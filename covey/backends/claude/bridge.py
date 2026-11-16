@@ -25,8 +25,8 @@ from covey.core.harness import BackendRuntime, HarnessCapabilities, HARNESS_REGI
 from covey.core.process import device_of
 from covey.core.process_env import child_process_env, process_device
 from covey.core.harness import BackendConfig, BridgeContext, HarnessSpec, RunRequest, RunResult, UUID_RE
-from covey.backends.claude.models import model_catalog
-from covey.backends.claude import redaction, rewind
+from covey.backends.claude.models import last_native_catalog, model_catalog
+from covey.backends.claude import profiles, redaction, rewind
 from covey.core.providers import retired_provider, retired_provider_notice
 
 STATE_DIR_NAME = "claude-lark-bridge"
@@ -70,9 +70,6 @@ class ClaudeBackend(BackendRuntime):
         parser.add_argument("--claude-transport", choices=["stream-json"], default="stream-json")
         parser.add_argument("--traex-ppe-env", help=argparse.SUPPRESS)
         parser.add_argument("--traex-site", help=argparse.SUPPRESS)
-        # --claude-profiles went with the Claude gateway profiles: this machine's own Claude Code
-        # login is what runs; its value is ignored and startup logs one line (same check as the options above)
-        parser.add_argument("--claude-profiles", help=argparse.SUPPRESS)
         parser.add_argument("--model", default=DEFAULT_MODEL, help="claude --model (default: claude-fable-5)")
         parser.add_argument(
             "--effort",
@@ -80,6 +77,7 @@ class ClaudeBackend(BackendRuntime):
             help="claude --effort: low|medium|high|xhigh|max|ultracode (default: xhigh)",
         )
         parser.add_argument("--claude-cmd", default=DEFAULT_CLAUDE_CMD, help="claude executable / wrapper command")
+        parser.add_argument("--claude-profiles", help="absolute path to configured Claude gateway profiles")
         parser.add_argument(
             "--claude-timeout",
             type=int,
@@ -115,14 +113,15 @@ class ClaudeBackend(BackendRuntime):
 
     def build_config(self, args: Any) -> BackendConfig:
         options = {"transport": "stream-json"}
+        if args.claude_profiles:
+            profiles.load(args.claude_profiles)
+            options[profiles.CONFIG] = args.claude_profiles
         if args.claude_auto_compact_window:
             options["auto_compact_window"] = args.claude_auto_compact_window
         if args.claude_compact_between_turns:
             options["compact_between_turns"] = args.claude_compact_between_turns
         if args.claude_login_shell:
             options["login_shell"] = True
-        if args.claude_profiles:
-            options["ignored_claude_profiles"] = True
         return BackendConfig(
             model=args.model,
             effort=args.effort,
@@ -135,7 +134,7 @@ class ClaudeBackend(BackendRuntime):
     def child_env(self, ctx: BridgeContext) -> dict[str, str]:
         """The Bridge's environment for a claude child, with the gateway's models unless the Bridge's
         environment names its own value; the compaction window only when configured."""
-        env = child_process_env(ctx.workdir, device=process_device(ctx))
+        env = profiles.environment(ctx, child_process_env(ctx.workdir, device=process_device(ctx)))
         env.setdefault(GATEWAY_MODELS_ENV, "1")
         # Every turn backs up the files it edits, so ↩️ 回退 can put them back (backends/claude/rewind.py).
         env.setdefault(rewind.FILE_CHECKPOINTS_ENV, "1")
@@ -160,13 +159,35 @@ class ClaudeBackend(BackendRuntime):
             # 协作 asks held to CONSULT in a fork (C8 on the installed CLI: tests/test_collab_c8.py).
             collab=True), ctx)
 
+    def _catalog(self, ctx, *, refresh=False):
+        configured = profiles.catalog(ctx)  # Validate first, before running even the default command.
+        if ctx.options.get(profiles.SELECTED):
+            return configured  # An execution context contains the selected command, never the default probe.
+        # The default account catalog always uses its original environment, even while selecting a profile.
+        probe = (dataclasses.replace(ctx, model="", options={k: v for k, v in ctx.options.items() if k != profiles.SELECTED})
+                 if configured else ctx)
+        try:
+            native = (model_catalog(self, probe, self.child_env(probe), refresh=True) if refresh
+                      else model_catalog(self, probe, self.child_env(probe)))
+        except (RuntimeError, OSError, ValueError):
+            if not configured:
+                raise
+            # Profiles refresh independently; retain the default account only within its own last-success age.
+            native = last_native_catalog(probe)
+        return {**native, **configured} if configured else native
+
     def model_catalog(self, ctx):
-        return model_catalog(self, ctx, self.child_env(ctx))
+        return self._catalog(ctx)
 
     def refresh_model_catalog(self, ctx):
-        return model_catalog(self, ctx, self.child_env(ctx), refresh=True)
+        return self._catalog(ctx, refresh=True)
 
     def normalize_model_settings(self, ctx, model, effort):
+        found = profiles.choice(ctx, model)
+        if found is not None:
+            if effort and effort not in found[1]["efforts"]:
+                raise ValueError("该 Claude profile 模型不支持此推理档位")
+            return model, effort
         if not model:
             return model, effort
         catalog = self.model_catalog(ctx)
@@ -195,7 +216,9 @@ class ClaudeBackend(BackendRuntime):
         removed = retired_provider(request.context.model)
         if removed:
             raise ValueError(retired_provider_notice(removed))
-        if self.retired_gateway(request.context):
+        ctx = profiles.resolve(request.context)
+        request = dataclasses.replace(request, context=ctx)
+        if not profiles.selected(ctx) and self.retired_gateway(request.context):
             raise ValueError("本话题的模型所在网关已下线，不能再用它；请点任务卡上的“换配置”选择其他模型")
         return redacted_stream(self, request, self.child_env(request.context))
 
@@ -205,7 +228,9 @@ class ClaudeBackend(BackendRuntime):
         from covey.backends.claude.runtime import compact_only
         if device_of(request.context):
             return False  # The session is on a device: its file is not ours to read (compact_before_turn).
-        ctx, env = request.context, self.child_env(request.context)
+        ctx = profiles.resolve(request.context)
+        request = dataclasses.replace(request, context=ctx)
+        env = self.child_env(ctx)
         want_redact = redaction.wanted(ctx)
         with _extension_turn(ctx, env, run_id=request.inputs.run_id) as (ctx, env):
             request = dataclasses.replace(request, context=ctx)
@@ -221,6 +246,7 @@ class ClaudeBackend(BackendRuntime):
         not sent when the relay cannot run or the topic's setting cannot be read. ``run_id``: its row in the relay's
         counts, apart from the turns'."""
         from covey.backends.claude.handoff import summarize
+        ctx = profiles.resolve(ctx)
         env = self.child_env(ctx)
         try:
             want_redact = redact or redaction.wanted(ctx)
@@ -248,6 +274,7 @@ class ClaudeBackend(BackendRuntime):
 
     def rewind_files(self, ctx, session_id, prompt_uuid):
         """Put back the files that turn's edit tools changed."""
+        ctx = profiles.resolve(ctx)
         return rewind.rewind_files(self, ctx, session_id, prompt_uuid, self.child_env(ctx))
 
     def prompt_runtime_note(self, ctx: BridgeContext) -> str:
@@ -283,8 +310,7 @@ class ClaudeBackend(BackendRuntime):
             f"login_shell={bool(ctx.options.get('login_shell'))} transport=stream-json"
             + (f" auto_compact_window={window}" if window else "")
             + (f" compact_between_turns={between}" if between else "")
-        ] + (["--claude-profiles is no longer used (Claude gateway profiles were removed; this machine's own Claude "
-              "Code login runs); its value is ignored"] if ctx.options.get("ignored_claude_profiles") else [])
+        ]
 
     def on_startup(self, ctx: BridgeContext) -> None:
         return None

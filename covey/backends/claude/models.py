@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from covey.backends.claude.argv import stream_argv
+from covey.backends.claude.profiles import CONFIG as PROFILES_CONFIG
 from covey.backends.claude.process import ClaudeProcess
 from covey.core.defaults import ULTRACODE, ULTRACODE_RUNS_AS
 from covey.core.state import read_json, write_json
@@ -37,6 +38,37 @@ def catalog_row(slug, display_name, description, efforts, default):
 # through their relay until they stopped fetching it). The last list that had
 # them stands in for this long.
 GATEWAY_KEEP = 24 * 3600
+# With configured profiles, their independent catalog refresh must not erase the default account's
+# last good directory when its CLI temporarily times out. Never renew this age on a failed probe.
+NATIVE_KEEP = 3600
+NATIVE_FILE = "claude-native.json"
+
+
+def _remember_native(ctx, catalog, at):
+    """Persist a successful default-account directory only for deployments that opted into profiles."""
+    if not ctx.options.get(PROFILES_CONFIG):
+        return
+    try:
+        write_json(Path(ctx.state_dir) / "native-models" / NATIVE_FILE,
+                   {"at": at, "command": list(ctx.backend_cmd), "models": catalog}, ensure_ascii=False)
+    except OSError:
+        pass  # An auxiliary cache write must not discard a successful native response.
+
+
+def last_native_catalog(ctx, now=None):
+    """The same command's native directory within NATIVE_KEEP of its last success, also after a restart."""
+    now = time.time() if now is None else now
+    try:
+        saved = read_json(Path(ctx.state_dir) / "native-models" / NATIVE_FILE)
+        rows = saved["models"]
+        if (saved["command"] == list(ctx.backend_cmd) and 0 <= now - saved["at"] <= NATIVE_KEEP
+                and isinstance(rows, dict) and all(isinstance(key, str) and key and isinstance(row, dict)
+                    and isinstance(row.get("supported_reasoning_levels"), list) for key, row in rows.items())):
+            return rows
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return {}
+
 
 
 def keep_gateway_models(ctx, catalog, now=None):
@@ -84,6 +116,7 @@ def model_catalog(backend, ctx, env, *, refresh=False):
     with _LOCK:
         cached = _CACHE.get(key)
         if not refresh and cached and time.monotonic() - cached[0] < 60:
+            _remember_native(ctx, cached[1], cached[2])
             return {
                 k: {**v, "supported_reasoning_levels": [dict(x) for x in v["supported_reasoning_levels"]]}
                 for k, v in cached[1].items()
@@ -104,7 +137,9 @@ def model_catalog(backend, ctx, env, *, refresh=False):
         finally:
             if not process.close():
                 raise RuntimeError("Claude 模型目录进程清理未确认")
-        _CACHE[key] = (time.monotonic(), catalog)
+        at = time.time()
+        _CACHE[key] = (time.monotonic(), catalog, at)
+        _remember_native(ctx, catalog, at)
         return {
             k: {**v, "supported_reasoning_levels": [dict(x) for x in v["supported_reasoning_levels"]]}
             for k, v in catalog.items()

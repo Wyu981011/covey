@@ -52,13 +52,16 @@ def claude_names(models):
 
 
 def catalog_changed(choice, live):
-    """Whether a card's menu entry is gone from the live catalogue or offers other budgets there."""
-    return not live or any(live.get(k) != choice.get(k) for k in ('levels', 'recommended', 'presets'))
+    """Whether a card's menu entry is gone, offers other budgets, or has changed readiness."""
+    return not live or any(live.get(k) != choice.get(k)
+                           for k in ('levels', 'recommended', 'presets', 'unavailable_reason'))
 
 
 def run_choice(choice, effort):
     """(model, effort) a menu entry starts with for a budget ('' the native default): a budget-preset model the
     preset of that budget, with that budget, so the runtime's exact preset check holds."""
+    if choice.get('unavailable_reason'):
+        raise ValueError('该模型尚未就绪：' + choice['unavailable_reason'])
     presets = choice.get('presets')
     if presets is None:
         return choice['model'], effort
@@ -97,7 +100,9 @@ class CatalogFilter(NamedTuple):
     def apply(self, models, app):
         # Nor a removed provider's model from a catalog saved before it was removed.
         models = {model: row for model, row in models.items()
-                  if not model.startswith(tuple(RETIRED_PREFIXES)) and not model.rsplit('/', 1)[-1].startswith(self.hidden)}
+                  if not model.startswith(tuple(RETIRED_PREFIXES))
+                  and (row.get('catalog_source') == 'configured_profile'
+                       or not model.rsplit('/', 1)[-1].startswith(self.hidden))}
         return self.view(self.live(models, app) if self.live else models)
 
 
@@ -136,6 +141,11 @@ FRESH = 900  # Seconds a catalog its Harness last answered with is offered.
 KEEP_UNANSWERED = 3600
 
 
+# Configured Claude profiles carry their supplier and readiness through the same catalog as native models.
+# No command, endpoint or credential belongs on a card or in its saved catalog.
+CATALOG_METADATA = ('source', 'provider', 'provider_title', 'unavailable_reason', 'catalog_source')
+
+
 def refresh_catalog(app, ctx):
     refresh = getattr(app.backend, 'refresh_model_catalog', None)
     catalog = refresh(ctx) if callable(refresh) else app.models.backend_model_catalog(ctx)
@@ -156,16 +166,46 @@ def refresh_catalog(app, ctx):
         recommendation = recommend(ctx, model, levels) if callable(recommend) else ''
         clean[model] = {'display_name': row.get('display_name') or model,
                         'levels': levels, 'default': row.get('default_reasoning_level') or '', 'recommended': recommendation,
-                        **({'family': family} if family else {})}
+                        **({'family': family} if family else {}),
+                        **{key: row[key] for key in CATALOG_METADATA if isinstance(row.get(key), str) and row[key]}}
     write_json(ctx.state_dir / 'launch-models' / (app.spec.name + '.json'), {'updated_at': time.time(), 'models': clean},
                ensure_ascii=False)
     return clean
 
 
+def current_profiles(app, models):
+    """A configured choice's current metadata, read locally on every draw and click; no gateway probe. An old
+    ready card cannot outlive a profile becoming pending, removed or unreadable. Native catalog rows stay as is."""
+    if app.spec.name != 'claude' or not any(model.startswith('profile/') for model in models):
+        return models
+    from covey.backends.claude.profiles import catalog
+    try:
+        current = catalog(app.harness.context)
+        missing = '所选网关或模型已移除'
+    except (OSError, ValueError):
+        current, missing = {}, '网关配置无效或无法读取'
+    result = dict(models)
+    for model, saved in models.items():
+        if not model.startswith('profile/'):
+            continue
+        row = current.get(model)
+        if row is None:
+            result[model] = {**saved, 'unavailable_reason': missing}
+            continue
+        # Drop the old readiness field when a profile becomes ready; metadata and explicit budgets may change too.
+        result[model] = {**{key: value for key, value in saved.items() if key not in CATALOG_METADATA},
+                         'display_name': row['display_name'],
+                         'levels': [level['effort'] for level in row['supported_reasoning_levels']],
+                         'default': row.get('default_reasoning_level') or '', 'recommended': '',
+                         **{key: row[key] for key in CATALOG_METADATA if isinstance(row.get(key), str) and row[key]}}
+    return result
+
+
 def available_models(topics, ctx):
-    """Launchable models by route key in a fixed order: a block per Harness in MENU_ORDER, each in its
-    catalog's order but the Harness's ``models_first`` (harnesses.json) ahead. The launch and 换配置 cards list
-    them by the chat's recent use first (app/model_usage.ranked); models nobody chose lately keep this order."""
+    """Model choices by route key in a fixed order: a block per Harness in MENU_ORDER, each in its catalog's order
+    but the Harness's ``models_first`` (harnesses.json) ahead. The launch and 换配置 cards list them by the chat's
+    recent use first (app/model_usage.ranked). Configured profiles not ready yet stay visible with their reason;
+    run_choice refuses to start them, and the settings panel refuses to save them as defaults."""
     result = {}
     for name in sorted(topics.apps, key=harness_rank):
         app = topics.apps[name]
@@ -185,17 +225,20 @@ def available_models(topics, ctx):
             keep = KEEP_UNANSWERED if cached.get('unanswered_at', 0) > cached['updated_at'] else FRESH
             if not 0 <= time.time() - cached['updated_at'] <= keep:
                 continue
-            models = catalog_filter(app).apply(cached['models'], app)
+            models = catalog_filter(app).apply(current_profiles(app, cached['models']), app)
             models = first_models(models, (getattr(app.harness.context, 'options', None) or {}).get('models_first'))
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            continue  # Only freshly verified native catalogs are launchable.
+            continue  # Expired catalogs, including configured-profile choices, must be refreshed first.
         for model, row in models.items():
             # The route is part of the model choice, never inferred from a name.
             provider = provider_of(name, model)
-            source = {'source': provider.name} if provider and provider.name else {}
+            source_name = row.get('source') or (provider.name if provider else '')
+            source = {'source': source_name} if source_name else {}
             # The 换配置 card's Harness and provider selects group the entries by these (cards/switch_form.py).
-            route = {'title': app.spec.title, 'provider': provider.key if provider else '',
-                     'provider_title': menu_name(provider, app.spec.title)}
+            route = {'title': app.spec.title, 'provider': row.get('provider') or (provider.key if provider else ''),
+                     'provider_title': row.get('provider_title') or menu_name(provider, app.spec.title)}
+            if row.get('unavailable_reason'):
+                row = {**row, 'display_name': row['display_name'] + '（' + row['unavailable_reason'] + '）'}
             result[name + ':' + model] = {**row, **source, 'harness': name, 'model': model,
                                           'label': model_label(app.spec.title, {**row, **source}), **route, **modes}
     return result

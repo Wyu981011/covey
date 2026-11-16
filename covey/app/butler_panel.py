@@ -115,9 +115,10 @@ def pick_provider(rows, choices, option, state_dir):
     if option == model_provider(rows.harness, rows.model, choices):
         return {}
     first = next(iter(models_of(explicit(choices), rows.harness, option)), '') if option else ''
-    if option and not first:
-        return None
-    return rows.save(model=first, effort=new_budget(rows, entry_of(choices, rows.harness, first)))
+    entry = entry_of(choices, rows.harness, first)
+    if option and (not first or entry and entry.get('unavailable_reason')):
+        return None  # A Claude profile that is pending or broken is not chosen (backends/claude/profiles.py).
+    return rows.save(model=first, effort=new_budget(rows, entry))
 
 
 def pick_model(rows, choices, option, state_dir):
@@ -129,7 +130,10 @@ def pick_model(rows, choices, option, state_dir):
     if not rows.harness or option and option not in models_of(explicit(choices), rows.harness) \
             or not option and not rows.empty:
         return None
-    return rows.save(model=option, effort=new_budget(rows, entry_of(choices, rows.harness, option)))
+    entry = entry_of(choices, rows.harness, option)
+    if entry and entry.get('unavailable_reason'):
+        return None
+    return rows.save(model=option, effort=new_budget(rows, entry))
 
 
 def pick_effort(rows, choices, option, state_dir):

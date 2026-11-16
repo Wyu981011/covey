@@ -434,6 +434,25 @@ class DefaultsTest(unittest.TestCase):
         self.assertEqual(TaskTrace.restore(trace.snapshot()).snapshot()["model"], "claude-opus-5-5[1m]")
         self.assertNotIn("model", TaskTrace().snapshot())
 
+    def test_a_profile_turn_names_its_saved_supplier_and_never_falls_back_to_the_native_account(self):
+        harness = SimpleNamespace(spec=SimpleNamespace(name="claude", title="Claude Code"))
+        model = "profile/west/opus"
+        job = SimpleNamespace(model=model, model_label="Claude Code · West VPS · Opus", effort="high")
+        with tempfile.TemporaryDirectory() as temp:
+            ctx = SimpleNamespace(state_dir=Path(temp))
+            path = Path(temp) / "launch-models" / "claude.json"
+            write_json(path, {"models": {model: {"display_name": "Opus", "provider_title": "Renamed VPS"}}})
+            self.assertEqual(answer_cards.inputs(job, harness, ctx=ctx)[1:3], ["West VPS", "Opus"])
+            # A job without a saved label can still name the configured supplier.
+            job.model_label = ""
+            self.assertEqual(answer_cards.inputs(job, harness, ctx=ctx)[1], "Renamed VPS")
+            path.unlink()
+            self.assertEqual(answer_cards.inputs(job, harness, ctx=ctx)[1], "west")
+            self.assertEqual(answer_cards.inputs(job, harness)[1], "west")
+            # A delivered turn stays attributable even after its profile is gone.
+            job.model_label = "Claude Code · West VPS · Opus"
+            self.assertEqual(answer_cards.inputs(job, harness)[1], "West VPS")
+
     def test_no_model_chosen_reads_default_and_a_job_s_time_comes_from_its_timings(self):
         harness = SimpleNamespace(spec=SimpleNamespace(name="claude", title="Claude Code"))
         job = SimpleNamespace(model="", model_label="", effort="", redaction=False, workspace_label="repo.code")

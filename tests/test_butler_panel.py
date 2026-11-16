@@ -11,10 +11,10 @@ import time
 import unittest
 from unittest import mock
 
-from support.launch_fixtures import write_maso_catalog
+from support.launch_fixtures import configure_claude_profiles, profile, write_maso_catalog
 from support.world import UnifiedCase
 from support import requires_extension
-from covey.app.launch_models import available_models
+from covey.app.launch_models import available_models, catalog_changed, run_choice
 from covey.app.butler_model_choice import resolve
 from covey.app.butler_env import ButlerEnv
 from covey.app import butler_panel as panel
@@ -642,6 +642,86 @@ class ButlerPanelTests(UnifiedCase):
         self.click(self.option(panel_card.REDACTION, 'off'), event_id='c7')
         self.assertFalse(self.settings().redaction)
         self.assertEqual(self.values(panel_card.REDACTION), [])
+
+    def test_a_pending_profile_stays_visible_but_cannot_become_a_main_or_topic_default(self):
+        model = 'profile/west/opus'
+        choices = {'claude:opus': {'harness': 'claude', 'model': 'opus', 'title': 'Claude Code',
+                                  'display_name': 'Opus', 'provider': 'anthropic', 'provider_title': 'Claude 自带',
+                                  'levels': ['high']},
+                   'claude:' + model: {'harness': 'claude', 'model': model, 'title': 'Claude Code',
+                                      'display_name': 'Opus（账号待登录）', 'provider': 'claude-profile:west',
+                                      'provider_title': 'West VPS', 'levels': ['high'],
+                                      'unavailable_reason': '账号待登录'}}
+        self.enterContext(mock.patch.object(panel, 'available_models', return_value=choices))
+        settings.update(self.ctx.state_dir, model='opus', effort='high',
+                        topic_defaults=settings.TopicDefaults(harness='claude', model='opus', effort='high'))
+        self.ask()
+        before = self.settings()
+        for index, (section, provider_kind, model_kind) in enumerate((
+                (panel_card.BUTLER_PART, panel_card.PROVIDER, panel_card.MODEL),
+                (panel_card.TOPIC_PART, panel_card.TOPIC_PROVIDER, panel_card.TOPIC_MODEL))):
+            self.part(section)
+            pending = self.option(provider_kind, 'claude-profile:west')
+            self.click(pending, event_id=f'pending-provider-{index}')
+            self.assertEqual(self.settings(), before)
+            self.assertIn(GONE, self.text())
+            # A model callback from an older card cannot bypass the supplier row's guard.
+            self.click({**pending, 'kind': model_kind, 'option': model}, event_id=f'pending-model-{index}')
+            self.assertEqual(self.settings(), before)
+        # Once the same configured profile is ready, the ordinary supplier choice works unchanged.
+        choices['claude:' + model].pop('unavailable_reason')
+        self.click(self.option(panel_card.TOPIC_PROVIDER, 'claude-profile:west'), event_id='ready-provider')
+        self.assertEqual(self.settings().topic_defaults.model, model)
+        self.part(panel_card.BUTLER_PART)
+        self.click(self.option(panel_card.PROVIDER, 'claude-profile:west'), event_id='ready-main')
+        self.assertEqual(self.settings().model, model)
+
+    def test_profile_changes_on_disk_immediately_block_old_cards_without_refreshing_the_catalog(self):
+        gateway = profile('west', 'West VPS')
+        path = configure_claude_profiles(self, [gateway])
+        model = 'profile/west/opus'
+        cache_path = self.ctx.state_dir / 'launch-models' / 'claude.json'
+        cached = json.loads(cache_path.read_text())
+        cached['models'][model] = {'display_name': 'Opus', 'levels': ['high'], 'source': 'West VPS',
+                                   'provider': 'claude-profile:west', 'provider_title': 'West VPS',
+                                   'catalog_source': 'configured_profile'}
+        write_json(cache_path, cached)
+        original_cache = cache_path.read_bytes()
+        settings.update(self.ctx.state_dir, model='claude-model', effort='high',
+                        topic_defaults=settings.TopicDefaults(harness='claude', model='claude-model', effort='high'))
+        before = self.settings()
+        ready = available_models(self.app.topics, self.ctx)['claude:' + model]
+        self.assertNotIn('unavailable_reason', ready)
+        self.ask()
+        old_provider = self.option(panel_card.PROVIDER, 'claude-profile:west')
+        for case in ('pending', 'invalid', 'removed'):
+            with self.subTest(case=case):
+                gateway.update(status='pending', reason='账号待登录')
+                path.write_text('{' if case == 'invalid' else json.dumps({
+                    'version': 1, 'profiles': [] if case == 'removed' else [gateway]}))
+                with mock.patch('subprocess.Popen') as spawn:
+                    choices = available_models(self.app.topics, self.ctx)
+                    current = choices['claude:' + model]
+                    self.assertTrue(current['unavailable_reason'])
+                    self.assertTrue(catalog_changed(ready, current))
+                    self.assertIn('claude:claude-model', choices)  # A bad profile config does not hide native models.
+                    with self.assertRaises(ValueError):
+                        run_choice(current, 'high')
+                    for kind in (panel_card.PROVIDER, panel_card.MODEL,
+                                 panel_card.TOPIC_PROVIDER, panel_card.TOPIC_MODEL):
+                        option = model if kind in (panel_card.MODEL, panel_card.TOPIC_MODEL) else 'claude-profile:west'
+                        self.click({**old_provider, 'kind': kind, 'option': option}, event_id=f'{case}-{kind}')
+                        self.assertEqual(self.settings(), before)
+                    spawn.assert_not_called()
+                self.assertEqual(cache_path.read_bytes(), original_cache)
+        gateway.update(status='ready', name='Renamed VPS')
+        write_json(path, {'version': 1, 'profiles': [gateway]})
+        current = available_models(self.app.topics, self.ctx)['claude:' + model]
+        self.assertNotIn('unavailable_reason', current)
+        self.assertEqual(current['provider_title'], 'Renamed VPS')
+        self.click({**old_provider, 'kind': panel_card.MODEL, 'option': model}, event_id='ready-again')
+        self.assertEqual(self.settings().model, model)
+        self.assertEqual(cache_path.read_bytes(), original_cache)
 
     def test_without_claude_code_the_rows_show_the_harness_it_runs_on_and_a_model_picked_saves_it(self):
         """T664: no Harness named and no Claude Code: the card draws the butler on Codex with Codex's own model (a model

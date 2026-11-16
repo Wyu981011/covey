@@ -15,17 +15,18 @@ from support.fake_lark import FakeCardKit
 from support.cards import (current_token, page_options, selects, settings_rows, walk_elements)
 from support.git import commit_all, init_git_repo
 from support import requires_extension
-from support.launch_fixtures import MASO_MENU, redacting, write_maso_catalog
+from support.launch_fixtures import MASO_MENU, configure_claude_profiles, profile, redacting, write_maso_catalog
 from support.processes import leftover_check
 from support.world import TopicFixture, UnifiedCase
 
 from covey.core import butler_settings
+from covey.app.butler_model_choice import resolve
 from covey.core.jobs import context_for_job
 from covey.app.form_cards import save_record
 from covey.app.launch import build_launch_card, card_token, chat_defaults_path, topic_budget
 from covey.app.launch_submit import submit_launch_form
 from covey.cards.launch_config import SUBMIT_PREFIX
-from covey.app.launch_models import available_models, harness_rank, run_choice
+from covey.app.launch_models import available_models, catalog_changed, harness_rank, refresh_catalog, run_choice
 from test_launch import InChat
 from covey.cards.launch_config import (BUDGET_ACTION, MODEL_ACTION, REDACTION_ACTION, WORK_MODE_ACTION, launch_form_card)
 from covey.core.menu_choice import AUTO_EFFORT_LABEL, effort_options, model_tiers, parse_budget, tier_pick
@@ -281,6 +282,76 @@ def settle(picker):
         while not picker.queue.empty():
             handler, *args = picker.queue.get_nowait()
             handler(*args)
+
+
+class ProfileLaunchTests(UnifiedCase):
+    def setUp(self):
+        super().setUp()
+        write_private_text(self.ctx.state_dir / "launch-models" / "claude.json", json.dumps({
+            "updated_at": time.time(), "models": {"opus": {"display_name": "Opus", "levels": ["high"], "default": ""}}}))
+
+    def test_configured_profiles_keep_their_supplier_and_pending_status_through_the_catalog(self):
+        backend = self.app.apps['claude'].backend
+        configure_claude_profiles(self, [profile('east', 'East VPS', ('opus', 'claude/claude-sonnet-5-5')),
+                                        profile('west', 'West VPS', status='pending', reason='账号待登录')])
+        common = {'display_name': 'Opus', 'supported_reasoning_levels': [{'effort': 'high'}],
+                  'catalog_source': 'configured_profile'}
+        catalog = {
+            'opus': {'display_name': 'Opus', 'supported_reasoning_levels': [{'effort': 'high'}]},
+            'profile/east/opus': {**common, 'source': 'East VPS', 'provider': 'claude-profile:east',
+                                  'provider_title': 'East VPS'},
+            'profile/west/opus': {**common, 'source': 'West VPS', 'provider': 'claude-profile:west',
+                                  'provider_title': 'West VPS', 'unavailable_reason': '账号待登录'},
+            # An explicit gateway list is authoritative: native-account alias filtering cannot hide its ids.
+            'profile/east/claude/claude-sonnet-5-5': {**common, 'display_name': 'Sonnet', 'source': 'East VPS',
+                                                    'provider': 'claude-profile:east', 'provider_title': 'East VPS'},
+            'claude-sonnet-5-5': {'display_name': 'Native Sonnet', 'supported_reasoning_levels': []}}
+        with mock.patch.object(backend, 'refresh_model_catalog', return_value=catalog, create=True):
+            refresh_catalog(self.app.apps['claude'], self.ctx)
+        choices = available_models(self.app.topics, self.ctx)
+        ready, pending = (choices['claude:profile/' + node + '/opus'] for node in ('east', 'west'))
+        self.assertEqual(ready['label'], 'Claude Code · East VPS · Opus')
+        self.assertEqual(pending['label'], 'Claude Code · West VPS · Opus（账号待登录）')
+        self.assertIn('claude:profile/east/claude/claude-sonnet-5-5', choices)
+        self.assertNotIn('claude:claude-sonnet-5-5', choices)
+        self.assertEqual(model_tiers(choices, 'claude:profile/west/opus')[3:], (
+            {'anthropic': 'Claude 自带', 'claude-profile:east': 'East VPS', 'claude-profile:west': 'West VPS'},
+            {'claude:profile/west/opus': 'Opus（账号待登录）'}))
+        self.assertEqual(tier_pick(choices, 'claude:opus', provider='claude-profile:west'), 'claude:profile/west/opus')
+        self.assertEqual(run_choice(ready, 'high'), ('profile/east/opus', 'high'))
+        with self.assertRaisesRegex(ValueError, '账号待登录'):
+            run_choice(pending, 'high')
+        plan = resolve(self.app.topics, self.ctx.state_dir, 'chat', butler_settings.TopicDefaults(),
+                       {'harness': 'claude', 'model': 'profile/west/opus', 'effort': 'high'}, choices=choices)
+        self.assertIsInstance(plan, str)  # topic_start refuses before it opens a topic or launches a job.
+        self.assertIn('账号待登录', plan)
+        self.assertTrue(catalog_changed(ready, {**ready, 'unavailable_reason': '账号待登录'}))
+        self.assertTrue(catalog_changed(pending, {k: v for k, v in pending.items() if k != 'unavailable_reason'}))
+        self.assertFalse(catalog_changed(ready, dict(ready)))
+
+    def test_a_pending_profile_cannot_start_or_create_a_workspace_from_its_launch_card(self):
+        model = 'profile/west/opus'
+        configure_claude_profiles(self, [profile('west', 'West VPS', status='pending', reason='账号待登录')])
+        write_private_text(self.ctx.state_dir / 'launch-models' / 'claude.json', json.dumps({
+            'updated_at': time.time(), 'models': {model: {
+                'display_name': 'Opus', 'levels': ['high'], 'default': '', 'source': 'West VPS',
+                'provider': 'claude-profile:west', 'provider_title': 'West VPS', 'unavailable_reason': '账号待登录'}}}))
+        save_record(self.ctx.state_dir / 'launch-defaults.json', {'model_choice': 'claude:' + model, 'effort': 'high'})
+        _, token, path = self.remembered_launch_card()
+        before = read_topic(self.target)
+        # Even if the owner selects a new worktree, refusal precedes filesystem or topic mutations.
+        record = self.launch_form(token)
+        record['form_defaults']['run_mode'] = 'worktree'
+        save_record(path, record)
+        with mock.patch('covey.app.launch_submit.plan_topic_worktree') as checkout:
+            with self.assertRaisesRegex(ValueError, '账号待登录'):
+                submit_launch_form(self.child, self.target, {'chat_id': 'chat', 'message_id': 'mid',
+                    'action_name': SUBMIT_PREFIX + token, 'form_value': {'path': ''}})
+        checkout.assert_not_called()
+        self.assertEqual(read_topic(self.target), before)
+        self.assertTrue(self.app.runtime.jobs.queue.empty())
+        self.assertEqual(self.launch_form(token)['status'], 'ready')
+
 
 
 class MasoLaunchTests(InChat, UnifiedCase):

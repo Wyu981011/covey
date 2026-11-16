@@ -2,6 +2,7 @@
 the Router serves it, and a Harness that reports the redaction capability."""
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 from unittest import mock
@@ -58,6 +59,22 @@ def write_maso_catalog(state_dir, *, families=True):
             row.pop('family', None)
         path.write_text(json.dumps(data))
     return catalog
+
+
+def configure_claude_profiles(case, profiles):
+    """Only the administrator's file and the running Harness's config path; callers keep any saved catalog."""
+    path = case.root / 'claude-profiles.json'
+    path.write_text(json.dumps({'version': 1, 'profiles': profiles}))
+    harness = case.app.apps['claude'].harness
+    harness.context = dataclasses.replace(harness.context, options={**harness.context.options, 'claude_profiles': str(path)})
+    return path
+
+
+def profile(identifier, name, models=('opus',), *, status='ready', reason=''):
+    """A named gateway whose command must never be run by model choices."""
+    return {'id': identifier, 'name': name, 'status': status, 'reason': reason, 'command': ['/fixture/never-run-claude'],
+            'models': [{'id': model, 'display_name': 'Sonnet' if 'sonnet' in model else 'Opus', 'efforts': ['high']}
+                       for model in models]}
 
 
 def redacting(case, name='claude'):

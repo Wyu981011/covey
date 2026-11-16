@@ -551,6 +551,7 @@
 | `backends/claude/models.py` | Public model metadata from the Claude initialization response, never account data |
 | `backends/claude/policy.py` | Explicit upstream safety signals only |
 | `backends/claude/process.py` | The Claude CLI's process and its JSONL transport |
+| `backends/claude/profiles.py` | Configured Claude gateways: named model choices, with pending profiles refused before any command starts |
 | `backends/claude/redaction.py` | The loopback relay that redacts one Claude Code turn of a topic that chose redaction |
 | `backends/claude/rewind.py` | ↩️ 回退 on Claude Code: drop the last turn of a session and put back the files it changed |
 | `backends/claude/runtime.py` | One turn of the Claude CLI over its JSONL transport, following the official Agent SDK protocol (run_stream) |

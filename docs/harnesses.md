@@ -8,7 +8,7 @@ Harness 是执行任务的 Agent 程序。本篇按上手顺序写：有哪些�
 
 | Harness | 供应商（模型 ID 前缀） | 登录或密钥 |
 | --- | --- | --- |
-| Claude Code | 本机 Claude Code 的登录（无前缀，换配置卡写“Claude 自带”） | `claude` 自己的登录 |
+| Claude Code | 本机 Claude Code 的登录（无前缀，换配置卡写“Claude 自带”）、[配置网关](#claude-profiles)（`profile/<id>/`） | `claude` 自己的登录，或所选包装命令配置的网关 |
 | Codex | 自己的登录（无前缀）；配了模型网关时还有网关（`<网关前缀>`，如 `mygw/`） | Codex 的登录；网关的个人密钥 |
 | DeepSeek Harness | 只有模型网关（无前缀）：没有给 dsh 用的网关就用不了 | 网关的个人密钥 |
 | Pi | Codex（无前缀，写“Codex 自带”）；配了模型网关时还有网关 | Codex 的 ChatGPT 登录（只借用访问令牌）；网关的个人密钥 |
@@ -101,6 +101,47 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **本轮结果与收尾**：只取当前调用的 JSONL，result 文本等于最后一条完整根消息才算数。最终 result 后关输入，约 10 秒后停止进程组（还有补充没被接收时不关）；后台命令或子 Agent 结束时 Claude Code 会再起一轮通知，机器人等它们全部结束，只受 `--claude-timeout` 约束，这一轮的回复是各轮回复按顺序连起来（紧挨着的相同段落只留一段，`backends/claude/completion.py` 的 `final_texts`）。有结果后 CLI 非零退出时按部分结果投递（会话封住）；因停止或超时结束、已有完整回复的照常发出并加说明。原生错误详情在 `<状态目录>/claude-diagnostics/<run-id>.json`，不要外传。
 - **限流与额度**：429 记 `rate_limited`（会自动重试），529、500、502、503、504、连接重置、流空闲超时记 `server_fault`（临时故障，会自动重试），402 记 `quota_exhausted`，451 记 `model_blocked`（后两种提示换配置）。明确的官方拒绝或降级会停止当前任务，见[官方拒绝与降级停止](policy-stop.md)。
 - **执行指标**：输出 token 是每条消息最大的 `output_tokens` 之和；缓存取 `cache_read_input_tokens`、`cache_creation_input_tokens`；子任务按 `parent_tool_use_id` 算，退出后读 `subagents/agent-*.jsonl` 补值；上下文取 result 的 `modelUsage`；生成时间扣除 tool_use 到 tool_result；TTFT `claude_delta`。下载请求与结果从会话记录的 `api-request*` 行还原，按 `requestDigest` 核对上的记 `digest_verified`。
+
+### Claude profiles
+
+同一个本机 Claude Code 可配置多个网关选项。在 `harnesses.json` 的 Claude `args` 增加 `--claude-profiles` 和配置文件的绝对路径：
+
+```json
+{
+  "enabled_harnesses": ["claude", "codex"],
+  "harnesses": {
+    "claude": {"args": ["--claude-cmd", "/absolute/bin/claude-default",
+                        "--claude-profiles", "/absolute/config/claude-profiles.json"]}
+  }
+}
+```
+
+配置文件示例：
+
+```json
+{
+  "version": 1,
+  "profiles": [
+    {
+      "id": "remote",
+      "name": "远端网关",
+      "command": ["/absolute/bin/claude-remote"],
+      "status": "pending",
+      "reason": "等待账号登录",
+      "models": [{"id": "opus", "display_name": "Opus", "efforts": ["high", "max"]}]
+    }
+  ]
+}
+```
+
+- 这是管理员显式配置的模型目录，不代表发现了可用账号或完成了模型验收。默认账号的原生目录保留；查询暂时失败时，沿用同一默认命令最近一小时内成功返回的完整目录，重启后也可读取，超过一小时才移除原生选项。缓存位于 `<state>/native-models/claude-native.json`，失败查询不延长时限；profile 配置目录独立展示。配置目录从不执行 profile 命令或访问其网关。
+- `id` 在配置内唯一，只用字母、数字、`_`、`-`，首位为字母或数字，最长 64 字符；`command` 是 argv 数组，第一项须为本机可执行文件的绝对路径，按 argv 直接运行，不套用默认账号的 `--claude-login-shell`。网关地址、账号、SSH 配置和凭据只在部署者自己的数据根或包装命令里，不进仓库或此文件。
+- 模型选择保存为 `profile/<id>/<模型 ID>`，启动 Claude 时才换成配置的真实模型 ID 与命令。模型可声明 `low`、`medium`、`high`、`xhigh`、`max`、`ultracode` 档位；空数组表示只支持默认档，可选的 `default` 必须在声明的档位内。各 profile 的档位不从默认账号推断。
+- `status` 必须是 `ready` 或 `pending`。未就绪选项带 `reason` 显示，不能启动、续接、压缩、分叉摘要或执行文件回退；配置删除、损坏，或排队后状态改为 `pending`，也会在调用前拒绝，不改用默认命令。登录/连通性准备完成后由部署者明确设 `ready`。目录后台刷新；每次执行重新读取配置，文件应原子替换。显式传入的 profiles 文件必须有效：文件缺失或损坏时，整个 Claude 配置（包括普通默认账号）都会拒绝启动或执行；修好原文件后重试，服务启动失败时重新启动服务，不会偷偷绕过该配置。
+- 任务、工作目录、会话和 Personal Agent 的 MCP 仍在本机；profile 改的是模型网关。包装命令必须保持 `HOME`、`CLAUDE_CONFIG_DIR` 和工作目录不变，并为该 profile 加载自己的账号配置。Bridge 清除继承的 `ANTHROPIC_BASE_URL`、令牌（含 OAuth）、密钥、自定义请求头、供应商开关及模型覆盖变量，再启动所选命令；命令需要正确处理 `auth status --json`，检查按完整 argv 缓存。
+- 开启敏感词脱敏时，包装命令还须响应 `--gateway-status`，只输出含有效 `endpoint` 的 JSON，不输出凭据。中继只转发到该地址；查询失败或没有地址时拒绝发送，不使用默认账号的环境地址、全局脱敏上游或官方默认地址。
+- 选择另一个 profile 按既有“换配置”流程开新会话；原生会话历史和结果验证机制不变。未配置该选项的部署保持原行为。
+
 
 ## Pi
 

@@ -38,12 +38,11 @@ CORE_PROVIDERS = (
 
 # compat(826a0d9): providers since removed, by their models' prefix, with the name a topic still on one of their
 # models is told is gone (Claude Code's Kiro 共享网关, TRAE and 豆包;
-# Codex's Magpie; Claude gateway profiles, "profile/<id>/<model>"): core/model_settings.py refuses such a topic's new message and backends/claude/bridge.py,
+# Codex's Magpie): core/model_settings.py refuses such a topic's new message and backends/claude/bridge.py,
 # backends/codex/bridge.py a job queued before, both before the Harness starts, and app/launch_models.py offers none
 # of their models from a catalog saved before; retire when no topic.json, launch default or model choice names one
 # (compat_report: retired-provider)
-CORE_RETIRED_PREFIXES = {"kiro-shared/": "Kiro 共享网关", "traex/": "TRAE", "doubao/": "豆包", "magpie/": "Magpie",
-                         "profile/": "Claude 网关档位"}
+CORE_RETIRED_PREFIXES = {"kiro-shared/": "Kiro 共享网关", "traex/": "TRAE", "doubao/": "豆包", "magpie/": "Magpie"}
 
 
 def merged(core: tuple, core_retired: dict, found) -> tuple[tuple, dict]:

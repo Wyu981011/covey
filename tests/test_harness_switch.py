@@ -16,7 +16,7 @@ from support.fake_lark import FakeCardKit
 from support.cards import page_options, settings_rows, walk_dicts, walk_elements as walk
 from support.fake_backends import InstructedBackend
 from support.git import commit_all, init_git_repo, run_git
-from support.launch_fixtures import MASO_MENU, redacting, write_maso_catalog
+from support.launch_fixtures import MASO_MENU, configure_claude_profiles, profile, redacting, write_maso_catalog
 from support.processes import leftover_check
 from support.records import write_topic
 from support.sessions import write_session_id
@@ -517,6 +517,24 @@ class HarnessSwitchTests(UnifiedCase):
         self.receive('next', 'continue please', root='src')
         job = self.app.runtime.jobs.queue.get_nowait()
         self.assertEqual((job.harness_id, job.model), ('claude', 'claude-model'))
+
+    def test_a_pending_profile_is_selectable_but_cannot_replace_the_topics_current_binding(self):
+        model = 'profile/west/opus'
+        configure_claude_profiles(self, [profile('west', 'West VPS', status='pending', reason='账号待登录')])
+        write_private_text(self.ctx.state_dir / 'launch-models' / 'claude.json', json.dumps({
+            'updated_at': time.time(), 'models': {model: {
+                'display_name': 'Opus', 'levels': ['high'], 'source': 'West VPS',
+                'provider': 'claude-profile:west', 'provider_title': 'West VPS', 'unavailable_reason': '账号待登录'}}}))
+        before = self.topic()
+        form, path, _ = self.open()
+        self.click(form, hs.PROVIDER, 'claude-profile:west')  # Codex has no such provider: ignored.
+        self.click(json.loads(path.read_text()), hs.MODEL, 'claude:' + model)
+        self.assertEqual(json.loads(path.read_text())['selected_model'], 'claude:' + model)
+        self.click(json.loads(path.read_text()), hs.CONFIRM)
+        self.assertEqual(self.topic(), before)
+        self.assertEqual(self.codex.sessions.read_session_id(self.source.session_path), self.session)
+        self.assertEqual(json.loads(path.read_text())['status'], 'ready')
+        self.assertIn('账号待登录', self.notice(path))
 
     @requires_extension()
     def test_a_redacting_topic_can_switch_harness_and_redaction_turns_off_with_notice(self):

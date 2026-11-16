@@ -246,13 +246,15 @@ class TurnTests(Base):
         self.assertNotIn("--settings", stream_argv(backend, self.ctx))
         env = {"ANTHROPIC_BASE_URL": self.upstream.url, "NO_PROXY": "corp"}
         with redaction.turn(self.ctx, env, run_id=RUN) as (ctx, env2):
-            self.assertIs(env2, env)
+            self.assertNotIn("COVEY_CLAUDE_REDACTION_ENDPOINT", env)
+            self.assertEqual(env2["COVEY_CLAUDE_REDACTION_UPSTREAM"], self.upstream.url)
             argv = stream_argv(backend, ctx, "11111111-1111-4111-8111-111111111111")
             settings = json.loads(argv[argv.index("--settings") + 1])["env"]
             # It replaces Claude Code's NO_PROXY whole, so the loopback names stay in it.
             self.assertEqual(settings["NO_PROXY"], "corp,127.0.0.1,localhost,::1")
             self.assertEqual(settings["no_proxy"], settings["NO_PROXY"])
             self.assertTrue(settings["ANTHROPIC_BASE_URL"].startswith("http://127.0.0.1:"))
+            self.assertEqual(env2["COVEY_CLAUDE_REDACTION_ENDPOINT"], settings["ANTHROPIC_BASE_URL"])
             # Fetching the gateway's models through the relay would file the list under the relay's port.
             self.assertEqual(settings["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"], "0")
             call(settings["ANTHROPIC_BASE_URL"] + "/v1/messages", json.dumps({"q": f"{TERM} {TERM}"}).encode())

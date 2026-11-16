@@ -15,6 +15,7 @@ from covey.core.process import device_of
 from covey.core.process_env import child_process_env, env_flag, process_device
 from covey.core import harness_probe
 from covey.core import gateways
+from covey.backends.claude import profiles as claude_profiles
 from covey.core.result import ERROR_CODES
 
 # `claude auth status` takes 1.0-2.0 s before every Claude task (S33). A passing one is reused this long:
@@ -28,7 +29,7 @@ LOGIN_REUSE = 300
 # it may pass again before a task runs. Off by default: a live deployment makes no extra model calls.
 PROBE_ENV = 'COVEY_HARNESS_PROBE'
 PROBED = ('claude', 'codex')
-_logins: dict = {}  # executable -> monotonic time of its last passing login check
+_logins: dict = {}  # full command -> monotonic time of its last passing login check
 
 
 def _executable(ctx):
@@ -69,23 +70,29 @@ def device_check(name, ctx):
 def local_check(name, ctx):
     if device_of(ctx):
         return device_check(name, ctx)
+    if name == 'claude':
+        ctx = claude_profiles.resolve(ctx)
     executable = _executable(ctx)
     if not executable or not shutil.which(executable):
         return {'status': 'unavailable', 'reason': 'executable_missing', 'scope': 'local_preflight'}
     if name == 'claude':
         # The last pass stays reusable while this runs: cleared up front, a task starting during the
         # watch's check ran its own (2 s).
+        command = list(ctx.backend_cmd) if isinstance(ctx.backend_cmd, (list, tuple)) else [ctx.backend_cmd]
+        login_key = tuple(command)
+        profile_env = ({'env': claude_profiles.environment(ctx, child_process_env(ctx.workdir))}
+                       if claude_profiles.selected(ctx) else {})
         try:
-            proc = subprocess.run([executable, 'auth', 'status', '--json'], cwd=ctx.workdir,
-                                  text=True, capture_output=True, timeout=8, check=False)
+            proc = subprocess.run([*command, 'auth', 'status', '--json'], cwd=ctx.workdir,
+                                  text=True, capture_output=True, timeout=8, check=False, **profile_env)
             data = json.loads(proc.stdout)
             if data.get('loggedIn') is False:
-                _logins.pop(executable, None)
+                _logins.pop(login_key, None)
                 return {'status': 'unavailable', 'reason': 'authentication', 'scope': 'local_preflight'}
         except (OSError, ValueError, subprocess.SubprocessError):
-            _logins.pop(executable, None)
+            _logins.pop(login_key, None)
             return {'status': 'unknown', 'reason': 'auth_check_unavailable', 'scope': 'local_preflight'}
-        _logins[executable] = time.monotonic()
+        _logins[login_key] = time.monotonic()
     if name in PROBED and probe_enabled():
         # Only the cached answer: a task's preflight never waits for a model call (the watch fills the cache).
         known = harness_probe.read_cache(harness_probe.probe_directory(), name, command=_command(ctx),
@@ -162,8 +169,11 @@ def usable(runtime, state, name, now=None) -> bool:
 
 
 def check_or_raise(name, ctx):
+    if name == 'claude':
+        ctx = claude_profiles.resolve(ctx)
     executable = _executable(ctx)
-    passed = _logins.get(executable) if name == 'claude' and not device_of(ctx) else None
+    command = tuple(ctx.backend_cmd) if isinstance(ctx.backend_cmd, (list, tuple)) else (ctx.backend_cmd,)
+    passed = _logins.get(command) if name == 'claude' and not device_of(ctx) else None
     if passed is not None and time.monotonic() - passed < LOGIN_REUSE and shutil.which(executable):
         return {'status': 'configured', 'scope': 'local_preflight; login check reused'}
     check = local_check(name, ctx)

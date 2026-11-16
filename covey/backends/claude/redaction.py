@@ -35,6 +35,7 @@ import urllib.parse
 import zlib
 from pathlib import Path
 
+from covey.backends.claude import profiles
 from covey.core.harness import RunResult
 from covey.core.redaction import load_config, record_turn, topic_redaction
 from covey.core.redactor import Redactor
@@ -149,6 +150,12 @@ def settings_upstream(env):
 
 def resolve_upstream(ctx, env, config):
     """Where the turn's requests go on to (see the module docstring); Unavailable for a broken address."""
+    if profiles.selected(ctx):
+        ctx = profiles.resolve(ctx)
+        upstream = gateway_status(ctx, profiles.environment(ctx, env))
+        if not upstream:
+            raise Unavailable("所选 Claude profile 未报告有效网关地址，敏感词中继未发送请求")
+        return upstream
     chained = str((ctx.options.get(SETTINGS_ENV) or {}).get("ANTHROPIC_BASE_URL") or "").strip()
     if chained:
         upstream = checked_url(chained)
@@ -336,9 +343,12 @@ def turn(ctx, env, *, run_id=""):
     no_proxy = ",".join(dict.fromkeys(hosts + ["127.0.0.1", "localhost", "::1"]))
     settings = {"ANTHROPIC_BASE_URL": relay.base_url, "NO_PROXY": no_proxy, "no_proxy": no_proxy,
                 GATEWAY_MODELS_ENV: "0"}
+    # Fixed-gateway wrappers accept only this turn's loopback relay for their own upstream.
+    relay_env = {**env, "COVEY_CLAUDE_REDACTION_ENDPOINT": relay.base_url,
+                 "COVEY_CLAUDE_REDACTION_UPSTREAM": upstream}
     with relay:
         try:
-            yield dataclasses.replace(ctx, options={**ctx.options, SETTINGS_ENV: settings, REPORT: relay.report}), env
+            yield dataclasses.replace(ctx, options={**ctx.options, SETTINGS_ENV: settings, REPORT: relay.report}), relay_env
         finally:
             report = relay.report()
             record_turn(ctx.state_dir, {

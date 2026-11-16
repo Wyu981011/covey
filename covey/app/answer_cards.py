@@ -69,8 +69,19 @@ def inputs(job, harness, snapshot=None, ctx=None) -> list:
     else:
         name = label.rsplit(" · ", 1)[-1] if label else model.rsplit("/", 1)[-1] if model else ""
     name = name or "默认模型"
-    provider = provider_of(str(getattr(spec, "name", "") or ""), model)
+    harness_name = str(getattr(spec, "name", "") or "")
+    provider = provider_of(harness_name, model)
     source = menu_name(provider, title) if provider is not None else ""
+    if harness_name == "claude" and model.startswith("profile/"):
+        # model_label is the turn's saved launch label: keep its supplier if the profile was renamed or removed.
+        # Old jobs without that snapshot use the catalog's supplier, then the profile id, never Claude 自带.
+        saved = label.removeprefix(title + " · ") if label.startswith(title + " · ") else ""
+        if " · " in saved:
+            source = saved.rsplit(" · ", 1)[0]
+        else:
+            rows = read_object(Path(state_dir) / "launch-models" / "claude.json").get("models") if state_dir else {}
+            entry = rows.get(model) if isinstance(rows, dict) else None
+            source = (entry.get("provider_title") if isinstance(entry, dict) else "") or model.split("/", 2)[1]
     effort = str(getattr(job, "effort", "") or "") or str(getattr(ctx, "effort", "") or "") or named_effort(model)
     # The card's workspace (app/cards.py card_facts), else the one its context ran in.
     workspace = str(getattr(job, "workspace_label", "") or "") or str(getattr(ctx, "workspace_name", "") or "")

@@ -355,28 +355,25 @@ class HarnessContractTests(unittest.TestCase):
                 CodexBackend().run(RunRequest(ctx, "probe"))
             server.assert_not_called()
 
-    def test_the_removed_claude_profiles_option_still_parses_and_is_ignored(self):
-        # Claude gateway profiles are gone (2026-11-14): an old command line's --claude-profiles parses, does
-        # nothing and gets one line at the start.
+    def test_configured_profiles_option_validates_instead_of_being_ignored(self):
         backend = ClaudeBackend()
         parser = argparse.ArgumentParser()
         backend.add_cli_args(parser)
-        self.assertNotIn("claude-profiles", parser.format_help())
+        self.assertIn("claude-profiles", parser.format_help())
         with tempfile.TemporaryDirectory() as root:
-            for argv, ignored in ((["--claude-profiles", "/absolute/claude-profiles.json"], True), ([], False)):
-                with self.subTest(argv=argv):
-                    options = backend.build_config(parser.parse_args(argv)).options
-                    self.assertFalse([key for key in options if "profiles" in key and key != "ignored_claude_profiles"])
-                    lines = [line for line in backend.startup_lines(make_context(Path(root), options=options))
-                             if "no longer used" in line]
-                    self.assertEqual(len(lines), int(ignored))
-                    self.assertTrue(all(line.startswith("--claude-profiles") for line in lines))
+            path = Path(root) / "missing-profiles.json"
+            with self.assertRaises(ValueError):
+                backend.build_config(parser.parse_args(["--claude-profiles", str(path)]))
+            options = backend.build_config(parser.parse_args([])).options
+            self.assertFalse(any("profiles" in key for key in options))
+            self.assertFalse(any("no longer used" in line for line in backend.startup_lines(
+                make_context(Path(root), options=options))))
 
-    def test_a_claude_job_on_a_profile_model_is_refused_before_claude_starts(self):
+    def test_a_claude_job_on_an_unconfigured_profile_is_refused_before_claude_starts(self):
         with tempfile.TemporaryDirectory() as root:
             ctx = make_context(Path(root), model="profile/west/opus", backend_cmd=["never-run-claude"],
                                options={"transport": "stream-json"})
-            with self.assertRaisesRegex(ValueError, "已下线的供应商「Claude 网关档位」.*换配置"):
+            with self.assertRaisesRegex(ValueError, "Claude profile"):
                 ClaudeBackend().run(RunRequest(ctx, "probe"))
 
     def test_registry_unknown_and_duplicate(self):
