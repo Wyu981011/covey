@@ -68,10 +68,10 @@ def device_check(name, ctx):
 
 
 def local_check(name, ctx):
-    if device_of(ctx):
-        return device_check(name, ctx)
     if name == 'claude':
         ctx = claude_profiles.resolve(ctx)
+    if device_of(ctx):
+        return device_check(name, ctx)
     executable = _executable(ctx)
     if not executable or not shutil.which(executable):
         return {'status': 'unavailable', 'reason': 'executable_missing', 'scope': 'local_preflight'}

@@ -6,9 +6,12 @@ import json
 from pathlib import Path
 import re
 
+from covey.core.process import device_of
+
 CONFIG = "claude_profiles"
 SELECTED = "claude_profile_model"
 PREFIX = "profile/"
+DEVICE_REASON = "该供应商仅支持机器人所在主机，不能切换执行设备"
 EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max", "ultracode"})
 # A profile wrapper loads its own gateway settings; another gateway's inherited settings must not select it.
 GATEWAY_ENV = frozenset({"ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
@@ -101,6 +104,8 @@ def resolve(ctx):
     found = choice(ctx, model)
     if found is None:
         return ctx
+    if device_of(ctx):
+        raise ValueError(DEVICE_REASON)
     profile, row = found
     if ctx.options.get(SELECTED) and (ctx.model != row["id"] or list(ctx.backend_cmd) != profile["command"]):
         raise ValueError("Claude profile 配置在准备任务期间已变化，未发送；请重新开始")
@@ -129,7 +134,8 @@ def catalog(ctx):
             row.update(supported_reasoning_levels=[{"effort": e} for e in model["efforts"]],
                        default_reasoning_level=model.get("default", ""), source=profile["name"],
                        provider="claude-profile:" + profile["id"], provider_title=profile["name"],
-                       unavailable_reason=(profile.get("reason") or "尚未就绪") if profile["status"] == "pending" else "",
+                       unavailable_reason=(DEVICE_REASON if device_of(ctx) else
+                                           (profile.get("reason") or "尚未就绪") if profile["status"] == "pending" else ""),
                        catalog_source="configured_profile")
             rows[slug] = row
     return rows

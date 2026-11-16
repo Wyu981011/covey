@@ -68,6 +68,18 @@ class ClaudeProfileTests(unittest.TestCase):
              self.assertRaisesRegex(RuntimeError, "offline"):
             self.backend.model_catalog(plain)
 
+    def test_device_execution_cannot_replace_a_selected_profile_with_its_default_account(self):
+        ctx = dataclasses.replace(self.ctx, device="fixture-device")
+        with mock.patch("subprocess.Popen") as spawn:
+            with self.assertRaisesRegex(ValueError, "执行设备"):
+                self.backend.run(RunRequest(ctx, "prompt"))
+            with self.assertRaisesRegex(ValueError, "执行设备"):
+                availability.check_or_raise("claude", ctx)
+        spawn.assert_not_called()
+        self.assertIn("执行设备", profiles.catalog(ctx)[ctx.model]["unavailable_reason"])
+        native = dataclasses.replace(ctx, model="opus", options={})
+        self.assertIs(profiles.resolve(native), native)
+
     def test_ready_executes_the_local_protocol_and_returns_a_verified_reply(self):
         saved, processes = [], []
         answer = self.backend.run(RunRequest(self.ctx, "prompt", callbacks=RunCallbacks(
