@@ -30,7 +30,7 @@ from covey.cards.review import recent_user_questions
 from covey.core.saved_results import has_saved_reply, load_authorized_reply
 from covey.core.locks import LOCK, topic_lock
 from covey.core.store import directory_store
-from covey.app import auto_retry, butler_reactions, relay_stops, subagent_recovery
+from covey.app import auto_retry, butler_reactions, quota_retry, relay_stops, subagent_recovery
 from covey.app.recovery_cards import paint_answered, recovery_card
 from covey.app.task_card import card_failure_notice
 from covey.app.redelivery import Redelivery
@@ -254,6 +254,9 @@ class TaskControls(Redelivery):
         if raw["kind"] == auto_retry.CANCEL_KIND:
             text = self.stop_auto_retry(ctx, chat_id, job_id)
             after_ack(lambda: reply(text))
+        elif raw["kind"] in (quota_retry.SWITCH_KIND, quota_retry.WAIT_KIND):
+            # The switch runs the quota command (up to its timeout): after the acknowledgement.
+            after_ack(lambda: reply(self.quota_choice(ctx, chat_id, job_id, raw["kind"])))
         elif raw.get(relay_stops.RELAY):
             # Its card says what came of it from the records (the retry's task number, or why none): no task number here.
             after_ack(lambda: relay_stops.clicked(self, ctx, event, raw, lambda: (
@@ -505,6 +508,14 @@ class TaskControls(Redelivery):
             self.steering.close_task_controls(ctx, job)
             self.cards.close_streaming_reply(ctx, job.progress)
         self.runtime.unregister_reply_job(job)
+
+    def quota_choice(self, ctx, chat_id, job_id, kind):
+        """换到…，马上继续 or 等恢复后自动继续 on a failed task card whose retry waits for its account (app/auto_retry.py
+        choose)."""
+        record = next((r for r in self.harness.topic_records(ctx, chat_id) if r.get("job_id") == job_id), None)
+        if record is None:
+            return f"任务 #{job_id} 没有待选择的自动继续。"
+        return auto_retry.choose(self, ctx, record, kind)
 
     def retry_topic(self, ctx: BridgeContext, chat_id: str, message_id: str, *, job_id: int | None = None,
                     automatic: int = 0) -> str:

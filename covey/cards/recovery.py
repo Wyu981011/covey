@@ -100,6 +100,13 @@ def result_actions(topic_id, job_id, label, *, stop_kind="", follow_ups=(), rout
     return {"tag": "column_set", "element_id": "result_actions", "columns": columns}
 
 
+def choice_actions(topic_id, job_id, buttons):
+    """The row of a failed task's card that asks what its pending retry does: ``buttons``, (label, kind) pairs."""
+    value = {"topic_id": topic_id, "job_id": job_id}
+    return {"tag": "column_set", "element_id": "result_actions",
+            "columns": [column_button(label, {"kind": kind, **value}) for label, kind in buttons]}
+
+
 def failure_details(text):
     """技术详情 under a failed task card's one-line reason: the words it said before (core/failure.py card_body)."""
     return markdown_panel(DETAILS_ID, grey("技术详情"), text[:6000], boxed=True, size="notation")

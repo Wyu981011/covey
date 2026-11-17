@@ -21,6 +21,10 @@ when a submit raised or a Bridge stopped during it: an uncertain one never runs 
 Clicking 检查并继续 or 停止自动重试, a newer job in the topic, or a model switch cancels it.
 Older Bridges and task runners ignore these keys; one of 74023f9 runs an incomplete one as its first
 rate-limit retry, and one that does not know ``server_fault`` shows such a failure as an unfinished one.
+
+A rate-limited turn on a Claude profile with a quota command (app/quota_retry.py) is retried when that command says,
+its advice kept in ``auto_retry_quota``: on another account at once, after asking the owner (换账号，马上继续 /
+等恢复后自动继续, ``choose``), or at the account's reset.
 """
 from __future__ import annotations
 
@@ -31,8 +35,9 @@ import random
 import time
 from typing import NamedTuple
 
+from covey.app import quota_retry
 from covey.app.outbox import REDELIVER_LABEL, REDELIVER_NOTE, RETRY_NOTE, retry_label
-from covey.cards.recovery import (FOLLOW_UP_NOTES, FOLLOW_UPS, OTHER_HARNESS, REPORT_NOTE, SWITCH_MODEL,
+from covey.cards.recovery import (FOLLOW_UP_NOTES, FOLLOW_UPS, OTHER_HARNESS, REPORT_NOTE, SWITCH_MODEL, choice_actions,
                                   failure_details, interrupted_summary, result_actions, result_note, retry_status, switch_route)
 from covey.core import env as cenv
 from covey.core import failure, turn_source
@@ -115,6 +120,7 @@ class Planned(NamedTuple):
     reset_at: float = 0.0
     progress: bool = False
     idle: int = 0
+    quota: dict | None = None  # A quota command's advice (app/quota_retry.py advise).
 
 
 def long_ladder() -> bool:
@@ -171,10 +177,13 @@ def clock(at):
     return _dt.datetime.fromtimestamp(at).astimezone().strftime("%H:%M")
 
 
-def status_line(due_at, attempt, kind=RATE_LIMITED, reset_at=0.0, *_):
+def status_line(due_at, attempt, kind=RATE_LIMITED, reset_at=0.0, progress=False, idle=0, quota=None):
     """The record's status line while a retry is pending; the topic notice says it too. ``reset_at``: the limit's
-    reset, when it is known. (More arguments are Planned's other fields.)"""
+    reset, when it is known; ``quota``: a quota command's advice the retry follows (app/quota_retry.py line).
+    (The arguments are Planned's fields.)"""
     spec = KINDS[kind]
+    if quota:
+        return f"{quota_retry.line(quota, due_at)}{count_words(kind, attempt)}"
     when = f"，预计 {clock(reset_at)} 恢复" if reset_at else ""
     return f"{spec.reason}{when}，将于 {clock(due_at)} {spec.action}{count_words(kind, attempt)}"
 
@@ -184,7 +193,13 @@ def queued_line(kind, attempt):
     return f"{KINDS[kind].action}已入队{count_words(kind, attempt)}"
 
 
-def plan(harness, ctx, job, turn, now=None):
+def quota_of(record):
+    """The quota command's advice ``record``'s pending retry follows, or None."""
+    quota = record.get("auto_retry_quota")
+    return quota if isinstance(quota, dict) and quota.get("action") and kind_of(record) == RATE_LIMITED else None
+
+
+def plan(harness, ctx, job, turn, now=None, log=None):
     """The Planned retry this finished turn gets, or None: a turn that ended as one of KINDS with no
     reply, on a Harness that declares the kind, that 检查并继续 would queue again, at most
     len(delays) times of its kind in a chain. A turn under a task timeout is not continued after an
@@ -215,6 +230,9 @@ def plan(harness, ctx, job, turn, now=None):
     if (has_saved_reply(ctx, record) or record.get("result_retry_policy") == "native_answer_once"
             or record.get("paused_question_delivery") is not None):
         return None  # 检查并继续 would redeliver or refuse it, not queue it again.
+    quota = quota_retry.advise(ctx, getattr(job, "session_id", None), log=log, now=now) if kind == RATE_LIMITED else None
+    if quota:
+        return Planned(quota["at"], done + 1, kind, 0.0, progress, idle, quota)
     reset = limit_reset(turn, now) if kind == RATE_LIMITED and long_ladder() else 0.0
     if reset and idle >= MAX_IDLE:
         return None  # MAX_IDLE retries at a reset that went nowhere: the failure card stays.
@@ -280,7 +298,8 @@ def schedule_fields(planned):
             # Only when set: a record that has none reads as before.
             **({"auto_retry_reset_at": planned.reset_at} if planned.reset_at else {}),
             **({"auto_retry_progress": True} if planned.progress else {}),
-            **({"auto_retry_idle": planned.idle} if planned.idle else {})}
+            **({"auto_retry_idle": planned.idle} if planned.idle else {}),
+            **({"auto_retry_quota": planned.quota} if planned.quota else {})}
 
 
 COUNTS = tuple(spec.count for spec in KINDS.values()) + (IDLE,)
@@ -380,11 +399,49 @@ def result_elements(topic_id, job_id, record, other=False):
     it runs, the rest in the fold), the buttons and what they do (``button_note``)."""
     label, follow = next_steps(record, other)
     kind = kind_of(record) if pending(record) else ""
+    quota = quota_of(record) if kind else None
+    if quota and quota["action"] == "ask" and not quota.get("chosen"):
+        # The owner's choice; no 检查并继续: the account is still used up.
+        row = choice_actions(topic_id, job_id, [(f"换到 {quota['other']}，马上继续", quota_retry.SWITCH_KIND),
+                                                ("等恢复后自动继续", quota_retry.WAIT_KIND), ("停止自动重试", CANCEL_KIND)])
+        return [retry_status(f"⏳ {status_line(record['auto_retry_at'], record['auto_retry_attempt'], kind, quota=quota)}。"
+                             "不点也会到时自动继续；在本话题发消息或换配置会取消。"), row, button_note(label, follow, kind)]
     elements = [actions(topic_id, job_id, bool(kind), record, other), button_note(label, follow, kind)]
     if kind:
         elements.insert(0, retry_status(
-            f"⏳ {status_line(record['auto_retry_at'], record['auto_retry_attempt'], kind, record.get('auto_retry_reset_at') or 0)}"))
+            f"⏳ {status_line(record['auto_retry_at'], record['auto_retry_attempt'], kind, record.get('auto_retry_reset_at') or 0, quota=quota)}"))
     return elements
+
+
+def choose(app, ctx, record, kind, now=None):
+    """换到…，马上继续 (``quota_retry.SWITCH_KIND``) or 等恢复后自动继续 on ``record``'s card asking about its pending
+    retry: what to reply. The switch runs before the record lock is taken; the retry then fires at the next tick."""
+    quota = quota_of(record) if pending(record) else None
+    if not quota or quota["action"] != "ask" or quota.get("chosen"):
+        return f"任务 #{record.get('job_id')} 没有待选择的自动继续。"
+    now = time.time() if now is None else now
+    chosen = {**quota, "chosen": "wait"}
+    due = record["auto_retry_at"]
+    if kind == quota_retry.SWITCH_KIND:
+        moved = quota_retry.switch(app.harness.context.options.get(quota_retry.OPTION), quota, log=app.runtime.log)
+        if not moved:
+            return f"没能换账号，仍会在 {clock(due)} 原账号恢复后自动继续。"
+        chosen, due = {**quota, "chosen": "switch", "moved": moved}, now
+    current = update_job_record_if(ctx.state_dir, record["key"], lambda r: pending(r) and r.get("auto_retry_quota") == quota,
+                                   auto_retry_quota=chosen, auto_retry_at=due,
+                                   status_message=status_line(due, record["auto_retry_attempt"], RATE_LIMITED, quota=chosen))
+    if current is None:
+        return "这次自动继续已经开始或取消了。"
+    try:
+        other = other_harness(ctx.state_dir, current, getattr(app, "topics", None))
+        if not app.cards.update_record_elements(ctx, current, result_elements(current["topic_id"], current["job_id"],
+                                                                              current, other)):
+            app.runtime.log(f"quota choice card update for job #{current.get('job_id')} not confirmed")
+    except Exception as exc:  # noqa: BLE001 - the record already says it; the card is best effort
+        app.runtime.log(f"quota choice card update failed: {type(exc).__name__}")
+    if chosen["chosen"] == "switch":
+        return f"已换到 {chosen['moved']} 账号，马上继续。"
+    return f"好的，{clock(due)} 原账号恢复后自动继续。"
 
 
 def show(app, ctx, record, text):

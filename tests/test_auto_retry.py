@@ -560,6 +560,76 @@ class AutoRetryTest(UnifiedCase):
         self.tick(record)
         self.assertEqual(self.queued(), [])
 
+    def quota_job(self, action, *, switch=False, wait=600, mid='task'):
+        """A rate-limited task whose quota command (app/quota_retry.py) said ``action``: its record."""
+        now = time.time()
+        quota = {'action': action, 'account': 'Pro', 'other': 'Max', 'resets_at': now + wait,
+                 'at': now + (5 if action == 'switch' else wait + 30), 'switch': switch or action == 'switch',
+                 'profile': 'gw', 'session': 'sid'}
+        if quota['switch']:
+            quota['moved'] = 'Max'
+        with mock.patch('covey.app.quota_retry.advise', return_value=quota) as advise:
+            record = self.failed_job(mid)
+        advise.assert_called_once()
+        return record
+
+    def test_a_quota_switch_retries_on_the_other_account_within_seconds(self):
+        record = self.quota_job('switch', wait=3 * 3600)
+        self.assertEqual((record['auto_retry_state'], record['auto_retry_attempt']), ('pending', 1))
+        self.assertLess(record['auto_retry_at'], time.time() + 10)
+        self.assertEqual(record['auto_retry_quota']['moved'], 'Max')
+        self.assertRegex(record['status_message'],
+                         r'^Pro 账号额度用满，\d\d:\d\d 才恢复；已换到 Max 账号，将于 \d\d:\d\d 自动继续$')
+        self.assertEqual(self.tick(record)['auto_retry_state'], 'queued')
+        [job] = self.queued()
+        self.assertEqual(job.auto_retry, 1)
+
+    def test_a_quota_reset_within_ten_minutes_asks_and_continues_by_itself(self):
+        record = self.quota_job('ask', wait=300)
+        self.assertGreaterEqual(record['auto_retry_at'], time.time() + 300)
+        self.assertIn('也可以换到 Max 账号马上继续', record['status_message'])
+        elements = auto_retry.result_elements(record['topic_id'], record['job_id'], record)
+        kinds = [c['elements'][0]['value']['kind'] for c in elements[1]['columns']]
+        self.assertEqual(kinds, ['bridge_job_quota_switch', 'bridge_job_quota_wait', auto_retry.CANCEL_KIND])
+        self.assertEqual(self.tick(record, after=-30)['auto_retry_state'], 'pending')
+        self.assertEqual(self.tick(record)['auto_retry_state'], 'queued')  # Nobody chose: at the reset.
+
+    def test_choosing_to_switch_moves_the_session_and_continues_now(self):
+        record = self.quota_job('ask', wait=300)
+        with mock.patch('covey.app.quota_retry.switch', return_value='Max') as switch:
+            self.assertEqual(self.click('bridge_job_quota_switch', record), '已换到 Max 账号，马上继续。')
+        self.assertEqual(switch.call_args.args[1], record['auto_retry_quota'])
+        after = find_job_record(self.ctx.state_dir, record['key'])
+        self.assertEqual((after['auto_retry_quota']['chosen'], after['auto_retry_quota']['moved']), ('switch', 'Max'))
+        self.assertLessEqual(after['auto_retry_at'], time.time())
+        elements = self.claude.cards.update_record_elements.call_args.args[2]
+        self.assertNotIn('bridge_job_quota_switch', json.dumps(elements))
+        self.assertIn('已换到 Max 账号', elements[0]['content'])
+        self.assertEqual(self.tick(after, after=0)['auto_retry_state'], 'queued')
+        self.assertIn('没有待选择的自动继续', self.click('bridge_job_quota_wait', record, 'click-2'))
+
+    def test_choosing_to_wait_keeps_the_time_and_a_failed_switch_changes_nothing(self):
+        record = self.quota_job('ask', wait=300)
+        with mock.patch('covey.app.quota_retry.switch', return_value='') as switch:
+            self.assertIn('没能换账号', self.click('bridge_job_quota_switch', record))
+        switch.assert_called_once()
+        self.assertEqual(find_job_record(self.ctx.state_dir, record['key'])['auto_retry_quota'], record['auto_retry_quota'])
+        self.assertIn('原账号恢复后自动继续', self.click('bridge_job_quota_wait', record, 'click-2'))
+        after = find_job_record(self.ctx.state_dir, record['key'])
+        self.assertEqual((after['auto_retry_quota']['chosen'], after['auto_retry_at']), ('wait', record['auto_retry_at']))
+        self.assertEqual(self.tick(after, after=-30)['auto_retry_state'], 'pending')
+
+    def test_all_accounts_used_up_waits_for_the_first_reset(self):
+        record = self.quota_job('wait', wait=2 * 3600)
+        self.assertGreaterEqual(record['auto_retry_at'], time.time() + 2 * 3600)
+        self.assertRegex(record['status_message'], r'^所有账号额度都用满，Pro 账号 \d\d:\d\d 先恢复')
+        moved = self.quota_job('wait', switch=True, wait=3600, mid='other')
+        self.assertRegex(moved['status_message'], r'^所有账号额度都用满，Max 账号先恢复，已换过去，将于 \d\d:\d\d 自动继续')
+
+    def test_without_a_quota_command_the_retry_is_as_before(self):
+        record = self.failed_job()
+        self.assertNotIn('auto_retry_quota', record)
+        self.assertRegex(record['status_message'], r'^模型服务限流，将于 \d\d:\d\d 自动重试$')
 
 class AutoRetryCardTest(unittest.TestCase):
     def test_a_pending_retry_shows_its_time_and_a_stop_button(self):

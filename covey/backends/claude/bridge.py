@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
+import os
 import shlex
 from typing import Any
 
@@ -78,6 +79,10 @@ class ClaudeBackend(BackendRuntime):
         )
         parser.add_argument("--claude-cmd", default=DEFAULT_CLAUDE_CMD, help="claude executable / wrapper command")
         parser.add_argument("--claude-profiles", help="absolute path to configured Claude gateway profiles")
+        parser.add_argument("--claude-quota-cmd",
+                            help="absolute path to a command that, after a rate-limited turn on a configured profile, "
+                                 "says whether its session moves to another account, asks, or waits for the reset "
+                                 "(app/quota_retry.py; default: off)")
         parser.add_argument(
             "--claude-timeout",
             type=int,
@@ -116,6 +121,10 @@ class ClaudeBackend(BackendRuntime):
         if args.claude_profiles:
             profiles.load(args.claude_profiles)
             options[profiles.CONFIG] = args.claude_profiles
+        if args.claude_quota_cmd:
+            if not os.path.isabs(args.claude_quota_cmd):
+                raise ValueError("--claude-quota-cmd must be an absolute path")
+            options["quota_cmd"] = args.claude_quota_cmd  # app/quota_retry.py OPTION
         if args.claude_auto_compact_window:
             options["auto_compact_window"] = args.claude_auto_compact_window
         if args.claude_compact_between_turns:

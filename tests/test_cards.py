@@ -1065,7 +1065,8 @@ class CardActionTableTest(unittest.TestCase):
         # bridge_board_project_go: the 看板's 继续 starts a project a guard paused again, which wakes its lead (app/digest.py).
         # bridge_board_recover: the 看板's 检查并继续 on a stopped row, the task card's retry (app/digest.py Digest.recover).
         self.assertEqual(BOT_ONLY - set(extensions.card_kinds()), {"bridge_job_retry", "bridge_fork", "bridge_compact", "bridge_steer_requeue",
-                                    "bridge_note", "bridge_job_retry_cancel", "bridge_question_skip", "bridge_question_ask",
+                                    "bridge_note", "bridge_job_retry_cancel", "bridge_job_quota_switch", "bridge_job_quota_wait",
+                                    "bridge_question_skip", "bridge_question_ask",
                                     "bridge_turn_export",
                                     "bridge_project_triage_fix", "bridge_project_ask_continue", "bridge_project_ask_finish",
                                     "bridge_job_look", "bridge_job_diagnose", "bridge_job_split", "bridge_job_report",

@@ -344,7 +344,7 @@ def _deliver_turn(job, ctx, turn, snapshot, *, harness, runtime, messenger, card
         cards.reveal_held(ctx, job, "ended")
     show_outcome(cards, ctx, job, turn.status, runtime)
 
-    retry = auto_retry.plan(harness, ctx, job, turn)
+    retry = auto_retry.plan(harness, ctx, job, turn, log=runtime.log)
     promised = None
     try:
         # A refusal of cyber or bio: one retry on an older model, said in the stopped turn's text (app/policy_retry.py).

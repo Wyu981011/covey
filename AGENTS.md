@@ -193,6 +193,7 @@
 | `app/question_display.py` | Where a question is shown |
 | `app/questions.py` | Durable questions: the Questions component, answers and delivery recovery |
 | `app/quiet_delivery.py` | The quiet butler turn's side of delivering a result |
+| `app/quota_retry.py` | A Claude profile's quota command (--claude-quota-cmd) |
 | `app/record_cards.py` | Writes to a job's card from its record once its own writer has ended (finished, or the job is in another … |
 | `app/recovery_cards.py` | The card of a task that did not end as it should (interrupted, failed, or its result not delivered) and the … |
 | `app/redaction_panel.py` | The 设置 card's 脱敏 tab |

@@ -28,7 +28,7 @@ from covey.core.workspaces import touch_workspace, worktree_root
 
 BUSY = frozenset(RUNNING | {"waiting_workspace"})
 # Card actions that start a job; refused on cards from before the latest switch.
-JOB_STARTING = frozenset({"bridge_job_retry", "bridge_steer_requeue", SWITCH_OPEN})
+JOB_STARTING = frozenset({"bridge_job_retry", "bridge_job_quota_switch", "bridge_steer_requeue", SWITCH_OPEN})
 REDACTION_ONLY = "敏感词脱敏开着时只能换到能脱敏的模型（Claude）；要换别的 Harness，先在卡上把脱敏关掉"
 STALE_CARD = "话题已换过配置，这张卡属于更换前的任务；请在最新的任务卡上操作，或直接在话题里发消息。"
 
