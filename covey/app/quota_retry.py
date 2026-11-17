@@ -10,19 +10,26 @@ which account each session uses. It is run as ``CMD advise --profile ID --sessio
 - advise: {"action": "switch"|"ask"|"wait"|"retry", "account": the session's account, "other": the account a
   switch goes to, "resets_at": when the session's account renews, "at": when the retry runs, "switch": whether
   the session moves before it}; "retry" (or any failure) leaves the usual rate-limit retry.
-- switch: {"ok": true, "to": the account the session uses now}.
+- switch: {"ok": true, "to": the account the session will use}.
 
 Neither is run under a record lock: advise in the worker as the turn ends, switch there or on a card click.
+Such a gateway holds a native session to its first account, so a switch does not resume the session: the topic's
+next turn forks it (``move_session``, read back by ``fork_next``), a new native session the gateway routes afresh;
+the profile's wrapper sends the fork to the account the command chose.
 """
 from __future__ import annotations
 
+import dataclasses
 import datetime as _dt
 import json
 import math
+from pathlib import Path
 import subprocess
 import time
 
 from covey.backends.claude import profiles
+from covey.core.session_state import capture_session_state, compare_and_set_session
+from covey.core.state import write_private_text
 
 OPTION = "quota_cmd"
 TIMEOUT = 20
@@ -30,6 +37,7 @@ ACTIONS = ("switch", "ask", "wait")
 SWITCH_KIND = "bridge_job_quota_switch"  # 换账号，马上继续 on an "ask" card.
 WAIT_KIND = "bridge_job_quota_wait"  # 等恢复后自动继续 on it.
 ASK_SECONDS = 600  # Owner's rule (T22 2026-11-17): a reset within 10 minutes asks, a later one switches at once.
+FORK_SUFFIX = ".quota-fork"  # Beside the topic's session pointer: "<session id> <pointer revision>".
 
 
 def _run(cmd, verb, profile, session, log=None):
@@ -64,10 +72,10 @@ def profile_of(ctx):
     return parts[1] if len(parts) == 3 and parts[1] else ""
 
 
-def advise(ctx, session, log=None, now=None):
+def advise(ctx, session, pattern, log=None, now=None):
     """What the quota command says of ``ctx``'s rate-limited ``session``: the record's ``auto_retry_quota`` (its
     action, accounts, times, profile and session), with ``moved`` the account the session went to when it says to
-    switch at once; None for the usual retry."""
+    switch at once (``move``); None for the usual retry. ``pattern``: the Harness's session pattern."""
     cmd, profile = (getattr(ctx, "options", None) or {}).get(OPTION), profile_of(ctx)
     if not cmd or not profile or not session:
         return None
@@ -84,19 +92,62 @@ def advise(ctx, session, log=None, now=None):
              "at": max(at, now), "switch": data.get("switch") is True or data["action"] == "switch",
              "profile": profile, "session": session}
     if quota["switch"]:
-        moved = switch(cmd, quota, log)
+        moved = move(ctx, pattern, quota, log)
         if not moved:
             return None  # Not moved: the usual retry, rather than one that waits on the wrong account.
         quota["moved"] = moved
     return quota
 
 
-def switch(cmd, quota, log=None):
-    """Move ``quota``'s session to another account: the account it uses now, or "" when that failed."""
+def move(ctx, pattern, quota, log=None):
+    """Move ``quota``'s session to another account: the command's switch, then the topic's next turn forks it
+    (move_session). The account it goes to, or "" when that failed."""
+    cmd = (getattr(ctx, "options", None) or {}).get(OPTION)
     if not cmd:
         return ""
     data = _run(cmd, "switch", quota["profile"], quota["session"], log)
-    return _label((data or {}).get("to")) if (data or {}).get("ok") is True else ""
+    moved = _label((data or {}).get("to")) if (data or {}).get("ok") is True else ""
+    if moved:
+        try:
+            move_session(ctx, pattern, quota["session"])
+        except (OSError, ValueError) as exc:
+            if log:
+                log(f"quota switch of session {quota['session']} not kept: {type(exc).__name__}")
+            return ""
+    return moved
+
+
+def _marker(ctx):
+    path = Path(ctx.session_path)
+    return path, path.with_name(path.name + FORK_SUFFIX)
+
+
+def move_session(ctx, pattern, session):
+    """The topic's next turn forks ``session`` rather than resuming it: its pointer is cleared (when it still names
+    it) and the marker keeps the session with the pointer's revision then, so a /new or another turn in between
+    voids it."""
+    path, marker = _marker(ctx)
+    revision, current = capture_session_state(path, pattern)
+    if current == session and compare_and_set_session(path, pattern, revision, session, None):
+        revision = revision + 1
+    elif current is not None:
+        raise ValueError("会话已变化")
+    write_private_text(marker, f"{session} {revision}")
+
+
+def fork_next(ctx, pattern):
+    """The context of a turn with no session to resume: one forking the session a quota switch left (move_session),
+    once; ``ctx`` as it is without a marker or when the pointer moved on since."""
+    path, marker = _marker(ctx)
+    try:
+        session, _, revision = marker.read_text().strip().partition(" ")
+        marker.unlink(missing_ok=True)
+        current = capture_session_state(path, pattern)
+    except (OSError, ValueError):
+        return ctx
+    if not pattern.fullmatch(session) or current != (int(revision) if revision.isdigit() else None, None):
+        return ctx
+    return dataclasses.replace(ctx, options={**ctx.options, "fork_session": session})
 
 
 def _hm(epoch):

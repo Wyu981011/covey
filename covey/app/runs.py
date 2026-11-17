@@ -16,8 +16,8 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from covey.app import (collab_channel, device_files, knowledge_turn, memory_turn, owner_send, project_context, repo_peers, subagent_recovery,
-                       tool_limits, workspace_gists)
+from covey.app import (collab_channel, device_files, knowledge_turn, memory_turn, owner_send, project_context, quota_retry,
+                       repo_peers, subagent_recovery, tool_limits, workspace_gists)
 from covey.core.statuses import ENDED
 from covey.app.leftovers import stop_task_leftovers
 from covey.app.butler import butler_turn
@@ -436,7 +436,13 @@ class Runs:
         history_snapshot = (
             job.history_snapshot if job.history_snapshot is not None else recent_history(ctx.history_path)
         )
-        ctx, history_snapshot = self.forks.fork_start(ctx, history_snapshot)
+        # After a quota switch (app/quota_retry.py) the topic's session is forked onto the other account.
+        moved = (quota_retry.fork_next(ctx, self.harness.spec.session_pattern)
+                 if backend_capabilities(self.harness.backend, ctx).native_fork else ctx)
+        if moved is ctx:
+            ctx, history_snapshot = self.forks.fork_start(ctx, history_snapshot)
+        else:
+            ctx = moved
         # A 协作 ask's channel (app/collab_channel.py): a fork of its helper's session, else the helper's record.
         ctx, history_snapshot = collab_channel.fork_start(self.harness, self.runtime.log, ctx, job, history_snapshot)
         if getattr(job, "policy_retry", None):

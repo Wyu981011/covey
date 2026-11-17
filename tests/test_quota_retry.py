@@ -1,17 +1,32 @@
 """A Claude profile's quota command (app/quota_retry.py): what it is asked and which answers are taken."""
 from __future__ import annotations
 
+import dataclasses
 import json
+import re
 import subprocess
+import tempfile
 import unittest
-from types import SimpleNamespace
+from pathlib import Path
 from unittest import mock
 
 from covey.app import quota_retry
+from covey.core.session_state import capture_session_state, compare_and_set_session
+
+PATTERN = re.compile(r"[0-9a-f-]{36}")
+SID = "11111111-2222-3333-4444-555555555555"
 
 
-def ctx(cmd='/abs/quota', model='profile/gw/claude-opus'):
-    return SimpleNamespace(options={quota_retry.OPTION: cmd} if cmd else {}, model=model)
+@dataclasses.dataclass(frozen=True)
+class Ctx:
+    """The fields of a BridgeContext the quota command reads."""
+    options: dict
+    model: str
+    session_path: Path
+
+
+def ctx(cmd='/abs/quota', model='profile/gw/claude-opus', session_path='/nonexistent/session'):
+    return Ctx({quota_retry.OPTION: cmd} if cmd else {}, model, Path(session_path))
 
 
 def answer(data, code=0):
@@ -23,7 +38,7 @@ class QuotaRetryTest(unittest.TestCase):
 
     def advise(self, *answers, context=None, session='sid'):
         with mock.patch('covey.app.quota_retry.subprocess.run', side_effect=list(answers)) as run:
-            quota = quota_retry.advise(context or ctx(), session, now=self.NOW)
+            quota = quota_retry.advise(context or ctx(), session, PATTERN, now=self.NOW)
         return quota, [call.args[0] for call in run.call_args_list]
 
     def test_off_without_a_command_a_profile_or_a_session(self):
@@ -41,11 +56,36 @@ class QuotaRetryTest(unittest.TestCase):
         self.assertEqual((quota['action'], quota['other'], quota['switch']), ('wait', '', False))
 
     def test_a_switch_moves_the_session_first_and_falls_back_when_it_cannot(self):
-        said = {'action': 'switch', 'account': 'Pro', 'other': 'Max', 'resets_at': self.NOW + 9000, 'at': self.NOW}
-        quota, calls = self.advise(answer(said), answer({'ok': True, 'to': 'Max'}))
-        self.assertEqual(calls[1], ['/abs/quota', 'switch', '--profile', 'gw', '--session', 'sid'])
-        self.assertEqual((quota['switch'], quota['moved']), (True, 'Max'))
-        self.assertEqual(self.advise(answer(said), answer({'ok': False}))[0], None)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session'
+            self.assertTrue(compare_and_set_session(path, PATTERN, 0, None, SID))
+            said = {'action': 'switch', 'account': 'Pro', 'other': 'Max', 'resets_at': self.NOW + 9000, 'at': self.NOW}
+            quota, calls = self.advise(answer(said), answer({'ok': True, 'to': 'Max'}), context=ctx(session_path=path),
+                                       session=SID)
+            self.assertEqual(calls[1], ['/abs/quota', 'switch', '--profile', 'gw', '--session', SID])
+            self.assertEqual((quota['switch'], quota['moved']), (True, 'Max'))
+            self.assertEqual(capture_session_state(path, PATTERN)[1], None)  # The next turn forks it.
+            self.assertEqual(self.advise(answer(said), answer({'ok': False}), session=SID)[0], None)
+
+    def test_the_next_turn_forks_the_moved_session_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'session'
+            self.assertTrue(compare_and_set_session(path, PATTERN, 0, None, SID))
+            context = ctx(session_path=path)
+            quota_retry.move_session(context, PATTERN, SID)
+            forked = quota_retry.fork_next(context, PATTERN)
+            self.assertEqual(forked.options['fork_session'], SID)
+            self.assertIs(quota_retry.fork_next(context, PATTERN), context)  # Once.
+            # A /new (or any change of the pointer) in between voids it.
+            quota_retry.move_session(context, PATTERN, SID)
+            revision, _ = capture_session_state(path, PATTERN)
+            self.assertTrue(compare_and_set_session(path, PATTERN, revision, None, None))
+            self.assertIs(quota_retry.fork_next(context, PATTERN), context)
+            # A pointer already on another session is not moved.
+            revision, _ = capture_session_state(path, PATTERN)
+            compare_and_set_session(path, PATTERN, revision, None, '99999999-2222-3333-4444-555555555555')
+            with self.assertRaises(ValueError):
+                quota_retry.move_session(context, PATTERN, SID)
 
     def test_bad_answers_leave_the_usual_retry(self):
         good = {'action': 'ask', 'account': 'Pro', 'other': 'Max', 'resets_at': self.NOW + 300, 'at': self.NOW + 330}

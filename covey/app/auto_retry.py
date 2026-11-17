@@ -230,7 +230,9 @@ def plan(harness, ctx, job, turn, now=None, log=None):
     if (has_saved_reply(ctx, record) or record.get("result_retry_policy") == "native_answer_once"
             or record.get("paused_question_delivery") is not None):
         return None  # 检查并继续 would redeliver or refuse it, not queue it again.
-    quota = quota_retry.advise(ctx, getattr(job, "session_id", None), log=log, now=now) if kind == RATE_LIMITED else None
+    pattern = getattr(getattr(harness, "spec", None), "session_pattern", None)  # A test's stand-in may have no spec.
+    quota = quota_retry.advise(ctx, getattr(job, "session_id", None), pattern, log=log,
+                               now=now) if kind == RATE_LIMITED else None
     if quota:
         return Planned(quota["at"], done + 1, kind, 0.0, progress, idle, quota)
     reset = limit_reset(turn, now) if kind == RATE_LIMITED and long_ladder() else 0.0
@@ -423,7 +425,7 @@ def choose(app, ctx, record, kind, now=None):
     chosen = {**quota, "chosen": "wait"}
     due = record["auto_retry_at"]
     if kind == quota_retry.SWITCH_KIND:
-        moved = quota_retry.switch(app.harness.context.options.get(quota_retry.OPTION), quota, log=app.runtime.log)
+        moved = quota_retry.move(ctx, app.harness.spec.session_pattern, quota, log=app.runtime.log)
         if not moved:
             return f"没能换账号，仍会在 {clock(due)} 原账号恢复后自动继续。"
         chosen, due = {**quota, "chosen": "switch", "moved": moved}, now

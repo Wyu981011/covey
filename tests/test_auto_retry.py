@@ -596,9 +596,9 @@ class AutoRetryTest(UnifiedCase):
 
     def test_choosing_to_switch_moves_the_session_and_continues_now(self):
         record = self.quota_job('ask', wait=300)
-        with mock.patch('covey.app.quota_retry.switch', return_value='Max') as switch:
+        with mock.patch('covey.app.quota_retry.move', return_value='Max') as switch:
             self.assertEqual(self.click('bridge_job_quota_switch', record), '已换到 Max 账号，马上继续。')
-        self.assertEqual(switch.call_args.args[1], record['auto_retry_quota'])
+        self.assertEqual(switch.call_args.args[2], record['auto_retry_quota'])
         after = find_job_record(self.ctx.state_dir, record['key'])
         self.assertEqual((after['auto_retry_quota']['chosen'], after['auto_retry_quota']['moved']), ('switch', 'Max'))
         self.assertLessEqual(after['auto_retry_at'], time.time())
@@ -610,7 +610,7 @@ class AutoRetryTest(UnifiedCase):
 
     def test_choosing_to_wait_keeps_the_time_and_a_failed_switch_changes_nothing(self):
         record = self.quota_job('ask', wait=300)
-        with mock.patch('covey.app.quota_retry.switch', return_value='') as switch:
+        with mock.patch('covey.app.quota_retry.move', return_value='') as switch:
             self.assertIn('没能换账号', self.click('bridge_job_quota_switch', record))
         switch.assert_called_once()
         self.assertEqual(find_job_record(self.ctx.state_dir, record['key'])['auto_retry_quota'], record['auto_retry_quota'])
@@ -625,6 +625,21 @@ class AutoRetryTest(UnifiedCase):
         self.assertRegex(record['status_message'], r'^所有账号额度都用满，Pro 账号 \d\d:\d\d 先恢复')
         moved = self.quota_job('wait', switch=True, wait=3600, mid='other')
         self.assertRegex(moved['status_message'], r'^所有账号额度都用满，Max 账号先恢复，已换过去，将于 \d\d:\d\d 自动继续')
+
+    def test_the_retry_after_a_switch_forks_the_session(self):
+        from covey.app import quota_retry
+        from covey.core.session_state import capture_session_state, compare_and_set_session
+        record = self.quota_job('switch', wait=3 * 3600)
+        pattern = self.claude.harness.spec.session_pattern
+        path = self.topic_ctx.session_path
+        revision, current = capture_session_state(path, pattern)
+        self.assertTrue(compare_and_set_session(path, pattern, revision, current, SID))
+        quota_retry.move_session(self.topic_ctx, pattern, SID)  # As quota_retry.move does after the command's switch.
+        self.assertEqual(self.tick(record)['auto_retry_state'], 'queued')
+        self.backend.capabilities = lambda ctx: HarnessCapabilities(rate_limit_retry=True, native_fork=True)  # Claude's.
+        self.run_queued(RATE_LIMITED)
+        context, _, session = self.backend.calls[-1]
+        self.assertEqual((session, context.options.get('fork_session')), (None, SID))
 
     def test_without_a_quota_command_the_retry_is_as_before(self):
         record = self.failed_job()
