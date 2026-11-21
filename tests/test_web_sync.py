@@ -251,6 +251,30 @@ class PushTest(WebCase):
         self.sync.push_once(T0 + 1)
         self.assertEqual(self.web.items("project")[-1]["data"]["status"], "收起")
 
+    def test_the_project_avatar_reuses_the_feishu_assignment_after_a_rename(self):
+        from covey.core import avatars
+
+        write_json(self.state / avatars.FILE, {"leads": {CHAT: {PID: "sea-whale"}}})
+        self.sync.push_once(T0)
+        self.assertEqual(self.web.items("project")[-1]["data"]["avatar"], "sea-whale")
+        projects.update(self.state, PID, lambda record: record.update(name="换个专项名字"))
+        self.sync.push_once(T0 + 1)
+        item = self.web.items("project")[-1]
+        self.assertEqual((item["data"]["title"], item["data"]["avatar"]), ("换个专项名字", "sea-whale"))
+        self.assertEqual(item["rev"], web_sync.rev(item["data"]))
+        self.assertEqual(avatars.lead_name(self.state, CHAT, PID), "sea-whale")
+
+    def test_an_avatar_first_seen_on_the_web_is_kept_for_feishu(self):
+        from covey.core import avatars
+
+        self.assertFalse((self.state / avatars.FILE).exists())
+        self.sync.push_once(T0)
+        name = self.web.items("project")[-1]["data"]["avatar"]
+        self.assertIn(name, avatars.POOL)
+        self.assertEqual(avatars.lead_name(self.state, CHAT, PID), name)
+        self.assertEqual(read_object(self.state / avatars.FILE)["leads"][CHAT][PID], name)
+        self.assertEqual(self.sync.push_once(T0 + 1), 0)
+
     def test_only_what_changed_is_pushed_again(self):
         self.topic()
         self.sync.push_once(T0)

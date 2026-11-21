@@ -170,6 +170,8 @@
 
 ### 专项条目
 
+- `avatar`（v30）是专项负责人已分配的头像文件名（不带 `.png`），和飞书卡片使用同一份分配，改专项名、排序或刷新页面不换头像。网页用自己的静态图片包按名取图，不接收任意图片路径；旧数据缺少或不认识这个名字时用中性图标。图片与来源说明在 `covey/assets/avatars/`；管家固定使用 `butler.png`。
+
 - `goal`（v11）是负责人用 `project_goal` 写的目标，没写过为空串（开专项时的那句话常常只是安排，不当目标显示）。另带 `started_at`。
 - `memory` 每条带 `id`、`said_by`（你说的、它总结的）、`origin`（`{at}`）；`library` 每条带 `kind`（file、link、image、video）、`size`（知道才给）、`topic_number`（知道才给）。
 
@@ -290,3 +292,4 @@
 | v27 | 回答那一轮的 `ran_with` |
 | v28 | `tidy` 的每条建议加 `project`（「去专项」） |
 | v29 | 问题卡只剩“提交回答”和“不处理”：`answer` 带 `note` 时没答的题算不回答、`answers` 可空；`ask` 按 `skip` 处理；`extras` 只管“不处理”，不再推 `asked` |
+| v30 | 专项条目加 `avatar`：网页与飞书卡片共用固定头像分配 |

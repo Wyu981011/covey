@@ -34,7 +34,7 @@ from covey.app import web_images
 from covey.app.web_collect import Collector
 from covey.app.web_ops import Ops
 from covey.app.web_push_client import Client, Stuck, WebError, Worker
-from covey.core import web_sync
+from covey.core import avatars, web_sync
 from covey.core.state import read_object, write_json
 
 FULL_SECONDS = web_sync.FULL_SECONDS
@@ -156,6 +156,14 @@ class WebSync:
         items, deleted = collector.collect(chat, now, full)
         if collector is not self.collector:
             return 0  # Left behind while it looked: what it read is old, and must not wait in the backlog either.
+        # Keep avatar allocation outside the read-only Collector and finish its lock before any HTTP call.
+        # Feishu and the web share this ledger, including collision handling and assignments already made.
+        for each in items:
+            if each["type"] == "project":
+                name = avatars.lead_name(self.env.state_dir, chat, each["key"])
+                if name:
+                    each["data"]["avatar"] = name
+                    each["rev"] = web_sync.rev(each["data"])
         if full:
             self.push_settings(chat, now, full=True)
             self.push_tidy(now, full=True)
