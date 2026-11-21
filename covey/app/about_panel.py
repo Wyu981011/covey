@@ -18,7 +18,6 @@ from covey.app import welcome
 from covey.app.menu_panel import MenuPanel, hub_top
 from covey.app.overview import Overview
 from covey.cards.about_panel import about_card
-from covey.cards.question_cards import STANDING_ENV, standing_enabled
 from covey.cards.settings_hub import ABOUT
 from covey.cards.welcome import BUTLER_WORDS
 from covey.core import extensions, knowledge, memory, nodes, patrol, project_proposals, projects
@@ -112,12 +111,6 @@ def _dispatch(probe):
     return False, "设 COVEY_DISPATCH_CARD=1", dispatch_cards.ENV
 
 
-def _standing(probe):
-    if standing_enabled():
-        return True, "每题都有推荐项的问题卡下面有这个按钮，点了记成原则", STANDING_ENV
-    return False, "设 COVEY_STANDING_ANSWERS=1", STANDING_ENV
-
-
 def _redaction(probe):
     if CLAUDE in probe.apps:
         return True, "话题开了脱敏才替换，只支持 Claude 的模型；词表在「脱敏」", ""
@@ -162,7 +155,7 @@ def _patrol(probe):
 FEATURES = (
     ("管家", _butler), ("同时做几件事", _tracks), ("早晚汇总和看板", _digest), ("手上的事", _overview),
     ("专项", _projects), ("整理专项", _tidy), ("记忆", _memory), ("知识条目", _knowledge), ("历史搜索", _history),
-    ("新话题带上最近话题的要点", _gists), ("以后这类按推荐走", _standing), ("派发卡", _dispatch), ("敏感词脱敏", _redaction),
+    ("新话题带上最近话题的要点", _gists), ("派发卡", _dispatch), ("敏感词脱敏", _redaction),
     ("代答", _proxy), ("网页工作台", _web), ("设备与机器状况", _nodes), ("我本来想找你的事", _patrol),
 )
 

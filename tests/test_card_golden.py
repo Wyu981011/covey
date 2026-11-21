@@ -370,7 +370,7 @@ def question_cards():
     cards["card_set_aside"] = question_card(question_record("set_aside", response_kind="set_aside", answers=skipped), "T70")
     cards["card_set_aside_taken"] = question_card(question_record(
         "answered", response_kind="set_aside", answers=skipped, delivery_state="delivered", continuation_job_id=432), "T70")
-    # 先问一句 (T604 #13): the open form says what was asked first; the topic answers it, the form stays.
+    # A record with a 先问一句 from before T631, which took it off the card: an open form like any, the old field unread.
     cards["card_asked_first"] = question_card(question_record(answers={}, asked_first={
         "at": FROZEN - 30, "text": "表格和列表在手机上哪个好看？", "event": "e"}), "T70")
     # One question with options at the private chat's top level: a button per option (cards/question_cards.py picks).
@@ -392,17 +392,6 @@ def question_cards():
     cards["feedback"] = question_feedback_card(question_record())
     cards["answer_notice"] = answer_notice_card("已提交回答")
     cards["folded_refusal"] = folded_refusal(question_record("superseded", superseded_by_job=432))
-    # 以后这类按推荐走 (app/standing_answers.py): the button under a form whose every question has one recommended
-    # option, and its own card: the sentence with 记下 / 改一下 / 算了, the box to change it, what became of it.
-    from covey.cards.question_cards import standing_card
-    with mock.patch.dict(os.environ, {"COVEY_STANDING_ANSWERS": "1"}):  # Off unset; ./install writes 1.
-        cards["card_standing_offer"] = question_card(question_record(
-            questions=[{"id": "q", "header": "合并", "question": "测试过了，要合并进 main 并推送吗？",
-                        "options": [{"label": "合并并推送（推荐）"}, {"label": "先不合并"}]}], answers={}), "T70")
-    standing = {"token": "e" * 24, "workspace": "covey", "picks": ["合并并推送"],
-                "text": "covey 工作区：测试通过就合并进 main 并推送；没有在跑的任务时直接部署，不用再问"}
-    for status in ("ready", "editing", "saved", "cancelled"):
-        cards[f"standing_{status}"] = standing_card({**standing, "status": status, "answered": True})
     return cards
 
 

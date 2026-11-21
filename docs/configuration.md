@@ -15,7 +15,6 @@
 | [管家](#管家) | `COVEY_BUTLER`（不设即允许） | 私聊发一句话由管家回答或开话题；设置卡「配置」页有管家一段。管家默认用 Claude Code，设置卡「配置」页的“管家”一段可换成 Codex 或 Antigravity；选的 Harness 没启用时私聊照旧开话题 | `COVEY_BUTLER=0`；或主人在设置卡「配置」页的“管家”一段把私聊顶层改成“每条直接开一个话题” |
 | [专项](projects.md) | `COVEY_PROJECTS=1`（`./install` 写） | 管家把长期要跟进的事开成专项时，私聊出现专项卡 | `COVEY_PROJECTS=0` |
 | [整理专项](#整理专项)（只提议） | `COVEY_PROJECT_TIDY=suggest`（`./install` 写，要 `COVEY_PROJECTS=1`） | 话题多了以后私聊出现“建个专项？”的提议卡；有菜单「看板」时看板卡上有「整理专项」 | `COVEY_PROJECT_TIDY=off` |
-| 以后这类按推荐走 | `COVEY_STANDING_ANSWERS=1`（`./install` 写） | 每题都有推荐项的问题卡下面多这个按钮 | `COVEY_STANDING_ANSWERS=0` |
 | [菜单「看板」](usage.md#看板) | `COVEY_BOARD=1`（`./install` 写） | 菜单里有「看板」，随时点开看现在等你、停住、在做的事；不用开早晚汇总（应用里还没有这一项时，「飞书应用待补」卡会补上） | `COVEY_BOARD=0`（开了早晚汇总时「看板」照旧跟着它） |
 | 撤回与编辑 | `COVEY_SOURCE_WATCH`（默认开） | 撤回一条已变成任务的消息，任务跟着停；编辑后任务收到改后的内容 | `COVEY_SOURCE_WATCH=0` |
 | [任务在跑时发的话补充给它](usage.md#追问排队与并行) | `COVEY_TOPIC_STEER`（默认开） | 话题里任务在跑时发一句，那张卡变成回执“已补充到 #N，不另开一轮”，你那句话上加一个 ✅ 表情（DONE），不再排成下一轮 | `COVEY_TOPIC_STEER=0`（照旧排成下一轮） |
@@ -253,7 +252,7 @@
 - `auto`：再加新建专项也直接做（专项卡上留「不要专项」撤回）。主人在提议卡上点了「以后直接建」，效果和 `auto` 一样。
 - 不设、`off` 或别的值：关。没有后台线程、管家没有 `projects_tidy`、设置卡没有这一行、每轮的消息里没有话题要点那段，行为和原来一样。
 
-仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 写服务清单时，终端里没设的就写上 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`、`COVEY_STANDING_ANSWERS=1` 这三个（`service/installer.py` 的 `INSTALL_SWITCHES`，见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
+仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 写服务清单时，终端里没设的就写上 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`、`COVEY_BOARD=1` 这三个（`service/installer.py` 的 `INSTALL_SWITCHES`，见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
 
 可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断用 Claude Code 的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装，和[同时做几件事](butler.md#同时做几件事开关默认关)的小模型判断同一套做法。没有 Claude Harness（比如只装了 Codex）时，设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>` 就改问那个[模型网关](harnesses.md#模型网关codexpi-与-dsh)（`harnesses.json` 的 `gateways` 或扩展带的网关，用你给它配的个人密钥；这时 `COVEY_PROJECT_TIDY_MODEL` 不管用，模型就是这里写的，选一个读得懂整段对话的）；不设时判断不了，整理卡写“没有可用的 Claude Code 来判断”。
 
@@ -397,7 +396,6 @@
 | `COVEY_DATA_HOME` | `core/paths.py`、`core/devices.py`（找 `devices.json`）、`core/extensions.py`（找本部署启用、停用的扩展 `extensions/enabled`） | 按 [数据目录](operations.md#数据目录) 推算 | 否 |
 | `COVEY_SERVICE_ROOT` | `core/paths.py` | `<数据根>/bridge-services` | 否 |
 | `COVEY_REVIEW` | `app/review.py`（`enabled`，`buttons` 据此画按钮） | 关；`1`：改了代码的答案卡和回带卡多「独立复核」 | 否 |
-| `COVEY_STANDING_ANSWERS` | `cards/question_cards.py`（`standing_offered`） | 关；`1`：问题卡上给「以后这类按推荐走」。`./install` 新装的服务写 `1`（`service/installer.py` 的 `INSTALL_SWITCHES`） | 否 |
 | `COVEY_STATE_DIR`；`LARK_CLAUDE_BRIDGE_STATE_DIR`、`LARK_DSH_BRIDGE_STATE_DIR`、`LARK_PI_BRIDGE_STATE_DIR`、`COVEY_AGY_STATE_DIR` | `app/harnesses.py`（只有默认 Harness 读，其余总用 Bridge 的 `--state-dir`） | `<数据根>/<Harness 的目录名>` | 否 |
 | `COVEY_PROFILE` | `backends/codex/bridge.py`、`backends/dsh/bridge.py`、`backends/pi/bridge.py`、`backends/agy/bridge.py`（Bridge 的 `--profile`） | 空：lark-cli 的默认 profile | 否 |
 | `COVEY_MESSAGE_FORMAT`、`LARK_CLAUDE_BRIDGE_MESSAGE_FORMAT`、`LARK_DSH_BRIDGE_MESSAGE_FORMAT`、`LARK_PI_BRIDGE_MESSAGE_FORMAT`、`COVEY_AGY_MESSAGE_FORMAT` | `feishu/messenger.py`（各 Harness 发消息时读） | `markdown` | 否 |

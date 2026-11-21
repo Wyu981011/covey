@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import re
-import time
 
 from covey.cards.board import OPEN_KIND
-from covey.cards.elements import (BUTTON_SPACING, button_look, button_row, callback, callback_button, card, item, markdown_panel,
-                                  note, notice_card, plain, text_button, topic_button)
+from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, item, markdown_panel, note, plain,
+                                  text_button)
 from covey.cards.review import compact_text
-from covey.cards.streaming import RECOMMENDED
 from covey.cards.ui import band_label, conclusion_band, receipt, styled
 from covey.core import look, triage, turn_words
 from covey.core.stale import STALE_NOTE
@@ -18,23 +16,16 @@ from covey.core.turn_words import ask_words
 SKIP_VALUE = "skip"
 SKIP_LABEL = "不回答此题"
 SUPPLEMENT = "supplement"  # The card-wide 补充说明 field.
-# The button beside 提交回答 that leaves every question unanswered and sends only 补充说明, which it requires
-# (skipping a model's questions to give a new instruction otherwise takes a 不回答此题 per question). It is
-# also the way to say the questions do not fit: "问题不合适 / 修改要求" opened a second card for the same thing.
-SKIP_ALL_KIND = "bridge_question_skip"
-SKIP_ALL_LABEL = "只发补充说明"
-SUPPLEMENT_HINT = "不答这些题时，写原因或新要求"
+# 提交回答 is the form's one way to send (T631): what was picked or written, and 补充说明. With 补充说明 written, a question
+# left unanswered is 不回答此题 (app/answers.py with_note): only a 补充说明 skips every question, which is how the owner
+# says the questions do not fit, gives a new instruction or asks about them first.
+SUBMIT_LABEL = "提交回答"
+SUPPLEMENT_HINT = "其他想说的：不答的原因、新要求，或想先问的话"
 STATUS_LABEL = "查看提交状态"
-# 先问一句 (T604 #13, app/questions.py ask_first): what the owner wrote in 补充说明 goes to the topic as a question about
-# these questions, as its next turn or into the task it runs; the form stays open and nothing is answered. The record
-# keeps the last one (ASKED, its time, words and click), which the form shows under its first line.
+# compat: 只发补充说明 and 先问一句 on cards sent before T631, which merged them into 提交回答. Each sends the 补充说明 with every
+# question 不回答此题 (app/interaction.py skip_all).
+SKIP_ALL_KIND = "bridge_question_skip"
 ASK_KIND = "bridge_question_ask"
-ASK_LABEL = "先问一句"
-ASKED = "asked_first"
-ASKED_SHOWN = 60  # Characters of the words the form shows of the last 先问一句.
-ASK_EMPTY = f"补充说明是空的，没有问。先在最下面的“补充说明”里写上你想问的，再点“{ASK_LABEL}”"
-ASK_SETTLED = "这组问题已经答过、收起或取消了，没有问；有话直接在话题里说"
-ASK_HELD = f"任务正停在这道题上等你回答，先问的话它读不到，没有问：回答它，或写在补充说明里点“{SKIP_ALL_LABEL}”"
 # 不处理 (T604 #15, app/questions.py set_aside): every question 不回答此题 with nothing added, nothing sent now; the record is
 # SET_ASIDE (its status and its response_kind) and off the 等你 lists. 撤销 (RESTORE_KIND) opens the form again until the
 # topic's next turn takes it as its answer (take_set_aside; the record answered then, its response_kind still SET_ASIDE).
@@ -44,7 +35,7 @@ SET_ASIDE_LABEL = "不处理"
 RESTORE_KIND = "bridge_question_restore"
 RESTORE_LABEL = "撤销"
 SET_ASIDE_SETTLED = "这组问题已经答过、收起或取消了，没有撤下"
-SET_ASIDE_HELD = f"任务正停在这道题上等你回答，撤下的话它会一直等，没有撤下：回答它，或写在补充说明里点“{SKIP_ALL_LABEL}”"
+SET_ASIDE_HELD = f"任务正停在这道题上等你回答，撤下的话它会一直等，没有撤下：回答它，或只写补充说明再点“{SUBMIT_LABEL}”"
 SET_ASIDE_ANSWER = f"这组题你点了“{SET_ASIDE_LABEL}”，已从“等你”里撤下；要回答的话先点卡上的“{RESTORE_LABEL}”"
 # 还有 N 件等你 under a card whose question the owner just settled (``others_row``): ``OTHERS`` is set on the record, never
 # saved (app/question_display.py ``paint``): {"n": what still waits for him as the 看板 counts it, "board": 去看板 offered}.
@@ -63,87 +54,6 @@ CONTEXT_CHARS = 120  # Characters of a question's background line (``question_co
 # (app/questions.py fold_older_questions); without it, an older duplicate retired once a later
 # identical form was answered (app/checkpoint_questions.py).
 FOLDED = "newer_question"
-
-
-# 以后这类按推荐走 (app/standing_answers.py): under an open form whose every question has one recommended option, a
-# button that turns this kind of question into a principle of the workspace once the owner confirms the sentence
-# a small model wrote; then the question is answered with the recommended options. Its own card, so the form stays.
-STANDING_KIND = "bridge_question_standing"
-STANDING_LABEL = "以后这类按推荐走"
-STANDING_SAVE, STANDING_EDIT, STANDING_CANCEL = "bridge_standing_save", "bridge_standing_edit", "bridge_standing_cancel"
-STANDING_FIELD = "principle"
-
-
-def recommended(questions):
-    """[(question index, option index)] of the one recommended option of each question (its label marked （推荐） or
-    (Recommended)), or None unless every question has exactly one; a multiple choice has none to go by."""
-    picked = []
-    for i, q in enumerate(questions or []):
-        options = q.get("options") or [] if isinstance(q, dict) else []
-        marked = [j for j, o in enumerate(options) if isinstance(o, dict) and RECOMMENDED.search(str(o.get("label") or ""))]
-        if len(marked) != 1 or q.get("multiple") or q.get("multiSelect"):
-            return None
-        picked.append((i, marked[0]))
-    return picked or None
-
-
-STANDING_ENV = "COVEY_STANDING_ANSWERS"  # 1 puts the button on the cards; off unset (rule 4), ./install writes 1.
-
-
-def standing_enabled():
-    """Whether COVEY_STANDING_ANSWERS turns 以后这类按推荐走 on (read on every call; the 设置 card's 能做什么 asks too)."""
-    from covey.core.process_env import env_flag
-    return env_flag(STANDING_ENV, False)
-
-
-def standing_offered(record):
-    """Whether ``record``'s open form gets 以后这类按推荐走: the switch is on, its every question has one recommended
-    option, and it is a topic's (a card can name it: not the butler's, whose questions are not a workspace's)."""
-    from covey.core.butler import traits
-    return (standing_enabled() and bool(record.get("topic_id")) and recommended(record.get("questions")) is not None
-            and traits(record.get("topic_id"), record.get("chat_id")).card_target)
-
-
-def standing_row(record):
-    """The 以后这类按推荐走 button under an open form (``recommended``), outside the form, which it does not submit."""
-    return button_row([topic_button(STANDING_LABEL, element_id="standing_action", behaviors=callback(
-        {"kind": STANDING_KIND, "topic_id": record["topic_id"], "token": record["token"]}))], "standing_actions")
-
-
-def standing_card(form):
-    """The card of one 以后这类按推荐走 (``form``, app/standing_answers.py): the sentence to keep as a principle of the
-    workspace with 记下 / 改一下 / 算了, the same in a box to change, or what became of it."""
-    status, text, where = form.get("status"), str(form.get("text") or ""), f"工作区 {form.get('workspace')} "
-    value = {"token": form["token"]}
-    picks = "；".join(str(row) for row in form.get("picks") or [])
-    if status == "saved":
-        done = f"已记下（{where}的原则）：{text}\n\n" + (
-            f"这道题已按推荐回答：{picks}" if form.get("answered") else "这道题已经答过或取消了，没有再答。")
-        return notice_card(done, "已记下原则")
-    if status == "cancelled":
-        return notice_card("算了，没有记下。这道题还在上面等你回答。", "没有记下原则")
-    notice = [{"tag": "markdown", "content": form["notice"]}] if form.get("notice") else []
-    lead = {"tag": "markdown", "content": f"**以后这类按推荐走**：记成{where}的一条原则，以后这类问题按它直接做，不再问你。"
-                                          + (f"\n这道题会按推荐回答：{picks}" if picks else "")}
-    if status == "editing":
-        return card([lead, *notice, {"tag": "form", "name": "standing_" + form["token"], "elements": [
-            {"tag": "input", "name": STANDING_FIELD, "input_type": "multiline_text", "rows": 3, "width": "fill",
-             "max_length": 200, "default_value": text, "placeholder": plain("一句话，最多 200 字")},
-            {"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "8px", "columns": [
-                {"tag": "column", "width": "weighted", "weight": 1, "elements": [
-                    {"tag": "button", "text": plain("记下"), "type": "primary_filled", "width": "fill",
-                     "form_action_type": "submit", "name": "standing_save",
-                     "behaviors": [{"type": "callback", "value": {"kind": STANDING_SAVE, **value}}]}]},
-                {"tag": "column", "width": "weighted", "weight": 1, "elements": [
-                    {"tag": "button", "text": plain("不管了"), "type": "default", "width": "fill",
-                     "form_action_type": "submit", "name": "standing_cancel",
-                     "behaviors": [{"type": "callback", "value": {"kind": STANDING_CANCEL, **value}}]}]}]}]}],
-                    "改一下这条原则", default_width=True)
-    return card([lead, {"tag": "markdown", "content": f"> {text}"}, *notice, button_row([
-        topic_button("记下", tone="primary", behaviors=callback({"kind": STANDING_SAVE, **value})),
-        topic_button("改一下", behaviors=callback({"kind": STANDING_EDIT, **value})),
-        topic_button("不管了", behaviors=callback({"kind": STANDING_CANCEL, **value}))], "standing_choices")],
-        "以后这类按推荐走？", default_width=True)
 
 
 HELD_NOTE = "已交负责人：它能依据专项记忆答的就替你答，答不了或 3 分钟没处理，会转给你。"
@@ -292,26 +202,14 @@ def top_level_card(record):
     return bool(record.get(TOP_COPY))
 
 
-def extras(record):
-    """Whether ``record``'s open form gets 先问一句 (T604 #13) and 不处理 (#15): a topic's question (not the butler's nor a
-    lead's, which ask at the chat's top level: ``Traits.card_target``) that no turn is held on. A turn waiting in place
-    for its answer (Claude's own question tool, ``native_live_question``) or paused on it (Codex's,
-    ``native_paused_question``) reads nothing else until it is answered: what is asked first would only queue behind it,
-    and one set aside would leave it waiting for ever."""
+def aside_offered(record):
+    """Whether ``record``'s open form gets 不处理 (T604 #15): a topic's question (not the butler's nor a lead's, which ask at
+    the chat's top level: ``Traits.card_target``) that no turn is held on. A turn waiting in place for its answer (Claude's
+    own question tool, ``native_live_question``) or paused on it (Codex's, ``native_paused_question``) reads nothing else
+    until it is answered: one set aside would leave it waiting for ever."""
     from covey.core.butler import traits
     return (bool(record.get("topic_id")) and not record.get("native_live_question")
             and not record.get("native_paused_question") and traits(record.get("topic_id"), record.get("chat_id")).card_target)
-
-
-def asked_line(record):
-    """The form's line for its last 先问一句 (ASKED): when, the start of the words, where the answer comes; '' without one."""
-    asked = record.get(ASKED)
-    if not isinstance(asked, dict) or not str(asked.get("text") or "").strip():
-        return ""
-    at = asked.get("at")
-    when = time.strftime("%H:%M ", time.localtime(at)) if isinstance(at, (int, float)) and not isinstance(at, bool) else ""
-    words = literal(compact_text(asked["text"], ASKED_SHOWN))
-    return f"{when}你先问了一句「{words}」，回答在话题里；这张卡还开着，看完再答。"
 
 
 def picks(record):
@@ -326,31 +224,30 @@ def how_to_answer(record):
     if picks(record):
         return "\n".join("- " + rule for rule in [
             f"点一个选项就提交它；不想回答点“{SKIP_LABEL}”。",
-            "选项都不合适时写在回答框，再点“提交回答”。",
-            "其他想说的写在最下面的“补充说明”，点选项时一起带上。",
-            f"不想答这道题（问题不合适、想改要求）：写在“补充说明”，点“{SKIP_ALL_LABEL}”。",
-            *extra_rules(record),
+            f"选项都不合适时写在回答框，再点“{SUBMIT_LABEL}”。",
+            f"其他想说的写在最下面的“补充说明”，点选项或“{SUBMIT_LABEL}”时一起带上。",
+            f"不想答这道题（问题不合适、想改要求或有疑问）：只写“补充说明”，点“{SUBMIT_LABEL}”。这道题记为{SKIP_LABEL}，"
+            "不表示同意；模型按补充说明重新评估。",
+            *aside_rules(record),
             f"也可以{_reply_where(record)}，当作这道题的回答。"])
     multiple = len(record["questions"]) > 1
     rules = [f"不想回答的题选“{SKIP_LABEL}”（没有选项的题勾选它）。",
              "选项都不合适时写在回答框；写了回答就以你写的为准，下拉框里选的不算。",
-             "其他想说的（例如不回答的原因）写在最下面的“补充说明”。",
-             f"不想答这些题（问题不合适、想改要求或给新要求）：写在“补充说明”，点“{SKIP_ALL_LABEL}”。所有题记为"
-             f"{SKIP_LABEL}，不表示同意；模型按补充说明重新评估。", *extra_rules(record)]
+             "其他想说的（不回答的原因、问题不合适、新要求或疑问）写在最下面的“补充说明”。写了补充说明，没答的题记为"
+             f"{SKIP_LABEL}，不表示同意；模型按补充说明重新评估。", *aside_rules(record)]
     if multiple:
-        rules += [("每题都处理后提交才能继续。" if record["blocking"] else "每题都处理后才能提交。"),
+        rules += ["没写补充说明时，每题都处理后才能提交" + ("，提交了任务才继续。" if record["blocking"] else "。"),
                   f"{_reply_where(record)}会先保存为补充，提交回答时一起带上；也可在补充回执上选择作为问题反馈发送。"]
     else:
         rules.append(f"也可以{_reply_where(record)}，当作这道题的回答。")
     return "\n".join("- " + rule for rule in rules)
 
 
-def extra_rules(record):
-    """怎么回答's lines for the buttons ``extras`` puts under 提交回答; none without them."""
-    if not extras(record):
+def aside_rules(record):
+    """怎么回答's line for 不处理 beside 提交回答 (``aside_offered``); none without it."""
+    if not aside_offered(record):
         return []
-    return [f"对题目有疑问：写在“补充说明”，点“{ASK_LABEL}”。话题先回答你，这张卡不收起，看完再答；问的话不算回答。",
-            f"先不管这组题：点“{SET_ASIDE_LABEL}”。每题记为{SKIP_LABEL}，从“等你”里撤下，话题下一轮开始时告诉模型；"
+    return [f"先不管这组题：点“{SET_ASIDE_LABEL}”。每题记为{SKIP_LABEL}，从“等你”里撤下，话题下一轮开始时告诉模型；"
             f"在那之前可以点“{RESTORE_LABEL}”。"]
 
 
@@ -384,8 +281,6 @@ def _question_form(record, token, tags="", headed=False):
                     {"tag": "markdown", "content": line}]
     if triage.state(record) == triage.ESCALATED and triage.of(record).get("why"):
         elements[1:1] = lead_notes(record)
-    if asked_line(record):  # What the owner asked first and where its answer comes (T604 #13).
-        elements.append(receipt(asked_line(record)))
     elements.append(markdown_panel("qh_" + token, "怎么回答", how_to_answer(record), size="notation", quiet=True))
     for i, q in enumerate(record["questions"]):
         elements.extend(_question_fields(i, q, count, record if buttons else None))
@@ -394,34 +289,23 @@ def _question_form(record, token, tags="", headed=False):
     elements.append({"tag": "input", "name": SUPPLEMENT, "input_type": "multiline_text", "rows": 2,
                      "auto_resize": True, "max_rows": 5, "width": "fill", "max_length": 1000,
                      "placeholder": {"tag": "plain_text", "content": SUPPLEMENT_HINT}})
-    # Two buttons on one row (four, each on its own line, read as too many). A card
-    # sent before keeps its 问题不合适 / 修改要求, which still opens the feedback card (app/questions.py).
-    submit = {"tag": "button", "text": {"tag": "plain_text", "content": "提交回答"}, "type": "primary_filled",
-              "width": "fill", "form_action_type": "submit", "name": "submit",
-              "behaviors": [{"type": "callback", "value": {"kind": "bridge_question", "topic_id": record["topic_id"],
-                                                          "token": token}}]}
-    skip = {"tag": "button", "text": {"tag": "plain_text", "content": SKIP_ALL_LABEL}, "type": "default",
-            "width": "fill", "form_action_type": "submit", "name": "skip_all",
-            "behaviors": [{"type": "callback", "value": {"kind": SKIP_ALL_KIND, "topic_id": record["topic_id"],
-                                                        "token": token}}]}
-    elements.append({"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "8px", "columns": [
-        {"tag": "column", "width": "weighted", "weight": 1, "elements": [submit]},
-        {"tag": "column", "width": "weighted", "weight": 1, "elements": [skip]}]})
-    if extras(record):
-        elements.append(_extras_row(record, token))
+    elements.append(_send_row(record, token))
     return {"tag": "form", "element_id": "q_" + token, "name": "question_form_" + token, "elements": elements}
 
 
-def _extras_row(record, token):
-    """Under 提交回答 and 只发补充说明, the lesser buttons each as wide as its label (``extras``): 先问一句, a submit, so
-    the 补充说明 it asks with goes with it, and 不处理, a text button (docs/ui.md 6: giving up on something), which sends
-    no field."""
+def _send_row(record, token):
+    """The form's buttons (T631: five read as too many): 提交回答, the one submit, and beside it, when the form offers it
+    (``aside_offered``), 不处理 as a bordered button of the same width, which sends no field. A card sent before keeps
+    its 只发补充说明 and 先问一句 (SKIP_ALL_KIND, ASK_KIND) or 问题不合适 / 修改要求, which still opens the feedback card."""
     value = {"topic_id": record["topic_id"], "token": token}
-    ask = {"tag": "button", "text": plain(ASK_LABEL), **button_look(), "form_action_type": "submit", "name": "ask_first",
-           "behaviors": callback({"kind": ASK_KIND, **value})}
-    aside = {"tag": "button", "text": plain(SET_ASIDE_LABEL), "type": "text", "size": "medium", "name": "set_aside",
+    submit = {"tag": "button", "text": plain(SUBMIT_LABEL), "type": "primary_filled", "width": "fill",
+              "form_action_type": "submit", "name": "submit", "behaviors": callback({"kind": "bridge_question", **value})}
+    if not aside_offered(record):
+        return submit
+    aside = {"tag": "button", "text": plain(SET_ASIDE_LABEL), "type": "default", "width": "fill", "name": "set_aside",
              "behaviors": callback({"kind": SET_ASIDE_KIND, **value})}
-    return button_row([ask, aside])
+    return {"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "8px", "columns": [
+        {"tag": "column", "width": "weighted", "weight": 1, "elements": [button]} for button in (submit, aside)]}
 
 
 def _pick_row(record, options):
@@ -550,8 +434,6 @@ def question_card(record, topic=""):
                if record.get('status') == 'superseded' and not folded(record)
                else element.get('header', {}).get('title', {}).get('content', '回答已保存'))
     elements = ([band] if band else []) + [element, *others_row(record)]
-    if form and record.get("token") and standing_offered(record):
-        elements.append(standing_row(record))
     if record.get('refusal'):
         elements.append({"tag": "markdown", "content": "⚠️ " + record['refusal']})
     built = card(elements, summary, default_width=True)

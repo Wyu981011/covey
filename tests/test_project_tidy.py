@@ -956,7 +956,7 @@ class OffTest(TidyCase):
         saved = runtime_environment(ins.env)
         self.assertEqual(saved["LARK_BRIDGE_PROJECTS"], "0")
         self.assertEqual(saved["LARK_BRIDGE_PROJECT_TIDY"], "off")
-        self.assertEqual(saved["LARK_BRIDGE_STANDING_ANSWERS"], "1")
+        self.assertEqual(saved["LARK_BRIDGE_BOARD"], "1")
 
     def test_the_patrol_reads_the_tidys_proposals_instead_of_its_own_word_match(self):
         from covey.app import patrol_rules

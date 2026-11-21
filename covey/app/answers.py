@@ -11,8 +11,7 @@ import hashlib
 import re
 
 from covey.app.held_notes import note_parts
-from covey.cards.question_cards import (GENERIC_HEADER, SKIP_ALL_LABEL, SKIP_LABEL, SKIP_VALUE, SUPPLEMENT,
-                                                 single_choice)
+from covey.cards.question_cards import GENERIC_HEADER, SKIP_LABEL, SKIP_VALUE, SUBMIT_LABEL, SUPPLEMENT, single_choice
 from covey.cards.review import compact_text
 
 
@@ -21,9 +20,9 @@ class AnswerIncomplete(ValueError):
 
 
 SKIPPED = "用户选择不回答此题（不表示同意或授权）"
-# 补充说明's heading when no question was answered (只发补充说明, or each one skipped): the note may say the
+# 补充说明's heading when no question was answered (only a 补充说明 submitted, or each one skipped): the note may say the
 # questions do not fit, as 问题不合适 / 修改要求 did in older releases.
-UNANSWERED_NOTE = "补充说明（没有回答上面的问题，不表示同意或授权；可能是对问题的反馈或新的要求，请据此重新评估）："
+UNANSWERED_NOTE = "补充说明（没有回答上面的问题，不表示同意或授权；可能是对问题的反馈、疑问或新的要求，请据此重新评估：是疑问就先解释，还要他定的再问）："
 ATTACHMENTS = "_attachments"  # What a topic reply adds to its wording (paths, forwards, quotes): for the model, never shown.
 TITLE_CHARS = 30  # After the card's "T12 · #34 · ".
 LABEL_CHARS = 12  # A question's short label in the title, when it has no header of its own.
@@ -47,16 +46,35 @@ def question_feedback_fields(questions, text):
     return fields
 
 
+NOTE_EMPTY = f"补充说明是空的，这次没有提交：先在最下面的“补充说明”里写上你想说的，再点“{SUBMIT_LABEL}”"
+
+
 def skip_all_fields(questions, fields):
-    """The form of “这些题先不答，只发补充说明”: every question 不回答此题, whatever was picked or written, and
-    its 补充说明, which this button requires (AnswerIncomplete when it is empty). The fields a runner of any
+    """Every question 不回答此题, whatever was picked or written, and the 补充说明, which this requires (AnswerIncomplete when
+    it is empty): 只发补充说明 and 先问一句 on a card sent before T631, and the web page's ``skip``. The fields a runner of any
     release reads the same way (forward_answer)."""
     supplement = str(fields.get(SUPPLEMENT) or "").strip()
     if not supplement:
-        raise AnswerIncomplete(f"补充说明是空的，这次没有提交。点“{SKIP_ALL_LABEL}”前，先在最下面的“补充说明”里写上你想说的")
+        raise AnswerIncomplete(NOTE_EMPTY)
     skipped = {f"skip_{i}": True for i in range(len(questions))}
     return {**skipped, SUPPLEMENT: supplement,
             **({ATTACHMENTS: fields[ATTACHMENTS]} if fields.get(ATTACHMENTS) else {})}
+
+
+def given(fields, i):
+    """Whether the form's ``fields`` answer question ``i`` at all: written, picked (不回答此题 too) or its skip box ticked."""
+    selected = fields.get(f"option_{i}")
+    picked = any(str(value).strip() for value in selected) if isinstance(selected, list) else selected not in (None, "")
+    return bool(str(fields.get(f"answer_{i}") or "").strip()) or fields.get(f"skip_{i}") in (True, "true") or picked
+
+
+def with_note(questions, fields):
+    """提交回答's fields (T631: the one button, 只发补充说明 and 先问一句 folded into it): with 补充说明 written, each question
+    left unanswered is 不回答此题, so a 补充说明 alone skips them all (answer_message heads it UNANSWERED_NOTE); without one,
+    form_answers asks for every question as before."""
+    if not str(fields.get(SUPPLEMENT) or "").strip():
+        return fields
+    return {**fields, **{f"skip_{i}": True for i in range(len(questions)) if not given(fields, i)}}
 
 
 def picked_fields(questions, fields, pick):
@@ -110,8 +128,9 @@ def form_answers(questions, fields):
             missing.append(q["question"][:40])
         answers[q["id"]] = {"answers": parts}
     if missing:
+        # Only the form gets here (answer_fields asks for every question itself): a 补充说明 skips what is left (with_note).
         raise AnswerIncomplete(f"还有 {len(missing)} 题没回答：" + "；".join(missing)
-                               + f"（不想回答可选“{SKIP_LABEL}”）")
+                               + f"（不想回答可选“{SKIP_LABEL}”，或在补充说明里写一句再点“{SUBMIT_LABEL}”）")
     return answers
 
 
@@ -249,8 +268,8 @@ def answer_message(record, answers, feedback, notes):
             q["question"] + "\n" + "；".join(answers[q["id"]]["answers"]) for q in record["questions"])
     text = shown + ("\n" + attachments if attachments else "")
     if record.get("supplement") and not feedback:
-        # Every question skipped (只发补充说明): the note may say the questions do not fit, as 问题不合适 / 修改要求 did
-        # in older releases, so the model is told to reconsider them with it.
+        # Every question skipped (only a 补充说明 submitted): the note may say the questions do not fit or ask about them,
+        # as 问题不合适 / 修改要求 and 先问一句 did in older releases, so the model is told to reconsider them with it.
         none = all(answers[q["id"]]["answers"] == [SKIPPED] for q in record["questions"])
         head = UNANSWERED_NOTE if none else "补充说明："
         shown += f"\n\n用户{head}\n" + record["supplement"]
@@ -272,11 +291,9 @@ def answer_message(record, answers, feedback, notes):
     return shown, text, delivered
 
 
-# 先问一句 (T604 #13; app/questions.py ask_first, app/owner_send.py ask): the owner's question about a question card or
-# a 代发草稿, which the topic answers as its next turn or in the task it runs. It answers nothing, and the card stays open.
-ASK_PREFIX = "ask-"  # Its turn's message id: app/task_controls.py leaves the task waiting for the answer as it is.
-ASK_START = "用户看了你的问题，先问一句。这不是回答：问题卡还开着，他看了你的解释再去答。这一轮只回答他问的，不用重新提问。"
-ASK_CHARS = 200  # Of each question, reminded in ``ask_message``.
+# 先问一句 on a 代发草稿 (T604 #13; app/owner_send.py ask): the owner's question about it, which the topic answers as its next turn
+# or in the task it runs. It decides nothing, and the card stays open.
+ASK_PREFIX = "ask-"  # Its turn's message id: app/task_controls.py leaves the task waiting for an answer as it is.
 
 
 def ask_id(key, event_id):
@@ -289,22 +306,14 @@ def ask_title(words):
     return compact_text("先问一句：" + str(words or ""), TITLE_CHARS)
 
 
-def ask_message(record, words):
-    """What the topic's model gets for a 先问一句 on ``record``'s questions: what it is (not an answer), its questions
-    again in short, and the owner's ``words``."""
-    asked = "\n".join("- " + compact_text(q.get("question") or "", ASK_CHARS) for q in record.get("questions") or ()
-                      if isinstance(q, dict))
-    return f"{ASK_START}\n你的问题：\n{asked}\n他问：\n{words}"
-
-
 # 不处理 (T604 #15; app/questions.py set_aside, take_set_aside): what the topic's next turn starts with for questions the
 # owner set aside, then each as an answer of every question 不回答此题 reads.
 SET_ASIDE_START = "你之前问的题，用户点了“不处理”：都不回答，不表示同意或授权；没有它做不了的先放着，不用再问同样的题。"
 
 
 def set_aside_answers(questions):
-    """不处理's answers: every question 不回答此题 with nothing added, as 只发补充说明 skips them (``skip_all_fields``)
-    without the 补充说明 it requires."""
+    """不处理's answers: every question 不回答此题 with nothing added, as ``skip_all_fields`` skips them without the 补充说明
+    it requires."""
     return form_answers(questions, {f"skip_{i}": True for i in range(len(questions))})
 
 
@@ -324,10 +333,14 @@ def answer_fields(record, answers, note, owner=False):
     multiple choice), with ``note`` as the 补充说明: ``form_answers`` the other way, for the butler's
     question_answer (app/butler_tools.py, its PROXY_NOTE). ``owner``: the owner's own answer (the web page,
     app/web_ops.py): a question without options takes the text given, a text that is no option of its question
-    is a written answer, as the card's answer box is (a written answer wins in form_answers), and ``{"skip": true}``
-    is 不回答此题 (the card's ``skip_i``). ValueError says what does not fit."""
-    if not isinstance(answers, dict) or not answers:
-        raise ValueError("answers 要是“题目 id → 选项原文”的对象")
+    is a written answer, as the card's answer box is (a written answer wins in form_answers), ``{"skip": true}``
+    is 不回答此题 (the card's ``skip_i``), and with ``note`` a question left out is 不回答此题, as 提交回答 has it
+    (``with_note``; ``answers`` may then be empty). ValueError says what does not fit."""
+    noted = owner and bool(str(note or "").strip())
+    if answers is None and noted:
+        answers = {}
+    if not isinstance(answers, dict) or not (answers or noted):
+        raise ValueError("answers 要是“题目 id → 选项原文”的对象" + ("；不答题时写上补充说明" if owner else ""))
     questions = [q for q in record.get("questions") or [] if isinstance(q, dict)]
     free = [str(q.get("question") or "")[:40] for q in questions if not q.get("options")]
     if free and not owner:
@@ -346,10 +359,13 @@ def answer_fields(record, answers, note, owner=False):
             raise ValueError(f"“{str(questions[index].get('question'))[:40]}”答了两次")
         given[index] = value
     missing = [str(q.get("question") or "")[:40] for i, q in enumerate(questions) if i not in given]
-    if missing:
-        raise ValueError("每题都要答，还差：" + "；".join(missing))
+    if missing and not noted:
+        raise ValueError("每题都要答，还差：" + "；".join(missing) + ("（不答的题写上补充说明就算不回答）" if owner else ""))
     fields = {}
     for i, q in enumerate(questions):
+        if i not in given:  # Left out with the owner's 补充说明: 不回答此题.
+            fields[f"skip_{i}"] = True
+            continue
         value = given[i]
         labels = [str(o.get("label") or "") for o in q.get("options") or [] if isinstance(o, dict)]
         if owner and isinstance(value, dict) and value.get("skip") is True:

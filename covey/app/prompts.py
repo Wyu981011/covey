@@ -142,8 +142,8 @@ def workspace_block(workspace_name: str, workdir: Path, device: str = "", remote
 
 # The owner's principles (core/principles.py), after the workspace in the rules and in each resumed turn's reminder.
 PRINCIPLES_CHARS = 2000  # Of the principles' lines; the oldest go first past it.
-# 以后这类按推荐走 (app/standing_answers.py) records the owner's standing go-ahead as a principle: what it allows is not
-# asked again. Said in the principles' head and, with COVEY_MEMORY=1, in the memory's rules.
+# What a principle already allows is not asked again. Said in the principles' head and, with COVEY_MEMORY=1, in the memory's
+# rules.
 ASK_AFTER_PRINCIPLES = "要问主人之前，先看这些原则：原则里已经同意的事（比如测试通过就合并、空闲时直接部署）照着做，不要再问。"
 PRINCIPLES_HEAD = ("主人的原则（主人说过、长期适用的原则和偏好；做事时照着做，不用再问主人“之前的思路”是什么。"
                    "和主人这一轮的话冲突时，以这一轮为准。" + ASK_AFTER_PRINCIPLES + "）：")

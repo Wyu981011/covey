@@ -23,6 +23,7 @@
 | 独立的敏感词网页看板（`COVEY_DASHBOARD`、`COVEY_DASHBOARD_URL`，扩展钩子 `dashboard_entry` 和它的 `COVEY_DASHBOARD_ENTRY`） | 不再读这几个变量，清单里留着也照常启动；扩展的 manifest 还写着 `dashboard_entry` 钩子也照常加载（`core/extensions.py` 的 `RETIRED_HOOKS`），核心不再调它。状态目录里的 `redaction/dashboard-token` 和 `redaction/dashboard-entry.json` 不再用，可以删（`app/bot_menu.py` 还从后者读旧链接卡发去的私聊）。旧链接卡和设置卡「脱敏」标签上的“换口令”（`bridge_dashboard_rotate`）点了只说网页看板已经去掉；旧菜单键 `redaction_dashboard` 照旧打开「脱敏」标签 |
 | 两卡式或 schema 3 之前的旧启动卡 | 点了只回“此启动卡已失效，请在主聊天重新发送消息开始任务。”，不改表单和等着的消息 |
 | 管家的“直接开工”设置（`main-thread.json` 的 `start`）和“记住的工作区”（`trusted`），以及设置卡上它们的行和按钮（`bridge_main_start_row`、`bridge_main_start`、`bridge_main_untrust`）、网页设置页的 `start_note`、`trusted` 和 `untrust` 操作 | 管家开的话题一律直接开工（运行方式是独立 worktree 的除外，仍出启动卡），不再读这两个字段：旧文件里有也能读，不报错，设置卡下次保存时不再写回。旧卡上点这三个按钮，设置卡回“直接开工已下线…”并重画，不改设置；网页的 `untrust` 回 failed。管家不再问、也不再记“以后这类直接开工吗” |
+| 以后这类按推荐走（`COVEY_STANDING_ANSWERS`）：问题卡下面的按钮和它那张卡（`bridge_question_standing`、`bridge_standing_save`、`bridge_standing_edit`、`bridge_standing_cancel`） | 不再读这个变量，清单里留着也不报错，`./install` 不再写它。旧卡上点这几个按钮只回一句“已下线”（`app/card_actions.py` 的 `MOVED_CARDS`），不记原则、不回答。以前记下的原则（`source.by` 为 `standing_answer`）照旧生效；`<state>/standing-forms/` 留在盘上，备份照旧跳过，可以手动删 |
 | 其他已下线卡片的按钮 | 见[已下线的功能](reference.md#已下线的功能) |
 
 ## 不再读取的变量

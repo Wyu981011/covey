@@ -31,11 +31,11 @@ from covey.app.artifact_policy import artifact_key
 from covey.core.checkpoint import artifact_paths
 from covey.cards.artifact_panels import artifact_panel
 from covey.cards.held_note import ANSWER_REQUIRED, note_card, note_parts
-from covey.app.answers import (AnswerIncomplete, SKIPPED, TITLE_CHARS, UNANSWERED_NOTE, answer_title, form_answers,
+from covey.app.answers import (NOTE_EMPTY, AnswerIncomplete, SKIPPED, TITLE_CHARS, UNANSWERED_NOTE, answer_title, form_answers,
                                         picked_fields)
 from covey.app.questions import scoped_question
 from covey.app.task_card import StreamingCard
-from covey.cards.question_cards import (PICK, SKIP_ALL_KIND, SKIP_ALL_LABEL, SKIP_LABEL, STATUS_LABEL, TOP_COPY,
+from covey.cards.question_cards import (PICK, SKIP_ALL_KIND, SKIP_LABEL, STATUS_LABEL, TOP_COPY,
                                                  question_card,
                                                  question_element)
 from covey.cards.review import question_preview, recent_user_questions
@@ -400,11 +400,11 @@ class QuestionTest(QuestionFixture, unittest.TestCase):
                 text = json.dumps(card, ensure_ascii=False)
                 self.assertIn("共 2 道题：逐题选择或填写，最后点“提交回答”。", text)
                 self.assertIn("直接在话题里回复会先保存为补充", text)
-                self.assertNotIn("问题不合适 / 修改要求", text)  # Folded into 只发补充说明 (2026-11-04 18:27).
-                self.assertIn(f"点“{SKIP_ALL_LABEL}”", text)
+                self.assertNotIn("问题不合适 / 修改要求", text)  # Folded into a 补充说明 alone (2026-11-04 18:27, T631).
+                self.assertIn("写了补充说明，没答的题记为不回答此题", text)
                 self.assertNotIn("也可以直接在话题里回复", text)
                 self.assertIn(f"不想回答的题选“{SKIP_LABEL}”", text)
-                self.assertEqual("每题都处理后提交才能继续" in text, blocking)
+                self.assertEqual("提交了任务才继续" in text, blocking)
                 for element in card["elements"]:
                     self.assertNotIn("initial_option", element)
                     self.assertNotIn("initial_options", element)
@@ -674,15 +674,13 @@ class QuestionCardLookTest(unittest.TestCase):
         help_panel = next(e for e in form["elements"] if e.get("tag") == "collapsible_panel")
         self.assertEqual(help_panel["header"]["title"]["content"], "怎么回答")
         rules = help_panel["elements"][0]["content"]
-        for rule in (SKIP_LABEL, "写了回答就以你写的为准", "补充说明", "问题不合适", SKIP_ALL_LABEL):
+        for rule in (SKIP_LABEL, "写了回答就以你写的为准", "补充说明", "问题不合适", "没答的题记为不回答此题"):
             self.assertIn(rule, rules)
         self.assertNotIn("每个输入框最多", text_of(card))
         # The form sends what it always sent: the same field names and values.
         fields = {e["name"]: e for e in walk_dicts(form["elements"]) if e.get("name")}
-        # 先问一句 and 不处理 under 提交回答 (T604, test_ask_first, test_set_aside) have names of their own; the fields
-        # are unchanged.
-        self.assertEqual(set(fields), {"option_0", "answer_0", "answer_1", "skip_1", "supplement", "skip_all", "submit",
-                                       "ask_first", "set_aside"})
+        # 不处理 beside 提交回答 (T604, test_set_aside) has a name of its own; the fields are unchanged.
+        self.assertEqual(set(fields), {"option_0", "answer_0", "answer_1", "skip_1", "supplement", "submit", "set_aside"})
         self.assertEqual([o["value"] for o in fields["option_0"]["options"]], ["0", "1", "skip"])
         self.assertEqual(question_element(two_questions())["elements"][0]["content"], "**等你 · 等你回答后继续**")
 
@@ -735,9 +733,9 @@ class QuestionStatusClickTest(QuestionFixture, unittest.TestCase):
 
 
 class SkipAllTest(QuestionFixture, unittest.TestCase):
-    """“这些题先不答，只发补充说明” (repo review U2, the owner's choice): every question 不回答此题, the 补充说明
-    sent and required. T191 answered five cards in a row with 不回答此题 per question and a 补充说明 that was
-    the new instruction; #1180's 提交回答 was refused first."""
+    """A 补充说明 alone (repo review U2, the owner's choice): every question 不回答此题, the 补充说明 sent. T191 answered
+    five cards in a row with 不回答此题 per question and a 补充说明 that was the new instruction; #1180's 提交回答 was refused
+    first. Its own button 只发补充说明 was folded into 提交回答 (T631); a card sent before still sends it so."""
 
     def click(self, fields, message_id=""):
         return self.app.interaction.interaction_action(self.ctx_topic, {
@@ -745,24 +743,27 @@ class SkipAllTest(QuestionFixture, unittest.TestCase):
             "action_value": {"kind": SKIP_ALL_KIND, "topic_id": self.ctx_topic.topic_id, "token": self.token},
             "form_value": fields})
 
-    def test_every_question_card_has_the_button_beside_submit(self):
+    def test_every_question_card_has_submit_and_set_aside_only(self):
         for questions in (self.record["questions"], self.record["questions"] + [{"id": "b", "question": "顺序？"}]):
             with self.subTest(len(questions)):
                 form = question_element({**self.record, "questions": questions})
-                # Two buttons on one row, 提交回答 first and blue (the owner, 2026-11-04 18:27); the row under it has
-                # the lesser ones (先问一句 and 不处理, test_ask_first, test_set_aside).
-                row = form["elements"][-2]
+                # Two buttons on one row, 提交回答 first and blue (the owner, 2026-11-04 18:27), then 不处理 (T631: five
+                # buttons read as too many; test_question_submit, test_set_aside).
+                row = form["elements"][-1]
                 buttons = [c["elements"][0] for c in row["columns"]]
-                self.assertEqual([b["text"]["content"] for b in buttons], ["提交回答", SKIP_ALL_LABEL])
+                self.assertEqual([b["text"]["content"] for b in buttons], ["提交回答", "不处理"])
                 self.assertEqual([b["type"] for b in buttons], ["primary_filled", "default"])
-                skip = buttons[1]
-                self.assertEqual((skip["form_action_type"], skip["name"]), ("submit", "skip_all"))
-                self.assertEqual(skip["behaviors"][0]["value"],
-                                 {"kind": SKIP_ALL_KIND, "topic_id": self.record["topic_id"], "token": self.token})
-                # Besides them only the option buttons of a single-choice question (TopLevelPickTest), 先问一句 and 不处理.
+                # Besides them only the option buttons of a single-choice question (TopLevelPickTest).
                 self.assertEqual([e["name"] for e in walk_dicts(form) if e.get("tag") == "button"
-                                  and not e["name"].startswith("pick_")], ["submit", "skip_all", "ask_first", "set_aside"])
+                                  and not e["name"].startswith("pick_")], ["submit", "set_aside"])
                 self.assertIn("**补充说明**（可选）", text_of(form))
+
+    def test_submit_with_a_supplement_alone_sends_the_same(self):
+        self.app.interaction.interaction_action(self.ctx_topic, {
+            "chat_id": "oc_chat", "event_id": "submit-note", "message_id": "",
+            "action_value": {"kind": "bridge_question", "topic_id": self.ctx_topic.topic_id, "token": self.token},
+            "form_value": {"supplement": "先帮我整理到一个飞书文档里"}})
+        self.rpc.answer.assert_called_once_with(17, {"scope": {"answers": [SKIPPED, UNANSWERED_NOTE + "先帮我整理到一个飞书文档里"]}})
 
     def test_whatever_was_picked_every_question_is_skipped_and_the_supplement_goes(self):
         # Picked and written fields are dropped: the owner said not to answer these questions.
@@ -782,8 +783,7 @@ class SkipAllTest(QuestionFixture, unittest.TestCase):
                 self.click({"option_0": "0", "supplement": supplement}, "om_qcard")
                 _, chat, _, source, card = self.app.cards.repaint_browse_card.call_args.args
                 self.assertEqual((chat, source), ("oc_chat", "om_qcard"))
-                self.assertEqual(card["body"]["elements"][2]["content"],
-                                 f"⚠️ 补充说明是空的，这次没有提交。点“{SKIP_ALL_LABEL}”前，先在最下面的“补充说明”里写上你想说的")
+                self.assertEqual(card["body"]["elements"][2]["content"], "⚠️ " + NOTE_EMPTY)
                 self.assertIn('"tag": "form"', json.dumps(card))  # Still open: written and sent again.
         self.rpc.answer.assert_not_called()
         self.assertEqual(json.loads(self.path.read_text())["status"], "pending")
@@ -829,8 +829,7 @@ class TopLevelPickTest(QuestionFixture, unittest.TestCase):
                                                                "token": self.token, PICK: 1})
         self.assertIn("- **全部**：处理全部数据", text_of(form))  # The options' notes stay above the buttons.
         self.assertIn("点选项就提交；都不合适时写在回答框再点“提交回答”，也可以引用这张卡直接回复。", text_of(form))
-        for name in ("submit", "skip_all"):  # 提交回答 and 只发补充说明 stay, with the answer box.
-            form_button(form, name)
+        form_button(form, "submit")  # 提交回答 stays, with the answer box.
         self.assertTrue([e for e in walk_dicts(form) if e.get("name") == "answer_0"])
 
     def test_a_topic_card_shows_option_buttons_too(self):
@@ -840,8 +839,7 @@ class TopLevelPickTest(QuestionFixture, unittest.TestCase):
         self.assertEqual([c["elements"][0]["name"] for c in row["columns"]], ["pick_0", "pick_1", "pick_skip"])
         self.assertIn("点选项就提交；都不合适时写在回答框再点“提交回答”，也可以直接在话题里回复。", text_of(form))
         self.assertIn("也可以直接在话题里回复，当作这道题的回答。", text_of(form))
-        for name in ("submit", "skip_all"):
-            form_button(form, name)
+        form_button(form, "submit")
 
     def test_other_cards_keep_the_dropdown(self):
         other = {"id": "b", "question": "顺序？", "options": [{"label": "先后"}]}

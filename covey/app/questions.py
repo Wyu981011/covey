@@ -26,10 +26,10 @@ from covey.core.locks import resource_lock
 from covey.core.providers import retired_provider, retired_provider_notice
 from covey.core.run_dir import run_dir, runner_alive
 from covey.cards.elements import md
-from covey.cards.question_cards import (ASK_HELD, ASK_SETTLED, ASKED, FOLDED, SET_ASIDE, SET_ASIDE_ANSWER, SET_ASIDE_HELD,
-                                        SET_ASIDE_SETTLED, answer_notice_card, extras, folded, folded_refusal)
-from covey.app.answers import (ATTACHMENTS, answer_message, answer_title, ask_id, ask_message, ask_title,
-                               question_feedback_fields, set_aside_answers, set_aside_message, submitted_answer)
+from covey.cards.question_cards import (FOLDED, SET_ASIDE, SET_ASIDE_ANSWER, SET_ASIDE_HELD, SET_ASIDE_SETTLED,
+                                        answer_notice_card, aside_offered, folded, folded_refusal)
+from covey.app.answers import (ATTACHMENTS, answer_message, answer_title, question_feedback_fields, set_aside_answers,
+                               set_aside_message, submitted_answer)
 from covey.app.checkpoint_questions import CheckpointQuestions
 from covey.app.held_notes import HeldNotes
 from covey.app.native_questions import NativeQuestions, turn_output
@@ -400,43 +400,8 @@ class Questions:
     def show_answer_notice(self, ctx, chat, token, text, mid):
         return self.display.show_answer_notice(ctx, chat, token, text, mid)
 
-    def ask_first(self, ctx, chat, token, words, event_id, *, sender=""):
-        """先问一句 on question ``token``'s form (T604 #13): the record keeps it (cards/question_cards.py ASKED) and both
-        cards say it, their form still open; once the click is acknowledged the asking topic gets ``words`` the way
-        it gets a message (``queue_ask``). Nothing is answered: the question stays pending and its task waits as it
-        did. ValueError when it can no longer be asked (answered, folded, a turn held on it, its form not shown yet).
-        False for the same click again, which asks nothing."""
-        path = question_path(ctx, token)
-        with question_card_lock(path):  # As an answer: a click on a form still being recorded waits for it.
-            record = scoped_question(ctx, chat, token)
-            if folded(record):
-                raise QuestionFolded(folded_refusal(record))
-            if record.get("status") != "pending":
-                raise ValueError(ASK_SETTLED)
-            if not extras(record):
-                raise ValueError(ASK_HELD)
-            self.require_delivered_question(ctx, record)
-            if (record.get(ASKED) or {}).get("event") == event_id:
-                return False
-            asked = {"at": time.time(), "text": words, "event": event_id}
-            record = update_question(path, lambda current: {**current, ASKED: asked}, expected={"pending"})
-            if record is None:
-                raise ValueError(ASK_SETTLED)
-            self.paint_question_state(ctx, record)  # Redrawn whole: 补充说明 is empty again.
-        after_ack(functools.partial(self._queue_question_ask, ctx, chat, record, words, event_id, sender))
-        return True
-
-    def _queue_question_ask(self, ctx, chat, record, words, event_id, sender=""):
-        """``ask_first``'s turn: with the asking task's checkpoint, as an answer's continuation would have it, so the
-        task that waits for the answer is not taken for one that went on (app/runs.py _continue_previous)."""
-        original = self.harness.topic_record(ctx, chat, record["job_id"]) or {}
-        prior = read_checkpoint(Path(original["checkpoint_path"])) if original.get("checkpoint_path") else None
-        job = self.queue_ask(ctx, chat, words, ask_message(record, words), ask_id(record["token"], event_id),
-                             title=ask_title(words), prior=prior, sender=sender)
-        self.runtime.log(f"question asked first token={record['token'][:10]} job=#{getattr(job, 'job_id', None)}")
-
     def queue_ask(self, ctx, chat, shown, text, message_id, *, title="", prior=None, sender=""):
-        """A 先问一句 in ctx's topic, from a question card or a 代发草稿 card (app/owner_send.py): ``text`` (what the model
+        """A 先问一句 in ctx's topic, from a 代发草稿 card (app/owner_send.py): ``text`` (what the model
         reads; ``shown`` the owner's words, which its card shows) written to the topic's history, then queued the way a
         message of the topic is (app/submission.py enqueue_chat_job with ``steer``): into the task the topic runs, as
         a supplement, when it takes one, else as the topic's next turn. ``message_id`` starts with ASK_PREFIX, so the
@@ -447,8 +412,8 @@ class Questions:
                                      title=title, sender_id=sender, steer=True)
 
     def set_aside(self, ctx, chat, token, event_id, *, by=""):
-        """不处理 on question ``token``'s form (T604 #15): every question 不回答此题 with nothing added (as 只发补充说明
-        without its note), saved and nothing sent; the record turns SET_ASIDE, so it leaves 等你 everywhere (core/board_read.py
+        """不处理 on question ``token``'s form (T604 #15): every question 不回答此题 with nothing added (as a 补充说明 alone
+        would skip them, without it), saved and nothing sent; the record turns SET_ASIDE, so it leaves 等你 everywhere (core/board_read.py
         asks reads pending ones only) and a message of the topic is no answer to it. The topic's next turn takes it as its
         answer (``take_set_aside``); until then ``restore`` (撤销) opens the form again. Its task waits as it did.
         ValueError when it can no longer be set aside; False when it already is (the same click again)."""
@@ -461,7 +426,7 @@ class Questions:
                 return False
             if record.get("status") != "pending":
                 raise ValueError(SET_ASIDE_SETTLED)
-            if not extras(record):
+            if not aside_offered(record):
                 raise ValueError(SET_ASIDE_HELD)
             self.require_delivered_question(ctx, record)
             record = transition_question(path, {"pending"}, status=SET_ASIDE, response_kind=SET_ASIDE,

@@ -78,7 +78,7 @@ class QuestionDisplay:
 
     def with_others(self, ctx, record):
         """``record`` with what else waits for the owner (``OTHERS``, never saved) once he has settled it himself (an
-        answer, 只发补充说明, a message of the topic taken as one, 不处理; a feedback or a cancel is not one): the 看板's
+        answer, a 补充说明 alone, a message of the topic taken as one, 不处理; a feedback or a cancel is not one): the 看板's
         count (app/overview.py waiting_count), in the chat that has a 看板 card (the private chat, a personal group)
         only; the record as it was when nothing else waits or the count cannot be read."""
         if record.get("status") not in ("answered", SET_ASIDE) or record.get("response_kind") == "feedback":

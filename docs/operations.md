@@ -183,7 +183,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
    ├─ backend-health/              各后端最近一次任务的结果和模型目录查询结果，doctor 从这里读
    ├─ launch-models/、native-models/   模型目录缓存、扩展的实测档位
    ├─ pi-sessions/、<网关名>/、<扩展>-sessions/   后端自己的会话和运行文件（<网关名>/relay.log 是模型网关的繁忙记录）
-   ├─ stuck-check/、standing-forms/、track-judge/、memory-candidates/   小模型一次调用的工作目录：「看看」、以后这类按推荐走的起草、同时做几件事的判断、你反复说的分组
+   ├─ stuck-check/、track-judge/、memory-candidates/   小模型一次调用的工作目录：「看看」、同时做几件事的判断、你反复说的分组
    └─ claude-diagnostics/、<扩展>-diagnostics/   后端诊断
 ```
 

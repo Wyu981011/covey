@@ -121,7 +121,6 @@ NOT_BACKED_UP = {
     "devices": "a device's working files on the hub",
     "nodes": "节点's keys (credentials) and samples",
     "stuck-check": "the working directory of a small model's run",
-    "standing-forms": "the working directory of a small model's run",
     "track-judge": "the working directory of a small model's run",
     "memory-candidates": "the working directory of a small model's run",
     "launch-models": "model lists, asked again",

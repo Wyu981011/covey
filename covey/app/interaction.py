@@ -14,11 +14,10 @@ from covey.core.turn_words import retry_hint
 from covey.core.jobs import job_key, quick_held, upsert_job_record
 from covey.core.locks import card_lock
 from covey.cards.elements import md
-from covey.cards.question_cards import (ASK_EMPTY, ASK_KIND, ASK_SETTLED, PICK, RESTORE_KIND, SET_ASIDE_KIND,
-                                        SET_ASIDE_SETTLED, SKIP_ALL_KIND, SUPPLEMENT, folded, folded_refusal,
-                                        question_feedback_card)
+from covey.cards.question_cards import (ASK_KIND, PICK, RESTORE_KIND, SET_ASIDE_KIND, SET_ASIDE_SETTLED, SKIP_ALL_KIND, folded,
+                                        folded_refusal, question_feedback_card)
 from covey.app.card_lanes import after_ack
-from covey.app.answers import ATTACHMENTS, AnswerIncomplete, picked_fields, skip_all_fields
+from covey.app.answers import ATTACHMENTS, AnswerIncomplete, picked_fields, skip_all_fields, with_note
 from covey.app.question_display import standalone_card, top_card
 from covey.app.questions import (QuestionFolded, fold_older_questions, question_card_lock, question_path,
                                           scoped_question)
@@ -287,8 +286,8 @@ class Interaction:
         return False
 
     def interaction_action(self, ctx, event):
-        """A click on a question's card (提交回答, 只发补充说明, 先问一句, 不处理 and its 撤销, its state, a saved answer's
-        check), on a supplement's receipt or a held note's card, or an old process panel's page."""
+        """A click on a question's card (提交回答, 不处理 and its 撤销, an older card's 只发补充说明 and 先问一句, its state, a saved
+        answer's check), on a supplement's receipt or a held note's card, or an old process panel's page."""
         raw = action_value(event)
         kind = raw.get("kind")
         if raw.get("topic_id") != ctx.topic_id:
@@ -340,15 +339,15 @@ class Interaction:
             try:
                 if PICK in raw:  # An option's button on a top-level copy: that option is the answer.
                     fields = picked_fields(record["questions"], fields, raw[PICK])
+                elif record.get("status") == "pending":  # 提交回答: with 补充说明, what was left unanswered is skipped.
+                    fields = with_note(record["questions"], fields)
                 self.questions.submit_answer(ctx, chat, raw["token"], fields, mid)
             except AnswerIncomplete as exc:
                 self.questions.show_answer_notice(ctx, chat, raw["token"], str(exc), mid)
             except QuestionFolded:
                 self.show_folded(ctx, chat, event, token, mid)
-        elif kind == SKIP_ALL_KIND:
+        elif kind in (SKIP_ALL_KIND, ASK_KIND):  # A card sent before T631: its 补充说明 alone, as 提交回答 sends it.
             self.skip_all(ctx, chat, event, token, fields, mid)
-        elif kind == ASK_KIND:
-            self.ask_first(ctx, chat, event, token, fields, mid)
         elif kind == SET_ASIDE_KIND:
             self.set_aside(ctx, chat, event, token, mid)
         elif kind == RESTORE_KIND:
@@ -360,10 +359,10 @@ class Interaction:
         return True
 
     def skip_all(self, ctx, chat, event, token, fields, mid):
-        """“这些题先不答，只发补充说明”: every question 不回答此题 and the 补充说明 sent, through the same answer
-        path as 提交回答 (a runner that still waits for the answer gets it). An empty 补充说明 is refused on the
-        clicked card, which is redrawn with the refusal under the form; a small notice card when that card
-        cannot be redrawn (a form on a task card)."""
+        """只发补充说明 or 先问一句 on a card sent before T631 merged them into 提交回答: every question 不回答此题 and the
+        补充说明 sent, through the same answer path as 提交回答 (a runner that still waits for the answer gets it), whatever
+        was picked. An empty 补充说明 is refused on the clicked card, which is redrawn (now with 提交回答 alone) with the
+        refusal under the form; a small notice card when that card cannot be redrawn (a form on a task card)."""
         record = scoped_question(ctx, chat, token)
         if folded(record):
             self.show_folded(ctx, chat, event, token, mid)
@@ -399,29 +398,6 @@ class Interaction:
             self.questions.show_answer_notice(ctx, chat, token, text, mid)
         else:
             elsewhere(text)
-
-    def ask_first(self, ctx, chat, event, token, fields, mid):
-        """先问一句 (T604 #13): what the owner wrote in 补充说明 goes to the asking topic as a question about these
-        questions (Questions.ask_first), the card stays open and nothing counts as an answer. An empty 补充说明 is
-        refused on the clicked card as 只发补充说明's is (``refuse_on_card``; under a task card's form, a line in the
-        topic: the notice card 提交回答 gets speaks of an answer). A question settled meanwhile gets its card redrawn."""
-        record = scoped_question(ctx, chat, token)
-        if folded(record):
-            self.show_folded(ctx, chat, event, token, mid)
-            return
-        if record.get("status") != "pending":
-            with question_card_lock(question_path(ctx, token)):
-                self.questions.paint_question_state(ctx, scoped_question(ctx, chat, token))
-            raise ValueError(ASK_SETTLED)
-        words = str(fields.get(SUPPLEMENT) or "").strip()
-        if not words:
-            self.refuse_on_card(ctx, chat, event, token, ASK_EMPTY, mid, elsewhere=lambda text: self.messenger.reply(
-                ctx, chat, text + "。", self.voice.key("question-ask-empty", mid), voice=self.voice))
-            return
-        try:
-            self.questions.ask_first(ctx, chat, token, words, mid, sender=str(event.get("operator_id") or ""))
-        except QuestionFolded:  # Folded between the read above and its own check.
-            self.show_folded(ctx, chat, event, token, mid)
 
     def set_aside(self, ctx, chat, event, token, mid):
         """不处理 (T604 #15): every question 不回答此题, off the 等你 lists, nothing sent until the topic's next turn

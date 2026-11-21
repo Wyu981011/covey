@@ -9,7 +9,7 @@ import time
 from covey.app import web_images, web_said
 from covey.app.web_said import NOT_ANSWERED  # turn.data answers' choice of a question the owner chose not to answer (data contract v4).
 from covey.app.answers import SKIPPED
-from covey.cards.question_cards import ASKED, SET_ASIDE, extras, question_context
+from covey.cards.question_cards import SET_ASIDE, aside_offered, question_context
 from covey.core import board_read, triage, web_sync
 from covey.core.jobs import job_key, topic_job_records
 from covey.core.state import epoch_seconds, read_object
@@ -89,7 +89,7 @@ def answered(questions, records) -> dict:
     """{("owner"|"agent", job key): [{question, choice}]} of the topic's answered question cards (data contract v4), from
     the question records alone, never a turn's words: an answer sent on as a follow-up task (its message ``answer-<token>``)
     is the owner's turn of that task; one handed to the task that asked it, which went on (a native question), is that
-    task's own turn. A question skipped (不回答此题, 只发补充说明, or feedback on the questions) is NOT_ANSWERED."""
+    task's own turn. A question skipped (不回答此题, a 补充说明 alone, or feedback on the questions) is NOT_ANSWERED."""
     follow = {str(record.get("message_id") or ""): record for record in records}
     found = {}
     for row in questions:
@@ -194,18 +194,15 @@ def question(row, topic, count, project="", number=0, records=(), rows=()):
 
 
 def lesser(row, state, closed_by) -> dict:
-    """What the page needs of the form's lesser buttons (data contract v20, cards/question_cards.py extras): ``extras`` whether 先问一句
-    and 不处理 can be clicked on an open question, ``asked`` the last 先问一句 ({at, text}) or null, ``restorable`` whether a question set
-    aside (``closed_by`` set_aside) can still be opened again (its topic's next turn has not taken it)."""
-    asked = row.get(ASKED) if isinstance(row.get(ASKED), dict) else {}
-    text = web_images.scrub(str(asked.get("text") or "").strip())
-    return {"extras": bool(state == "open" and extras(row)), "restorable": closed_by == "set_aside",
-            "asked": {"at": moment(asked.get("at")) or None, "text": text[:500]} if text else None}
+    """What the page needs of 不处理 beside 提交回答 (data contract v20, v29; cards/question_cards.py aside_offered): ``extras`` whether
+    it can be clicked on an open question, ``restorable`` whether a question set aside (``closed_by`` set_aside) can still be opened
+    again (its topic's next turn has not taken it). v29 took 先问一句 off, and with it ``asked``."""
+    return {"extras": bool(state == "open" and aside_offered(row)), "restorable": closed_by == "set_aside"}
 
 
 def closed(row, state, records=(), rows=()) -> tuple:
     """(closed_at, closed_by) of a question record whose web ``state`` is ``state`` (data contract v9): when it stopped waiting
-    (epoch seconds, None when not known) and how. ``closed_by``: owner (answered), feedback (只发补充说明 or feedback on the
+    (epoch seconds, None when not known) and how. ``closed_by``: owner (answered), feedback (a 补充说明 alone or feedback on the
     questions), skipped (每题都选了不回答), lead (the project's lead answered it, COVEY_PROJECT_TRIAGE), superseded (a later
     question of the topic folded it), stale (daily maintenance closed it), switched, rewound, lead_stop, web_stop or cancelled;
     "" while it is open or held. The time is the record's own (core/store.py SETTLED_STAMPS); a record from before it has none,

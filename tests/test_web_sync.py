@@ -109,13 +109,9 @@ class FakeApp:
         self.steering = SimpleNamespace(steer_stage=lambda job: "running", deliver_steer=self.deliver)
         self.questions = SimpleNamespace(submit_answer=lambda ctx, chat, token, fields, event: self.answers.append((ctx.topic_id, token, fields, event)),
                                          paint_question_state=lambda ctx, record: self.painted.append((record["token"], record["status"])),
-                                         ask_first=self.ask_first, set_aside=self.set_aside, restore=self.restore)
-        self.lesser = []  # (what, token, words or by, event) of 先问一句, 不处理 and 撤销.
+                                         set_aside=self.set_aside, restore=self.restore)
+        self.lesser = []  # (what, token, by, event) of 不处理 and 撤销.
         self.controls = SimpleNamespace(cancel_reply_job_from_card=lambda ctx, action, chat, message, others=0: self.stopped.append(action))
-
-    def ask_first(self, ctx, chat, token, words, event, *, sender=""):
-        self.lesser.append(("ask", token, words, event, sender))
-        return True
 
     def set_aside(self, ctx, chat, token, event, *, by=""):
         self.lesser.append(("aside", token, by, event))
@@ -773,8 +769,35 @@ class InboxTest(WebCase):
         self.web.op("answer", 1, "op-4", TOPIC, token=TOKEN, skip=True, note="")
         self.web.op("answer", 2, "op-5", TOPIC, token=TOKEN, skip=True, note="先放一放")
         self.sync.inbox_once()
-        self.assertEqual([(r["state"], r["message"][:6]) for r in self.web.acks], [("failed", "只发补充说明"), ("done", "补充说明已交")])
+        self.assertEqual([(r["state"], r["message"][:6]) for r in self.web.acks], [("failed", "补充说明是空"), ("done", "补充说明已交")])
         self.assertEqual([a[2] for a in self.app.answers], [{"skip_0": True, "supplement": "先放一放"}])
+
+    def test_a_note_alone_or_with_some_answers_skips_what_is_left_out(self):
+        """T631 (data contract v29): 提交回答 is the one button, a 补充说明 alone skips every question and one with some answers
+        the questions left out; a page before v29 sends 先问一句 as ``ask``, which is the note alone."""
+        self.topic()
+        self.question(questions=[{"id": "q1", "question": "用哪个库？", "options": [{"label": "A"}, {"label": "B"}]},
+                                 {"id": "q2", "question": "放哪？", "options": []}])
+        self.web.op("answer", 1, "op-4", TOPIC, token=TOKEN, note="先说说 A 和 B 差在哪")
+        self.web.op("answer", 2, "op-5", TOPIC, token=TOKEN, answers={}, note="")
+        self.web.op("answer", 3, "op-6", TOPIC, token=TOKEN, answers={"q1": "A"}, note="")
+        self.sync.inbox_once()
+        self.assertEqual([r["state"] for r in self.web.acks], ["done", "failed", "failed"])
+        self.assertEqual(self.web.acks[0]["message"], "补充说明已交给任务（题目算没答）")
+        self.assertIn("不答题时写上补充说明", self.web.acks[1]["message"])
+        self.assertIn("每题都要答，还差：放哪？（不答的题写上补充说明就算不回答）", self.web.acks[2]["message"])
+        self.assertEqual(self.app.answers[0][2], {"skip_0": True, "skip_1": True, "supplement": "先说说 A 和 B 差在哪"})
+        self.app.answers.clear()
+        self.question(questions=[{"id": "q1", "question": "用哪个库？", "options": [{"label": "A"}, {"label": "B"}]},
+                                 {"id": "q2", "question": "放哪？", "options": []}])
+        self.web.op("answer", 4, "op-7", TOPIC, token=TOKEN, answers={"q1": "B"}, note="放哪你定")
+        self.web.op("answer", 5, "op-8", TOPIC, token=TOKEN, ask=True, note="B 稳吗？")
+        self.sync.inbox_once()
+        self.assertEqual([r["state"] for r in self.web.acks[3:]], ["done", "done"])
+        self.assertEqual(self.web.acks[3]["message"], "答案已交给任务")
+        self.assertEqual([a[2] for a in self.app.answers], [{"option_0": "1", "skip_1": True, "supplement": "放哪你定"},
+                                                            {"skip_0": True, "skip_1": True, "supplement": "B 稳吗？"}])
+        self.assertEqual(self.app.lesser, [])
 
     def test_each_question_can_be_left_unanswered_or_answered_in_words(self):
         """T617, 2026-11-21: the page's form had only the options, where the card has 不回答此题 for each question and an answer box
@@ -799,23 +822,20 @@ class InboxTest(WebCase):
         with self.assertRaises(ValueError):
             answer_fields(record, {"q1": {"skip": True}}, "")
 
-    def test_ask_first_set_aside_and_restore_go_to_the_questions_own_paths(self):
+    def test_set_aside_and_restore_go_to_the_questions_own_paths(self):
         self.topic()
         self.question()
-        self.web.op("answer", 1, "op-4", TOPIC, token=TOKEN, ask=True, note="")
-        self.web.op("answer", 2, "op-5", TOPIC, token=TOKEN, ask=True, note="A 和 B 差在哪？")
-        self.web.op("answer", 3, "op-6", TOPIC, token=TOKEN, aside=True)
+        self.web.op("answer", 1, "op-6", TOPIC, token=TOKEN, aside=True)
         self.sync.inbox_once()
-        self.assertEqual([r["state"] for r in self.web.acks], ["failed", "done", "done"])
-        self.assertIn("先写上", self.web.acks[0]["message"])
-        self.assertEqual(self.app.lesser, [("ask", TOKEN, "A 和 B 差在哪？", "web-op-5", "ou_owner"), ("aside", TOKEN, "ou_owner", "web-op-6")])
+        self.assertEqual([r["state"] for r in self.web.acks], ["done"])
+        self.assertEqual(self.app.lesser, [("aside", TOKEN, "ou_owner", "web-op-6")])
         self.question(status="set_aside", set_aside_at=T0 + 10, set_aside_event="web-op-6")
-        self.web.op("answer", 4, "op-7", TOPIC, token=TOKEN, answers={"q1": "A"})
-        self.web.op("answer", 5, "op-8", TOPIC, token=TOKEN, restore=True)
+        self.web.op("answer", 2, "op-7", TOPIC, token=TOKEN, answers={"q1": "A"})
+        self.web.op("answer", 3, "op-8", TOPIC, token=TOKEN, restore=True)
         self.sync.inbox_once()
-        self.assertEqual([r["state"] for r in self.web.acks[3:]], ["failed", "done"])
-        self.assertIn("先点撤销", self.web.acks[3]["message"])
-        self.assertIn("在网页上", self.web.acks[3]["message"])
+        self.assertEqual([r["state"] for r in self.web.acks[1:]], ["failed", "done"])
+        self.assertIn("先点撤销", self.web.acks[1]["message"])
+        self.assertIn("在网页上", self.web.acks[1]["message"])
         self.assertEqual(self.app.lesser[-1], ("restore", TOKEN, "", "web-op-8"))
         self.assertEqual(self.app.answers, [])
 
@@ -1687,9 +1707,9 @@ class ExtrasTest(WebCase):
             "tok-stale-01": ("cancelled", T0 + 100, "stale", None),
         })
 
-    def test_a_question_says_its_background_and_what_its_lesser_buttons_can_do(self):
-        """T617 (data contract v21): each question's 背景 line, ``extras`` (先问一句 and 不处理 can be clicked), the last 先问一句 and a
-        question set aside, ``restorable`` until the topic's next turn takes it."""
+    def test_a_question_says_its_background_and_whether_it_can_be_set_aside(self):
+        """T617 (data contract v20): each question's 背景 line, ``extras`` (不处理 can be clicked; v29 took 先问一句 off, and the last
+        one, ``asked``, with it) and a question set aside, ``restorable`` until the topic's next turn takes it."""
         self.topic()
         self.question(questions=[{"id": "q1", "question": "用哪个库？", "context": "决定依赖", "options": [{"label": "A"}]}],
                       asked_first={"at": T0 + 3, "text": "A 稳吗？", "event": "om_x"})
@@ -1699,8 +1719,9 @@ class ExtrasTest(WebCase):
         self.sync.push_once(T0 + 40)
         by = {item["key"]: item["data"] for item in self.web.items("question")}
         self.assertEqual(by[TOKEN]["questions"][0]["context"], "决定依赖")
-        self.assertEqual((by[TOKEN]["extras"], by[TOKEN]["asked"], by[TOKEN]["restorable"]), (True, {"at": T0 + 3, "text": "A 稳吗？"}, False))
-        self.assertEqual((by["tok-live-0001"]["extras"], by["tok-live-0001"]["asked"]), (False, None))
+        self.assertEqual((by[TOKEN]["extras"], by[TOKEN]["restorable"]), (True, False))
+        self.assertNotIn("asked", by[TOKEN])  # A record that still has a 先问一句 from before.
+        self.assertEqual(by["tok-live-0001"]["extras"], False)
         aside = by["tok-aside-001"]
         self.assertEqual((aside["state"], aside["closed_by"], aside["closed_at"], aside["restorable"], aside["extras"]),
                          ("answered", "set_aside", T0 + 20, True, False))

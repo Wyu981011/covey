@@ -9,7 +9,7 @@ pickers, the workspace manager, 换配置 (app/harness_switch.py) and 回退
 这些都不用回答了, 飞书应用待补's, the welcome card's, a group's menu card and the shared session's control are here but never reach a task, so
 they name no handler: the Bridge handles them before topic routing (app/proxy_panel.py, app/proxy_resend.py,
 app/owner_send.py, app/group_manager.py, app/redaction_panel.py, app/butler_panel.py, app/settings_hub.py, app/memory_panel.py,
-app/overview.py, app/digest.py, app/app_setup.py, app/welcome.py, app/group_menu.py, app/standing_answers.py). The enabled extensions' kinds (core/extensions.py CARD_KINDS) are
+app/overview.py, app/digest.py, app/app_setup.py, app/welcome.py, app/group_menu.py). The enabled extensions' kinds (core/extensions.py CARD_KINDS) are
 added below, bot_only, their features claiming the clicks.
 """
 from __future__ import annotations
@@ -90,10 +90,10 @@ ACTIONS = {
     "bridge_steer_interrupt": CardAction("打断命令读补充", handler=QUESTIONS),
     "bridge_note": CardAction("处理暂存消息", bot_only=True, handler=QUESTIONS),
     "bridge_question": CardAction("提交回答", handler=QUESTIONS),
-    # Handled by the Bridge, which hands the answer on to a runner that still waits for it (forward_answer);
-    # bot_only: it queues a follow-up task.
+    # 只发补充说明 and 先问一句 on a card sent before T631, which merged them into 提交回答: each sends the 补充说明 with every
+    # question 不回答此题, as 提交回答 with only a 补充说明 does (app/interaction.py skip_all). Handled by the Bridge, which
+    # hands the answer on to a runner that still waits for it (forward_answer); bot_only: it queues a follow-up task.
     "bridge_question_skip": CardAction("只发补充说明", bot_only=True, handler=QUESTIONS),
-    # 先问一句 (T604 #13): the 补充说明 goes to the topic as its next turn or into the task it runs; bot_only: it queues a turn.
     "bridge_question_ask": CardAction("先问一句", bot_only=True, handler=QUESTIONS),
     # 不处理 and its 撤销 (T604 #15): the question set aside or open again; nothing is sent, no task starts.
     "bridge_question_set_aside": CardAction("不处理", handler=QUESTIONS),
@@ -217,12 +217,6 @@ ACTIONS = {
     "bridge_welcome_try": CardAction("发欢迎卡上的示例", bot_only=True),
     # The menu card of a group with a butler (app/group_menu.py KIND).
     "bridge_group_menu": CardAction("群里的菜单"),
-    # 以后这类按推荐走 under a question card and its own card's 记下 / 改一下 / 算了 (app/standing_answers.py): the Bridge
-    # takes them before topic routing (PANELS); 记下 answers the question through its own submit path.
-    "bridge_question_standing": CardAction("以后这类按推荐走"),
-    "bridge_standing_save": CardAction("记下原则"),
-    "bridge_standing_edit": CardAction("改一下原则"),
-    "bridge_standing_cancel": CardAction("不记原则"),
 }
 # 整理专项's cards (cards/project_proposal.py KINDS, COVEY_PROJECT_TIDY): the proposal card, its rename form, the 整理专项 card,
 # 移出 on a topic's card and the 设置 card's 整理专项. The Bridge takes them before topic routing (app/project_tidy.py claim).
@@ -237,6 +231,10 @@ RETIRED_TEXT = {
 # compat: cards sent by a feature that was taken out: (kind, the prefix of its forms' button names) -> what a click gets
 # (a card kind not in ACTIONS is otherwise dropped without a word). Paseo (covey_paseo) was taken out.
 MOVED_CARDS = {("bridge_paseo", "bridge_paseo_"): "Paseo 已下线，卡片上的操作没有执行。"}
+# 以后这类按推荐走 under a question card and its own card's 记下 / 改一下 / 不管了 were taken out (T631): the question is answered on
+# its card; the principles it recorded stay.
+MOVED_CARDS.update({(kind, "standing_"): "“以后这类按推荐走”已下线，没有记原则，也没有回答；在问题卡上直接回答。" for kind in (
+    "bridge_question_standing", "bridge_standing_save", "bridge_standing_edit", "bridge_standing_cancel")})
 
 
 def moved_card_text(event) -> str:

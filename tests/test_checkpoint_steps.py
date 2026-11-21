@@ -79,14 +79,10 @@ class RulesTest(unittest.TestCase):
         for text in ("", None, "看看昨天的日志", "部署到第 331 代"):
             self.assertEqual(images_note(text), "", text)
 
-    def test_the_rules_teach_the_mark_the_standing_answer_button_looks_for(self):
-        # 以后这类按推荐走 is offered only under a card whose every question has one option marked （推荐）
-        # (cards/question_cards.py recommended); the rules never said how to mark one.
+    def test_the_rules_teach_how_to_mark_the_recommended_option(self):
+        # The cards set an option marked （推荐） apart (cards/streaming.py RECOMMENDED); the rules say how to mark one.
         self.assertIn("在 label 末尾加“（推荐）”（一题只标一个）", CHECKPOINT_RULES)
         self.assertIn("不选它的代价", CHECKPOINT_RULES)
-        asked = [{"question": "合并吗", "options": [{"label": "合并（推荐）", "description": "不合并下周要重做"},
-                                                    {"label": "先不合并"}]}]
-        self.assertEqual(question_cards.recommended(asked), [(0, 0)])
 
     def test_the_rules_name_the_background_line_the_card_shows(self):
         # T604 #14: a question may carry one line of background, which the card writes under it.

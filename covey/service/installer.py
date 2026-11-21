@@ -43,8 +43,7 @@ from covey.service.app_check import draw, profile_app_id, profile_app_name
 from covey.service.manager import PROXY_ENV_KEYS, persistable, validate_environment
 
 # What ./install switches on in the service it registers (docs/install.md): the code's default stays off (AGENTS.md rule 4).
-INSTALL_SWITCHES = {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_STANDING_ANSWERS": "1",
-                    "COVEY_BOARD": "1"}
+INSTALL_SWITCHES = {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD": "1"}
 
 DEFAULT_PROFILE = "covey"
 DEFAULT_APP_NAME = "Covey"
@@ -667,7 +666,7 @@ class Installer:
                 "repo": str(REPO_ROOT), "settings": settings}
 
     def default_switches(self):
-        """The switches a new service starts with on (INSTALL_SWITCHES: 专项, 整理专项 只提议, 以后这类按推荐走 and 菜单「看板」:
+        """The switches a new service starts with on (INSTALL_SWITCHES: 专项, 整理专项 只提议 and 菜单「看板」:
         装好就开): put into this shell's environment, which the launch saves in the manifest; one the environment already
         sets stays, under either spelling (``self.env`` holds the old one: ``COVEY_PROJECTS=0`` is ``LARK_BRIDGE_PROJECTS`` there)."""
         for key, value in INSTALL_SWITCHES.items():

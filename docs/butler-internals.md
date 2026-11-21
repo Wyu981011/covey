@@ -175,15 +175,6 @@
 - **工具**：`principle_save` 的 `scope` 是 `owner` 或 `workspace`（要已登记的工作区）；正文相同的返回已有 id。`principle_delete`、`principles_list` 用 `delete`、`entries`。
 - **注入**（`app/runs.py` 的 `Runs.principles`，块由 `app/prompts.py` 的 `principles_block` 写）：新会话在 `bridge_rules` 里，续接的在 `_with_rules` 补的提醒里，所以新原则下一轮就生效。总长约 `PRINCIPLES_CHARS`（2000）字，超了从旧的截。代答话题不带。原则块开头是 `PRINCIPLES_HEAD`。
 
-### 以后这类按推荐走
-
-`app/standing_answers.py`；`COVEY_STANDING_ANSWERS=1` 打开，不设是关，`./install` 新装的服务写 `1`。
-
-- 话题里的问题卡上，每道题都恰好有一个标了“（推荐）”或“(Recommended)”的选项时，表单下多一个按钮「以后这类按推荐走」（不在表单里，不提交它）。只认主人的点击。
-- 点了以后小模型（Haiku，最多 20 秒；开着脱敏的话题不发内容）把这道题概括成这个话题工作区的一条原则，例如“这个工作区：测试通过就合并进 main 并推送；没有在跑的任务时直接部署，不用再问”，另发一张卡给主人看这句话，带「记下」「改一下」「不管了」；小模型没给出时用题目和推荐项拼一句。
-- 「改一下」把这句话放进输入框重画整张卡；「记下」才记成工作区原则（`source.by` 为 `standing_answer`），同时这道题还在等时按推荐项回答；已经答过或取消的只记原则。
-- 话题没有工作区、题已经不在等、没有唯一的推荐项时不出卡，回一句为什么。卡的记录在 `<state>/standing-forms/`，卡只整张换。
-
 ## 知识库的细节
 
 - **存储**（`core/knowledge.py`，只用标准库）：`<state>/knowledge/owner.jsonl`（通用）和 `workspaces/<工作区>.jsonl`，只追加的事件，一行一个：`add`；`update`（新 id，带 `replaces`，旧的变已取代）；`drop`（必须有 `reason`）。读的时候从头重放，得到每条的状态（当前、已取代、已作废）。同目录有生成的 `.md`（每组当前条目）和 `owner-brief.md`（和注入同样 `KNOWLEDGE_CHARS` = 1500 字的摘要）。写在文件的跨进程锁里追加一行，锁里不调飞书、不起子进程；生成的 `.md` 写不出不影响事件。读不了的文件当空，下一次写前改名 `*.bad-<epoch>`；不是事件的行跳过。

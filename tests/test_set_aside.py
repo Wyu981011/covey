@@ -26,14 +26,14 @@ from covey.core.jobs import find_job_record, upsert_job_record
 from covey.core.statuses import QUESTION_TRANSITIONS
 from covey.core.store import update_question
 
-from test_ask_first import ask_row, checkpoint_question
+from test_question_submit import checkpoint_question, send_row
 
 
 class SetAsideCardTest(unittest.TestCase):
-    def test_the_form_offers_it_beside_ask_first_as_a_text_button(self):
+    def test_the_form_offers_it_beside_submit_as_a_button(self):
         form = question_element(checkpoint_question())
-        ask, aside = ask_row(form)
-        self.assertEqual((aside["text"]["content"], aside["type"], aside["name"]), (SET_ASIDE_LABEL, "text", "set_aside"))
+        _, aside = send_row(form)
+        self.assertEqual((aside["text"]["content"], aside["type"], aside["name"]), (SET_ASIDE_LABEL, "default", "set_aside"))
         self.assertNotIn("form_action_type", aside)  # It sends no field.
         self.assertEqual(aside["behaviors"][0]["value"], {"kind": SET_ASIDE_KIND, "topic_id": "t" * 64, "token": "c" * 16})
         self.assertIn(f"先不管这组题：点“{SET_ASIDE_LABEL}”", how_to_answer(checkpoint_question()))

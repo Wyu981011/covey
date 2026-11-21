@@ -6,7 +6,7 @@ KINDS) as the owner's own and says (state, message) for the ack.
   ``web-<op_id>`` to the topic, event_context, append_history, enqueue_chat_job). To a topic that waits for the owner's answer the words
   are taken as a message in its thread is in Feishu (app/interaction.py _interactive_command): with one question waiting they are its
   answer, written (``answer_0``, through the question's own submit path); with several waiting, or one the project's lead holds, they are
-  refused, to be answered on the question, and the question is never closed by them (as its 只发补充说明, the page's handiest box
+  refused, to be answered on the question, and the question is never closed by them (a 补充说明 alone, the page's handiest box,
   would close the question). To the butler's key (core/butler.py butler_topic_id) the words are a message the owner wrote at the top level of
   the private chat: ``hear`` (app/unified.py web_message) takes it through the entry of a Feishu message, access, the duplicate check,
   the extensions and the butler, so the butler answers, opens a topic or hands on as ever. The message id ``web-<op_id>`` is no Feishu
@@ -20,9 +20,10 @@ KINDS) as the owner's own and says (state, message) for the ack.
 - ``seen``: the topic's latest result is marked as seen, as the owner's read receipt in Feishu does (core/topic_seen.py record_reads), so
   the board, the Pins and 手上的事 and the next push (``unseen`` false) follow. Asked again it says done and writes nothing.
 - ``answer``: the question's own submit path (app/questions.py submit_answer) with the fields of app/answers.py answer_fields as the owner's
-  own answer (``owner``: a question without options takes the text written, ``{"skip": true}`` is 不回答此题). ``skip`` true: 只发补充说明,
-  its ``note`` required. The form's lesser buttons (cards/question_cards.py extras) by their own paths (app/questions.py): ``ask`` true is
-  先问一句 with ``note`` as the words, ``aside`` true is 不处理, ``restore`` true is its 撤销. A question that no longer waits (``settled``):
+  own answer (``owner``: a question without options takes the text written, ``{"skip": true}`` is 不回答此题, and with ``note`` a question
+  left out is 不回答此题, as 提交回答 has it since v29). ``skip`` true, and ``ask`` true from a page before v29: the ``note`` alone, which it
+  requires. 不处理 beside 提交回答 (cards/question_cards.py aside_offered) by its own path (app/questions.py): ``aside`` true, and
+  ``restore`` true is its 撤销. A question that no longer waits (``settled``):
   the same answer it has is ``done`` and sent nothing; any other is ``failed`` saying who closed it and how (you, the lead, a newer
   question, maintenance, a stop or a switch) and what to do now.
 - ``stop``: the topic's task stops as a click on its card's 停止 does: forwarded to its task runner when it has one (app/runner_ipc.py), else
@@ -258,21 +259,18 @@ class Ops:
         app, ctx = self.topic(state, chat, topic)
         note = payload.get("note")
         note = str(note).strip() if isinstance(note, str) else ""
-        if payload.get("ask") is True:
-            if not note:
-                raise ValueError("先问一句要先写上你想问的")
-            if not app.questions.ask_first(ctx, chat, token, note, PREFIX + str(row.get("op_id")), sender=self.runtime.owner_open_id or ""):
-                return "这句已经问过了"
-            return "已问话题，回答在话题里；题目还开着，看完再答"
-        if payload.get("skip") is True:
+        # ``skip``, and ``ask`` from a page before v29 (先问一句 folded into 提交回答): the 补充说明 alone.
+        if payload.get("skip") is True or payload.get("ask") is True:
             try:
                 fields = skip_all_fields(record.get("questions") or [], {SUPPLEMENT: note})
             except AnswerIncomplete:
-                raise ValueError("只发补充说明要先写上补充说明") from None
+                raise ValueError("补充说明是空的：写上你想说的再提交") from None
             app.questions.submit_answer(ctx, chat, token, fields, PREFIX + str(row.get("op_id")))
             return "补充说明已交给任务（题目算没答）"
         fields = answer_fields(record, payload.get("answers"), note, owner=True)
         app.questions.submit_answer(ctx, chat, token, fields, PREFIX + str(row.get("op_id")))
+        if note and not any(key.startswith(("option_", "answer_")) for key in fields):
+            return "补充说明已交给任务（题目算没答）"
         return "答案已交给任务"
 
     def aside(self, state, chat, row, record, *, restore=False) -> str:

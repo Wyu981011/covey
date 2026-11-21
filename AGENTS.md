@@ -35,7 +35,7 @@
 | 早晚汇总 | `app/digest.py`、`cards/digest.py`；晚间汇总的“你反复说的” `app/memory_candidates.py`，“本周找你” `app/weekly_usage.py` 的 `reached` | [早晚汇总](docs/usage.md#早晚汇总)、[配置](docs/configuration.md#早晚汇总) |
 | 启动卡与工作区 | `app/launch.py`、`app/launch_submit.py`、`app/model_picker.py`、`app/directory_picker.py`、`core/workspaces.py` | [开始一个任务](docs/usage.md#开始一个任务) |
 | 任务卡与执行过程 | `app/cards.py`、`app/task_card.py`、`core/trace.py`、`cards/streaming.py` | [cards.md](docs/cards.md)、[执行指标口径](docs/architecture.md#执行指标口径) |
-| 问题卡与回答 | `app/questions.py`、`app/native_questions.py`、`app/checkpoint_questions.py`；「以后这类按推荐走」`app/standing_answers.py` | [问题与回答](docs/architecture.md#问题与回答) |
+| 问题卡与回答 | `app/questions.py`、`app/native_questions.py`、`app/checkpoint_questions.py`、`app/answers.py`（提交回答 `with_note`）、`cards/question_cards.py` | [问题与回答](docs/architecture.md#问题与回答) |
 | 补充 | `app/steering.py`、`core/deliveries.py`、`core/steer.py` | [补充投递](docs/architecture.md#补充投递) |
 | 主人撤回或编辑消息（`COVEY_SOURCE_WATCH`，默认开） | `app/source_watch.py`（读回、停止、补充）、`core/source_book.py`（登记的消息）、`cards/source_note.py` | [撤回与编辑](docs/architecture.md#撤回与编辑) |
 | 换配置 | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py` | [话题中途换配置](docs/architecture.md#话题中途换配置) |
@@ -199,7 +199,6 @@
 | `app/settings_hub.py` | The 设置 card: the bot menu's 设置 (event key MENU_KEY) puts the butler's settings on one page, 配置, the workspace … |
 | `app/source_watch.py` | The owner recalled or edited a message the Bridge acts on |
 | `app/stale.py` | Close the records daily maintenance found waiting too long (core.stale.stale_records) |
-| `app/standing_answers.py` | 以后这类按推荐走: the button under a question card whose every question has one recommended option |
 | `app/status_cards.py` | Topic status cards: what the pinned board pins for a topic with a thread in the owner's private chat, in … |
 | `app/steer_forms.py` | The 补充 forms of a task: a 补充 click, the form (steer_form_card), a submitted form (submit_steer_form |
 | `app/steer_interrupt.py` | A supplement the model has not read yet: how long it has waited, and stopping the command that holds it back |
