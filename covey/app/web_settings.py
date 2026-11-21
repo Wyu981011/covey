@@ -174,7 +174,8 @@ class WebSettings:
 
     def usage(self, now=None) -> dict:
         """本周用量 as the bot menu's card counts it (app/weekly_usage.py ``summarize`` over the job records of the window), for the
-        page's own 本周用量 (the page summed its pushed turns, 8.41B against the card's 9.43B)."""
+        page's own 本周用量 (the page summed its pushed turns, 8.41B against the card's 9.43B); ``history`` (v26): the same count by
+        local day and the page's ranges, for its 用量 page (weekly_usage.py ``history``)."""
         from covey.app import weekly_usage
         from covey.core.jobs import select_job_records
         now = time.time() if now is None else now
@@ -182,7 +183,8 @@ class WebSettings:
         titles = {name: harness.spec.title for name, harness in (getattr(self.env.topics, "harnesses", {}) or {}).items()}
         records = select_job_records(Path(self.env.state_dir), lambda r: (weekly_usage.created_at(r) or 0) >= since)
         found = weekly_usage.summarize(records, now, titles)
-        return {**found, "outcomes": dict(found["outcomes"]), "ended": dict(found["ended"]), "at": now}
+        return {**found, "outcomes": dict(found["outcomes"]), "ended": dict(found["ended"]), "at": now,
+                "history": weekly_usage.history(Path(self.env.state_dir), now, titles)}
 
     def config(self, ctx, settings, choices, chat) -> dict:
         """配置 (v22), as the card's page (cards/butler_panel.py config_page) with every section open: ``topic`` (新话题), ``main``

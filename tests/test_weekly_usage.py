@@ -2,17 +2,23 @@
 and the card the bot menu's 本周用量 sends to the owner's private chat."""
 from __future__ import annotations
 
+import datetime
 import json
 import os
+import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
+from support.records import write_job
 from support.world import UnifiedCase
+from covey.app import weekly_usage
 from covey.app.bot_menu import PANELS
-from covey.app.weekly_usage import created_at, job_tokens, summarize
+from covey.app.weekly_usage import HISTORY_DAYS, SPANS, created_at, history, job_tokens, local_days, summarize
 from covey.cards.weekly_usage import sections, total_tokens, usage_card, usage_text
-from covey.core.jobs import upsert_job_record
+from covey.core.jobs import job_path, upsert_job_record
+from covey.core.state import write_private_text
 
 NOW = 1793635200.0  # 2026-11-03T00:00:00+08:00
 DAY = 86400
@@ -204,6 +210,78 @@ class CardTests(unittest.TestCase):
         self.assertEqual([row["elements"][0]["content"] for row in band["elements"]],
                          ["<font color='indigo'>最近 7 天</font>", "**没有任务**", "<font color='grey'>这 7 天没有任务。</font>"])
         self.assertEqual(card["config"]["summary"]["content"], "本周用量 · 没有任务")
+
+
+class HistoryTests(unittest.TestCase):
+    """The web page's 用量 (``history``): the card's count by local day and by the page's ranges (SPANS)."""
+    NOON = NOW + 12 * 3600  # 2026-11-03 12:00 in UTC+8.
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state, self.n = Path(tmp.name), 0
+
+    def put(self, at, **fields):
+        self.n += 1
+        write_job(self.state, f"k{self.n}", job_id=self.n, **{**job(**fields), "created_at": iso(at)})
+
+    def test_ninety_local_days_end_today(self):
+        days = local_days(self.NOON, HISTORY_DAYS)
+        today = datetime.date(2026, 11, 3)
+        self.assertEqual([date for date, _ in days], [(today - datetime.timedelta(days=HISTORY_DAYS - 1 - i)).isoformat()
+                                                       for i in range(HISTORY_DAYS)])
+        self.assertEqual(days[-1][1], NOW)  # Today's midnight.
+        self.assertEqual(days[-2][1], NOW - DAY)
+        self.assertEqual(SPANS, (7, 30, 90))
+
+    def test_each_day_and_range_counts_as_the_card_does(self):
+        self.put(self.NOON - 60, topic="a", **ran(input_tokens=100, cache_read_tokens=80, output_tokens=5))
+        self.put(NOW - 1, topic="a", input_tokens=10, output_tokens=1)  # 11-02 23:59:59.
+        self.put(NOW - 1, harness="codex", topic="b")  # No token counts: untracked.
+        self.put(NOW - 6 * DAY, topic="c", input_tokens=1, output_tokens=1)  # 10-28, the first of the 7 days.
+        self.put(NOW - 7 * DAY, topic="d", input_tokens=1, output_tokens=1)  # 10-27: in the 30 days only.
+        self.put(NOW - 89 * DAY, topic="e", input_tokens=1, output_tokens=1)  # 08-06, the first of the 90.
+        # Not counted, as on the card: a removed Harness's, a launch card's, a merged supplement's, one after now.
+        self.put(self.NOON - 60, harness="gone", input_tokens=5, output_tokens=5)
+        self.put(self.NOON - 60, status="waiting_workspace")
+        self.put(self.NOON - 60, status="cancelled", never_started=True)
+        self.put(self.NOON + 60, input_tokens=5, output_tokens=5)
+        found = history(self.state, self.NOON, TITLES)
+        days = {row["date"]: row for row in found["days"]}
+        self.assertEqual(len(found["days"]), HISTORY_DAYS)
+        self.assertEqual((found["days"][0]["date"], found["days"][-1]["date"]), ("2026-08-06", "2026-11-03"))
+        self.assertEqual(days["2026-11-03"], {"date": "2026-11-03", "tasks": 1, "topics": 1, "tokens": 105, "input": 100,
+                                              "cache": 80, "output": 5, "untracked": 0})
+        self.assertEqual(days["2026-11-02"], {"date": "2026-11-02", "tasks": 2, "topics": 2, "tokens": 11, "input": 10,
+                                              "cache": 0, "output": 1, "untracked": 1})
+        self.assertEqual(days["2026-11-01"]["tasks"], 0)  # A day without tasks is there, at nothing.
+        self.assertEqual([(s["days"], s["since"], s["tasks"], s["topics"], s["tokens"], s["untracked"]) for s in found["spans"]],
+                         [(7, "2026-10-28", 4, 3, 118, 1), (30, "2026-10-05", 5, 4, 120, 1), (90, "2026-08-06", 6, 5, 122, 1)])
+        self.assertEqual(found["spans"][0]["harnesses"], [
+            {"title": "Claude", "tasks": 3, "tokens": 118, "input": 111, "cache": 80, "output": 7, "untracked": 0},
+            {"title": "Codex", "tasks": 1, "tokens": 0, "input": 0, "cache": 0, "output": 0, "untracked": 1}])
+        # A range is its days summed: the bars and the total agree.
+        for span in found["spans"]:
+            self.assertEqual(span["tokens"], sum(row["tokens"] for row in found["days"][-span["days"]:]))
+        self.assertEqual(found["first"], "2026-08-06")  # Nothing older: the records start there.
+        json.dumps(found)  # Pushed as JSON: no set left.
+
+    def test_first_is_none_once_a_record_is_older_than_the_days(self):
+        self.assertEqual(history(self.state, self.NOON, TITLES)["first"], None)  # No record at all.
+        self.put(NOW - 10 * DAY, status="waiting_workspace")  # Not counted, but a record: the records start then.
+        self.assertEqual(history(self.state, self.NOON, TITLES)["first"], "2026-10-24")
+        self.put(NOW - 90 * DAY)  # Before the first day, changed since.
+        self.assertIsNone(history(self.state, self.NOON, TITLES)["first"])
+
+    def test_a_record_unchanged_since_before_the_days_is_not_read_but_says_they_go_further(self):
+        old = iso(NOW - 120 * DAY)
+        write_private_text(job_path(self.state, "old"), json.dumps({**job(), "key": "old", "created_at": old, "updated_at": old}))
+        self.put(NOW - DAY)
+        with mock.patch.object(weekly_usage, "counted", wraps=weekly_usage.counted) as seen:
+            found = history(self.state, self.NOON, TITLES)
+        self.assertEqual(seen.call_count, 1)  # The old one was left out by its updated_at alone.
+        self.assertIsNone(found["first"])
+        self.assertEqual(found["spans"][-1]["tasks"], 1)
 
 
 class MenuTests(UnifiedCase):

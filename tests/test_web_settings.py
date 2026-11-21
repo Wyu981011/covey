@@ -320,6 +320,9 @@ class WebSettingsTest(UnifiedCase):
             found = self.web.usage(now=1_800_000_000)
         summarize.assert_called_once()
         self.assertEqual((found["days"], found["tasks"]), (weekly_usage.WINDOW_DAYS, 0))
+        # v24: the same count by local day and by the page's ranges, for its 用量 page.
+        self.assertEqual(len(found["history"]["days"]), weekly_usage.HISTORY_DAYS)
+        self.assertEqual([span["days"] for span in found["history"]["spans"]], list(weekly_usage.SPANS))
         json.dumps(found)  # Pushed as JSON: no Counter left.
         with mock.patch.dict(os.environ, {web_sync.ENV: "1"}):
             sync = WebSync(self.app.runtime, self.env)

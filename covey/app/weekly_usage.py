@@ -16,9 +16,13 @@ Only the routed Harnesses are counted: a removed one's tasks are left out.
 counted only, with no goal: 问题, the question cards that went out to him in the window (questions/ records with their card's
 message, any chat; one a project's lead answered in his place while it was held never reached him, core/triage.py), and
 停住, the window's tasks that ended 停住了 (core/look.py ``stopped``: failed, interrupted; not the ones he stopped himself).
+
+The web page's 用量 (``history``, docs/web.md key ``usage``): the same tasks by local day, the HISTORY_DAYS that end today, and
+the page's ranges (SPANS) summed, so a day's bar and a range's total are the card's count cut by the calendar.
 """
 from __future__ import annotations
 
+import bisect
 import collections
 import time
 from pathlib import Path
@@ -26,12 +30,14 @@ from pathlib import Path
 from covey.app.menu_panel import MenuPanel
 from covey.cards.weekly_usage import folded_card, total_tokens, usage_card, usage_text
 from covey.core import look, triage
-from covey.core.jobs import never_started, select_job_records
+from covey.core.jobs import jobs_dir, never_started, select_job_records
 from covey.core.state import epoch_seconds
 from covey.core.statuses import ENDED, NOT_ENDED
 from covey.core.store import directory_store
 
 WINDOW_DAYS = 7
+HISTORY_DAYS = 90  # The web page's 用量 looks back this many local days, today the last (``history``).
+SPANS = (7, 30, HISTORY_DAYS)  # Its ranges, each summed here: a range's topics are not the sum of its days'.
 TOKEN_FIELDS = ("input_tokens", "cache_read_tokens", "output_tokens")
 KIND = "weekly-usage"
 FOLDER = "weekly-usage-cards"  # The cards' records (app/menu_panel.py).
@@ -89,11 +95,17 @@ def harness_of(record):
     return str(record.get("harness_id") or record.get("backend") or "")
 
 
+def counted(record, since, now, titles=None):
+    """Whether the card counts job ``record`` from ``since`` to ``now``: created then and a backend ran it; ``titles``: only
+    a routed Harness's (None: any)."""
+    return ((at := created_at(record)) is not None and since <= at <= now and not never_started(record)
+            and (titles is None or harness_of(record) in titles))
+
+
 def window(records, since, now, titles=None):
     """The tasks among ``records`` created from ``since`` to ``now`` that a backend ran; ``titles``: only the routed
     Harnesses' (None: every one's)."""
-    return [r for r in records if (at := created_at(r)) is not None and since <= at <= now and not never_started(r)
-            and (titles is None or harness_of(r) in titles)]
+    return [r for r in records if counted(r, since, now, titles)]
 
 
 def asked(state_dir, since, now) -> int:
@@ -197,3 +209,78 @@ class WeeklyUsage:
         self.runtime.log(f"weekly usage tasks={summary['tasks']} untracked={summary['untracked']} "
                          f"event={source[-10:]}")
         return summary
+
+
+def local_days(now, count):
+    """The ``count`` local days that end with the one of ``now``, oldest first: each one's date (``2026-11-21``) and the
+    moment it starts."""
+    t = time.localtime(now)
+
+    def at(day, hour):  # mktime takes a day of the month out of its range as the days before or after it.
+        return time.mktime((t.tm_year, t.tm_mon, t.tm_mday - count + 1 + day, hour, 0, 0, 0, 0, -1))
+    return [(time.strftime("%Y-%m-%d", time.localtime(at(day, 12))), at(day, 0)) for day in range(count)]
+
+
+def figures(**more):
+    """A day's, a range's or a Harness's figures before the first task is added (``add``)."""
+    return {"tasks": 0, "tokens": 0, "input": 0, "cache": 0, "output": 0, "untracked": 0, **more}
+
+
+def add(row, counts, topic=None):
+    """One task into ``row`` (``figures``): its token ``counts`` (``job_tokens``; None: untracked) and its topic, when the
+    row counts topics."""
+    row["tasks"] += 1
+    if topic and "topics" in row:
+        row["topics"].add(topic)
+    if counts is None:
+        row["untracked"] += 1
+        return
+    row["tokens"] += total_tokens(counts)
+    row["input"] += counts["input_tokens"]
+    row["cache"] += counts["cache_read_tokens"]
+    row["output"] += counts["output_tokens"]
+
+
+def history(state_dir, now, titles=None, log=None):
+    """The web page's 用量: the card's tasks (``counted``) by local day, the HISTORY_DAYS that end with ``now``'s (``days``,
+    oldest first, a day without tasks too), and each of SPANS, its last days, summed with its topics and its Harnesses
+    as the card orders them (``spans``). ``first``: the date of the oldest job record when it is one of the days (none was
+    there to count before it), else None. ``titles`` as for ``summarize``. Read where the records are cached: ``take``
+    accepts none, so none is copied (core/store.py query), as this runs at each full look of the page's push."""
+    labels, starts = zip(*local_days(now, HISTORY_DAYS))
+    start = starts[0]
+    days = [figures(date=label, topics=set()) for label in labels]
+    spans = [figures(days=n, since=labels[-n], topics=set(), harnesses={}) for n in SPANS]
+    oldest = {"at": None, "before": False}
+
+    def recent(fields):  # A record last changed before the first day was created before it too.
+        if (at := epoch_seconds(fields.get("updated_at"))) is not None and at < start:
+            oldest["before"] = True
+            return False
+        return True
+
+    def take(record):
+        at = created_at(record)
+        if at is None:
+            return False
+        oldest["at"] = at if oldest["at"] is None else min(oldest["at"], at)
+        oldest["before"] = oldest["before"] or at < start
+        if not counted(record, start, now, titles):
+            return False
+        day = bisect.bisect_right(starts, at) - 1
+        counts, topic = job_tokens(record), record.get("topic_id") if isinstance(record.get("topic_id"), str) else None
+        add(days[day], counts, topic)
+        for span in spans:
+            if day >= HISTORY_DAYS - span["days"]:
+                add(span, counts, topic)
+                add(span["harnesses"].setdefault(harness_of(record), figures()), counts)
+        return False
+
+    directory_store(jobs_dir(Path(state_dir))).query(take, log=log, narrow=recent)
+    for row in days + spans:
+        row["topics"] = len(row["topics"])
+    for span in spans:
+        span["harnesses"] = sorted(({"title": (titles or {}).get(name, name), **row} for name, row in span["harnesses"].items()),
+                                   key=lambda row: (-row["tasks"], -row["tokens"], row["title"]))
+    first = None if oldest["before"] or oldest["at"] is None else time.strftime("%Y-%m-%d", time.localtime(oldest["at"]))
+    return {"days": days, "spans": spans, "first": first}
