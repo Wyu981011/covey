@@ -6,6 +6,10 @@ no card here is sent by itself, the cards that move to this look use these parts
   BAND: a gradient in steps too fine to see), inside one thin line. Its colours are the card's own: a card with a band
   goes through ``styled``, which puts them in its ``config.style.color``.
 - ``seg_bar``: how many of each state, as one line of coloured bars as long as their counts, and a legend under it.
+- ``speaker_header``: the title bar of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3):
+  the butler indigo, a project's lead violet, a topic's default with its state as a coloured tag. It takes what the
+  "你问" block (cards/answer_card.py ask_block, ``ASK_META``) carried, so the card does not have the block as well
+  (``split_ask``); the block's link back to the owner's message stays as a line ``ask_footnote``.
 - ``topic_row``: a state's dot and word, ``T31 title ›``, a line in words, grey figures; buttons at the right; the
   whole opens ``url``.
 """
@@ -196,3 +200,90 @@ def receipt(text) -> dict:
     if text.startswith(DONE_MARK):
         text = text[len(DONE_MARK):].lstrip()
     return md(grey(text), size="notation")
+
+
+ASK_META = "_ask"  # The key of the "你问" block (cards/answer_card.py ask_block) that holds what a title bar says; never sent.
+ASK_ID = "answer_ask"
+SUBTITLE_WORDS = 18  # Characters of the owner's words a butler card's subtitle quotes.
+BACK_LABEL = "看你那句 ›"
+# What the topic did with the owner's words (cards/answer_card.py SAYS ``doing``) -> the look.STATES key of its tag.
+TOPIC_TAGS = {"done": "result", "waiting": "waiting", "member": "waiting", "stopped": "stopped", "running": "running"}
+
+
+def split_ask(elements):
+    """(what the "你问" block among ``elements`` carried (``ASK_META``), ``elements`` without it); None and the same
+    list when there is none: a block saved before the title bar kept its own look."""
+    rest, meta = [], None
+    for element in elements or ():
+        found = element.get(ASK_META) if isinstance(element, dict) else None
+        if meta is None and isinstance(found, dict):
+            meta = found
+        else:
+            rest.append(element)
+    return meta, rest
+
+
+def role_of(who) -> str:
+    """"butler", "lead" or "topic": whose words ``who`` (core/look.py speaker) is."""
+    if who == look.SPEAKERS["butler"]:
+        return "butler"
+    return "lead" if str(who or "").startswith("专项「") else "topic"
+
+
+def _tag(text, color) -> dict:
+    return {"tag": "text_tag", "text": {"tag": "plain_text", "content": text}, "color": color}
+
+
+def _icon(token, color) -> dict:
+    return {"tag": "standard_icon", "token": token, "color": INK.get(color, color)}
+
+
+def speaker_header(meta, *, outcome="", label="", tag=None) -> dict:
+    """The title bar for the block ``meta`` came from. The butler: indigo, 管家, "回你 20:41「原话前 18 字…」" and a 答复
+    tag. A lead: violet, its name 负责人, what it did with the owner's words, a 专项 tag. A topic: default, its T number
+    and title, the same sentence, its state as a tag. ``outcome``: a look.STATES key that sets the topic's tag (a relay
+    knows its own); a state that asks for the owner (等你, 停住了) is the tag of the other two as well. Without a block
+    (``meta`` None) the title is ``label`` (the T number) and there is no subtitle. ``tag``: (text, colour) in place of
+    the state's, for a card that is settled."""
+    meta = meta or {"who": label}
+    who, doing = str(meta.get("who") or ""), str(meta.get("doing") or "")
+    role, key = role_of(who), outcome or TOPIC_TAGS.get(doing, "")
+    says, words = str(meta.get("says") or ""), " ".join(str(meta.get("words") or "").split())
+    at = str(meta.get("at") or "")
+    if role == "butler" and doing == "answer" and meta.get("verb", "你问") == "你问" and (at or words):
+        quote = words if len(words) <= SUBTITLE_WORDS else words[:SUBTITLE_WORDS - 1] + "…"
+        says = f"回你{' ' + at if at else ''}" + (f"「{quote}」" if quote else "")
+    asks = key in ("waiting", "stopped", "stuck")
+    if role == "butler":
+        template, icon, color = "indigo", "robot_outlined", "indigo"
+        tags = [_tag(look.STATES[key].word, look.STATES[key].color) if asks else _tag("答复", "indigo")]
+    elif role == "lead":
+        template, icon, color = "violet", "group_outlined", "violet"
+        tags = [_tag("专项", "violet"), *([_tag(look.STATES[key].word, look.STATES[key].color)] if asks else [])]
+    else:
+        found = look.STATES.get(key)
+        template, icon, color = "default", (found.icon if found and found.icon else "chat_outlined"), \
+            (found.color if found else "grey")
+        tags = [_tag(found.word, found.color)] if found else []
+    if tag:
+        tags = [_tag(*tag)]
+    head = {"title": {"tag": "plain_text", "content": " ".join((who or look.SPEAKERS["butler"]).split())}}
+    if says:
+        head["subtitle"] = {"tag": "plain_text", "content": says}
+    head["text_tag_list"] = tags
+    head["template"] = template
+    head["icon"] = _icon(icon, color)
+    return head
+
+
+def back_link(meta) -> str:
+    """The link back to the owner's message the block opened, "[看你那句 ›](url)"; '' without a place to open."""
+    url = str((meta or {}).get("url") or "")
+    return f"[{BACK_LABEL}]({url})" if url else ""
+
+
+def ask_footnote(meta):
+    """The line that keeps the block's way back to the owner's message once the title bar says the rest: one small
+    Markdown element; None without a link."""
+    link = back_link(meta)
+    return md(link, size="notation", element_id=ASK_ID) if link else None

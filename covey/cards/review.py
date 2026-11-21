@@ -8,7 +8,7 @@ import re
 from typing import Any
 
 from covey.cards.elements import card
-from covey.cards.ui import band_label, banded, conclusion_band
+from covey.cards.ui import ask_footnote, band_label, banded, conclusion_band, speaker_header, split_ask
 from covey.core import turn_words
 from covey.core.text import literal, redact
 
@@ -350,8 +350,12 @@ def answer_card(text: str, summary: str, tail: list | tuple = (), head: list | t
     "你问" block of an answer at the private chat's top level). ``said``: the lead a conclusion band in ``head``
     shows; the answer then goes without the line that only repeats it (``after_lead``), and without a Markdown block
     when that line was all of it. None when it would not fit one card message; it then goes as Markdown."""
+    headed = bool(head)
+    meta, head = split_ask(head)  # The "你问" block goes into the title bar (cards/ui.py speaker_header).
     body = after_lead(text, said) if said and head else text
     answer = [{"tag": "markdown", "content": bold_minor_headings(inline_one_line_code(body)),
-               "text_size": "normal_v2"}] if body.strip() or not head else []
-    built = banded(card([*head, *answer, *tail], summary, update_multi=bool(tail)))
+               "text_size": "normal_v2"}] if body.strip() or not headed else []
+    back = ask_footnote(meta)
+    built = banded(card([*head, *answer, *tail, *([back] if back else [])], summary, update_multi=bool(tail),
+                        header=speaker_header(meta) if meta else None))
     return built if len(json.dumps(built, ensure_ascii=False).encode("utf-8")) <= ANSWER_CARD_BYTES else None

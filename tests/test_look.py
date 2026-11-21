@@ -226,7 +226,7 @@ class ColourRulesTest(unittest.TestCase):
     TAG = re.compile(r"<text_tag color='(orange|red)'>(.*?)</text_tag>")
     # What orange may say: the two states (with their count), a group or a choice waiting for the owner, the state's dot and
     # segment of the 看板's bar, a 要你做 bar's label (cards/ui.py todo_bar), and the icons of those states.
-    ORANGE_WORDS = re.compile(r"^\**(\d+ )?(等你|可能卡住|等你确认)\**$|^\d+ 条建议$|^\d+ 个匹配$|^●$|^━+$|^\*\*要\S{1,3}\*\*$")
+    ORANGE_WORDS = re.compile(r"^\**(\d+ )?(等你|可能卡住|等你确认|要你确认)\**$|^\d+ 条建议$|^\d+ 个匹配$|^●$|^━+$|^\*\*要\S{1,3}\*\*$")
     ORANGE_ICONS = {"time_outlined", "warning_outlined", "chat_outlined"}
 
     @classmethod

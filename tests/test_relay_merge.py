@@ -103,7 +103,7 @@ class MergedTest(MergeCase):
         chat, text, key, reply_to, card, _ = send.call_args.args
         self.assertEqual((chat, key, reply_to), (CHAT, job_key("main-t1", 9) + "-merged", ""))
         shown = json.dumps(card, ensure_ascii=False)
-        for words in ("有结果 · 2 个话题", "个话题做完了", "T410", "T411 查日志", "两种做法都行", "查完了：没有异常"):
+        for words in ("2 个话题做完了", "有结果", "T410", "T411 查日志", "两种做法都行", "查完了：没有异常"):
             self.assertIn(words, shown)
         self.assertEqual(card["config"]["summary"]["content"], "2 个话题 · 有结果：T410、T411")
         self.assertTrue(text.startswith("**2 个话题做完了**"))
@@ -125,7 +125,8 @@ class MergedTest(MergeCase):
         self.pause.assert_called_once_with(relay_send.MERGE_SECONDS)
         chat, text, key, reply_to, card, _ = send.call_args.args
         self.assertEqual(key, job_key("main-t1", 9))
-        self.assertIn("有结果 · T410", json.dumps(card, ensure_ascii=False))
+        self.assertEqual(("T410", "有结果"), (card["header"]["title"]["content"][:4],
+                                             card["header"]["text_tag_list"][0]["text"]["content"]))
         self.assertEqual(self.saved("main-t1", 9)["state"], "sent")
         self.assertNotIn("merged", self.saved("main-t1", 9))
         self.assertEqual(TOPIC, message_topic(self.state, CHAT, "om_relay"))
@@ -165,13 +166,16 @@ class MergedTest(MergeCase):
 
 class CardTest(unittest.TestCase):
     def test_the_merged_card(self):
-        built, text = merged_card([{"label": "T12", "title": "改看板", "lead": "按钮改好了"},
+        built, text = merged_card([{"label": "T12", "title": "改看板", "lead": "按钮改好了", "url": "https://x/t12"},
                                    {"label": "T13", "title": "", "lead": ""}])
-        band, first, second, note = built["body"]["elements"]
-        self.assertIn("有结果 · 2 个话题", json.dumps(band, ensure_ascii=False))
-        self.assertEqual(first["content"], "**T12 改看板**\n<font color='grey'>按钮改好了</font>")
-        self.assertEqual(second["content"], "**T13**")
-        self.assertIn("点 T 号打开它的回答", json.dumps(note, ensure_ascii=False))
+        first, second = built["body"]["elements"]
+        self.assertEqual(("2 个话题做完了", "有结果"), (built["header"]["title"]["content"],
+                                                     built["header"]["text_tag_list"][0]["text"]["content"]))
+        # Each row is one block, the whole of it opening its topic; one whose link is not known opens nothing.
+        self.assertEqual([{"type": "open_url", "default_url": "https://x/t12"}], first["behaviors"])
+        self.assertNotIn("behaviors", second)
+        self.assertEqual(first["elements"][0]["content"], "**T12 改看板**\n<font color='grey'>按钮改好了</font>")
+        self.assertEqual(second["elements"][0]["content"], "**T13**")
         self.assertEqual(text, "**2 个话题做完了**\n- T12 改看板：按钮改好了\n- T13")
 
 

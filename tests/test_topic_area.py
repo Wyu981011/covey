@@ -361,8 +361,10 @@ class MirrorTest(MirrorCase):
         self.assertIn("用哪个做法", card)
         self.assertNotIn("负责人派的活", card)  # No "你问" block: the lead asked for this turn, not the owner.
         # Who asks all the same (样卡 B, docs/ui.md 5.3): the topic, for work its lead handed it.
-        self.assertIn("**T538", card)
-        self.assertIn("办负责人派的事，要你定", card)
+        built = sends.call_args.args[2]
+        self.assertEqual("T538", built["header"]["title"]["content"])
+        self.assertEqual("办负责人派的事，要你定", built["header"]["subtitle"]["content"])
+        self.assertEqual("等你", built["header"]["text_tag_list"][0]["text"]["content"])
         self.assertEqual(read_object(self.ctx.state_dir / "questions" / "q-member.json")["mirror_message_id"], mid)
 
     def test_a_running_turn_s_output_is_its_notes_and_the_answer_so_far(self):
@@ -449,7 +451,9 @@ class MirrorFilesTest(MirrorCase):
         mid = self.app_.questions.display.mirror(self.tctx, self.record, "选哪张图？")
         built = sends.call_args.args[2]
         elements = built["body"]["elements"]
-        self.assertEqual([e.get("element_id") for e in elements][1], ARTIFACTS_ID)  # Right under the output.
+        ids = [e.get("element_id") for e in elements]
+        self.assertEqual(ids[ids.index("mirror_output") + 1], ARTIFACTS_ID)  # Right under the output's fold, after the form.
+        self.assertLess([i for i, e in enumerate(ids) if e and e.startswith("q_")][0], ids.index("mirror_output"))
         self.assertIn("https://drive.invalid/a.png", json.dumps(built, ensure_ascii=False))
         self.assertTrue(answer_cards.clicked(self.ctx.state_dir, self.key, mid))  # Its 重新上传 is the answer cards'.
         self.assertFalse(answer_cards.holds_files(self.ctx.state_dir, "other"))
@@ -460,7 +464,9 @@ class MirrorFilesTest(MirrorCase):
         with mock.patch.object(self.app.messenger, "send_message", return_value=True):
             self.app_.questions.display.mirror(self.tctx, self.record, "长" * 5000)
         built = self.app.messenger.create_and_send_card.call_args.args[2]
-        self.assertEqual(built["body"]["elements"][0].get("element_id"), ARTIFACTS_ID)
+        ids = [e.get("element_id") for e in built["body"]["elements"]]
+        self.assertEqual(ids[-1], ARTIFACTS_ID)  # After the form; the output went as a message of its own.
+        self.assertNotIn("mirror_output", ids)
 
     def test_none_without_an_answer_card_showing_them_nor_at_the_top_level_itself(self):
         self.ledger("done")
@@ -492,8 +498,9 @@ class MirrorFilesTest(MirrorCase):
         self.assertIn("https://drive.invalid/a.png", text)
         self.assertNotIn("上传中", text)
         self.assertNotIn('"pick"', text)  # Answered: folded as the card in the topic.
-        self.assertEqual(json.dumps(painted["body"]["elements"][-1]),
-                         json.dumps(standalone_card(self.tctx, answered)["body"]["elements"][-1]))
+        panel = "q_" + answered["token"]
+        again = lambda built: next(e for e in built["body"]["elements"] if e.get("element_id") == panel)  # noqa: E731
+        self.assertEqual(json.dumps(again(painted)), json.dumps(again(standalone_card(self.tctx, answered))))
         self.assertEqual([c.args[1] for c in self.app.messenger.patch_card.call_args_list], ["om_answer"])
         self.assertEqual(answer_cards.copies(self.ctx.state_dir, self.key, "done"), [])
         self.app_.artifacts.refresh_answer_cards(self.tctx, self.jrecord)

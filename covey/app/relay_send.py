@@ -13,7 +13,8 @@ from pathlib import Path
 from covey.app import answer_cards
 from covey.app.relay_targets import ask_for, turn_card
 from covey.cards.answer_card import tail as answer_tail, tail_card
-from covey.cards.relay_card import DONE as DONE_OUTCOME, WAITING as WAITING_OUTCOME, merged_card, relay_card, summary
+from covey.cards.relay_card import (DONE as DONE_OUTCOME, FOLD_ID, WAITING as WAITING_OUTCOME, merged_card, relay_card,
+                                    summary)
 from covey.cards.review import answer_lead
 from covey.core import background, butler
 from covey.core.failure import HEADLINE_CHARS
@@ -77,11 +78,22 @@ def linked(state_dir, chat_id, built, text, profile=None, cards=None):
             elif element.get("tag") == "column_set":  # The 输入/输出 box (cards/answer_card.py), not 产物's names.
                 for column in element.get("columns") or ():
                     walk(column.get("elements") if isinstance(column, dict) else ())
-            elif element.get("tag") == "column":
-                walk(element.get("elements"))
+            elif element.get("tag") == "column" or element.get("element_id") == FOLD_ID:
+                walk(element.get("elements"))  # The reply's fold (cards/relay_card.py reply_fold) too, not 产物's.
     if isinstance(built, dict):
         walk((built.get("body") or {}).get("elements"))
     return built, link(text)
+
+
+def topic_url(state_dir, topic, card="", profile=None) -> str:
+    """The link that opens ``topic`` at ``card`` (app/topic_links.py link_for), the relay's "进话题 ›"; '' when it cannot
+    be told. Never raises."""
+    from covey.app.topic_links import link_for
+
+    try:
+        return link_for(state_dir, topic, card=card, profile=profile)
+    except Exception:  # noqa: BLE001 - the card without that link
+        return ""
 
 
 def dispatch_note(state_dir, target, outcome, state, message_id="", reason="") -> None:
@@ -145,8 +157,8 @@ def _made(state_dir, job, target, outcome, profile, log, facts):
     card = turn_card(state_dir, job, outcome)
     # What the topic did with the owner's words, in the speaker's sentence (cards/answer_card.py says).
     facts = {**facts, "ask": ask_for(state_dir, job, target, profile, at=card, log=log, doing=outcome)}
-    built, text = relay_card(target["label"], outcome, **facts)
     topic = str(target.get("topic_id") or job_field(job, "topic_id"))
+    built, text = relay_card(target["label"], outcome, url=topic_url(state_dir, topic, card, profile), **facts)
     links = {topic: card}
     built, text = linked(state_dir, target["chat_id"], built, text, profile, cards=links)
     return built, text, links, facts
@@ -326,8 +338,11 @@ def take(state_dir, chat, path, key, target, send, made, profile=None, log=None)
         write_json(Path(state_dir) / WAITING, waiting, ensure_ascii=False, indent=1)
     if len(taken) > 1:
         items = [record.get("item") or {"label": record.get("job_key", "")} for _, record in taken]
-        built, text = merged_card(items)
         links = {item["topic_id"]: item.get("card") or "" for item in items if item.get("topic_id")}
+        from covey.app.topic_links import links_for
+
+        urls = links_for(state_dir, links, cards=links, profile=profile)  # Each row opens its topic.
+        built, text = merged_card([{**item, "url": urls.get(item.get("topic_id") or "", "")} for item in items])
         built, text = linked(state_dir, chat, built, text, profile, cards=links)
         made = (built, text, links, {})
         key = key + "-merged"

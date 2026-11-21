@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-from covey.cards.elements import button_row, callback, md, note, panel_card, plain
+from covey.cards.elements import button_row, callback, card, md, note, panel_header, plain
 from covey.core.owner_send import digest, placeholders
 from covey.core.text import literal
 
@@ -38,6 +38,30 @@ STATES = {
     "declined": ("这条不发了", False),
     "superseded": ("这条草稿已被新的草稿替换", False),
 }
+# The title bar by state: (what it says under 代发草稿, its tag, the tag's colour). Orange is the owner's turn (要你确认)
+# and what may have gone wrong; the others say what came of it.
+BARS = {
+    "drafted": ("确认后以你的身份发出", "要你确认", "orange"),
+    "choose": ("先选收件人", "要你确认", "orange"),
+    "unresolved": ("没找到收件人", "没发", "grey"),
+    "sending": ("正在以你的身份发送", "发送中", "blue"),
+    "sent": ("已以你的身份发出", "已发出", "green"),
+    "uncertain": ("可能已发出，没能确认", "没能确认", "red"),
+    "unsent": ("没发出，改好正文可以重新发送", "没发出", "red"),
+    "declined": ("这条不发了", "不发了", "grey"),
+    "superseded": ("这条草稿已被新的草稿替换", "已替换", "grey"),
+}
+TOP_TAG = "要你确认"
+
+
+def top_card(label, to_label, url=""):
+    """The small card at the chat's top level when a draft waits in its topic (app/owner_send.py top_line): the topic's
+    T number and 代发草稿 in the title bar, an orange 要你确认 tag, whom it goes to, and the way to the topic."""
+    head = panel_header("chat_outlined", " ".join(part for part in (str(label or "").strip(), "代发草稿") if part),
+                        f"有一条以你的身份发给{to_label or '别人'}的草稿，等你确认", [(TOP_TAG, "orange")], color="orange")
+    link = md(f"[到话题里看 ›]({url})" if url else "在话题里的这张草稿上确认", size="notation")
+    return card([link], f"{label + ' · ' if label else ''}代发草稿等你确认", default_width=True, update_multi=True,
+                padding="6px 14px 12px 14px", header=head)
 
 
 def masked(text) -> str:
@@ -73,7 +97,7 @@ def owner_send_card(record, view) -> dict:
     state = view.get("state") if view.get("state") in STATES else record.get("status", "drafted")
     heading, form = STATES.get(state, STATES["drafted"])
     text = str(record.get("text") or "")
-    elements = [md(f"**{heading}**"), md(recipient_line(record))]
+    elements = [md(recipient_line(record))]
     if record.get("topic_label"):
         elements.append(note(f"来自 {literal(record['topic_label'])}"))
     if record.get("why"):
@@ -134,4 +158,6 @@ def owner_send_card(record, view) -> dict:
         elements.append(note("发送工具没登录的话，先点机器人菜单「代答」，在代答卡上点“网页端登录”扫码。"))
     if view.get("notice"):
         elements.append(md(view["notice"]))
-    return panel_card(elements, heading)
+    sub, tag, color = BARS.get(state, BARS["drafted"])
+    return card(elements, heading, default_width=True, padding="12px",
+                header=panel_header("chat_outlined", "代发草稿", sub, [(tag, color)], color=color))

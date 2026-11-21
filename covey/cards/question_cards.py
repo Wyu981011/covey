@@ -4,10 +4,10 @@ from __future__ import annotations
 import re
 
 from covey.cards.board import OPEN_KIND
-from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, item, markdown_panel, note, plain,
-                                  text_button)
+from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, collapsible, grey, item,
+                                  markdown_panel, note, plain, text_button)
 from covey.cards.review import compact_text
-from covey.cards.ui import band_label, conclusion_band, receipt, styled
+from covey.cards.ui import ask_footnote, band_label, conclusion_band, receipt, speaker_header, split_ask, styled
 from covey.core import look, triage, turn_words
 from covey.core.stale import STALE_NOTE
 from covey.core.text import literal
@@ -440,26 +440,72 @@ def question_card(record, topic=""):
     return styled(built) if band else built
 
 
+SETTLED_TAGS = {"answered": ("已回答", "grey"), SET_ASIDE: ("不处理", "grey"), "cancelled": ("已取消", "grey"),
+                "superseded": ("已收起", "grey")}
+LINE_CHARS = 40  # Characters of a settled question's summary line (``settled_lines``).
+ANSWER_LINE_CHARS = 80
+
+
+def settled_lines(record):
+    """The two lines a settled question's copy keeps above its fold, "问题概要" and "→ 你选了「…」", as Markdown; None for
+    one that is still open or has no answer to say (folded under a newer one). Feedback and 不处理 say that."""
+    count = len(record.get("questions") or ())
+    status = record.get("status")
+    if not count or status in (None, "pending", "superseded", "submitting", "uncertain"):
+        return None
+    first = compact_text(record["questions"][0].get("question") or "", LINE_CHARS)
+    asked = f"{count} 道题 · {first}" if count > 1 else first
+    if status == "cancelled":
+        answer = "已取消"
+    elif record.get("response_kind") == "feedback":
+        answer = "你提了反馈，原问题没有回答"
+    elif status == SET_ASIDE or record.get("response_kind") == SET_ASIDE:
+        answer = "你选了不处理"
+    else:
+        given = [" ".join("；".join((record.get("answers", {}).get(q["id"]) or {}).get("answers", [])).split())
+                 for q in record["questions"]]
+        words = " / ".join(part for part in given if part)
+        answer = f"你选了「{compact_text(words, ANSWER_LINE_CHARS)}」" if words else "已回答"
+    return [{"tag": "markdown", "content": literal(asked), "text_size": "normal_v2"},
+            {"tag": "markdown", "content": grey("→ " + literal(answer)), "text_size": "notation"}]
+
+
+OUTPUT_ID = "mirror_output"
+
+
 def mirror_card(record, topic="", output="", ask=None, files=None):
-    """The question card again at the private chat's top level (app/question_display.py mirror): the same form,
-    with ``output``, what the turn wrote before it asked, above it.
-    Settled, it folds as the card in the topic does; the output stays. ``ask``: the "你问" block above it all.
-    ``files``: the asking turn's 产物 panel, as its answer card in the topic has it (app/artifacts.py answer_files),
-    right under the output (alone above the form when the output went as its own message)."""
+    """The question card again at the private chat's top level (app/question_display.py mirror): the same form, under
+    the title bar that says whose it is (cards/ui.py speaker_header: ``ask``, the "你问" block, becomes the bar, its way
+    back a line at the end). The question and its options come first; ``output``, what the turn wrote before it asked,
+    is in a fold under them (``reply_fold``'s title: how much), then ``files``, the asking turn's 产物 panel as its
+    answer card in the topic has it (app/artifacts.py answer_files). Settled, the form folds as the card in the topic
+    does and two lines keep what was asked and what he answered (``settled_lines``); the output stays."""
+    from covey.cards.relay_card import reply_body, size_words
+
     built = question_card({**record, TOP_COPY: True}, topic)  # Options as buttons (``top_level_card``).
-    lead = []
+    meta, _ = split_ask([ask] if ask else [])
+    settled = SETTLED_TAGS.get(record.get("status"))
+    legacy = [ask] if ask and meta is None else []  # A block sent before the title bar: kept as it was, at the top.
+    elements = list(built["body"]["elements"])
+    lines = settled_lines(record)
+    if lines:
+        elements = [*lines, *elements]
     if output:
-        from covey.cards.relay_card import reply_body
-        lead.append({"tag": "markdown", "content": reply_body(output)})
+        text = reply_body(output)
+        elements.append(collapsible(OUTPUT_ID, f"{topic or '话题'} 这一轮的输出 · {size_words(text)}（点开看）",
+                                    [{"tag": "markdown", "content": text}], quiet=True, spacing="6px"))
     if files:
-        lead.append(files)
-    if output:
-        lead.append({"tag": "markdown", "text_size": "notation",
-                     "content": f"<font color='grey'>{topic or '话题'} 这一轮的输出，问题在下面；在这里答和在话题里答一样</font>"})
-    if lead:
-        built["body"]["elements"] = [*lead, {"tag": "hr"}, *built["body"]["elements"]]
-    if ask:  # The "你问" block (cards/answer_card.py ask_block): which of the owner's messages it answers.
-        built["body"]["elements"] = [ask, *built["body"]["elements"]]
+        elements.append(files)
+    back = ask_footnote(meta)
+    if back:
+        elements.append(back)
+    built["body"]["elements"] = [*legacy, *elements]
+    if not legacy:
+        if settled and meta:  # It no longer asks: "关于你 20:33 的问题", not "要你定".
+            from covey.cards.answer_card import says
+
+            meta = {**meta, "doing": "about", "says": says(meta.get("verb") or "你问", "about", meta.get("at") or "").strip()}
+        built["header"] = speaker_header(meta, outcome="waiting", label=topic or "话题", tag=settled)
     return built
 
 

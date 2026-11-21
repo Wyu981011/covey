@@ -36,7 +36,7 @@ from covey.app.form_cards import replace_form_card
 from covey.app.proxy_commands import chat_info, search_people
 from covey.app.proxy_send import available
 from covey.cards.owner_send import (ASK, ASK_FIELD, ASK_LABEL, DROP, PICK, PICKS, SEND, TEXT_FIELD, editable,
-                                    owner_send_card)
+                                    owner_send_card, top_card)
 from covey.core import env as cenv
 from covey.core import owner_send as records
 from covey.core.butler import is_butler_topic
@@ -238,8 +238,10 @@ class OwnerSend:
             if url:
                 line += f"（[到话题里看 ›]({url})）"
             top = dataclasses.replace(ctx, reply_to_message_id="")
+            small = top_card(record.get("topic_label"), record.get("to_label"), url)  # A card; the line if it is refused.
             self.proxy.messenger.send_message(top.profile, record["chat_id"], line,
-                                              self.proxy.voice.key("owner-send-top", record["id"]), voice=self.proxy.voice)
+                                              self.proxy.voice.key("owner-send-top", record["id"]), voice=self.proxy.voice,
+                                              card=small)
         except Exception as exc:  # noqa: BLE001 - the card is in the topic
             self.proxy.runtime.log(f"owner send top line failed draft={record['id'][:8]}: {type(exc).__name__}")
 

@@ -239,6 +239,17 @@ def linkify(text, state_dir, chat_id, *, profile=None, fetch=None, skip=(), card
         return text
 
 
+def links_for(state_dir, topics, *, cards=None, profile=None, fetch=None) -> dict:
+    """{topic id: the link that opens it} for ``topics`` (``link_for``, at ``cards``' card of each when given), read in
+    parallel within BUDGET; a topic not done in time, or one that cannot be told, is not in it. Never raises."""
+    wanted = [topic for topic in dict.fromkeys(str(t) for t in topics or ()) if topic][:FETCHES]
+    try:
+        return {topic: url for topic, url in _links(state_dir, wanted, profile, fetch, cards or {}).items() if url} \
+            if wanted else {}
+    except Exception:  # noqa: BLE001 - rows without links
+        return {}
+
+
 def _links(state_dir, topics, profile, fetch, cards) -> dict:
     """{topic id: link} for ``topics``, read in parallel within BUDGET; a topic not done in time has none."""
     from concurrent.futures import ThreadPoolExecutor, wait

@@ -450,10 +450,12 @@ def proxy_cards():
         cards[f"resend_{state}"] = resend_card({"state": state, "notice": "⚠️ 没有重新发送：代答已关闭。"}, {
             "id": "0" * 32, "reply": "收到\n**这两条** 挺到位的", "reason": "网页端未登录", "messages": []}, "张三")
     # The 代发草稿 card (cards/owner_send.py) waiting for the owner, with 先问一句 under the box (T604 #13), and sent.
-    from covey.cards.owner_send import owner_send_card
+    from covey.cards.owner_send import owner_send_card, top_card
     draft = {"id": "d" * 32, "ref": "zs", "status": "drafted", "topic_label": "T9「通知」", "why": "把开好的 key 交给他",
              "text": "key 开好了，在共享盘的 keys 目录", "recipient": {"name": "张三", "department": "算法", "kind": "p2p"}}
     cards["owner_send_drafted"] = owner_send_card(draft, {"state": "drafted"})
+    # The small card at the chat's top level that says a draft waits in its topic (app/owner_send.py top_line).
+    cards["owner_send_top"] = top_card("T9「通知」", "张三", "https://applink.feishu.cn/client/thread/open?open_chat_id=oc_x&open_thread_id=omt_x")
     cards["owner_send_unsent"] = owner_send_card({**draft, "status": "unsent", "reason": "网页端未登录"}, {"state": "unsent"})
     # A draft with a blank left in it (T604 #41): the card says so; and one whose text the card cannot edit.
     blank = {**draft, "text": "会议改到【日期】，请确认"}
@@ -896,7 +898,8 @@ def answer_tail_cards():
                 [answer_band("done", "T443", "改看板的 Pin 目标", "按钮已经改好")]),
             "relay_waiting": relay_card("T439", WAITING, question="用哪种格式输出？表格还是列表，表格方便对比、列表方便手机上看")[0],
             # 做完了 relays that came close together, as one (app/relay_send.py send_merged).
-            "relay_merged": merged_card([{"label": "T439", "title": "改看板的 Pin 目标", "lead": "按钮已经改好"},
+            "relay_merged": merged_card([{"label": "T439", "title": "改看板的 Pin 目标", "lead": "按钮已经改好",
+                                          "url": thread_url},
                                          {"label": "T441", "title": "查一下昨晚的日志", "lead": "没有异常"}])[0],
             "relay_stopped": relay_card("T439", STOPPED, reason="到了任务的时间上限，这一轮停在这里；可以接着做，或拆小再试")[0],
             "answer_card_asked": answer_card(text, "✅ 结论", tail(files, inputs, outputs), [ask]),
@@ -915,6 +918,26 @@ def answer_tail_cards():
             "answer_relay_speaker": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
                                                ask=ask_block("看板改成彩色块", at="12:31", url="https://applink.feishu.cn/t/439",
                                                              who="T439 改看板的颜色", doing="done"))[0],
+            # A long reply with a table and a change, folded under its conclusion (cards/relay_card.py reply_fold), the title bar
+            # of its topic, the small line with the way back and into the topic; the same for a lead; the butler's below.
+            "answer_relay_long": relay_card(
+                "T439", DONE, text="**结论**：按钮已经改好。\n\n" + "\n".join(f"- 第 {n} 处：改了名字和颜色，旧卡点了回一句" for n in range(12))
+                + "\n\n| 项 | 结果 |\n| --- | --- |\n| 单测 | 通过 |\n| 真机 | 待验收 |", inputs=inputs, outputs=outputs,
+                files=files, change=handed, url=thread_url,
+                ask=ask_block("看板改成彩色块", at="12:31", url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=1",
+                              who="T439 改看板的颜色", doing="done"))[0],
+            "answer_card_lead_speaker": answer_card(text, "专项「发布」· 负责人 · 结论", tail(None, inputs, outputs), [
+                ask_block("发布的事怎么样了", at="12:31", url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=2",
+                          who="专项「发布」· 负责人", doing="answer")]),
+            # The question first, the turn's output folded under it, its way back at the end (T439 asks, the owner not answered).
+            "question_copy_waiting": mirror_card(
+                question_record(), "T439", "先说结论：两种都行。\n\n" + "\n".join(f"- 第 {n} 处：改了名字和颜色" for n in range(8)),
+                ask=ask_block("选哪种样式", at="09:12", who="T439 改看板的颜色", doing="waiting",
+                              url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=3"), files=files),
+            "question_copy_settled": mirror_card(
+                question_record("answered", continuation_job_id=432, delivery_state="running"), "T439",
+                "先说结论：两种都行。", ask=ask_block("选哪种样式", at="09:12", who="T439 改看板的颜色", doing="waiting",
+                                                  url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=3")),
             "answer_card_butler": answer_card(text, "✅ 结论", tail(files, inputs, outputs),
                                               [ask_block("看板改成彩色块", at="12:31", who="管家")]),
             # The speaker's sentence by what it did (cards/answer_card.py says, 样卡 B): a relay waiting, a stopped one.

@@ -17,7 +17,7 @@ from covey.app import answer_cards
 from covey.app.artifacts import Artifacts, answer_files
 from covey.cards.relay_card import DONE, relay_card
 from covey.app.turn_delivery import TurnDelivery
-from covey.cards.answer_card import (ARTIFACTS_ID, FACTS_ID, facts_element, input_lines, input_parts,
+from covey.cards.answer_card import (ARTIFACTS_ID, FACTS_ID, figure, facts_element, input_lines, input_parts,
                                               output_parts, tail)
 from covey.cards.elements import replace_element
 from covey.cards.review import ANSWER_CARD_BYTES, after_lead, answer_card, answer_lead
@@ -474,26 +474,28 @@ class CardTest(unittest.TestCase):
         built = answer_card("## 结论\n好了", "T439 有结果 · 结论", parts)
         self.assertEqual(ids(built), [None, ARTIFACTS_ID, FACTS_ID])
         self.assertTrue(built["config"]["update_multi"])  # Its 产物 are written in later.
+        took = figure("用时", "1分")
         relay, _ = relay_card("T439", DONE, text="## 结论\n好了。\n\n细节在下面", inputs=["Claude Code"],
-                              outputs=["**1**"], files=self.files)
-        self.assertEqual(ids(relay), [None, None, ARTIFACTS_ID, FACTS_ID])  # The conclusion band leads the relay.
-        whole, _ = relay_card("T439", DONE, text="## 结论\n好了", inputs=["Claude Code"], outputs=["**1**"],
+                              outputs=[took], files=self.files, url="https://x/t439")
+        # The conclusion band leads the relay; the 输入/输出 box is one small line (用时 · 进话题 ›), not the box.
+        self.assertEqual(ids(relay), [None, None, ARTIFACTS_ID, "relay_foot"])
+        whole, _ = relay_card("T439", DONE, text="## 结论\n好了", inputs=["Claude Code"], outputs=[took],
                               files=self.files)
-        self.assertEqual(ids(whole), [None, ARTIFACTS_ID, FACTS_ID])  # The band says all of a one-line reply.
-        self.assertIn("T439 ›", json.dumps(relay, ensure_ascii=False))
-        self.assertNotIn("T439 ›", json.dumps(built, ensure_ascii=False))
+        self.assertEqual(ids(whole), [None, ARTIFACTS_ID, "relay_foot"])  # The band says all of a one-line reply.
+        self.assertIn("[进话题 ›](https://x/t439)", json.dumps(relay, ensure_ascii=False))
+        self.assertIn("用时", relay["body"]["elements"][-1]["content"].replace("\u2060", ""))
+        self.assertNotIn(FACTS_ID, json.dumps(relay, ensure_ascii=False))
+        self.assertNotIn("进话题", json.dumps(built, ensure_ascii=False))
         # Without artifacts: the box alone; a plain answer card without a tail as before.
         self.assertEqual(ids(answer_card("好了", "s", tail(None, ["Claude Code"], []))), [None, FACTS_ID])
         self.assertNotIn("update_multi", answer_card("好了", "s").get("config", {}))
 
     def test_a_reply_too_long_for_a_card_goes_as_markdown_and_a_relay_held_before_is_an_answer_card(self):
         self.assertIsNone(relay_card("T439", DONE, text="字" * 9000, inputs=[], outputs=[])[0])
-        # Held by a release before 2026-11-08: at, took and artifacts, no inputs. The reply and its T number's box,
-        # no grey line.
+        # Held by a release before 2026-11-08: at, took and artifacts, no inputs. The reply alone, no grey line.
         old, text = relay_card("T439", DONE, text="好了", at=1.0, took=60, artifacts=2)
-        self.assertEqual(ids(old), [None, FACTS_ID])  # The band (it says the one-line reply whole) and the box.
+        self.assertEqual(ids(old), [None])  # The band says the one-line reply whole; no box, no small line.
         self.assertEqual(text, "好了")
-        self.assertIn("T439 ›", json.dumps(old, ensure_ascii=False))
         self.assertNotIn("产物 2 个", json.dumps(old, ensure_ascii=False))
         self.assertEqual(text, "好了")
 
@@ -872,7 +874,9 @@ class RedeliveryTest(Case):
         with mock.patch.object(placement, "plan", return_value=top), \
                 mock.patch.object(answer_cards, "ask_link", return_value="https://applink.feishu.cn/x"):
             first = self.first()
+            # No speaker to name (the butler off): the block stays a block of the card, as before the title bar.
             self.assertEqual(first[2]["body"]["elements"][0]["element_id"], "answer_ask")
+            self.assertNotIn("header", first[2])
             self.assertEqual(first[1].reply_to_message_id, "")
             again = self.again()
         self.same(first, again)

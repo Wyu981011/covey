@@ -23,6 +23,7 @@ import re
 
 from covey.cards.elements import card, chevron, collapsible, grey, item, json_size, md, text_button
 from covey.core.checkpoint import change_summary, delivery_commits, short_commit
+from covey.cards.ui import ASK_ID, ASK_META
 from covey.cards.facts import context_text, start_text, token_total, usage_figures
 from covey.core.metrics import took_text
 from covey.core.text import literal, share
@@ -212,23 +213,30 @@ def not_found(change) -> list:
     return [str(commit) for commit in found if commit] if isinstance(found, list) else []
 
 
+def change_rows(change) -> list:
+    """The rows of an open 改动 fold: 提交 (every commit in full, one a line, one not found in the workdir's repository
+    followed by ABSENT), 部署 and 自检 (as the checkpoint wrote them, not cut); [] for anything but a dict with
+    something in it."""
+    if not isinstance(change, dict) or not change:
+        return []
+    commits, absent = delivery_commits(change), set(not_found(change))
+    shown = "\n".join(literal_text(commit) + (" " + grey(ABSENT) if commit in absent else "") for commit in commits)
+    return [labelled("提交", shown if commits else grey("未提交")),
+            labelled("部署", literal_text(change.get("deployed")) if change.get("deployed") else grey("未部署")),
+            labelled("自检", literal_text(change.get("verified")) if change.get("verified") else grey("未自检"))]
+
+
 def change_element(change):
     """The 改动 fold (CHANGE_ID) of a turn that changed code (app/answer_cards.py change): folded, one small grey line "改动 · 951327a · 第 331 代 · 已自检"
-    (core/checkpoint.py change_summary), in the 产物 panel's look (a quiet ``collapsible``); open, a row each of
-    提交 (every commit in full, one a line, one not found in the workdir's repository followed by ABSENT), 部署 and
-    自检 (as the checkpoint wrote them, not cut). A string
+    (core/checkpoint.py change_summary), in the 产物 panel's look (a quiet ``collapsible``); open, ``change_rows``. A string
     (``change`` of an older release, "已提交 a6bc148 · 已部署 第 322 代 · 未验收"): that one grey line,
     no fold. None without one."""
     if isinstance(change, str):
         words = " ".join(change.split())
         return md(grey(literal_text(f"{CHANGE_WORD} · {words}")), size="notation", element_id=CHANGE_ID) if words else None
-    if not isinstance(change, dict) or not change:
+    rows = change_rows(change)
+    if not rows:
         return None
-    commits, absent = delivery_commits(change), set(not_found(change))
-    shown = "\n".join(literal_text(commit) + (" " + grey(ABSENT) if commit in absent else "") for commit in commits)
-    rows = [labelled("提交", shown if commits else grey("未提交")),
-            labelled("部署", literal_text(change.get("deployed")) if change.get("deployed") else grey("未部署")),
-            labelled("自检", literal_text(change.get("verified")) if change.get("verified") else grey("未自检"))]
     return collapsible(CHANGE_ID, f"{CHANGE_WORD} · {change_summary(change)}", rows, quiet=True, spacing="4px")
 
 
@@ -367,9 +375,15 @@ def tail(files=None, inputs=(), outputs=(), link="", change=None, notes=(), butt
 
 
 def tail_card(elements, summary, lead=""):
-    """The card after an answer sent as Markdown or a file: ``lead`` (one small grey line), then ``elements``."""
+    """The card after an answer sent as Markdown or a file: ``lead`` (one small grey line), then ``elements``; a "你问"
+    block among them (``ask_block``) becomes the title bar, its way back a line at the end (cards/ui.py)."""
+    from covey.cards.ui import ask_footnote, speaker_header, split_ask
+
+    meta, rest = split_ask(elements)
     head = [md(grey(lead), size="notation")] if lead else []
-    return card([*head, *elements], summary, update_multi=True)
+    back = ask_footnote(meta)
+    return card([*head, *rest, *([back] if back else [])], summary, update_multi=True,
+                header=speaker_header(meta) if meta else None)
 
 
 HEAD_ID = "answer_head"
@@ -384,7 +398,6 @@ def head_element(head, label="", title=""):
     return md(text, element_id=HEAD_ID, size="normal_v2")
 
 
-ASK_ID = "answer_ask"
 ASK_CHARS = 70
 
 
@@ -412,14 +425,17 @@ def says(verb, doing, at) -> str:
     return template.format(at=f" {at} " if at else "")
 
 
-def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer"):
+def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", meta=True):
     """The block above an answer, a conclusion or a question's copy at the private chat's top level saying which
     message of the owner's it answers: grey, two
     lines, "你问 · 12:31 ›" and the message's words (two lines at most); the whole block opens ``url`` (the
     message's thread, app/answer_cards.py ask_link). Style "A" of four samples. ``who``: its speaker (docs/ui.md 5.3,
     cards/ui.py ``speaker``) and what it did with that message in one sentence (``says``, by ``doing``: answer, done,
     waiting, stopped, about, running, member, report), "**管家** 答复你 12:31 的问题 ›" over 「his words」; with no words, that line
-    alone (a lead's wake-up turn: "主动来汇报 · 09:40"). None without words or a speaker."""
+    alone (a lead's wake-up turn: "主动来汇报 · 09:40"). None without words or a speaker.
+    ``meta``: the block also carries what a title bar says (cards/ui.py ``ASK_META``: who, what it did, when, the
+    words, the link), for the card that takes the block into its header (``split_ask``) and is never sent; a card
+    that keeps the block as an element (the dispatch card) asks for none."""
     from covey.cards.ui import speaker
 
     words = " ".join(str(text or "").split())
@@ -427,8 +443,9 @@ def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer"):
         return None
     words = words if len(words) <= ASK_CHARS else words[:ASK_CHARS - 1] + "…"
     arrow = "　›" if url else ""
+    sentence = says(verb, doing, at) if who else ""
     if who:
-        head = speaker(who) + " " + grey(says(verb, doing, at) + arrow)
+        head = speaker(who) + " " + grey(sentence + arrow)
         quoted = f"「{words}」"
     else:
         head = grey(" · ".join(part for part in (verb if words else "", at) if part) + arrow)
@@ -438,6 +455,9 @@ def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer"):
            "corner_radius": "6px", "background_style": "grey-50", "vertical_spacing": "2px", "elements": lines}
     if url:
         box["behaviors"] = [{"type": "open_url", "default_url": url}]
+    if meta and who:
+        box[ASK_META] = {"who": who, "doing": doing, "verb": verb, "at": at, "says": sentence.strip(), "words": words,
+                         "url": url}
     return box
 
 
