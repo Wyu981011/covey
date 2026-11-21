@@ -223,8 +223,19 @@ class RelayTest(unittest.TestCase):
         self.assertEqual("answer_facts", facts["element_id"])
         plain = facts["content"].replace(" ", " ").replace("⁠", "")
         for words in ("输入", "Claude Code", "Claude 自带", "Opus 5.5", "思考 xhigh", "脱敏关", "covey", "输出", "用时", "token",
-                      "缓存命中", "改动", "a6bc148", "看你那句 ›", f"[进话题 ›]({TOPIC_URL})"):
+                      "缓存命中", "改动", "a6bc148", f"[进话题 ›]({TOPIC_URL})"):
             self.assertIn(words, plain)
+        # One way in (T636, 2026-11-22): 看你那句 › opened the topic's thread at this turn's card too, as 进话题 › does.
+        self.assertNotIn("看你那句", plain)
+        self.assertEqual(1, plain.count("›"))
+
+    def test_without_the_topics_link_the_one_link_is_the_ask_blocks(self):
+        built, _ = relay_card("T623", DONE, text="好了", outputs=[figure("用时", "1分")], ask=self.asked())
+        content = built["body"]["elements"][-1]["content"]
+        self.assertIn(f"[进话题 ›]({URL})", content)
+        self.assertNotIn("看你那句", content)
+        bare, _ = relay_card("T623", DONE, text="好了", outputs=[figure("用时", "1分")])
+        self.assertNotIn("›", json.dumps(bare["body"]["elements"][-1], ensure_ascii=False))
 
     def test_a_relay_without_figures_keeps_its_links_on_a_small_line(self):
         self.assertIsNone(foot(None, ()))
@@ -234,7 +245,7 @@ class RelayTest(unittest.TestCase):
         built, _ = relay_card("T623", WAITING, question="选 A 还是 B？", ask=self.asked("waiting"))
         self.assertEqual(("等你", "orange"), tag(first(built)))
         self.assertNotIn("header", built)
-        self.assertIn("看你那句 ›", built["body"]["elements"][-1]["content"])
+        self.assertEqual(f"[进话题 ›]({URL})", built["body"]["elements"][-1]["content"])
         stopped, _ = relay_card("T623", STOPPED, reason="到了时间上限", avatar="img_topic")
         self.assertEqual(("停住了", "red"), tag(first(stopped)))
         self.assertTrue(text_of(first(stopped)).startswith("**T623** <text_tag"))

@@ -192,8 +192,8 @@ def glued(text):
 def facts_element(inputs=(), outputs=(), link="", change=None, links=()):
     """The 输入 and 输出 under an answer (FACTS_ID): one small element, a line each with its label grey, no box
     (``input_lines``, ``output_lines``), the line of 改动 after them when ``change`` (a dict, ``change_line``) says
-    one; ``link``, the relay's T number, and ``links`` (Markdown: 看你那句 ›, 进话题 ›) end 输出's last line. None
-    with none of them."""
+    one; ``link``, the relay's T number, and ``links`` (Markdown: 看你那句 › on an answer, 进话题 › on a relay) end
+    输出's last line. None with none of them."""
     rows = []
     if inputs:
         rows.append(grey("输入") + " " + "".join(input_lines(inputs)))

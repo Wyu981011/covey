@@ -10,8 +10,8 @@ from covey.cards.answer_card import check_element, facts_element, tail as answer
 from covey.cards.elements import card, collapsible, grey, json_size, md, note
 from covey.cards.review import (ANSWER_CARD_BYTES, after_lead, answer_lead, bold_minor_headings,
                                 inline_one_line_code)
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, back_link, band_label, banded, conclusion_band, container,
-                            speaker_row, split_ask, styled)
+from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, speaker_row,
+                            split_ask, styled)
 from covey.core import look
 from covey.core.failure import HEADLINE_CHARS, split_title
 from covey.core.text import literal, redact
@@ -67,12 +67,23 @@ def reply_fold(text):
 
 def foot(inputs, outputs, *, change=None, links=()):
     """What ends a relay (FACTS_ID, cards/answer_card.py facts_element): its 输入 and 输出 lines, the 改动 line of a
-    turn that changed code (a dict) and ``links`` (Markdown: 看你那句 ›, 进话题 ›) ending the 输出 line; with neither
-    输入 nor 输出, the links alone on a small line (FOOT_ID). None without anything."""
+    turn that changed code (a dict) and ``links`` (Markdown: 进话题 ›) ending the 输出 line; with neither 输入 nor 输出,
+    the links alone on a small line (FOOT_ID). None without anything."""
     if inputs or outputs or change:
         return facts_element(inputs, outputs, links=links, change=change)
     line = "　".join(links)
     return md(line, size="notation", element_id=FOOT_ID) if line.strip() else None
+
+
+INTO_LABEL = "进话题 ›"
+
+
+def into(url, meta) -> list:
+    """The relay's one link into its topic, ["[进话题 ›](…)"]: ``url`` (app/relay_send.py topic_url), else the "你问" block's
+    (``meta``, cards/ui.py split_ask): a topic's turn's block opens that topic's thread too, at the same card. [] without
+    either."""
+    link = str(url or "") or str((meta or {}).get("url") or "")
+    return [f"[{INTO_LABEL}]({link})"] if link else []
 
 
 def summary(label, words, text):
@@ -94,12 +105,13 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
     the answer card's tail takes them), WAITING (``question``) or STOPPED (``reason``, one line). A DONE reply that is
     long (``long_reply``) is in a fold under the conclusion.
     ``ask``: the "你问" block (cards/answer_card.py ask_block; a relay at the top level quoting no card, threaded):
-    its words go to the speaker's row, its way back is "看你那句 ›" on the 输出 line, after "进话题 ›" (with ``url``,
-    which opens the topic). ``at``, ``took``,
+    its words go to the speaker's row. One link ends the 输出 line, "进话题 ›" (``into``): ``url``, which opens the topic
+    at this turn's card, else the block's own link, which opens the same thread (app/answer_cards.py ask_url) and was a
+    second link, "看你那句 ›", to the same place. ``at``, ``took``,
     ``artifacts``: what a relay held (inline_pending) by an older release had besides, for a grey line no
     card has now, not shown; without ``inputs`` the foot has no 输入 line."""
     meta, _ = split_ask([ask] if ask else [])
-    links = [link for link in (f"[进话题 ›]({url})" if url else "", back_link(meta)) if link]
+    links = into(url, meta)
     key = {DONE: "result", WAITING: "waiting"}.get(outcome, "stopped")
     row = speaker_row(meta, outcome=key, label=label, avatar=avatar)
     style = dict(padding=BODY_PADDING, spacing=BODY_SPACING)
