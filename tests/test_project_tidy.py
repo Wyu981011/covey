@@ -657,6 +657,7 @@ class SuggestionLayoutTest(TidyCase):
         self.assertEqual(shown[0]["headline"], "拆出新专项「评审改动上线」")
         self.assertEqual([each["label"] for each in shown[0]["topics"]][:1], [label_title(self.state, members[0])[0]])
         self.assertNotIn("link", shown[0]["topics"][0])
+        self.assertEqual(shown[0]["project"], "")  # 去专项 only once it is done (v28).
         before = self.tidy.web_stamps()
         state, words = Ops(self.env).run({"kind": "tidy_decide", "op_id": "o1", "payload": {"proposal": shown[0]["id"], "choice": "ok"}})
         self.assertEqual(state, "done", words)
@@ -666,6 +667,7 @@ class SuggestionLayoutTest(TidyCase):
         self.assertNotIn("拆出来", text(self.patched()))
         after = self.tidy.web_view()["proposals"][0]
         self.assertEqual((after["state"], after["note"]), ("done", words))
+        self.assertEqual(projects.read_record(self.state, after["project"])["name"], "评审改动上线")  # The new one, not ``pid``.
         again = Ops(self.env).run({"kind": "tidy_decide", "op_id": "o2", "payload": {"proposal": shown[0]["id"], "choice": "decline"}})
         self.assertEqual(again[0], "failed")
         self.assertIn("已经定过了", again[1])
@@ -696,7 +698,23 @@ class SuggestionLayoutTest(TidyCase):
         self.assertEqual(state, "done", words)
         self.assertEqual(proposals.read_proposal(self.state, shown[0]["id"])["state"], proposals.DECLINED)
         self.assertIn("不管了", text(self.patched()))
-        self.assertEqual(self.tidy.web_view()["proposals"][0]["state"], "declined")
+        self.assertEqual([(each["state"], each["project"]) for each in self.tidy.web_view()["proposals"]], [("declined", "")])
+
+    def test_a_new_project_made_from_the_page_is_the_one_its_row_opens(self):
+        self.filler(3)
+        one, two = self.topic("网关失联"), self.topic("网关扩容")
+        self.verdicts.append({"suggestions": [
+            {"kind": "create", "topics": [1, 2], "name": "推理网关稳定", "goal": "一周不失联", "why": "同一个网关", "confidence": 0.8}]})
+        self.see(lambda: [one, two])
+        self.tidy.runs.whole(self.ctx, CHAT, "run-c", "test", "")
+        pid = self.tidy.web_view()["proposals"][0]["id"]
+        state, words = Ops(self.env).run({"kind": "tidy_decide", "op_id": "o1", "payload": {"proposal": pid, "choice": "ok"}})
+        self.assertEqual(state, "done", words)
+        made = proposals.read_proposal(self.state, pid)["project_made"]
+        self.assertEqual(projects.read_record(self.state, made)["name"], "推理网关稳定")
+        self.assertEqual([(each["state"], each["project"]) for each in self.tidy.web_view()["proposals"]], [("done", made)])
+        projects.record_path(self.state, made).unlink()  # Gone: no 去专项.
+        self.assertEqual(self.tidy.web_view()["proposals"][0]["project"], "")
 
 
 class PendingTest(TidyCase):

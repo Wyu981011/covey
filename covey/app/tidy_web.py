@@ -7,8 +7,10 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from covey.app import tidy_facts as facts
+from covey.app.projects import project_id
 from covey.cards import project_proposal as cards
 from covey.core import project_proposals as proposals
+from covey.core import projects
 from covey.core.state import read_object
 
 WEB_RUNS, WEB_OPEN_DAYS, WEB_DECIDED_HOURS = 30, 7, 24  # The web page's 整理专项: the runs looked at, how long open and decided ones stay.
@@ -16,6 +18,19 @@ WEB_STATES = {proposals.ACCEPTED: "done"}  # Being carried out: no buttons; the 
 WEB_DOING = "正在照办……"
 WEB_REFUSED = {"tidy_stale": "这条建议的卡已经过时了", "tidy_running": "正在整理，等这次整理完再定", "tidy_decided": "这条已经定过了",
                "tidy_bad_value": "这条建议找不到了", "tidy_no_topics": "没有话题，专项没建"}
+
+
+def made(state, record) -> str:
+    """The project a done suggestion's 去专项 opens on the web page (v28 ``project``): the one a 新建 or 拆出 made (app/projects.py
+    gather makes its id from the proposal's), a merge's the one kept, else the one it changed; '' once that project is gone."""
+    kind = record.get("kind")
+    if kind in (proposals.CREATE, proposals.SPLIT):
+        pid = record.get("project_made") or project_id("tidy", record["id"])
+    elif kind == proposals.MERGE:
+        pid = (record.get("projects") or [""])[0]
+    else:
+        pid = record.get("project") or ""
+    return pid if projects.read_record(state, pid) else ""
 
 
 class WebSide:
@@ -59,6 +74,7 @@ class WebSide:
                           "state": WEB_STATES.get(status, status), "note": "" if status == proposals.OPEN else
                           (record.get("note") or note or (record.get("view") or {}).get("note") or cards.OUTCOME.get(status, "")
                            or (WEB_DOING if status == proposals.ACCEPTED else "")),
+                          "project": made(state, record) if status == proposals.DONE else "",
                           "at": float(record.get("created_at") or 0)})
 
         try:
