@@ -28,7 +28,7 @@
 
    - `base_url` 不带末尾斜杠；`key_file` 是存密钥的文件，建议权限 600。
    - 密钥只从 `key_file` 读，不进日志、记录和报告；换了密钥文件，10 秒内自动读到。
-   - `push_seconds`、`poll_seconds` 默认都是 1。文件缺了或写错，只记一行失败、退避重试。
+   - `push_seconds` 默认 1，`poll_seconds` 默认 0.5。文件缺了或写错，只记一行失败、退避重试。
 2. 服务清单里设 `COVEY_WEB=1` 和 `COVEY_WEB_CONFIG=<上面那个文件>`，重新注册服务（见[配置 · 改开关三步](configuration.md#改开关三步)）。
 3. **确认连上了**：一两分钟内网页上出现你私聊里最近的话题，“最后同步”的时间在走；在网页上对一个话题说一句，飞书的话题里出现这一轮。`bridge.log` 里没有 `web sync … failed`。
 4. 关掉：设 `COVEY_WEB=0` 重新注册。网页上已有的内容留着，只是不再更新。
@@ -199,7 +199,7 @@
 
 ### 网页发回的操作
 
-`web-inbox` 线程每秒 GET `/sync/inbox?after=<seq>`；先把 seq 和 op_id 记进 `<state>/web/inbox.json`，再执行，按 op_id 去重（重启后也一样；记了没记结果的算“结果不确定”，回 failed，不重发）；执行完 POST `/sync/ack`。话题、专项必须属于主人的私聊；不认识的、已结束的回 failed 并写原因，网页按 op_id 显示。
+`web-inbox` 线程每 0.5 秒 GET `/sync/inbox?after=<seq>`（取到新操作就立刻再取一次）；先把 seq 和 op_id 记进 `<state>/web/inbox.json`，再执行，按 op_id 去重（重启后也一样；记了没记结果的算“结果不确定”，回 failed，不重发）；执行完 POST `/sync/ack`：设置和启动类操作执行完先推设置再单独 ack，不等同一批里后面的操作；每条这类操作在日志留一行 `web op <kind> seq=… run=…ms push=…ms ack=…ms`（不含内容），用来看各段耗时。数据约定不变，不加版本号。话题、专项必须属于主人的私聊；不认识的、已结束的回 failed 并写原因，网页按 op_id 显示。
 
 | 操作 | 做什么 |
 | --- | --- |

@@ -189,7 +189,7 @@ class ConfigTest(WebCase):
         config = web_sync.load_config()
         self.assertEqual(config.key, KEY)
         self.assertNotIn(KEY, repr(config))
-        self.assertEqual((config.push_seconds, config.poll_seconds), (1.0, 1.0))
+        self.assertEqual((config.push_seconds, config.poll_seconds), (1.0, 0.5))
 
     def test_a_missing_key_file_is_said_without_the_key(self):
         write_json(self.state / "bad.json", {"base_url": "https://x.example/openapi", "key_file": str(self.state / "none")})
@@ -925,6 +925,29 @@ class InboxTest(WebCase):
         self.assertEqual([r["state"] for r in self.web.acks], ["done", "done"])
         self.assertEqual([action["job_id"] for action in self.app.stopped], ["4"])
         self.assertEqual(forward.call_args_list[0].args[3]["job_id"], "4")
+
+    def test_a_settings_change_is_pushed_and_acked_before_the_next_one_in_the_batch_runs(self):
+        order = []
+        self.web.op("settings", 1, "op-s1", what="row")
+        self.web.op("settings", 2, "op-s2", what="row")
+
+        def run(row):
+            order.append(("run", row["op_id"], len(self.web.acks)))
+            return "done", "ok"
+
+        with mock.patch.object(self.sync.ops, "run", side_effect=run), \
+                mock.patch.object(self.sync, "push_settings", side_effect=lambda *a, **k: order.append(("push", len(self.web.acks))) or 0):
+            self.sync.inbox_once()
+        self.assertEqual(order[:4], [("run", "op-s1", 0), ("push", 0), ("run", "op-s2", 1), ("push", 1)])
+        self.assertEqual([r["op_id"] for r in self.web.acks], ["op-s1", "op-s2"])
+        self.assertTrue(any(line.startswith("web op settings seq=1 run=") for line in self.logs))
+
+    def test_the_inbox_goes_again_at_once_after_new_operations(self):
+        waits = []
+        self.sync.runtime.shutdown = SimpleNamespace(is_set=lambda: len(waits) >= 2, wait=lambda s: waits.append(s) or False)
+        with mock.patch.object(self.sync, "inbox_once", side_effect=[1, 0, 0]):
+            self.sync.loop("inbox", self.sync.inbox_once, lambda: 0.5, again=True)
+        self.assertEqual(waits, [0, 0.5])
 
     def test_stop_without_a_task_fails(self):
         self.topic()

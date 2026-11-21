@@ -473,7 +473,7 @@
 | `COVEY_PATROL_DAILY_CALLS` | `core/patrol.py`（`number`） | 48：小模型一天最多调几次（1 到 1000） | 否 |
 | `COVEY_PATROL_JUDGE_MS` | `core/patrol.py`（`number`） | 30000：小模型一次调用的硬上限，毫秒（1000 到 120000） | 否 |
 | `COVEY_WEB` | `core/web_sync.py`（`enabled`）、`app/web_sync.py`（`WebSync.threads`） | 空：关。`1`：开网页工作台同步，`web-push`、`web-inbox` 两条线程；要同时设 `COVEY_WEB_CONFIG` | 否 |
-| `COVEY_WEB_CONFIG` | `core/web_sync.py`（`load_config`） | 空。指向一个 JSON：`base_url`、`key_file`（只从这个文件读密钥）、`push_seconds`（默认 1）、`poll_seconds`（默认 1）；文件缺了或写错只记一行失败、退避重试 | 否 |
+| `COVEY_WEB_CONFIG` | `core/web_sync.py`（`load_config`） | 空。指向一个 JSON：`base_url`、`key_file`（只从这个文件读密钥）、`push_seconds`（默认 1）、`poll_seconds`（默认 0.5）；文件缺了或写错只记一行失败、退避重试 | 否 |
 | `COVEY_PROJECT_TIDY` | `core/project_proposals.py`、`app/project_tidy.py`、`app/runs.py`、`core/butler.py`、`core/butler_tool_specs.py`、`app/web_sync.py`、`app/butler_panel.py` | 空或 `off`：关。`suggest`：只提议（能归进已有专项的直接归，新建要主人点）；`auto`：新建也直接做。`./install` 新装的服务写 `suggest`。见[整理专项](#整理专项) | 否 |
 | `COVEY_PROJECT_TIDY_MODEL` | `core/project_proposals.py`（`model`）、`app/project_sorter.py`（`ask`） | `sonnet`：补话题要点和整理判断用的 Claude Code 模型别名或 id；写错按默认 | 否 |
 | `COVEY_PROJECT_TIDY_DAYS` | `core/project_proposals.py`（`number`） | 7：整理看最近几天有过一轮的话题（专项里的话题不论多久都看） | 否 |

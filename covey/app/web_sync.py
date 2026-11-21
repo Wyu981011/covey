@@ -79,20 +79,21 @@ class WebSync:
             return ()
         return (("web-push", lambda ctx: self.loop("push", self.push_once, lambda: self.client.settings().push_seconds, self.start_over,
                                                    lambda: self.collector.moved)),
-                ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, lambda: self.client.settings().poll_seconds)))
+                ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, lambda: self.client.settings().poll_seconds, again=True)))
 
-    def loop(self, label, step, seconds, reset=None, moved=None) -> None:
+    def loop(self, label, step, seconds, reset=None, moved=None, again=False) -> None:
         """``step`` every ``seconds()``, in a Worker; a failure is logged (the first, then every tenth) and waited out 2, 4 ... MAX_BACKOFF
         seconds. A step with no progress in STUCK_SECONDS (``moved()``: the monotonic time of its last; without it, the step's start) is
         logged and left behind: ``reset()`` drops what it was building and the next step runs in a new Worker (none while MAX_LEFT
-        left-behind ones are still stuck)."""
+        left-behind ones are still stuck). With ``again``, a step that returned something (the inbox's new operations) is followed by the next
+        at once: the page's next click is waiting."""
         worker, left = Worker(f"web-{label}-step"), []
         while not self.runtime.shutdown.is_set():
             try:
-                worker.call(step, STUCK_SECONDS, moved)
+                got = worker.call(step, STUCK_SECONDS, moved)
                 if self.down.pop(label, 0):
                     self.runtime.log(f"web sync {label} recovered")
-                wait = seconds()
+                wait = 0 if again and got else seconds()
             except Stuck:
                 left = [each for each in (*left, worker) if each.thread.is_alive()]
                 self.runtime.log(f"web sync {label} stuck: a step has not moved in {STUCK_SECONDS} s; left behind ({len(left)} so far)")
@@ -361,16 +362,38 @@ class WebSync:
         ledger = self.ledger
         data = self.client.request("GET", f"/sync/inbox?after={ledger.after()}&limit=100")
         results, fresh = [], 0
+
+        def flush(timing=None) -> None:
+            """What the page reads before it sees done (the new settings, the tidy list), then the ack of the results so far: one
+            operation's ack does not wait for the ones after it in the same batch."""
+            nonlocal results
+            began = time.monotonic()
+            chat = self.runtime.access.owner_chat()
+            if chat:
+                self.push_settings(chat, time.time())
+                self.push_tidy(time.time())
+            pushed = time.monotonic()
+            if results:
+                self.client.request("POST", "/sync/ack", {"results": results})
+                ledger.acked([each["op_id"] for each in results])
+                if timing is not None:  # Content-free: where the seconds of a page's change go (docs/web.md).
+                    self.runtime.log(f"web op {timing[0]} seq={timing[1]} run={timing[2]:.0f}ms push={(pushed - began) * 1000:.0f}ms "
+                                     f"ack={(time.monotonic() - pushed) * 1000:.0f}ms")
+            results = []
+
         for row in data.get("items") or ():
             op_id, seq = str(row.get("op_id") or ""), row.get("seq")
             if not op_id or not isinstance(seq, int) or isinstance(seq, bool):
                 continue
             known = ledger.get(op_id)
+            timing = None
             if known is None:
                 fresh += 1
                 ledger.take(op_id, seq)
+                ran = time.monotonic()
                 state, message = self.ops.run(row)
                 ledger.finish(op_id, state, message)
+                timing = (str(row.get("kind") or ""), seq, (time.monotonic() - ran) * 1000)
                 if row.get("topic_key"):
                     self.collector.touch(row["topic_key"])
                 opened = self.ops.opened_topic(row)
@@ -384,11 +407,7 @@ class WebSync:
                 ledger.finish(op_id, "failed", "这条执行到一半没有结果（Covey 重启或卡住了），结果不确定，没有重发")
             saved = ledger.get(op_id)
             results.append({"seq": seq, "op_id": op_id, "state": saved["state"], "message": saved["message"]})
-        chat = self.runtime.access.owner_chat()
-        if chat:
-            self.push_settings(chat, time.time())
-            self.push_tidy(time.time())
-        if results:
-            self.client.request("POST", "/sync/ack", {"results": results})
-            ledger.acked([each["op_id"] for each in results])
+            if timing is not None and timing[0] in ("settings", "launch", "tidy_decide"):
+                flush(timing)  # Acked at once, not after the rest of the batch.
+        flush()
         return fresh
