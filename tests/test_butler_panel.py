@@ -150,8 +150,8 @@ class ButlerPanelTests(UnifiedCase):
         # private chat mode is a row of the butler's, not a red button on top. T614: the butler's Harness and 工作区 are
         # rows of their own.
         for part in ('**新话题**', '**管家**', '**更多**', panel_card.SUBAGENT_NOTE, panel_card.LOCKED,
-                     "<font color='grey'>私聊顶层的消息</font>\\n交给管家", "<font color='grey'>Harness</font>\\nClaude Code",
-                     "<font color='grey'>供应商</font>\\nClaude 自带", "<font color='grey'>工作区</font>\\n默认工作区",
+                     "<font color='grey'>私聊顶层的消息</font>\u3000交给管家", "<font color='grey'>Harness</font>\u3000Claude Code",
+                     "<font color='grey'>供应商</font>\u3000Claude 自带", "<font color='grey'>工作区</font>\u3000默认工作区",
                      '压缩阈值', '20 万', '展开'):
             self.assertIn(part, text)
         for part in ('**新话题默认**', '**直接开工**', '改成纯话题', '**私聊模式**', '**独立复核**', '记住的工作区',
@@ -172,7 +172,7 @@ class ButlerPanelTests(UnifiedCase):
         self.assertEqual(self.values(panel_card.EFFORT), [])
         self.assertEqual([v['option'] for v in self.values(panel_card.PROVIDER)], ['anthropic'])
         self.assertEqual([v['option'] for v in self.values(panel_card.MODEL)], ['claude-model'])  # T615: no 默认.
-        self.assertIn("<font color='grey'>模型</font>\\n未选", text)
+        self.assertIn("<font color='grey'>模型</font>\u3000未选", text)
         self.assertEqual(self.values(panel_card.TOPIC_HARNESS), [])  # 新话题 closed: what it holds in a grey line.
         self.assertNotIn('原目录', text)  # The usual 运行方式 and 工作区 are left out of its line (USUAL).
         # 新话题 opened: its rows; 管家 closed.
@@ -257,7 +257,7 @@ class ButlerPanelTests(UnifiedCase):
         self.ask()
         self.assertEqual(self.cards[-1]['header']['subtitle']['content'], '新话题 Codex Model · 管家没开')
         text = self.text()  # 纯话题: the butler's section is the mode's row alone.
-        for part in ("<font color='grey'>私聊顶层的消息</font>\\n每条直接开一个话题", panel_card.MODE_OFF, '**管家**',
+        for part in ("<font color='grey'>私聊顶层的消息</font>\u3000每条直接开一个话题", panel_card.MODE_OFF, '**管家**',
                      'Codex · Codex Model · xhigh · docs · 独立 worktree'):  # The closed 新话题's line.
             self.assertIn(part, text)
         for part in ('压缩阈值', '改成管家', panel_card.LOCKED):
@@ -265,7 +265,7 @@ class ButlerPanelTests(UnifiedCase):
         self.assertEqual(self.values(panel_card.MODEL), [])
         self.part('topic')
         text = self.text()
-        for part in (f"<font color='grey'>{label}</font>\\n{choice}" for label, choice in (
+        for part in (f"<font color='grey'>{label}</font>\u3000{choice}" for label, choice in (
                 ('Harness', 'Codex'), 
                 ('运行方式', '独立 worktree'), ('工作区', 'docs'))):
             self.assertIn(part, text)
@@ -320,13 +320,13 @@ class ButlerPanelTests(UnifiedCase):
         self.ask()
         self.part('topic')
         text = self.text()
-        self.assertIn("<font color='grey'>子 Agent</font>\\n轻量（Sonnet，搜索用 Haiku）", text)
+        self.assertIn("<font color='grey'>子 Agent</font>\u3000轻量（Sonnet，搜索用 Haiku）", text)
         self.assertIn(panel_card.SUBAGENT_NOTE, text)
         self.assertEqual(self.click(self.option(panel_card.SUBAGENTS, 'same'), event_id='s1'), 1)
         self.assertEqual(self.settings().subagents, 'same')
         self.assertEqual(json.loads(settings.path(self.ctx.state_dir).read_text())['subagents'], 'same')
         self.assertEqual(self.cards[-1]['header']['title']['content'], HUB_TITLES[panel_card.CONFIG])
-        self.assertIn("<font color='grey'>子 Agent</font>\\n跟主模型", self.text())
+        self.assertIn("<font color='grey'>子 Agent</font>\u3000跟主模型", self.text())
         self.assertEqual(self.click(self.option(panel_card.SUBAGENTS, 'light'), event_id='s2'), 1)
         self.assertEqual(self.settings().subagents, 'light')
         # An option no release offers is not written.
@@ -541,7 +541,7 @@ class ButlerPanelTests(UnifiedCase):
         # T615: its levels by name; no 默认, 推荐 or 原生默认, and "Default (recommended)" is no 模型 choice.
         self.assertEqual(self.rows(panel_card.EFFORT), [o for o in native if o[0] not in NAMELESS])
         self.assertEqual([o for o, _ in self.rows(panel_card.MODEL)], ['claude-model'])
-        self.assertIn("<font color='grey'>模型</font>\\n未选", self.text())
+        self.assertIn("<font color='grey'>模型</font>\u3000未选", self.text())
         self.click(self.option(panel_card.EFFORT, 'max'), event_id='c1')
         self.assertEqual((self.settings().model, self.settings().effort), ('', 'max'))
         self.assertNotIn(GONE, self.text())
@@ -709,7 +709,7 @@ class ButlerPanelTests(UnifiedCase):
         self.assertLessEqual(element_count(card), CARD_NODES)
         self.assertLessEqual(json_size(card), CARD_BYTES)
         text = json.dumps(card, ensure_ascii=False)
-        self.assertIn("<font color='grey'>模型</font>\\nM39", text)  # The chosen model stays listed when the options are cut.
+        self.assertIn("<font color='grey'>模型</font>\u3000M39", text)  # The chosen model stays listed when the options are cut.
         self.assertIn('只列出前', text)
 
 

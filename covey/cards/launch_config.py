@@ -92,7 +92,7 @@ def setting_row(setting, *, token, open_key='', changed=False, stamp='', value=N
     redraw closes the row. An option is
     one tappable line, two card nodes (a card holds 200), the current one blue and bold after ✓, the others
     after a full-width space so the names line up. ``cell``: a row of a line (setting_line) as a small unit, its title the label
-    in grey over the choice. ``value``: more fields of each option's callback (the 代答 tab's
+    in grey then the choice on one line. ``value``: more fields of each option's callback (the 代答 tab's
     revision)."""
     label = f"**<font color='blue'>{setting.label}</font>**" if changed else grey(setting.label)
     lines = [tap({'kind': setting.kind, 'token': token, **(value or {}), 'option': option},
@@ -102,16 +102,16 @@ def setting_row(setting, *, token, open_key='', changed=False, stamp='', value=N
     options = {'tag': 'column_set', 'flex_mode': 'none', 'columns': [
         {'tag': 'column', 'width': 'weighted', 'weight': 1, 'background_style': 'bg-white',
          'padding': '2px 8px 2px 8px', 'vertical_spacing': '0px', 'elements': lines}]}
-    title = md(f'{label}\n{setting.text}') if cell else md(f'{label}　{setting.text}')
-    if cell:  # A tile: its own frame, the label over the choice, the chevron at its right edge.
+    title = md(f'{label}　{setting.text}')
+    if cell:  # A tile: its own frame, the label then the choice on one line, the chevron at its right edge.
         return fold(f'set_{setting.key}_{stamp or token[:4]}', title, [options], expanded=setting.key == open_key,
-                    padding='0px 4px 6px 4px', spacing='0px', title_padding='5px 2px 5px 8px', border=TILE_BORDER)
+                    padding='0px 4px 4px 4px', spacing='0px', title_padding='3px 2px 3px 8px', border=TILE_BORDER)
     return fold(f'set_{setting.key}_{stamp or token[:4]}', title, [options],
                 expanded=setting.key == open_key, padding='0px 0px 6px 0px', spacing='0px',
                 title_padding='7px 0px 7px 0px')
 
 
-# A line of settings (setting_line): at most two tiles (setting_row ``cell``) side by side, the label over the choice, each
+# A line of settings (setting_line): at most two tiles (setting_row ``cell``) side by side, the label then the choice on one line, each
 # still a fold whose options open under its tile. 'stretch': two columns of equal width where the card is wide, one
 # under the other where it is narrow (the 话题侧栏, a phone), so a choice is never cut into "Claude 自 / 带" and the tiles'
 # edges and chevrons line up from one line to the next; a setting whose words are long (``wide`` in cards/butler_panel.py)
