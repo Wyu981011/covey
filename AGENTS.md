@@ -319,6 +319,7 @@
 | --- | --- |
 | `core/app_manifest.py` | What the Feishu app behind a Bridge must have, and what its online version lacks |
 | `core/attachments.py` | Image attachments a Harness hands its model itself (Claude Code's stream-json input, pi's prompt) |
+| `core/avatars.py` | The avatars of the private chat's cards: which picture a speaker has, and the image keys Feishu gave them |
 | `core/background.py` | The work a task runner finishes before it exits |
 | `core/backup.py` | The daily backup of a state directory |
 | `core/board_read.py` | What the owner's private chat's topics are doing, as the records say it |
@@ -452,6 +453,7 @@
 | --- | --- |
 | `feishu/app_config.py` | The app's online configuration, read as the bot through Feishu's official API (no login) |
 | `feishu/app_console.py` | The Feishu developer console, driven by a headless Chromium logged in as the owner |
+| `feishu/avatars.py` | The image key of an avatar |
 | `feishu/cardkit.py` | Shared CardKit API helpers for Feishu bridge scripts |
 | `feishu/connections.py` | Linux event-bus transport watchdog, independent of user message activity |
 | `feishu/delivery.py` | Shared Feishu message delivery helpers for bridge scripts |

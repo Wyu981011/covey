@@ -158,7 +158,9 @@ def _made(state_dir, job, target, outcome, profile, log, facts):
     # What the topic did with the owner's words, in the speaker's sentence (cards/answer_card.py says).
     facts = {**facts, "ask": ask_for(state_dir, job, target, profile, at=card, log=log, doing=outcome)}
     topic = str(target.get("topic_id") or job_field(job, "topic_id"))
-    built, text = relay_card(target["label"], outcome, url=topic_url(state_dir, topic, card, profile), **facts)
+    picture = answer_cards.avatar(state_dir, topic, str(target.get("chat_id") or ""), profile, log)  # Its call, outside the lock.
+    built, text = relay_card(target["label"], outcome, url=topic_url(state_dir, topic, card, profile), avatar=picture,
+                             **facts)
     links = {topic: card}
     built, text = linked(state_dir, target["chat_id"], built, text, profile, cards=links)
     return built, text, links, facts
@@ -342,7 +344,10 @@ def take(state_dir, chat, path, key, target, send, made, profile=None, log=None)
         from covey.app.topic_links import links_for
 
         urls = links_for(state_dir, links, cards=links, profile=profile)  # Each row opens its topic.
-        built, text = merged_card([{**item, "url": urls.get(item.get("topic_id") or "", "")} for item in items])
+        from covey.feishu.avatars import image_key
+
+        built, text = merged_card([{**item, "url": urls.get(item.get("topic_id") or "", "")} for item in items],
+                                  avatar=image_key(state_dir, profile, "topic", log))
         built, text = linked(state_dir, chat, built, text, profile, cards=links)
         made = (built, text, links, {})
         key = key + "-merged"

@@ -159,12 +159,14 @@ class QuestionDisplay:
     def member_speaker(self, ctx, record):
         """The speaker line atop a project topic's question copy at the top level: the topic asks, for work its lead
         handed it (cards/answer_card.py ask_block, ``doing`` member); None when the topic cannot be named."""
-        from covey.app.answer_cards import speaker
+        from covey.app.answer_cards import avatar, speaker
         from covey.cards.answer_card import ask_block
 
         who = speaker(ctx.state_dir, str(record.get("topic_id") or ""), str(record.get("chat_id") or ""),
                       self.runtime.log)
-        return ask_block("", who=who, doing="member") if who else None
+        picture = avatar(ctx.state_dir, str(record.get("topic_id") or ""), str(record.get("chat_id") or ""),
+                         getattr(ctx, "profile", None), self.runtime.log) if who else ""
+        return ask_block("", who=who, doing="member", avatar=picture) if who else None
 
     # The top-level copy of a 话题区's question.
     def mirror(self, ctx, record, output="", job=None):

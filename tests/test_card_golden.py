@@ -900,7 +900,8 @@ def answer_tail_cards():
             # 做完了 relays that came close together, as one (app/relay_send.py send_merged).
             "relay_merged": merged_card([{"label": "T439", "title": "改看板的 Pin 目标", "lead": "按钮已经改好",
                                           "url": thread_url},
-                                         {"label": "T441", "title": "查一下昨晚的日志", "lead": "没有异常"}])[0],
+                                         {"label": "T441", "title": "查一下昨晚的日志", "lead": "没有异常"}],
+                                        avatar="img_v3_fake_topic")[0],
             "relay_stopped": relay_card("T439", STOPPED, reason="到了任务的时间上限，这一轮停在这里；可以接着做，或拆小再试")[0],
             "answer_card_asked": answer_card(text, "✅ 结论", tail(files, inputs, outputs), [ask]),
             "answer_relay_asked": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
@@ -925,21 +926,22 @@ def answer_tail_cards():
                 + "\n\n| 项 | 结果 |\n| --- | --- |\n| 单测 | 通过 |\n| 真机 | 待验收 |", inputs=inputs, outputs=outputs,
                 files=files, change=handed, url=thread_url,
                 ask=ask_block("看板改成彩色块", at="12:31", url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=1",
-                              who="T439 改看板的颜色", doing="done"))[0],
+                              who="T439 改看板的颜色", doing="done", avatar="img_v3_fake_topic"))[0],
             "answer_card_lead_speaker": answer_card(text, "专项「发布」· 负责人 · 结论", tail(None, inputs, outputs), [
                 ask_block("发布的事怎么样了", at="12:31", url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=2",
-                          who="专项「发布」· 负责人", doing="answer")]),
+                          who="专项「发布」· 负责人", doing="answer", avatar="img_v3_fake_lead")]),
             # The question first, the turn's output folded under it, its way back at the end (T439 asks, the owner not answered).
             "question_copy_waiting": mirror_card(
                 question_record(), "T439", "先说结论：两种都行。\n\n" + "\n".join(f"- 第 {n} 处：改了名字和颜色" for n in range(8)),
-                ask=ask_block("选哪种样式", at="09:12", who="T439 改看板的颜色", doing="waiting",
+                ask=ask_block("选哪种样式", at="09:12", who="T439 改看板的颜色", doing="waiting", avatar="img_v3_fake_topic",
                               url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=3"), files=files),
             "question_copy_settled": mirror_card(
                 question_record("answered", continuation_job_id=432, delivery_state="running"), "T439",
                 "先说结论：两种都行。", ask=ask_block("选哪种样式", at="09:12", who="T439 改看板的颜色", doing="waiting",
                                                   url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=3")),
             "answer_card_butler": answer_card(text, "✅ 结论", tail(files, inputs, outputs),
-                                              [ask_block("看板改成彩色块", at="12:31", who="管家")]),
+                                              [ask_block("看板改成彩色块，字大一点，颜色用暖色，再把图例挪到右边去", at="12:31",
+                                                         who="管家", avatar="img_v3_fake_butler")]),
             # The speaker's sentence by what it did (cards/answer_card.py says, 样卡 B): a relay waiting, a stopped one.
             "ask_speaker_waiting": ask_block("选哪种样式", verb="你答", at="09:12", url="https://applink.feishu.cn/t/439",
                                              who="T439 改看板的颜色", doing="waiting"),

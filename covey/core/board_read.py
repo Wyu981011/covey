@@ -39,7 +39,7 @@ import re
 from pathlib import Path
 
 from covey.core.jobs import jobs_dir, select_job_records, topic_job_records
-from covey.core import look, projects, turn_words
+from covey.core import avatars, look, projects, turn_words
 from covey.core.butler import is_butler_topic, traits
 from covey.core.failure import failure_view
 from covey.core.metrics import run_start, timings_of
@@ -127,6 +127,17 @@ def speaker_of(state, topic_id, chat) -> str:
         return ""
     label, title = label_title(state, topic_id)
     return look.speaker("topic", label=label, title=title)
+
+
+def avatar_of(state, topic_id, chat) -> str:
+    """The picture of ``speaker_of``'s speaker (core/avatars.py): the butler's, the one kept for a project's lead, the
+    topics'; '' when it has no speaker or the lead's cannot be kept."""
+    role = traits(topic_id, chat).name
+    if role == "butler":
+        return avatars.BUTLER
+    if role == "lead":
+        return avatars.lead_name(state, chat, projects.lead_record(state, topic_id, chat).get("id") or "")
+    return "" if role in {"butler_off", "lead_off"} else avatars.TOPIC
 
 
 def running_jobs(state, chat) -> list:

@@ -43,6 +43,7 @@ for _name in [name for name in os.environ if (name.startswith("COVEY_") or name.
 # Nor do they reach Feishu: a Bridge's startup would try a direct connection and add the host to this
 # process's no_proxy (feishu/sdk.py lark_cli_direct). The tests of direct turn it on themselves.
 os.environ["COVEY_FEISHU_DIRECT"] = "0"
+os.environ["COVEY_AVATARS"] = "0"  # No test uploads an avatar to Feishu (covey/feishu/avatars.py); the tests of avatars switch it on.
 
 # The enabled extensions' own tests: their tests/support/ files join this package (``from support.x import ...``), and
 # their tests/ directories are where scripts/test_map.py finds their test modules.

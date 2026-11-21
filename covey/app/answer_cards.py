@@ -266,9 +266,10 @@ def asked(state_dir, record, *, topic_id="", at=(), profile=None, fetch=None, lo
         return time.strftime("%H:%M", time.localtime(at_time)) if at_time else ""
 
     who = speaker(state_dir, str(topic_id or get("topic_id") or ""), str(get("chat_id") or ""), log)
+    picture = avatar(state_dir, str(topic_id or get("topic_id") or ""), str(get("chat_id") or ""), profile, log) if who else ""
     if projects.own_message(str(get("message_id") or "")):
         # A project's lead woken by the Bridge or handed the butler's words: the owner asked nothing here; who speaks.
-        return ask_block("", at=time_of_day(), who=who, doing="report")
+        return ask_block("", at=time_of_day(), who=who, doing="report", avatar=picture)
     text = str(get("user_text") or "")
     answer = text.lstrip().startswith(ANSWER_HEADING)
     words = " ".join(str(get("asked_text") or "").split())
@@ -293,7 +294,7 @@ def asked(state_dir, record, *, topic_id="", at=(), profile=None, fetch=None, lo
         parts = answer_parts(text, asked_questions(state_dir, str(get("message_id") or "")))
         added = str(get("asked_text") or "").strip()
         return answer_block([*parts, *([("heading", "另外说的"), ("note", added)] if added else [])], words, at=when)
-    return ask_block(words, verb="你答" if answer else "你问", at=when, url=url, who=who, doing=doing)
+    return ask_block(words, verb="你答" if answer else "你问", at=when, url=url, who=who, doing=doing, avatar=picture)
 
 
 def speaker(state_dir, topic_id, chat_id, log=None) -> str:
@@ -308,6 +309,24 @@ def speaker(state_dir, topic_id, chat_id, log=None) -> str:
     except Exception as exc:  # noqa: BLE001 - the block without its speaker
         if log is not None:
             log(f"speaker unavailable topic={topic_id[:12]}: {type(exc).__name__}")
+        return ""
+
+
+def avatar(state_dir, topic_id, chat_id, profile=None, log=None) -> str:
+    """The image key of the speaker's picture (core/board_read.py avatar_of, feishu/avatars.py image_key: uploaded the
+    first time); '' when it cannot be told or uploaded, the card then has the speaker's name alone. Never raises; makes a
+    call of its own, so never under a record's lock."""
+    if not topic_id or not chat_id:
+        return ""
+    try:
+        from covey.core.board_read import avatar_of
+        from covey.feishu.avatars import image_key
+
+        name = avatar_of(state_dir, topic_id, chat_id)
+        return image_key(state_dir, profile, name, log) if name else ""
+    except Exception as exc:  # noqa: BLE001 - the card without its picture
+        if log is not None:
+            log(f"avatar unavailable topic={topic_id[:12]}: {type(exc).__name__}")
         return ""
 
 

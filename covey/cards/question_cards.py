@@ -7,7 +7,8 @@ from covey.cards.board import OPEN_KIND
 from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, collapsible, grey, item,
                                   markdown_panel, note, plain, text_button)
 from covey.cards.review import compact_text
-from covey.cards.ui import ask_footnote, band_label, conclusion_band, receipt, speaker_header, split_ask, styled
+from covey.cards.ui import (BODY_PADDING, BODY_SPACING, ask_footnote, band_label, conclusion_band, receipt, speaker_row,
+                            split_ask, styled)
 from covey.core import look, triage, turn_words
 from covey.core.stale import STALE_NOTE
 from covey.core.text import literal
@@ -475,7 +476,7 @@ OUTPUT_ID = "mirror_output"
 
 def mirror_card(record, topic="", output="", ask=None, files=None):
     """The question card again at the private chat's top level (app/question_display.py mirror): the same form, under
-    the title bar that says whose it is (cards/ui.py speaker_header: ``ask``, the "你问" block, becomes the bar, its way
+    the speaker's row that says whose it is (cards/ui.py speaker_row: ``ask``, the "你问" block, becomes the row, its way
     back a line at the end). The question and its options come first; ``output``, what the turn wrote before it asked,
     is in a fold under them (``reply_fold``'s title: how much), then ``files``, the asking turn's 产物 panel as its
     answer card in the topic has it (app/artifacts.py answer_files). Settled, the form folds as the card in the topic
@@ -499,13 +500,15 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
     back = ask_footnote(meta)
     if back:
         elements.append(back)
-    built["body"]["elements"] = [*legacy, *elements]
-    if not legacy:
+    if legacy:
+        built["body"]["elements"] = [*legacy, *elements]
+    else:
         if settled and meta:  # It no longer asks: "关于你 20:33 的问题", not "要你定".
             from covey.cards.answer_card import says
 
             meta = {**meta, "doing": "about", "says": says(meta.get("verb") or "你问", "about", meta.get("at") or "").strip()}
-        built["header"] = speaker_header(meta, outcome="waiting", label=topic or "话题", tag=settled)
+        built["body"]["elements"] = [speaker_row(meta, outcome="waiting", label=topic or "话题", tag=settled), *elements]
+        built["body"].update(padding=BODY_PADDING, vertical_spacing=BODY_SPACING)
     return built
 
 

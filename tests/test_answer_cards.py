@@ -50,13 +50,14 @@ class PartsTest(unittest.TestCase):
             self.assertIn(part, out)
         self.assertEqual(output_parts({}, None), [])
 
-    def test_the_box_has_a_label_column_and_the_relay_s_ends_in_its_t_number(self):
+    def test_the_facts_are_a_line_each_with_a_grey_label_and_the_relay_s_ends_in_its_t_number(self):
         box = facts_element(["Claude Code", "Opus 5.5"], ["**1**"], link="T439")
-        self.assertEqual(box["element_id"], FACTS_ID)
-        rows = box["columns"][0]["elements"]
-        self.assertEqual([row["columns"][0]["elements"][0]["content"] for row in rows],
-                         ["<font color='grey'>输入</font>", "<font color='grey'>输出</font>"])
-        self.assertTrue(rows[1]["columns"][1]["elements"][0]["content"].endswith("T439 ›"))
+        self.assertEqual((box["element_id"], box["tag"], box["text_size"]), (FACTS_ID, "markdown", "notation"))
+        rows = box["content"].split("\n")
+        self.assertEqual([row.split(" ")[0] for row in rows], ["<font", "<font"])
+        self.assertTrue(rows[0].startswith("<font color='grey'>输入</font> ") and rows[1].startswith("<font color='grey'>输出</font> "))
+        self.assertTrue(rows[1].endswith("T439 ›"))
+        self.assertNotIn("background_style", json.dumps(box))  # The grey frame is gone: the parts are all still here.
         self.assertIsNone(facts_element())
 
     def test_a_narrow_card_wraps_only_after_a_separator(self):
@@ -65,7 +66,7 @@ class PartsTest(unittest.TestCase):
         # 2026-11-09: 不用 · 分割，换成明显的分隔符), never before it.
         box = facts_element(input_parts("Claude Code", "Claude 自带", "Opus 5.5", "xhigh", False, "ws"),
                             ["<font color='grey'>缓存命中</font> **94%**"], link="T439")
-        rows = [row["columns"][1]["elements"][0]["content"] for row in box["columns"][0]["elements"]]
+        rows = [row.split("</font> ", 1)[1] for row in box["content"].split("\n")]
         shown = [re.sub(r"<[^>]*>|\*\*", "", row) for row in rows]
         self.assertEqual([row.replace("\u2060", "").replace("\u00a0", " ") for row in shown],
                          ["Claude Code ｜ Claude 自带 ｜ Opus 5.5 ｜ 思考 xhigh ｜ 脱敏关 ｜ ws", "缓存命中 94% ｜ T439 ›"])
@@ -87,7 +88,7 @@ class LinesTest(unittest.TestCase):
         return re.sub(r"<[^>]*>|\*\*", "", text).replace("\u2060", "").replace("\u00a0", " ")
 
     def rows(self, box):
-        return [self.plain(row["columns"][1]["elements"][0]["content"]) for row in box["columns"][0]["elements"]]
+        return [self.plain(row.split("</font> ", 1)[1]) for row in box["content"].split("\n")]
 
     def test_a_saved_reasoning_part_reads_as_the_thinking_budget(self):
         # The owner, 2026-11-09: 推理深度统一叫思考预算. A job's input_parts and a relay's record saved before then say
@@ -477,14 +478,13 @@ class CardTest(unittest.TestCase):
         took = figure("用时", "1分")
         relay, _ = relay_card("T439", DONE, text="## 结论\n好了。\n\n细节在下面", inputs=["Claude Code"],
                               outputs=[took], files=self.files, url="https://x/t439")
-        # The conclusion band leads the relay; the 输入/输出 box is one small line (用时 · 进话题 ›), not the box.
-        self.assertEqual(ids(relay), [None, None, ARTIFACTS_ID, "relay_foot"])
+        # The speaker's row, then the conclusion band; 输入 and 输出 are the same two lines as the answer card's, with 进话题 ›.
+        self.assertEqual(ids(relay), ["speaker_row", None, None, ARTIFACTS_ID, FACTS_ID])
         whole, _ = relay_card("T439", DONE, text="## 结论\n好了", inputs=["Claude Code"], outputs=[took],
                               files=self.files)
-        self.assertEqual(ids(whole), [None, ARTIFACTS_ID, "relay_foot"])  # The band says all of a one-line reply.
+        self.assertEqual(ids(whole), ["speaker_row", None, ARTIFACTS_ID, FACTS_ID])  # The band says all of a one-line reply.
         self.assertIn("[进话题 ›](https://x/t439)", json.dumps(relay, ensure_ascii=False))
         self.assertIn("用时", relay["body"]["elements"][-1]["content"].replace("\u2060", ""))
-        self.assertNotIn(FACTS_ID, json.dumps(relay, ensure_ascii=False))
         self.assertNotIn("进话题", json.dumps(built, ensure_ascii=False))
         # Without artifacts: the box alone; a plain answer card without a tail as before.
         self.assertEqual(ids(answer_card("好了", "s", tail(None, ["Claude Code"], []))), [None, FACTS_ID])
@@ -494,7 +494,7 @@ class CardTest(unittest.TestCase):
         self.assertIsNone(relay_card("T439", DONE, text="字" * 9000, inputs=[], outputs=[])[0])
         # Held by a release before 2026-11-08: at, took and artifacts, no inputs. The reply alone, no grey line.
         old, text = relay_card("T439", DONE, text="好了", at=1.0, took=60, artifacts=2)
-        self.assertEqual(ids(old), [None])  # The band says the one-line reply whole; no box, no small line.
+        self.assertEqual(ids(old), ["speaker_row", None])  # The reply alone under the row; no 输入/输出 lines.
         self.assertEqual(text, "好了")
         self.assertNotIn("产物 2 个", json.dumps(old, ensure_ascii=False))
         self.assertEqual(text, "好了")

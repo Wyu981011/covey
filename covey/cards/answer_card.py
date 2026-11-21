@@ -1,8 +1,8 @@
 """What follows a finished turn's answer on its answer card in the topic and on its relay at the private chat's top
 level: the answer, then its 产物
 folded (cards/artifact_panels.py drive_artifact_panel, by ARTIFACTS_ID), then its 改动 folded the same way (``change_element``,
-CHANGE_ID: only a turn that changed code, core/checkpoint.py shows_change), then one grey box of two rows, each label in
-a column of its own so that a wrapped line stays right of it. Each row is one line that wraps on its own: its
+CHANGE_ID: only a turn that changed code, core/checkpoint.py shows_change), then 输入 and 输出 as two small lines under it,
+a line of 改动 after them when the turn changed code, each label grey. Each is one line that wraps on its own: its
 parts apart by a grey "｜" (SEPARATOR),
 each part never broken inside at a phone's width or in a topic's side panel (``unbroken``; the "E" sample
 split "脱 / 敏关", "缓存 / 命中"), so a line wraps only after a separator:
@@ -11,11 +11,11 @@ split "脱 / 敏关", "缓存 / 命中"), so a line wraps only after a separator
 - 输出: 用时 ｜ token/s ｜ token (the cache included, as the task card's tile) ｜ 缓存命中 (``output_parts``,
   ``output_lines``);
 
-The task card's 输入/输出 box (cards/task_figures.py io_box) is the same box: while its turn runs, 输出 is 开始 ｜ 已运行 ｜
+The task card's 输入/输出 box (cards/task_figures.py io_box) is the grey box, in the topic's thread: while its turn runs, 输出 is 开始 ｜ 已运行 ｜
 token ｜ token/s ｜ 上下文 (``running_figures``, ``RUNNING_LINES``).
 
 The relay's 输出 line ends with its T number ("T43 ›"), which app/relay_send.py linked makes a link to the turn's
-card. An answer too long for one
+card, and with 看你那句 › (``put_back``). An answer too long for one
 card goes as Markdown and then ``tail_card``: these parts alone."""
 from __future__ import annotations
 
@@ -189,13 +189,51 @@ def glued(text):
     return out
 
 
-def facts_element(inputs=(), outputs=(), link=""):
-    """The grey box of 输入 and 输出 (FACTS_ID), in lines (``input_lines``, ``output_lines``); ``link``, the relay's T
-    number, ends 输出's last line. None with none of them."""
-    out = output_lines(outputs)
-    if link:
-        out = [*out[:-1], SEPARATOR.join([*out[-1:], f"{link} ›"])]
-    return box(FACTS_ID, input_lines(inputs), out)
+def facts_element(inputs=(), outputs=(), link="", change=None, links=()):
+    """The 输入 and 输出 under an answer (FACTS_ID): one small element, a line each with its label grey, no box
+    (``input_lines``, ``output_lines``), the line of 改动 after them when ``change`` (a dict, ``change_line``) says
+    one; ``link``, the relay's T number, and ``links`` (Markdown: 看你那句 ›, 进话题 ›) end 输出's last line. None
+    with none of them."""
+    rows = []
+    if inputs:
+        rows.append(grey("输入") + " " + "".join(input_lines(inputs)))
+    parts = [*output_lines(outputs), *(part for part in (f"{link} ›" if link else "", *(links or ())) if part)]
+    if parts:
+        rows.append(grey("输出") + " " + SEPARATOR.join(parts))
+    line = change_line(change)
+    if line:
+        rows.append(line)
+    return md("\n".join(rows), size="notation", element_id=FACTS_ID) if rows else None
+
+
+def change_line(change) -> str:
+    """The 改动 of a turn that changed code (a dict, core/checkpoint.py) as one more line of the facts: "改动 a6bc148 ｜
+    第 322 代 ｜ 已自检" (``change_summary``'s parts); '' for anything else."""
+    if not isinstance(change, dict) or not change:
+        return ""
+    parts = [part for part in change_summary(change).split(" · ") if part]
+    return grey(CHANGE_WORD) + " " + SEPARATOR.join(unbroken(literal_text(part)) for part in parts) if parts else ""
+
+
+def put_back(elements, meta):
+    """``elements`` with the way back to the owner's message (cards/ui.py ``back_link`` of ``meta``) at the end of the
+    facts' 输出 line (FACTS_ID); a card without facts has the line ``ask_footnote`` at its end instead. A list again."""
+    from covey.cards.ui import ask_footnote, back_link
+
+    link = back_link(meta)
+    if not link:
+        return list(elements)
+    done, rest = False, []
+    for element in elements:
+        if not done and isinstance(element, dict) and element.get("element_id") == FACTS_ID \
+                and element.get("tag") == "markdown":
+            rows = str(element.get("content") or "").split("\n")
+            at = next((i for i in range(len(rows) - 1, -1, -1) if rows[i].startswith(grey("输出"))), -1)
+            if at >= 0:
+                rows[at] += SEPARATOR + link
+                element, done = {**element, "content": "\n".join(rows)}, True
+        rest.append(element)
+    return rest if done else [*rest, ask_footnote(meta)]
 
 
 CHANGE_WORD = "改动"
@@ -376,14 +414,15 @@ def tail(files=None, inputs=(), outputs=(), link="", change=None, notes=(), butt
 
 def tail_card(elements, summary, lead=""):
     """The card after an answer sent as Markdown or a file: ``lead`` (one small grey line), then ``elements``; a "你问"
-    block among them (``ask_block``) becomes the title bar, its way back a line at the end (cards/ui.py)."""
-    from covey.cards.ui import ask_footnote, speaker_header, split_ask
+    block among them (``ask_block``) becomes the speaker's row, its way back goes on the 输出 line (cards/ui.py)."""
+    from covey.cards.ui import BODY_PADDING, BODY_SPACING, speaker_row, split_ask
 
     meta, rest = split_ask(elements)
     head = [md(grey(lead), size="notation")] if lead else []
-    back = ask_footnote(meta)
-    return card([*head, *rest, *([back] if back else [])], summary, update_multi=True,
-                header=speaker_header(meta) if meta else None)
+    if not meta:
+        return card([*head, *rest], summary, update_multi=True)
+    return card([speaker_row(meta), *head, *put_back(rest, meta)], summary, update_multi=True,
+                padding=BODY_PADDING, spacing=BODY_SPACING)
 
 
 HEAD_ID = "answer_head"
@@ -425,7 +464,7 @@ def says(verb, doing, at) -> str:
     return template.format(at=f" {at} " if at else "")
 
 
-def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", meta=True):
+def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", meta=True, avatar=""):
     """The block above an answer, a conclusion or a question's copy at the private chat's top level saying which
     message of the owner's it answers: grey, two
     lines, "你问 · 12:31 ›" and the message's words (two lines at most); the whole block opens ``url`` (the
@@ -435,7 +474,8 @@ def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", met
     alone (a lead's wake-up turn: "主动来汇报 · 09:40"). None without words or a speaker.
     ``meta``: the block also carries what a title bar says (cards/ui.py ``ASK_META``: who, what it did, when, the
     words, the link), for the card that takes the block into its header (``split_ask``) and is never sent; a card
-    that keeps the block as an element (the dispatch card) asks for none."""
+    that keeps the block as an element (the dispatch card) asks for none. ``avatar``: the speaker's picture, an image key
+    (app/answer_cards.py ``avatar``), carried with it."""
     from covey.cards.ui import speaker
 
     words = " ".join(str(text or "").split())
@@ -457,7 +497,7 @@ def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", met
         box["behaviors"] = [{"type": "open_url", "default_url": url}]
     if meta and who:
         box[ASK_META] = {"who": who, "doing": doing, "verb": verb, "at": at, "says": sentence.strip(), "words": words,
-                         "url": url}
+                         "url": url, **({"avatar": avatar} if avatar else {})}
     return box
 
 

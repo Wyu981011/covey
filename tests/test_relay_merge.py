@@ -125,8 +125,8 @@ class MergedTest(MergeCase):
         self.pause.assert_called_once_with(relay_send.MERGE_SECONDS)
         chat, text, key, reply_to, card, _ = send.call_args.args
         self.assertEqual(key, job_key("main-t1", 9))
-        self.assertEqual(("T410", "有结果"), (card["header"]["title"]["content"][:4],
-                                             card["header"]["text_tag_list"][0]["text"]["content"]))
+        self.assertTrue(card["body"]["elements"][0]["content"].startswith("**T410**"))
+        self.assertIn("<text_tag color='green'>有结果</text_tag>", card["body"]["elements"][0]["content"])
         self.assertEqual(self.saved("main-t1", 9)["state"], "sent")
         self.assertNotIn("merged", self.saved("main-t1", 9))
         self.assertEqual(TOPIC, message_topic(self.state, CHAT, "om_relay"))
@@ -168,9 +168,8 @@ class CardTest(unittest.TestCase):
     def test_the_merged_card(self):
         built, text = merged_card([{"label": "T12", "title": "改看板", "lead": "按钮改好了", "url": "https://x/t12"},
                                    {"label": "T13", "title": "", "lead": ""}])
-        first, second = built["body"]["elements"]
-        self.assertEqual(("2 个话题做完了", "有结果"), (built["header"]["title"]["content"],
-                                                     built["header"]["text_tag_list"][0]["text"]["content"]))
+        head, first, second = built["body"]["elements"]
+        self.assertTrue(head["content"].startswith("**2 个话题做完了** <text_tag color='green'>有结果</text_tag>"))
         # Each row is one block, the whole of it opening its topic; one whose link is not known opens nothing.
         self.assertEqual([{"type": "open_url", "default_url": "https://x/t12"}], first["behaviors"])
         self.assertNotIn("behaviors", second)

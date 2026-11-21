@@ -157,7 +157,8 @@
 - **哪些轮**（`relay_targets.relay_target`）：消息 id 是 `main-<请求>` 的任务、`topic_send` 作为补充送进的任务、它们的自动重试（`retry_of`）。话题里回答问题后接着跑的、主人在串里开的一轮也回带（`area_target`）。
 - **什么时候**：任务进程投递完、任务卡写完之后（`TurnDelivery.deliver` → `butler_relay.after_turn`），出错只记日志。
 - **结论卡**（`cards/relay_card.py` 的 `relay_card`）只用 `turn.verified_delivery`（规则 5）；超过 `CARD_TEXT_BYTES` 分几条 Markdown 发，再补一张小卡。等你回答而放不了问题卡副本时发回带卡：结论带“等你 · T10”和“要你定：”问题（`relay_question`）。主人自己点的停止不发，记 `skipped`、`why: owner_stop`。
-- **只发一次**（`app/relay_send.py` 的 `send_once`）：记录 `<state>/main-thread/relays/<任务键>.json`。先画好卡，文件锁下写 `submitting`（不用全局 `LOCK`，规则 1、2），锁外发，发送键从任务键派生；发完写 `sent`，没确认写 `uncertain`，都不重发。写 `submitting` 前出错的记 `unsent`，不补发。日志 `main relay state=…`。可选部分（产物、输入/输出的一行脚注）出错时去掉那一项照发。
+- **只发一次**（`app/relay_send.py` 的 `send_once`）：记录 `<state>/main-thread/relays/<任务键>.json`。先画好卡，文件锁下写 `submitting`（不用全局 `LOCK`，规则 1、2），锁外发，发送键从任务键派生；发完写 `sent`，没确认写 `uncertain`，都不重发。写 `submitting` 前出错的记 `unsent`，不补发。日志 `main relay state=…`。可选部分（产物、输入/输出两行）出错时去掉那一项照发；头像取不到时头像行只写名字。
+- **头像**：文件在 `covey/assets/avatars/`：`butler.png`（管家，换头像只换这个文件）、`topic.png`（所有话题）、负责人的 20 张（`core/avatars.py` 的 `POOL`：Moods 6、Clay 6、海底 8）。负责人的头像按专项 id 的稳定哈希在 20 张里选，同一个私聊里已有专项用着的就顺延到下一张没人用的，结果记进状态目录的 `avatars.json`（`leads`），之后不变；记录已不在的专项让出它的那张。第一次用到一张时 `feishu/avatars.py` 的 `image_key` 用 `lark-cli im images create` 上传（在建卡的地方做，锁外，规则 1、2），拿到的 image_key 按“应用 → 文件内容的 SHA-256”记进同一个文件的 `keys`，换了文件内容会重新上传。上传失败时这张卡只写名字照常发，10 分钟内不再试同一张。卡片构造函数不联网，image_key 由 `app/answer_cards.py` 的 `avatar` 取来放进 `ask_block` 的 `avatar`，或由 `relay_card(avatar=)` 传入。`COVEY_AVATARS=0` 关（不上传、卡上只有名字）。
 - **产物**：答案卡、回带卡记在 `<state>/answer-cards/<任务键>.json`，上传结束或“重新上传”后整卡改写（`app/answer_cards.py`）。
 - `main-thread/opened/`、`relays/`、`answer-cards/` 7 天没动的由维护删。旧 release 的任务进程不回带。
 

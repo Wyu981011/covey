@@ -1,4 +1,4 @@
-"""The shared parts of the 夜航 look (docs/ui.md) as schema 2.0 card elements: the conclusion band, the 要你做 bar, the segment bar, a state's dot and pill, a topic row. Words and colours come from core/look.py;
+"""The shared parts of the 夜航 look (docs/ui.md) as schema 2.0 card elements: the conclusion band, the 要你做 bar, the segment bar, a state's dot and pill, a topic row, the speaker's row. Words and colours come from core/look.py;
 no card here is sent by itself, the cards that move to this look use these parts (docs/ui.md 怎么开工).
 
 - ``conclusion_band``: the visual centre of a card. A small label, the headline, a grey line, then ``below`` (a
@@ -6,10 +6,12 @@ no card here is sent by itself, the cards that move to this look use these parts
   BAND: a gradient in steps too fine to see), inside one thin line. Its colours are the card's own: a card with a band
   goes through ``styled``, which puts them in its ``config.style.color``.
 - ``seg_bar``: how many of each state, as one line of coloured bars as long as their counts, and a legend under it.
-- ``speaker_header``: the title bar of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3):
-  the butler indigo, a project's lead violet, a topic's default with its state as a coloured tag. It takes what the
-  "你问" block (cards/answer_card.py ask_block, ``ASK_META``) carried, so the card does not have the block as well
-  (``split_ask``); the block's link back to the owner's message stays as a line ``ask_footnote``.
+- ``speaker_row``: the first element of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3):
+  the speaker's picture, its name bold and what it did with the owner's words grey, a topic's state as a coloured tag.
+  It takes what the "你问" block (cards/answer_card.py ask_block, ``ASK_META``) carried, so the card does not have the
+  block as well (``split_ask``); the block's link back to the owner's message goes on the card's 输出 line
+  (``put_back``), else a line of its own, ``ask_footnote``. The picture is an image key the caller made
+  (app/answer_cards.py ``avatar``): cards make no network calls.
 - ``topic_row``: a state's dot and word, ``T31 title ›``, a line in words, grey figures; buttons at the right; the
   whole opens ``url``.
 """
@@ -230,50 +232,51 @@ def role_of(who) -> str:
     return "lead" if str(who or "").startswith("专项「") else "topic"
 
 
-def _tag(text, color) -> dict:
-    return {"tag": "text_tag", "text": {"tag": "plain_text", "content": text}, "color": color}
+def _tag(text, color) -> str:
+    return f"<text_tag color='{color}'>{literal(text)}</text_tag>"
 
 
-def _icon(token, color) -> dict:
-    return {"tag": "standard_icon", "token": token, "color": INK.get(color, color)}
+AVATAR_SIZE = "28px 28px"
+ROW_ID = "speaker_row"
 
 
-def speaker_header(meta, *, outcome="", label="", tag=None) -> dict:
-    """The title bar for the block ``meta`` came from. The butler: indigo, 管家, "回你 20:41「原话前 18 字…」" and a 答复
-    tag. A lead: violet, its name 负责人, what it did with the owner's words, a 专项 tag. A topic: default, its T number
-    and title, the same sentence, its state as a tag. ``outcome``: a look.STATES key that sets the topic's tag (a relay
-    knows its own); a state that asks for the owner (等你, 停住了) is the tag of the other two as well. Without a block
-    (``meta`` None) the title is ``label`` (the T number) and there is no subtitle. ``tag``: (text, colour) in place of
-    the state's, for a card that is settled."""
+def speaker_row(meta, *, outcome="", label="", tag=None, avatar="") -> dict:
+    """The first element of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3): the speaker's
+    picture (``avatar``, its image key, else the ``avatar`` of ``meta``; none: the line alone) and one line, the name
+    bold and what it did with the owner's words grey, "**管家** 回你 20:41「原话前 18 字…」"; a lead "**<专项名> ·
+    负责人** 汇报你 …", a topic "**T439 标题** [有结果] 做完了你 12:31 交代的事". A topic's state is a tag
+    (``outcome``: a look.STATES key a relay knows itself); a state that asks for the owner (等你, 停住了) is the tag of the
+    other two as well. Without a block (``meta`` None) the name is ``label`` (the T number) and nothing follows it.
+    ``tag``: (text, colour) in place of the state's, for a card that is settled."""
     meta = meta or {"who": label}
     who, doing = str(meta.get("who") or ""), str(meta.get("doing") or "")
     role, key = role_of(who), outcome or TOPIC_TAGS.get(doing, "")
     says, words = str(meta.get("says") or ""), " ".join(str(meta.get("words") or "").split())
     at = str(meta.get("at") or "")
-    if role == "butler" and doing == "answer" and meta.get("verb", "你问") == "你问" and (at or words):
+    if role != "topic" and doing == "answer" and meta.get("verb", "你问") == "你问" and (at or words):
         quote = words if len(words) <= SUBTITLE_WORDS else words[:SUBTITLE_WORDS - 1] + "…"
         says = f"回你{' ' + at if at else ''}" + (f"「{quote}」" if quote else "")
+    if role == "lead":
+        says = says.replace("做完了你", "汇报你", 1)
     asks = key in ("waiting", "stopped", "stuck")
-    if role == "butler":
-        template, icon, color = "indigo", "robot_outlined", "indigo"
-        tags = [_tag(look.STATES[key].word, look.STATES[key].color) if asks else _tag("答复", "indigo")]
-    elif role == "lead":
-        template, icon, color = "violet", "group_outlined", "violet"
-        tags = [_tag("专项", "violet"), *([_tag(look.STATES[key].word, look.STATES[key].color)] if asks else [])]
-    else:
-        found = look.STATES.get(key)
-        template, icon, color = "default", (found.icon if found and found.icon else "chat_outlined"), \
-            (found.color if found else "grey")
-        tags = [_tag(found.word, found.color)] if found else []
-    if tag:
-        tags = [_tag(*tag)]
-    head = {"title": {"tag": "plain_text", "content": " ".join((who or look.SPEAKERS["butler"]).split())}}
-    if says:
-        head["subtitle"] = {"tag": "plain_text", "content": says}
-    head["text_tag_list"] = tags
-    head["template"] = template
-    head["icon"] = _icon(icon, color)
-    return head
+    found = look.STATES.get(key)
+    tags = [_tag(*tag)] if tag else [_tag(found.word, found.color)] if found and (asks or role == "topic") else []
+    name = " ".join((who or look.SPEAKERS["butler"]).split())
+    if role == "lead":
+        name = name.removeprefix("专项「").replace("」· 负责人", " · 负责人")
+    line = " ".join(part for part in (f"**{literal(name)}**", *tags, grey(literal(says)) if says else "") if part)
+    text = md(line, size="normal_v2")
+    picture = avatar or str(meta.get("avatar") or "")
+    if not picture:
+        return {**text, "element_id": ROW_ID}
+    image = {"tag": "img", "img_key": picture, "size": AVATAR_SIZE, "scale_type": "crop_center",
+             "alt": {"tag": "plain_text", "content": ""}}
+    return {"tag": "column_set", "element_id": ROW_ID, "horizontal_spacing": "8px", "columns": [
+        {"tag": "column", "width": "auto", "vertical_align": "center", "elements": [image]},
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [text]}]}
+
+
+BODY_SPACING, BODY_PADDING = "6px", "10px 12px 10px 12px"  # The body of a card that opens with a speaker's row.
 
 
 def back_link(meta) -> str:

@@ -362,9 +362,8 @@ class MirrorTest(MirrorCase):
         self.assertNotIn("负责人派的活", card)  # No "你问" block: the lead asked for this turn, not the owner.
         # Who asks all the same (样卡 B, docs/ui.md 5.3): the topic, for work its lead handed it.
         built = sends.call_args.args[2]
-        self.assertEqual("T538", built["header"]["title"]["content"])
-        self.assertEqual("办负责人派的事，要你定", built["header"]["subtitle"]["content"])
-        self.assertEqual("等你", built["header"]["text_tag_list"][0]["text"]["content"])
+        self.assertEqual("**T538** <text_tag color='orange'>等你</text_tag> <font color='grey'>办负责人派的事，要你定</font>",
+                         built["body"]["elements"][0]["content"])
         self.assertEqual(read_object(self.ctx.state_dir / "questions" / "q-member.json")["mirror_message_id"], mid)
 
     def test_a_running_turn_s_output_is_its_notes_and_the_answer_so_far(self):

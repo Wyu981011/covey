@@ -311,9 +311,11 @@ class AnswerCardTest(unittest.TestCase):
         from covey.cards.review import ANSWER_CARD_BYTES
 
         huge = {"commit": "951327a", "deployed": "部" * 2000, "verified": "验" * 2000}
-        built, body = relay_card("T1", DONE, text="答" * 7000, inputs=self.inputs, outputs=self.outputs, change=huge)
-        self.assertIsNone(built)  # Too big with it: the reply as Markdown, its parts on their own card after it.
+        built, body = relay_card("T1", DONE, text="答" * 7900, inputs=self.inputs, outputs=self.outputs, change=huge)
+        self.assertIsNone(built)  # Too big with the card's own parts: the reply as Markdown, its parts on their own card after it.
         self.assertTrue(body)
+        built, _ = relay_card("T1", DONE, text="答" * 7000, inputs=self.inputs, outputs=self.outputs, change=huge)
+        self.assertLessEqual(json_size(built), ANSWER_CARD_BYTES)  # The 改动 line is as long as its summary, not its text.
         built, _ = relay_card("T1", DONE, text="好了", inputs=self.inputs, outputs=self.outputs, change=huge)
         self.assertLessEqual(json_size(built), ANSWER_CARD_BYTES)
 

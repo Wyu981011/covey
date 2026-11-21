@@ -98,12 +98,12 @@ class CardTest(unittest.TestCase):
     def test_a_conclusion_is_the_whole_reply(self):
         reply = "先说结论。\n\n" + "细节。" * 300 + "\n\n## 逐层结果\n\n最后一段。"
         card, text = relay_card("T410", DONE, text=reply, inputs=["Claude Code"], outputs=[], url="https://x/t410")
-        # The title bar says whose it is: the T number first, the state as a tag (cards/ui.py speaker_header).
-        self.assertEqual(("T410", "有结果", "green"), (
-            card["header"]["title"]["content"], card["header"]["text_tag_list"][0]["text"]["content"],
-            card["header"]["text_tag_list"][0]["color"]))
+        # The speaker's row says whose it is: the T number first, the state as a tag (cards/ui.py speaker_row).
+        row, band, fold, foot = card["body"]["elements"]
+        self.assertNotIn("header", card)
+        self.assertTrue(row["content"].startswith("**T410** <text_tag color='green'>有结果</text_tag>"))
         self.assertEqual("T410 · 有结果：先说结论", card["config"]["summary"]["content"])
-        band, fold, foot = card["body"]["elements"]  # The conclusion band first (docs/ui.md 5.2), the reply folded.
+        # The conclusion band next (docs/ui.md 5.2), the reply folded.
         self.assertIn("先说结论", str(band))
         # The band says the first line; the reply under it goes on from there (cards/review.py after_lead).
         content = fold["elements"][0]["content"]
@@ -112,7 +112,7 @@ class CardTest(unittest.TestCase):
         self.assertNotIn("先说结论", content)
         self.assertTrue(content.endswith("最后一段。"))  # Not cut: no "…", no 全文在 T410.
         self.assertIn("完整回答 · 约", fold["header"]["title"]["content"])
-        self.assertIn("[进话题 ›](https://x/t410)", foot["content"])  # One small line instead of the 输入/输出 box.
+        self.assertIn("[进话题 ›](https://x/t410)", foot["content"])  # On the 输出 line, under 输入.
         self.assertNotIn("全文", text)
         self.assertTrue(text.startswith("先说结论。"))
 
@@ -124,21 +124,19 @@ class CardTest(unittest.TestCase):
 
     def test_a_question_and_a_stop(self):
         card, _ = relay_card("T408", WAITING, question="选 A 还是 B？")
-        band, rest = card["body"]["elements"][0], card["body"]["elements"][1:]
-        self.assertEqual(("T408", "等你", "orange"), (card["header"]["title"]["content"],
-                                                      card["header"]["text_tag_list"][0]["text"]["content"],
-                                                      card["header"]["text_tag_list"][0]["color"]))
+        row, band, rest = card["body"]["elements"][0], card["body"]["elements"][1], card["body"]["elements"][2:]
+        self.assertTrue(row["content"].startswith("**T408** <text_tag color='orange'>等你</text_tag>"))
         self.assertIn("要你定：选 A 还是 B？", str(band))  # A short question is the band's alone, not said twice.
         self.assertEqual(1, json.dumps(card["body"], ensure_ascii=False).count("选 A 还是 B？"))
         self.assertIn("在 T408 的问题卡里答，或在这里回「T408 …」", rest[0]["content"])
         long = "选 A 还是 B？" + "A 快一些但要改接口，B 慢一些但不动接口。" * 2
         card, text = relay_card("T408", WAITING, question=long)
-        self.assertIn("要你定：下面这个问题", str(card["body"]["elements"][0]))
-        self.assertEqual(long, card["body"]["elements"][1]["content"])
+        self.assertIn("要你定：下面这个问题", str(card["body"]["elements"][1]))
+        self.assertEqual(long, card["body"]["elements"][2]["content"])
         self.assertTrue(text.startswith("**T408 等你**"))
         card, text = relay_card("T408", STOPPED, reason="用户停止了任务")
-        self.assertEqual("停住了", card["header"]["text_tag_list"][0]["text"]["content"])
-        self.assertIn("用户停止了任务", str(card["body"]["elements"][0]))
+        self.assertIn("<text_tag color='red'>停住了</text_tag>", card["body"]["elements"][0]["content"])
+        self.assertIn("用户停止了任务", str(card["body"]["elements"][1]))
         self.assertTrue(text.startswith("**T408 停住了**：用户停止了任务"))
         self.assertEqual("T408 · 停住了：用户停止了任务", card["config"]["summary"]["content"])
 
@@ -349,19 +347,22 @@ class DeliverTest(Case):
         self.assertEqual(("unit", CHAT), args[:2])
         self.assertEqual(f"bot-main-relay-{job_key('main-t1', 9)}", args[3])
         self.assertEqual("", kwargs["reply_to_message_id"])  # Its own message at the top level, quoting no card.
-        # Who speaks (docs/ui.md 5.3) is the title bar: the topic by its T number, one sentence saying what it did with the
-        # owner's words under it (样卡 B), not "T410 · 你问", which read as its own; no grey block above the card.
-        header, elements = kwargs["card"]["header"], kwargs["card"]["body"]["elements"]
-        self.assertTrue(header["title"]["content"].startswith("T410"))
-        self.assertIn("做完了你", header["subtitle"]["content"])
-        self.assertNotIn("· 你问", str(header))
-        self.assertEqual(("default", "有结果"), (header["template"], header["text_tag_list"][0]["text"]["content"]))
-        self.assertNotIn("answer_ask", str(elements[0]))
-        self.assertIn("两种做法都行，先用第一种", str(elements[0]))  # The conclusion band.
+        # Who speaks (docs/ui.md 5.3) is the row at the top: the topic by its T number, one sentence saying what it did with
+        # the owner's words after it (样卡 B), not "T410 · 你问", which read as its own; no grey block above the card.
+        self.assertNotIn("header", kwargs["card"])
+        elements = kwargs["card"]["body"]["elements"]
+        row = elements[0]["content"]
+        self.assertTrue(row.startswith("**T410**"))
+        self.assertIn("做完了你", row)
+        self.assertNotIn("· 你问", row)
+        self.assertIn("<text_tag color='green'>有结果</text_tag>", row)
+        self.assertNotIn("answer_ask", str(elements[1]))
+        self.assertIn("两种做法都行，先用第一种", str(elements[1]))  # The conclusion band.
         # REPLY is "## 结论" over one line: the band says it whole, no block repeats it under the band.
         self.assertEqual(json.dumps(kwargs["card"]["body"], ensure_ascii=False).count("两种做法都行"), 1)
-        # The 输入/输出 box is one small line now (cards/relay_card.py foot_line), no box.
-        self.assertNotIn("answer_facts", json.dumps(kwargs["card"], ensure_ascii=False))
+        # 输入 and 输出 are two small lines, no grey box (cards/answer_card.py facts_element).
+        self.assertEqual("answer_facts", elements[-1]["element_id"])
+        self.assertNotIn("background_style", json.dumps(elements[-1]))
 
     def test_a_done_turn_brings_its_longer_progress_notes_after_the_answer(self):
         """The owner, 2026-11-21 (T620): 13:51's "基线组已经补跑起来了……" stayed in 执行过程; the relay had the last words only."""
@@ -375,18 +376,19 @@ class DeliverTest(Case):
         self.assertIn(STAGE_HEADING, body)
         self.assertNotIn("我先看下文件", body)
         self.assertLess(body.index("两种做法都行"), body.index("基线组已经补跑起来了"))  # The answer first, its band unchanged.
-        self.assertIn("两种做法都行，先用第一种", str(send.call_args.kwargs["card"]["body"]["elements"][0]))
+        self.assertIn("两种做法都行，先用第一种", str(send.call_args.kwargs["card"]["body"]["elements"][1]))
 
-    def test_a_turn_that_changed_code_has_its_change_folded_above_the_box(self):
+    def test_a_turn_that_changed_code_has_its_change_as_a_line_under_input_and_output(self):
         point = self.state / "delivery-checkpoint.json"
         point.write_text(json.dumps({"delivery": {"commit": "a6bc148d38ce", "deployed": "第 322 代"}}, ensure_ascii=False))
         send = self.deliver(self.job(progress=SimpleNamespace(), checkpoint_path=str(point)))
         elements = send.call_args.kwargs["card"]["body"]["elements"]
         ids = [element.get("element_id") for element in elements]
-        change = elements[ids.index("answer_change")]  # A short reply: the fold stays out here, above the small line.
-        self.assertIn("answer_change", ids[-2:])
-        self.assertIn("改动 · a6bc148 · 第 322 代 · 未自检", str(change))
-        self.assertIn("a6bc148d38ce", str(change))  # Open, the commit in full.
+        self.assertNotIn("answer_change", ids)  # No fold: the change is the third line of the facts.
+        lines = elements[ids.index("answer_facts")]["content"].replace("\u2060", "").replace("\u00a0", " ").split("\n")
+        for words in ("改动", "a6bc148", "第 322 代", "未自检"):
+            self.assertIn(words, lines[-1])
+        self.assertIn("输入", lines[0])
         relay_send.relay_path(self.state, job_key("main-t1", 9)).unlink()
         # A research turn's delivery without a commit, and no files changed: none.
         point.write_text(json.dumps({"delivery": {"verified": "报告已发群"}}, ensure_ascii=False))
@@ -400,9 +402,9 @@ class DeliverTest(Case):
     def test_a_stopped_turn_without_one_says_it_stopped(self):
         send = self.deliver(self.job(progress=SimpleNamespace()), status="cancelled")
         card = send.call_args.kwargs["card"]
-        self.assertEqual("停住了", card["header"]["text_tag_list"][0]["text"]["content"])
-        self.assertTrue(card["header"]["title"]["content"].startswith("T410"))
-        self.assertIn("用户停止了任务", str(card["body"]["elements"][0]))
+        self.assertIn("<text_tag color='red'>停住了</text_tag>", card["body"]["elements"][0]["content"])
+        self.assertTrue(card["body"]["elements"][0]["content"].startswith("**T410**"))
+        self.assertIn("用户停止了任务", str(card["body"]["elements"][1]))
 
     def test_an_undelivered_result_sends_nothing(self):
         send = self.deliver(self.job(progress=SimpleNamespace()), sent=False)
@@ -420,7 +422,7 @@ class DeliverTest(Case):
             with mock.patch.object(answer_cards, name, side_effect=AttributeError("x")):
                 send = self.deliver(self.job(progress=SimpleNamespace()))
             send.assert_called_once()
-            self.assertIn("两种做法都行", str(send.call_args.kwargs["card"]["body"]["elements"][0]))
+            self.assertIn("两种做法都行", str(send.call_args.kwargs["card"]["body"]["elements"][1]))
             saved = read_object(relay_send.relay_path(self.state, job_key("main-t1", 9)))
             self.assertEqual("sent", saved["state"])
 
@@ -540,7 +542,7 @@ class AwaitedDeliverTest(AwaitedCase):
         self.lead_turn("main-lead1")
         send = self.deliver(self.job(progress=SimpleNamespace()))
         send.assert_called_once()
-        self.assertIn("两种做法都行", str(send.call_args.kwargs["card"]["body"]["elements"][0]))
+        self.assertIn("两种做法都行", str(send.call_args.kwargs["card"]["body"]["elements"][1]))
 
     def test_one_a_wake_up_turn_handed_on_sends_nothing(self):
         self.lead_turn("lead-a1b2c3d4e5f6-3")
