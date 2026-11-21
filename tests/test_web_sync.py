@@ -2121,6 +2121,37 @@ class ModelNameTest(unittest.TestCase):
             self.assertEqual(model_names.model_name(model), name, model)
 
 
+class RanWithTest(WebCase):
+    """An answer's foot on the page (data contract v27): what its turn ran with, from its task's record."""
+
+    MENU = {"claude:opus": {"title": "Claude Code", "provider": "", "provider_title": "自带", "display_name": "Opus 5.5"},
+            "claude:gw/opus": {"title": "Claude Code", "provider": "gw", "provider_title": "网关", "display_name": "Opus 5.5 · 网关"}}
+
+    def test_a_record_reads_in_the_launch_cards_words(self):
+        job = {"harness_id": "claude", "model": "opus", "effort": "high", "workspace_name": "ws-root"}
+        self.assertEqual(web_turns.ran_with(job, self.MENU, False), {"harness": "Claude Code", "provider": "自带", "model": "Opus 5.5",
+                                                                     "effort": "high", "workspace": "ws-root", "redaction": "off"})
+        self.assertEqual(web_turns.ran_with(dict(job, model="gw/opus"), self.MENU, True)["provider"], "网关")
+        self.assertEqual(web_turns.ran_with(dict(job, model="gw/opus"), self.MENU, True)["redaction"], "on")
+        # No menu (it could not be read) or a model the menu no longer has: the model's own name, no provider.
+        self.assertEqual(web_turns.ran_with(dict(job, model="claude-opus-5-5"), {}, False),
+                         {"harness": "claude", "model": "Opus 5.5", "effort": "high", "workspace": "ws-root", "redaction": "off"})
+        self.assertEqual(web_turns.ran_with({"model": "opus"}, self.MENU), {})
+        self.assertEqual(web_turns.ran_with({"model": "opus"}, self.MENU, topic={"harness_id": "claude", "workspace_name": "ws1"})["workspace"],
+                         "ws1")
+
+    def test_an_answer_turn_carries_it_and_the_owners_does_not(self):
+        self.topic()
+        write_topic(self.state, topic_id=TOPIC, chat_id=CHAT, harness_id="claude", topic_number=7, origin={"title": "整理账单"},
+                    workspace_name="ws1", redaction=True)
+        with mock.patch.object(self.sync.collector, "menu", return_value=self.MENU):
+            self.sync.push_once(T0)
+        turns = {item["key"]: item["data"] for item in self.web.items("turn")}
+        self.assertEqual(turns[f"{TOPIC}:2"]["ran_with"], {"harness": "Claude Code", "provider": "自带", "model": "Opus 5.5",
+                                                         "workspace": "ws1", "redaction": "on"})
+        self.assertNotIn("ran_with", turns[f"{TOPIC}:1"])
+
+
 class OffTest(WebCase):
     def test_forget_is_one_of_the_kinds_and_the_off_switch_still_means_no_request(self):
         self.assertIn("forget", web_sync.KINDS)

@@ -13,6 +13,7 @@ the checkpoint's plan, the token figures, the time it took and the notes of the 
   ``usage_figures``, core/metrics.py ``run_seconds``). While the turn runs ``seconds`` moves in steps of ``RUNNING_STEP`` and ``speed`` is a
   whole number, so a quiet minute does not change the item's ``rev`` every second.
 - ``notes``: the record's ``memory_notes`` as written by the memory feature ({kind, text, scope, entry_id}); none without the field.
+- ``ran_with`` (data contract v27): the Harness, provider, model, budget, workspace and 敏感词脱敏 the turn ran with (``ran_with``).
 
 A field is left out when nothing is known; the page draws what it gets. Nothing here reads more than the trace file and the checkpoint of
 one turn, and never raises."""
@@ -159,6 +160,30 @@ def figures(record, snapshot, running, now) -> dict:
             window = shown["window"]
             out["context"] = {"used": used, "limit": window if type(window) is int and window > 0 else 0}
     return out
+
+
+def ran_with(record, menu=None, redaction=False, topic=None) -> dict:
+    """What the turn the job ``record`` made ran with, in the words the launch card names them (data contract v27 ``ran_with``, the
+    answer's foot on the page): {harness, provider, model, effort, workspace, redaction}. ``menu`` is the launch card's model menu
+    (app/launch_models.py available_models; {} or None: the model's own name, core/model_names.py, and no provider); ``redaction`` is the
+    topic's 敏感词脱敏 now, as the record does not keep it; ``topic`` (topic.json) names the Harness and workspace of an older record that
+    does not. {} without a Harness."""
+    from covey.core.menu_choice import tiers
+    from covey.core.model_names import model_name
+    record = record if isinstance(record, dict) else {}
+    topic = topic if isinstance(topic, dict) else {}
+    harness = str(record.get("harness_id") or topic.get("harness_id") or "")
+    if not harness:
+        return {}
+    menu = menu if isinstance(menu, dict) else {}
+    model = str(record.get("model") or "")
+    entry = menu.get(f"{harness}:{model}") or {}
+    harnesses, providers, _ = tiers(menu, harness) if menu else ({}, {}, {})
+    out = {"harness": str(harnesses.get(harness) or harness), "provider": str(providers.get(entry.get("provider", ""), "")) if entry else "",
+           "model": str(entry.get("display_name") or entry.get("label") or "") or model_name(model) or model,
+           "effort": str(record.get("effort") or ""), "workspace": str(record.get("workspace_name") or topic.get("workspace_name") or ""),
+           "redaction": "on" if redaction else "off"}
+    return {key: value for key, value in out.items() if value}
 
 
 def ended_figures(state, record) -> dict:

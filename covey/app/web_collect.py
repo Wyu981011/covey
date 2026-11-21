@@ -15,6 +15,7 @@ from covey.core.history_storage import history_lines
 from covey.core.butler import butler_topic_id
 from covey.core.jobs import job_key, select_job_records, topic_job_records
 from covey.core.model_names import model_name
+from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 from covey.core.state import epoch_seconds, read_object
 from covey.core.statuses import RUNNING
 from covey.core.store import directory_store
@@ -222,6 +223,7 @@ class Collector:
         data = read_object(topic_file(state, topic))
         found = None if butler else projects.topic_project(state, topic)
         turns, count = self.turns(state, topic, records, latest, word, project, now, questions, form=form, butler=butler)
+        self.put_ran_with(turns, records, data)
         number = int(label[1:]) if label[1:].isdigit() else 0
         updated = max((epoch_seconds(record.get("updated_at")) or 0 for record in records), default=0)
         ran = [record for record in records if not board_read.unrun(record)]
@@ -272,6 +274,20 @@ class Collector:
             if made:
                 out.append(web_sync.item("question", row.get("token"), made))
         return out
+
+    def put_ran_with(self, turns, records, data) -> None:
+        """Each answer's ``ran_with`` (data contract v27, web_turns.ran_with) from its task's record: the page writes it under the answer."""
+        by_job = {str(record.get("job_id") or ""): record for record in records if record.get("job_id")}
+        redaction = data.get(REDACTION_KEY) is True
+        menu = None
+        for turn in turns:
+            job = by_job.get(str(turn.get("job_id") or "")) if turn.get("role") == "agent" else None
+            if job is None:
+                continue
+            menu = self.menu() if menu is None else menu
+            ran = web_turns.ran_with(job, menu, redaction, data)
+            if ran:
+                turn["ran_with"] = ran
 
     @staticmethod
     def gist(state, topic):
