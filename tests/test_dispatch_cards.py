@@ -1,6 +1,7 @@
 """The 派发卡 (app/dispatch_cards.py, cards/dispatch_card.py, core/dispatch_records.py): sent when the butler's
-tools hand work to a topic, kept up to date by one thread (throttled, a new sequence for every write, a failed write
-backed off), one line once the conclusion went out, and none of it with COVEY_DISPATCH_CARD off."""
+topic_send hands work to a topic that was there (none for a topic topic_start or topic_fork opens), kept up to date by
+one thread (throttled, a new sequence for every write, a failed write backed off), one line once the conclusion went
+out, and none of it with COVEY_DISPATCH_CARD off."""
 from __future__ import annotations
 
 import itertools
@@ -187,11 +188,28 @@ class DispatchCase(UnifiedCase):
         return [call for call in self.sent.call_args_list if find_element(call.args[2], "dp_thread")]
 
     def start(self, request_id="r1", **args):
+        """topic_start ``request_id``: a topic of the owner's question, which leaves no 派发卡."""
         fields = dict(title="查日志", prompt="看看昨晚的失败", workspace="project", readonly=True, user_requested=False,
                       why="日志在这个仓库")
         fields.update(args)
         request = Request(request_id, "topic_start", fields, "main-job", 0.0)
         return butler_topics.TOOLS["topic_start"](self.env, request)
+
+    def send(self, request_id, topic, text):
+        request = Request(request_id, "topic_send", {"topic": topic, "text": text}, "main-job", 0.0)
+        return butler_topics.TOOLS["topic_send"](self.env, request)
+
+    def dispatched(self, request_id="r1", **args):
+        """The 派发卡 of ``request_id``: a topic the butler opened (topic_start "open-" + ``request_id``, no card) whose first
+        turn ended, and the work topic_send ``request_id`` handed to it again, a turn of its own (its key ``job_key``).
+        topic_send's answer."""
+        opened = self.start("open-" + request_id, **args)
+        self.assertTrue(opened["ok"], opened)
+        first = self.app.runtime.jobs.find(0, self.job_key("open-" + request_id))
+        if first is not None:
+            self.app.runtime.unregister_reply_job(first)
+        self.set_job("open-" + request_id, status="done")
+        return self.send(request_id, opened["data"]["topic_id"], "再看看前天的")
 
     def token(self, request_id="r1"):
         return butler_opened.request_token(SimpleNamespace(id=request_id))
@@ -220,13 +238,13 @@ class DirectionGoneTest(DispatchCase):
 
     def test_the_old_switch_and_arguments_change_nothing_and_make_no_file(self):
         with mock.patch.dict(os.environ, {"COVEY_DIRECTIONS": "1"}):
-            self.start("r1", direction="数据平台", direction_by_owner=True)
+            self.dispatched("r1", direction="数据平台", direction_by_owner=True)
         self.assertNotIn("direction", self.record("r1"))
         self.assertEqual(self.tags(), ["在做"])
         self.assertFalse((self.ctx.state_dir / "directions.json").exists())
 
     def test_an_old_record_with_a_direction_is_read_and_its_card_draws_none(self):
-        self.start("r2")
+        self.dispatched("r2")
         path = records.record_path(self.ctx.state_dir, self.token("r2"))
         write_json(path, {**self.record("r2"), "direction": {"name": "数据平台", "source": "owner"}})
         self.tick(time.time() + 10)
@@ -237,7 +255,7 @@ class CreatedTest(DispatchCase):
     def test_the_card_is_a_message_of_its_own_in_the_chat_with_a_link_to_the_owners_and_a_quote_of_it_goes_to_the_topic(self):
         # Feishu puts a reply to a message that has a thread already into that thread (the topic hangs under the owner's
         # message), whatever reply_in_thread says: so the card is no reply (the 2026-11-15 check found it in the thread).
-        answer = self.start()
+        answer = self.dispatched()
         self.assertTrue(answer["ok"], answer)
         topic = answer["data"]["topic_id"]
         (profile, chat, card, key), kwargs = self.dispatch_sends()[-1]
@@ -260,13 +278,13 @@ class CreatedTest(DispatchCase):
         self.assertEqual(routed_topic(self.ctx.state_dir, CHAT, message), topic)
 
     def test_a_request_asked_twice_sends_one_card(self):
-        self.start()
-        self.start()
+        self.dispatched()
+        self.dispatched()
         self.assertEqual(len(self.dispatch_sends()), 1)
 
     def test_with_the_switch_off_nothing_is_called_and_no_record_is_made(self):
         with mock.patch.dict(os.environ, {dispatch_cards.ENV: ""}):
-            self.assertTrue(self.start("off")["ok"])
+            self.assertTrue(self.dispatched("off")["ok"])
             self.assertEqual(self.cards.threads(), ())
         self.assertEqual(self.dispatch_sends(), [])
         self.assertEqual(records.live_paths(self.ctx.state_dir), [])
@@ -274,23 +292,19 @@ class CreatedTest(DispatchCase):
     def test_a_card_that_cannot_be_sent_leaves_the_topic_opened_and_says_so_in_the_log(self):
         self.sent.side_effect = lambda profile, chat, card, key, **kw: (
             ("", "") if find_element(card, "dp_thread") else self.send_card(profile, chat, card, key, **kw))
-        self.assertTrue(self.start()["ok"])
+        self.assertTrue(self.dispatched()["ok"])
         self.assertTrue(any("dispatch card not sent" in line for line in self.logs))
 
     def test_the_same_question_dispatched_again_counts_its_rounds(self):
-        self.start("one")
-        self.start("two")
+        self.dispatched("one")
+        self.dispatched("two")
         self.assertEqual((self.record("one")["rounds"], self.record("two")["rounds"]), (1, 1))  # Two topics.
         self.assertEqual(records.rounds_for(self.ctx.state_dir, OWNER, self.record("one")["topic_id"]), 2)
-
-    def send(self, request_id, topic, text):
-        request = Request(request_id, "topic_send", {"topic": topic, "text": text}, "main-job", 0.0)
-        return butler_topics.TOOLS["topic_send"](self.env, request)
 
     def test_a_supplement_into_the_job_a_card_follows_sends_no_second_card(self):
         # T525 #4664 (2026-11-18): topic_send started the turn, the next one went in as its 补充 and sent a second card that
         # said the same, and that the conclusion never settled (its note goes to the token of the job's own request).
-        topic = self.start()["data"]["topic_id"]
+        topic = self.dispatched()["data"]["topic_id"]
         job = self.app.runtime.jobs.find(0, self.job_key())
         job.execution_started = True
         job.backend_control = SimpleNamespace(steer=mock.Mock(return_value=None), remote=False)
@@ -302,7 +316,7 @@ class CreatedTest(DispatchCase):
         self.assertTrue(any("dispatch card kept" in line for line in self.logs))
 
     def test_a_supplement_after_the_card_settled_sends_a_card_of_its_own(self):
-        topic = self.start()["data"]["topic_id"]
+        topic = self.dispatched()["data"]["topic_id"]
         job = self.app.runtime.jobs.find(0, self.job_key())
         job.execution_started = True
         job.backend_control = SimpleNamespace(steer=mock.Mock(return_value=None), remote=False)
@@ -311,16 +325,70 @@ class CreatedTest(DispatchCase):
         self.assertEqual(len(self.dispatch_sends()), 2)
         self.assertEqual(self.record("r2")["mid"], self.job_key())
 
-    def test_a_topic_that_waits_on_its_launch_card_says_it_waits_for_the_owner(self):
+    def test_an_older_card_of_a_topic_waiting_on_its_launch_card_still_says_it_waits_for_the_owner(self):
+        # Rule 10: the 派发卡 a release before left when topic_start opened a topic (kind start), here one waiting on its
+        # launch card, is still drawn as it was.
         butler_settings.update(self.ctx.state_dir, topic_defaults=butler_settings.TopicDefaults(run_mode="worktree"))
-        self.start(harness="codex")
-        self.assertEqual(self.dispatch_sends()[-1].args[2]["header"]["text_tag_list"][0]["text"]["content"], "等你")
+        topic = self.start("old", harness="codex")["data"]["topic_id"]
+        self.assertEqual(self.dispatch_sends(), [])
+        token = self.token("old")
+        record = records.new_record(token=token, chat_id=CHAT, topic_id=topic, job_key="main-job", mid=self.job_key("old"),
+                                    kind="start", owner_message=OWNER, request=ASK, starts=False, now=time.time() - 60)
+        record.update(card_id="card-old", card_message_id="om_card_old", sequence=1)
+        write_json(records.record_path(self.ctx.state_dir, token), record)
+        self.tick(time.time())
+        self.assertEqual(self.last_card()["header"]["text_tag_list"][0]["text"]["content"], "等你")
+
+
+class OpenedTest(DispatchCase):
+    """A topic topic_start or topic_fork opens has no 派发卡: its thread hangs under the owner's question, or its own topic
+    card is at the chat's top level (T636, 2026-11-22: the owner saw the topic under his question and a big card under
+    it that said the same again)."""
+
+    def test_a_topic_under_the_question_and_a_second_one_with_its_own_card_send_none(self):
+        first, second = self.start("o1"), self.start("o2", title="另一件")
+        self.assertTrue(first["ok"] and second["ok"], (first, second))
+        self.assertNotEqual(first["data"]["root_message_id"], second["data"]["root_message_id"])
+        self.assertEqual(self.dispatch_sends(), [])
+        self.assertEqual(records.live_paths(self.ctx.state_dir), [])
+
+    def test_a_fork_sends_none(self):
+        topic = self.start("o1")["data"]["topic_id"]
+        job = self.app.runtime.jobs.find(0, self.job_key("o1"))
+        self.app.runtime.unregister_reply_job(job)
+        self.set_job("o1", status="done")
+        request = Request("f1", "topic_fork", {"topic": topic, "title": "换个思路", "prompt": "试试另一种做法"}, "main-job", 0.0)
+        with mock.patch("covey.feishu.message_read.fetch_message_detail", return_value={}), \
+                mock.patch("covey.feishu.message_read.message_item", return_value={}):
+            answer = butler_topics.TOOLS["topic_fork"](self.env, request)
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual(self.dispatch_sends(), [])
+        self.assertEqual(records.live_paths(self.ctx.state_dir), [])
+
+    def test_a_supplement_into_the_turn_topic_start_opened_sends_none(self):
+        topic = self.start("o1")["data"]["topic_id"]
+        job = self.app.runtime.jobs.find(0, self.job_key("o1"))
+        job.execution_started = True
+        job.backend_control = SimpleNamespace(steer=mock.Mock(return_value=None), remote=False)
+        answer = self.send("r2", topic, "顺便看下前天的")
+        self.assertTrue(answer["ok"] and answer["data"]["steered"], answer)
+        self.assertEqual(self.dispatch_sends(), [])
+        self.assertEqual(self.record("r2"), {})
+        self.assertTrue(any("dispatch card skipped" in line for line in self.logs))
+        self.assertTrue(dispatch_cards.opened_turn(self.ctx.state_dir, self.job_key("o1")))
+        self.assertFalse(dispatch_cards.opened_turn(self.ctx.state_dir, "om_owner_question"))
+
+    def test_a_next_turn_handed_to_it_has_its_card(self):
+        self.assertTrue(self.dispatched()["ok"])
+        self.assertEqual(len(self.dispatch_sends()), 1)
+        self.assertEqual((self.record()["kind"], self.record()["mid"]), ("send", self.job_key()))
+        self.assertFalse(dispatch_cards.opened_turn(self.ctx.state_dir, self.job_key()))
 
 
 class RefreshTest(DispatchCase):
     def setUp(self):
         super().setUp()
-        self.assertTrue(self.start()["ok"])
+        self.assertTrue(self.dispatched()["ok"])
         self.base = self.record()["started_at"]
         self.set_job(status="running", phase="跑测试", workspace_name="project", harness_id="claude", model="Claude · Sonnet", effort="high")
         self.put.reset_mock()
@@ -418,10 +486,10 @@ class RefreshTest(DispatchCase):
 class SettleTest(DispatchCase):
     def setUp(self):
         super().setUp()
-        self.assertTrue(self.start()["ok"])
+        self.assertTrue(self.dispatched()["ok"])
         self.base = self.record()["started_at"]
         self.set_job(status="running", workspace_name="project")
-        self.target = {"token": self.token(), "kind": "start", "topic_id": self.record()["topic_id"]}
+        self.target = {"token": self.token(), "kind": "send", "topic_id": self.record()["topic_id"]}
         self.tick(self.base + 3)
         self.put.reset_mock()
 
@@ -540,7 +608,7 @@ class ClickTest(DispatchCase):
 
     def setUp(self):
         super().setUp()
-        self.assertTrue(self.start()["ok"])
+        self.assertTrue(self.dispatched()["ok"])
         self.topic = self.record()["topic_id"]
         self.app.runtime.owner_open_id = "ou_owner"
         self.app.runtime.state_dir = self.ctx.state_dir

@@ -1,6 +1,7 @@
 """The records of the 派发卡 (docs/butler.md 派发卡): <state>/main-thread/dispatch/<token>.json, one per
-card the butler's topic_start, topic_send or topic_fork put at the chat's top level (app/dispatch_cards.py), and
-the sidecar <token>.relay.json a task runner leaves when that card's conclusion went out (``mark_relayed``).
+card the butler's topic_send put at the chat's top level (app/dispatch_cards.py; ``kind`` send, and start or fork in the
+records of the cards topic_start and topic_fork sent before), and the sidecar <token>.relay.json a task runner leaves
+when that card's conclusion went out (``mark_relayed``).
 
 The record is written by the Bridge alone: first by the tool that sends the card, then by the refresh thread. The task
 runner never writes it (rule 3: one writer for a card); what the runner has to say, the relay's end, goes in the
@@ -39,9 +40,9 @@ def relay_note_path(state_dir, token) -> Path:
 
 def new_record(*, token, chat_id, topic_id, job_key, mid, kind, owner_message, request, starts, rounds=1, now=None, ask_at="", ask_url="") -> dict:
     """A fresh live record. ``job_key`` the butler job that sent the card, ``mid`` the key or message id of the
-    topic's job it follows, ``kind`` start, send or fork, ``starts`` whether the topic starts at once (else it waits
-    on its launch card). ``ask_at``, ``ask_url``: the owner's message the card's "你问" block names (the time he wrote it,
-    the link that opens it)."""
+    topic's job it follows, ``kind`` send (start or fork in older records), ``starts`` whether the topic starts at once
+    (else it waits on its launch card: an older start record's). ``ask_at``, ``ask_url``: the owner's message the card's
+    "你问" block names (the time he wrote it, the link that opens it)."""
     request = " ".join(str(request or "").split())
     return {"schema_version": SCHEMA, "token": token, "chat_id": chat_id, "topic_id": topic_id, "job_key": job_key,
             "mid": mid, "kind": kind, "owner_message": owner_message, "request": request[:REQUEST_CHARS],
@@ -97,3 +98,10 @@ def mark_relayed(state_dir, token, *, outcome, state, message_id="", reason="") 
 
 def relay_note(state_dir, token) -> dict:
     return read_object(relay_note_path(state_dir, token))
+
+
+def sent(state_dir, token) -> bool:
+    """Whether the card of the request ``token`` went out (its record names the card's message)."""
+    if not token or "/" in str(token):
+        return False
+    return bool(read_object(record_path(state_dir, token)).get("card_message_id"))

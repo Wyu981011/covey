@@ -1,10 +1,13 @@
-"""派发卡 (docs/butler.md 派发卡), when COVEY_DISPATCH_CARD=1: the card the butler's topic_start,
-topic_send and topic_fork leave at the chat's top level, a message of its own with the "你问" block (cards/dispatch_card.py)
-naming the owner's message, saying how the job it handed to a topic is going, kept up to date until the conclusion comes back and the card shrinks to one line (cards/dispatch_card.py).
+"""派发卡 (docs/butler.md 派发卡), when COVEY_DISPATCH_CARD=1: the card the butler's topic_send leaves at the chat's top
+level when it hands work to a topic that was there, a message of its own with the "你问" block (cards/dispatch_card.py)
+naming the owner's message, saying how the job it handed to that topic is going, kept up to date until the conclusion
+comes back and the card shrinks to one line (cards/dispatch_card.py). A topic topic_start or topic_fork opens gets none:
+its thread hangs under the owner's question, or its own card is at the top level (app/butler_topics.py dispatch_card);
+the records of cards those sent before still refresh and settle as they did.
 
 - ``created`` (called by app/butler_topics.py once a topic took the work): sends the card, records it
-  (core/dispatch_records.py), and makes a quote of it go to the topic (``route_message``). Never raises: the topic is
-  open and its work queued already.
+  (core/dispatch_records.py), and makes a quote of it go to the topic (``route_message``). Never raises: the topic
+  has the work already.
 - ``DispatchCards`` (a feature object of the Bridge: ``threads()`` gives the refresh thread): each second it looks at the
   records still live, reads the topic's job records (no Feishu call, no lock) and draws the card; when what it would say
   differs from what it last wrote and at least ``MIN_GAP`` seconds have passed it writes the whole card (one CardKit
@@ -24,6 +27,7 @@ from covey.app.card_publish import clock, digest_of, publish, safely, titles_of,
 from covey.cards import answer_card
 from covey.cards.dispatch_card import (DONE, FAILED, RUNNING, STEER_KIND, STOP_KIND, STOPPED, WAITING, Dispatch, dispatch_card,
                                        settled_card)
+from covey.core import butler_opened
 from covey.core import dispatch_records as records
 from covey.core import env as cenv
 from covey.core import look, projects
@@ -40,6 +44,8 @@ from covey.core.topics import topic_label, topic_title
 from covey.core.turn_words import UNSET_PHASES, ask_words, request_line
 
 ENV = "COVEY_DISPATCH_CARD"
+MAIN = "main-"  # A butler tool's synthetic message id: MAIN + its request's token (app/butler_topics.py).
+SEND = "send"  # The record's kind: topic_send's (start and fork, of cards sent before topic_send alone had one).
 TICK = 1.0  # Seconds between two looks at the live records.
 MIN_GAP = 2.5  # Seconds between two writes of one card (CardKit allows 10 a second; v3's finding: one in 2 to 3 is enough).
 BACKOFF = 60.0  # The longest wait after a failed write (2, 4, 8 ... seconds).
@@ -248,20 +254,30 @@ def ask_of(env, state, job_key) -> dict:
     return {"ask_at": clock(at), "ask_url": url}
 
 
-def created(env, request, topic_id, job_key="", *, token, kind="start", mid="", starts=True, project=False) -> str:
-    """Send the card of the work ``request`` (a butler tool call) handed to topic ``topic_id``; the record's token,
-    '' when there is none. ``job_key``: the butler job (default the request's); ``mid``: the key of the topic's job
-    the card follows (default the first turn's, "main-" + ``token``, the request's: app/butler_topics.py request_token). Once a request: a second call finds
-    the card sent. Does nothing with the switch off, or when the owner's message is not known. Never raises.
-    ``project``: the butler said this work is a long job (topic_send with ``project``): ``upgrade_hint.project`` in the record,
-    which app/projects.py reads (COVEY_PROJECT_UPGRADE)."""
+def created(env, request, topic_id, job_key="", *, token, mid="", project=False) -> str:
+    """Send the card of the work ``request`` (the butler's topic_send) handed to topic ``topic_id``; the record's token,
+    '' when there is none. ``job_key``: the butler job (default the request's); ``mid``: the key of the topic's running
+    job a 补充 went into (default the turn the request started, "main-" + ``token``, the request's: app/butler_topics.py
+    request_token). Once a request: a second call finds the card sent. Does nothing with the switch off, or when the
+    owner's message is not known. Never raises. ``project``: the butler said this work is a long job (topic_send with
+    ``project``): ``upgrade_hint.project`` in the record, which app/projects.py reads (COVEY_PROJECT_UPGRADE)."""
     if not enabled():
         return ""
-    return safely(env, lambda: _created(env, request, topic_id, job_key or request.job_key, token, kind, mid, starts, project),
+    return safely(env, lambda: _created(env, request, topic_id, job_key or request.job_key, token, mid, project),
                   f"dispatch card failed topic={str(topic_id)[:12]}")
 
 
-def _created(env, request, topic_id, job_key, token, kind, mid, starts, project=False) -> str:
+def opened_turn(state_dir, mid) -> bool:
+    """Whether ``mid``, a job's message id, is the turn the butler's topic_start or topic_fork queued ("main-" + the token
+    of its request, core/butler_opened.py): a turn with no 派发卡 (app/butler_topics.py dispatch_card)."""
+    mid = str(mid or "")
+    if not mid.startswith(MAIN):
+        return False
+    record = butler_opened.by_token(state_dir, mid[len(MAIN):])
+    return bool(record) and butler_opened.kind_of(record) in (butler_opened.START, butler_opened.FORK)
+
+
+def _created(env, request, topic_id, job_key, token, mid, project=False) -> str:
     from covey.app.relay_targets import butler_job_owner_message
 
     chat, state = env.chat(), Path(env.state_dir)
@@ -276,12 +292,17 @@ def _created(env, request, topic_id, job_key, token, kind, mid, starts, project=
     if kept:
         # A 补充 into a job whose card is out already: that card follows it, a second one would say the same and never
         # get the conclusion's note (it goes to the token of the job's own request).
-        env.runtime.log(f"dispatch card kept topic={str(topic_id)[:12]} kind={kind} token={kept[:8]}")
+        env.runtime.log(f"dispatch card kept topic={str(topic_id)[:12]} token={kept[:8]}")
         return kept
+    if mid and not record and opened_turn(state, mid):
+        # A 补充 into the turn topic_start or topic_fork opened: that turn shows in its own thread and has no card, and
+        # one for the 补充 would never get the conclusion's note either.
+        env.runtime.log(f"dispatch card skipped topic={str(topic_id)[:12]}: a supplement to the turn the topic opened with")
+        return ""
     if not record:
         record = records.new_record(token=token, chat_id=chat, topic_id=topic_id, job_key=job_key,
-                                    mid=mid or "main-" + token, kind=kind, owner_message=owner,
-                                    request=request_words(state, job_key), starts=starts,
+                                    mid=mid or MAIN + token, kind=SEND, owner_message=owner,
+                                    request=request_words(state, job_key), starts=True,
                                     rounds=records.rounds_for(state, owner, topic_id), **ask_of(env, state, job_key))
         if project:
             record["upgrade_hint"]["project"] = True
@@ -299,7 +320,7 @@ def _created(env, request, topic_id, job_key, token, kind, mid, starts, project=
     sent = publish(env, state, chat, card, env.voice.key("main-dispatch", token), card_id=record.get("card_id", ""),
                    on_created=saved, record=store, topic=topic_id, route_chat=chat,
                    not_sent=f"dispatch card not sent topic={str(topic_id)[:12]}",
-                   sent=f"dispatch card sent topic={str(topic_id)[:12]} kind={kind} message=")
+                   sent=f"dispatch card sent topic={str(topic_id)[:12]} message=")
     return token if sent else ""
 
 

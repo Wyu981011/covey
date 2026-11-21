@@ -55,8 +55,8 @@ class UpCase(DispatchCase):
         self.writer = project_cards.ProjectCards(self.app.runtime, self.app.messenger, self.app.voice, {"claude": "Claude Code"})
 
     def long(self, words=LONG):
-        """The butler's ``project`` flag on the 派发卡 the next topic_start leaves (``words`` are the owner's, which decide
-        nothing: only the flag turns a topic into a project)."""
+        """The butler's ``project`` flag on the 派发卡 the next topic_send leaves (``dispatched``; ``words`` are the owner's,
+        which decide nothing: only the flag turns a topic into a project)."""
         upsert_job_record(self.state, "main-job", user_text=words)
         real = butler_topics.dispatch_card
         patcher = mock.patch.object(butler_topics, "dispatch_card",
@@ -65,9 +65,9 @@ class UpCase(DispatchCase):
         self.addCleanup(patcher.stop)
 
     def plain(self, request_id="r1", **args):
-        """A topic opened with the upgrade off: its 派发卡 stays live."""
+        """A topic the butler opened and handed work again with the upgrade off: its 派发卡 stays live."""
         with mock.patch.dict(os.environ, {upgrades.ENV: ""}):
-            answer = self.start(request_id, **args)
+            answer = self.dispatched(request_id, **args)
         self.assertTrue(answer["ok"], answer)
         return answer["data"]["topic_id"], self.record(request_id)
 
@@ -94,7 +94,7 @@ class SwitchTest(UpCase):
     def test_the_upgrade_is_off_by_default_and_the_butlers_flag_changes_nothing_then(self):
         self.long()
         with mock.patch.dict(os.environ, {upgrades.ENV: ""}):
-            answer = self.start()
+            answer = self.dispatched()
         self.assertTrue(answer["ok"], answer)
         self.assertEqual(self.projects_on_disk(), [])
         self.assertEqual((self.record()["state"], self.record()["project_id"]), ("live", None))
@@ -109,7 +109,7 @@ class SwitchTest(UpCase):
         self.long()
         with mock.patch.dict(os.environ, {projects.ENV: ""}):
             self.assertEqual(self.up.threads(), ())
-            answer = self.start()
+            answer = self.dispatched()
             self.assertEqual(self.up.consider(self.record()["token"]), "")
         self.assertTrue(answer["ok"])
         self.assertEqual(self.projects_on_disk(), [])
@@ -120,8 +120,7 @@ class SwitchTest(UpCase):
         topic, dispatch = self.plain()
         self.assertEqual(self.up.consider(dispatch["token"]), "")  # No word, no flag.
         self.second_dispatch(topic, "b" * 16, state="settled")
-        self.second_dispatch(topic, "c" * 16, state="settled")
-        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 3)
+        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 3)  # Its opening, the card and this one.
         self.assertEqual(self.up.consider(dispatch["token"]), "")  # The third round is ``auto``'s.
         self.assertEqual(self.projects_on_disk(), [])
         hinted = {**dispatch, "upgrade_hint": {"long_word": False, "project": True}}
@@ -129,9 +128,8 @@ class SwitchTest(UpCase):
 
     def test_auto_also_upgrades_on_the_third_round_and_the_card_says_which(self):
         topic, dispatch = self.plain()
-        self.second_dispatch(topic, "b" * 16, state="settled")
         with mock.patch.dict(os.environ, {upgrades.ENV: "auto"}):
-            self.assertEqual(self.up.consider(dispatch["token"]), "")  # Two rounds.
+            self.assertEqual(self.up.consider(dispatch["token"]), "")  # Two rounds: its opening and the card.
             self.second_dispatch(topic, "c" * 16, state="settled")
             pid = self.up.consider(dispatch["token"])
         self.assertTrue(pid)
@@ -141,10 +139,10 @@ class SwitchTest(UpCase):
 
     def test_the_rounds_are_the_larger_of_the_cards_and_the_owners_own_turns_and_the_old_field_is_not_read(self):
         topic, dispatch = self.plain()
-        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 1)
+        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 2)  # The butler opened it, then handed it more.
         path = records.record_path(self.state, dispatch["token"])
         path.write_text(json.dumps({**dispatch, "rounds": 9}))  # The record's own count is ignored.
-        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 1)
+        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 2)
         for number, message in enumerate(("om_a", "om_b", "om_c", "main-x", "lead-1-1"), 1):
             upsert_job_record(self.state, f"own{number}", topic_id=topic, chat_id=CHAT, job_id=100 + number, message_id=message,
                               status="done")
@@ -152,7 +150,21 @@ class SwitchTest(UpCase):
         self.second_dispatch(topic, "d" * 16)
         self.second_dispatch(topic, "e" * 16)
         self.second_dispatch(topic, "f" * 16)
-        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 4)  # The cards, now more.
+        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 5)  # The opening and the cards, now more.
+
+    def test_the_opening_is_one_round_whether_or_not_an_older_release_sent_a_card_for_it(self):
+        # T636: topic_start and topic_fork leave no 派发卡; a release before sent one (kind start), counted as that round.
+        topic = self.start("o1")["data"]["topic_id"]
+        self.assertEqual(records.live_paths(self.state), [])
+        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 1)
+        self.second_dispatch(topic, "a" * 16, kind="start")
+        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 1)
+        self.second_dispatch(topic, "b" * 16)
+        self.assertEqual(upgrades.rounds_for_topic(self.state, topic), 2)
+        stranger = "f" * 64  # A topic the butler did not open (no origin of its): its cards alone.
+        self.assertEqual(upgrades.rounds_for_topic(self.state, stranger), 0)
+        self.second_dispatch(stranger, "c" * 16)
+        self.assertEqual(upgrades.rounds_for_topic(self.state, stranger), 1)
 
     def test_the_butler_flag_on_topic_send_is_kept_in_the_dispatch_record_only_with_the_switch_on(self):
         request = SimpleNamespace(args={"project": True})
@@ -164,7 +176,7 @@ class SwitchTest(UpCase):
 
     def test_a_thread_and_a_lead_are_never_upgraded_again(self):
         self.long()
-        answer = self.start()
+        answer = self.dispatched()
         topic = answer["data"]["topic_id"]
         again = self.second_dispatch(topic, "9" * 16)
         self.assertEqual(self.up.consider(again["token"]), "")  # The topic is a project's thread now.
@@ -174,7 +186,7 @@ class SwitchTest(UpCase):
 class UpgradeTest(UpCase):
     def upgraded(self):
         self.long()
-        answer = self.start()
+        answer = self.dispatched()
         self.assertTrue(answer["ok"], answer)
         dispatch = self.record()
         return answer["data"]["topic_id"], dispatch, self.project(dispatch)
@@ -329,7 +341,7 @@ class UpgradeTest(UpCase):
     def test_the_lead_calls_make_no_card_and_so_no_upgrade(self):
         self.long()
         with mock.patch.object(butler_topics, "lead_of", return_value=("a1b2c3d4e5f6", "p")):
-            answer = self.start()
+            answer = self.dispatched()
         self.assertTrue(answer["ok"], answer)
         self.assertEqual(self.projects_on_disk(), [])
         self.assertEqual(self.dispatch_sends(), [])
@@ -602,7 +614,7 @@ class StyleKeepTest(UpCase):
         self.on(COVEY_PROJECT_STYLE_KEEP="1")
         (self.state / project_lead.STYLE_FILE).write_text('{"detail": "一行", "spawn": "保守"}')  # An older release's file.
         self.long()
-        self.start("r1")
+        self.dispatched("r1")
         self.assertEqual(self.project(self.record("r1"))["style"], {"detail": "一行"})
 
 
@@ -612,7 +624,7 @@ class DowngradeTest(UpCase):
         self.claude = self.app.apps["claude"]
         self.claude.messenger.reply = mock.Mock(return_value=True)
         self.long()
-        self.topic = self.start()["data"]["topic_id"]
+        self.topic = self.dispatched()["data"]["topic_id"]
         self.dispatch = self.record()
         self.project = self.project_for(self.dispatch)
         self.lead = self.project["lead_topic_id"]
@@ -708,7 +720,7 @@ class ToolTest(UpCase):
 
     def upgraded(self):
         self.long()
-        topic = self.start()["data"]["topic_id"]
+        topic = self.dispatched()["data"]["topic_id"]
         project = self.project(self.record())
         return topic, project
 

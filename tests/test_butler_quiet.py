@@ -194,6 +194,33 @@ class DeliverTest(DeliverCase):
             self.deliver(self.job())
         self.assertEqual(message_topic(self.state, CHAT, "om_hook"), "t453")
 
+    def test_a_topic_whose_dispatch_card_went_out_is_not_hooked_again(self):
+        # T636 (2026-11-22): the 派发卡 of the hand-on and the hook under the owner's message both said where it went.
+        from covey.core import dispatch_records
+        self.topic("t453", chat_id=CHAT, root_id="om_t453", title="同步", topic_number=453)
+        self.topic("t454", chat_id=CHAT, root_id="om_t454", title="看板", topic_number=454)
+        self.opened(plan=None, topic_id="t453", answer={"ok": True, "data": {"label": "T453"}})
+        super(Case, self).opened("b", job_key=job_key("om_1", 7), at=3, topic_id="t454",
+                                 answer={"ok": True, "data": {"label": "T454"}})
+        record = dispatch_records.new_record(token="a", chat_id=CHAT, topic_id="t453", job_key=job_key("om_1", 7),
+                                             mid="main-a", kind="send", owner_message="om_1", request="同步", starts=True)
+        write_json(dispatch_records.record_path(self.state, "a"), {**record, "card_message_id": "om_dispatch"})
+        unsent = dispatch_records.new_record(token="b", chat_id=CHAT, topic_id="t454", job_key=job_key("om_1", 7),
+                                             mid="main-b", kind="send", owner_message="om_1", request="看板", starts=True)
+        write_json(dispatch_records.record_path(self.state, "b"), unsent)  # Its card did not go out: still hooked.
+        cards = DeliverCase.cards(self)
+        cards.messenger.create_and_send_card.return_value = ("card-h", "om_hook")
+        with mock.patch.object(DeliverCase, "cards", return_value=cards), \
+                mock.patch("covey.app.topic_links.topic_thread_link", return_value=("https://link", "thread")):
+            self.deliver(self.job())
+        self.assertEqual(self.emojis(), [butler_reactions.GOT])
+        built = cards.messenger.create_and_send_card.call_args.args[2]
+        self.assertEqual(1, len(built["body"]["elements"]))
+        self.assertIn("T454", json.dumps(built, ensure_ascii=False))
+        self.assertNotIn("T453", json.dumps(built, ensure_ascii=False))
+        write_json(dispatch_records.record_path(self.state, "b"), {**unsent, "card_message_id": "om_dispatch_b"})
+        self.assertEqual([], butler_reply.hook_rows(self.state, job_key("om_1", 7)))  # Both went out: no hook at all.
+
     def test_a_turn_that_only_opened_a_topic_gets_no_hook(self):
         self.opened()
         cards = DeliverCase.cards(self)

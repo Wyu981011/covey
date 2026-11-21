@@ -48,6 +48,7 @@ ENV = "COVEY_PROJECT_UPGRADE"
 OFF, BUTLER, AUTO = "off", "butler", "auto"
 WORD = "word"  # The value the live deployments set (and the reason an older record carries): the same as ``butler``.
 ROUNDS = 3  # ``auto``: the topic's round that makes a project.
+OPENINGS = ("start", "fork")  # The kinds of the 派发卡 records an older release sent when the butler opened a topic.
 UPGRADE_STEPS = ("record", "lead", "thread", "card", "merged", "route", "receipt")
 START_STEPS = ("record", "lead", "card", "receipt")
 GATHER_STEPS = ("record", "lead", "card", "members", "receipt")  # 整理专项's 建专项: topics that are there already.
@@ -74,12 +75,17 @@ def project_id(kind, key) -> str:
 
 
 def rounds_for_topic(state_dir, topic_id) -> int:
-    """How many rounds ``topic_id`` has had: the larger of the 派发卡 records that name it and the turns the owner started in
-    it himself (a job whose message id is a Feishu message's, ``om_``). The record's own ``rounds`` field (the same question
-    dispatched again) is not read."""
-    cards = sum(1 for path in drecords.live_paths(state_dir) if read_object(path).get("topic_id") == topic_id)
+    """How many rounds ``topic_id`` has had: the larger of the butler's hand-ons and the turns the owner started in it
+    himself (a job whose message id is a Feishu message's, ``om_``). The butler's are the 派发卡 records that name it (each
+    topic_send's) and its opening, when the butler opened it (topic.json ``origin`` kind ``main``): topic_start and
+    topic_fork leave no 派发卡, a record of kind start or fork is one an older release sent for that opening (counted
+    once). The record's own ``rounds`` field (the same question dispatched again) is not read."""
+    named = [saved for saved in map(read_object, drecords.live_paths(state_dir)) if saved.get("topic_id") == topic_id]
+    origin = read_object(topic_file(Path(state_dir), topic_id)).get("origin")
+    opened = (isinstance(origin, dict) and origin.get("kind") == "main"
+              and not any(saved.get("kind") in OPENINGS for saved in named))
     asked = sum(1 for job in topic_job_records(Path(state_dir), topic_id) if str(job.get("message_id") or "").startswith("om_"))
-    return max(cards, asked)
+    return max(len(named) + opened, asked)
 
 
 def has_receipt(state_dir, pid, kind) -> bool:

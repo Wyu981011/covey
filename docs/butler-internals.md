@@ -226,7 +226,8 @@
 开关和用途见 butler.md [派发卡](butler.md#派发卡开关默认关)。
 
 - **内容**（`cards/dispatch_card.py` 的 `dispatch_card`）：卡头 = 主人请求的前 30 字 + 状态标签（在做、等你、做完、失败、已停）；一行灰字“T12 · 12:41 起 · 用时 2分05秒”；折叠面板（标题行 T 号 + 话题标题 + 工作区；在做和等你时展开）里是当前步骤或阶段；输入/输出灰框；补充、停止、打开话题三个按钮，能用的才画（补充和停止只在“在做”且已有任务时，等你时回答在话题里的问题卡上）。卡里**没有输入框**（会刷新的卡不放输入框，见 [cards.md](cards.md) 卡片的客户端限制）。
-- **创建**（`app/dispatch_cards.py` 的 `created`）：话题接了活（`topic_start`、`topic_send`、`topic_fork`）之后发出；记 `route_message`，主人引用这张卡说话进那个话题。同一个请求只发一张。补充送进正在跑的任务、话题里已有一张正跟着这一轮的派发卡时，不再发新卡（日志 `dispatch card kept`）。发不出去只记日志，话题已经开了。
+- **创建**（`app/dispatch_cards.py` 的 `created`）：已有话题接了 `topic_send` 的活之后发出；`topic_start`、`topic_fork` 不调（`app/butler_topics.py` 的 `dispatch_card`：开出的话题挂在提问下面或自己的话题卡在顶层）。记 `route_message`，主人引用这张卡说话进那个话题。同一个请求只发一张。补充送进正在跑的任务时：话题里已有一张正跟着这一轮的派发卡，不再发新卡（日志 `dispatch card kept`）；这一轮是 `topic_start`、`topic_fork` 排的（消息 id 是 `main-` 加它们请求的 token，`opened_turn`），也不发（日志 `dispatch card skipped`：它在自己的串里，回带的便条也只记到它自己的请求上）。发不出去只记日志，话题已经接了活。旧版本为开话题发的派发卡（记录 `kind` 是 `start`、`fork`）照常刷新、沉底。
+- **和小卡**：只做了交接的一轮，`app/butler_reply.py` 的 `hook_rows` 跳过这次转交发了派发卡的话题（`core/dispatch_records.py` 的 `sent`），全跳过就不发“→ T12”小卡。
 - **记录**：`<state>/main-thread/dispatch/<token>.json`（`core/dispatch_records.py`），`state` 只有 `live → settled`（`DISPATCH_TRANSITIONS`），`settled` 之后后台线程不再看它；`rounds`、`upgrade_hint`、`project_id` 留给转成专项用。
 - **刷新**：`DispatchCards` 的后台线程每秒看一遍没结束的记录，只读话题的任务记录（没有飞书调用，不拿锁），摘要变了且离上次写至少 2.5 秒（`MIN_GAP`）才写一次整卡。写之前从 `reserve` 取 sequence 存进记录，失败按 2、4、8 … 最多 60 秒退避，下次取新的 sequence，从不重发同一个。任务进程不碰这张卡，Bridge 里只有这个后台线程写它。
 - **结论沉底**：回带发出后，任务进程只留一张小便条 `<token>.relay.json`（不碰卡）；后台线程读到便条，把卡整卡换成一行“✅ 做完 · 结论在下方 ›”（链到结论消息，面板收起、按钮摘掉），写成功后记录转 `settled`。失败或停止同样写一行原因。回带 `uncertain` 或 `unsent` 时不留便条，卡原样留着让主人看到出了问题。任务结束后 10 分钟（`TERMINAL_GRACE`）还没有便条，卡就按最后的样子转 `settled`；3 天还没结束的也一样。

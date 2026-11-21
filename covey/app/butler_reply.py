@@ -24,7 +24,7 @@ from covey.cards.review import answer_lead
 from covey.core.deliveries import CLOCK_SLACK, read_delivery, shown_preview
 from covey.core.jobs import job_key
 from covey.app import project_lead, topic_links
-from covey.core import butler_opened, placement, turn_words
+from covey.core import butler_opened, dispatch_records, placement, turn_words
 from covey.core.butler import traits_of
 from covey.core.saved_results import saved_delivery_kind
 from covey.core.state import read_object
@@ -267,11 +267,13 @@ def hook_rows(state_dir, key, *, profile=None, fetch=None, log=None) -> list[tup
     ``key`` handed work on to (topic_send, butler_opened SEND), oldest first, once each. The link opens the topic's
     thread at the line topic_send put there (its record's ``thread_message_id``), else the thread itself
     (app/topic_links.py topic_thread_link); a fallback or none is a log line. A topic it opened or forked hangs its
-    thread under the owner's message already, or has its topic card at the top level: none of those."""
+    thread under the owner's message already, or has its topic card at the top level: none of those; nor one whose
+    派发卡 that hand-on sent (core/dispatch_records.py ``sent``), which says where the work went and opens the thread."""
     rows, seen = [], set()
-    for _, record in sorted(butler_opened.by_job(state_dir, key), key=lambda pair: float(pair[1].get("at") or 0)):
+    for token, record in sorted(butler_opened.by_job(state_dir, key), key=lambda pair: float(pair[1].get("at") or 0)):
         topic = str(record.get("topic_id") or "")
-        if not butler_opened.answered(record) or butler_opened.kind_of(record) != butler_opened.SEND or not topic or topic in seen:
+        if (not butler_opened.answered(record) or butler_opened.kind_of(record) != butler_opened.SEND or not topic
+                or topic in seen or dispatch_records.sent(state_dir, token)):
             continue
         seen.add(topic)
         title = str(_topic_title(state_dir, topic) or "")
