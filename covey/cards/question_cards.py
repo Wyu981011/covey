@@ -4,11 +4,11 @@ from __future__ import annotations
 import re
 
 from covey.cards.board import OPEN_KIND
-from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, collapsible, grey, item,
+from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, grey, item,
                                   markdown_panel, note, plain, text_button)
-from covey.cards.review import compact_text
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, ask_footnote, band_label, conclusion_band, receipt, speaker_row,
-                            split_ask, styled)
+from covey.cards.review import PEEK_WIDTH, compact_text, opening
+from covey.cards.ui import (BODY_PADDING, BODY_SPACING, ask_footnote, band_label, banded, conclusion_band, peek, receipt,
+                            speaker_row, split_ask, styled)
 from covey.core import look, triage, turn_words
 from covey.core.stale import STALE_NOTE
 from covey.core.text import literal
@@ -443,19 +443,17 @@ def question_card(record, topic=""):
 
 SETTLED_TAGS = {"answered": ("已回答", "grey"), SET_ASIDE: ("不处理", "grey"), "cancelled": ("已取消", "grey"),
                 "superseded": ("已收起", "grey")}
-LINE_CHARS = 40  # Characters of a settled question's summary line (``settled_lines``).
 ANSWER_LINE_CHARS = 80
 
 
-def settled_lines(record):
-    """The two lines a settled question's copy keeps above its fold, "问题概要" and "→ 你选了「…」", as Markdown; None for
-    one that is still open or has no answer to say (folded under a newer one). Feedback and 不处理 say that."""
+def settled_line(record):
+    """The line a settled question's copy keeps under its question (``settled_peek``): "→ 你选了「…」", and where the
+    answer went once a task took it, "· #21 在做"; one Markdown element, None for one that is still open or has no
+    answer to say (folded under a newer one). Feedback and 不处理 say that."""
     count = len(record.get("questions") or ())
     status = record.get("status")
     if not count or status in (None, "pending", "superseded", "submitting", "uncertain"):
         return None
-    first = compact_text(record["questions"][0].get("question") or "", LINE_CHARS)
-    asked = f"{count} 道题 · {first}" if count > 1 else first
     if status == "cancelled":
         answer = "已取消"
     elif record.get("response_kind") == "feedback":
@@ -467,34 +465,68 @@ def settled_lines(record):
                  for q in record["questions"]]
         words = " / ".join(part for part in given if part)
         answer = f"你选了「{compact_text(words, ANSWER_LINE_CHARS)}」" if words else "已回答"
-    return [{"tag": "markdown", "content": literal(asked), "text_size": "normal_v2"},
-            {"tag": "markdown", "content": grey("→ " + literal(answer)), "text_size": "notation"}]
+    delivery, taken = record.get("delivery_state"), record.get("continuation_job_id")
+    if status == "answered" and taken and delivery in FOLLOW_UP:
+        answer += f" · #{taken} {FOLLOW_UP[delivery]}"
+    return {"tag": "markdown", "content": grey("→ " + literal(answer)), "text_size": "notation"}
+
+
+def settled_peek(record):
+    """A settled question on its top-level copy as 犹抱琵琶半遮面 (cards/ui.py peek): the question's first lines in view
+    (its own header bold before them), one click away the rest of it, what was answered and where it went
+    (``settled_title``), with the buttons its fold has (``_settled_panel``: 查看提交状态, 撤销 open). Several questions
+    say how many before the first one's opening and open on all of them."""
+    token, questions = record["token"], record["questions"]
+    panel = _settled_panel(record, token)
+    count, first = len(questions), questions[0]
+    header = question_header(first) if count == 1 else f"{count} 道题"
+    lead = f"**{literal(header)}** " if header else ""
+    head, rest = opening(first.get("question") or "", PEEK_WIDTH - 2 * len(header) - 2)
+    head = head or compact_text(first.get("question") or "", 40)
+    plain = (count == 1 and record.get("status") == "answered"
+             and record.get("response_kind") not in ("feedback", SET_ASIDE))
+    body = ""
+    if plain:  # The rest goes on from the opening, then the answer as the fold said it.
+        answer = "；".join((record.get("answers", {}).get(first["id"]) or {}).get("answers", []))
+        body = "\n".join(part for part in (rest, "答：" + answer if answer else "") if part)
+        body += ("\n\n补充说明：\n" + record["supplement"]) if record.get("supplement") else ""
+    body = body.strip() or settled_summary(record)
+    status = settled_title(record).removeprefix("❓ ")
+    elements = [{"tag": "markdown", "content": body[:10000]}, {"tag": "markdown", "content": grey(literal(status)),
+                                                              "text_size": "notation"}, *panel["elements"][1:]]
+    built = peek("q_" + token, lead + head, elements)
+    built["expanded"] = bool(panel.get("expanded"))
+    return built
 
 
 OUTPUT_ID = "mirror_output"
+OUTPUT_LABEL = "这一轮输出"
 
 
 def mirror_card(record, topic="", output="", ask=None, files=None):
     """The question card again at the private chat's top level (app/question_display.py mirror): the same form, under
     the speaker's row that says whose it is (cards/ui.py speaker_row: ``ask``, the "你问" block, becomes the row, its way
     back a line at the end). The question and its options come first; ``output``, what the turn wrote before it asked,
-    is in a fold under them (``reply_fold``'s title: how much), then ``files``, the asking turn's 产物 panel as its
-    answer card in the topic has it (app/artifacts.py answer_files). Settled, the form folds as the card in the topic
-    does and two lines keep what was asked and what he answered (``settled_lines``); the output stays."""
-    from covey.cards.relay_card import reply_body, size_words
+    comes under them with its first lines in view and the rest folded (cards/relay_card.py reply_peek), then ``files``,
+    the asking turn's 产物 panel as its answer card in the topic has it (app/artifacts.py answer_files). Settled, the
+    question shows its first lines and folds the rest with the answer (``settled_peek``), and a line under it says
+    what he answered (``settled_line``); the output stays."""
+    from covey.cards.relay_card import reply_body, reply_peek
 
     built = question_card({**record, TOP_COPY: True}, topic)  # Options as buttons (``top_level_card``).
     meta, _ = split_ask([ask] if ask else [])
     settled = SETTLED_TAGS.get(record.get("status"))
     legacy = [ask] if ask and meta is None else []  # A block sent before the title bar: kept as it was, at the top.
     elements = list(built["body"]["elements"])
-    lines = settled_lines(record)
-    if lines:
-        elements = [*lines, *elements]
+    line = settled_line(record)
+    if line:  # The question's fold (q_<token>) becomes its peek, the answer's line under it.
+        at = next((n for n, element in enumerate(elements) if element.get("element_id") == "q_" + record["token"]), None)
+        if at is None:
+            elements = [line, *elements]
+        else:
+            elements[at:at + 1] = [settled_peek(record), line]
     if output:
-        text = reply_body(output)
-        elements.append(collapsible(OUTPUT_ID, f"{topic or '话题'} 这一轮的输出 · {size_words(text)}（点开看）",
-                                    [{"tag": "markdown", "content": text}], quiet=True, spacing="6px"))
+        elements.append(reply_peek(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL))
     if files:
         elements.append(files)
     back = ask_footnote(meta)
@@ -509,7 +541,7 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
             meta = {**meta, "doing": "about", "says": says(meta.get("verb") or "你问", "about", meta.get("at") or "").strip()}
         built["body"]["elements"] = [speaker_row(meta, outcome="waiting", label=topic or "话题", tag=settled), *elements]
         built["body"].update(padding=BODY_PADDING, vertical_spacing=BODY_SPACING)
-    return built
+    return banded(built)  # The topic's badge has its colour in the card's config.
 
 
 def answer_notice_card(text):

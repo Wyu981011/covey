@@ -25,6 +25,16 @@ OWNER = "om_owner"
 REPLY = "## 结论\n两种做法都行，先用第一种。"
 
 
+def row_line(row):
+    """The words of a speaker's row (cards/ui.py speaker_row): its text column's, or the row itself alone."""
+    return row["columns"][1]["elements"][0]["content"] if row["tag"] == "column_set" else row["content"]
+
+
+def badge_words(row):
+    """What a topic's badge in a speaker's row says (cards/ui.py topic_badge)."""
+    return row["columns"][0]["elements"][0]["elements"][0]["content"]
+
+
 class Case(ButlerCase):
     context_topic = TOPIC
 
@@ -95,26 +105,35 @@ class TargetTest(Case):
 
 
 class CardTest(unittest.TestCase):
-    def test_a_conclusion_is_the_whole_reply(self):
+    def test_a_long_reply_shows_its_first_lines_and_folds_the_rest(self):
         reply = "先说结论。\n\n" + "细节。" * 300 + "\n\n## 逐层结果\n\n最后一段。"
         card, text = relay_card("T410", DONE, text=reply, inputs=["Claude Code"], outputs=[], url="https://x/t410")
-        # The speaker's row says whose it is: the T number first, the state as a tag (cards/ui.py speaker_row).
-        row, band, fold, foot = card["body"]["elements"]
+        # The speaker's row says whose it is: the T number its badge, the state as a tag (cards/ui.py speaker_row).
+        row, fold, foot = card["body"]["elements"]
         self.assertNotIn("header", card)
-        self.assertTrue(row["content"].startswith("**T410** <text_tag color='green'>有结果</text_tag>"))
+        self.assertEqual("<font color='white'>**T410**</font>", badge_words(row))
+        self.assertTrue(row_line(row).startswith("<text_tag color='green'>有结果</text_tag>"))
         self.assertEqual("T410 · 有结果：先说结论", card["config"]["summary"]["content"])
-        # The conclusion band next (docs/ui.md 5.2), the reply folded.
-        self.assertIn("先说结论", str(band))
-        # The band says the first line; the reply under it goes on from there (cards/review.py after_lead).
+        # No conclusion band (T638, 犹抱琵琶半遮面): the reply's first lines in view, how much in all after them, the
+        # rest folded and going on from where they stop (cards/review.py opening).
+        self.assertEqual(("relay_reply", False), (fold["element_id"], fold["expanded"]))
+        head = fold["header"]["title"]["content"]
+        self.assertTrue(head.startswith("先说结论。\n细节。"))
+        self.assertIn("<font color='grey'>全文约", head)
         content = fold["elements"][0]["content"]
-        self.assertEqual("relay_reply", fold["element_id"])
         self.assertTrue(content.startswith("细节。"))
         self.assertNotIn("先说结论", content)
         self.assertTrue(content.endswith("最后一段。"))  # Not cut: no "…", no 全文在 T410.
-        self.assertIn("完整回答 · 约", fold["header"]["title"]["content"])
+        self.assertEqual(300, head.count("细节。") + content.count("细节。"))  # Nothing said twice, nothing left out.
         self.assertIn("[进话题 ›](https://x/t410)", foot["content"])  # On the 输出 line, under 输入.
         self.assertNotIn("全文", text)
         self.assertTrue(text.startswith("先说结论。"))
+
+    def test_a_short_reply_is_the_card_s_body_without_a_heading_over_it(self):
+        card, text = relay_card("T410", DONE, text=REPLY, inputs=["Claude Code"], outputs=[])
+        row, reply, foot = card["body"]["elements"]
+        self.assertEqual("两种做法都行，先用第一种。", reply["content"])  # No "## 结论" row, no band saying it again.
+        self.assertEqual(REPLY, text)
 
     def test_a_reply_too_large_for_a_card_goes_as_markdown(self):
         reply = "很长的回答。" * (CARD_TEXT_BYTES // 6)
@@ -125,7 +144,8 @@ class CardTest(unittest.TestCase):
     def test_a_question_and_a_stop(self):
         card, _ = relay_card("T408", WAITING, question="选 A 还是 B？")
         row, band, rest = card["body"]["elements"][0], card["body"]["elements"][1], card["body"]["elements"][2:]
-        self.assertTrue(row["content"].startswith("**T408** <text_tag color='orange'>等你</text_tag>"))
+        self.assertEqual("<font color='white'>**T408**</font>", badge_words(row))
+        self.assertTrue(row_line(row).startswith("<text_tag color='orange'>等你</text_tag>"))
         self.assertIn("要你定：选 A 还是 B？", str(band))  # A short question is the band's alone, not said twice.
         self.assertEqual(1, json.dumps(card["body"], ensure_ascii=False).count("选 A 还是 B？"))
         self.assertIn("在 T408 的问题卡里答，或在这里回「T408 …」", rest[0]["content"])
@@ -135,7 +155,7 @@ class CardTest(unittest.TestCase):
         self.assertEqual(long, card["body"]["elements"][2]["content"])
         self.assertTrue(text.startswith("**T408 等你**"))
         card, text = relay_card("T408", STOPPED, reason="用户停止了任务")
-        self.assertIn("<text_tag color='red'>停住了</text_tag>", card["body"]["elements"][0]["content"])
+        self.assertIn("<text_tag color='red'>停住了</text_tag>", row_line(card["body"]["elements"][0]))
         self.assertIn("用户停止了任务", str(card["body"]["elements"][1]))
         self.assertTrue(text.startswith("**T408 停住了**：用户停止了任务"))
         self.assertEqual("T408 · 停住了：用户停止了任务", card["config"]["summary"]["content"])
@@ -351,14 +371,14 @@ class DeliverTest(Case):
         # the owner's words after it (样卡 B), not "T410 · 你问", which read as its own; no grey block above the card.
         self.assertNotIn("header", kwargs["card"])
         elements = kwargs["card"]["body"]["elements"]
-        row = elements[0]["content"]
-        self.assertTrue(row.startswith("**T410**"))
+        self.assertEqual("<font color='white'>**T410**</font>", badge_words(elements[0]))  # Its badge, no picture.
+        row = row_line(elements[0])
         self.assertIn("做完了你", row)
         self.assertNotIn("· 你问", row)
         self.assertIn("<text_tag color='green'>有结果</text_tag>", row)
         self.assertNotIn("answer_ask", str(elements[1]))
-        self.assertIn("两种做法都行，先用第一种", str(elements[1]))  # The conclusion band.
-        # REPLY is "## 结论" over one line: the band says it whole, no block repeats it under the band.
+        # REPLY is "## 结论" over one line: the line alone, no band and no heading saying it again (T638).
+        self.assertEqual("两种做法都行，先用第一种。", elements[1]["content"])
         self.assertEqual(json.dumps(kwargs["card"]["body"], ensure_ascii=False).count("两种做法都行"), 1)
         # 输入 and 输出 are two small lines, no grey box (cards/answer_card.py facts_element).
         self.assertEqual("answer_facts", elements[-1]["element_id"])
@@ -375,7 +395,7 @@ class DeliverTest(Case):
         self.assertIn("基线组已经补跑起来了", body)
         self.assertIn(STAGE_HEADING, body)
         self.assertNotIn("我先看下文件", body)
-        self.assertLess(body.index("两种做法都行"), body.index("基线组已经补跑起来了"))  # The answer first, its band unchanged.
+        self.assertLess(body.index("两种做法都行"), body.index("基线组已经补跑起来了"))  # The answer first.
         self.assertIn("两种做法都行，先用第一种", str(send.call_args.kwargs["card"]["body"]["elements"][1]))
 
     def test_a_turn_that_changed_code_has_its_change_as_a_line_under_input_and_output(self):
@@ -402,8 +422,8 @@ class DeliverTest(Case):
     def test_a_stopped_turn_without_one_says_it_stopped(self):
         send = self.deliver(self.job(progress=SimpleNamespace()), status="cancelled")
         card = send.call_args.kwargs["card"]
-        self.assertIn("<text_tag color='red'>停住了</text_tag>", card["body"]["elements"][0]["content"])
-        self.assertTrue(card["body"]["elements"][0]["content"].startswith("**T410**"))
+        self.assertIn("<text_tag color='red'>停住了</text_tag>", row_line(card["body"]["elements"][0]))
+        self.assertEqual("<font color='white'>**T410**</font>", badge_words(card["body"]["elements"][0]))
         self.assertIn("用户停止了任务", str(card["body"]["elements"][1]))
 
     def test_an_undelivered_result_sends_nothing(self):

@@ -19,6 +19,7 @@ from covey.app.artifacts import answer_files, artifact_key
 from covey.cards.answer_card import ARTIFACTS_ID, tail
 from covey.cards.review import answer_card
 from covey.app.question_display import standalone_card
+from covey.cards.question_cards import settled_peek
 from covey.app.prompts import BUTLER_RULES_TEXT, butler_message
 from covey.core import butler, butler_opened, butler_settings
 from covey.core.jobs import job_key, upsert_job_record
@@ -362,8 +363,11 @@ class MirrorTest(MirrorCase):
         self.assertNotIn("负责人派的活", card)  # No "你问" block: the lead asked for this turn, not the owner.
         # Who asks all the same (样卡 B, docs/ui.md 5.3): the topic, for work its lead handed it.
         built = sends.call_args.args[2]
-        self.assertEqual("**T538** <text_tag color='orange'>等你</text_tag> <font color='grey'>办负责人派的事，要你定</font>",
-                         built["body"]["elements"][0]["content"])
+        badge, line = (column["elements"][0] for column in built["body"]["elements"][0]["columns"])
+        self.assertEqual("<font color='white'>**T538**</font>", badge["elements"][0]["content"])  # Its T number's badge.
+        self.assertEqual("<text_tag color='orange'>等你</text_tag> <font color='grey'>办负责人派的事，要你定</font>",
+                         line["content"])
+        self.assertIn(badge["background_style"], built["config"]["style"]["color"])  # Its colour is the card's own.
         self.assertEqual(read_object(self.ctx.state_dir / "questions" / "q-member.json")["mirror_message_id"], mid)
 
     def test_a_running_turn_s_output_is_its_notes_and_the_answer_so_far(self):
@@ -499,7 +503,11 @@ class MirrorFilesTest(MirrorCase):
         self.assertNotIn('"pick"', text)  # Answered: folded as the card in the topic.
         panel = "q_" + answered["token"]
         again = lambda built: next(e for e in built["body"]["elements"] if e.get("element_id") == panel)  # noqa: E731
-        self.assertEqual(json.dumps(again(painted)), json.dumps(again(standalone_card(self.tctx, answered))))
+        # The copy's question is folded too, its first lines in view (cards/question_cards.py settled_peek); the card in
+        # the topic keeps its fold.
+        self.assertEqual(json.dumps(again(painted)), json.dumps(settled_peek(answered)))
+        self.assertFalse(again(painted)["expanded"])
+        self.assertFalse(again(standalone_card(self.tctx, answered))["expanded"])
         self.assertEqual([c.args[1] for c in self.app.messenger.patch_card.call_args_list], ["om_answer"])
         self.assertEqual(answer_cards.copies(self.ctx.state_dir, self.key, "done"), [])
         self.app_.artifacts.refresh_answer_cards(self.tctx, self.jrecord)

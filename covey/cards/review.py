@@ -108,6 +108,119 @@ def after_lead(text: Any, lead: str) -> str:
     return "\n".join(lines[at + 1:]).lstrip("\n")
 
 
+# 露一截 (cards/ui.py peek): how much of a long text's opening stays in view.
+PEEK_WIDTH = 120  # Display width (a CJK character two): about two lines of a card on a computer, three or four on a phone.
+PEEK_LINES = 3  # Lines at most: short lines (a list) fill the height before the width.
+PEEK_FILL = 0.5  # An opening narrower than this share of the width takes the next line in too, cut to fit.
+PEEK_CUT = 0.4  # A line is cut at a sentence end, else a pause, no nearer its start than this share of the room left.
+# A line that never goes into an opening: a table's row, a code fence, a rule, an image.
+_NOT_OPENING = re.compile(r" {0,3}(?:\||```|~~~|<hr|!\[|[-*_](?:\s*[-*_]){2,}\s*$)")
+_HEADING_LINE = re.compile(r" {0,3}#{1,6}\s+(.*?)(?:\s+#+)?\s*")
+_BOLD_LINE = re.compile(r"\*\*[^*].*\*\*[:：]?")
+# What a cut never goes inside: inline code, bold, a link, a tag pair, a tag.
+_ATOM = re.compile(r"`[^`\n]*`|\*\*[^*\n](?:.*?[^*\n])?\*\*|!?\[[^\]\n]*\]\([^)\n]*\)|<(\w+)\b[^>\n]*>.*?</\1>|<[^>\n]+>")
+_ENDS, _PAUSES = "。！？!?；;", "，、：,:"
+_ORDERED = re.compile(r" {0,3}(\d{1,9})[.)]\s")
+_LISTED = re.compile(r" {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>)")
+
+
+def _width(text) -> int:
+    return sum(2 if ord(char) > 0x2e7f else 1 for char in str(text))
+
+
+def _cut(line, room):
+    """(head, tail) of ``line`` cut where its words reach ``room`` display width: after the last sentence end that is
+    not too near its start (PEEK_CUT), else after the last pause, then "…", else where the room ends, then "…";
+    never inside what ``_ATOM`` matches. ('', ``line``) when not even its first part fits."""
+    atoms = {found.start(): found.end() for found in _ATOM.finditer(line)}
+    used, at, end, pause = 0, 0, None, None
+    while at < len(line):
+        stop = atoms.get(at, at + 1)
+        part = line[at:stop]
+        wide = _width(plain_markdown(part) if stop - at > 1 else part)
+        if used + wide > room:
+            break
+        used, at = used + wide, stop
+        if part[-1] in _ENDS or (part[-1] == "." and (at == len(line) or line[at] == " ")):
+            end = (at, used)
+        elif part[-1] in _PAUSES:
+            pause = (at, used)
+    if at >= len(line):
+        return line, ""
+    if end and end[1] >= room * PEEK_CUT:
+        return line[:end[0]], line[end[0]:].lstrip()
+    if pause and pause[1] >= room * PEEK_CUT:
+        return line[:pause[0] - 1] + "…", line[pause[0]:].lstrip()
+    return (line[:at].rstrip() + "…", line[at:].lstrip()) if at else ("", line)
+
+
+def drop_part_heading(text) -> str:
+    """``text`` (Markdown) without a first line that only names a part ("## 结论", "**总结**") when words follow it: a
+    card that shows the text's first lines as they are needs no heading over them (it read as a large 结论 row)."""
+    text = str(text or "")
+    lines = text.split("\n")
+    filled = [n for n, line in enumerate(lines) if line.strip()]
+    if len(filled) < 2:
+        return text
+    first = lines[filled[0]].strip()
+    heading = _HEADING_LINE.fullmatch(first) or _BOLD_LINE.fullmatch(first)
+    if heading and compact_text(first, len(first) + 1).rstrip(LEAD_ENDS).lower() in GENERIC_HEADINGS:
+        return "\n".join(lines[filled[0] + 1:]).lstrip("\n")
+    return text
+
+
+def opening(text, width=PEEK_WIDTH):
+    """(opening, rest) of a Markdown text for a peek (cards/ui.py ``peek``): its first lines of words, no wider in all
+    than ``width`` and at most PEEK_LINES, and what follows them, so that the two read as the whole text once the fold
+    is opened. A heading that only names a part ("## 结论") is left out, another heading is bold when it comes first
+    and starts the rest after words; list items and quotes come as they are, but not past a blank line after words; a
+    table, code or a rule ends the opening, and a numbered list is not split after words before it. An opening under PEEK_FILL of ``width`` takes the next line in too, cut
+    (``_cut``) where it fills it: at a sentence end, else at a pause or where the room ends, with "…". ('', ``text``)
+    when the text does not start with words (a table, code); (``text``, '') when it all fits."""
+    lines = drop_part_heading(str(text or "").replace("\r\n", "\n")).split("\n")
+    at = 0
+    taken, used, rest, crossed = [], 0, [], False
+    while at < len(lines):
+        line = lines[at]
+        if not line.strip():
+            if taken and used >= width * PEEK_FILL:
+                break
+            crossed = crossed or bool(taken)
+            at += 1
+            continue
+        heading = _HEADING_LINE.fullmatch(line)
+        if _NOT_OPENING.match(line) or len(taken) >= PEEK_LINES or (heading and taken):
+            break  # A new part (a heading) after words starts the rest.
+        if crossed and _LISTED.match(line):
+            break  # Past a blank line only words go on: a list or a quote there is a part of its own.
+        shown = f"**{heading.group(1).replace('**', '').strip()}**" if heading else line.rstrip()
+        wide = _width(plain_markdown(shown))
+        if used + wide <= width:
+            taken.append(shown)
+            used += wide
+            at += 1
+            continue
+        if not taken or used < width * PEEK_FILL:
+            head, tail = _cut(shown, width - used)
+            if head:
+                taken.append(head)
+                rest = [tail] if tail else []
+                at += 1
+        break
+    if not taken:
+        return "", str(text or "")
+    rest = "\n".join([*rest, *lines[at:]]).strip("\n")
+    # A numbered list is not split after words before it: the rest would start at "3." and may be numbered anew.
+    following = _ORDERED.match(rest)
+    if following and int(following.group(1)) > 1:
+        start = len(taken)
+        while start > 0 and _ORDERED.match(taken[start - 1]):
+            start -= 1
+        if 0 < start < len(taken):
+            taken, rest = taken[:start], "\n".join(taken[start:]) + "\n" + rest
+    return "\n".join(taken), rest
+
+
 def question_preview(value: Any, *, max_lines: int, max_chars: int) -> str:
     text = str(value or "").strip().replace("\r\n", "\n").replace("\r", "\n") or "(空)"
     lines = text.split("\n")

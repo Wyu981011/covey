@@ -489,7 +489,7 @@
 | `COVEY_PROXY_REPLY_CHECK` | `core/proxy.py`（`reply_check_mode`；`app/proxy.py` 的 `check_reply` 经它） | `count`：代答回复的发前检查只记命中、照常发；`hold`：命中的不发，留给你看；`off` 或 `0`：不查 | 否 |
 | `COVEY_OWNER_SEND` | `app/owner_send.py`（`enabled`） | 开（有代答发送器时）：话题以主人身份发消息走代发草稿卡；`0` 关，见[代发](proxy.md#代发) | 否 |
 | `COVEY_APP_CHECK` | `app/app_setup.py` | 开：检查飞书应用、缺了发卡；`0` 关 | 否 |
-| `COVEY_AVATARS` | `feishu/avatars.py`（`image_key`） | 开：私聊卡片的头像行放头像（第一次用时上传到飞书，`image_key` 记在状态目录的 `avatars.json`）；`0` 关：不上传、卡上只有名字（测试套件默认关） | 否 |
+| `COVEY_AVATARS` | `feishu/avatars.py`（`image_key`） | 开：私聊卡片的头像行放管家和负责人的头像（第一次用时上传到飞书，`image_key` 记在状态目录的 `avatars.json`）；`0` 关：不上传、卡上只有名字（测试套件默认关）。话题的头像是它的 T 号（卡片里画的，不是图片），不受这个开关影响 | 否 |
 | `COVEY_WELCOME` | `app/welcome.py`（`enabled`：`settle` 据此写 `welcome.json`，`threads()` 据此起 `welcome` 后台线程） | 开：新部署第一次启动后在主人私聊发一张欢迎卡，每个部署只发一次（之前已有任务、话题或私聊记录的部署不发）；`0` 关：不写记录、不起线程、不发，和原来一样 | 否 |
 | `COVEY_AUTO_RETRY_LONG` | `app/auto_retry.py`（`long_ladder`：`plan` 排自动重试时据此选等待时间表、是否有临时故障一类、是否读恢复时间、是否加随机、做了实事是否清零；`applies`、`status_line` 也看它） | 开（默认，只有 `0` 关）：限流 60 秒到 1 小时共六次、临时故障 30 秒到 5 分钟共三次、读得到恢复时间就等到那时、每次另加 0–30 秒随机；`0`：和原来一样，限流 60、180 秒两次，临时故障不重试，没有随机 | 否 |
 | `COVEY_LIMIT_NOTICE` | `app/limit_notice.py`（`enabled`：`tick` 在 Bridge 的 outbox 循环里据此决定看不看记录、发不发提示） | 开（默认，只有 `0` 关）：私聊里几个话题同一原因停下、各自排好自动重试时发一条合并提示；`0`：不读记录、不发，和原来一样 | 否 |

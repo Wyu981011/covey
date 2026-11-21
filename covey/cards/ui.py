@@ -11,13 +11,21 @@ no card here is sent by itself, the cards that move to this look use these parts
   It takes what the "你问" block (cards/answer_card.py ask_block, ``ASK_META``) carried, so the card does not have the
   block as well (``split_ask``); the block's link back to the owner's message goes on the card's 输出 line
   (``put_back``), else a line of its own, ``ask_footnote``. The picture is an image key the caller made
-  (app/answer_cards.py ``avatar``): cards make no network calls.
+  (app/answer_cards.py ``avatar``): cards make no network calls. A topic has no picture: its T number is its
+  badge (``topic_badge``), white on the topic's own colour, and its title follows alone.
+- ``peek``: 犹抱琵琶半遮面, a long text's opening in view and the rest one click away, a fold whose title is that
+  opening (cards/review.py ``opening`` cuts it) and whose body goes on from there.
 - ``topic_row``: a state's dot and word, ``T31 title ›``, a line in words, grey figures; buttons at the right; the
   whole opens ``url``.
+
+Colours a card defines itself (``config.style.color``: the band's, a badge's) are put there by ``styled`` or
+``banded``, the last thing a card with them goes through.
 """
 from __future__ import annotations
 
-from covey.cards.elements import grey, md
+import re
+
+from covey.cards.elements import chevron, grey, md
 from covey.core import look
 from covey.core.text import literal
 
@@ -120,12 +128,17 @@ def conclusion_band(label, headline, line="", *, below=(), url="") -> dict:
     return container(boxes, border="band-line", radius="10px", spacing="0px", url=url)
 
 
-def styled(card) -> dict:
-    """``card`` (cards/elements.py card) with the colours of the band in its ``config.style.color``, beside any it has."""
+def _colored(card, colors) -> dict:
     config = card.setdefault("config", {})
     style = config.setdefault("style", {})
-    style["color"] = {**style.get("color", {}), **look.band_colors()}
+    style["color"] = {**style.get("color", {}), **colors}
     return card
+
+
+def styled(card) -> dict:
+    """``card`` (cards/elements.py card) with the colours of the band in its ``config.style.color``, and those of the
+    topic badges on it (``badge_colors``), beside any it has."""
+    return _colored(card, {**look.band_colors(), **badge_colors(card.get("body"))})
 
 
 def has_band(elements) -> bool:
@@ -134,9 +147,91 @@ def has_band(elements) -> bool:
 
 
 def banded(card) -> dict:
-    """``card`` ``styled`` when its body has a conclusion band (``has_band``), else as it is: for the cards that
-    take a band from their caller (an answer card's head, a question card's copy)."""
-    return styled(card) if has_band(card.get("body", {}).get("elements")) else card
+    """``card`` ``styled`` when its body has a conclusion band (``has_band``), else with the colours of its topic
+    badges alone, else as it is: the last step of a card that may have either (an answer card's head, a question
+    card's copy, a relay, the merged relay, a tail card)."""
+    if has_band(card.get("body", {}).get("elements")):
+        return styled(card)
+    colors = badge_colors(card.get("body"))
+    return _colored(card, colors) if colors else card
+
+
+# 话题头像 (docs/ui.md 4): the badge a topic has where a speaker has a picture.
+BADGE_COLOR = "topic-{}"  # The config.style.color name of core/look.py TOPIC_COLORS[n].
+BADGE_HEIGHT = "28px"  # As tall as a speaker's picture (AVATAR_SIZE).
+_BADGE = re.compile(r"topic-(\d+)")
+
+
+def topic_badge(label, url=""):
+    """A topic's badge: its T number ``label`` ("T12") bold and white on the topic's own colour (core/look.py
+    topic_color), a rounded block as tall as a speaker's picture and as wide as the number, so T7, T1234 and T12345
+    all read at the same size. ``url``: what a click on it opens (inside a block that opens it: the click stops at
+    the badge). None for a label without a number. The card it is on ends with ``banded`` or ``styled``: they put
+    its colour in the card's config."""
+    place = look.topic_color(label)
+    if place < 0:
+        return None
+    words = md(font("**" + literal(" ".join(str(label).split())) + "**", "white"), size="notation")
+    badge = {"tag": "interactive_container", "width": "auto", "height": BADGE_HEIGHT, "padding": "0px 8px 0px 8px",
+             "corner_radius": "8px", "background_style": BADGE_COLOR.format(place), "has_border": False,
+             "horizontal_align": "center", "vertical_align": "center", "elements": [words]}
+    if url:
+        badge["behaviors"] = [{"type": "open_url", "default_url": url}]
+    return badge
+
+
+def badge_colors(node) -> dict:
+    """The ``config.style.color`` entries of the topic badges in ``node`` (a card's body, any element), at any depth:
+    each badge's colour, the same in light and dark mode (white words on it either way)."""
+    found = set()
+
+    def walk(value):
+        if isinstance(value, dict):
+            style = value.get("background_style")
+            matched = _BADGE.fullmatch(style) if isinstance(style, str) else None
+            if matched and value.get("tag") == "interactive_container":
+                found.add(int(matched.group(1)))
+            for each in value.values():
+                walk(each)
+        elif isinstance(value, list):
+            for each in value:
+                walk(each)
+    walk(node)
+    colors = {}
+    for place in sorted(found):
+        if place < len(look.TOPIC_COLORS):
+            rgba = _hex_rgba(look.TOPIC_COLORS[place])
+            colors[BADGE_COLOR.format(place)] = {"light_mode": rgba, "dark_mode": rgba}
+    return colors
+
+
+def _hex_rgba(color) -> str:
+    color = color.lstrip("#")
+    return f"rgba({int(color[0:2], 16)},{int(color[2:4], 16)},{int(color[4:6], 16)},1)"
+
+
+_NUMBER = re.compile(r"(T\d+)(?:\s+(.*))?", re.S)
+
+
+def split_number(who):
+    """(T number, title) of a topic's speaker words, "T12 标题" -> ("T12", "标题"); ('', ``who``) when they do not
+    start with a T number."""
+    found = _NUMBER.fullmatch(" ".join(str(who or "").split()))
+    return (found.group(1), found.group(2) or "") if found else ("", str(who or ""))
+
+
+# 露一截 (docs/ui.md 4 ``peek``): a long text's opening stays in view, the rest is a click away.
+def peek(element_id, head, rest, *, hint="", label="", spacing="4px") -> dict:
+    """犹抱琵琶半遮面: a fold whose title is ``head`` (Markdown, the text's opening as cards/review.py opening cut it),
+    ``label`` grey before it and ``hint`` grey after it (how much there is in all), and whose body is ``rest``
+    (Markdown going on from where ``head`` stopped, or elements). No frame: the opening reads as the text it is, the
+    chevron at the right says there is more; opened, the rest follows it as if never cut."""
+    title = " ".join(part for part in (grey(label) if label else "", head, grey(hint) if hint else "") if part)
+    body = [md(rest)] if isinstance(rest, str) else list(rest)
+    return {"tag": "collapsible_panel", "element_id": element_id, "expanded": False,
+            "header": {"title": {"tag": "markdown", "content": title}, "vertical_align": "center",
+                       "icon": chevron(), "icon_position": "right", "icon_expanded_angle": -180},
+            "padding": "0px 0px 0px 0px", "vertical_spacing": spacing, "elements": body}
 
 
 TITLE_CHARS = 24  # Characters of a topic's title a band's label shows (as core/look.py SPEAKER_TITLE).
@@ -244,10 +339,11 @@ def speaker_row(meta, *, outcome="", label="", tag=None, avatar="") -> dict:
     """The first element of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3): the speaker's
     picture (``avatar``, its image key, else the ``avatar`` of ``meta``; none: the line alone) and one line, the name
     bold and what it did with the owner's words grey, "**管家** 回你 20:41「原话前 18 字…」"; a lead "**<专项名> ·
-    负责人** 汇报你 …", a topic "**T439 标题** [有结果] 做完了你 12:31 交代的事". A topic's state is a tag
-    (``outcome``: a look.STATES key a relay knows itself); a state that asks for the owner (等你, 停住了) is the tag of the
-    other two as well. Without a block (``meta`` None) the name is ``label`` (the T number) and nothing follows it.
-    ``tag``: (text, colour) in place of the state's, for a card that is settled."""
+    负责人** 汇报你 …", a topic "[T439] **标题** [有结果] 做完了你 12:31 交代的事": a topic's T number is its badge
+    (``topic_badge``) in the picture's place, whatever picture was given, and its title alone is the name. A topic's
+    state is a tag (``outcome``: a look.STATES key a relay knows itself); a state that asks for the owner (等你, 停住了)
+    is the tag of the other two as well. Without a block (``meta`` None) the name is ``label`` (the T number) and
+    nothing follows it. ``tag``: (text, colour) in place of the state's, for a card that is settled."""
     meta = meta or {"who": label}
     who, doing = str(meta.get("who") or ""), str(meta.get("doing") or "")
     role, key = role_of(who), outcome or TOPIC_TAGS.get(doing, "")
@@ -264,15 +360,23 @@ def speaker_row(meta, *, outcome="", label="", tag=None, avatar="") -> dict:
     name = " ".join((who or look.SPEAKERS["butler"]).split())
     if role == "lead":
         name = name.removeprefix("专项「").replace("」· 负责人", " · 负责人")
-    line = " ".join(part for part in (f"**{literal(name)}**", *tags, grey(literal(says)) if says else "") if part)
+    number, title = split_number(name) if role == "topic" else ("", name)
+    badge = topic_badge(number) if number else None
+    if badge:
+        name = title
+    line = " ".join(part for part in (f"**{literal(name)}**" if name else "", *tags,
+                                      grey(literal(says)) if says else "") if part)
     text = md(line, size="normal_v2")
     picture = avatar or str(meta.get("avatar") or "")
-    if not picture:
+    if badge:
+        first = badge
+    elif picture:
+        first = {"tag": "img", "img_key": picture, "size": AVATAR_SIZE, "scale_type": "crop_center",
+                 "alt": {"tag": "plain_text", "content": ""}}
+    else:
         return {**text, "element_id": ROW_ID}
-    image = {"tag": "img", "img_key": picture, "size": AVATAR_SIZE, "scale_type": "crop_center",
-             "alt": {"tag": "plain_text", "content": ""}}
     return {"tag": "column_set", "element_id": ROW_ID, "horizontal_spacing": "8px", "columns": [
-        {"tag": "column", "width": "auto", "vertical_align": "center", "elements": [image]},
+        {"tag": "column", "width": "auto", "vertical_align": "center", "elements": [first]},
         {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [text]}]}
 
 

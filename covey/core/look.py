@@ -15,6 +15,8 @@ own (cards/board.py LOOKS), so that it can move here without a change (tests/tes
   orb, no glow around the edge, no visible stripes). A Feishu container
   takes one solid colour, so the band is rows, each a step lighter than the one above, inside one thin line. The
   colours are the card's own (``config.style.color``), each with a light and a dark mode value.
+- ``TOPIC_COLORS``, ``topic_color``: a topic's own colour, picked by its T number, the ground of the badge that
+  carries the number (cards/ui.py topic_badge); it tells topics apart and says nothing of a state.
 - ``RETIRED``: words the surfaces said before for these states, to be replaced as each surface moves.
 
 Standard library only, importing nothing of the Bridge's."""
@@ -61,6 +63,15 @@ BRAND = {"color": "indigo", "web": "#7C83FF"}
 # stripe; 3% did (the third sample card).
 BAND = {"rgb": (94, 106, 210), "dark_rgb": (124, 131, 255), "top": 0.085, "step": 0.01, "floor": 0.035, "dark": 2.0,
         "line": (0.20, 0.38), "rows": 6}
+# A topic's own colour (docs/ui.md 4 话题头像): the ground of the badge that carries its T number where a picture was,
+# white words on it. Twelve deep tones round the colour wheel, each at least 4.9:1 against white (WCAG AA) in light
+# and dark mode alike, so the number reads at any length (T7, T1234, T12345). A colour says which topic, never its state:
+# the states are tags, a light ground under coloured words. ``topic_color``: the colour of a T number.
+TOPIC_COLORS = ("#BE185D", "#C2410C", "#A16207", "#4D7C0F", "#15803D", "#0F766E",
+                "#0369A1", "#1D4ED8", "#4F46E5", "#6D28D9", "#A21CAF", "#475569")
+# Consecutive numbers TOPIC_STEP apart on the wheel (coprime with its 12): neighbours never share a colour, and twelve in
+# a row never repeat one.
+TOPIC_STEP = 5
 # The web page's own neutrals (夜航 v2): three grounds, two lines, four text greys. Layers come from having a ground
 # or not, not from borders; the brightest grey is for conclusions and titles, long answers read in ``read``.
 WEB = {"surface": "#07080B", "panel": "#0C0E13", "raised": "#12141B", "line": "#171A21", "line2": "#232733",
@@ -176,11 +187,19 @@ def band_colors() -> dict:
     return colors
 
 
+def topic_color(label) -> int:
+    """The place in TOPIC_COLORS of a topic's colour, from its T number (``label``: "T12", or the number itself);
+    -1 for a label with no number in it."""
+    digits = "".join(ch for ch in str(label or "") if ch.isdigit())
+    return int(digits) * TOPIC_STEP % len(TOPIC_COLORS) if digits else -1
+
+
 def export() -> dict:
     """The table as the web page reads it (look.json): each state's word, group and colours, the order of the most
-    pressing, the brand, the band's gradient and the web page's own colours."""
+    pressing, the brand, the band's gradient, the topics' colours (``topic_color`` picks one: number × step, modulo
+    their count) and the web page's own colours."""
     return {"version": 1,
             "states": {key: {**look._asdict(), "heading": group_word(key)} for key, look in STATES.items()},
             "project": PROJECT._asdict(), "pressing": list(PRESSING), "brand": dict(BRAND),
             "band": {**BAND, "rgb": list(BAND["rgb"]), "dark_rgb": list(BAND["dark_rgb"]), "line": list(BAND["line"])},
-            "web": dict(WEB)}
+            "topics": {"colors": list(TOPIC_COLORS), "step": TOPIC_STEP}, "web": dict(WEB)}

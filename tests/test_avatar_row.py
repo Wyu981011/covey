@@ -4,11 +4,12 @@ block is gone from the body and its way back is on the 输出 line; 输入 and �
 left out; a long relayed reply folds under its conclusion; a question's copy leads with the question; a draft waiting for
 the owner is a small card with an orange 要你确认; the merged relay has a row and rows that open their topics. The avatars
 (core/avatars.py, feishu/avatars.py): a lead's picture is stable and not shared, an upload that fails leaves the card
-without its picture."""
+without its picture; a topic has no picture, its T number is its badge (T638)."""
 from __future__ import annotations
 
 import json
 import os
+from html import unescape
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,7 +17,7 @@ from unittest import mock
 
 from covey.cards.answer_card import ask_block, facts_element, figure, input_parts, put_back, tail, tail_card
 from covey.cards.owner_send import BARS, owner_send_card, top_card
-from covey.cards.question_cards import mirror_card, settled_lines
+from covey.cards.question_cards import mirror_card, settled_line, settled_peek
 from covey.cards.relay_card import DONE, STOPPED, WAITING, fold_title, foot, long_reply, merged_card, relay_card, size_words
 from covey.cards.review import answer_card
 from covey.cards.ui import ASK_META, back_link, speaker_row, split_ask
@@ -59,6 +60,14 @@ def first(built):
     return built["body"]["elements"][0]
 
 
+def badge_of(row):
+    """The badge in a topic's row (cards/ui.py topic_badge): (its words, its colour's name); None without one."""
+    found = row["columns"][0]["elements"][0] if row["tag"] == "column_set" else None
+    if not found or found["tag"] != "interactive_container":
+        return None
+    return found["elements"][0]["content"], found["background_style"]
+
+
 class RowTest(unittest.TestCase):
     def meta(self, who, doing, **more):
         return split_ask([ask_block("看板改成彩色块，字大一点，颜色用暖色，再把图例挪到右边去", at="20:41", url=URL, who=who, doing=doing, **more)])[0]
@@ -85,21 +94,44 @@ class RowTest(unittest.TestCase):
             "**发布 · 负责人** <font color='grey'>汇报你 20:41 交代的事"))
         self.assertEqual(("等你", "orange"), tag(speaker_row(self.meta("专项「发布」· 负责人", "waiting"))))
 
-    def test_a_topic_s_row_has_its_t_number_first_and_its_state_as_the_tag(self):
+    def test_a_topic_s_row_has_its_t_number_as_its_badge_and_its_state_as_the_tag(self):
         for doing, expected in (("done", ("有结果", "green")), ("waiting", ("等你", "orange")), ("stopped", ("停住了", "red"))):
             row = speaker_row(self.meta("T623 工作台私聊密度", doing, avatar="img_topic"))
             self.assertEqual(expected, tag(row))
-            self.assertTrue(text_of(row).startswith("**T623 工作台私聊密度** <text_tag"))
+            # The badge in the picture's place, a picture given or not; the title alone after it.
+            self.assertEqual(("<font color='white'>**T623**</font>", "topic-7"), badge_of(row))  # 623 × 5 % 12.
+            self.assertTrue(text_of(row).startswith("**工作台私聊密度** <text_tag"))
         self.assertTrue(text_of(speaker_row(self.meta("T623 x", "done"))).endswith("做完了你 20:41 交代的事</font>"))
+
+    def test_the_badge_is_as_wide_as_its_number_and_its_colour_is_the_card_s_own(self):
+        from covey.cards.elements import card
+        from covey.cards.ui import banded, topic_badge
+        from covey.core import look
+
+        for label in ("T7", "T638", "T1234", "T12345"):
+            badge = topic_badge(label)
+            self.assertEqual(("auto", "28px", "notation"), (badge["width"], badge["height"],
+                                                            badge["elements"][0]["text_size"]))
+            self.assertEqual(f"<font color='white'>**{label}**</font>", badge["elements"][0]["content"])
+        self.assertIsNone(topic_badge("话题"))
+        # Neighbours never share a colour, and twelve in a row use all twelve.
+        places = [look.topic_color(f"T{n}") for n in range(630, 642)]
+        self.assertEqual(12, len(set(places)))
+        self.assertTrue(all(a != b for a, b in zip(places, places[1:])))
+        built = banded(card([speaker_row(self.meta("T638 卡片半遮面", "done"))], "s"))
+        self.assertEqual({"topic-10": {"light_mode": "rgba(162,28,175,1)", "dark_mode": "rgba(162,28,175,1)"}},
+                         built["config"]["style"]["color"])
+        self.assertNotIn("config", banded(card([speaker_row(self.meta("管家", "answer"))], None)))  # No badge, no colour.
 
     def test_without_a_picture_the_row_is_its_line_alone_and_a_given_one_wins_over_the_block_s(self):
         row = speaker_row(self.meta("管家", "answer"))
         self.assertEqual("markdown", row["tag"])
         self.assertEqual("img_b", speaker_row(self.meta("管家", "answer", avatar="img_a"), avatar="img_b")["columns"][0]
                          ["elements"][0]["img_key"])
-        label = speaker_row(None, outcome="stopped", label="T623")  # No block: the T number and the state.
+        label = speaker_row(None, outcome="stopped", label="T623")  # No block: the T number's badge and the state.
         self.assertEqual((("停住了", "red")), tag(label))
-        self.assertTrue(text_of(label).startswith("**T623** <text_tag"))
+        self.assertEqual("<font color='white'>**T623**</font>", badge_of(label)[0])
+        self.assertTrue(text_of(label).startswith("<text_tag"))
 
     def test_no_row_is_red_and_only_the_owner_s_turn_is_orange(self):
         for who in ("管家", "专项「发布」· 负责人", "T623 x"):
@@ -188,20 +220,27 @@ class RelayTest(unittest.TestCase):
     asked = staticmethod(lambda doing="done": ask_block("发布的事", at="20:33", url=URL, who="T623 密度", doing=doing,
                                                         avatar="img_topic"))
 
-    def test_a_short_reply_stays_open_and_a_long_one_or_a_table_folds_under_its_conclusion(self):
+    def test_a_short_reply_stays_open_and_a_long_one_or_a_table_shows_its_opening_and_folds_the_rest(self):
         self.assertFalse(long_reply("一行\n两行\n" * 3))
         self.assertTrue(long_reply("行\n" * 7))
         self.assertTrue(long_reply("字" * 181))
         self.assertTrue(long_reply("| a | b |\n| --- | --- |\n| 1 | 2 |"))
         short, _ = relay_card("T623", DONE, text="## 结论\n好了\n\n细节：改了两处。", ask=self.asked())
-        # The row, the band, the reply as it is, and the line with the way back; no fold.
-        self.assertEqual(["column_set", "interactive_container", "markdown", "markdown"],
-                         [element["tag"] for element in short["body"]["elements"]])
-        long, _ = relay_card("T623", DONE, text="## 结论\n好了\n\n" + "细节很多。" * 60, ask=self.asked())
-        _, band, fold, _ = long["body"]["elements"]
-        self.assertEqual(("collapsible_panel", False), (fold["tag"], fold["expanded"]))
-        self.assertIn("好了", json.dumps(band, ensure_ascii=False))  # The conclusion stays outside the fold.
-        self.assertNotIn("好了", json.dumps(fold["elements"], ensure_ascii=False).replace("好了。", ""))
+        # The row, the reply as it is (its "## 结论" left off: no large row over it), the line with the way back; no
+        # band, no fold (T638).
+        self.assertEqual(["column_set", "markdown", "markdown"], [element["tag"] for element in short["body"]["elements"]])
+        self.assertEqual("好了\n\n细节：改了两处。", short["body"]["elements"][1]["content"])
+        long, _ = relay_card("T623", DONE, text="## 结论\n好了。\n\n" + "细节很多。" * 60, ask=self.asked())
+        _, fold, _ = long["body"]["elements"]
+        self.assertEqual(("collapsible_panel", False, "relay_reply"), (fold["tag"], fold["expanded"], fold["element_id"]))
+        head = fold["header"]["title"]["content"]
+        self.assertTrue(head.startswith("好了。\n细节很多。"))  # 犹抱琵琶半遮面: the first words in view.
+        self.assertIn("<font color='grey'>全文约 300 字</font>", head)  # 好了。and 60 × 细节很多。, to the nearest ten.
+        self.assertNotIn("结论", head)
+        body = fold["elements"][0]["content"]
+        self.assertNotIn("好了", body)  # Going on from where the opening stopped, nothing said twice.
+        self.assertEqual(60, head.count("细节很多。") + body.count("细节很多。"))
+        self.assertNotIn("border", fold)  # No frame: the opening reads as the reply it is.
 
     def test_the_fold_says_how_much_is_in_it(self):
         table = "| 项 | 结果 |\n| --- | --- |\n| 单测 | 通过 |"
@@ -218,7 +257,7 @@ class RelayTest(unittest.TestCase):
         ids = [element.get("element_id") for element in built["body"]["elements"]]
         self.assertNotIn("answer_change", ids)  # No fold: the change is a line.
         self.assertIn("answer_change_check", ids)  # A commit the repository does not have stays in view.
-        self.assertNotIn("a6bc148d38ce", json.dumps(built["body"]["elements"][2], ensure_ascii=False))  # Not in the reply's fold.
+        self.assertNotIn("a6bc148d38ce", json.dumps(built["body"]["elements"][1], ensure_ascii=False))  # Not in the reply's fold.
         facts = built["body"]["elements"][-1]
         self.assertEqual("answer_facts", facts["element_id"])
         plain = facts["content"].replace(" ", " ").replace("⁠", "")
@@ -248,8 +287,9 @@ class RelayTest(unittest.TestCase):
         self.assertEqual(f"[进话题 ›]({URL})", built["body"]["elements"][-1]["content"])
         stopped, _ = relay_card("T623", STOPPED, reason="到了时间上限", avatar="img_topic")
         self.assertEqual(("停住了", "red"), tag(first(stopped)))
-        self.assertTrue(text_of(first(stopped)).startswith("**T623** <text_tag"))
-        self.assertEqual("img_topic", first(stopped)["columns"][0]["elements"][0]["img_key"])  # Given beside the block.
+        self.assertTrue(text_of(first(stopped)).startswith("<text_tag"))
+        self.assertEqual("<font color='white'>**T623**</font>", badge_of(first(stopped))[0])  # Not the picture given.
+        self.assertIn("topic-7", stopped["config"]["style"]["color"])
 
 
 class MergedTest(unittest.TestCase):
@@ -268,33 +308,57 @@ class MergedTest(unittest.TestCase):
 class QuestionCopyTest(unittest.TestCase):
     ask = staticmethod(lambda: ask_block("选哪种样式", at="09:12", url=URL, who="T439 改看板", doing="waiting"))
 
-    def test_the_question_leads_and_the_output_is_folded_under_it_with_its_size(self):
-        built = mirror_card(question_record(), "T439", "上一轮写了很长很长的输出" * 30, ask=self.ask())
+    def test_the_question_leads_and_the_output_shows_its_opening_under_it(self):
+        built = mirror_card(question_record(), "T439", "上一轮写了很长很长的输出。" * 30, ask=self.ask())
         ids = [element.get("element_id") for element in built["body"]["elements"]]
         self.assertEqual("speaker_row", ids[0])
         self.assertTrue(ids[2].startswith("q_"))  # The row, the band, then the form.
         self.assertEqual("mirror_output", ids[3])
         fold = built["body"]["elements"][3]
-        self.assertIn("T439 这一轮的输出 · 约", fold["header"]["title"]["content"])
+        head = fold["header"]["title"]["content"]
+        self.assertTrue(head.startswith("<font color='grey'>这一轮输出</font> 上一轮写了很长很长的输出。"))
+        self.assertIn("<font color='grey'>全文约", head)
+        self.assertEqual(30, head.count("输出。") + fold["elements"][0]["content"].count("输出。"))
+        short = mirror_card(question_record(), "T439", "只有一句", ask=self.ask())["body"]["elements"][3]
+        self.assertEqual(("markdown", "<font color='grey'>这一轮输出</font> 只有一句"), (short["tag"], short["content"]))
         self.assertEqual(("等你", "orange"), tag(first(built)))
         self.assertNotIn("header", built)
         self.assertIn(f"[看你那句 ›]({URL})", built["body"]["elements"][-1]["content"])
         self.assertNotIn("answer_ask", ids[:-1])
 
-    def test_an_answered_copy_keeps_the_question_and_what_he_chose_in_two_lines(self):
+    def test_an_answered_copy_shows_the_question_s_opening_and_what_he_chose_under_it(self):
         answered = question_record("answered", continuation_job_id=5, delivery_state="running")
-        lines = settled_lines(answered)
-        self.assertEqual(2, len(lines))
-        self.assertIn("2 道题", lines[0]["content"])
-        self.assertIn("你选了「表格 / 无」", lines[1]["content"])
+        line = settled_line(answered)
+        self.assertIn("你选了「表格 / 无」 · #5 在做", unescape(line["content"]))  # Where the answer went, at a glance.
         built = mirror_card(answered, "T439", "输出", ask=self.ask())
         self.assertEqual(("已回答", "grey"), tag(first(built)))
         self.assertIn("关于你 09:12 的问题", text_of(first(built)))  # No longer "要你定".
-        self.assertIn("你选了「", json.dumps(built["body"]["elements"][:4], ensure_ascii=False))
-        self.assertIn("已取消", settled_lines(question_record("cancelled"))[1]["content"])
+        elements = built["body"]["elements"]
+        # The question's fold is its peek (its first lines in view, folded), the answer's line right under it.
+        at = next(n for n, element in enumerate(elements) if str(element.get("element_id")).startswith("q_"))
+        peek, under = elements[at], elements[at + 1]
+        self.assertEqual(settled_peek(answered), peek)
+        self.assertEqual(line, under)
+        self.assertFalse(peek["expanded"])
+        self.assertTrue(peek["header"]["title"]["content"].startswith("**2 道题** "))
+        status = unescape(json.dumps(peek["elements"], ensure_ascii=False))
+        self.assertIn("#431 的 2 道题 · 已回答 → #5 在做", status)  # The fold's old title, as a grey line inside it.
+        self.assertNotIn("❓", status)
+        self.assertIn("已取消", settled_line(question_record("cancelled"))["content"])
         for status in ("pending", "superseded"):
-            self.assertIsNone(settled_lines(question_record(status)))
-        self.assertIn("你提了反馈", settled_lines(question_record("answered", response_kind="feedback"))[1]["content"])
+            self.assertIsNone(settled_line(question_record(status)))
+        self.assertIn("你提了反馈", settled_line(question_record("answered", response_kind="feedback"))["content"])
+
+    def test_one_answered_question_goes_on_from_its_opening_to_the_answer(self):
+        long = "按新办法重排：每页把三组草图和参考图放在一起，先看每张草图的配色对不对，再看各组之间是否一致。" * 2 + "用新的评分表来判吗？"
+        record = {**question_record("answered", continuation_job_id=5, delivery_state="running"),
+                  "questions": [{"id": "q1", "header": "评分", "question": long, "options": [{"label": "用新评分表"}]}],
+                  "answers": {"q1": {"answers": ["用新评分表"]}}}
+        peek = settled_peek(record)
+        head, body = peek["header"]["title"]["content"], peek["elements"][0]["content"]
+        self.assertTrue(head.startswith("**评分** 按新办法重排："))
+        self.assertTrue(body.endswith("用新的评分表来判吗？\n答：用新评分表"))
+        self.assertEqual(2, head.count("按新办法重排") + body.count("按新办法重排"))  # The question once, read together.
 
     def test_a_block_sent_before_the_row_stays_at_the_top_as_it_was(self):
         legacy = {key: value for key, value in self.ask().items() if key != ASK_META}
@@ -338,9 +402,10 @@ class LinkedTest(unittest.TestCase):
         built, _ = relay_card("T9", DONE, text="## 结论\n好了\n\n" + "细节见 T7。" * 40, files=files)
         with mock.patch("covey.app.topic_links.linkify", side_effect=lambda text, *a, **k: text.replace("T7", "[T7](u)")):
             built, _ = linked("/state", "oc_x", built, "")
-        text = json.dumps(built["body"]["elements"][2], ensure_ascii=False)
+        text = json.dumps(built["body"]["elements"][1]["elements"], ensure_ascii=False)  # The rest of the reply.
         self.assertIn("[T7](u)", text)
-        self.assertNotIn("[T7](u)", json.dumps(built["body"]["elements"][3], ensure_ascii=False))
+        self.assertNotIn("[T7](u)", json.dumps(built["body"]["elements"][1]["header"], ensure_ascii=False))  # Tapped to open.
+        self.assertNotIn("[T7](u)", json.dumps(built["body"]["elements"][2], ensure_ascii=False))
 
 
 class NoLeakTest(unittest.TestCase):
@@ -361,12 +426,13 @@ class AvatarsTest(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.state = Path(self.tmp.name)
 
-    def test_the_pool_is_twenty_files_that_are_there_and_the_butler_and_the_topic_have_theirs(self):
+    def test_the_pool_is_twenty_files_that_are_there_and_the_butler_has_its_own(self):
         self.assertEqual(20, len(set(avatars.POOL)))
-        for name in (*avatars.POOL, avatars.BUTLER, avatars.TOPIC):
+        for name in (*avatars.POOL, avatars.BUTLER):
             self.assertTrue(avatars.asset(name).is_file(), name)
         self.assertIsNone(avatars.asset("../x"))
         self.assertIsNone(avatars.asset("nobody"))
+        self.assertIsNone(avatars.asset("topic"))  # A topic's T number is its badge (T638): no picture to upload.
         self.assertEqual({"G": 6, "M": 6, "s": 8}, {k: sum(n[0] == k for n in avatars.POOL) for k in "GMs"})
 
     def test_a_lead_keeps_its_picture_and_the_leads_of_one_chat_do_not_share_one(self):
@@ -416,17 +482,17 @@ class UploadTest(unittest.TestCase):
         kept = json.loads((self.state / "avatars.json").read_text())["keys"]["covey"]
         self.assertEqual({avatars.digest("butler"): "img_v3_butler"}, kept)
         self.assertEqual("", avatars.cached_key(self.state, "another-app", "butler"))  # A key belongs to its app.
-        self.assertEqual("", avatars.cached_key(self.state, "covey", "topic"))
+        self.assertEqual("", avatars.cached_key(self.state, "covey", "G-1"))
 
     def test_a_failed_upload_leaves_the_card_without_the_picture_and_is_tried_again_later(self):
         logs = []
         results = iter([None, "img_v3_late"])
         upload = lambda path, profile: next(results)
-        self.assertEqual("", uploads.image_key(self.state, "covey", "topic", logs.append, upload=upload))
-        self.assertTrue(logs and "topic" in logs[0])
-        self.assertEqual("", uploads.image_key(self.state, "covey", "topic", upload=upload))  # Not at once: it would wait again.
+        self.assertEqual("", uploads.image_key(self.state, "covey", "G-1", logs.append, upload=upload))
+        self.assertTrue(logs and "G-1" in logs[0])
+        self.assertEqual("", uploads.image_key(self.state, "covey", "G-1", upload=upload))  # Not at once: it would wait again.
         with mock.patch("covey.feishu.avatars.time.monotonic", return_value=10 ** 9):
-            self.assertEqual("img_v3_late", uploads.image_key(self.state, "covey", "topic", upload=upload))
+            self.assertEqual("img_v3_late", uploads.image_key(self.state, "covey", "G-1", upload=upload))
 
     def test_an_upload_that_raises_or_a_missing_picture_is_no_key_and_the_switch_turns_it_all_off(self):
         def boom(path, profile):
@@ -435,7 +501,7 @@ class UploadTest(unittest.TestCase):
         self.assertEqual("", uploads.image_key(self.state, "covey", "nobody", upload=lambda *_: "img"))
         self.assertEqual("", uploads.image_key(None, "covey", "butler", upload=lambda *_: "img"))
         with mock.patch.dict(os.environ, {"COVEY_AVATARS": "0"}):
-            self.assertEqual("", uploads.image_key(self.state, "covey", "topic", upload=lambda *_: "img"))
+            self.assertEqual("", uploads.image_key(self.state, "covey", "butler", upload=lambda *_: "img"))
 
     def test_the_speaker_s_key_comes_from_who_speaks(self):
         from covey.app import answer_cards

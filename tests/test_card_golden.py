@@ -900,8 +900,7 @@ def answer_tail_cards():
             # 做完了 relays that came close together, as one (app/relay_send.py send_merged).
             "relay_merged": merged_card([{"label": "T439", "title": "改看板的 Pin 目标", "lead": "按钮已经改好",
                                           "url": thread_url},
-                                         {"label": "T441", "title": "查一下昨晚的日志", "lead": "没有异常"}],
-                                        avatar="img_v3_fake_topic")[0],
+                                         {"label": "T441", "title": "查一下昨晚的日志", "lead": "没有异常"}])[0],
             "relay_stopped": relay_card("T439", STOPPED, reason="到了任务的时间上限，这一轮停在这里；可以接着做，或拆小再试")[0],
             "answer_card_asked": answer_card(text, "✅ 结论", tail(files, inputs, outputs), [ask]),
             "answer_relay_asked": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
@@ -939,6 +938,20 @@ def answer_tail_cards():
                 question_record("answered", continuation_job_id=432, delivery_state="running"), "T439",
                 "先说结论：两种都行。", ask=ask_block("选哪种样式", at="09:12", who="T439 改看板的颜色", doing="waiting",
                                                   url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=3")),
+            # T638 犹抱琵琶半遮面: one long question answered, its opening in view and the rest going on to the answer; a
+            # long reply of prose, its first lines in view, the rest folded.
+            "question_copy_settled_one": mirror_card(
+                {**question_record("answered", continuation_job_id=432, delivery_state="running"),
+                 "questions": [{"id": "q1", "header": "评分", "question": "按新办法重排：每页把三组草图和参考图放在一起，"
+                                "先看每张草图的配色对不对，再看各组之间是否一致，最后写进 report.md。用新的评分表来判吗？",
+                                "options": [{"label": "用新评分表"}, {"label": "用旧评分表"}]}],
+                 "answers": {"q1": {"answers": ["用新评分表（推荐）"]}}}, "T52",
+                "先说结论：三组草图都重看了一遍。" * 12, ask=ask_block("选哪种评法", at="01:49", who="T52 整理设计稿", doing="waiting",
+                                                       url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=4")),
+            "answer_relay_prose": relay_card(
+                "T53", DONE, text="看板的颜色还没换成：浅色那套换好了，深色那套还没有。" + "原因是深色模式下旧颜色的对比度不够。" * 8,
+                inputs=inputs, outputs=outputs, url=thread_url,
+                ask=ask_block("换看板颜色", at="01:41", who="T53 统一看板和卡片的配色", doing="done"))[0],
             "answer_card_butler": answer_card(text, "✅ 结论", tail(files, inputs, outputs),
                                               [ask_block("看板改成彩色块，字大一点，颜色用暖色，再把图例挪到右边去", at="12:31",
                                                          who="管家", avatar="img_v3_fake_butler")]),

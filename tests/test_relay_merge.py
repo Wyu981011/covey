@@ -103,7 +103,7 @@ class MergedTest(MergeCase):
         chat, text, key, reply_to, card, _ = send.call_args.args
         self.assertEqual((chat, key, reply_to), (CHAT, job_key("main-t1", 9) + "-merged", ""))
         shown = json.dumps(card, ensure_ascii=False)
-        for words in ("2 个话题做完了", "有结果", "T410", "T411 查日志", "两种做法都行", "查完了：没有异常"):
+        for words in ("2 个话题做完了", "有结果", "**T410**", "**T411**", "**查日志**", "两种做法都行", "查完了：没有异常"):
             self.assertIn(words, shown)
         self.assertEqual(card["config"]["summary"]["content"], "2 个话题 · 有结果：T410、T411")
         self.assertTrue(text.startswith("**2 个话题做完了**"))
@@ -125,8 +125,9 @@ class MergedTest(MergeCase):
         self.pause.assert_called_once_with(relay_send.MERGE_SECONDS)
         chat, text, key, reply_to, card, _ = send.call_args.args
         self.assertEqual(key, job_key("main-t1", 9))
-        self.assertTrue(card["body"]["elements"][0]["content"].startswith("**T410**"))
-        self.assertIn("<text_tag color='green'>有结果</text_tag>", card["body"]["elements"][0]["content"])
+        row = card["body"]["elements"][0]  # The T number is its badge (cards/ui.py topic_badge), the state a tag.
+        self.assertEqual("<font color='white'>**T410**</font>", row["columns"][0]["elements"][0]["elements"][0]["content"])
+        self.assertIn("<text_tag color='green'>有结果</text_tag>", row["columns"][1]["elements"][0]["content"])
         self.assertEqual(self.saved("main-t1", 9)["state"], "sent")
         self.assertNotIn("merged", self.saved("main-t1", 9))
         self.assertEqual(TOPIC, message_topic(self.state, CHAT, "om_relay"))
@@ -173,8 +174,16 @@ class CardTest(unittest.TestCase):
         # Each row is one block, the whole of it opening its topic; one whose link is not known opens nothing.
         self.assertEqual([{"type": "open_url", "default_url": "https://x/t12"}], first["behaviors"])
         self.assertNotIn("behaviors", second)
-        self.assertEqual(first["elements"][0]["content"], "**T12 改看板**\n<font color='grey'>按钮改好了</font>")
-        self.assertEqual(second["elements"][0]["content"], "**T13**")
+        # Each row: the topic's T number as its badge (its own link too, a click on it stops there), the title bold
+        # and the lead grey beside it.
+        badge, words = (column["elements"][0] for column in first["elements"][0]["columns"])
+        self.assertEqual(("topic-0", "<font color='white'>**T12**</font>", "https://x/t12"),
+                         (badge["background_style"], badge["elements"][0]["content"], badge["behaviors"][0]["default_url"]))
+        self.assertEqual("**改看板**\n<font color='grey'>按钮改好了</font>", words["content"])
+        badge, words = (column["elements"][0] for column in second["elements"][0]["columns"])
+        self.assertNotIn("behaviors", badge)
+        self.assertEqual("**T13**", words["content"])  # Nothing else to say: the number again, not an empty line.
+        self.assertEqual({"topic-0", "topic-5"}, set(built["config"]["style"]["color"]))  # 12 × 5 % 12, 13 × 5 % 12.
         self.assertEqual(text, "**2 个话题做完了**\n- T12 改看板：按钮改好了\n- T13")
 
 

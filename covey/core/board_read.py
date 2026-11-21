@@ -130,14 +130,15 @@ def speaker_of(state, topic_id, chat) -> str:
 
 
 def avatar_of(state, topic_id, chat) -> str:
-    """The picture of ``speaker_of``'s speaker (core/avatars.py): the butler's, the one kept for a project's lead, the
-    topics'; '' when it has no speaker or the lead's cannot be kept."""
+    """The picture of ``speaker_of``'s speaker (core/avatars.py): the butler's, the one kept for a project's lead; ''
+    for a topic, whose T number is its badge (cards/ui.py topic_badge), and when it has no speaker or the lead's cannot
+    be kept."""
     role = traits(topic_id, chat).name
     if role == "butler":
         return avatars.BUTLER
     if role == "lead":
         return avatars.lead_name(state, chat, projects.lead_record(state, topic_id, chat).get("id") or "")
-    return "" if role in {"butler_off", "lead_off"} else avatars.TOPIC
+    return ""
 
 
 def running_jobs(state, chat) -> list:

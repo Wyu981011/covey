@@ -269,7 +269,8 @@ def build():
 # Feishu's colour names in light mode (docs/ui.md 2: the hex values are approximations for sketches).
 INK = {"grey": "#8f959e", "blue": "#245bdb", "indigo": "#4b52e0", "green": "#2ea121", "red": "#f54a45",
        "orange": "#de7802", "violet": "#7a35f0", "purple": "#7a35f0", "wathet": "#1a8aae", "turquoise": "#0f9e8a",
-       "yellow": "#b38600", "carmine": "#d83931", "neutral": "#1f2329", "default": "#1f2329", "black": "#1f2329"}
+       "yellow": "#b38600", "carmine": "#d83931", "neutral": "#1f2329", "default": "#1f2329", "black": "#1f2329",
+       "white": "#ffffff"}
 TAG = {"blue": ("#e1eaff", "#245bdb"), "neutral": ("#eff0f1", "#4e5969"), "grey": ("#eff0f1", "#4e5969"),
        "green": ("#d9f5d6", "#237b19"), "orange": ("#feead2", "#b25f00"), "red": ("#fde2e2", "#d83931"),
        "wathet": ("#d2f1fb", "#1a8aae"), "violet": ("#ece2fe", "#7a35f0"), "purple": ("#ece2fe", "#7a35f0"),
@@ -413,6 +414,10 @@ class Page:
             return f'<i class="ic" style="color:{self.color(element.get("color", "grey"))}">{ICON.get(element["token"], "•")}</i>'
         if tag == "column_set":
             return self.columns(element)
+        if tag == "interactive_container" and element.get("width") == "auto":  # As wide as it needs: a topic's badge.
+            inner = "".join(self.render(e) for e in element.get("elements", []))
+            return (f'<div style="display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;'
+                    f'height:{element.get("height", "auto")};{self.box_style(element)}">{inner}</div>')
         if tag == "interactive_container":
             gap = element.get("vertical_spacing", "8px")
             inner = "".join(self.render(e) for e in element.get("elements", []))

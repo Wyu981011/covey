@@ -344,10 +344,8 @@ def take(state_dir, chat, path, key, target, send, made, profile=None, log=None)
         from covey.app.topic_links import links_for
 
         urls = links_for(state_dir, links, cards=links, profile=profile)  # Each row opens its topic.
-        from covey.feishu.avatars import image_key
-
-        built, text = merged_card([{**item, "url": urls.get(item.get("topic_id") or "", "")} for item in items],
-                                  avatar=image_key(state_dir, profile, "topic", log))
+        # No picture: each row has its topic's T number as its badge (cards/ui.py topic_badge).
+        built, text = merged_card([{**item, "url": urls.get(item.get("topic_id") or "", "")} for item in items])
         built, text = linked(state_dir, chat, built, text, profile, cards=links)
         made = (built, text, links, {})
         key = key + "-merged"

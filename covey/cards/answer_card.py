@@ -415,14 +415,14 @@ def tail(files=None, inputs=(), outputs=(), link="", change=None, notes=(), butt
 def tail_card(elements, summary, lead=""):
     """The card after an answer sent as Markdown or a file: ``lead`` (one small grey line), then ``elements``; a "你问"
     block among them (``ask_block``) becomes the speaker's row, its way back goes on the 输出 line (cards/ui.py)."""
-    from covey.cards.ui import BODY_PADDING, BODY_SPACING, speaker_row, split_ask
+    from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, speaker_row, split_ask
 
     meta, rest = split_ask(elements)
     head = [md(grey(lead), size="notation")] if lead else []
     if not meta:
         return card([*head, *rest], summary, update_multi=True)
-    return card([speaker_row(meta), *head, *put_back(rest, meta)], summary, update_multi=True,
-                padding=BODY_PADDING, spacing=BODY_SPACING)
+    return banded(card([speaker_row(meta), *head, *put_back(rest, meta)], summary, update_multi=True,
+                       padding=BODY_PADDING, spacing=BODY_SPACING))  # A topic's badge has its colour in the config.
 
 
 HEAD_ID = "answer_head"

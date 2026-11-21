@@ -1,7 +1,7 @@
 """The avatars of the private chat's cards (docs/ui.md 5.3): which picture a speaker has, and the image keys Feishu gave them.
 
-The pictures are in covey/assets/avatars/: ``butler.png`` for the butler (replace the file to change it), ``topic.png``
-for every topic, and ``POOL`` for the project leads. A lead's picture is picked once from its project id and kept in
+The pictures are in covey/assets/avatars/: ``butler.png`` for the butler (replace the file to change it) and ``POOL``
+for the project leads; a topic has no picture, its T number is its badge (cards/ui.py topic_badge). A lead's picture is picked once from its project id and kept in
 ``<state>/avatars.json`` (``leads``: {chat: {project id: name}}): the id's stable hash picks one of the 20, a name another
 project of the same chat has is passed over for the next free one, a project that no longer exists frees its name. The
 same file holds the image keys (``keys``: {profile: {sha256 of the file: image_key}}), so a picture uploaded once is
@@ -15,7 +15,7 @@ from covey.core import projects
 from covey.core.locks import shared_file_lock
 from covey.core.state import read_object, write_json
 
-BUTLER, TOPIC = "butler", "topic"
+BUTLER = "butler"
 # DiceBear Moods (G), DiceBear Clay (M), the sea set: the names of the files without ".png".
 POOL = ("G-1", "G-2", "G-3", "G-6", "G-7", "G-9",
         "M-2", "M-3", "M-5", "M-9", "M-11", "M-12",
@@ -25,8 +25,8 @@ FILE = "avatars.json"
 
 
 def asset(name) -> Path | None:
-    """The picture file of ``name`` (BUTLER, TOPIC or one of POOL); None for any other name or a missing file."""
-    if name not in (BUTLER, TOPIC, *POOL):
+    """The picture file of ``name`` (BUTLER or one of POOL); None for any other name or a missing file."""
+    if name not in (BUTLER, *POOL):
         return None
     path = ASSETS / f"{name}.png"
     return path if path.is_file() else None

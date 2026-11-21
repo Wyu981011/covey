@@ -1,17 +1,18 @@
 """The card a topic turn's outcome takes back to the butler's top level (app/butler_relay.py, docs/butler.md
 结论回到顶层): ``relay_card``, pure, and what it shares with the question card's copy there
-(cards/question_cards.py mirror_card): a topic's reply as card Markdown (``reply_body``). ``merged_card``: 做完了 relays that
-came close together, as one card (app/relay_send.py send_merged)."""
+(cards/question_cards.py mirror_card): a topic's reply as card Markdown (``reply_body``), a long one with its opening in
+view and the rest folded under it (``reply_peek``). ``merged_card``: 做完了 relays that came close together, as one card
+(app/relay_send.py send_merged)."""
 from __future__ import annotations
 
 import re
 
 from covey.cards.answer_card import check_element, facts_element, tail as answer_tail
 from covey.cards.elements import card, collapsible, grey, json_size, md, note
-from covey.cards.review import (ANSWER_CARD_BYTES, after_lead, answer_lead, bold_minor_headings,
-                                inline_one_line_code)
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, speaker_row,
-                            split_ask, styled)
+from covey.cards.review import (ANSWER_CARD_BYTES, answer_lead, bold_minor_headings, drop_part_heading,
+                                inline_one_line_code, opening)
+from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, peek,
+                            speaker_row, split_ask, styled, topic_badge)
 from covey.core import look
 from covey.core.failure import HEADLINE_CHARS, split_title
 from covey.core.text import literal, redact
@@ -20,7 +21,7 @@ CARD_TEXT_BYTES = 24000  # A card is at most 30 KB (CardKit); a longer reply goe
 QUESTION_CHARS = 300
 SUMMARY_CHARS = 40
 DONE, WAITING, STOPPED = "done", "waiting", "stopped"
-# A reply longer than this (lines, characters) or with a table goes into a fold under the conclusion (``long_reply``).
+# A reply longer than this (lines, characters) or with a table shows its opening, the rest folded (``long_reply``).
 FOLD_LINES, FOLD_CHARS = 6, 180
 FOLD_ID = "relay_reply"
 FOOT_ID = "relay_foot"
@@ -42,7 +43,8 @@ def reply_size(text):
 
 
 def long_reply(text) -> bool:
-    """Whether a reply goes into a fold on the relay: more than FOLD_LINES lines or FOLD_CHARS characters, or a table."""
+    """Whether a reply is folded on the relay, its opening in view (``reply_peek``): more than FOLD_LINES lines or
+    FOLD_CHARS characters, or a table."""
     lines, chars, tables = reply_size(text)
     return lines > FOLD_LINES or chars > FOLD_CHARS or tables > 0
 
@@ -61,8 +63,28 @@ def fold_title(text) -> str:
 
 
 def reply_fold(text):
-    """The reply in a fold closed under the conclusion: ``text`` (Markdown)."""
+    """The reply in a closed fold titled with its size: ``text`` (Markdown) that does not start with words."""
     return collapsible(FOLD_ID, fold_title(text), [md(text)], quiet=True, spacing="6px")
+
+
+def whole_words(text) -> str:
+    """How much there is in all, said after a peek's opening: "全文约 1800 字 · 含 1 张表"."""
+    return "全文" + size_words(text)
+
+
+def reply_peek(text, element_id=FOLD_ID, *, label=""):
+    """A long reply (Markdown) as 犹抱琵琶半遮面 (docs/ui.md 4 露一截, cards/ui.py peek): its first lines in view
+    (cards/review.py opening, ``label`` grey before them), then how much there is in all, the rest one click away and
+    going on from there; nothing to fold, the reply as it is; one that does not start with words (a table, code), the
+    fold titled with its size (``reply_fold``)."""
+    head, rest = opening(text)
+    if not head:
+        return reply_fold(text) if element_id == FOLD_ID else collapsible(
+            element_id, " · ".join(part for part in (label, size_words(text)) if part) + "（点开看）", [md(text)],
+            quiet=True, spacing="6px")
+    if not rest.strip():
+        return md(" ".join(part for part in (grey(label) if label else "", head) if part), element_id=element_id)
+    return peek(element_id, head, rest, hint=whole_words(text), label=label)
 
 
 def foot(inputs, outputs, *, change=None, links=()):
@@ -96,14 +118,16 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
                buttons=(), url="", avatar=""):
     """(card, text): the relay's card (None for a reply over CARD_TEXT_BYTES: the Markdown alone), and
     the same as Markdown when the card is refused. Its first element says whose it is (cards/ui.py speaker_row: the
-    speaker's picture, the topic's T number and title, its state as a tag, what it did with the owner's words after it),
-    so the card has no "你问" block. ``avatar``: the speaker's picture (an image key) when ``ask`` has none.
+    topic's T number as its badge, its title, its state as a tag, what it did with the owner's words after it), so the
+    card has no "你问" block. ``avatar``: the speaker's picture (an image key) when ``ask`` has none and no T number
+    makes a badge.
     ``outcome`` DONE (``text`` the saved reply; ``inputs`` and ``outputs``, the answer card's 输入/输出 lines, which the
     foot (``foot``) keeps whole, with the 改动 line of ``change``, a dict; ``files``, its 产物 panel,
     cards/answer_card.py; ``delivery``, the 交付
     line an older release kept as a string, ``change`` of those, its fold; ``notes`` and ``buttons``, its other parts, as
-    the answer card's tail takes them), WAITING (``question``) or STOPPED (``reason``, one line). A DONE reply that is
-    long (``long_reply``) is in a fold under the conclusion.
+    the answer card's tail takes them), WAITING (``question``) or STOPPED (``reason``, one line). A DONE reply is the
+    card's body as it is, no conclusion band over it (its first words are its conclusion); a long one
+    (``long_reply``) shows its opening, the rest folded under it (``reply_peek``).
     ``ask``: the "你问" block (cards/answer_card.py ask_block; a relay at the top level quoting no card, threaded):
     its words go to the speaker's row. One link ends the 输出 line, "进话题 ›" (``into``): ``url``, which opens the topic
     at this turn's card, else the block's own link, which opens the same thread (app/answer_cards.py ask_url) and was a
@@ -120,20 +144,17 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         lead = summary(label, look.word("result"), answer_lead(text, SUMMARY_CHARS))
         if len(body.encode("utf-8")) > CARD_TEXT_BYTES:
             return None, body
-        # The conclusion band (docs/ui.md 5.2 聊天结果卡): the reply's lead as its conclusion.
-        conclusion = answer_lead(text, HEADLINE_CHARS)
-        band = [conclusion_band("结论", literal(conclusion))] if conclusion else []
-        # The band says the reply's first line: the reply under it starts after that line (cards/review.py after_lead).
-        rest = after_lead(body, conclusion) if band else body
-        folded = bool(rest.strip()) and long_reply(rest)
+        # No conclusion band (T638): the band said the reply's first line again, large, over two rows. The reply's
+        # first lines are in view as they are; a long reply folds the rest under them (docs/ui.md 5.2 聊天结果卡).
         shown_change = change or delivery
         line = shown_change if isinstance(shown_change, dict) and shown_change else None  # Its 改动 is a line of the foot.
-        reply = [reply_fold(rest)] if folded else [md(rest)] if rest.strip() else []
+        shown = drop_part_heading(body)  # Its first words say it: no "## 结论" row over them.
+        reply = [] if not shown.strip() else [reply_peek(shown)] if long_reply(shown) else [md(shown)]
         ending = foot(inputs, outputs, change=line, links=links)
         tail = [*answer_tail(files, (), (), change=None if line else shown_change, notes=notes),
                 *([check_element(shown_change)] if line and check_element(shown_change) else []),
                 *([ending] if ending else []), *(buttons or ())]
-        built = banded(card([row, *band, *reply, *tail], lead, update_multi=True, **style))
+        built = banded(card([row, *reply, *tail], lead, update_multi=True, **style))
         # A long 改动 fold may take a card past its limit (as cards/review.py answer_card): the reply goes as
         # Markdown, its parts after it (app/relay_send.py send_once).
         return (built if json_size(built) <= ANSWER_CARD_BYTES else None), body
@@ -168,21 +189,27 @@ ROW_ID = "merged_row"
 def merged_card(items, avatar=""):
     """(card, text): 做完了 relays that came close together (app/relay_send.py send_merged) as one card, the Markdown when
     the card is refused. ``items``: each relay's {label (T41), title, lead (its reply's first line), url (that opens
-    its topic, when known)}, in the order they came. The speaker's row (``avatar``, the topics') says how many (有结果 tag); one block each, its T number
-    and title bold, its lead grey under it, the whole block opening ``url``."""
+    its topic, when known)}, in the order they came. The speaker's row (``avatar``, a picture when given) says how many
+    (有结果 tag); one block each, the topic's T number as its badge (cards/ui.py topic_badge), its title bold and its
+    lead grey beside it, the whole block opening ``url``."""
     count = len(items)
     rows = []
     for item in items:
-        head = " ".join(part for part in (literal(item.get("label") or ""), literal(item.get("title") or "")) if part)
+        label, title, url = str(item.get("label") or ""), literal(item.get("title") or ""), str(item.get("url") or "")
+        badge = topic_badge(label, url=url)  # Its own link too: a click on it would not reach the block's.
+        head = title if badge else " ".join(part for part in (literal(label), title) if part)
         lead = literal(item.get("lead") or "")
-        words = f"**{head or '话题'}**" + (f"\n{grey(lead)}" if lead else "")
-        row = container([md(words, size="normal_v2")], background="grey-50", radius="6px", padding="6px 10px 6px 10px",
-                        url=str(item.get("url") or ""))
+        words = "\n".join(part for part in (f"**{head}**" if head else "", grey(lead) if lead else "") if part)
+        text = md(words or f"**{literal(label) or '话题'}**", size="normal_v2")
+        inner = [{"tag": "column_set", "horizontal_spacing": "8px", "columns": [
+            {"tag": "column", "width": "auto", "vertical_align": "top", "elements": [badge]},
+            {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [text]}]}] if badge else [text]
+        row = container(inner, background="grey-50", radius="6px", padding="6px 10px 6px 10px", url=url)
         rows.append(row)
     head = speaker_row({"who": f"{count} 个话题做完了", "says": MERGED_SUBTITLE}, outcome="result", avatar=avatar)
     labels = "、".join(str(item.get("label") or "话题") for item in items)
-    built = card([head, *rows], summary(f"{count} 个话题", look.word("result"), labels), update_multi=True,
-                 padding=BODY_PADDING, spacing=BODY_SPACING)
+    built = banded(card([head, *rows], summary(f"{count} 个话题", look.word("result"), labels), update_multi=True,
+                        padding=BODY_PADDING, spacing=BODY_SPACING))
     lines = [f"**{count} 个话题做完了**"] + [
         "- " + " ".join(part for part in (str(item.get("label") or ""), str(item.get("title") or "")) if part)
         + (f"：{item['lead']}" if item.get("lead") else "") for item in items]
