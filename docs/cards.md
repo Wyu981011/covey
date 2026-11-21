@@ -235,13 +235,14 @@
 
 设置卡的 `bridge_main_start`、`bridge_main_start_row`、`bridge_main_untrust`（直接开工、记住的工作区）不走这条：它们仍由设置卡认领（`app/butler_panel.py`，`RETIRED_KINDS`），回一句“直接开工已下线”并重画，不改设置。
 
-### 设置卡配置页的一行多项
+### 设置卡配置页的格子版式
 
-配置页一段里的几项并排成一行（`cards/butler_panel.py` 的 `lines`、`cards/launch_config.py` 的 `setting_line`）：新话题第一行 Harness、供应商、模型、思考预算，第二行工作区、运行方式、脱敏；管家第一行同上，第二行工作区、脱敏、压缩阈值，私聊顶层的消息单独一行；独立复核四项一行；更多是子 Agent 一项。
+配置页一段里的各项排成格子（`cards/butler_panel.py` 的 `tile_lines`、`cards/launch_config.py` 的 `setting_line`），顺序不变：新话题 Harness、供应商、模型、思考预算 / 工作区、运行方式、脱敏；管家 Harness、供应商、模型、思考预算 / 工作区、脱敏、压缩阈值、私聊顶层的消息；独立复核四项；更多是子 Agent。（网页设置页读的 `lines` 仍是原来的三行分法，没变。）
 
-- 一行是一个 `column_set`，`flex_mode` 取 `LINE_FLEX`（默认 `flow`），每格一个 `auto` 宽的 `column`，里面还是原来的折叠行 `setting_row`（`cell=True`：标题是灰色标签在上、当前值在下），点开列选项，点一个选项照旧记下并整卡重画。不用下拉框（`select`）的原因不变：iOS 飞书的 select 是全屏选择器，取消按钮在状态栏下面（见 `cards/launch_config.py` 的模块说明）。
-- `flow` 让格子按文字宽度排，放不下就换行：电脑上一行放下，话题侧栏（约 300px）和手机上折成两三行，不会把标签截成“…”。某个客户端把 `flow` 排坏时，把 `LINE_FLEX` 改成 `bisect`（每格等宽、每行两格），其余代码不用动。
-- 只有一项的行（子 Agent、私聊顶层的消息）还是原来的整行折叠。一格比原来多一个 `column`，每行多一个 `column_set`；元素数仍按 `CARD_NODES` 的预算由 `fits` 裁选项。
+- 每项还是原来的折叠行 `setting_row`（`cell=True`：灰色标签在上、当前值在下），点开列选项，点一个选项照旧记下并整卡重画，现在是一个带细边框（`TILE_BORDER`，灰色、圆角 8px）的格子，下拉箭头都在格子右缘；去掉了原来整块灰底。不用下拉框（`select`）的原因不变：iOS 飞书的 select 是全屏选择器，取消按钮在状态栏下面（见 `cards/launch_config.py` 的模块说明）。
+- 两格一行，`column_set` 的 `flex_mode` 取 `LINE_FLEX`（`stretch`），两个等宽（`weighted`）的 `column`：卡片宽时左右并排，窄（话题侧栏约 250–300px，手机）时自动上下叠成单列，所以不会把“Claude 自带”折成“Claude 自 / 带”。选的值很长的项（显示宽度超过 `WIDE`，如工作区、子 Agent）单独一行占满；落单的一项占半行（另一半放空的 `column`），格子不错位。`bisect`（任何宽度都两列，窄屏会断词）和 `flow` + `auto`（宽度参差）都试过，不用。
+- 没展开的段是一个整块可点、带边框的容器（`closed_section`）：标题和蓝字“展开”同一行，下面一行灰字摘要（`summary`：只列值、不带标签、不带供应商，惯常的选择——默认工作区、原目录、脱敏关、压缩 20 万、交给管家——不列）。容器和展开的段共用同一个按钮 kind（`SECTION`），旧卡上的“展开”按钮照旧能点。
+- 元素数比原来少（新话题段约少 12 个节点），仍按 `CARD_NODES` 的预算由 `fits` 裁选项。
 - 卡片 JSON 变了，要真机验收（手机、话题侧栏、深色）：格子换行、点开的选项宽度、点开后其余格的位置。
 
 ## 卡片的客户端限制

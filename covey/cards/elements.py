@@ -251,12 +251,13 @@ def markdown_panel(element_id, title, content, *, content_id="", size="normal_v2
 
 
 def fold(element_id, title, elements, *, expanded=False, padding="0px 0px 0px 0px", spacing="4px", title_padding="",
-         icon_position="right", background=""):
+         icon_position="right", background="", border=None):
     """An unframed fold of ``elements`` under ``title``, a markdown element, with a grey chevron: 执行过程's folds of
     earlier operations and records (the chevron after the title, "follow_text": these were first sent with the icon
     last), the launch card's 调整 panel and its settings rows."""
     panel = {"tag": "collapsible_panel", "element_id": element_id, "expanded": expanded,
-             **({"background_color": background} if background else {}), "padding": padding, "vertical_spacing": spacing}
+             **({"background_color": background} if background else {}), **({"border": border} if border else {}),
+             "padding": padding, "vertical_spacing": spacing}
     header = {"title": title, **({"padding": title_padding} if title_padding else {})}
     turn = {"icon_position": icon_position, "icon_expanded_angle": -180}
     header.update({**turn, "icon": chevron()} if icon_position == "follow_text" else {"icon": chevron(), **turn})

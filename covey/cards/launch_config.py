@@ -78,10 +78,10 @@ def workspace_setting(key, kind, current, names, *, first=(), last=(), labels=No
     return Setting(key, '工作区', kind, current, [*first, *((name, labels.get(name, name)) for name in names), *last])
 
 
-def tap(value, elements, padding):
+def tap(value, elements, padding, border=False):
     """A tappable container around ``elements``; a tap calls back ``value``."""
     return {'tag': 'interactive_container', 'width': 'fill', 'padding': padding, 'corner_radius': '6px',
-            'behaviors': [{'type': 'callback', 'value': value}], 'elements': elements}
+            **({'has_border': True, 'border_color': 'grey'} if border else {}), 'behaviors': [{'type': 'callback', 'value': value}], 'elements': elements}
 
 
 def setting_row(setting, *, token, open_key='', changed=False, stamp='', value=None, cell=False):
@@ -103,27 +103,35 @@ def setting_row(setting, *, token, open_key='', changed=False, stamp='', value=N
         {'tag': 'column', 'width': 'weighted', 'weight': 1, 'background_style': 'bg-white',
          'padding': '2px 8px 2px 8px', 'vertical_spacing': '0px', 'elements': lines}]}
     title = md(f'{label}\n{setting.text}') if cell else md(f'{label}　{setting.text}')
+    if cell:  # A tile: its own frame, the label over the choice, the chevron at its right edge.
+        return fold(f'set_{setting.key}_{stamp or token[:4]}', title, [options], expanded=setting.key == open_key,
+                    padding='0px 4px 6px 4px', spacing='0px', title_padding='5px 2px 5px 8px', border=TILE_BORDER)
     return fold(f'set_{setting.key}_{stamp or token[:4]}', title, [options],
                 expanded=setting.key == open_key, padding='0px 0px 6px 0px', spacing='0px',
-                title_padding='5px 0px 5px 0px' if cell else '7px 0px 7px 0px')
+                title_padding='7px 0px 7px 0px')
 
 
-# A line of settings (setting_line): the rows side by side as small units, the label over the choice, each still a fold whose
-# options open under its unit. 'flow': the units are as wide as their words and wrap where the card is narrow (the
-# 话题侧栏, a phone), so a line is one line where it fits and two where it does not, never a label cut short; 'bisect'
-# is the same two to a line whatever the width (columns of equal width, the fallback if a client lays 'flow' out badly).
-LINE_FLEX = 'flow'
+# A line of settings (setting_line): at most two tiles (setting_row ``cell``) side by side, the label over the choice, each
+# still a fold whose options open under its tile. 'stretch': two columns of equal width where the card is wide, one
+# under the other where it is narrow (the 话题侧栏, a phone), so a choice is never cut into "Claude 自 / 带" and the tiles'
+# edges and chevrons line up from one line to the next; a setting whose words are long (``wide`` in cards/butler_panel.py)
+# is a line of its own, as wide as the card. ('bisect' kept two columns at any width; 'flow' with auto widths left the
+# tiles ragged.)
+LINE_FLEX = 'stretch'
+TILE_BORDER = {'color': 'grey', 'corner_radius': '8px'}
 
 
-def setting_line(settings, *, token, stamp='', value=None):
-    """``settings`` as one line of units (setting_row ``cell``) in a column_set; a line of one is that row alone."""
+def setting_line(settings, *, token, stamp='', value=None, full=False):
+    """``settings`` as one line of tiles (setting_row ``cell``) in a column_set; ``full``: one tile as wide as the card
+    (a long choice), else a tile alone keeps its half, the other column empty, so the tiles stay on one grid."""
     cells = [setting_row(s, token=token, stamp=stamp, value=value, cell=True) for s in settings]
-    if len(cells) == 1:
-        return setting_row(settings[0], token=token, stamp=stamp, value=value)
-    equal = LINE_FLEX in ('bisect', 'trisect')
-    columns = [{'tag': 'column', 'width': 'weighted' if equal else 'auto', **({'weight': 1} if equal else {}),
-                'vertical_align': 'top', 'elements': [cell]} for cell in cells]
-    return {'tag': 'column_set', 'flex_mode': LINE_FLEX, 'horizontal_spacing': '12px', 'columns': columns}
+    if full and len(cells) == 1:
+        return cells[0]
+    columns = [{'tag': 'column', 'width': 'weighted', 'weight': 1, 'vertical_align': 'top', 'elements': [cell]}
+               for cell in cells]
+    if len(columns) == 1:
+        columns.append({'tag': 'column', 'width': 'weighted', 'weight': 1, 'elements': []})
+    return {'tag': 'column_set', 'flex_mode': LINE_FLEX, 'horizontal_spacing': '8px', 'columns': columns}
 
 
 def model_settings(choices, model, *, kinds, revision, effort, work_mode=''):

@@ -11,7 +11,7 @@ app/workspace_manager.py); the page 其他 that held it is retired. A card of it
 then 工作区用途 (``other_page``).
 
 No select: a choice is a settings-list row (cards/launch_config.py setting_row) whose options open under it in
-the client, the rows of a line side by side as units (``lines``, setting_line); a tap records the option and redraws the whole card. Every value says the state it sets, so a click
+the client, two tiles to a line (``tile_lines``, setting_line); a tap records the option and redraws the whole card. Every value says the state it sets, so a click
 on an older card or revision still does what it says. The fold IDs take the revision, so a redraw closes the row.
 """
 from __future__ import annotations
@@ -20,12 +20,12 @@ from covey.cards import ui
 from covey.core.text import literal
 from covey.cards.elements import (CARD_BYTES, CARD_NODES, fits, grey, item, md, note, panel_header, plain,
                                             row, section, styled_panel, tag, text_button)
-from covey.cards.launch_config import (DEFAULT, Setting, harness_setting, known, listed,
+from covey.cards.launch_config import (DEFAULT, Setting, tap, harness_setting, known, listed,
                                                 redaction_setting, run_mode_setting, setting_line, setting_row, settings_block,
                                                 tier_rows, workspace_setting)
 from covey.core.menu_choice import butler_harnesses, default_entry, entry_of, models_of, redacts, tiers
 from covey.cards.settings_hub import BUTLER, CONFIG, ICONS, TITLES, WORKSPACE, successor
-from covey.core.butler_settings import SUBAGENTS as SUBAGENT_MODES
+from covey.core.butler_settings import COMPACT_TOKENS, SUBAGENTS as SUBAGENT_MODES
 from covey.core.workspaces import RUN_MODES
 
 ENABLE = 'bridge_main_enable'
@@ -231,17 +231,12 @@ def review_setting_list(settings, choices, limit):
     return rows
 
 
-# The rows of a section by line (``lines``): the first line the model's four (Harness, 供应商, 模型, 思考预算), the
-# second the rest (新话题: 工作区, 运行方式, 脱敏; 管家: 工作区, 脱敏, 压缩阈值), the private chat mode's row a line alone.
+# The rows of a section in the order the owner set, two tiles to a line (``tile_lines``): Harness, 供应商 / 模型, 思考预算 / then
+# the rest (新话题: 工作区, 运行方式, 脱敏; 管家: 工作区, 脱敏, 压缩阈值, 私聊顶层的消息). A choice whose words are long
+# (``wide``) takes a line of its own, as wide as the card.
 MODEL_KEYS = frozenset({'harness', 'provider', 'model', 'effort', 't_harness', 't_provider', 't_model', 't_effort',
                         'r_harness', 'r_provider', 'r_model', 'r_effort'})
-
-
-def lines(settings_):
-    """``settings_`` as the lines of units 配置 draws, in this order: the model's rows, the others, the mode."""
-    found = [[s for s in settings_ if s.key in MODEL_KEYS], [s for s in settings_ if s.key not in MODEL_KEYS | {'mode'}],
-             [s for s in settings_ if s.key == 'mode']]
-    return [line for line in found if line]
+WIDE = 16  # Display width (a CJK character is two) of a choice past which its tile is a line of its own.
 
 
 def shown_value(setting):
@@ -249,17 +244,71 @@ def shown_value(setting):
     return dict(setting.options).get(setting.current, setting.current or '未选')
 
 
+def width(text):
+    """``text``'s display width: a CJK character two, any other one."""
+    return sum(2 if ord(char) > 0x2e7f else 1 for char in str(text))
+
+
+def wide(setting):
+    """Whether ``setting``'s choice is too long for half a card (a workspace's name, 子 Agent's words)."""
+    return width(shown_value(setting)) > WIDE
+
+
+def lines(settings_):
+    """``settings_`` as three lines, the web page's (app/web_settings.py rows_of): the model's rows, the others, the mode."""
+    found = [[s for s in settings_ if s.key in MODEL_KEYS], [s for s in settings_ if s.key not in MODEL_KEYS | {'mode'}],
+             [s for s in settings_ if s.key == 'mode']]
+    return [line for line in found if line]
+
+
+def tile_lines(settings_):
+    """``settings_`` as the lines of tiles 配置 draws, (rows, full) each: the model's rows (MODEL_KEYS) first and the rest
+    after them, each group two to a line in the order given; a ``wide`` row alone and full; a last row alone keeps its half."""
+    found = []
+    for group in ([s for s in settings_ if s.key in MODEL_KEYS], [s for s in settings_ if s.key not in MODEL_KEYS]):
+        pending = []
+        for setting in group:
+            if wide(setting):
+                found += [(pending, False)] if pending else []
+                pending = []
+                found.append(([setting], True))
+                continue
+            pending.append(setting)
+            if len(pending) == 2:
+                found.append((pending, False))
+                pending = []
+        found += [(pending, False)] if pending else []
+    return found
+
+
+# What a closed section's line leaves out: the choices that are the usual ones (the open section shows them).
+USUAL = {'space': '', 't_space': '', 'redact': 'off', 't_redact': 'off', 't_run_mode': 'direct', 'mode': 'agent',
+         'compact': str(COMPACT_TOKENS)}
+
+
 def summary(settings_):
-    """A closed section's grey line: each row's chosen value after its label, '·' between, the Harness's and the
-    model's alone and no 供应商 (the model says it): 'Codex · Codex Model · 思考预算 low · 运行方式 原目录'."""
+    """A closed section's grey line, short: the chosen values in order, '·' between, no labels (the values say what they
+    are: the Harness, the model, 思考预算 as 'xhigh'); no 供应商 (the model says it); a choice that is the usual one
+    (USUAL: the default 工作区, 运行方式 原目录, 脱敏 关, compaction at its default, the mode 交给管家) left out, one that
+    is not named by its label where the value alone would not say it (压缩, 脱敏): 'Antigravity · Gemini 4 Neon · xhigh'."""
     parts = []
     for s in settings_:
-        if s.label == '供应商':
+        if s.label == '供应商' or USUAL.get(s.key) == s.current:
             continue
         shown = literal(str(shown_value(s)))
-        bare = s.label in ('Harness', '模型') and shown not in ('未选', DEFAULT)  # A name says what it is.
-        parts.append(shown if bare else f'{s.label} {shown}')
+        parts.append(f"{'压缩' if s.label == '压缩阈值' else s.label} {shown}" if s.label in ('压缩阈值', '脱敏') else shown)
     return ' · '.join(parts)
+
+
+def heading(title):
+    """A section's heading in 配置, a little space above it to part it from the section before."""
+    return {**section(title), 'margin': '6px 0px 0px 0px'}
+
+
+def closed_section(part, line, click):
+    """A section that is not open: its heading with 展开 beside it and ``line`` (``summary``) under, one tappable frame
+    (a tap calls back ``click``, SECTION)."""
+    return tap(click, [md(f"**{SECTIONS[part]}**　<font color='blue'>展开</font>"), note(line)], '8px 10px 8px 10px', border=True)
 
 
 def config_page(settings, choices, workspaces, limit, follows, models, fallback, rows, value, confirm, *,
@@ -281,10 +330,9 @@ def config_page(settings, choices, workspaces, limit, follows, models, fallback,
     elements = []
     for part, settings_ in parts.items():
         if part != open_:
-            elements += [item(section(SECTIONS[part]), text_button('展开', value(SECTION, open=part), tone='primary')),
-                         note(summary(settings_))]
+            elements.append(closed_section(part, summary(settings_), value(SECTION, open=part)))
             continue
-        elements += [section(SECTIONS[part]), rows(settings_)]
+        elements += [heading(SECTIONS[part]), *rows(settings_)]
         if part == TOPIC_PART:
             elements.append(note(TOPIC_NOTE))
         elif part == BUTLER_PART:
@@ -296,7 +344,7 @@ def config_page(settings, choices, workspaces, limit, follows, models, fallback,
                 elements += mode_confirm(value)
         else:
             elements.append(note(REVIEW_NOTE))
-    elements += [section('更多'), rows([subagent_setting(settings)]), note(SUBAGENT_NOTE)]
+    elements += [heading('更多'), *rows([subagent_setting(settings)]), note(SUBAGENT_NOTE)]
     if butler_on:
         elements.append(note(LOCKED))
     return elements
@@ -321,7 +369,7 @@ def butler_panel_card(token, view, settings, choices, workspaces, top=(), follow
         return {'kind': kind, 'token': token, 'revision': revision, **more}
 
     def rows(settings_):
-        return settings_block([setting_line(line, token=token, stamp=stamp) for line in lines(settings_)])
+        return [setting_line(line, token=token, stamp=stamp, full=full) for line, full in tile_lines(settings_)]
 
     def draw(limit, shown, models):
         elements = list(top) + ([ui.receipt(view['notice'])] if view.get('notice') else [])
@@ -335,8 +383,8 @@ def butler_panel_card(token, view, settings, choices, workspaces, top=(), follow
             elements += [section('管家用的模型'), settings_block([harness_line(settings, choices)] + [
                 setting_row(s, token=token, stamp=stamp) for s in butler_setting_list(settings, choices, limit)
                 if s.key not in ('harness', 'space')])]
-            elements += [section('新话题默认'), rows(topic_settings(settings.topic_defaults, choices, workspaces, limit,
-                                                                    follows, models, fallback))]
+            elements += [section('新话题默认'), settings_block(rows(topic_settings(settings.topic_defaults, choices, workspaces, limit,
+                                                                    follows, models, fallback)))]
             elements += other_page(settings, workspaces[:shown], len(workspaces), value)
             elements.append(note(NOTE))
             return elements

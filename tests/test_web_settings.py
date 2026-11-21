@@ -18,6 +18,7 @@ from covey.cards import butler_panel as cards
 from covey.core import butler_settings as settings, groups as group_records, redaction, web_sync
 from covey.core.state import write_json
 from covey.core.workspaces import config_path
+from covey.core.defaults import RECOMMENDED
 
 
 
@@ -374,7 +375,13 @@ class WebSettingsTest(UnifiedCase):
         self.assertIn(data["preselect"]["model"], keys)
         for model in data["models"]:
             self.assertIn(model["start_budget"], [b["value"] for b in model["budgets"]], model["key"])
+            # The budgets by name, as the 设置 card lists them (T615): no 推荐, no 模型原生默认; the default one is a level too.
+            self.assertNotIn(RECOMMENDED, [b["value"] for b in model["budgets"]], model["key"])
+            self.assertNotIn("推荐", " ".join(b["text"] for b in model["budgets"]), model["key"])
+            self.assertIn(model["default_budget"], [b["value"] for b in model["budgets"]], model["key"])
             self.assertTrue(model["harness_title"])
+        chosen = next(m for m in data["models"] if m["key"] == data["preselect"]["model"])
+        self.assertIn(data["preselect"]["effort"], [b["value"] for b in chosen["budgets"]])
         self.assertEqual(data["preselect"]["workspace"], "project")
         self.assertEqual([w["name"] for w in data["workspaces"]][0:1] and sorted(w["name"] for w in data["workspaces"]),
                          ["docs", "gone", "project"])

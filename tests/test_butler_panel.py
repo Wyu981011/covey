@@ -150,7 +150,7 @@ class ButlerPanelTests(UnifiedCase):
         # private chat mode is a row of the butler's, not a red button on top. T614: the butler's Harness and 工作区 are
         # rows of their own.
         for part in ('**新话题**', '**管家**', '**更多**', panel_card.SUBAGENT_NOTE, panel_card.LOCKED,
-                     "<font color='grey'>私聊顶层的消息</font>　交给管家", "<font color='grey'>Harness</font>\\nClaude Code",
+                     "<font color='grey'>私聊顶层的消息</font>\\n交给管家", "<font color='grey'>Harness</font>\\nClaude Code",
                      "<font color='grey'>供应商</font>\\nClaude 自带", "<font color='grey'>工作区</font>\\n默认工作区",
                      '压缩阈值', '20 万', '展开'):
             self.assertIn(part, text)
@@ -174,7 +174,7 @@ class ButlerPanelTests(UnifiedCase):
         self.assertEqual([v['option'] for v in self.values(panel_card.MODEL)], ['claude-model'])  # T615: no 默认.
         self.assertIn("<font color='grey'>模型</font>\\n未选", text)
         self.assertEqual(self.values(panel_card.TOPIC_HARNESS), [])  # 新话题 closed: what it holds in a grey line.
-        self.assertIn('原目录', text)
+        self.assertNotIn('原目录', text)  # The usual 运行方式 and 工作区 are left out of its line (USUAL).
         # 新话题 opened: its rows; 管家 closed.
         self.part('topic')
         text = self.text()
@@ -185,7 +185,7 @@ class ButlerPanelTests(UnifiedCase):
         self.assertEqual(self.values(panel_card.MODEL), [])
         self.assertEqual(self.values(panel_card.TOPIC_MODEL), [])
         self.assertIn('codex', [v['option'] for v in self.values(panel_card.TOPIC_HARNESS)])
-        self.assertIn('交给管家', text)  # The closed 管家's line.
+        self.assertNotIn('交给管家', text)  # The closed 管家's line leaves out the usual mode (USUAL).
         # 直接开工 and 记住的工作区 are retired: no row, no button.
         for kind in panel_card.RETIRED_KINDS:
             self.assertEqual(self.values(kind), [])
@@ -257,8 +257,8 @@ class ButlerPanelTests(UnifiedCase):
         self.ask()
         self.assertEqual(self.cards[-1]['header']['subtitle']['content'], '新话题 Codex Model · 管家没开')
         text = self.text()  # 纯话题: the butler's section is the mode's row alone.
-        for part in ("<font color='grey'>私聊顶层的消息</font>　每条直接开一个话题", panel_card.MODE_OFF, '**管家**',
-                     'Codex · Codex Model · 思考预算 xhigh · 工作区 docs · 运行方式 独立 worktree'):  # The closed 新话题's line.
+        for part in ("<font color='grey'>私聊顶层的消息</font>\\n每条直接开一个话题", panel_card.MODE_OFF, '**管家**',
+                     'Codex · Codex Model · xhigh · docs · 独立 worktree'):  # The closed 新话题's line.
             self.assertIn(part, text)
         for part in ('压缩阈值', '改成管家', panel_card.LOCKED):
             self.assertNotIn(part, text)
@@ -320,13 +320,13 @@ class ButlerPanelTests(UnifiedCase):
         self.ask()
         self.part('topic')
         text = self.text()
-        self.assertIn("<font color='grey'>子 Agent</font>　轻量（Sonnet，搜索用 Haiku）", text)
+        self.assertIn("<font color='grey'>子 Agent</font>\\n轻量（Sonnet，搜索用 Haiku）", text)
         self.assertIn(panel_card.SUBAGENT_NOTE, text)
         self.assertEqual(self.click(self.option(panel_card.SUBAGENTS, 'same'), event_id='s1'), 1)
         self.assertEqual(self.settings().subagents, 'same')
         self.assertEqual(json.loads(settings.path(self.ctx.state_dir).read_text())['subagents'], 'same')
         self.assertEqual(self.cards[-1]['header']['title']['content'], HUB_TITLES[panel_card.CONFIG])
-        self.assertIn("<font color='grey'>子 Agent</font>　跟主模型", self.text())
+        self.assertIn("<font color='grey'>子 Agent</font>\\n跟主模型", self.text())
         self.assertEqual(self.click(self.option(panel_card.SUBAGENTS, 'light'), event_id='s2'), 1)
         self.assertEqual(self.settings().subagents, 'light')
         # An option no release offers is not written.

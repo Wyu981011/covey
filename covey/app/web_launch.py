@@ -80,7 +80,7 @@ def _selection(env, choices, config, harnesses, reads, draft=None):
 def catalog(env, ctx, chat) -> dict:
     """The data contract v17 ``launch`` block (see the module's docstring)."""
     from covey.app.launch_models import available_models
-    from covey.core.menu_choice import budget_options, harness_of, tiers
+    from covey.core.menu_choice import budget_options, harness_of, plain_budget, plain_budgets, tiers
     from covey.core.defaults import WORK_MODES
     from covey.core.workspaces import RUN_MODES
     choices = available_models(env.topics, ctx)
@@ -92,8 +92,12 @@ def catalog(env, ctx, chat) -> dict:
     for key, entry in ranked.items():
         harness = harness_of(key, entry)
         names, providers, _ = tiers(ranked, harness)
-        options, default = budget_options(entry)
-        start = _selection(env, choices, config, harnesses, reads, draft={"model": key}).effort
+        # The budgets by name, as the 设置 card lists them (T615): no 推荐 or 模型原生默认, which do not say what they run;
+        # the preselected and default ones are replaced by the level they name. 开始任务's check (model_choice) still
+        # takes the card's whole list, a superset.
+        options = plain_budgets(entry)
+        start = plain_budget(entry, _selection(env, choices, config, harnesses, reads, draft={"model": key}).effort)
+        default = plain_budget(entry, budget_options(entry)[1])
         models.append({"key": key, "harness": harness, "harness_title": names.get(harness, harness),
                        "provider": entry.get("provider", ""), "provider_title": providers.get(entry.get("provider", ""), "自带"),
                        "label": str(entry.get("display_name") or entry.get("label") or key.partition(":")[2]),
@@ -108,7 +112,7 @@ def catalog(env, ctx, chat) -> dict:
                   for name in found.names]
     return {"models": models, "workspaces": workspaces,
             "run_modes": [{"value": key, "text": text} for key, text in RUN_MODES.items()],
-            "preselect": {"model": found.model, "effort": found.effort, "work_mode": found.work_mode,
+            "preselect": {"model": found.model, "effort": plain_budget(ranked.get(found.model) or {}, found.effort), "work_mode": found.work_mode,
                           "redaction": "on" if defaults.redaction else "off", "workspace": found.workspace,
                           "run_mode": defaults.run_mode if defaults.run_mode in RUN_MODES else "direct"}}
 
