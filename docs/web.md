@@ -218,7 +218,7 @@
 - 网页先把文件分段传进自己的库：`POST /api/uploads`（`{name, mime, size}`，回 `{id}`）、`POST /api/uploads/:id/parts`（`{n, data}`，每段原始字节不超过 512 KiB）、`POST /api/uploads/:id/done`。单个不超过 20 MB，一句最多 9 个，7 天后过期。
 - Covey 执行 `say` 时经开放接口取回：`GET /sync/upload?id=<id>`（`{id, name, mime, size, parts, done}`，没有、过期、没传完是 404）、`GET /sync/upload/part?id=<id>&n=<n>`（`{n, data}`）。存进话题的 `incoming_media/`（文件名 `web-<id 前 16 位>-<净化过的原名>`），按飞书附件的格式列在话说完之后（`app/web_files.py`）：图片是“图片 N”并作为图片交给模型，其余是“文件 N（原名）”。
 - 有一个取不到（过期、没传完、比说的大、超过 20 MB）整条 `say` 回 failed，写明哪个、为什么，不发半截。
-- 这一轮推回网页时，图片照 v19 的 `images` 显示，正文里的附件块是“附件：图片 N 张”。开新话题（`launch`）不带附件。
+- 这一轮推回网页时，图片照 v19 的 `images` 显示，正文里的附件块是“附件：图片 N 张”。开新话题（`launch`）也能带，见下（v25）。
 
 **`switch`**（v21）：`topic_key`，`payload` 同 `launch` 去掉 `text`（`model`、`effort`、`work_mode`、`workspace`、`run_mode`、`redaction`）。
 
@@ -234,6 +234,7 @@
 - 开法同管家直接开工的话题：私聊顶层一张话题卡，第一轮就是你写的话；这次选择记成这个私聊的“上次开始任务”，下一张启动卡和网页的预选都跟着变。
 - 独立 worktree 只有启动卡能建：这样的话题出一张按网页选择填好的启动卡，在飞书话题里点开始任务。
 - 每一步记在 `<state>/web/launches/<op_id>.json`，同一条操作再来不会开第二个话题。回执“已开 T23「标题」：直接开工”，网页按 T 号跳过去。
+- 带附件（v25）：`payload.files` 同 `say`。开话题之前先全部取回，放在 `<state>/web/launches/<op_id>.files/`，有一个取不到就回 failed、什么都不开；开好后搬进新话题的 `incoming_media/`，第一轮的话按飞书附件的格式列出它们。
 
 **`settings`**：只认主人（`app/access.py` 的 `is_owner`），写设置走和卡片同一处，回执也是卡片那句。`payload.what`：
 
@@ -274,3 +275,4 @@
 | v22 | `settings` 的新话题、管家两页并成 `config`，加独立复核一段 |
 | v23 | 管家那一轮的 `handed`、话题回答的 `relayed_at`（私聊区） |
 | v24 | `config` 的每一行加 `line`（卡片上并排的那一行，从 1 起；行序按卡片的排法：新话题 工作区、运行方式、脱敏，管家 工作区、脱敏、压缩阈值）；去掉新话题的“直接开工”行、`start_note`、`trusted`；`untrust` 下线 |
+| v25 | `launch` 的 `files`（开新话题带附件） |

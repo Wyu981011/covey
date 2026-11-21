@@ -19,6 +19,8 @@ owner's private chat, pushed for the page's chat box (``catalog``), and the page
   and the next page preselect it. A worktree takes minutes to check out, which only the launch card does: such a topic gets the launch
   card prefilled with these choices, to start from there (the receipt says so). Each step is kept in <state>/web/launches/<op_id>.json,
   so an operation done again (the inbox's ledger never does it twice) does not open a second topic.
+- ``files`` (data contract v25): the first turn's attachments, as a ``say``'s (app/web_files.py): taken from the page before anything is
+  opened, then moved into the new topic's incoming_media and listed after the words.
 """
 from __future__ import annotations
 
@@ -171,8 +173,46 @@ def plan_of(env, ctx, chat, payload) -> dict:
             "redaction": redaction, "start": run_mode == "direct"}
 
 
-def launch(env, op_id, chat, payload) -> str:
-    """Open the topic (see the module's docstring); the receipt the page shows, with the topic's T number."""
+def staged_files(env, op_id, record, payload, fetch) -> list:
+    """The launch's ``files`` (data contract v25) taken from the page into <state>/web/launches/<op_id>.files/ before the topic is opened,
+    so a file that cannot be taken opens nothing; [{kind, name, path}] kept in the record, the same list when done again."""
+    from covey.app import web_files
+    if "files" in record:
+        return record["files"]
+    files = web_files.listed(payload.get("files"))
+    if not files:
+        return []
+    if fetch is None:
+        raise ValueError("Covey 现在取不到网页上的附件")
+    staging = record_path(env.state_dir, op_id).with_suffix(".files")
+    return [{"kind": item.kind, "name": item.name, "path": item.path} for item in web_files.fetch(fetch, staging, files)]
+
+
+def placed_files(staged, media_dir) -> list:
+    """The staged files moved into the new topic's incoming_media (a file moved before, by a launch done again, is found there);
+    ListedAttachment each."""
+    import os
+    from covey.core.attachments import ListedAttachment
+    media_dir = Path(media_dir)
+    media_dir.mkdir(parents=True, exist_ok=True)
+    out = []
+    for each in staged:
+        source = Path(each["path"])
+        dest = media_dir / source.name
+        if source.exists():
+            os.replace(source, dest)
+        out.append(ListedAttachment(each["kind"], each.get("name") or "", str(dest)))
+    for folder in {Path(each["path"]).parent for each in staged}:
+        try:
+            folder.rmdir()  # Empty once every file moved; left alone otherwise.
+        except OSError:
+            pass
+    return out
+
+
+def launch(env, op_id, chat, payload, fetch=None) -> str:
+    """Open the topic (see the module's docstring); the receipt the page shows, with the topic's T number. ``fetch``: the page's
+    /openapi request (app/web_ops.py Ops.fetch), for the attachments of the first turn (data contract v25)."""
     from covey.app import butler_topics
     from covey.app.launch_submit import remember_launch
     text = str(payload.get("text") or "").strip()
@@ -189,6 +229,7 @@ def launch(env, op_id, chat, payload) -> str:
     if not record.get("plan"):
         record = {"op_id": op_id, "chat_id": chat, "title": _title(text), "why": "你在网页上开的", "plan": plan_of(env, ctx, chat, payload),
                   "at": time.time(), "sequence": 0}
+        record["files"] = staged_files(env, op_id, record, payload, fetch)
         write_json(path, record, ensure_ascii=False)
     plan = record["plan"]
     app = env.topics.apps[plan["harness"]]
@@ -205,6 +246,9 @@ def launch(env, op_id, chat, payload) -> str:
     if not find_job_record(Path(env.state_dir), message) and not app.runtime.jobs.settling(message):
         target = app.submission.event_context(app.harness.context, event)
         owner = env.runtime.owner_open_id or ""
+        if record.get("files"):  # The first turn lists them as a Feishu message's attachments (app/web_files.py with_files).
+            from covey.app.web_files import with_files
+            text = with_files(text, placed_files(record["files"], target.history_path.parent / "incoming_media"))
         append_history(target.history_path, "user", text, {"message_id": message, "chat_id": chat, **({"sender_id": owner} if owner else {})})
         if app.submission.enqueue_chat_job(target, text, chat, message, prompt_content=text, title=record["title"],
                                            sender_id=owner) is None:

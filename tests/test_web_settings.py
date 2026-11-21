@@ -406,6 +406,43 @@ class WebSettingsTest(UnifiedCase):
                          ("done", words))
         self.assertEqual(len(sent), 1)
 
+    def test_a_launch_with_files_gives_the_first_turn_its_attachments_and_one_that_cannot_be_taken_opens_nothing(self):
+        """T616 21:46 (data contract v25): the new-topic page's + and pasted screenshots go with the first turn, as a say's files do."""
+        import base64
+        from covey.core.jobs import find_job_record
+        from covey.app.web_push_client import WebError
+        model = self.snap()["launch"]["models"][0]
+        uploads = {"a" * 32: ("图.png", "image/png", b"png-bytes"), "b" * 32: ("计划.md", "text/markdown", "- 一\n".encode())}
+
+        def fetch(method, path):
+            query = dict(part.split("=", 1) for part in path.split("?", 1)[1].split("&"))
+            if query["id"] not in uploads:
+                raise WebError("http 404", 404)
+            name, mime, data = uploads[query["id"]]
+            if path.startswith("/sync/upload/part"):
+                return {"n": 0, "data": base64.b64encode(data).decode()}
+            return {"id": query["id"], "name": name, "mime": mime, "size": len(data), "parts": 1, "done": True}
+        self.ops.fetch = fetch
+        sent = []
+        self.app.messenger.create_and_send_card = mock.Mock(side_effect=lambda *a, **k: (sent.append(a[2]), ("card1", "om_rootf"))[1])
+        base = dict(text="看看这两个", model=model["key"], effort=model["start_budget"], workspace="docs", run_mode="direct", redaction="off")
+        state, words = self.launch("op-lf0", **base, files=[{"id": "c" * 32, "name": "过期.pdf", "mime": "application/pdf"}])
+        self.assertEqual((state, words), ("failed", "附件 过期.pdf 取不到：已过期或没传完"))
+        self.assertEqual(sent, [])  # Nothing opened.
+        state, words = self.launch("op-lf1", **base, files=[{"id": "a" * 32, "name": "图.png", "mime": "image/png"},
+                                                            {"id": "b" * 32, "name": "计划.md", "mime": "text/markdown"}])
+        self.assertEqual(state, "done", words)
+        record = json.loads((self.ctx.state_dir / "web" / "launches" / "op-lf1.json").read_text())
+        media = self.ctx.state_dir / "topics" / record["topic_id"] / "incoming_media"
+        saved = sorted(media.iterdir())
+        self.assertEqual([p.read_bytes() for p in saved], [b"png-bytes", "- 一\n".encode()])
+        job = find_job_record(self.ctx.state_dir, "web-op-lf1")
+        history = (self.ctx.state_dir / "topics" / record["topic_id"] / "history.jsonl").read_text()
+        self.assertIn("收到的附件（已下载到本地）", history)
+        self.assertIn(str(saved[0]), history)
+        self.assertEqual(job["topic_id"], record["topic_id"])
+        self.assertFalse((self.ctx.state_dir / "web" / "launches" / "op-lf1.files").exists())  # Moved, and the empty folder gone.
+
     def test_a_launch_is_checked_as_the_cards_start_checks_it(self):
         model = self.snap()["launch"]["models"][0]
         base = dict(text="x", model=model["key"], effort=model["start_budget"], workspace="docs", run_mode="direct")

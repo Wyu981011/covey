@@ -324,7 +324,7 @@ class Ops:
         from covey.app import web_launch
         if not self.runtime.access.is_owner(self.runtime.owner_open_id or ""):
             raise ValueError("只有机器人主人能开话题")
-        return web_launch.launch(self.env, row.get("op_id"), chat, payload)
+        return web_launch.launch(self.env, row.get("op_id"), chat, payload, fetch=self.fetch)
 
     def opened_topic(self, row) -> str:
         """The topic a ``launch`` row opened ('' for none): the push builds it on its next step, so the page can open it at once."""
