@@ -2292,7 +2292,7 @@ class TidyPushTest(WebCase):
 
 
 class RoomTest(WebCase):
-    """The private chat (私聊区, data contract v23, app/web_room.py): a butler turn says whom it handed the owner's words to, a topic turn
+    """The room (大厅, data contract v23, app/web_room.py): a butler turn says whom it handed the owner's words to, a topic turn
     whose conclusion went to the top level says when; a lead's turns carry neither."""
 
     def opened(self, name, **fields):

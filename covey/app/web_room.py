@@ -1,4 +1,4 @@
-"""What the web page's private chat (私聊区, docs/web.md 私聊区) needs beside the butler's and the leads' turns: whom a butler turn
+"""What the web page's room (大厅, docs/web.md 大厅) needs beside the butler's and the leads' turns: whom a butler turn
 handed the owner's words to (``handed``) and when a topic turn's conclusion went to the top level of the private chat (``relayed_at``).
 
 Reading only, as app/web_collect.py: the butler's request records (core/butler_opened.py, main-thread/opened/) and the relay records
