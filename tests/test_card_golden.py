@@ -949,7 +949,7 @@ def answer_tail_cards():
                 "先说结论：三组草图都重看了一遍。" * 12, ask=ask_block("选哪种评法", at="01:49", who="T52 整理设计稿", doing="waiting",
                                                        url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=4")),
             "answer_relay_prose": relay_card(
-                "T53", DONE, text="看板的颜色还没换成：浅色那套换好了，深色那套还没有。" + "原因是深色模式下旧颜色的对比度不够。" * 8,
+                "T53", DONE, text="看板的颜色还没换成：浅色那套换好了，深色那套还没有。" + "原因是深色模式下旧颜色的对比度不够。" * 12,
                 inputs=inputs, outputs=outputs, url=thread_url,
                 ask=ask_block("换看板颜色", at="01:41", who="T53 统一看板和卡片的配色", doing="done"))[0],
             "answer_card_butler": answer_card(text, "✅ 结论", tail(files, inputs, outputs),
