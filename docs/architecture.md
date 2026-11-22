@@ -594,7 +594,7 @@ cancelled、superseded：终态
 - **负责人的运行**（`app/project_lead.py`、`app/project_tools.py`，只在 `is_lead` 的话题里）：
   - **一轮** `butler_turn` 对负责人走 `lead_turn`：消息头是 `lead_rules`（身份、工具、风格、留给第 3 期专员的做法层 `PRACTICE`，分层拼接）加**状态包**（目标与完成标准、话题清单：状态、一句话、交付物，专项记忆（含近 30 天主人删掉的，别记回去）、资料库索引（`COVEY_PROJECT_MEMORY=1` 才有）、风格、自上次唤醒以来的收件箱、近 10 条决定），再是这一轮自己的消息。新会话给全部，续接的会话只给会变的部分（话题清单、风格、收件箱、决定）。
   - **会话只是缓存**：不做摘要压缩（`compact_butler` 跳过负责人）。上一轮 `input_tokens` 超 15 万、话题空闲超 24 小时、或换了模型，`worker` 的 `_start_turn` 经 `settle_session` 清掉会话指针，这一轮新开会话、状态包给全。
-  - **工具**：只有 `Read`、`Grep`、`Glob`（`options["tools"]` 经 `backends/claude/argv.py` 变成 `--tools`；MCP 工具不属内置工具，不受影响）加 Bridge 工具 `topics_list`、`topic_read`、`topics_search`、`workspaces_list` 和 `project_*`。MCP 配置里有 `COVEY_PROJECT_LEAD`（专项 id）时服务只列这些，管家的列表一个字不变。`project_topic_start`、`project_topic_send` 走 `butler_topics` 的 `topic_start`、`topic_send`（负责人的任务调用时开出来的话题带 `project: {role: thread}`，写在绑定里，第一轮排队之前；同时在做的话题不设上限，风格里也没有“派活”档，旧记录的 `style.spawn` 照读不用）；`project_topic_send` 发给还不在任何专项的普通话题时，先用 `app/projects.py` 的 `join_topic`（`by: lead`）把它收进本专项再加话（`app/project_tools.py` 的 `take_in`；别的专项的话题、负责人话题、管家、代答话题和主人移出过专项的 `never_auto` 话题拒绝），负责人规则要它派活前先看专项里和私聊里已有的话题，能追加就追加；`project_topic_stop` 停专项里的一个话题（主人对管家说“停掉 T1”，管家用 `project_send` 交给负责人）：先用 `project_cards.stop_tasks` 停它排队和在跑的任务（转给任务进程，同停止专项），再用 `binding.retire_open_questions` 收掉它等主人回答的问题（`cancel_reason: lead_stop`，卡上写“负责人按你的意思停了这个话题”）并把等回答的任务记录记为 `cancelled`；话题仍在专项的话题清单里、算结束，只能停本专项的话题，专项已结束时拒绝；`project_note`（专项卡上一句，`report` 标要告诉主人的，按风格过滤）、`project_goal`（负责人写给主人看的目标和完成标准，记在 `lead_goal`，网页专项标题下显示它；记录的 `goal` 仍是开专项时的话，状态包里没写过就提醒一句）、`project_remember`、`project_style`、`project_finish`（还有话题在做时拒绝）写记录的 `notes`、`decisions`、`style`，`project_remember`、`project_style` 的记忆条目写进 `projects/<id>/memory.json`（见下面“记忆”）；`project_answer`、`project_escalate`（问题分流，`COVEY_PROJECT_TRIAGE=1`）只在开关开着时列给负责人，关着时直接调也只回答“问题分流没有开”（见下面的问题分流）。
+  - **工具**：只有 `Read`、`Grep`、`Glob`（`options["tools"]` 经 `backends/claude/argv.py` 变成 `--tools`；MCP 工具不属内置工具，不受影响）加 Bridge 工具 `topics_list`、`topic_read`、`topics_search`、`workspaces_list` 和 `project_*`。MCP 配置里有 `COVEY_PROJECT_LEAD`（专项 id）时服务只列这些，管家的列表一个字不变。`project_topic_start`、`project_topic_send` 走 `butler_topics` 的 `topic_start`、`topic_send`（负责人的任务调用时开出来的话题带 `project: {role: thread}`，写在绑定里，第一轮排队之前；同时在做的话题不设上限，风格里也没有“派活”档，旧记录的 `style.spawn` 照读不用）；`project_topic_send` 发给还不在任何专项的普通话题时，先用 `app/projects.py` 的 `join_topic`（`by: lead`）把它收进本专项再加话（`app/project_tools.py` 的 `take_in`；别的专项的话题、负责人话题、管家、代答话题和主人移出过专项的 `never_auto` 话题拒绝），负责人规则要它派活前先看专项里和私聊里已有的话题，能追加就追加；`project_topic_stop` 停专项里的一个话题（主人对管家说“停掉 T1”，管家用 `project_send` 交给负责人）：先用 `project_cards.stop_tasks` 停它排队和在跑的任务（转给任务进程，同停止专项），再用 `binding.retire_open_questions` 收掉它等主人回答的问题（`cancel_reason: lead_stop`，卡上写“负责人按你的意思停了这个话题”）并把等回答的任务记录记为 `cancelled`；话题仍在专项的话题清单里、算结束，只能停本专项的话题，专项已结束时拒绝；`project_note`（专项卡上一句，`report` 标要告诉主人的，按风格过滤）、`project_goal`（负责人写给主人看的目标和完成标准，记在 `lead_goal`，网页专项标题下显示它；记录的 `goal` 仍是开专项时的话，状态包里没写过就提醒一句）、`project_remember`、`project_style`、`project_finish`（还有话题在做时拒绝）写记录的 `notes`、`decisions`、`style`，`project_remember`、`project_style` 的记忆条目写进 `projects/<id>/memory.json`（见下面“记忆”）；`project_answer`、`project_escalate`（问题分流，`COVEY_PROJECT_TRIAGE=1`）只在开关开着时列给负责人，关着时直接调也只回答“问题分流没有开”（见下面的问题分流）。开协作（`COVEY_COLLAB=1`）时多一个 `project_checklist`（目标检查表，纯函数在 `core/project_checklist.py`），`project_finish` 多第三道门 `checklist_gate`（还有没满足的条目或没处理的协作缺口就拒），`project_answer` 要写 `evidence`，由 `app/triage.py` 的 `grounds` 逐条核对；使用者看到的见[负责人对照目标跟进](projects.md#负责人对照目标跟进)和[分流的依据](projects.md#分流的依据)。
   - **记忆** `projects/<id>/memory.json`（`core/project_memory.py`，只用标准库；使用者怎么看见见 [projects.md 专项记忆与资料库](projects.md#专项记忆与资料库)）：条目 `{id, text, kind, source, at, deleted}`，格式和旧版一样；`kind` 是 `decision`、`constraint`、`contact`、`fact`、`style` 之一（负责人工具旧名 `practice`、`pitfall` 记成 `constraint`），`source` 是写进来的那条路定的（`lead`、`owner`、`owner_answer`、`owner_fix`，模型说什么都不算）。
     - **限额与删除顺序**：一条至多 200 字（`TEXT`），问答的一条至多 600 字（`ANSWER_TEXT`）；活条目至多 120 条（`MAX_ENTRIES`）、文件至多 64 KB（`MAX_BYTES`），墓碑至多 20 个、30 天后清掉。超了按 `VICTIMS` 的顺序删最旧的：墓碑、问答（`owner_answer`、`owner_fix`）、负责人记的事实和联系人、负责人记的其他条目、主人自己的话，风格行（主人最后一次定的汇报风格）从不删。删活条目不是丢：连同它的旁路字段写进 `memory-archive.json`（留最近 300 条，`ARCHIVE_ENTRIES`），这个文件读不出来时这次写入失败、记忆保持原样。用户的“删”写墓碑（`deleted` 是删的时间，文字留着），状态包列出近 30 天的墓碑，负责人的 `project_remember` 也拒绝记回去。
     - **旁路与按题留底**：旧版本不认识的东西写在旁边的 `memory-meta.json`（条目 id → `META_KEYS`：出处 `origin`、`asserted_by`、`recorded_by`、层 `layer`、`applies`、`valid`、`superseded_by`、`fixes`），旧版本改写 `memory.json` 丢不掉它们；旧版本不读也不写 meta、archive 和 `answers/`。你答问题卡，每道答了的题记一条决定（`kind=decision`、`source=owner_answer`，条目 id 是问题记录的标识加题号，同一份回答只记一次、删掉的不再记回来），整份问题记录原样存进 `answers/<token>.json`（`answer_record`），条目文字截短了也能查回原文。
@@ -615,8 +615,8 @@ cancelled、superseded：终态
   - **降级** 点“不要专项”→ `downgrade`：记录转 `cancelled`（`state_reason: downgraded`，之后 `ProjectCards` 把卡缩成“⏹ 专项已降为普通话题”）；停掉负责人排队和在跑的任务；专项的每个话题（含原话题）`clear_topic_project`（在 `topic_lock` 里，只清自己专项的）；卡消息和并入的几行的别名 `route_message` 指回原话题（直接开的指向第一个话题，没有话题就不指），卡自己的别名也改回去（`move_topic_message`）。每一步重做无害，所以一个降了一半的专项再点一次会接着降完。话题的任务不停，它们是普通话题了。
 - **问题分流**（`app/triage.py`、`core/triage.py`、`core/project_gates.py`，第 2 期 P2-5；开关 `COVEY_PROJECT_TRIAGE`，见[配置](configuration.md)；做法、硬闸词表、实验 E2/E4 在[专项的问题分流](projects.md#专项的问题分流)）：专项的话题的选择题先交给负责人。`Questions.triage.route` 在 `NativeQuestions.show`（活问题）和 `CheckpointQuestions.deliver`（检查点、暂停的问题）发卡前调；扣住 = 问题记录的 `triage.state == held`，`status`、`display_pending`、任务记录的 `question_delivery_ok` 都按“没发卡但也不是没投出去”写，`recover_question_delivery` 跳过扣住的。回执和超时归 Bridge 的 `sweep`（任务进程只写自己这道题的记录，规则 8），`project_answer` 走 `submit_answer`，`project_escalate` 和超时走原来的发卡口子。状态只按 `TRIAGE_TRANSITIONS`（`held → answered_by_lead | escalated`）走（规则 4）；记录锁内不发网络请求（规则 1）。
 - **续轮与护栏**（`app/project_loop.py`，第 2 期 P2-6；开关 `COVEY_PROJECT_AUTOWAKE`、`COVEY_PROJECT_BUDGET`，见[配置](configuration.md)）：
-  - **谁唤醒**：`ProjectLoop`（功能对象，`COVEY_PROJECTS=1` 才起后台线程，启动后等 20 秒让 Bridge 自己先恢复被打断的任务，之后每 10 秒看一遍）对每个 `active` 专项：有没人读过的回执（收件箱里没被领、或领它的那一轮没好好结束，即 `take_receipts` 的判定）、负责人没有排队、在跑或等主人的任务时，入队 1 个唤醒轮——和负责人话题里的任何消息一样走 `enqueue_chat_job`，消息 id `lead-<专项 id>-<n>`（`n` 数在记录的 `wakes` 里；先记数再入队，丢一个下次再找，不会重复），消息内容只有 Bridge 的一句说明，状态包和收件箱由 `lead_turn` 自己加。`start` 回执总是唤醒（只要 `COVEY_PROJECTS=1`）；其余都要 `COVEY_PROJECT_AUTOWAKE=1`，关着时它们留在收件箱，等负责人下一次被主人叫起时一起读。重启后同一遍查找就把盘上的未领回执重新入队。
-  - **回执谁写**：`thread_end`（专项的话题的一轮结束：一句话结论、状态、任务号）和 token 累加都由 **Bridge** 在任务进程退出后写（`butler_relay.after_runner` 的第一步调 `project_loop.after_runner`，所有任务结束的路径都经过它；规则 8 让任务进程只改本任务的卡和记录，写别的专项的收件箱和记录不算在内，所以放 Bridge 这边，旧任务进程也一样有回执）；`owner_said`（主人在专项的话题里直接说话）在 Bridge 收消息处（`app/app.py` `handle_event`）写；`stalled` 由循环写。`question` 留给 P2-5。回执一律经 `add_receipt`。
+  - **谁唤醒**：`ProjectLoop`（功能对象，`COVEY_PROJECTS=1` 才起后台线程，启动后等 20 秒让 Bridge 自己先恢复被打断的任务，之后每 10 秒看一遍）对每个 `active` 专项：有没人读过的回执（收件箱里没被领、或领它的那一轮没好好结束，即 `take_receipts` 的判定）、负责人没有排队、在跑或等主人的任务时，入队 1 个唤醒轮——和负责人话题里的任何消息一样走 `enqueue_chat_job`，消息 id `lead-<专项 id>-<n>`（`n` 数在记录的 `wakes` 里；先记数再入队，丢一个下次再找，不会重复），消息内容只有 Bridge 的一句说明，状态包和收件箱由 `lead_turn` 自己加。`start` 回执总是唤醒（只要 `COVEY_PROJECTS=1`）；其余都要 `COVEY_PROJECT_AUTOWAKE=1`，关着时它们留在收件箱，等负责人下一次被主人叫起时一起读。重启后同一遍查找就把盘上的未领回执重新入队。开协作时普通回执合批：最新一条到了 `COVEY_PROJECT_BATCH_SECONDS`（默认 20，`0` 不攒）秒没有新的才叫醒，最早一条最多等 4 倍（`ProjectLoop.look` 里的 `settling`）；`start`、主人在停住卡上的选择、扣住的问题、`collab_gap` 马上叫醒，`collab_answered` 不叫醒、也不参与计时。
+  - **回执谁写**：`thread_end`（专项的话题的一轮结束：一句话结论、状态、任务号）和 token 累加都由 **Bridge** 在任务进程退出后写（`butler_relay.after_runner` 的第一步调 `project_loop.after_runner`，所有任务结束的路径都经过它；规则 8 让任务进程只改本任务的卡和记录，写别的专项的收件箱和记录不算在内，所以放 Bridge 这边，旧任务进程也一样有回执）；`owner_said`（主人在专项的话题里直接说话）在 Bridge 收消息处（`app/app.py` `handle_event`）写；`stalled` 由循环写。`question` 留给 P2-5。回执一律经 `add_receipt`。协作的咨询轮不写 `thread_end`、不进资料库；它的 token 由 `consult_tokens` 记进汇总方现在所在的专项，汇总方不在专项时记进被问的协助方所在的专项，按任务键只记一次（`token_jobs`）。
   - **主人触发的轮**：负责人话题里 message id 不以 `lead-` 开头的轮（主人引用专项卡回复、管家 `project_send` 转交、回答的续接）。它入队时（`submission.enqueue_chat_job` → `project_loop.owner_turn`）把 `wakes` 的连续计数和最近一小时的记录清零、清掉停滞标记，并把因护栏（`tokens`、`wakes`、`stalled`）或主人点了停止专项而停住的专项恢复成 `active`；`tokens` 停住的从已用的数目重新开一份预算（`token_floor`），否则下一遍就又停了。主人在专项的话题里说话（`owner_said`）也清连续计数。
   - **Bridge 自造的消息 id**：唤醒轮的 `lead-<pid>-<n>` 和管家转交用的别名 `project-lead-<id>`（`projects.own_message`）在飞书里没有：回复不引用它（`core/topics.py` 的 `context_for_topic` 把 `reply_to` 留空，答案是聊天区的新消息），答案顶上也不画“你问”块（`app/answer_cards.py` 的 `asked`）。accept7 时转交那一轮的卡先回复别名两次被拒，才改发到顶层。
   - **护栏**（全是机械检查，数字由主人定）：专项 `paused` 且 `state_reason` 写 `tokens`、`wakes`、`stalled`，之后不再唤醒，专项卡的“负责人”一行写“停住 · 原因”（`projects.reason_words`）。`COVEY_PROJECT_ASK=1` 时还发一张停住卡问主人继续、收尾还是停（见[专项停住后问主人](projects.md#专项停住后问主人)）；`COVEY_PROJECT_STALL_SECONDS` 能调小停滞的时间。
@@ -633,7 +633,7 @@ cancelled、superseded：终态
 
 ## 多参与者协作（开发中，默认关）
 
-一件交付由几个参与者共同办成：主人点名几位，参与者带着各自的上下文往返，由一个汇总方交出一份带出处的结论，主人不用转述。本节是它的契约：参与者、交付和来源的语义，协作记录与状态机，执行闭环，轮次来源和各消费者的统一行为，能力与预检，两端，话题转交管家，开关、兼容与回退，示例消息流。已落地：兼容基线（`core/turn_source.py` 轮次来源、行为表、来源等级、开关 `COVEY_COLLAB`；`core/collab.py` 交付归属 `route`、两张状态表、限额、幂等键；出队处和任务进程开跑处的来源闸）和执行闭环（`core/collab_records.py` 协作记录，`app/collab_flow.py` 发起、派发、落账、续接、到期、停止、对账和对外的操作，`app/collab_checks.py` 预检，`app/collab_channel.py` 咨询通道，硬只读 `CONSULT`）。两端也已落地：网页的协作条目和操作，飞书的协作卡（`cards/collab_card.py`、`app/collab_cards.py`），见[两端](#两端)。
+一件交付由几个参与者共同办成：主人点名几位，参与者带着各自的上下文往返，由一个汇总方交出一份带出处的结论，主人不用转述。本节是它的契约：参与者、交付和来源的语义，协作记录与状态机，执行闭环，轮次来源和各消费者的统一行为，能力与预检，两端，话题转交管家，开关、兼容与回退，示例消息流。已落地：兼容基线（`core/turn_source.py` 轮次来源、行为表、来源等级、开关 `COVEY_COLLAB`；`core/collab.py` 交付归属 `route`、两张状态表、限额、幂等键；出队处和任务进程开跑处的来源闸）和执行闭环（`core/collab_records.py` 协作记录，`app/collab_flow.py` 发起、派发、落账、续接、到期、停止、对账和对外的操作，`app/collab_checks.py` 预检，`app/collab_channel.py` 咨询通道，硬只读 `CONSULT`）。两端也已落地：网页的协作条目和操作，飞书的协作卡（`cards/collab_card.py`、`app/collab_cards.py`），见[两端](#两端)。负责人这一侧（目标检查表、收尾门禁、回执合批、咨询轮计预算、答题依据校验）也已落地，写在[专项](#专项第-2-期开发中默认关)一节。
 
 ### 参与者、交付与来源
 
@@ -657,7 +657,7 @@ cancelled、superseded：终态
   - 未接手：接收方在等主人回答（不消费那道题、不代答）、已停止（不唤醒）、能力不够、版本不支持。
   - 已答复：答复按 `verified_reply` 存，带证据、出处话题和核查时刻；可以是“不知道”“缺材料”。
 - **一次协作的状态**（`COLLAB_TRANSITIONS`）：`open`，到汇总方交出结论是 `done`，主人停了是 `cancelled`。
-- **限额**（首版默认，试点后再调，都在 `core/collab.py`）：主人点名最多 3 位协助方（`HELPERS_NAMED`，多了发起前就拒，什么都不发），不是主人点名的最多 2 位（`HELPERS_DEFAULT`）；协助方不再去问别人；排队最多 10 分钟（`QUEUE_SECONDS`），整次 30 分钟（`WINDOW_SECONDS`）。用量算进各自话题和专项的预算。
+- **限额**（首版默认，试点后再调，都在 `core/collab.py`）：主人点名最多 3 位协助方（`HELPERS_NAMED`，多了发起前就拒，什么都不发），不是主人点名的最多 2 位（`HELPERS_DEFAULT`）；协助方不再去问别人；排队最多 10 分钟（`QUEUE_SECONDS`），整次 30 分钟（`WINDOW_SECONDS`），这两个时限可用 `COVEY_COLLAB_QUEUE_SECONDS`、`COVEY_COLLAB_WINDOW_SECONDS` 调（`core/collab_records.py`）。咨询轮的 token 记进**一个**专项：汇总方所在的，否则被问的协助方所在的（`project_loop.consult_tokens`，按任务键只记一次）；不两边各记，话题本身没有预算。
 - **停止、到期、重启**：
   - 主人停这件事：协作 `cancelled`，它下面排队和在跑的咨询轮停掉，接收方别的工作不动；迟到的答复留档，不唤醒任何人。
   - 到期：那次咨询 `expired`；汇总方拿已有的答复和缺口接着做，不把主人原来的工作标成失败，也不自动去问主人。
@@ -679,12 +679,12 @@ cancelled、superseded：终态
 - **续接**（`advance`）：没有咨询在等时，给汇总方排一轮 `collab_reply`（消息 id `collab-<协作>-reply-<n>`），带主人原话、每位的答复和证据、没答上的原因；这些咨询记成 `read`。续接轮是汇总方自己的交付（照它的放置表发）；它可以对同一位再澄清一次（检查点再写 `collab_ask`，第 2 次，`clarify`）：协助方在两次之间没跑过新任务，续接第 1 次的分叉（通道指针还在）；跑过，清空通道指针、重新分叉，提示里带第 1 次的问答原文和“又跑了 N 轮”。协助方不能再去请别人（咨询轮没有检查点）；对没请过的人只能等主人发话。续接轮没留下新的咨询就是 `done`。
 - **主人的新话优先**：续接轮的消息里，`goal_rev` 之后主人在汇总方话题里又说的话（`goal_note`）写在最后，说明以主人最新的要求为准、旧答复只作参考；续接轮排在主人已排着的消息后面，不当补充，不消费等着的题（`answers_questions` 为否，`Runs._continue_previous`）。
 - **到期、停止、重启**：排队超过 `QUEUE_SECONDS`，或整次超过 `WINDOW_SECONDS`，没答复的咨询 `expired`（在跑的那一轮停掉），汇总方拿已有的答复和缺口接着做，主人原来那一轮不标失败；主人停这件事（`stop`，或停汇总方的续接轮）：`cancelled`，排队和在跑的咨询轮、续接轮停掉，协助方别的工作不动，迟到的答复记在 `late` 里，不唤醒任何人；重启后线程按记录对账：记了 `taken` 却没有任务记录的按同一个消息 id 再排一次，任务已结束而没人落账的按任务终态落账，从不重跑模型补投递。
-- **负责人回执**：咨询有了结果，汇总方所在的专项（协助方在另一个专项时，那边也）收一条 `collab_answered`（不叫醒）；续接轮检查点写的 `collab_gap`（补不上的缺口、冲突、依赖）收一条 `collab_gap`（叫醒，`app/project_loop.py` 的 `autowake_due` 按 `collab.RECEIPT_WAKES`）。咨询轮不写 `thread_end`。
+- **负责人回执**：咨询有了结果，汇总方所在的专项（协助方在另一个专项时，那边也）收一条 `collab_answered`（不叫醒）；续接轮检查点写的 `collab_gap`（补不上的缺口、冲突、依赖）收一条 `collab_gap`（叫醒，`app/project_loop.py` 的 `autowake_due` 按 `collab.RECEIPT_WAKES`）。咨询轮不写 `thread_end`。开协作时普通回执合批（`settling`、`COVEY_PROJECT_BATCH_SECONDS`）；负责人醒来那一轮读到的只有已回带的 `thread_end` 或 `collab_answered`、它又只记了 `thread` 或 `note` 汇报时，回复不外发（`project_loop.told_already`），汇总方会自己交付，负责人不再转述。
 
 ### 轮次来源
 
 - **字段** `turn_source`（`core/turn_source.py`，任务上是 `BridgeReplyJob.turn_source`）：`{v, kind, asserted_by, recorded_by, origin, level, collab, ask}`，只由 Bridge 建任务时写（`make`），有值时才进任务记录、`queued/` 和 `handoff.json` 的 `extras`。
-- **没有这个字段就是旧来源**（`LEGACY`）：主人的消息、管家和负责人转来的话、唤醒轮、到点回来看、自动重试，都照原来的判断（消息 id 的前缀、发送者、话题的角色），行为一字不变。这一版建的任务都没有它。
+- **没有这个字段就是旧来源**（`LEGACY`）：主人的消息、管家和负责人转来的话、唤醒轮、到点回来看、自动重试，都照原来的判断（消息 id 的前缀、发送者、话题的角色），行为一字不变。主人的消息仍不盖章；带这个字段的只有咨询轮（`collab_ask`）、续接轮（`collab_reply`）和转交管家的那一轮（`handover`）。
 - **kind**（v1）：`owner`（盖了章的主人消息，还没有哪个版本盖）、`collab_ask`（协作咨询）、`collab_reply`（协作答复续接：答复到齐或到期后汇总方接着做的那一轮）、`handover`（话题转交管家，见下）。加新 kind 就是改协议：旧版本不认识的一律不跑，所以给已有来源补 kind 之前，回滚的目标版本要先认识它。
 - **行为表** `BEHAVIOR`：每个消费者只问 `behavior(任务或记录)`，不自己看 kind；不认识的 kind、更高的版本、格式不对的一律是 `NOTHING`（什么都不碰，按只读算）。
 
@@ -703,7 +703,7 @@ cancelled、superseded：终态
 
 ### 能力与预检
 
-- **三方都声明才派发**（`refusal`；派发的实现把协作的 kind 加进 `RUNS`）：
+- **三方都声明才派发**（`refusal`；`RUNS` 现在是 `owner`、`collab_ask`、`collab_reply`、`handover`）：
   - Bridge：`COVEY_COLLAB=1`，而且本 release 的 `RUNS` 有这个 kind；
   - 任务进程：它自己 release 的 `RUNS` 有这个 kind，开跑前再查一次（`app/worker.py`）；
   - 后端：`HarnessCapabilities.collab`（咨询在接收方原会话的临时分叉里跑，限制只管这一轮，接收方的会话、指针、历史、回退标记都不动；真实拒写验过才声明），协作咨询另要 `read_only`（硬只读）。Claude Code 和 Codex 声明了（C8 见下）；Pi、Antigravity、dsh 和扩展的 Harness 没有，预检就是 `not_taken`，后端不启动；设备上不声明（`DEVICE_OFF`）。
@@ -737,13 +737,15 @@ cancelled、superseded：终态
 
 ### 开关、兼容与回退
 
-- `COVEY_COLLAB`：不设是关，不派发任何协作轮、不起 `collab` 线程、规则里没有 `collab_ask`；`1`：三方都支持时派发（`collab_ask`、`collab_reply` 在 `RUNS` 里）。
+- `COVEY_COLLAB`：不设是关，不派发任何协作轮、不起 `collab` 线程、规则里没有 `collab_ask`，负责人的规则、状态包、工具和收尾都和原来逐字一样；`1`：三方都支持时派发（`collab_ask`、`collab_reply` 在 `RUNS` 里），负责人对照目标检查表跟进、答题要写依据，网页和飞书出协作条目和协作卡。
 - **兼容基线**是提交 38dd405 那一版：认识 `turn_source`，不认识、不支持的不跑；没有 `turn_source` 的任务、`topic.json` 和 `runs/` 协议都和原来一字不差（`tests/golden/run_dir.json` 不变）。执行闭环这一版只多跑两个 kind，不改协议。
 - 比兼容基线早的 release 不认识这个字段：`app/runner_spawn.py` 的 `load_job` 把它当一个不认识的属性带上，照主人的消息跑。所以有过协作任务的部署，回滚目标不得早于兼容基线；回滚到兼容基线时排着的协作轮记 `cancelled`、不跑，咨询通道的目录和 `collab/` 记录留着不读。
 - **回退步骤**：
   1. 关 `COVEY_COLLAB` 重启，停新的派发；
   2. 等在跑的协作轮结束或停掉：`collab/` 里没有已接手的咨询，`jobs/` 里没有带 `turn_source` 又没结束的任务；
   3. 再回滚到不早于兼容基线的 release。
+
+  网页的“停止这次协作”只在协作开着、有排队或在跑的咨询时出现；不认 `payload.collab` 的旧后端会把它当成普通停止（停掉汇总方话题手上的那一轮），所以先做完第 1、2 步再换后端，那时网页上已经没有这个按钮。
 
   没按顺序来时，兼容基线照样不跑新版本写下的协作任务（记 `cancelled`）；已经在跑的协作任务进程是新版本的代码，自己按协作的规则投递，Bridge 这边的收集器按 `behavior` 跳过主人的那几样。
 

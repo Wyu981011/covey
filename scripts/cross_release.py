@@ -851,9 +851,15 @@ PATTERNS = [(re.compile(r"\d{4}-\d\d-\d\dT[\d:.]+(?:Z|[+-]\d\d:\d\d)?"), "<T>"),
             (re.compile(r"\b\d{19}-[0-9a-f]{8}\b"), "<OP>"), (re.compile(r"\b\d\d:\d\d(?::\d\d)?\b"), "<HM>"),
             (re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b(?<!" + SID + ")"), "<UUID>")]
 TIMING_LINE = re.compile(r"(?:\[[^\]]*\] )?timing ")
-# Fields whose values are per run but whose presence matters: compared as present.
+# Fields whose values are per run but whose presence matters: compared as present. last_activity is the task monitor's
+# words for the last thing the turn did: after a restart the new Bridge's bridge_restarted makes the runner write its
+# "机器人 … 重启过" note, and whether the monitor saw that or the turn's own progress note last is a race of the two (one
+# release alone flips between 更新了机器人 and 更新了进度 from run to run, old releases too), not the protocol.
 VOLATILE_RECORD = {"timings", "latency_ms", "revision", "card_update_failures", "token_rate", "context_tokens",
-                   "elapsed_seconds", "last_progress_age_seconds", "long_task_summary"}
+                   "elapsed_seconds", "last_progress_age_seconds", "long_task_summary", "last_activity"}
+# The same, in one variant only: downkilled SIGKILLs the runner right after its first phase, so whether it got to record
+# the native session id first is the kill's timing; every other variant compares session_id as it is.
+VOLATILE_BY_VARIANT = {"downkilled": {"session_id"}}
 
 
 def normal(value, scratch, trees, key=None):
@@ -882,9 +888,10 @@ def tidy(data, scratch, trees):
             continue
         section = normal({k: data[phase].get(k) for k in ("error", "facts", "log", "feishu")}, scratch, trees)
         facts = section["facts"] or {}
+        volatile = VOLATILE_RECORD | VOLATILE_BY_VARIANT.get(data.get("variant"), set())
         for name in ("record", "record_after_restart"):
             if isinstance(facts.get(name), dict):
-                for field in VOLATILE_RECORD & set(facts[name]):
+                for field in volatile & set(facts[name]):
                     facts[name][field] = "<PRESENT>"
         # Order of lines and events of different threads is not the protocol, nor are timing lines (their
         # counts, such as journal=jobs:N, vary from run to run within one release).

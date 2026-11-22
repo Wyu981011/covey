@@ -904,6 +904,19 @@ class CrossReleaseTests(unittest.TestCase):
                 self.assertEqual(cross_release.compare(args), 1)
             self.assertIn("not the release they name: ['new-bridge-old-runner plain']", printed.getvalue())
 
+    def test_a_raced_record_field_is_compared_as_present_and_session_id_only_where_the_runner_is_killed(self):
+        def tidied(variant, **record):
+            data = {"variant": variant, "adopt": {"facts": {"record": {"status": "done", **record}}, "log": [], "feishu": []}}
+            return cross_release.tidy(data, Path("/absolute/scratch"), [])["adopt"]["facts"]["record"]
+
+        for variant in ("main", "downkilled"):  # The runner's restart note or the turn's own: which the monitor saw last.
+            self.assertEqual(tidied(variant, last_activity="更新了进度"), tidied(variant, last_activity="更新了机器人"))
+            self.assertNotEqual(tidied(variant, last_activity="更新了进度"), tidied(variant))  # Gone is still a difference.
+        sid = cross_release.SID
+        self.assertEqual(tidied("downkilled", session_id=""), tidied("downkilled", session_id=sid))
+        for variant in ("main", "plain", "stop", "sigterm", "killed"):  # Everywhere else the session id is compared.
+            self.assertNotEqual(tidied(variant, session_id=""), tidied(variant, session_id=sid))
+
     def test_compare_is_not_equal_when_a_run_asked_for_is_missing_or_left_by_another_run(self):
         trees = {"new": "/absolute/new-tree", "old": "/absolute/old-tree"}
 
