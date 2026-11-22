@@ -269,6 +269,7 @@ class UpgradeTest(UpCase):
         self.assertEqual(set(projects.read_record(self.state, pid)["steps"]), set(upgrades.UPGRADE_STEPS))
         self.assertEqual(read_object(records.record_path(self.state, "b" * 16))["state"], "settled")
 
+    @mock.patch.object(projects, "MAX_ACTIVE", 3)
     def test_three_active_projects_stop_the_next_upgrade_and_a_stopped_one_does_not_count(self):
         for number in range(projects.MAX_ACTIVE):
             projects.create(self.state, projects.new_record(chat_id=CHAT, name=f"n{number}", project_id=f"{number:012x}"))
@@ -525,14 +526,35 @@ class DirectTest(UpCase):
         self.assertEqual(self.sent.call_count, 1)
         self.assertEqual(len(self.receipts(first["data"]["project_id"])), 1)
 
-    def test_the_fourth_active_project_is_refused_and_nothing_is_made(self):
-        for number in range(projects.MAX_ACTIVE):
-            projects.create(self.state, projects.new_record(chat_id=CHAT, name=f"n{number}", project_id=f"{number:012x}"))
+    @mock.patch.object(projects, "MAX_ACTIVE", 3)
+    def test_at_the_limit_projects_that_moved_within_a_day_are_not_folded_and_the_answer_names_the_quietest(self):
+        now = time.time()
+        for number, hours in enumerate((3, 20, 10)):
+            projects.create(self.state, projects.new_record(chat_id=CHAT, name=f"n{number}", project_id=f"{number:012x}",
+                                                            now=now - hours * 3600))
         answer = self.start("p4", project=True)
         self.assertFalse(answer["ok"])
         self.assertIn("已经有 3 个专项在做", answer["text"])
+        self.assertIn("最久没动静的是「n1」（20 小时没有动静）、「n2」（10 小时没有动静）、「n0」", answer["text"])
         self.assertEqual(len(self.projects_on_disk()), 3)
+        self.assertEqual([projects.read_record(self.state, f"{n:012x}")["state"] for n in range(3)], ["active"] * 3)
         self.assertEqual(self.sent.call_count, 0)
+
+    @mock.patch.object(projects, "MAX_ACTIVE", 3)
+    def test_at_the_limit_the_quietest_project_with_nothing_to_do_is_folded_and_the_new_one_made(self):
+        now = time.time()
+        for number, days in enumerate((2, 5, 3)):
+            projects.create(self.state, projects.new_record(chat_id=CHAT, name=f"n{number}", project_id=f"{number:012x}",
+                                                            now=now - days * 86400))
+        answer = self.start("p4", project=True, title="新的一件事")
+        self.assertTrue(answer["ok"], answer)
+        folded = projects.read_record(self.state, f"{1:012x}")
+        self.assertTrue(projects.folded(folded))
+        self.assertEqual((folded["idle"]["by"], folded["idle"]["days"]), ("room", 5))
+        self.assertEqual([projects.state_of(projects.read_record(self.state, f"{n:012x}")) for n in (0, 2)], ["active", "active"])
+        self.assertIn("为腾位置收起了最久没动静的专项「n1」", answer["text"])
+        self.assertEqual(projects.active_count(self.state), 3)
+        self.assertTrue(any("folded away to make room" in line for line in self.logs))
 
     def test_an_unknown_workspace_is_refused_as_topic_start_refuses_it(self):
         answer = self.start("p5", project=True, workspace="nowhere")
@@ -824,6 +846,23 @@ class ToolTest(UpCase):
         self.assertEqual(reply_to, "")
         again = self.call("project_send", "send3", pid=name, text="那就继续")
         self.assertEqual(again, answer)  # Once a request.
+
+    def test_project_send_takes_the_topics_it_names_into_the_project_and_says_the_ones_it_cannot(self):
+        tool = next(tool for tool in butler_tool_specs.project_butler_tools(butler_tool_specs.TOOLS) if tool["name"] == "project_send")
+        self.assertEqual(tool["input_schema"]["properties"]["topics"]["type"], "array")
+        topic, project = self.upgraded()
+        plain, _ = self.plain("a9")
+        label = f"T{topic_number(self.state, plain)}"
+        answer = self.call("project_send", "j1", pid=project["id"], text="主人要把它收进来", topics=[label, "T9999"])
+        self.assertTrue(answer["ok"], answer)
+        record = projects.read_record(self.state, project["id"])
+        self.assertIn(plain, record["threads"])
+        self.assertEqual(record["joins"][-1]["by"], "butler")
+        self.assertEqual(load_topic(self.state, plain)["project"], {"id": project["id"], "role": projects.MEMBER})
+        self.assertIn(f"收进专项的话题：{label}（不打断它们）", answer["text"])
+        self.assertIn("没收进：T9999", answer["text"])
+        joined = [row for row in self.receipts(project["id"]) if row["kind"] == members.JOINED]
+        self.assertIn("管家把话题", joined[-1]["text"])
 
     def test_project_send_to_a_folded_project_opens_it_again_and_the_list_says_收起_before(self):
         topic, project = self.upgraded()

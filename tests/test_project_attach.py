@@ -3,6 +3,7 @@ away, its rules and tool descriptions say to hand the matter to that project's l
 again), and with the switch off the rules and the snapshot are what they were."""
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import time
@@ -45,11 +46,22 @@ class AttachTest(unittest.TestCase):
         self.make("eee555", "取消的", "x", state="cancelled")
         self.make("fff666", "别的聊天", "x", chat="oc_other")
         rows = self.groups()["projects"]
-        self.assertEqual(list(rows), ["aaa111", "bbb222", "ccc333", "ddd555"])
+        # The ones on first, then stopped, folded away and finished (the order a long list is cut in).
+        self.assertEqual(list(rows), ["aaa111", "ccc333", "bbb222", "ddd555"])
         self.assertIn("做完，主人再说话会重开", rows["ddd555"])  # The owner's words for it still reach its lead (T574).
         self.assertEqual(rows["aaa111"], "aaa111 · 迁移订单库 · 在做 · 目标：把订单库迁到新集群，周末前要有结果")
         self.assertIn("收起", rows["bbb222"])
         self.assertIn("停住", rows["ccc333"])
+
+    def test_a_long_list_shows_the_newest_on_first_and_points_to_projects_list_for_the_rest(self):
+        for number in range(session.PROJECT_ROWS + 2):
+            self.make(f"p{number:05d}", f"专项{number}", updated_at=1000.0 + number)
+        self.make("zzz999", "收起的", state="paused", state_reason=projects.IDLE, updated_at=5000.0)
+        groups = self.groups()
+        self.assertEqual(list(groups["projects"])[:2], [f"p{session.PROJECT_ROWS + 1:05d}", f"p{session.PROJECT_ROWS:05d}"])
+        full = session.render_snapshot(groups, {}, full=True, at="11-17 10:00", receipts=True)
+        self.assertIn("- 另有 3 个，用 projects_list 看", full)
+        self.assertNotIn("收起的", full)  # Folded away after the ones on: past the rows shown.
 
     def test_it_reads_as_a_section_and_only_the_change_shows_next_time(self):
         self.make("aaa111", "迁移订单库", "迁库")
@@ -82,7 +94,8 @@ class AttachTest(unittest.TestCase):
             off = prompts.butler_rules()
             self.assertEqual(prompts.project_rules(), ())
         self.assertNotIn(prompts.PROJECT_RULE, off)
-        self.assertEqual(on.split("\n"), [*off.split("\n")[:-1], prompts.PROJECT_RULE, off.split("\n")[-1]])
+        self.assertNotIn(prompts.ASKED_RULE, off)
+        self.assertEqual(on.split("\n"), [*off.split("\n")[:-1], prompts.PROJECT_RULE, prompts.ASKED_RULE, off.split("\n")[-1]])
 
     def test_the_rule_and_the_tool_words_say_what_the_owner_decided_and_use_the_terms_list(self):
         rule = prompts.PROJECT_RULE
@@ -108,6 +121,50 @@ class AttachTest(unittest.TestCase):
         for text in texts:
             for word in ("方向", "专员"):
                 self.assertNotIn(word, text)
+
+
+
+class BoardTest(AttachTest):
+    """The 看板's 专项 part as projects grow (core/projects.py MAX_ACTIVE 50, folded ones piling up): what asks for him first,
+    a block each for the first SHOWN on, the rest and the folded ones a line each in one fold."""
+
+    def view(self):
+        from covey.app.digest import Digest
+
+        fake = SimpleNamespace(where=lambda chat: "", urls=lambda ctx, pairs: {})
+        return Digest.projects_view(fake, SimpleNamespace(state_dir=self.state), CHAT,
+                                    {"waiting": [{"topic": "w" * 32}], "running": [], "done": []})
+
+    def test_waiting_ones_first_folded_ones_last_and_the_rest_by_their_last_change(self):
+        self.make("aaa111", "老的", updated_at=1000.0)
+        self.make("bbb222", "新的", updated_at=3000.0)
+        self.make("ccc333", "等你的", threads=["w" * 32], updated_at=500.0)
+        self.make("ddd444", "收起的", state="paused", state_reason=projects.IDLE, updated_at=9000.0)
+        found = self.view()["projects"]
+        self.assertEqual([entry["name"] for entry in found], ["等你的", "新的", "老的", "收起的"])
+        self.assertEqual([bool(entry.get("folded")) for entry in found], [False, False, False, True])
+        self.assertNotIn("_at", found[0])
+
+    def test_past_the_blocks_and_folded_away_each_is_a_line_in_one_fold(self):
+        from covey.cards import board
+        from covey.cards.elements import find_element
+
+        live = [{"name": f"在做{n}", "goal": "", "topics": [], "waiting": 0, "running": 1, "stopped": 0, "url": ""}
+                for n in range(board.SHOWN + 2)]
+        folded = [{"name": "收起1", "goal": "", "topics": [], "waiting": 0, "running": 0, "stopped": 0, "folded": True,
+                   "url": "https://applink.example/p"}]
+        view = {"waiting": [], "running": [], "done": [], "stale": [], "stamp": "08:00", "projects": live + folded}
+        card = board.board_card(view)
+        text = json.dumps(card, ensure_ascii=False)
+        self.assertIn(f"在做{board.SHOWN - 1}", text)
+        fold = find_element(card, "board_projects")
+        self.assertEqual(fold["header"]["title"]["content"], "另有 2 个专项 · 收起的专项 1 个")
+        lines = [element["content"] for element in fold["elements"]]
+        self.assertEqual(len(lines), 3)
+        self.assertIn(f"在做{board.SHOWN}", lines[0])
+        self.assertIn("[收起1](https://applink.example/p)", lines[2])
+        self.assertIn("收起", lines[2])
+        self.assertIsNone(find_element(board.board_card({**view, "projects": live[:2]}), "board_projects"))
 
 
 if __name__ == "__main__":

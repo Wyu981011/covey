@@ -338,7 +338,7 @@ SEND_PROJECT = {"type": "boolean", "description": "主人要把这件事长期�
                                                   "这个话题会转成专项（只在转成专项打开时生效）；一般的补充、拿不准的都不要填"}
 BUTLER_PROJECT_TOOLS = (
     {"name": "projects_list",
-     "description": "列出主人的专项：id、名字、状态（在做、停住、收起、做完、已取消；收起是没有要做的事放久了，有新的事会自动展开）、专项的话题的 T 号、负责人最近记的一句。在做的专项都列出，做完的列最近 3 个。"
+     "description": "列出主人的专项：id、名字、状态（在做、停住、收起、做完、已取消；收起是没有要做的事放久了，有新的事会自动展开）、专项的话题的 T 号、负责人最近记的一句。在做的专项都列出（最近有动静的在前），停住和收起的列最近 30 个，做完的列最近 3 个。"
                     "主人问专项进展、要给专项加话、或要判断某件事是不是已有专项的一部分时先用它（每一轮的快照里也列着在做的和收起的专项）。",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "project_send",
@@ -347,7 +347,10 @@ BUTLER_PROJECT_TOOLS = (
                     "主人原话 Bridge 会附上。pid 是专项的 id（projects_list 里的，或名字）。" + DONE,
      "input_schema": {"type": "object", "required": ["pid", "text"], "properties": {
          "pid": {"type": "string", "description": "专项的 id（projects_list 里的），或它名字里的几个字"},
-         "text": {"type": "string", "description": "交给负责人的内容：主人这次要它做或改的事"}}}},
+         "text": {"type": "string", "description": "交给负责人的内容：主人这次要它做或改的事"},
+         "topics": {"type": "array", "items": {"type": "string"},
+                    "description": "可选：主人要收进这个专项的已有话题，T 号（如 T531）或话题 id，一个一项。直接挂进专项、交给负责人跟进，"
+                                   "正在跑的不打断，等主人回答的问题仍归主人；挂不上的（没找到、已在别的专项里）回复里会逐个说，要转告主人"}}}},
 )
 # 整理专项 (COVEY_PROJECT_TIDY suggest or auto, with COVEY_PROJECTS=1; app/project_tidy.py): listed after the project tools.
 TIDY_ENV = "COVEY_PROJECT_TIDY"

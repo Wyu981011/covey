@@ -292,6 +292,7 @@
 - 不设或 `1`：允许。用不用由主人在设置卡上选的模式定（`<state>/main-thread.json` 的 `mode`），改模式不用重启。新部署第一次启动写成管家，日志 `main thread mode settled mode=agent|topics`。
 - 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话只能用 Claude Code。
 - `main-thread.json` 里旧的 `"desk_topics": true` 读到也按 `false` 处理，启动时记一行 warning，见[已下线的功能与旧配置](legacy.md)。
+- 开着专项（`COVEY_PROJECTS=1`）时，话题能把只有管家能办的事转给管家（检查点 `ask_butler`，记录在 `<state>/butler-asks/`），没有单独的开关，见[在话题里说开专项](projects.md#在话题里说开专项)。
 
 ### 管家规则
 
@@ -484,7 +485,7 @@
 | `COVEY_PROJECT_TIDY_MIN_TOPICS` | `core/project_proposals.py`（`number`）、`app/tidy_realtime.py`（`Realtime.handle`）、`app/tidy_run.py`（`start`） | 5：聊天里的话题少于这个数时不整理（实时、定时、手动都不） | 否 |
 | `COVEY_PROJECT_TIDY_JUDGE_SECONDS` | `core/project_proposals.py`（`number`）、`app/project_sorter.py`（`judge`） | 90：一次判断调用的硬上限，秒；超了这次判断作废，什么都不改 | 否 |
 | `COVEY_PROJECT_TIDY_READ_SECONDS` | `core/project_proposals.py`（`number`）、`app/project_sorter.py`（`backfill`） | 60：补一个老话题的要点那次调用的上限，秒；超了只跳过这个话题 | 否 |
-| `COVEY_PROJECT_UPGRADE` | `app/projects.py`（`mode`：升级、`Projects.consider`；要 `COVEY_PROJECTS=1` 和 `COVEY_DISPATCH_CARD=1`） | 空或 `off`：不转成专项；`butler`：管家转话时带了 `project`，派发卡就静默转成专项（`word` 是旧值，同 `butler`）；`auto`：再加该话题来回到第 3 轮（管家开这个话题算第 1 轮）。同时最多 3 个活专项 | 否 |
+| `COVEY_PROJECT_UPGRADE` | `app/projects.py`（`mode`：升级、`Projects.consider`；要 `COVEY_PROJECTS=1` 和 `COVEY_DISPATCH_CARD=1`） | 空或 `off`：不转成专项；`butler`：管家转话时带了 `project`，派发卡就静默转成专项（`word` 是旧值，同 `butler`）；`auto`：再加该话题来回到第 3 轮（管家开这个话题算第 1 轮）。同时最多 50 个活专项，满了先收起最久没动静的一个（[专项可长可短](projects.md#专项可长可短)） | 否 |
 | `COVEY_PINNED_TOPICS` | `core/topic_seen.py`（看板 `app/pins.py` 和已读消费者 `app/topic_seen.py` 都经它） | 关；`1` 开（还要 `COVEY_PINNED_OVERVIEW=1`） | 否 |
 | `COVEY_PROXY_PROFILE` | `app/proxy.py` | 空：代答不可用 | 否 |
 | `COVEY_PROXY_GROUP_NAME` | `app/proxy.py` | `代答`：第一次开启代答时新建的群叫这个名字；已建的群按群 ID 找，名字照旧 | 否 |

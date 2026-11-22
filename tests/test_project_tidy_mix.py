@@ -99,9 +99,10 @@ class SplitTest(TidyCase):
         self.assertIn("不要收尾", [row for row in project_lead.take_receipts(self.state, new["id"], "k3")
                                   if row["kind"] == "start"][0]["text"])
 
-    def test_a_split_with_three_projects_on_is_not_made(self):
+    @mock.patch.object(projects, "MAX_ACTIVE", 3)
+    def test_a_split_with_three_projects_on_that_all_just_moved_is_not_made(self):
         self.assertTrue(self.apply(self.split(self.a, self.t[:2], "一"))[0])
-        self.assertEqual(self.apply(self.split(self.b, self.t[3:], "二")), (False, "已经有 3 个专项在做，没拆"))
+        self.assertEqual(self.apply(self.split(self.b, self.t[3:], "二")), (False, "已经有 3 个专项在做，都还有事在做，没拆"))
         self.assertEqual(self.record(self.b)["threads"], self.t[3:])
 
     def test_a_split_of_a_topic_another_proposal_moved_first_leaves_it_where_it_went_and_one_left_is_no_project(self):

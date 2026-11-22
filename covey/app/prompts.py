@@ -491,10 +491,18 @@ PROJECT_RULE = (
     "主人要停专项里的某个话题（T 号属于专项的话题）时，也用 project_send 交给负责人，写明停哪个话题；负责人会停掉它的任务、收掉它等主人回答的问题，你自己不动它。")
 
 
+# A topic hands the butler what only it can do (app/butler_asks.py, COVEY_PROJECTS=1): its message starts with HEAD.
+ASKED_RULE = (
+    "- 以“↪ T12 转给管家”开头的消息，是话题 T12 替主人转来的、只有你能办的事（开专项、把话题收进专项、另开话题、交给别的话题）："
+    "“你在 T12 说”后面是主人在 T12 里的原话，“T12 的理解”只作参考。以主人原话为准，原话没要的不做。"
+    "开专项时把 T12 放进 topic_start 的 topics；快照或 projects_list 里已有做同一件事的专项，就用 project_send 交给它、把 T12 放进 topics 收进去；"
+    "两个以上对得上或拿不准时先问主人。不要再转回 T12，也不要请主人再说一遍。")
+
+
 def project_rules() -> tuple[str, ...]:
-    """The butler's rule for putting a new matter into a project that already exists (COVEY_PROJECTS=1); none without it, so
-    the rules are then what they were."""
-    return (PROJECT_RULE,) if projects.enabled() else ()
+    """The butler's rules for putting a new matter into a project that already exists and for what a topic hands it
+    (COVEY_PROJECTS=1); none without it, so the rules are then what they were."""
+    return (PROJECT_RULE, ASKED_RULE) if projects.enabled() else ()
 
 
 # The owner asking how to use Covey itself: the butler reads the running release's own one-page guide first (a release

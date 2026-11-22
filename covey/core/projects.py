@@ -45,7 +45,9 @@ ROLES = (LEAD, MEMBER)
 
 # The defaults for the guards of a later package (the lead's runs, the loop): not read here.
 DEFAULT_WAKES = 30  # Wake-ups in a row with no one stepping in.
-MAX_ACTIVE = 3  # Projects active at the same time.
+# Projects active at the same time: a guard against a runaway, not a quota for the owner to manage. A new project at the
+# limit first folds the quietest one away (app/project_loop.py make_room); a folded or stopped one does not count.
+MAX_ACTIVE = 50
 
 NAME_CHARS = 60
 GOAL_CHARS = 2000
@@ -230,7 +232,8 @@ def joined_at(record, topic_id):
 
 
 JOINS_KEPT = 30  # Entries of a record's ``joins``, the 归入记录 on the project's card.
-JOIN_BY = ("start", "tidy", "rule", "lead")  # Who took a topic in: the direct start, the judge, the 话题要点 rule, the lead's send.
+# Who took a topic in: the direct start, the judge, the 话题要点 rule, the lead's send, the butler's project_send.
+JOIN_BY = ("start", "tidy", "rule", "lead", "butler")
 
 
 def log_join(state_dir, project_id, topic_id, by, why="", now=None) -> dict:
@@ -383,9 +386,9 @@ def is_member_topic(state_dir, topic_id) -> bool:
 
 
 def active_count(state_dir) -> int:
-    """How many projects are on right now (``ACTIVE``; a stopped one, ``PAUSED``, uses no turns and does not count): the
-    owner's limit is ``MAX_ACTIVE``. Read-only: the upgrade and a project opened directly ask it before they write
-    (app/projects.py). 0 without COVEY_PROJECTS."""
+    """How many projects are on right now (``ACTIVE``; a stopped or folded one, ``PAUSED``, uses no turns and does not
+    count): the limit is ``MAX_ACTIVE``. Read-only: a new project asks it, through app/project_loop.py make_room, before
+    it is written. 0 without COVEY_PROJECTS."""
     if not enabled() or not state_dir:
         return 0
     return sum(1 for record in records(state_dir) if (record.get("state") or ACTIVE) == ACTIVE)

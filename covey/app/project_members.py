@@ -69,8 +69,9 @@ GATHERED_NOTE = ("这些话题是整理时收进来的，它们做完不等于�
 JOINED, LEFT = "joined", "left"  # The receipts the lead gets.
 
 
-BY_WORDS = {"start": "建专项时", "tidy": "整理专项", "rule": "整理专项", "lead": "负责人加话时"}  # Who took a topic in, in the
-# lead's receipt and on the card's 归入记录 (core/projects.py JOIN_BY; "rule" is 整理专项 going by the 话题要点's related topics).
+# Who took a topic in, in the lead's receipt and on the card's 归入记录 (core/projects.py JOIN_BY; "rule" is 整理专项 going by
+# the 话题要点's related topics).
+BY_WORDS = {"start": "建专项时", "tidy": "整理专项", "rule": "整理专项", "lead": "负责人加话时", "butler": "管家"}
 
 
 def join_topic(state, pid, topic, *, why="", by="tidy") -> dict:

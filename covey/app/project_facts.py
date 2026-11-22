@@ -106,7 +106,8 @@ def triage_lines(record) -> tuple:
     return tuple(lines)
 
 
-JOIN_WORDS = {"start": "建专项时收进", "tidy": "整理专项归入", "rule": "整理专项按话题要点归入", "lead": "负责人加话时收进"}
+JOIN_WORDS = {"start": "建专项时收进", "tidy": "整理专项归入", "rule": "整理专项按话题要点归入", "lead": "负责人加话时收进",
+              "butler": "管家收进"}
 
 
 def join_lines(state_dir, record) -> tuple:

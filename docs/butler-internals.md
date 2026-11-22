@@ -124,7 +124,7 @@
 - **专项**（`COVEY_PROJECTS=1` 时，Bridge 把它交给 MCP 服务）：管家的清单多出 `projects_list`、`project_send`（`app/butler_projects.py`），`topic_start`、`topic_send` 各多一个可选的 `project`。
   - `topic_start` 带 `project: true` 不开话题，开一个专项（`Projects.start`：记录、负责人话题、专项卡、`start` 回执），`title` 是专项名，`prompt` 是目标和完成标准，主人要收进来的已有话题放 `topics`（T 号的数组），挂进专项、不打断它们，挂不上的回复里逐个说原因。
   - `topic_send` 带 `project: true` 是管家判断这个话题要转成专项（主人要长期跟进、分成几个话题持续推进，或直接说“转成专项”；拿不准不带），`COVEY_PROJECT_UPGRADE` 不是 `off` 才生效。
-  - 专项的话题不接 `topic_send`，回一句改用 `project_send`；`project_send` 的 `pid` 写 id、id 的开头或名字里的几个字，在跑的负责人那一轮收到补充，没有就开它的下一轮（消息 id `main-…`，算主人触发的一轮）。
+  - 专项的话题不接 `topic_send`，回一句改用 `project_send`；`project_send` 的 `pid` 写 id、id 的开头或名字里的几个字，在跑的负责人那一轮收到补充，没有就开它的下一轮（消息 id `main-…`，算主人触发的一轮）。带 `topics` 时先把这些已有话题收进专项（`take_topics`：同 `topic_start` 的 `topics` 用 `wanted_topics` 查，`join_topic` 的 `by` 是 `butler`），回复逐个写收进的和没收进的。
   - 关着时清单和原来一字不差。专项本身见[专项](projects.md)。
 - 查询类工具（`app/butler_tools.py`）只读记录，不持记录锁。`topics_list` 的“有结果没看”（`group: result`）是看板的口径（`board_results`），“最近”是 `TOOLS_AGE`（3 天）。`topic_read` 默认读 2 轮，检查点列阶段、已完成、产物、下一步、在问，以及 `steps` 和 `delivery`。
 - `question_answer` 只答最新一组 pending 的问题：每题都要答，答案是选项原文，有自由文字题就整组拒绝。经 `app/answers.py` 的 `answer_fields` 转成表单字段，补充说明写 `PROXY_NOTE`，再经 `app/questions.py` 的 `submit_answer` 提交，和卡上点“提交回答”同一条路。

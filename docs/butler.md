@@ -186,12 +186,12 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `knowledge_search` | query*、workspace、history | 搜当前条目；`history` 时也搜已取代、已作废的（同上） |
 | `history_search` | query*、workspace、since | 搜 Claude、Codex、Bridge 的历史轮次（只有 `COVEY_HISTORY_CMD` 是绝对路径才列） |
 | `projects_list` | 无 | 列专项：id、名字、状态、专项的话题的 T 号、负责人最近一句（只有 `COVEY_PROJECTS=1` 才列） |
-| `project_send` | pid*、text* | 把主人的话交给专项的负责人，按主人触发的一轮处理（同上） |
+| `project_send` | pid*、text*、topics | 把主人的话交给专项的负责人，按主人触发的一轮处理（同上）；`topics` 里的已有话题先直接收进这个专项 |
 | `projects_tidy` | scope | 整理一遍专项（只在开了[整理专项](projects.md#整理专项)时列） |
 
 `topic_start` 开出的话题和同一个仓库里 30 分钟内还在做的话题标题相近时，回复末尾加“可能重复：T12《…》 也在同一个仓库做相近的事”，只提示，照常开（`app/repo_peers.py` 的 `duplicates`）。
 
-开了专项时 `topic_start`、`topic_send` 各多一个可选的 `project`（开专项、把话题转成专项）。查询类工具只读记录、不持记录锁；`question_answer` 和卡上点“提交回答”走同一条路。各工具的规则见[实现细节 · 工具的细节](butler-internals.md#工具的细节)。
+开了专项时 `topic_start`、`topic_send` 各多一个可选的 `project`（开专项、把话题转成专项）。开了专项时话题也能把只有管家能办的事交过来：私聊顶层一条“↪ T12 转给管家”，管家在它上面排一轮、按主人在话题里的原话办（[在话题里说开专项](projects.md#在话题里说开专项)）。查询类工具只读记录、不持记录锁；`question_answer` 和卡上点“提交回答”走同一条路。各工具的规则见[实现细节 · 工具的细节](butler-internals.md#工具的细节)。
 
 ### 按线索找话题
 

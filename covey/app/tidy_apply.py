@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from covey.app import project_loop
 from covey.app import tidy_facts as facts
 from covey.cards import project_proposal as cards
 from covey.core import butler_opened
@@ -72,10 +73,13 @@ class Applier:
 
         state, kind, pid = Path(ctx.state_dir), record["kind"], record.get("project") or ""
         if kind == proposals.CREATE:
-            if projects.active_count(state) >= projects.MAX_ACTIVE:
-                return False, f"已经有 {projects.MAX_ACTIVE} 个专项在做，没建：先收尾或停掉一个"
+            room = project_loop.make_room(state, self.runtime.log)
+            if not room.ok:
+                return False, "没建：" + room.words
             made = self.create(ctx, chat, record, owner_named=False)
-            return (True, f"已建专项「{record.get('name')}」，专项卡在聊天区") if made else (False, "专项没建成")
+            folded = project_loop.room_words(room).rstrip("。")
+            return (True, f"已建专项「{record.get('name')}」，专项卡在聊天区" + (f"；{folded}" if folded else "")) if made \
+                else (False, "专项没建成")
         if kind == proposals.JOIN:
             ok = self.join(ctx, record, chat)
             return ok, "已归进" if ok else "没归进去：话题或专项已经变了"
@@ -115,8 +119,8 @@ class Applier:
             movable, gone = facts.still_in(state, record["topics"], pid)
             if len(movable) < proposals.MIN_CREATE:
                 return False, f"已过时：{gone + '，' if gone else ''}剩下的不够另建一个专项，没拆"
-            if projects.active_count(state) >= projects.MAX_ACTIVE:
-                return False, f"已经有 {projects.MAX_ACTIVE} 个专项在做，没拆"
+            if not project_loop.make_room(state, self.runtime.log).ok:
+                return False, f"已经有 {projects.MAX_ACTIVE} 个专项在做，都还有事在做，没拆"
             name = str(record.get("name") or "")
             for topic in movable:
                 leave_topic(state, pid, topic, went=f"拆去了新专项「{name[:30]}」")

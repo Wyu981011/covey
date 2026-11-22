@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import dispatch_cards, project_cards, project_facts, project_lead
+from covey.app import dispatch_cards, project_cards, project_facts, project_lead, project_loop
 from covey.app.project_clicks import topic_ctx
 from covey.app.project_members import GATHERED_NOTE, topic_line, wanted_topics
 from covey.app.butler_env import arg_text, reply
@@ -193,15 +193,15 @@ class Projects:
 
     def upgrade(self, dispatch, why=BUTLER, rounds=0) -> str:
         """Turn the 派发卡 ``dispatch`` and its topic into a project (the seven ``UPGRADE_STEPS``); the project's id, '' when
-        there is none (``MAX_ACTIVE`` projects are on, or the card was not sent). Run again after a crash it goes on from
-        the first step not done."""
+        there is none (``MAX_ACTIVE`` projects are on and none could be folded away for it, app/project_loop.py make_room,
+        or the card was not sent). Run again after a crash it goes on from the first step not done."""
         state, token = Path(self.env.state_dir), str(dispatch.get("token") or "")
         topic = str(dispatch.get("topic_id") or "")
         if not (token and topic and dispatch.get("card_id") and dispatch.get("card_message_id")):
             return ""
         pid = project_id("upgrade", token)
         if not projects.read_record(state, pid):
-            if projects.active_count(state) >= projects.MAX_ACTIVE:
+            if not project_loop.make_room(state, self.env.runtime.log).ok:
                 self.env.runtime.log(f"project upgrade skipped: {projects.MAX_ACTIVE} projects are on topic={topic[:12]}")
                 return ""
             note = NOTES["rounds"].format(rounds) if why == "rounds" else NOTES[BUTLER]
@@ -464,14 +464,15 @@ class Projects:
 
     def gather(self, *, chat, name, goal, topics, key, why="", owner_named=False) -> str:
         """整理专项's 建专项: a project of the existing ``topics`` (GATHER_STEPS), named ``name``; its id, '' when MAX_ACTIVE
-        projects are on. ``key`` (the proposal's id) makes the id: the same click twice finds the same project."""
+        projects are on and none could be folded away for it (app/project_loop.py make_room). ``key`` (the proposal's id)
+        makes the id: the same click twice finds the same project."""
         state = Path(self.env.state_dir)
         topics = [topic for topic in dict.fromkeys(topics) if isinstance(topic, str) and projects.TOPIC_RE.fullmatch(topic)]
         if not topics:
             return ""
         pid = project_id("tidy", key)
         if not projects.read_record(state, pid):
-            if projects.active_count(state) >= projects.MAX_ACTIVE:
+            if not project_loop.make_room(state, self.env.runtime.log).ok:
                 self.env.runtime.log(f"project gather skipped: {projects.MAX_ACTIVE} projects are on")
                 return ""
             source = read_object(topic_file(state, topics[0]))
@@ -516,14 +517,14 @@ class Projects:
         if saved.get("answer"):
             return saved["answer"]
         pid = project_id("direct", butler_opened.request_token(request))
-        record = projects.read_record(state, pid)
+        record, room = projects.read_record(state, pid), project_loop.Room(True, "", "")
         if not record:
-            if projects.active_count(state) >= projects.MAX_ACTIVE:
-                return reply(False, f"已经有 {projects.MAX_ACTIVE} 个专项在做，不再开新的：先让主人收尾或停掉一个，"
-                                    "或把这件事当普通话题开（topic_start 不带 project）。")
             plan = butler_topics.plan_start(env, args, butler_settings.load(state))
             if isinstance(plan, str):
                 return reply(False, plan)
+            room = project_loop.make_room(state, env.runtime.log)
+            if not room.ok:
+                return reply(False, room.words + "。这次没开；也可以把这件事当普通话题开（topic_start 不带 project）。")
             joins, refused = wanted_topics(env, chat, args.get("topics"))
             title, prompt = arg_text(args.get("title"), 40), arg_text(args.get("prompt"))
             words = butler_handoff.asked(state, request.job_key).words
@@ -546,6 +547,7 @@ class Projects:
         text = (f"已开专项「{record.get('name')}」（{pid}）：负责人会开话题去做，专项卡在聊天区，进展看卡；不用等它做完。"
                 if done else f"专项「{record.get('name')}」已建（{pid}），"
                              f"{'' if sent else '专项卡还没发出去，'}有一步没做完，Bridge 会自己补；不要再开一次。")
+        text += project_loop.room_words(room)
         origin, threads = record.get("origin") or {}, record.get("threads") or ()
         joined = [topic for topic in origin.get("topics") or () if topic in threads]
         waiting = [topic for topic in origin.get("topics") or () if topic not in threads]

@@ -510,7 +510,8 @@ class Runs:
             prior = {"subagents": dead}  # No checkpoint to verify: only the block of what they delivered.
         shown = devices.device_checkpoint_path(ctx, job.checkpoint_path) if ctx.device else ""
         return ("\n\n" + checkpoint_note(Path(job.checkpoint_path), prior, shown=shown) + self._gist_note(ctx, job)
-                + self._revisit_note(ctx, job) + self._criteria_note(ctx, job) + self._images_note(ctx, job))
+                + self._revisit_note(ctx, job) + self._ask_note(ctx, job) + self._criteria_note(ctx, job)
+                + self._images_note(ctx, job))
 
     def _dead_subagents(self, ctx: BridgeContext, job: ReplyJob) -> dict | None:
         """What the subagents of the topic's last ended task delivered (app/subagent_recovery.py), when that task failed
@@ -577,6 +578,15 @@ class Runs:
         if not revisits.records.enabled() or not revisits.ordinary(ctx.state_dir, topic, job.chat_id):
             return ""
         return "\n\n" + revisits.REVISIT_RULE
+
+    def _ask_note(self, ctx: BridgeContext, job: ReplyJob) -> str:
+        """话题转交管家's rule (app/butler_asks.py: COVEY_PROJECTS=1 with the butler on, the owner's own turn of a topic
+        in a chat with a butler), '' otherwise."""
+        from covey.app import butler_asks
+
+        if not butler_asks.offered(self.runtime.access, ctx.state_dir, job, job.topic_id or ctx.topic_id):
+            return ""
+        return "\n\n" + butler_asks.RULE
 
     def _continue_previous(self, ctx: BridgeContext, job: ReplyJob) -> dict | None:
         """A task of the topic waiting for answers when ``job`` starts without being one: it becomes continued and

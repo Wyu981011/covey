@@ -17,7 +17,9 @@ when something happened since it last looked, and the mechanical checks that sto
   question waiting, no receipt unread) and nothing said or done for COVEY_PROJECT_IDLE_DAYS days (default 7, ``fold``) is
   folded away: PAUSED with ``state_reason`` ``idle`` (``projects.IDLE``) and ``idle`` ({at, days}); no pause card, no question. The owner's own
   turn in the lead's topic, his word in a member's topic (``heard``) or the butler's ``project_send`` (all go through ``reopen``)
-  open it again; ``idle_reopened_at`` keeps it from folding again before something has happened.
+  open it again; ``idle_reopened_at`` keeps it from folding again before something has happened. With MAX_ACTIVE projects
+  on, a new one (the butler's start, an upgrade, 整理专项's 建 and 拆) first folds the quietest one that rests and has been
+  quiet a day (``make_room``) instead of being refused; only when none can be folded is it refused, naming the quietest.
 - A project its lead finished (``done``) opens again the same ways (``owner_spoke``, ``unfinish``): the owner speaking in
   it means there is more to do; ``owner_at`` keeps when he last did (app/project_tools.py project_finish's gate).
 - With COVEY_PROJECT_ASK=1 a pause a guard made is also put to the owner (``pause``): the record gets ``pause_ask`` ({reason,
@@ -39,6 +41,7 @@ reply that goes out is the saved, authorized one."""
 from __future__ import annotations
 
 import time
+from collections import namedtuple
 from pathlib import Path
 
 from covey.app import project_context, project_lead, triage as triage_flow
@@ -163,6 +166,102 @@ def last_activity(state_dir, record, receipts) -> float:
             times.append(board_read.ended_at(job))
     times += [float(item.get("at") or 0) for item in receipts if item.get("kind") != "stalled"]
     return max(times)
+
+
+def receipts(state_dir, project_id) -> list:
+    """Every receipt of the project's inbox, read or not: a member's end the lead has read is activity all the same."""
+    try:
+        return [read_object(path) for path in project_lead.inbox_dir(state_dir, project_id).glob("*.json")]
+    except OSError:
+        return []
+
+
+def resting(state_dir, record, pending) -> bool:
+    """Whether ``record``'s project has nothing the lead or the Bridge could move: nothing to do, or only the owner's answer
+    awaited (``ProjectLoop.look`` folds such a one away after the idle days, ``rest``)."""
+    topics = [str(record.get("lead_topic_id") or ""), *(record.get("threads") or ())]
+    return not has_work(state_dir, record, pending) or not (running_turns(state_dir, topics) or movable(state_dir, topics, pending))
+
+
+def quiet_since(state_dir, record) -> float:
+    """When something last happened in the project, its opening again after a fold counted (what the idle days run from)."""
+    return max(last_activity(state_dir, record, receipts(state_dir, record["id"])), float(record.get("idle_reopened_at") or 0))
+
+
+# Making room for a new project when MAX_ACTIVE are on (``make_room``): the quietest active project that has rested this
+# long is folded away now instead of after the idle days, so a project that has gone still does not keep a new one out.
+ROOM_IDLE = 86400
+QUIETEST_SHOWN = 3  # The quietest projects a refusal names, for the owner to wrap up or stop.
+Room = namedtuple("Room", "ok folded words")  # ok: a new project may begin; folded: the name of the one folded for it; words: why not.
+
+
+def quietest(state_dir, now=None) -> list:
+    """[(seconds quiet, record, whether it rests)] of the active projects (``quiet_since``, ``resting``), the quietest
+    first: what ``make_room`` folds and what a refusal names."""
+    now = time.time() if now is None else now
+    found = []
+    for record in projects.records(state_dir):
+        if projects.state_of(record) != projects.ACTIVE:
+            continue
+        found.append((now - quiet_since(state_dir, record), record, resting(state_dir, record, unread(state_dir, record["id"]))))
+    return sorted(found, key=lambda item: item[0], reverse=True)
+
+
+def room_possible(state_dir, now=None) -> bool:
+    """Whether a new project could begin, without changing anything: fewer than MAX_ACTIVE are on, or one of them could be
+    folded away for it (what a proposal of 整理专项 asks before it is shown)."""
+    if projects.active_count(state_dir) < projects.MAX_ACTIVE:
+        return True
+    return any(rests and quiet >= ROOM_IDLE for quiet, _, rests in quietest(state_dir, now))
+
+
+def make_room(state_dir, log=None, now=None) -> Room:
+    """Whether a new project may begin. Fewer than MAX_ACTIVE on: yes. Else the quietest active project that rests and has been
+    quiet ROOM_IDLE at least is folded away as the idle fold does it (PAUSED, ``idle`` with ``by`` "room" and the days it
+    rested; its card becomes 收起 and new work opens it again), and its name is in ``folded``. None to fold: ``words`` says
+    so and names the quietest ones, for the owner to wrap up or stop. Records only (rule 1): the caller writes the new
+    project after."""
+    if not projects.enabled() or projects.active_count(state_dir) < projects.MAX_ACTIVE:
+        return Room(True, "", "")
+    now = time.time() if now is None else now
+    ranked = quietest(state_dir, now)
+    for quiet, record, rests in ranked:
+        if not rests or quiet < ROOM_IDLE:
+            continue
+        days, done = max(1, int(quiet // 86400)), []
+
+        def change(data):
+            if data.get("state") != projects.ACTIVE:
+                return
+            data["state"], data["state_reason"] = projects.PAUSED, projects.IDLE
+            data["idle"] = {"at": now, "days": days, "by": "room"}
+            data.pop("stall", None)
+            done.append(True)
+        try:
+            projects.update(state_dir, record["id"], change)
+        except (KeyError, ValueError, OSError):
+            continue
+        if done:
+            if log is not None:
+                log(f"project folded away to make room project={str(record['id'])[:8]} days={days}")
+            return Room(True, cut(record.get("name"), 30) or "专项", "")
+    named = "、".join(f"「{cut(record.get('name'), 20) or '专项'}」（{quiet_words(quiet)}没有动静）"
+                     for quiet, record, _ in ranked[:QUIETEST_SHOWN])
+    return Room(False, "", f"已经有 {projects.MAX_ACTIVE} 个专项在做，都还有事在做或刚动过，没有能收起腾位置的"
+                           + (f"；最久没动静的是{named}，收尾或停掉一个就能再开" if named else ""))
+
+
+def quiet_words(seconds) -> str:
+    """How long a project has been quiet, in the owner's words: N 天, else N 小时, else 不到 1 小时."""
+    seconds = max(0, int(seconds))
+    if seconds >= 86400:
+        return f"{seconds // 86400} 天"
+    return f"{seconds // 3600} 小时" if seconds >= 3600 else "不到 1 小时"
+
+
+def room_words(room) -> str:
+    """The sentence a new project's answer adds when ``make_room`` folded a project away for it; '' when none was."""
+    return f"为腾位置收起了最久没动静的专项「{room.folded}」，有新的事它会自动展开。" if room.folded else ""
 
 
 def reported(state_dir, topic_id, key) -> bool:
@@ -496,8 +595,7 @@ class ProjectLoop:
                 return self.pause(record, reason, now) if reason else self.wake(record, now)
             if not due:
                 return
-        topics = [lead, *(record.get("threads") or ())]
-        if not has_work(state, record, pending) or not (running_turns(state, topics) or movable(state, topics, pending)):
+        if resting(state, record, pending):
             # Nothing to do, or only the owner's answer awaited (the lead can move nothing): no stall, and it folds away
             # after the idle days all the same (the question card stays; the owner's answer opens the project again).
             return self.rest(record, state, now)
@@ -505,18 +603,14 @@ class ProjectLoop:
             self.stall(record, state, now, lead, pending)
 
     def inbox(self, state, pid) -> list:
-        try:  # Every receipt, read or not: a member's end the lead has read is activity all the same.
-            return [read_object(path) for path in project_lead.inbox_dir(state, pid).glob("*.json")]
-        except OSError:
-            return []
+        return receipts(state, pid)
 
     def rest(self, record, state, now) -> None:
         """Nothing to do: folded away once ``projects.idle_seconds()`` have passed since anything happened (a task ended, a receipt came, the
         owner spoke, the project was opened or opened again). The pause card is not sent and nothing is asked."""
         pid = record["id"]
         self.unstall(record, state)  # Nothing left to do: a reminder of a stall is over.
-        activity = max(last_activity(state, record, self.inbox(state, pid)), float(record.get("idle_reopened_at") or 0))
-        if now - activity < projects.idle_seconds():
+        if now - quiet_since(state, record) < projects.idle_seconds():
             return
         days = projects.idle_days()
 

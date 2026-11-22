@@ -3,7 +3,8 @@ when COVEY_PROJECTS=1, the last with COVEY_PROJECT_TIDY too, core/butler_tool_sp
 
 - ``projects_list``: the chat's projects and the proposals 整理专项 left for the owner, in the 看板's words.
 - ``project_send`` hands the owner's words to a project's lead as a turn the owner started (a supplement to the turn it is in, else its
-  next turn); once a request (its record in the butler's request path, app/butler_topics.py).
+  next turn), the existing topics in its ``topics`` joined to the project first (``take_topics``); once a request (its record in the
+  butler's request path, app/butler_topics.py).
 - ``projects_tidy`` starts 整理专项 (app/project_tidy.py start).
 
 The lead has its own tools (app/project_tools.py): ``butler_only`` refuses these to a lead's job. Rule 6 (AGENTS.md): a steer that may have
@@ -28,6 +29,7 @@ OFF_WORDS = "专项没有开（COVEY_PROJECTS）。"
 STATE_WORDS = {projects.ACTIVE: "在做", projects.PAUSED: "停住", projects.DONE: "做完", projects.CANCELLED: "已取消"}
 FOLDED_WORDS = "收起"  # A project paused for being idle (core/projects.py ``folded``): the state the butler hears.
 LISTED_ENDED = 3  # Projects that ended, listed after the ones that are on.
+LISTED_PAUSED = 30  # Projects stopped or folded away, listed after the ones on: the newest; folded ones pile up over months.
 
 
 def butler_only(env, request):
@@ -47,8 +49,13 @@ def projects_list(env, request):
         return refused
     state, chat = Path(env.state_dir), env.chat()
     found = projects.records(state, chat)
-    live = [record for record in found if projects.state_of(record) in (projects.ACTIVE, projects.PAUSED)]
-    ended = [record for record in found if record not in live][-LISTED_ENDED:]
+    # The ones on first, then the stopped and folded ones, each the most recently changed first; of those not on, the
+    # LISTED_PAUSED newest (the rest are still found by name, ``find_project``).
+    newest = lambda record: -float(record.get("updated_at") or 0)  # noqa: E731
+    active = sorted((record for record in found if projects.state_of(record) == projects.ACTIVE), key=newest)
+    paused = sorted((record for record in found if projects.state_of(record) == projects.PAUSED), key=newest)
+    live, unlisted = [*active, *paused[:LISTED_PAUSED]], len(paused[LISTED_PAUSED:])
+    ended = [record for record in found if projects.state_of(record) not in (projects.ACTIVE, projects.PAUSED)][-LISTED_ENDED:]
     # The proposals waiting for him, said the same way as the 看板.
     waiting = []
     if project_proposals.enabled():
@@ -64,6 +71,8 @@ def projects_list(env, request):
         note = project_facts.lead_note(record)
         rows.append(f"{record['id']} · {cut(record.get('name'), 30)} · {FOLDED_WORDS if projects.folded(record) else STATE_WORDS.get(projects.state_of(record), projects.state_of(record))}"
                     f" · 话题 {threads}" + (f" · 最近：{cut(note, 40)}" if note else ""))
+    if unlisted:
+        rows.append(f"另有 {unlisted} 个更早停住或收起的专项没列出：project_send 的 pid 写它名字里的几个字也能交给它")
     return reply(True, "\n".join(rows) + (f"\n{pending.lstrip('；')}" if pending else ""), count=len(found), waiting=len(waiting),
                  projects=[{"id": record["id"], "name": record.get("name"), "state": projects.state_of(record)}
                            for record in [*live, *ended]])
@@ -153,6 +162,7 @@ def project_send(env, request):
             projects.update(state, record["id"], project_loop.owner_spoke)
         except (KeyError, ValueError, OSError):
             return reply(False, f"专项「{name}」已收尾，重开没有成功，这次没有转。")
+    joined, unjoined = take_topics(env, chat, record, request.args.get("topics"))
     # No ``topic_id``: the readers of main-thread/opened (core/butler_opened.py) take a record with one for a topic the request handed
     # on to, and the lead is not one (it is not relayed, has no T number and no thread of its own).
     note = {"request": request.id, "job_key": request.job_key, "chat_id": chat, "lead_topic_id": lead, "project_id": record["id"],
@@ -160,6 +170,8 @@ def project_send(env, request):
     butler_opened.save(path, note)
     owner = butler_handoff.asked(state, request.job_key)
     sent = lead_prompt(name, text, owner)
+    taken = (f"收进专项的话题：{'、'.join(joined)}（不打断它们）。" if joined else "") + (
+        f"没收进：{'；'.join(unjoined)}。把这些告诉主人。" if unjoined else "")
     shown = owner.words or text
     data = {"project_id": record["id"], "lead_topic_id": lead}
     job = butler_topics.live_turn(app, ctx, chat)
@@ -173,13 +185,38 @@ def project_send(env, request):
             return done(path, note, reply(False, f"没有送进专项「{name}」负责人正在跑的任务 #{job.job_id}：{exc}。没有发出；"
                                         "等这一轮结束后再转。", **data))
         return done(path, note, reply(True, f"已转给专项「{name}」的负责人："
-                                          f"{butler_topics.steered_words(job, saved)}。", **data, steered=True))
+                                          f"{butler_topics.steered_words(job, saved)}。{taken}", **data, steered=True))
     if not (find_job_record(state, mid) or app.runtime.jobs.settling(mid)):
         append_history(ctx.history_path, "user", shown, {"message_id": mid})
         if app.submission.enqueue_chat_job(ctx, shown, chat, mid, prompt_content=sent, title=name) is None:
             return done(path, note, reply(False, f"专项「{name}」负责人的下一轮没有提交：模型配置无法确认。", **data))
-    return done(path, note, reply(True, f"已转给专项「{name}」的负责人：它开了新的一轮，结果会由 Bridge 发给主人。",
+    return done(path, note, reply(True, f"已转给专项「{name}」的负责人：它开了新的一轮，结果会由 Bridge 发给主人。{taken}",
                                 **data, steered=False))
+
+
+def take_topics(env, chat, record, raw) -> tuple:
+    """project_send's ``topics``: each an ordinary topic of the chat joined to the project as the butler's (app/project_members.py
+    join_topic, ``by`` "butler": its running turn and the question it waits on are left as they are, the lead gets a ``joined``
+    receipt) and its cards marked 已归进 · 移出; ([the T numbers joined], [each one not joined, with why])."""
+    from covey.app.project_members import join_topic, wanted_topics
+
+    if not raw:
+        return [], []
+    state = Path(env.state_dir)
+    joins, refused = wanted_topics(env, chat, raw)
+    joined, unjoined = [], [f"{item['ref']}，{item['why']}" for item in refused]
+    for topic in joins:
+        label = topic_label(state, topic) or topic[:8]
+        try:
+            join_topic(state, record["id"], topic, why="主人让管家收进来", by="butler")
+        except (ValueError, KeyError) as exc:
+            unjoined.append(f"{label}，{exc}")
+            continue
+        joined.append(label)
+        tidy = getattr(env, "tidy", None)
+        if tidy is not None:
+            tidy.show_joined(topic, record["id"])
+    return joined, unjoined
 
 
 def projects_tidy(env, request):

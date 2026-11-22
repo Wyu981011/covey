@@ -7,6 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from covey.app.card_lanes import after_ack
+from covey.app import project_loop
 from covey.app import tidy_facts as facts
 from covey.cards import project_proposal as cards
 from covey.core import project_proposals as proposals
@@ -172,11 +173,13 @@ class Clicks:
             return "tidy_decided"
 
         def build():
-            if projects.active_count(state) >= projects.MAX_ACTIVE:
-                pid, words = "", f"已经有 {projects.MAX_ACTIVE} 个专项在做，没建：先收尾或停掉一个，再说“整理一下专项”"
+            room = project_loop.make_room(state, self.runtime.log)
+            if not room.ok:
+                pid, words = "", "没建：" + room.words + "。之后再说“整理一下专项”。"
             else:
                 pid = self.applier.create(ctx, chat, {**record, "name": name, "goal": goal}, owner_named=named, name=name, goal=goal)
-                words = f"已建专项「{name}」：专项卡在聊天区，负责人接着跟进。" if pid else "专项没建成，过一会儿再说“整理一下专项”。"
+                words = (f"已建专项「{name}」：专项卡在聊天区，负责人接着跟进。" + project_loop.room_words(room) if pid
+                         else "专项没建成，过一会儿再说“整理一下专项”。")
                 if pid and unknown:
                     words += f"（{'、'.join(unknown)} 不是你最近的话题，没加）"
                 if pid and taken:

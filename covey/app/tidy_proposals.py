@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from covey.app import project_loop
 from covey.app import project_sorter as sorter
 from covey.app import tidy_facts as facts
 from covey.cards import project_proposal as cards
@@ -202,7 +203,7 @@ class ProposalCards:
 
     def propose(self, ctx, chat, made) -> str:
         """A new project the judge sees: made at once (``auto``, or the owner's 以后直接建), else a proposal card; '' when it
-        is not proposed (以后别提议, turned down before, MAX_ACTIVE projects on)."""
+        is not proposed (以后别提议, turned down before, MAX_ACTIVE projects on and none could be folded away for it)."""
         state = Path(ctx.state_dir)
         prefs = proposals.prefs(state)
         # Topics already in a project are not proposed again.
@@ -211,7 +212,7 @@ class ProposalCards:
             return ""
         if topics != list(made["topics"]):
             made = {**made, "topics": topics, "id": proposals.proposal_id(proposals.CREATE, topics)}
-        if projects.active_count(state) >= projects.MAX_ACTIVE:
+        if not project_loop.room_possible(state):
             return ""
         if proposals.declined_like(state, proposals.CREATE, made["topics"]):
             return ""

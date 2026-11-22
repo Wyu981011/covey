@@ -527,7 +527,16 @@ class Digest:
             topics = [topic for topic in (record.get("lead_topic_id"), *(record.get("threads") or ())) if topic]
             found.append({"name": record.get("name") or "", "goal": record.get("goal") or "", "topics": topics,
                           "waiting": len(rows["waiting"] & set(topics)), "running": len(rows["running"] & set(topics)),
-                          "stopped": len(stopped & set(topics)), "lead": record.get("lead_topic_id") or ""})
+                          "stopped": len(stopped & set(topics)), "lead": record.get("lead_topic_id") or "",
+                          **({"folded": True} if projects.folded(record) else
+                             {"paused": True} if record.get("state") == projects.PAUSED else {}),
+                          "_at": float(record.get("updated_at") or 0)})
+        # What asks for him first (等你, 停住, 在做), then the rest, each the most recently changed first; folded away last
+        # (cards/board.py puts those and what is past its SHOWN blocks in one fold).
+        found.sort(key=lambda entry: (bool(entry.get("folded")), not entry["waiting"], not entry["stopped"],
+                                      not entry["running"], -entry["_at"]))
+        for entry in found:
+            entry.pop("_at")
         # The proposals waiting for him, each with its topics, to decide right on the 看板, not by
         # scrolling up the chat. One of a single topic is no project any more (app/project_sorter.py MIN_CREATE): left out.
         pending = []

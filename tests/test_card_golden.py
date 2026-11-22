@@ -1442,6 +1442,14 @@ def digest_cards():
                              "why": "", "rows": [{"topic": "h", "label": "T488", "title": "修 064 采购审批数据包",
                                                   "url": "https://applink.feishu.cn/t/488"},
                                                  {"topic": "i", "label": "T505", "title": "优化 Bootstrap 下一环节", "url": ""}]}]}),
+            # Many projects (T639: up to 50 on, folded ones piling up): the first 8 on a block each, the rest and the
+            # folded ones a line each in one fold.
+            "board_many_projects": board_card({
+                "waiting": [], "stale": [], "running": [], "done": [], "stamp": "08:00",
+                "projects": [*({"name": f"专项 {n}", "goal": "目标" if n < 2 else "", "topics": [f"t{n}"], "waiting": int(n == 0),
+                                "running": 1, "stopped": 0, "url": f"https://applink.feishu.cn/t/{700 + n}"} for n in range(10)),
+                             {"name": "旧的上线收尾", "goal": "", "topics": ["u"], "waiting": 0, "running": 0, "stopped": 0,
+                              "folded": True, "url": "https://applink.feishu.cn/t/650"}]}),
             "board_empty": board_card({"waiting": [], "stale": [], "running": [], "done": [], "stamp": "08:00"}),
             # Nothing to list, told apart (T604 #53): the owner never had a topic; a record from 08:00 drawn later.
             "board_first_use": board_card({"waiting": [], "stale": [], "running": [], "done": [], "stamp": "08:00",

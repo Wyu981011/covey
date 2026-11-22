@@ -19,8 +19,9 @@ A cancelled topic is 停住了 unless the owner stopped it himself (core/look.py
 status, as before.
 
 ``view`` is app/digest.py collect's, with ``url`` on each row and, from board_view, ``projects`` [{name, goal, topics,
-waiting, stopped, running}], ``proposals`` (open proposal cards) and ``tidy`` (整理专项 on). 早晚汇总 keeps its own card
-(cards/digest.py)."""
+waiting, stopped, running, folded}] (what asks for him first, folded away last: a block each for the first SHOWN on, the
+rest and the folded ones a line each in one fold), ``proposals`` (open proposal cards) and ``tidy`` (整理专项 on). 早晚汇总
+keeps its own card (cards/digest.py)."""
 from __future__ import annotations
 
 from covey.cards import ui
@@ -203,6 +204,16 @@ def project_block(project):
                                              if project.get("url") else {})}
 
 
+def project_line(project):
+    """A project past the 看板's blocks, or folded away, in one line: its name (a link to it) and 收起, 停住 (a guard or the
+    owner stopped it) or how its topics stand."""
+    stand = "、".join(f"{n} 个{word}" for n, word in ((project.get("waiting"), "等你"), (project.get("stopped"), "停住"),
+                                                      (project.get("running"), "在做")) if n)
+    name = literal_text(project.get("name") or "专项")
+    word = "收起" if project.get("folded") else "停住" if project.get("paused") else stand or "在做"
+    return md((f"[{name}]({project['url']})" if project.get("url") else name) + " " + grey("· " + word), size="normal_v2")
+
+
 def proposal_block(item):
     """A proposal waiting for him: its name, its topics (each a link), its goal, and 建专项 / 不管了 that act on it from
     here (app/project_tidy.py BOARD_FROM). Not one clickable block: its topics are links of their own."""
@@ -287,7 +298,16 @@ def board_card(view, now=None):
             f"　<text_tag color='violet'>{len(pending)} 个提议等你定</text_tag>" if pending else "")
         elements.append({"tag": "markdown", "content": content, "text_size": "normal_v2",
                          "icon": {"tag": "standard_icon", "token": "folder_outlined", "color": "grey"}})
-        elements += [project_block(project) for project in projects]
+        # A block each for those on, the first SHOWN; the rest and the ones folded away one line each in a fold, as the
+        # list grows (app/project_loop.py: up to MAX_ACTIVE on, and folded ones pile up).
+        on = [project for project in projects if not project.get("folded")]
+        elements += [project_block(project) for project in on[:SHOWN]]
+        rest, folded = on[SHOWN:], [project for project in projects if project.get("folded")]
+        if rest or folded:
+            title = " · ".join(part for part in (f"另有 {len(rest)} 个专项" if rest else "",
+                                                 f"收起的专项 {len(folded)} 个" if folded else "") if part)
+            elements.append(collapsible("board_projects", title, [project_line(project) for project in rest + folded],
+                                        quiet=True))
         elements += [proposal_block(item) for item in pending[:SHOWN]]
         if view.get("tidy") is not None:
             line = ("「建专项」按提议里的话题和名字建，建好后话题可以移出、名字可以改" if pending else

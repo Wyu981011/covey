@@ -175,6 +175,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ memory-candidates.json       晚间汇总里“你反复说的”候选和主人点的「记下」「不用」（`COVEY_MEMORY=1`）
 │  ├─ projects/                    专项（`COVEY_PROJECTS`）：`<专项>.json`；`<专项>/` 里是记忆 `memory.json`、资料库索引 `library.json` 和复制的文件 `library/`、收件箱 `inbox/`；整理专项的记录 `tidy/`
 │  ├─ owner-send/                  代发的草稿和发送记录
+│  ├─ butler-asks/                 话题转给管家的事（`COVEY_PROJECTS`）：每轮一个，转了什么、发没发出去
 │  ├─ patrol/                      我本来想找你的事（`COVEY_PATROL=shadow`）的记录
 │  ├─ devices/、nodes/             多设备在本机的工作文件；节点的名单、口令和采样
 │  ├─ web/                         网页工作台：网页上发来的操作的账本 `inbox.json`、推过的内容、网页开的话题

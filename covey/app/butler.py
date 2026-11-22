@@ -552,20 +552,28 @@ def snapshot_groups(ctx, chat, now) -> dict:
 
 
 PROJECT_GROUP = ("projects", "专项")
+# The projects a snapshot lists (the ones on first, ``project_rows``): more than another group's ROWS, as a new matter is put
+# into one of them by its line; the rest are in projects_list.
+PROJECT_ROWS = 30
 PROJECT_STATE_WORDS = {"active": "在做", "paused": "停住", "done": "做完，主人再说话会重开"}
 DONE_SHOWN = 14 * 86400  # A finished project stays in the butler's snapshot this long: the owner's words for it still reach its lead.
 
 
 def project_rows(state, chat, now=None) -> dict:
     """The chat's projects that are on, folded away or finished in the last DONE_SHOWN seconds, project id -> its line: id,
-    name, state (在做, 停住, 收起, 做完), one sentence of the goal."""
-    rows, now = {}, time.time() if now is None else now
+    name, state (在做, 停住, 收起, 做完), one sentence of the goal. In the order a long list is cut in (PROJECT_ROWS): the
+    ones on first, then stopped, folded and finished, each the most recently changed first."""
+    rows, now, found = {}, time.time() if now is None else now, []
     for record in projects.records(state, chat):
         state = record.get("state") or projects.ACTIVE
         if state == projects.DONE and now - float(record.get("updated_at") or 0) > DONE_SHOWN:
             continue
         if state not in (projects.ACTIVE, projects.PAUSED, projects.DONE):
             continue
+        rank = 0 if state == projects.ACTIVE else 2 if projects.folded(record) else 1 if state == projects.PAUSED else 3
+        found.append((rank, -float(record.get("updated_at") or 0), record))
+    for _, _, record in sorted(found, key=lambda item: item[:2]):
+        state = record.get("state") or projects.ACTIVE
         word = "收起" if projects.folded(record) else PROJECT_STATE_WORDS[state]
         goal = str(record.get("goal") or "").strip().splitlines()[0][:40] if str(record.get("goal") or "").strip() else ""
         rows[record["id"]] = line(record["id"], "·", str(record.get("name") or "专项"), "·", word, goal and f"· 目标：{goal}")
@@ -580,9 +588,10 @@ def render_snapshot(groups, previous, *, full, at, receipts) -> str:
         changed = rows if full else {topic: text for topic, text in rows.items() if previous.get(key, {}).get(topic) != text}
         name = name if receipts or key != "result" else NO_RECEIPTS
         if changed or (full and (rows or key != PROJECT_GROUP[0])):
-            items = [f"- {text}" for text in list(changed.values())[:ROWS]]
-            if len(changed) > ROWS:
-                items.append(f"- 另有 {len(changed) - ROWS} 个，用 topics_list 看")
+            limit, more = (PROJECT_ROWS, "projects_list") if key == PROJECT_GROUP[0] else (ROWS, "topics_list")
+            items = [f"- {text}" for text in list(changed.values())[:limit]]
+            if len(changed) > limit:
+                items.append(f"- 另有 {len(changed) - limit} 个，用 {more} 看")
             sections.append("\n".join((f"{name}：", *(items or ["（无）"]))))
             shown += len(changed)
         gone = [] if full else [text for topic, text in previous.get(key, {}).items() if topic not in rows]

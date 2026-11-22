@@ -41,13 +41,15 @@ class KindsTest(unittest.TestCase):
                 self.assertEqual(turn_source.behavior(item), turn_source.AS_BEFORE)
                 self.assertEqual(turn_source.refusal(item), "")
 
-    def test_this_release_runs_the_owner_and_nothing_of_a_collaboration_whatever_the_switch(self):
+    def test_this_release_runs_the_owner_and_a_handover_and_nothing_of_a_collaboration_whatever_the_switch(self):
         owner = {"turn_source": turn_source.make(OWNER, asserted_by="owner", origin={"message_id": "om_1"})}
         self.assertEqual(turn_source.refusal(owner), "")
+        # 话题转交管家 (app/butler_asks.py) runs: no switch, no capability.
+        handover = turn_source.make(HANDOVER, asserted_by="owner", origin={"message_id": "om_9", "topic": "t3"})
+        self.assertEqual(turn_source.refusal({"turn_source": handover}), "")
         for on in ("", "1"):
             with self.subTest(switch=on), mock.patch.dict("os.environ", {turn_source.SWITCH: on}):
-                for made in (asked(), turn_source.make(REPLY, asserted_by="bridge", collab="c1"),
-                             turn_source.make(HANDOVER, asserted_by="owner", origin={"message_id": "om_9", "topic": "t3"})):
+                for made in (asked(), turn_source.make(REPLY, asserted_by="bridge", collab="c1")):
                     self.assertIn("这个版本不执行", turn_source.refusal({"turn_source": made}, capabilities=FULL))
 
     def test_a_kind_a_version_or_a_shape_it_does_not_know_never_runs_and_may_do_nothing(self):
@@ -90,7 +92,7 @@ class KindsTest(unittest.TestCase):
         self.assertFalse(handover.answers_questions)
         self.assertEqual(set(turn_source.BEHAVIOR), {LEGACY, *ALL_KINDS})
         self.assertEqual(turn_source.KINDS, ALL_KINDS)
-        self.assertEqual(turn_source.RUNS, {OWNER})
+        self.assertEqual(turn_source.RUNS, {OWNER, HANDOVER})
 
     def test_the_first_item_with_a_source_decides(self):
         job = BridgeReplyJob(job_id=1, user_text="", chat_id="c", message_id="om_1", timeout=0)

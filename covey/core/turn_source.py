@@ -37,7 +37,9 @@ REPLY = "collab_reply"  # 协作答复续接: the integrator's turn that goes on
 HANDOVER = "handover"  # A butler turn for an owner's request a topic could not do (开专项, 停别的话题, 收进专项).
 MALFORMED = "?"  # A field that is not an object, or whose kind is not a string.
 KINDS = frozenset({OWNER, ASK, REPLY, HANDOVER})
-RUNS = frozenset({OWNER})  # The kinds this release runs, LEGACY aside. A package that runs another adds it here.
+# The kinds this release runs, LEGACY aside. A package that runs another adds it here: ``handover`` since 话题转交管家
+# (app/butler_asks.py) queues such a turn of the butler's.
+RUNS = frozenset({OWNER, HANDOVER})
 SWITCHED = frozenset({ASK, REPLY})  # Run only with SWITCH on.
 NEEDS = {ASK: ("collab", "read_only"), REPLY: ("collab",)}  # HarnessCapabilities fields each kind needs.
 
