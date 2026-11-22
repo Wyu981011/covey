@@ -35,7 +35,7 @@ from covey.app.butler_env import arg_text, reply
 from covey.cards.project_card import merged_card
 from covey.core import dispatch_records as drecords
 from covey.core import env as cenv
-from covey.core import butler, butler_opened, butler_settings, project_proposals, projects
+from covey.core import butler, butler_opened, butler_settings, devices, project_proposals, projects
 from covey.core.card_sequence import file_card, reserve
 from covey.core.jobs import topic_job_records
 from covey.core.locks import LOCK, resource_lock, topic_lock
@@ -282,10 +282,15 @@ class Projects:
             raise RuntimeError("the main thread has no topic.json yet")
         source = read_object(topic_file(state, origin["topic_id"])) if origin.get("topic_id") else {}
         data = {key: value for key, value in root.items() if key not in LEAD_DROPS}
+        name = source.get("workspace_name") or origin.get("workspace") or root.get("workspace_name") or ""
+        workdir = source.get("workdir") or origin.get("workdir") or root.get("workdir") or ""
+        if devices.is_device_value(workdir):
+            # A workspace on a device is the project's topics' (project_lead.py device_workspace): the lead stays in the
+            # butler's, where its tools are (core/harness.py DEVICE_OFF: bridge_tools).
+            name, workdir = root.get("workspace_name") or "", root.get("workdir") or ""
         data.update(topic_id=lead, chat_id=chat, root_id="", thread_id="", binding_revision=1, project=field,
                     workspace_locked=True, harness_locked=True, model_settings_snapshot=True,
-                    workspace_name=source.get("workspace_name") or origin.get("workspace") or root.get("workspace_name") or "",
-                    workdir=source.get("workdir") or origin.get("workdir") or root.get("workdir") or "")
+                    workspace_name=name, workdir=workdir)
         with LOCK:
             write_json(path, {**read_object(path), **data}, ensure_ascii=False, indent=2)
         return True

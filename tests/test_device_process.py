@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from covey.backends.agy.bridge import AntigravityBackend
 from covey.backends.claude.bridge import ClaudeBackend
 from covey.backends.claude.control import ClaudeControl
 from covey.backends.claude.process import ClaudeProcess
@@ -30,12 +31,13 @@ from covey.backends.codex.rpc import AppServer, RpcError
 from covey.core import device_link as dl
 from covey.core import process as hub_process
 from covey.core.harness import BridgeContext, RunCallbacks, RunInputs, RunRequest
-from covey.core.steer import SteerNotReady
+from covey.core.steer import SteerNotReady, SteerRefused
 from support import REPO, make_context
 from support.fake_backends import CLAUDE_JSONL, RUN
 from support.fake_device import FakeDevice
 
 AGENT = REPO / "tests" / "support" / "fake_agent.py"
+AGY = REPO / "tests" / "fixtures" / "harness" / "agy_stream.py"
 APP_SERVER = REPO / "tests" / "support" / "fake_app_server.py"
 
 
@@ -227,6 +229,15 @@ class SpawnRequestTest(DeviceCase):
                                         {"tools": {"codex": {"found": False, "path": ""}}}), ["codex", "app-server"])
         self.assertEqual(dl.device_argv(["python", "x"], SimpleNamespace(backend_cmd=["python"]), {}), ["python", "x"])
         self.assertEqual(dl.device_argv(["claude", "-p"], SimpleNamespace(backend_cmd=["other"]), {}), ["claude", "-p"])
+
+    def test_antigravitys_command_is_the_devices_too_and_one_that_cannot_run_there_is_left_alone(self):
+        # core/roster.py ``devices``: claude, codex and agy run on a device; pi and dsh do not (core/devices.py harness_names).
+        found = {"tools": {"agy": {"found": True, "path": "/home/me/.local/bin/agy"}, "pi": {"found": True, "path": "/x/pi"}}}
+        self.assertEqual(dl.device_argv(["/hub/bin/agy", "--output-format", "stream-json"],
+                                        SimpleNamespace(backend_cmd=["/hub/bin/agy"]), found),
+                         ["/home/me/.local/bin/agy", "--output-format", "stream-json"])
+        self.assertEqual(dl.device_argv(["/hub/bin/pi", "--mode", "rpc"], SimpleNamespace(backend_cmd=["/hub/bin/pi"]), found),
+                         ["/hub/bin/pi", "--mode", "rpc"])
 
     def test_a_context_without_a_remote_directory_or_an_unreachable_device_is_a_spawn_error(self):
         with self.assertRaises(ValueError):
@@ -705,6 +716,72 @@ class ClaudeOnADeviceTest(DeviceCase):
         identity.assert_not_called()
         sweep.assert_not_called()
         self.assertIsNone(process.identity)
+
+
+class AntigravityOnADeviceTest(DeviceCase):
+    """``AntigravityBackend.run`` on the fixture agy of tests/fixtures/harness/agy_stream.py (core/roster.py: agy runs on a
+    device): its process is the device's through core/process.py stream_subprocess_lines, and a running turn there takes
+    no supplement (the SIGINT and the process tree it needs are this machine's)."""
+
+    def run_turn(self, scenario="ok", cancel=None, after=None):
+        record = self.device.home / "agy-record.json"
+        self.device.transport.env.update(FAKE_AGY_SCENARIO=scenario, FAKE_AGY_RECORD=str(record))
+        ctx = self.ctx(options={"harness_id": "agy"}, backend_cmd=[sys.executable, "-I", str(AGY)], timeout=30, model="",
+                       effort="")
+        seen, controls = [], []
+
+        def watch(process):
+            if process is not None:
+                self.processes.append(process)
+                self.device.tasks.append(process.task)
+                seen.append(process)
+                if after:
+                    after(process)
+
+        with mock.patch.object(dl, "resolve", return_value=self.link), \
+                mock.patch.dict(os.environ, {"COVEY_TASK_DIR": str(self.root / "run")}):
+            answer = AntigravityBackend().run(RunRequest(ctx, "做个任务", callbacks=RunCallbacks(
+                process=watch, control=lambda control: controls.append(control) if control is not None else None,
+                verified_reply=lambda reply: None, session=lambda sid: None),
+                inputs=RunInputs(cancel or threading.Event(), run_id=RUN)))
+        return answer, seen, controls, json.loads(record.read_text()) if record.exists() else {}
+
+    def test_a_turn_runs_to_its_end_on_the_device(self):
+        answer, seen, _, record = self.run_turn()
+        self.assertFalse(answer.is_error, (answer.text, answer.outcome.error_code))
+        self.assertEqual((answer.text, answer.session_id), ("完成", "055a398f-db14-4c5f-abbb-1bf03f8120a7"))
+        self.assertEqual(len(seen), 1)
+        self.assertIsInstance(seen[0], dl.DeviceProcess)
+        self.assertIsNone(seen[0].pid)
+        spec = json.loads((self.device.task_dir(seen[0].task) / "spec.json").read_text())["spec"]
+        self.assertEqual(spec["cwd"], str(self.device.home))
+        self.assertEqual(spec["argv"][:3], [sys.executable, "-I", str(AGY)])
+        self.assertIn("--output-format", spec["argv"])
+        # agy read the prompt line from the link and worked in the device's directory, not in the stand-in.
+        self.assertEqual(record["cwd"], str(self.device.home))
+        self.assertIn("做个任务", json.loads(record["stdin"])["message"]["content"])
+        self.assertEqual(dl.read_record(self.root / "run")["state"], "exited")
+
+    def test_a_running_turn_there_takes_no_supplement_and_the_cards_offer_none(self):
+        answer, _, controls, _ = self.run_turn()
+        self.assertFalse(answer.is_error)
+        (control,) = controls
+        self.assertFalse(control.supports_steer)
+        with self.assertRaises(SteerRefused):
+            control.steer("再看看", "ev1")
+        backend = AntigravityBackend()
+        device = backend.capabilities(self.ctx())
+        local = backend.capabilities(dataclasses.replace(self.ctx(), device="", remote_workdir=""))
+        self.assertEqual((device.steering, device.steer_reads, device.bridge_tools), (False, False, False))
+        self.assertEqual((local.steering, local.steer_reads, local.bridge_tools), (True, True, True))
+
+    def test_stopping_the_turn_stops_agy_on_the_device(self):
+        cancel = threading.Event()
+        answer, seen, _, _ = self.run_turn("slow", cancel=cancel, after=lambda process: threading.Timer(1.5, cancel.set).start())
+        self.assertTrue(answer.is_error)
+        self.assertEqual(answer.outcome.error_code, "cancelled")
+        self.assertIsNotNone(seen[0].poll())
+        self.assertTrue(wait_for(lambda: (self.device.task_dir(seen[0].task) / "exit.json").exists()))
 
 
 class AppServerOnADeviceTest(DeviceCase):

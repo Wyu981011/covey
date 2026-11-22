@@ -17,6 +17,12 @@ job's reply is the last process's answer.
 
 The butler's turn (``options["mcp_config"]``, its Bridge tools) runs with a home of its own whose MCP config adds them
 (backends/agy/home.py): agy reads MCP servers from one file in the home and from nowhere a turn could name.
+
+On a device (``ctx.device``, docs/configuration.md 多设备) the process is the device's (core/process.py
+stream_subprocess_lines with the turn's context): the device's own agy and Google sign-in, an environment from its profile,
+the conversation kept there. A running turn there takes no supplement (``capabilities``, AgyControl: the SIGINT and the
+process tree a supplement needs are this machine's), and its stderr stays on the device. The launch card's models are this
+machine's ``agy models``.
 """
 from __future__ import annotations
 
@@ -37,8 +43,8 @@ from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY,
                                 JobCancelled, UUID_RE, for_device)
 from covey.core import env as cenv
 from covey.core import procfs
-from covey.core.process import is_owned, process_identity, stop_group, stream_subprocess_lines
-from covey.core.process_env import child_process_env
+from covey.core.process import device_of, is_owned, process_identity, stop_group, stream_subprocess_lines
+from covey.core.process_env import child_process_env, process_device
 from covey.core.reply_state import ReplyState
 from covey.core.result import MAX_REPLY_BYTES
 from covey.core.steer import SteerRefused, refuse_steer, steer_text
@@ -226,10 +232,13 @@ class AntigravityBackend(BackendRuntime):
                              args.skip_permissions, {"harness_id": "agy"})
 
     def capabilities(self, ctx):
-        return for_device(HarnessCapabilities(steering=True, steer_reads=True, bridge_tools=True), ctx)
+        # A supplement stops agy with SIGINT and looks for what it left in this machine's process tree (AgyControl): on a
+        # device, whose program passes on TERM and KILL only, a running turn takes none (the next turn takes the words).
+        here = not device_of(ctx)
+        return for_device(HarnessCapabilities(steering=here, steer_reads=here, bridge_tools=True), ctx)
 
     def environment(self, ctx):
-        return child_process_env(ctx.workdir)
+        return child_process_env(ctx.workdir, device=process_device(ctx))
 
     def model_catalog(self, ctx):
         path = Path(ctx.state_dir) / "launch-models" / "agy.json"
@@ -483,13 +492,17 @@ def stop_left(identities):
 
 class AgyControl:
     """The task's controls: a supplement stops the running agy (SIGINT) and is the next process's message.
-    Writes are never replayed (rule 6): an accepted supplement is held here until a process takes it."""
+    Writes are never replayed (rule 6): an accepted supplement is held here until a process takes it. On a device
+    (``device``) there is no supplement: ``supports_steer`` is false, so app/steering.py sends none."""
     native_blocking_questions = False
     supports_steer = True
     awaiting_answer = False
 
-    def __init__(self, emit):
+    def __init__(self, emit, *, device=False):
         self.emit = emit
+        self.device = bool(device)
+        if self.device:
+            self.supports_steer = False
         self.user_requests = set()
         self.lock = threading.Lock()
         self.process = None
@@ -500,6 +513,8 @@ class AgyControl:
         self.stopping = False
 
     def steer(self, text, event_id):
+        if self.device:
+            raise SteerRefused("设备上的 Antigravity 不能在执行中补充，请发送下一轮要求")
         with self.lock:
             refuse_steer(text, closing=self.closing, ready=self.ready or self.stopping, label="Antigravity")
             self.pending.append((steer_text(text), event_id))
@@ -584,7 +599,7 @@ def run_stream(request, argv, stdin, env):
     ctx, expected_session = request.context, request.session_id
     state = ReplyState(ctx.options, request.inputs.run_id, request.publish)
     adapter = AntigravityEventAdapter(lambda kind, data: request.emit(kind, data, None))
-    control = AgyControl(lambda kind, data: request.emit(kind, data, control))
+    control = AgyControl(lambda kind, data: request.emit(kind, data, control), device=bool(device_of(ctx)))
     cancel_event = request.inputs.cancel_event
     deadline = time.monotonic() + ctx.timeout if ctx.timeout > 0 else None
     rows = StreamRows(request, adapter, expected_session, control)
@@ -600,7 +615,7 @@ def run_stream(request, argv, stdin, env):
             left = 0 if deadline is None else max(1, int(deadline - time.monotonic()))
             rc, stderr = stream_subprocess_lines(argv, stdin_text=stdin, timeout=left, on_line=rows.on_line,
                                                  env=env, cwd=str(ctx.workdir), cancel_event=cancel_event,
-                                                 process_observer=rows.observe)
+                                                 process_observer=rows.observe, ctx=ctx)
             message, event_ids = control.take()
             if not message or cancel_event.is_set() or rows.sid is None or rows.invalid or control.closing:
                 break

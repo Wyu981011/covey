@@ -5,7 +5,9 @@ topic_fork, handlers as app/butler_env.py describes them. Only in the owner's pr
   app/forks.py opens a fork on its root, and replaces the card once with the topic's number. A topic that
   starts at once (always, but in a worktree) is bound as a fork is and its first turn is
   submitted; any other waits on its launch card, prefilled from ``origin.launch`` in its topic.json
-  (app/launch.py build_launch_card), with the prompt as the waiting turn.
+  (app/launch.py build_launch_card), with the prompt as the waiting turn. A workspace on a device (COVEY_DEVICES=1) is
+  checked as 开始任务 checks it before anything is opened (``device_binding``) and runs in 原目录 (with 独立 worktree in the
+  settings, its launch card waits for the owner's click).
 - ``topic_send`` gives the owner's words to a topic: a supplement to its turn while one runs (app/steering.py
   deliver_steer), else its next turn, headed by the topic's title. A line in the topic's thread says the butler
    passed the owner's words on.
@@ -173,12 +175,68 @@ def redaction_refusal(env, name, title, asked) -> str:
     return REDACTION_ASK.format(name=title, choice=ASK_CHOICE.format(**names) if able else ASK_NONE)
 
 
+# A workspace on a device (``gpu1:/home/me/proj``, COVEY_DEVICES=1, docs/configuration.md 多设备): checked as the launch card
+# checks one (app/launch_submit.py) before anything is opened, so a device that cannot take the topic opens none
+# (``device_binding``). With the switch off such a workspace (only a device's is written ``alias:path``) opens nothing
+# either, instead of a topic on a path of this machine that is not there (DEVICE_SWITCH_OFF).
+DEVICE_SWITCH_OFF = ("没有开话题：工作区「{workspace}」是设备 {alias} 上的目录（{value}），这个 Bridge 没开多设备（COVEY_DEVICES），"
+                     "用不了；换个工作区，或请主人打开多设备。")
+DEVICE_UNKNOWN = ("没有开话题：工作区「{workspace}」在设备 {alias} 上，devices.json 里没有这台设备；换个工作区，"
+                  "或请主人先把设备写进 devices.json。")
+DEVICE_CONFIG = "没有开话题：devices.json 读不通，设备上的工作区现在用不了（{error}）；换个工作区，或请主人修好 devices.json。"
+DEVICE_SPACE = "没有开话题：设备 {alias} 不允许在这个聊天里用（devices.json 的 spaces）；换个工作区。"
+DEVICE_HARNESS = "没有开话题：设备 {alias} 只声明了 {declared}（devices.json 的 harnesses），没有 {title}；{way}"
+DEVICE_HARNESS_WAY = "换它声明的 Harness 再调一次（harness 填 {names}），或换个工作区。"
+DEVICE_HARNESS_NONE = "它声明的 Harness 本机器人都没有启用，换个工作区。"
+DEVICE_DIRECTORY = "没有开话题：{why}；{way}"
+DEVICE_OFFLINE_WAY = "设备连上后再开，或换个工作区。"
+DEVICE_MISSING_WAY = "换个工作区，或请主人确认这个目录。"
+# 敏感词脱敏 is done on this machine (core/harness.py DEVICE_OFF; app/runs.py refuses a device's turn that would redact).
+DEVICE_REDACTION = ("没有开话题：工作区「{workspace}」在设备 {alias} 上，设备上的话题不能脱敏（敏感词只在 Bridge 本机替换），"
+                    "而新话题默认开着脱敏。先问主人（不要替主人定）：换个本机的工作区，还是这个话题不脱敏"
+                    "（主人明确同意后，再调一次并带 redaction=false）。")
+DEVICE_REDACTION_CANNOT = "没有开话题：设备 {alias} 上的话题不能脱敏。要脱敏就换个本机的工作区；不脱敏就去掉 redaction=true 再调一次。"
+
+
+def device_binding(env, workspace, value, harness, title):
+    """(``devices.Binding``, ``devices.Device``) of the device workspace ``workspace`` (its listed value ``value``) for a
+    topic on the Harness ``harness`` (shown as ``title``), checked as 开始任务 checks it: the device listed in devices.json,
+    allowed in this chat (app/access.py allows_device, rule 11), declaring the Harness, and its directory there (one shim
+    ``stat`` within 5 seconds, core/devices.py check_dir; no lock is held). A str saying why not."""
+    try:
+        binding = devices.bind_workdir(Path(env.state_dir), value)
+        device = devices.current().device(binding.device)
+    except devices.UnknownDevice:
+        return DEVICE_UNKNOWN.format(workspace=workspace, alias=str(value).split(":", 1)[0])
+    except devices.DeviceConfigError as exc:
+        return DEVICE_CONFIG.format(error=" ".join(str(exc).split())[:160])
+    alias = binding.device
+    if not env.runtime.access.allows_device(env.chat(), device):
+        return DEVICE_SPACE.format(alias=alias)
+    if harness not in device.harnesses:
+        apps = env.topics.apps
+        usable = [name for name in device.harnesses if name in apps]
+        way = DEVICE_HARNESS_WAY.format(names=" 或 ".join(usable)) if usable else DEVICE_HARNESS_NONE
+        declared = " / ".join(apps[name].spec.title if name in apps else name for name in device.harnesses)
+        return DEVICE_HARNESS.format(alias=alias, declared=declared, title=title, way=way)
+    found, why = devices.check_dir(Path(env.state_dir), alias, binding.remote_workdir)
+    if found != "ok":
+        return DEVICE_DIRECTORY.format(why=why, way=DEVICE_OFFLINE_WAY if found == "offline" else DEVICE_MISSING_WAY)
+    return binding, device
+
+
 def plan_start(env, args, settings, *, ask=False):
     """What topic_start opens: the Harness, model and budget as ``resolve`` finds them; the settings' workspace
     (a workspace there is always the one), else the call's; the settings' run mode and redaction, the call's
     ``redaction`` (true or false) in place of the latter. A str saying why not. ``ask`` (topic_start's): a topic that
     would redact on a Harness that cannot is refused (``redaction_refusal``) instead of opened without; a call that says
-    redaction=false, after the owner agreed, opens it so."""
+    redaction=false, after the owner agreed, opens it so.
+
+    A workspace on a device (``device_binding``) gives the plan its stored value as ``workdir`` (``gpu1:/home/me/proj``,
+    never a path resolved here), ``device`` and ``device_title``; it runs in 原目录, the only run mode a device has, and a
+    run mode of 独立 worktree in the settings is kept as ``worktree_wanted`` (topic_start leaves the start to the owner's
+    click on the launch card then). It never redacts: a topic that would is refused as above, in a device's words. With
+    多设备 off, a workspace written ``alias:path`` is refused (DEVICE_SWITCH_OFF), never resolved as a path here."""
     defaults = settings.topic_defaults
     found = resolve(env.topics, env.state_dir, env.chat(), defaults, args)
     if isinstance(found, str):
@@ -188,27 +246,42 @@ def plan_start(env, args, settings, *, ask=False):
     workspace = defaults.workspace or arg_text(args.get("workspace"))
     if workspace not in config["workspaces"]:
         return f"没有登记工作区「{workspace}」，可选：{'、'.join(config['workspaces'])}。"
-    if devices.is_device_value(config["workspaces"][workspace]):
-        # Not built yet: the plan's workdir is resolved here, and the topic would be on a path that does not exist.
-        return f"工作区「{workspace}」在设备上，管家本期还不能把话题开在设备上；请让主人在启动卡里选它。"
+    value, binding, device = config["workspaces"][workspace], None, None
+    if devices.is_device_value(value):
+        checked = device_binding(env, workspace, value, found["harness"], app.spec.title)
+        if isinstance(checked, str):
+            return checked
+        binding, device = checked
+    elif devices.device_shaped(value):
+        return DEVICE_SWITCH_OFF.format(workspace=workspace, alias=str(value).split(":", 1)[0], value=value)
     asked = args.get("redaction") if isinstance(args.get("redaction"), bool) else None
     wanted = defaults.redaction if asked is None else asked
-    redacts = backend_capabilities(app.backend, base).redaction
+    redacts = backend_capabilities(app.backend, devices.with_binding(base, binding) if binding else base).redaction
     if ask and wanted and not redacts:
+        if binding is not None:
+            words = DEVICE_REDACTION_CANNOT if asked is True else DEVICE_REDACTION
+            return words.format(workspace=workspace, alias=binding.device)
         return redaction_refusal(env, found["harness"], app.spec.title, asked is True)
-    return {"harness": found["harness"], "model": found["model"], "model_key": found["model_key"],
+    run_mode = defaults.run_mode if defaults.run_mode in RUN_MODES else "direct"
+    plan = {"harness": found["harness"], "model": found["model"], "model_key": found["model_key"],
             "effort": found["effort"], "work_mode": getattr(base, "work_mode", "") or "", "workspace": workspace,
-            "workdir": str(Path(config["workspaces"][workspace]).expanduser().resolve()),
-            "run_mode": defaults.run_mode if defaults.run_mode in RUN_MODES else "direct",
-            "redaction": bool(wanted and redacts)}
+            "workdir": binding.value if binding else str(Path(value).expanduser().resolve()),
+            "run_mode": "direct" if binding else run_mode, "redaction": bool(wanted and redacts)}
+    if binding is not None:
+        plan.update(device=binding.device, device_title=device.title)
+        if run_mode == "worktree":
+            plan["worktree_wanted"] = True
+    return plan
 
 
 def config_line(env, plan):
-    """The topic card's configuration: Harness · 模型 · 思考预算 · 工作区 · 运行方式 (· 脱敏)."""
+    """The topic card's configuration: Harness · 模型 · 思考预算 · 工作区 (· 设备) · 运行方式 (· 脱敏); 设备 the title of the
+    device a workspace there is on, as the launch card names it."""
     app = env.topics.apps[plan["harness"]]
     model = app.cards.model_label(app.harness.context, plan["model"]) if plan["model"] else ""
     model = model.split(" · ", 1)[-1] if model else (plan["model"] or "默认模型")
     return (app.spec.title, model, "思考预算 " + (plan["effort"] or "模型默认"), "工作区 " + plan["workspace"],
+            *(["设备 " + plan["device_title"]] if plan.get("device_title") else []),
             RUN_MODES[plan["run_mode"]], *(["脱敏"] if plan["redaction"] else []))
 
 
@@ -240,8 +313,9 @@ def topic_start(env, request):
         plan = plan_start(env, args, settings, ask=True)
         if isinstance(plan, str):
             return reply(False, plan)
-        # A worktree takes minutes to check out; the launch card creates it and survives a restart.
-        plan["start"] = plan["run_mode"] == "direct"
+        # A worktree takes minutes to check out; the launch card creates it and survives a restart. A device's workspace
+        # runs in 原目录 only: with 独立 worktree in the settings the owner's click on the launch card starts it there.
+        plan["start"] = plan["run_mode"] == "direct" and not plan.get("worktree_wanted")
         # Judged read-only and started without the owner's click: its first turn says so and is held to it
         # (app/tool_limits.py LOOK). A plan saved before it has none: as before.
         plan["read_only"] = bool(plan["start"]) and args.get("readonly") is True
@@ -273,9 +347,12 @@ def _open(env, request, path, record, chat, prompt, args):
     where = ("，话题串挂在主人这条提问下面" if record.get("area_root")
              else "，话题串的根是顶层一张小卡（主人这条提问下面已经有一个话题串）" if record.get("area_taken") else "")
     twins = repo_peers.duplicates(env.state_dir, record["topic_id"], plan.get("workdir"), title)
-    text = (f"已开 {named}：直接开工{where}" if plan["start"]
-            else f"已开 {named}：启动卡在话题里，等主人点开始{where}"
-            + ("（运行方式是独立 worktree，由启动卡创建）" if plan["run_mode"] == "worktree" else ""))
+    on = f"，在设备 {plan['device_title']} 上" if plan.get("device_title") else ""
+    text = (f"已开 {named}：直接开工{on}{where}" if plan["start"]
+            else f"已开 {named}：启动卡在话题里，等主人点开始{on}{where}"
+            + ("（运行方式是独立 worktree，由启动卡创建）" if plan["run_mode"] == "worktree" else "")
+            + ("（设备上的工作区只能用原目录运行，设置里的独立 worktree 用不了，启动卡预选了原目录）"
+               if plan.get("worktree_wanted") else ""))
     text += f"。可能重复：{'、'.join(twins)} 也在同一个仓库做相近的事（照开，没拦）" if twins else ""
     return done(path, record, reply(True, text, topic_id=record["topic_id"], label=label, root_message_id=root,
                                      started=bool(plan["start"])))

@@ -634,6 +634,50 @@ class SelfCheckTest(DeviceEnv, unittest.TestCase):
                 ("g", "codex", "other", "gpu1 上的 codex 最小请求失败：boom")):
             self.assertEqual(device_probe.explain_probe("gpu1", harness, {"reason": reason, "detail": "boom"}, {}), expect)
 
+    def test_antigravity_is_looked_for_on_the_device_and_its_minimal_request_runs_there_once_it_has_one(self):
+        self.good_tools()
+        self.tool("agy", 'case "$1" in --version) echo "1.5.14";; *) echo ok;; esac')
+        config = devices.parse(json.dumps({**DOC, "devices": {"gpu1": {**DOC["devices"]["gpu1"], "harnesses": ["claude", "agy"]}}}))
+        seen = []
+        real, command_for = self.device.transport.call, harness_probe.command_for
+        self.device.transport.call = lambda cmd, **f: seen.append((cmd, f)) or real(cmd, **f)
+        without = mock.patch.object(harness_probe, "command_for",
+                                    lambda name, path: None if name == "agy" else command_for(name, path))
+        # Not signed in (no sign-in file under the device's home, core/device_shim.py SIGN_IN_FILES): said so, nothing run.
+        with without:
+            result = device_probe.check_device(config, "gpu1", state_dir=self.state, transport=self.device.transport)
+        self.assertFalse(result.ok, result.lines())
+        self.assertEqual((result.failed.name, devices.read_profile(self.state, "gpu1")["tools"]["agy"]["login"]),
+                         ("probe:agy", "no"))
+        self.assertEqual(result.explain(), "gpu1 上的 agy 没有登录：在设备上运行一次 agy，选 Google OAuth 登录"
+                                           "（打开它给的链接、把授权码贴回终端），再自检。")
+        token = self.device.home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+        token.parent.mkdir(parents=True)
+        token.write_text("fake-sign-in-for-the-test")
+        # Without a minimal request (core/harness_probe.py command_for gives none): the program and its sign-in are looked
+        # for, the program never run.
+        with without:
+            result = device_probe.check_device(config, "gpu1", state_dir=self.state, transport=self.device.transport,
+                                               now=lambda: 4000.0)
+        self.assertTrue(result.ok, result.lines())
+        self.assertEqual([s.name for s in result.steps][-2:], ["probe:claude", "probe:agy"])
+        self.assertEqual(result.steps[-1].detail, "found, no minimal request")
+        self.assertEqual(result.explain(), "gpu1 自检通过：claude 2.1.310 · agy 1.5.14；claude 的最小请求都通过了，"
+                                           "agy 没有最小请求，查了程序和登录")
+        self.assertNotIn("reader", result.steps[1].detail, "no Codex declared: no reader")
+        self.assertEqual(devices.read_profile(self.state, "gpu1")["probe"]["agy"]["probed"], False)
+        self.assertFalse([f for cmd, f in seen if cmd == "exec" and "agy" in f["argv"][0]])
+        # With one (T664 adds agy's), it runs on the device with the profile's environment like Claude's and Codex's.
+        seen.clear()
+        with mock.patch.object(harness_probe, "command_for",
+                               lambda name, path: [path, "-p", "ok"] if name == "agy" else command_for(name, path)):
+            result = device_probe.check_device(config, "gpu1", state_dir=self.state, transport=self.device.transport)
+        self.assertTrue(result.ok, result.lines())
+        self.assertIn("claude、agy 的最小请求都通过了", result.explain())
+        self.assertEqual([f["argv"][1:] for cmd, f in seen if cmd == "exec" and f["argv"][0].endswith("/agy")], [["-p", "ok"]])
+        self.assertEqual(device_probe.explain_probe("gpu1", "agy", {"reason": "not_logged_in"}, {}),
+                         "gpu1 上的 agy 没有登录：在设备上运行一次 agy，选 Google OAuth 登录（打开它给的链接、把授权码贴回终端），再自检。")
+
     def test_a_probe_that_times_out_is_a_timeout_not_a_hang(self):
         self.tool("claude", 'case "$1" in --version) echo "2.1.310";; auth) echo \'{"loggedIn": true}\';; *) sleep 30;; esac')
         self.tool("codex", 'case "$1" in --version) echo "codex-cli 0.1";; login) echo ok;; *) echo ok;; esac')

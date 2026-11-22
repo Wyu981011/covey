@@ -20,19 +20,26 @@ class RosterEntry:
     live_questions: bool = False  # Keeps the turn open while a native question waits for its answer.
     paused_questions: bool = False  # Interrupts the turn on a question and resumes it with the answer.
     after: str = ""  # An extension's place in NAMES: right after this Harness (the card lists keep that order); "" appends.
+    # Its turns can run on a device (core/devices.py, docs/configuration.md 多设备): the backend starts its process with
+    # core/process.py spawn_process given the turn's context and keeps nothing of the turn in a path of this machine.
+    # devices.json may declare only these (core/devices.py harness_names).
+    devices: bool = False
 
 
 CORE_HARNESSES = {
     "codex": RosterEntry("covey.backends.codex.bridge", "CodexSessionStore",
-                         "covey.backends.codex.sessions", paused_questions=True),
+                         "covey.backends.codex.sessions", paused_questions=True, devices=True),
     "claude": RosterEntry("covey.backends.claude.bridge", "ClaudeSessionStore",
-                          "covey.backends.claude.sessions", live_questions=True),
-    # DeepSeek Harness, on Acme's Anthropic Messages models (Acme's Responses models are a Codex provider).
+                          "covey.backends.claude.sessions", live_questions=True, devices=True),
+    # DeepSeek Harness, on Acme's Anthropic Messages models (Acme's Responses models are a Codex provider). Not on a
+    # device: its gateway's personal key would have to go there, and its route patch and DSH_HOME are paths here.
     "dsh": RosterEntry("covey.backends.dsh.bridge", "DshSessionStore"),
-    # Pi, on GPT models from the Codex login or Acme; questions go through the checkpoint like dsh's.
+    # Pi, on GPT models from the Codex login or Acme; questions go through the checkpoint like dsh's. Not on a device: it
+    # borrows this machine's Codex token, and its home, sessions and a gateway's relay are all on this machine.
     "pi": RosterEntry("covey.backends.pi.bridge", "PiSessionStore"),
-    # Antigravity (Google's agy), on the models of its own Google sign-in; questions go through the checkpoint.
-    "agy": RosterEntry("covey.backends.agy.bridge", "AntigravitySessionStore"),
+    # Antigravity (Google's agy), on the models of its own Google sign-in; questions go through the checkpoint. On a
+    # device with the device's own sign-in, and no supplement into a running turn there (backends/agy/bridge.py).
+    "agy": RosterEntry("covey.backends.agy.bridge", "AntigravitySessionStore", devices=True),
 }
 # A Harness is the agent program; where its models come from is a provider (core/providers.py), never a
 # Harness of its own. Removed Harnesses by ID, with the name their topics showed. Old topics, jobs and
@@ -78,3 +85,4 @@ HARNESSES, RETIRED = merged(CORE_HARNESSES, CORE_RETIRED, manifests())
 NAMES = tuple(HARNESSES)  # The first one is the default route.
 LIVE_QUESTIONS = frozenset(name for name, h in HARNESSES.items() if h.live_questions)
 PAUSED_QUESTIONS = frozenset(name for name, h in HARNESSES.items() if h.paused_questions)
+DEVICE_HARNESSES = tuple(name for name, h in HARNESSES.items() if h.devices)  # In NAMES' order.

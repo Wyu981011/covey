@@ -202,6 +202,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 `app/butler_topics.py`，只在主人私聊里动作，飞书调用都在锁外（规则 1、2）。
 
 - **`topic_start`**：工作区只认已登记的名字；Harness、模型、预算逐项取值（`app/butler_model_choice.py`：调用给的 > `topic_defaults` > 这个私聊上次开始任务的配置 > Bridge 默认）。第一轮直接提交；运行方式是独立 worktree 时话题里出预填好的启动卡。
+- **设备上的工作区**（开了[多设备](configuration.md#多设备开发中默认关)，工作区是 `别名:路径`）：开话题前照启动卡的规矩查一遍（`device_binding`）：设备在 `devices.json` 里、这个聊天在它的 `spaces` 里、声明了这个 Harness、设备答复目录在（最多 5 秒）；哪一条不过都不开话题，回复写明原因和怎么改（比如 `harness` 填设备声明的哪个）。开出来的话题 topic.json 存 `别名:路径`、话题卡配置行多“设备 <标题>”、只用原目录运行（设置里是独立 worktree 时出预选原目录的启动卡，等主人点）、不脱敏（新话题默认脱敏时先问主人）。`workspaces_list` 在设备工作区后面写设备标题和能用的 Harness。专项开在设备工作区时负责人留在 Bridge 本机（它的工具在本机），状态包写明专项的话题开在哪个设备工作区。多设备没开时，写成 `别名:路径` 的工作区也不开话题（回复说多设备没开），不会当成本机路径开一个跑不起来的话题。
 - **`topic_send`**：话题有没结束的任务时作为补充交给它，已经停了就作为下一条消息（有没答的问题就作为回答）。话题串里出一张“管家转来你 HH:MM 的消息”的灰底卡。
 - **完成标准**（`criteria`，`core/criteria.py`，#22）：`topic_start` 可带 1 到 4 条，存进话题的 topic.json；主人要改时管家用 `topic_send` 的 `criteria` 换掉（空数组去掉）。问答、查询、调研不带。有标准的话题每一轮的消息在检查点文件后面多一段“完成标准”（`criteria.note`），模型在检查点 `criteria` 里逐条写满足 / 没满足 / 没查；答案卡和回带卡只列没标满足的（没写的算没查）。专项负责人的 `project_topic_start` 也能带。
 - **`topic_fork`**：从源话题最近一次结束的任务分叉（`app/forks.py` 的 `create_fork`），复制原生会话。

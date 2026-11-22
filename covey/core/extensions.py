@@ -43,7 +43,7 @@ ENABLED_FILE = "extensions/enabled"  # Under the repository root: one package pe
 CHOICE_FILE = "extensions/enabled"
 DEFAULT_DIR = "extensions"
 PACKAGE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*")
-HARNESS_FIELDS = {"module", "store", "store_module", "live_questions", "paused_questions", "after"}
+HARNESS_FIELDS = {"module", "store", "store_module", "live_questions", "paused_questions", "after", "devices"}
 # The hooks the core calls: what a module must have is in the file that calls it.
 HOOK_NAMES = {
     "proxy_sender": "app/proxy.py: the 代答 sender (ProxySend, ProxyLogin and the helpers app/proxy_send.py names)",

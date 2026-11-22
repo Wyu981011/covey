@@ -28,7 +28,7 @@ from covey.core.board_read import PRIORITY, TOOLS_AGE, job_number, topic_jobs, t
 from covey.app.answers import AnswerIncomplete, answer_fields
 from covey.app.butler_env import reply
 from covey.app.overview import UNSET_PHASES
-from covey.core import butler_requests, butler, butler_settings, principles, turn_words
+from covey.core import butler_requests, butler, butler_settings, devices, principles, turn_words
 from covey.core.checkpoint import (checkpoint_delivery, checkpoint_steps, current_step, read_checkpoint,
                                             step_words)
 from covey.core.jobs import job_path, read_job_record
@@ -373,6 +373,27 @@ def workspace_spaces(env):
     return spaces, default
 
 
+def device_note(env, value) -> str:
+    """What workspaces_list says of a workspace on a device (COVEY_DEVICES=1, ``gpu1:/home/me/proj``): the device's title
+    and the Harnesses it declares, the only ones a topic there runs on (app/butler_topics.py device_binding), or why no
+    topic of this chat can go there; '' for any other workspace (and for every one with the switch off)."""
+    if not devices.is_device_value(value):
+        return ""
+    alias = str(value).split(":", 1)[0]
+    try:
+        device = devices.current().device(alias)
+    except devices.UnknownDevice:
+        return f"设备 {alias}：devices.json 里没有这台设备，开不了话题"
+    except devices.DeviceConfigError:
+        return f"设备 {alias}：devices.json 读不通，开不了话题"
+    if not env.runtime.access.allows_device(env.chat(), device):
+        return f"设备 {device.title}：这个聊天不能用（devices.json 的 spaces）"
+    apps = env.topics.apps
+    names = "、".join(f"{apps[name].spec.title}（harness 填 {name}）" if name in apps else f"{name}（本机器人没启用）"
+                     for name in device.harnesses)
+    return f"设备 {device.title}：只能用 {names}，原目录运行"
+
+
 def workspaces_list(env, request):
     spaces, default = workspace_spaces(env)
     if not spaces:
@@ -390,6 +411,9 @@ def workspaces_list(env, request):
     lines = []
     for name, path in spaces.items():
         line = f"{name}{'（默认）' if name == default else ''} · {path}"
+        on = device_note(env, path)
+        if on:
+            line += " · " + on
         if settings.note(name):
             line += f" · 用途：{settings.note(name)}"
         if recent.get(name):

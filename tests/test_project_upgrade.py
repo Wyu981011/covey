@@ -18,11 +18,12 @@ from covey.app import butler_topics, project_cards, project_clicks, project_lead
 from covey.app import butler_projects, project_members as members, projects as upgrades
 from covey.cards.elements import find_element
 from covey.core import dispatch_records as records
-from covey.core import butler_mcp, butler, butler_opened, butler_settings, butler_tool_specs, projects
+from covey.core import butler_mcp, butler, butler_opened, butler_settings, butler_tool_specs, devices, projects
 from covey.core.jobs import BridgeReplyJob, find_job_record, upsert_job_record
 from covey.core.butler_requests import Request
 from covey.core.state import read_object, write_json
 from covey.core.topics import load_topic, message_topic, routed_topic, topic_number, topic_title
+from covey.core.workspaces import config_path, load_config
 
 LONG = "这件事长期做，接着做"
 
@@ -479,6 +480,32 @@ class DirectTest(UpCase):
         self.assertEqual((lead["project"]["role"], lead["workspace_name"], lead["model"]), ("lead", "project", "claude-opus-x"))
         self.assertEqual(routed_topic(self.state, CHAT, project["card"]["message_id"]), project["lead_topic_id"])
         self.assertIn("已开专项「迁移订单库」", answer["text"])
+
+    def test_a_project_on_a_devices_workspace_keeps_its_lead_here_and_its_pack_says_where_the_topics_go(self):
+        # COVEY_DEVICES=1: the project's topics go to the device (app/butler_topics.py plan_start); its lead, whose tools are
+        # the Bridge's (core/harness.py DEVICE_OFF: bridge_tools), stays in the butler's workspace and is told.
+        (self.root / "devices.json").write_text(json.dumps({"schema": 1, "control_dir": "/dev/shm/covey-ssh-proj", "devices": {
+            "gpu1": {"title": "GPU 1", "ssh": {"host": "gpu1.example"}}}}))
+        config = load_config(self.state, self.work)
+        config["workspaces"]["gpu1-proj"] = "gpu1:/home/me/proj"
+        write_json(config_path(self.state), config, ensure_ascii=False, indent=2)
+        on = {"COVEY_DEVICES": "1", "COVEY_DEVICES_FILE": str(self.root / "devices.json")}
+        with mock.patch.dict(os.environ, on), mock.patch.object(devices, "check_dir", return_value=("ok", "")) as checked:
+            answer = self.start("p9", project=True, title="训练脚本", prompt="在 GPU 上把训练跑通", workspace="gpu1-proj")
+            self.assertTrue(answer["ok"], answer)
+            checked.assert_called_once()
+            project = projects.read_record(self.state, answer["data"]["project_id"])
+            self.assertEqual((project["origin"]["workspace"], project["origin"]["workdir"]), ("gpu1-proj", "gpu1:/home/me/proj"))
+            lead = load_topic(self.state, project["lead_topic_id"])
+            self.assertEqual((lead["workspace_name"], lead["workdir"]), ("main-space", "/absolute/main"))
+            pack = project_lead.state_pack(self.state, project, "k1", full=True, receipts=[])
+            self.assertIn("工作区：专项的话题在设备上的工作区「gpu1-proj」（gpu1:/home/me/proj）里做；你自己在 Bridge 本机", pack)
+            self.assertIn("workspace 填「gpu1-proj」", pack)
+            self.assertNotIn("工作区：专项的话题", project_lead.state_pack(self.state, project, "k2", full=False, receipts=[]))
+        # Off, the pack names no device; a project anywhere else never did. Nothing is read for it.
+        self.assertNotIn("工作区：专项的话题", project_lead.state_pack(self.state, project, "k3", full=True, receipts=[]))
+        with mock.patch.object(project_lead, "read_object", side_effect=AssertionError("read with the switch off")):
+            self.assertEqual(project_lead.device_workspace(self.state, project), ("", ""))
 
     def test_the_existing_topics_the_butler_names_are_taken_in_and_the_ones_it_cannot_are_said(self):
         tool = next(tool for tool in butler_tool_specs.project_butler_tools(butler_tool_specs.TOOLS) if tool["name"] == "topic_start")

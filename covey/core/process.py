@@ -267,10 +267,12 @@ def stream_subprocess_lines(
     cwd: str | None = None,
     cancel_event: threading.Event | None = None,
     process_observer: Callable | None = None,
+    ctx=None,
 ) -> tuple[int, str]:
     """Run ``argv`` streaming stdout lines to ``on_line``; return (rc, stderr).
 
-    Raises ``subprocess.TimeoutExpired`` when ``timeout`` (>0) elapses.
+    Raises ``subprocess.TimeoutExpired`` when ``timeout`` (>0) elapses. ``ctx``: the turn's context; one that names a
+    device runs ``argv`` there (``spawn_process``), its stderr staying on the device (the stderr returned is empty).
     """
     if cancel_event is not None and cancel_event.is_set():
         raise JobCancelled("任务已手动停止")
@@ -278,16 +280,22 @@ def stream_subprocess_lines(
     timed_out = threading.Event()
     cancelled = threading.Event()
     finished = threading.Event()
-    proc = subprocess.Popen(
-        argv,
-        text=True,
-        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=env,
-        cwd=cwd,
-        start_new_session=True,
-    )
+    if device_of(ctx):
+        # On a device the input is always the link's (its end is said, never inherited), and the stderr pipe ends empty
+        # when the process does.
+        proc = spawn_process(argv, ctx=ctx, cwd=cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    else:
+        proc = subprocess.Popen(
+            argv,
+            text=True,
+            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+            cwd=cwd,
+            start_new_session=True,
+        )
     stderr_thread, timer, cancel_thread = _watch_process(proc, stderr_parts, timeout, timed_out, cancel_event,
                                                          cancelled, finished)
     try:
@@ -297,6 +305,8 @@ def stream_subprocess_lines(
             assert proc.stdin is not None
             proc.stdin.write(stdin_text)
             proc.stdin.close()
+        elif proc.stdin is not None:
+            proc.stdin.close()  # A device's process: no input, said at once.
         assert proc.stdout is not None
         for line in proc.stdout:
             line = line.strip()

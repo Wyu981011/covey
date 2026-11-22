@@ -59,6 +59,9 @@ ENV_REPORT = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy"
               "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
 EXTRA_BIN = (".local/bin", ".claude/local", ".npm-global/bin", ".volta/bin", ".cargo/bin", ".bun/bin",
              "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin")
+# A Harness whose sign-in is a file under the home rather than a command's answer: Antigravity's Google sign-in (without it
+# agy waits a minute for a browser sign-in, and its words about it go to a stderr the hub never sees). Only looked at.
+SIGN_IN_FILES = {"agy": (".gemini", "antigravity-cli", "antigravity-oauth-token")}
 NETWORK_FS = {"nfs", "nfs4", "cifs", "smbfs", "smb3", "afs", "ceph", "lustre", "gpfs", "9p", "beegfs", "glusterfs",
               "fuse.sshfs", "fuse.glusterfs", "fuse.cephfs", "fuse.nfs", "fuse.s3fs", "virtiofs"}
 
@@ -846,6 +849,10 @@ def probe_tool(name):
         code, text = run_quiet(login, 20)
         info["login"] = "unknown" if code is None else "ok" if code == 0 and not LOGGED_OUT.search(text) else "no"
         info["login_detail"] = text[:300]
+    elif name in SIGN_IN_FILES:
+        found = os.path.isfile(os.path.join(home(), *SIGN_IN_FILES[name]))
+        info["login"] = "ok" if found else "no"
+        info["login_detail"] = "" if found else "~/%s not found" % "/".join(SIGN_IN_FILES[name])
     return info
 
 

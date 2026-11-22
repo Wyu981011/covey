@@ -205,7 +205,7 @@
 | [网页工作台](web.md) | `COVEY_WEB=1` 加 `COVEY_WEB_CONFIG=/absolute/path/to/web.json` | `web-push`、`web-inbox` 后台线程：把专项、话题、一轮、问题推给网页应用，取回网页上的操作 |
 | [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` | `dispatch_cards` 后台线程；管家转给已有话题后提问下面挂一张活卡片 |
 | [群聊免@](#群聊免) | `COVEY_GROUP_ALL_MESSAGES=1` 加应用权限 | 设置卡「群聊」每个群多一个“免@” |
-| [多设备](#多设备开发中默认关)（开发中） | `COVEY_DEVICES=1` 加 `devices.json` | `devices` 后台线程（有设备时才起）；设备上能跑 Claude Code 和 Codex 的话题 |
+| [多设备](#多设备开发中默认关)（开发中） | `COVEY_DEVICES=1` 加 `devices.json` | `devices` 后台线程（有设备时才起）；设备上能跑 Claude Code、Codex 和 Antigravity 的话题，管家也能开 |
 | [节点与机器状况](#节点与机器状况默认关) | `COVEY_NODE_LISTEN=<监听地址>` | `nodes-gateway`、`nodes-alerts`、`nodes-local` 后台线程；机器状况告警卡，设置卡「设备」标签 |
 | [飞书 SDK 与直连](#飞书-sdk-与直连) | `COVEY_CARD_TRANSPORT=sdk`；直连默认开 | 卡片和消息走常驻 SDK 客户端 |
 | [事件长连接走 SDK](#飞书-sdk-与直连) | `COVEY_EVENT_TRANSPORT=sdk` | `event-websocket` 线程代替 lark-cli 事件消费者 |
@@ -343,7 +343,7 @@
 
 ### 多设备（开发中，默认关）
 
-让话题在另一台机器（Linux，经 ssh）上工作，而不是在 Bridge 所在的机器上。设备上能跑 Claude Code 和 Codex 的话题；默认关，真机验收在进行。结构、连接、离线恢复和文件进出见[架构 · 设备](architecture.md#设备多设备默认关)，Harness 在设备上的差别见[Harness 说明](harnesses.md#在设备上运行)。
+让话题在另一台机器（Linux，经 ssh）上工作，而不是在 Bridge 所在的机器上。设备上能跑 Claude Code、Codex 和 Antigravity 的话题；默认关，真机验收在进行。结构、连接、离线恢复和文件进出见[架构 · 设备](architecture.md#设备多设备默认关)，Harness 在设备上的差别见[Harness 说明](harnesses.md#在设备上运行)。
 
 **打开**：`COVEY_DEVICES=1`，再写 `devices.json`（`$COVEY_DATA_HOME/devices.json`，或 `COVEY_DEVICES_FILE` 指的文件），改完文件重启。设备要能从 Bridge 所在的机器免密 ssh 过去，而且 `known_hosts` 里已经有它的主机密钥（先手动 `ssh` 一次）：Covey 从不问密码。
 
@@ -367,19 +367,19 @@
 | `ssh.host` | `~/.ssh/config` 里的别名或 `user@host`。不能有空格，不能以 `-` 开头 |
 | `ssh.options` | 追加的 ssh 参数（`-J` 跳板、`-p`、`-i` 等）。Covey 自己的选项排在前面，这里改不掉它们 |
 | `ssh.python` | 设备上的解释器，默认 `python3`（3.9 起） |
-| `harnesses` | 这台设备上要用的 Harness，`claude`、`codex` 的子集，默认两个都要 |
+| `harnesses` | 这台设备上要用的 Harness：`claude`、`codex`、`agy` 的子集（`core/roster.py` 里 `devices` 为真的，扩展的 Harness 也看这一列），不写时是 `claude`、`codex`。`pi`、`dsh` 不能写，配置报错时点名（原因见 [Harness 说明](harnesses.md#在设备上运行)） |
 | `env` | 只写要覆盖设备环境档案的变量（比如这台机器出网要的代理）。值里不能带 `user:密码@` |
 | `login_shell` | `true` 时自检再用登录 shell 取一次环境变量（`.bashrc` 里设的代理）。默认 `false` |
 | `spaces` | 谁可以用这台设备：`owner_private`（默认，主人私聊）、`personal_groups`、`team`（显式写才开）。代答群和没绑定的群永远不能用 |
 
-**用**：主人在启动卡「其他目录…」或设置卡「工作区」页「＋ 添加工作区…」的目录浏览器里输入 `gpu1:/home/me/proj`，登记成一个设备工作区（名字取 `别名-目录名`），开话题时选它。设备没答复、目录不存在、别名不在 `devices.json` 里都当场报错。
+**用**：主人在启动卡「其他目录…」或设置卡「工作区」页「＋ 添加工作区…」的目录浏览器里输入 `gpu1:/home/me/proj`，登记成一个设备工作区（名字取 `别名-目录名`），开话题时选它。设备没答复、目录不存在、别名不在 `devices.json` 里都当场报错。管家和专项负责人也能把话题开在设备工作区（[管家 · 开话题](butler.md#开话题转交分叉)）：开之前一样查设备名单、`spaces`、声明的 Harness 和目录，查不过就不开，回复写明原因。
 
 **自检**：`python3 -B bin/covey_devices.py --state-dir "$STATE_DIR" check gpu1`（`list` 只打印每台设备最近一次的结果），新加设备、改了 ssh 或代理设置后跑一次，见[运维 · 设备自检](operations.md#设备自检)。失败时写明是哪一步：连不上、没装、没登录、超时，或连不上模型服务（去哪里设 `HTTPS_PROXY`）。
 
 **已知限制**：
-- 只有 Linux 设备真机验证过；只支持 Claude Code 和 Codex。
+- 只有 Linux 设备真机验证过；能上设备的是 Claude Code、Codex 和 Antigravity，Pi 和 dsh 不能。Antigravity 在设备上用设备自己的 Google 登录（没登录时这一轮当场拒绝），不能执行中补充（下一轮再说）。
 - 设备上的话题没有回退、压缩、下载请求与结果、敏感词脱敏和分叉（按钮不出现）；开着脱敏的话题在设备上的一轮直接拒绝。
-- 不能由管家开（管家自己的工作区也不能是设备），不能用「独立 worktree」，换配置不生成旧模型的摘要。
+- 管家自己的工作区不能是设备；专项开在设备工作区时，负责人留在 Bridge 本机，专项的话题开在设备上。不能用「独立 worktree」（管家设置是独立 worktree 时，设备话题出预选原目录的启动卡），换配置不生成旧模型的摘要。
 - 任务卡和答案卡不显示改动摘要；产物只能是设备工作区里的文件（目录请打包）；回复里指向设备文件的 Markdown 图片不上传。
 - 设置卡上设备的状态行读的是最近一次自检的结果，不会自己去自检。
 

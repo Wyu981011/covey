@@ -18,7 +18,8 @@ PACKAGE = "fake_covey_ext"
 MANIFEST = f'''
 HARNESSES = {{
     "fakeh": {{"module": "{__name__}", "store": "FakeStore", "live_questions": True}},
-    "fakep": {{"module": "{__name__}", "store": "FakeStore", "store_module": "x.y", "paused_questions": True}},
+    "fakep": {{"module": "{__name__}", "store": "FakeStore", "store_module": "x.y", "paused_questions": True,
+               "devices": True}},
 }}
 PROVIDERS = [
     {{"key": "fakeprov", "harness": "fakeh", "name": "", "prefix": "", "access": "fake login"}},
@@ -363,6 +364,9 @@ class MergeTest(ExtensionCase):
         live = frozenset(n for n, h in harnesses.items() if h.live_questions)
         self.assertIn("fakeh", live)
         self.assertNotIn("fakep", live)
+        # One that says so runs on a device (core/devices.py harness_names); the core's are Claude, Codex and Antigravity.
+        on_devices = tuple(n for n, h in harnesses.items() if h.devices)
+        self.assertEqual(on_devices, ("codex", "claude", "agy", "fakep"))
 
     def test_a_second_extension_follows_the_first(self):
         second = self.other("second_ext", harnesses={"third": {"module": "m", "store": "S"}})

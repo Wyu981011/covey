@@ -169,11 +169,18 @@ dsh 是 DeepSeek 开源的 Agent Harness（npm 包 `@deepseek-ai/dsh`，预览�
 
 ## 在设备上运行
 
-开了多设备（`COVEY_DEVICES=1`，[配置](configuration.md#多设备开发中默认关)）后，工作区写成 `别名:路径` 的话题跑在那台设备上。只有 Claude Code 和 Codex 能在设备上跑（设备的 `harnesses` 只认 `claude`、`codex`）。结构和不变量见[架构 · 设备](architecture.md#设备多设备默认关)。
+开了多设备（`COVEY_DEVICES=1`，[配置](configuration.md#多设备开发中默认关)）后，工作区写成 `别名:路径` 的话题跑在那台设备上。能上设备的 Harness 由 `core/roster.py` 的 `devices` 列定：核心里是 Claude Code、Codex 和 Antigravity（设备的 `harnesses` 只认这几个，不写时是 `claude`、`codex`）。结构和不变量见[架构 · 设备](architecture.md#设备多设备默认关)。
 
-- **设备上要有的**：Harness 的命令、登录、会话文件、模型目录、代理和证书。Bridge 不替设备登录，也不转发令牌。设备上的环境从空开始，只带设备档案里白名单内的代理和证书变量，再加 `devices.json` 的 `env`；`--claude-cmd`、`--codex-cmd` 在设备上换成自检时记下的路径，登录 shell 写设备的 `login_shell`。
-- **启动前**：新加或改了设备先跑自检 `bin/covey_devices.py check <别名>`（[运维](operations.md#设备自检)），它在设备上对每个声明的 Harness 真跑一次最小请求；每轮开始前只读最近的自检，没登录当场拒绝。
-- **和本机的差别**：没有回退、下载请求与结果、压缩、分叉和敏感词脱敏（开着脱敏的话题在设备上拒绝）；不取 git diff 快照。补充、原生问答和图片照常，消息里的文件先放到设备的 `.covey/incoming/`；产物和 `show_images` 从设备取回再上传。启动卡列的模型仍是 Bridge 本机的目录。
+| Harness | 在设备上 | 原因或差别 |
+| --- | --- | --- |
+| Claude Code、Codex | 能 | 见下面几条 |
+| Antigravity（`agy`） | 能 | 用设备自己的 `agy` 和 Google 登录（在设备上运行一次 `agy` 登录；设备端程序看 `~/.gemini/antigravity-cli/antigravity-oauth-token` 在不在，不在就按没登录拒绝这一轮，自检也说没登录，不用 API key 登录）；执行中不能补充：补充要给 agy 发 SIGINT 再收拾它留在本机进程树里的命令，设备端程序只转发 TERM、KILL，所以任务卡上没有补充，话题里的新消息排成下一轮；stderr 留在设备上；启动卡的模型是 Bridge 本机 `agy models` 列的，设备登的账号没有所选模型时 agy 自己报错 |
+| Pi | 不能 | 借用 Bridge 本机 Codex 登录的访问令牌，每轮的私有 home、会话目录和网关的本地中转都在本机；Bridge 不把令牌送去别的机器 |
+| dsh | 不能 | 只用模型网关，要把网关的个人密钥放进进程环境（设备端拿不到，也不该送过去），路由补丁和 `DSH_HOME` 都是本机路径 |
+
+- **设备上要有的**：Harness 的命令、登录、会话文件、模型目录、代理和证书。Bridge 不替设备登录，也不转发令牌。设备上的环境从空开始，只带设备档案里白名单内的代理和证书变量，再加 `devices.json` 的 `env`；`--claude-cmd`、`--codex-cmd`、`--agy-cmd` 在设备上换成自检时记下的路径，登录 shell 写设备的 `login_shell`。
+- **启动前**：新加或改了设备先跑自检 `bin/covey_devices.py check <别名>`（[运维](operations.md#设备自检)），它在设备上对每个声明的 Harness 真跑一次最小请求（`core/harness_probe.py` 的 `command_for`；没有最小请求的 Harness 只查程序在不在，Antigravity 再查登录文件，结论里写明）；每轮开始前只读最近的自检和设备最近的答复，没登录当场拒绝。
+- **和本机的差别**：没有回退、下载请求与结果、压缩、分叉和敏感词脱敏（开着脱敏的话题在设备上拒绝）；不取 git diff 快照。补充（Antigravity 除外）、原生问答和图片照常，消息里的文件先放到设备的 `.covey/incoming/`；产物和 `show_images` 从设备取回再上传。启动卡列的模型仍是 Bridge 本机的目录。
 - **断线**：设备端小程序守着 Agent，Bridge 断线时照常跑；超过耐心值才按中断处理，恢复后先停旧进程再续接。
 
 ## 执行权限

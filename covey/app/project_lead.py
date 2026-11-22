@@ -33,7 +33,7 @@ from pathlib import Path
 from covey.app import project_context
 from covey.app.prompts import project_memory_lines
 from covey.app.triage_view import pack_block
-from covey.core import board_read, butler, collab, project_checklist, project_library, project_memory, projects, triage
+from covey.core import board_read, butler, collab, devices, project_checklist, project_library, project_memory, projects, triage
 from covey.core import memory as core_memory
 from covey.core import turn_source
 from covey.core.checkpoint import read_checkpoint
@@ -42,7 +42,7 @@ from covey.core.locks import resource_lock
 from covey.core.state import epoch_seconds, read_object, write_json
 from covey.core.statuses import ENDED, RUNNING
 from covey.core.text import cut, last_line, stamp  # noqa: F401  (last_line: app/project_loop.py)
-from covey.core.topics import topic_label, topic_title
+from covey.core.topics import topic_file, topic_label, topic_title
 from covey.core.turn_words import RESULTS, UNSET_PHASES
 from covey.core.web_sync import PREFIX as WEB_PREFIX
 
@@ -475,6 +475,25 @@ def inbox_block(state_dir, receipts, record) -> str:
     return "\n".join(out)
 
 
+def device_workspace(state_dir, record) -> tuple:
+    """(name, value) of the project's workspace when it is on a device (COVEY_DEVICES=1, ``gpu1:/home/me/proj``): the
+    workspace of the topic the project grew from, else the one it was opened with, as the lead's own would be. Its topics
+    work there; the lead does not (app/projects.py step_lead: on a device it would have none of its tools), and its pack
+    says so (``state_pack``). ('', '') for a project anywhere else, or with the switch off (then nothing is read)."""
+    if not devices.enabled():
+        return "", ""
+    origin = record.get("origin") if isinstance(record.get("origin"), dict) else {}
+    source = read_object(topic_file(Path(state_dir), origin["topic_id"])) if origin.get("topic_id") else {}
+    value = str(source.get("workdir") or origin.get("workdir") or "")
+    if not devices.is_device_value(value):
+        return "", ""
+    return str(source.get("workspace_name") or origin.get("workspace") or ""), value
+
+
+DEVICE_PLACE = ("工作区：专项的话题在设备上的工作区「{name}」（{value}）里做；你自己在 Bridge 本机（设备上用不了专项的工具），"
+                "开专项的话题时 workspace 填「{name}」，Harness 用那台设备声明的。")
+
+
 def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redacted=False) -> str:
     """The pack at the head of the lead's turn ``key``. ``full``: the whole of it (a new session); else the parts that
     change between turns (members, memory, style, inbox, decisions), the goal being in the session already.
@@ -493,6 +512,10 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
                    + ("\n你写下的（project_goal）：" + lead_goal(record) if lead_goal(record) else ""))
     if not lead_goal(record):
         out.append("（还没用 project_goal 写专项的目标：这一轮写一句给主人看的，说清要做成什么、做到什么算完）")
+    if full:
+        name, value = device_workspace(state_dir, record)
+        if value:
+            out.append(DEVICE_PLACE.format(name=name or value, value=value))
     rows = member_rows(state_dir, record)
     out.append("话题（" + (f"{len(rows)} 个，{sum(1 for row in rows if row['live'])} 个没结束" if rows else "还没有") + "）："
                + ("\n" + "\n".join(map(thread_line, rows)) if rows else ""))

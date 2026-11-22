@@ -6,7 +6,9 @@ file, makes no ``<state>/devices/`` directory, starts no thread, and ``gpu1:/pat
 nothing changes. A switch that is on with no device listed behaves the same.
 
 - **Config** (``load``, ``Config``, ``Device``): validated whole; a problem raises ``DeviceConfigError`` naming each
-  one. Aliases are ``[a-z][a-z0-9-]{0,23}``; ``control_dir`` must be short enough for a Unix socket.
+  one. Aliases are ``[a-z][a-z0-9-]{0,23}``; ``control_dir`` must be short enough for a Unix socket. A device declares
+  Harnesses whose turns run on a device (``harness_names``: core/roster.py ``devices``), Claude Code and Codex unless
+  it names them.
 - **Workspace values** (``bind_workdir``): ``gpu1:/home/me/proj`` becomes a ``Binding``: the hub path
   ``<state>/devices/gpu1/standin/<sha12>`` (which never exists, so a place that was not taught about devices fails
   loudly instead of touching a hub directory) with ``device`` and ``remote_workdir``. Callers use it only when
@@ -23,7 +25,7 @@ nothing changes. A switch that is on with no device listed behaves the same.
   ``ls``; one ``exec`` of a small script), for the directory browser. **Codex's model list** (``codex_root``): the
   device's ``models_cache.json`` fetched with the shim's ``get`` into ``<state>/devices/<alias>/codex-home/``.
 
-Standard library plus core/env, core/paths, core/state and core/device_transport.
+Standard library plus core/env, core/paths, core/state and core/device_transport (core/roster, read on use).
 """
 from __future__ import annotations
 
@@ -52,7 +54,8 @@ ALIAS = re.compile(r"[a-z][a-z0-9-]{0,23}\Z")
 HOST = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.@:%\[\]-]{0,252}\Z")
 ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}\Z")
 FILE_NAME_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}\Z")
-HARNESSES = ("claude", "codex")
+# What a device that names no ``harnesses`` declares: the two devices.json meant before any other could run there.
+DEFAULT_HARNESSES = ("claude", "codex")
 SPACES = ("owner_private", "personal_groups", "team")
 DEFAULTS = {"patience_minutes": 15, "waiting_patience_hours": 6, "connect_seconds": 5}
 LIMITS = {"patience_minutes": (1, 1440), "waiting_patience_hours": (1, 168), "connect_seconds": (1, 60)}
@@ -117,6 +120,19 @@ class Config:
             return self.devices[alias]
         except KeyError:
             raise UnknownDevice("no device %r in devices.json" % (alias,))
+
+
+def harness_names():
+    """The Harnesses a device may declare: those whose turns run on a device (core/roster.py ``devices``: Claude Code,
+    Codex and Antigravity in the core), in the roster's order. Read on use, so only a devices.json being parsed asks."""
+    from covey.core.roster import DEVICE_HARNESSES
+    return DEVICE_HARNESSES
+
+
+def _not_on_devices(items):
+    """The Harnesses of ``items`` the roster has but that cannot run on a device (Pi and dsh in the core)."""
+    from covey.core.roster import NAMES
+    return [item for item in items if isinstance(item, str) and item in NAMES and item not in harness_names()]
 
 
 def undeclared_refusal(alias, harness, title):
@@ -266,10 +282,12 @@ def _device(alias, entry, fail):
         if not _plain(python) or not python.strip():
             fail(where + ".ssh.python", "must be a command name or path")
             ok, python = False, "python3"
-    harnesses = entry.get("harnesses", list(HARNESSES))
-    if (not isinstance(harnesses, list) or not harnesses or not all(item in HARNESSES for item in harnesses)
+    harnesses, names = entry.get("harnesses", list(DEFAULT_HARNESSES)), harness_names()
+    if (not isinstance(harnesses, list) or not harnesses or not all(item in names for item in harnesses)
             or len(set(harnesses)) != len(harnesses)):
-        fail(where + ".harnesses", "must be a non-empty list from %s" % ", ".join(HARNESSES))
+        cannot = _not_on_devices(harnesses) if isinstance(harnesses, list) else []
+        fail(where + ".harnesses", "must be a non-empty list from %s%s" % (
+            ", ".join(names), " (%s cannot run on a device)" % ", ".join(cannot) if cannot else ""))
         ok, harnesses = False, []
     env = entry.get("env", {})
     if not isinstance(env, dict):
@@ -423,7 +441,14 @@ def is_device_value(value, environ=None):
     """Whether ``value`` (a stored workspace value, a path or a name) is ``alias:path`` with the switch on. Reads no
     file and needs no listed alias: for the places that must not treat such a value as a hub path (the directory
     check of ``core/workspaces.py``)."""
-    return enabled(environ) and bool(DEVICE_VALUE.match(str(value).strip()))
+    return enabled(environ) and device_shaped(value)
+
+
+def device_shaped(value):
+    """Whether ``value`` reads ``alias:path``, the switch on or off (reads nothing): only a device workspace is written so
+    (a workspace of this machine is an absolute path), for the place that refuses one while the switch is off
+    (app/butler_topics.py plan_start) instead of taking it for a path here."""
+    return bool(DEVICE_VALUE.match(str(value).strip()))
 
 
 # ---------------------------------------------------------------- the checkpoint and the seed files of a task

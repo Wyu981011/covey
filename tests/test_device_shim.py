@@ -124,6 +124,24 @@ class CommandLineTest(ShimCase):
             info = self.device.call("hello", want=["fakeagent"])["tools"]["fakeagent"]
             self.assertEqual((info["found"], info["path"], info["version"]), (True, str(tool), "fakeagent 9.9.9"))
 
+    def test_antigravitys_sign_in_is_a_file_under_the_home_looked_at_never_read(self):
+        with exec_tempdir() as bin_dir:
+            tool = Path(bin_dir) / "agy"
+            tool.write_text("#!/bin/sh\necho '1.5.14'\n")
+            tool.chmod(0o755)
+            if not os.access(tool, os.X_OK):
+                self.skipTest("no directory here where a script may be executed (run through scripts/test_map.py)")
+            self.device.env["PATH"] = "%s:%s" % (bin_dir, self.device.env["PATH"])
+            info = self.device.call("hello", want=["agy"])["tools"]["agy"]
+            self.assertEqual((info["found"], info["version"], info["login"]), (True, "1.5.14", "no"))
+            self.assertEqual(info["login_detail"], "~/.gemini/antigravity-cli/antigravity-oauth-token not found")
+            token = self.home / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+            token.parent.mkdir(parents=True)
+            token.write_text("fake-sign-in-for-the-test")
+            reply = self.device.call("hello", want=["agy"])
+            self.assertEqual((reply["tools"]["agy"]["login"], reply["tools"]["agy"]["login_detail"]), ("ok", ""))
+            self.assertNotIn("fake-sign-in-for-the-test", json.dumps(reply.head))
+
     def test_an_old_hub_protocol_and_bad_requests_are_answered_with_codes(self):
         self.assertEqual(self.device.call("hello", proto=0).err, "bad_proto")
         self.assertEqual(self.device.call("nonsense").err, "bad_request")

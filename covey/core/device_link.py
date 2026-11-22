@@ -1,8 +1,9 @@
 """DeviceProcess: a Harness process that runs on a device, dressed as the ``subprocess.Popen`` the backends use.
 
 ``core/process.py spawn_process`` returns one when the turn's context names a device (``ctx.device``); otherwise it
-is a plain ``Popen`` and nothing here is imported. The backends (``ClaudeProcess``, Codex's ``AppServer``) read its
-``stdout`` line by line and write its ``stdin`` as they do a local process; underneath, the shim on the device
+is a plain ``Popen`` and nothing here is imported. The backends (``ClaudeProcess``, Codex's ``AppServer``,
+Antigravity's ``core/process.py stream_subprocess_lines``) read its ``stdout`` line by line and write its ``stdin`` as
+they do a local process; underneath, the shim on the device
 (``core/device_shim.py``) owns the real process and a **link thread** carries the bytes over ``attach``:
 
 - **spawn**: the device runs the Agent under a supervisor that outlives ssh (``spawn``, idempotent per task key); the
@@ -68,7 +69,6 @@ PATH_NAME = re.compile(r"(PATH|DIR|HOME|FILE|ROOT)$")
 ENV_PREFIXES = ("CLAUDE_CODE_", "ANTHROPIC_", "CLAUDE_AUTOCOMPACT")
 ENV_NAMES = ("LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "NO_COLOR", "ENABLE_TOOL_SEARCH", "DISABLE_AUTOUPDATER",
              "DISABLE_TELEMETRY", "DISABLE_ERROR_REPORTING")
-TOOLS = ("claude", "codex")
 
 
 class DeviceSpawnError(OSError):
@@ -164,13 +164,14 @@ def spawn_env(env, extra):
 
 def device_argv(argv, ctx, profile):
     """``argv`` with the hub's Harness command (``ctx.backend_cmd``) replaced by the one the device's profile found
-    (``tools.claude.path``), or by the bare name for the device's PATH."""
+    (``tools.claude.path``; a Harness that runs on a device, core/devices.py harness_names), or by the bare name for the
+    device's PATH."""
     prefix = list(getattr(ctx, "backend_cmd", None) or [])
     argv = list(argv)
     if not prefix or argv[:len(prefix)] != prefix:
         return argv
     name = os.path.basename(prefix[0])
-    if name not in TOOLS:
+    if name not in devices.harness_names():
         return argv
     info = ((profile or {}).get("tools") or {}).get(name) or {}
     path = info.get("path") if info.get("found") and isinstance(info.get("path"), str) and info.get("path") else name

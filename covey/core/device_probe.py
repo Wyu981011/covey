@@ -1,6 +1,7 @@
 """A device's self-check: ``self_check`` connects, pushes the shim (and the Codex reader), says hello, imports the
 environment profile and (with ``probe_harness``, which ``check_device`` and ``bin/covey_devices.py check`` pass) runs
-one minimal real request per declared Harness on the device, with the profile's environment. Its outcome, in words
+one minimal real request per declared Harness on the device, with the profile's environment (a Harness that has none,
+core/harness_probe.py ``command_for``, is only looked for). Its outcome, in words
 (``CheckResult.explain``), is kept in ``profile.json`` (core/devices.py ``build_profile``) and read back by
 ``status_text`` (the workspace card's device line, ``service/doctor.py``). The command line is service/device_check.py.
 
@@ -20,7 +21,9 @@ LOGIN_ENV_SCRIPT = ["sh", "-c", 'exec "${SHELL:-sh}" -lc env']
 READER_FILE = Path(__file__).resolve().parents[1] / "backends" / "codex" / "workspace_reader.py"
 PROBE_SECONDS = 60
 PROBE_OUTPUT = 1 << 16
-LOGIN_HELP = {"claude": "在设备上运行 claude，用 /login 登录", "codex": "在设备上运行 codex login"}
+LOGIN_HELP = {"claude": "在设备上运行 claude，用 /login 登录", "codex": "在设备上运行 codex login",
+              "agy": "在设备上运行一次 agy，选 Google OAuth 登录（打开它给的链接、把授权码贴回终端）"}
+UNPROBED = "executable found; no minimal request for this Harness"
 
 
 @dataclasses.dataclass
@@ -60,13 +63,20 @@ def explain_probe(alias, harness, answer, env):
 
 def probe_harness(transport, device, name, profile, *, timeout=PROBE_SECONDS):
     """The one real minimal request of a Harness on a device (``self_check``'s ``probe``): the same call as
-    ``core/harness_probe.py`` makes here (``claude -p``, ``codex exec``), run by the shim's ``exec`` on the device with
-    the profile's environment (``devices.effective_env``). ``{"ok", "reason", "detail", "seconds"}``; ``reason`` is one of
-    ``harness_probe.REASONS``."""
+    ``core/harness_probe.py`` makes here (``command_for``: ``claude -p``, ``codex exec``), run by the shim's ``exec`` on the
+    device with the profile's environment (``devices.effective_env``). ``{"ok", "reason", "detail", "seconds"}``; ``reason``
+    is one of ``harness_probe.REASONS``. A Harness without a minimal request is only looked for, as here: found is ``ok``
+    with ``probed`` false (never a request it does not have), unless the device said it is not signed in (``login`` no:
+    agy's sign-in file, core/device_shim.py SIGN_IN_FILES), which is ``not_logged_in``."""
     info = (profile.get("tools") or {}).get(name) or {}
     if not info.get("found") or not info.get("path"):
         return {"ok": False, "reason": "not_installed", "detail": "%s not found on the device" % name, "seconds": 0.0}
     argv = harness_probe.command_for(name, info["path"])
+    if argv is None:
+        if info.get("login") == "no":
+            return {"ok": False, "reason": "not_logged_in", "detail": "%s is not signed in on the device" % name,
+                    "probed": False, "seconds": 0.0}
+        return {"ok": True, "reason": "ok", "detail": UNPROBED, "probed": False, "seconds": 0.0}
     started = time.monotonic()
     answer = transport.call("exec", argv=argv, env=devices.effective_env(device, profile), cwd="~", timeout=timeout,
                             max_out=PROBE_OUTPUT, patience=timeout + 30.0)
@@ -105,9 +115,16 @@ class CheckResult:
             tools = ((self.profile or {}).get("tools") or {})
             found = " · ".join("%s %s" % (name, short_version(name, info)) for name, info in tools.items()
                                if info.get("found")) or "没有声明 Harness"
-            probed = [step.name.split(":", 1)[1] for step in self.steps if step.name.startswith("probe:") and step.ok]
-            return "%s 自检通过：%s%s" % (self.alias, found,
-                                        "；%s 的最小请求都通过了" % "、".join(probed) if probed else "（没有真跑最小请求）")
+            answers = (self.profile or {}).get("probe") or {}
+            passed = [step.name.split(":", 1)[1] for step in self.steps if step.name.startswith("probe:") and step.ok]
+            looked = [name for name in passed if (answers.get(name) or {}).get("probed") is False]
+            probed = [name for name in passed if name not in looked]
+            signed = [name for name in looked if (tools.get(name) or {}).get("login") == "ok"]
+            bare = [name for name in looked if name not in signed]
+            words = ["%s 的最小请求都通过了" % "、".join(probed)] if probed else []
+            words += ["%s 没有最小请求，查了程序和登录" % "、".join(signed)] if signed else []
+            words += ["%s 没有最小请求，只查了程序" % "、".join(bare)] if bare else []
+            return "%s 自检通过：%s%s" % (self.alias, found, "；" + "，".join(words) if words else "（没有真跑最小请求）")
         return "\n".join(self._failure(step) for step in self.steps if not (step.ok or step.skipped))
 
     def _failure(self, step):
@@ -232,7 +249,7 @@ def _run_check(config, device, transport, data, probe, now, state_dir, result):
                 write_json(devices.device_dir(state_dir, alias) / "profile.json", result.profile, ensure_ascii=False)
             if not answer.get("ok"):
                 raise LinkError("%s: %s" % (answer.get("reason", "other"), answer.get("detail", "")))
-            return "ok"
+            return "found, no minimal request" if answer.get("probed") is False else "ok"
 
         step("probe:" + name, run_probe)
 
