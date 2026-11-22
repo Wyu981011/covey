@@ -12,6 +12,7 @@ op id, ``<time_ns>-<hex8>``, read once, oldest first. A job waiting for its turn
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import time
@@ -75,11 +76,52 @@ def runner_alive(directory: Path) -> bool:
     return str(Path(directory).absolute()).encode() in argv
 
 
+def argv_dirs(root: Path) -> set[str] | None:
+    """The names ``n`` for which a process of this user has ``<root>/n`` as one whole argument: the only run
+    directories runner_alive can say yes to, as it looks for the directory in the argv of the process its
+    runner.json names (that process must be this user's). One read of /proc per process and none under ``root``:
+    reading every runner.json took 3-8 s on NAS for 1700 run directories, several times at each start (T648).
+    None when /proc cannot be listed (no procfs): then every directory is asked."""
+    prefix = str(Path(root).absolute()).encode() + b"/"
+    try:
+        pids = [name for name in os.listdir("/proc") if name.isdigit()]
+    except OSError:
+        return None
+    uid, names = os.getuid(), set()
+    for pid in pids:
+        try:
+            if os.stat(f"/proc/{pid}").st_uid != uid:
+                continue
+            with open(f"/proc/{pid}/cmdline", "rb") as file:
+                argv = file.read().split(b"\0")
+        except OSError:
+            continue
+        for arg in argv:
+            name = arg[len(prefix):] if arg.startswith(prefix) else b""
+            if name and b"/" not in name:
+                names.add(name.decode(errors="surrogateescape"))
+    return names
+
+
+def _asked(root: Path, alive) -> list[Path]:
+    """The entries of ``root`` to ask ``alive`` about: with runner_alive only those argv_dirs names, by name;
+    with another test (a caller's or a test's), every one, as before argv_dirs."""
+    named = argv_dirs(root) if alive is runner_alive else None
+    if named is not None:
+        return [root / name for name in sorted(named)]
+    return sorted(root.iterdir()) if root.is_dir() else []
+
+
+def live_dirs(state_dir: Path, alive=runner_alive) -> list[Path]:
+    """The run directories whose task runner is alive (``alive``), absolute, by name: those a Bridge adopts at its start."""
+    return [directory for directory in (entry.absolute() for entry in _asked(Path(state_dir) / RUNS, alive))
+            if directory.is_dir() and alive(directory)]
+
+
 def live_keys(state_dir: Path, alive=runner_alive) -> set:
     """Job keys whose task runner is alive, whichever bridge started it."""
-    root = Path(state_dir) / RUNS
     keys = set()
-    for directory in root.iterdir() if root.is_dir() else []:
+    for directory in _asked(Path(state_dir) / RUNS, alive):
         info = runner_info(directory)
         if info and info.get("key") and alive(directory):
             keys.add(info["key"])

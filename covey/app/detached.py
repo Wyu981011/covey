@@ -41,7 +41,7 @@ from covey.core.jobs import (DEVICE_LOST_STATUS, SIGTERM_STATUS, context_for_job
 from covey.core.butler import traits_of
 from covey.core.deliveries import lost, topic_steer
 from covey.core.statuses import RUNNING
-from covey.core.run_dir import (DONE, EXIT, HANDOFF, INBOX, QUEUED, RUNS, ack, live_keys as _live_keys,
+from covey.core.run_dir import (DONE, EXIT, HANDOFF, INBOX, QUEUED, ack, live_dirs, live_keys as _live_keys,
                                          queued_path, read_exit, restart_blockers as _restart_blockers,
                                          runner_alive as alive, runner_info, take)
 from covey.app.policy_guard import requested
@@ -348,11 +348,7 @@ def close_forms_sent_after_handoff(app, job, ctx, directory: Path) -> None:
 def adopt_runners(gateway, ctx) -> set:
     """Watch every live runner again and re-queue waiting jobs; returns the keys kept running."""
     kept = set()
-    root = Path(ctx.state_dir) / RUNS
-    for directory in sorted(root.iterdir()) if root.is_dir() else []:
-        directory = directory.absolute()
-        if not directory.is_dir() or not alive(directory):
-            continue
+    for directory in live_dirs(ctx.state_dir, alive):
         try:
             handoff = read_json(directory / HANDOFF)
             if handoff["harness"] not in gateway.apps:

@@ -53,7 +53,7 @@ from covey.core.jobs import max_job_id
 from covey.core.roster import NAMES
 from covey.core.state import write_private_text, read_json, write_json
 from covey.core import background, butler_settings, timing
-from covey.core.store import save_indexes
+from covey.core.store import directory_store, save_indexes
 
 # A task runner (``task_runner=True``) imports what the Bridge alone uses only when it first needs it: the
 # Bridge's controllers (_build_parts), and below, the startup and maintenance parts of main().
@@ -80,6 +80,19 @@ def remove_pid(path):
 def save_record_indexes(gateway, ctx):
     """An outbox-loop step: the record directories' .index, for the task runners this Bridge starts."""
     save_indexes(ctx.state_dir)
+
+
+def warm_records(state_dir):
+    """Read the job and question records on a background thread while the start checks its identity (init_target, a
+    second of Feishu calls): the recovery after it reads all of them (recover_question_delivery), 3-4 s from NAS for
+    5900 job records (T648). A query meanwhile waits for it; a failed one changes nothing, the next query catches up."""
+    def warm():
+        try:
+            for folder in (state_dir / "jobs", state_dir / "questions"):
+                directory_store(folder).warm()
+        except Exception:  # noqa: BLE001 - only a head start
+            pass
+    threading.Thread(target=warm, daemon=True, name=background.RECORDS).start()
 
 
 def fold_questions(gateway, ctx):
@@ -376,6 +389,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # Old records migrated before anything reads them (core/migrate.py); once done, one file read.
             from covey.core.migrate import migrate
             migrate(ctx.state_dir, log=self.runtime.log)
+            warm_records(ctx.state_dir)  # Read meanwhile: the recovery below reads every job and question record.
             self.butler.settle(ctx, self.runtime.log)  # The private chat mode, once (docs/butler.md 私聊模式).
             self.welcome.settle(ctx)  # Whether this deployment gets its welcome card, once (app/welcome.py).
             if butler_settings.desk_topics_left(ctx.state_dir):  # Retired (docs/butler.md 会话).
@@ -391,6 +405,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
                 except (OSError, ValueError, ImportError):
                     self.runtime.log('CardKit SDK warmup unavailable; CLI remains available')
             self.init_target(ctx)
+            self.start_intake(ctx)  # Events come in from here; handled once the workers start (below).
             self.harnesses[self.topics.default].ensure_started(ctx)  # The first job does not check again.
             self.log_startup(ctx)
             self.runtime.jobs.counter = max_job_id(ctx.state_dir)
@@ -574,6 +589,14 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
                                      retry_seconds=CARD_ACTION_RETRY_SECONDS)
         consume(ctx, key, handle=handle, set_process=lambda proc: self.event_procs.__setitem__(key, proc),
                 shutdown=self.runtime.shutdown, log=self.runtime.log, retry_seconds=CARD_ACTION_RETRY_SECONDS)
+
+    def start_intake(self, ctx: BridgeContext) -> None:
+        """With COVEY_EVENT_TRANSPORT=sdk, connect as soon as the app's identity is checked (init_target): the clicks
+        and messages that come while the start recovers (until the workers below) are taken in and wait for their
+        consumers, a click answered at once (feishu/ws_intake.py HELD_TOAST), where without a connection Feishu refused
+        them. lark-cli's consumers (the default) start with the workers, as before."""
+        if ws_intake.enabled():
+            ws_intake.intake(ctx, self.runtime.shutdown, self.runtime.log, CARD_ACTION_RETRY_SECONDS).start()
 
     def consume_loop(self, ctx: BridgeContext) -> None:
         self.consume_events(ctx, MESSAGE_EVENT_KEY, self.handle_event)

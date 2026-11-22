@@ -285,6 +285,20 @@ class LaunchTests(LaunchCase):
         job = self.app.runtime.jobs.queue.get_nowait()
         self.assertEqual((job.workdir, job.effort), ((repo / 'pkg').resolve(), 'low'))
 
+    def test_a_restart_reads_the_launch_forms_together_and_leaves_those_not_creating_a_worktree(self):
+        # The forms are read many at a time at a start (700 one by one took 1.6 s on NAS); one it cannot read is logged.
+        from covey.app import launch_submit
+        forms = self.ctx.state_dir / 'launch-forms'
+        forms.mkdir(exist_ok=True)
+        for number in range(30):
+            (forms / f'ready{number:02}.json').write_text(json.dumps({'status': 'ready', 'topic_id': 'gone'}))
+        (forms / 'torn.json').write_text('{')
+        with mock.patch.object(launch_submit, 'abandon_worktree_launch') as abandon, \
+                mock.patch.object(self.app.topics.runtime, 'log') as log:
+            launch_submit.recover_worktree_launches(self.app.topics, self.ctx)
+        abandon.assert_not_called()
+        self.assertEqual([c.args[0] for c in log.call_args_list], ['launch worktree recovery failed: JSONDecodeError'])
+
     def test_a_restart_during_the_checkout_gives_the_card_back(self):
         repo = self.make_repo()
         self.receive('task', 'hello')

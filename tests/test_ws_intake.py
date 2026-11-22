@@ -318,6 +318,86 @@ class IntakeTest(unittest.TestCase):
         self.assertEqual(events.format_event_stderr(f'[event] ready event_key={MENU_EVENT_KEY}'),
                          f'[event] ready event_key={MENU_EVENT_KEY}')
 
+    def test_a_click_before_its_consumer_attaches_is_answered_held_and_handled_once_it_attaches(self):
+        # The Bridge connects as soon as its identity is checked (Intake.start) and attaches the consumers after its
+        # start's recovery: a click meanwhile gets the held toast instead of Feishu's error, and is handled after.
+        self.intake._set_connected(True)
+        self.assertEqual(self.logs, ['event websocket connected; events wait for the start to finish'])  # No ready line yet.
+        self.assertEqual(self.intake.on_payload(frame(CARD)), ws_intake.HELD_TOAST)
+        self.assertEqual(ws_intake.HELD_TOAST_TEXT, '收到，机器人刚重启，稍后处理')
+        seen = []
+        self.run_consumer(CARD_ACTION_EVENT_KEY, lambda event, ctx: seen.append(event))
+        self.wait_for(lambda: seen)
+        self.assertIn(f'[event] ready event_key={CARD_ACTION_EVENT_KEY}', self.logs)  # What deploy_bridge.sh waits for.
+        self.assertEqual(json.loads(seen[0]['action_value'])['kind'], 'stop')
+        later = envelope(CARD_ACTION_EVENT_KEY, CARD['event'], event_id='ev_after')
+        self.assertEqual(self.intake.on_payload(frame(later)), ws_intake.TOAST)
+
+    def test_start_connects_once_before_any_consumer_and_a_consumer_starts_no_second_connection(self):
+        intake = ws_intake.Intake(SimpleNamespace(profile='fake'), self.shutdown, self.logs.append, 300)
+        ran = threading.Event()
+        with mock.patch.object(ws_intake.Intake, '_run', side_effect=lambda: ran.set()) as run:
+            intake.start()
+            intake.start()
+            self.assertTrue(ran.wait(5))
+            threading.Thread(target=intake.consume, args=(MENU_EVENT_KEY, lambda event, ctx: None), daemon=True).start()
+            self.wait_for(lambda: MENU_EVENT_KEY in intake.attached)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(intake.status()['status'], 'disconnected')  # Started, not connected yet.
+
+    def test_stopping_twice_disconnects_once_without_waiting_again_and_names_what_was_not_handled(self):
+        # The Bridge stops it on the signal and again at the end of its main: the second time waited out 2 s on the
+        # stopped loop before the process could exit and the Manager start the next one.
+        import asyncio
+        loop = asyncio.new_event_loop()
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        calls = []
+
+        class Client:
+            _auto_reconnect = True
+
+            async def _disconnect(self):
+                calls.append('disconnect')
+        self.intake.on_payload(frame(CARD))  # Taken in while no consumer handles clicks.
+        self.intake.client, self.intake.loop = Client(), loop
+        started = time.monotonic()
+        self.intake.stop()
+        self.intake.stop()
+        self.assertLess(time.monotonic() - started, 1.5)
+        thread.join(5)
+        loop.close()
+        self.assertEqual(calls, ['disconnect'])
+        self.assertIn(f'event websocket: stopping with events not handled {CARD_ACTION_EVENT_KEY}=1', self.logs)
+
+    def test_stop_from_the_signal_handler_while_this_thread_holds_the_lock_does_not_hang(self):
+        # The SIGTERM handler runs stop() on the main thread, which may be inside start() or consume() holding the lock.
+        done = []
+
+        def signalled():
+            with self.intake.lock:
+                self.intake.stop()
+            done.append(True)
+        thread = threading.Thread(target=signalled, daemon=True)
+        thread.start()
+        thread.join(5)
+        self.assertEqual(done, [True])
+
+    def test_a_connection_made_after_the_bridge_began_to_stop_takes_nothing_in(self):
+        self.shutdown.set()
+        creds = SimpleNamespace(config=SimpleNamespace(app_id='cli_fake', app_secret='fake', domain='https://open.example'))
+        started = []
+        fake = SimpleNamespace(Client=lambda *args, **kwargs: SimpleNamespace(start=lambda: started.append(True)),
+                               loop=object())
+        with mock.patch('covey.feishu.sdk.client', return_value=creds), \
+                mock.patch.dict(sys.modules, {'lark_oapi.ws': SimpleNamespace(client=fake), 'lark_oapi.ws.client': fake,
+                                              'lark_oapi.core.enum': SimpleNamespace(LogLevel=SimpleNamespace(ERROR=0)),
+                                              'lark_oapi.event.dispatcher_handler': SimpleNamespace(
+                                                  EventDispatcherHandler=mock.MagicMock())}):
+            self.intake._run_client(threading.Event())
+        self.assertEqual(started, [])
+        self.assertIsNone(self.intake.client)
+
     def test_connection_status_feeds_the_connections_thread(self):
         from covey.feishu import connections
         runtime = SimpleNamespace(shutdown=threading.Event(), connection_health={}, log=lambda line: None)

@@ -29,7 +29,7 @@ from pathlib import Path
 from covey.core.locks import resource_lock
 from covey.core.process_env import env_flag
 from covey.core.run_dir import ACKS, EXIT, INBOX, OP
-from covey.core.state import keyed_json_path, read_json, write_json
+from covey.core.state import keyed_json_path, read_each, read_json, write_json
 
 # A topic's message sent while the topic's task runs goes into that task as a supplement (app/submission.py
 # steers_on_arrival), unless 0: then it is queued as the next round, as before (docs/configuration.md).
@@ -136,13 +136,16 @@ def lost(state_dir, job_key=None, since=0.0):
     ``since`` (less CLOCK_SLACK) are skipped unread, as in ``end_unread``."""
     found = []
     since = float(since or 0) - CLOCK_SLACK
-    for path in (Path(state_dir) / "interaction-deliveries").glob("*.json"):
+
+    def load(path):
         try:
             if path.stat().st_mtime < since:
-                continue
+                return None
         except OSError:
-            continue
-        record = read_delivery(path)
+            return None
+        return read_delivery(path)
+    paths = list((Path(state_dir) / "interaction-deliveries").glob("*.json"))
+    for path, record in zip(paths, read_each(paths, load)):  # All of them at a Bridge's start: 390 took 1 s one by one.
         if (isinstance(record, dict) and (job_key is None or record.get("job_key") == job_key)
                 and marked(record) and REQUEUE in offers(record)):
             found.append((path, record))

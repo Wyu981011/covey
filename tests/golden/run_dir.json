@@ -676,9 +676,10 @@
  ],
  "live_keys_missing": [],
  "live_keys_with_list": [
-  "raised",
-  "AttributeError",
-  "'list' object has no attribute 'get'"
+  "ok",
+  [
+   "live"
+  ]
  ],
  "mark_done_missing": [
   "ok",

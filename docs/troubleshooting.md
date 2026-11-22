@@ -91,7 +91,7 @@ tail -n 100 "$STATE_DIR/bridge.log"
 
 每次卡片点击到达 Bridge 时，`bridge.log` 写一行 `card action kind=<按钮类型> message=<消息 ID 末 10 位> event=<事件 ID 末 10 位> outcome=<结果> elapsed_ms=<耗时>`（表单按钮没有类型，记按钮名去掉令牌，开始任务记 `bridge_launch_submit`）。
 
-找不到对应时间的这一行，说明点击没有到达机器人：机器人停着时点卡片都没有反应。看机器人是否在运行、`ready event_key=card.action.trigger` 是否在、卡片回调消费者是否正在等 300 秒重启，再查应用的 `card.action.trigger` 订阅、权限和发布状态。
+找不到对应时间的这一行，说明点击没有到达机器人：机器人停着时点卡片都没有反应，部署或重启时从旧进程停下到新进程连上飞书的几秒也是（lark-cli 收事件时还要加上新进程认领任务的几秒；SDK 收事件时新进程一连上就先收下点击，回“收到，机器人刚重启，稍后处理”）。看机器人是否在运行、`ready event_key=card.action.trigger` 是否在、卡片回调消费者是否正在等 300 秒重启，再查应用的 `card.action.trigger` 订阅、权限和发布状态。
 
 找到时按 `outcome` 判断：
 

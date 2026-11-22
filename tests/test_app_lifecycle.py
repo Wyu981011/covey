@@ -265,6 +265,46 @@ class StoppingTest(unittest.TestCase):
                 self.assertEqual(self.stop(fail), (["notify_stale_jobs", "consume", *order], fail))
 
 
+class StartOrderTest(unittest.TestCase):
+    """What main does before its workers, in order. With COVEY_EVENT_TRANSPORT=sdk the event connection starts right after
+    the identity check and before the recovery (its events wait for their consumers, which start with the workers);
+    with lark-cli's consumers it starts with the workers, as before. The job and question records are read meanwhile."""
+
+    def start(self, env):
+        from covey.feishu import ws_intake
+        self.addCleanup(ws_intake.reset)
+        app = UnifiedBridgeApp(script_path=REPO / "bin/covey_bridge.py")
+        quiet(app)
+        calls = []
+
+        def step(name, result=None):
+            return lambda *args, **kwargs: calls.append(name) or result
+        clean = {k: v for k, v in os.environ.items() if k not in ("COVEY_EVENT_TRANSPORT", "LARK_BRIDGE_EVENT_TRANSPORT")}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {**clean, **env}, clear=True), \
+                mock.patch("covey.app.unified.signal.signal"), mock.patch("covey.core.migrate.migrate"), \
+                mock.patch("covey.feishu.sdk.lark_cli_direct"), mock.patch("covey.feishu.sdk.enabled", return_value=False), \
+                mock.patch("covey.app.unified.warm_records", step("warm records")), \
+                mock.patch.object(app, "init_target", step("init_target")), \
+                mock.patch.object(ws_intake.Intake, "start", step("event connection")), \
+                mock.patch.object(app.harnesses[DEFAULT], "ensure_started", step("ensure_started")), \
+                mock.patch.object(app, "log_startup"), \
+                mock.patch("covey.app.unified.recover_question_delivery", step("recover questions")), \
+                mock.patch.object(app, "notify_stale_jobs", step("adopt and interrupt")), \
+                mock.patch("covey.app.unified.supervised", step("workers", mock.Mock())), \
+                mock.patch.object(app, "consume_loop", step("consume")):
+            app.main(["--state-dir", str(Path(tmp) / "state"), "--workdir", tmp, "--profile", "unit"])
+        return [name for n, name in enumerate(calls) if not n or calls[n - 1] != name]
+
+    def test_the_sdk_connection_starts_once_the_identity_is_checked_and_before_the_recovery(self):
+        self.assertEqual(self.start({"COVEY_EVENT_TRANSPORT": "sdk"}),
+                         ["warm records", "init_target", "event connection", "ensure_started", "recover questions",
+                          "adopt and interrupt", "workers", "consume"])
+
+    def test_lark_cli_consumers_start_with_the_workers_as_before(self):
+        self.assertEqual(self.start({}), ["warm records", "init_target", "ensure_started", "recover questions",
+                                          "adopt and interrupt", "workers", "consume"])
+
+
 class WorkerTargetsTest(unittest.TestCase):
     @requires_extension()
     def test_each_optional_feature_adds_its_worker_only_when_on(self):

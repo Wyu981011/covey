@@ -165,11 +165,18 @@ continued、done、failed、cancelled、interrupted：终态
 
 ### 重启认领
 
-`UnifiedBridgeApp.main` 先拿状态目录的实例锁，然后：
+`UnifiedBridgeApp.main` 先拿状态目录的实例锁，迁移旧记录（`core/migrate.py`），在后台线程预读任务和问题记录（`warm_records`，下面第 1 步要读全部，和 `init_target` 的飞书调用同时读），再 `init_target` 核对应用身份；开着 `COVEY_EVENT_TRANSPORT=sdk` 时紧接着连上事件长连接（`start_intake`，见[事件长连接走 SDK](#事件长连接走-sdk默认关)）。然后：
 
 1. `recover_question_delivery` 核对问题记录；`recover_worktree_launches` 把建 worktree 时被打断的启动卡换回表单。
 2. `adopt_runners` 按 `handoff.json` 认领存活任务进程，往 inbox 写 `bridge_restarted`；再排上 `queued/` 里的任务。
 3. `recover_stale_jobs` 把其余未结束记录标 `interrupted`；`close_retired_jobs`；`release_started_launches` 排上已绑定话题里还在 `waiting_workspace` 的消息。
+
+这三步做完才起后台线程和事件消费者：认领、标中断和核对问题都要在处理第一个点击或消息之前。所以这几步的耗时，就是重启后点卡片没反应（lark-cli 收事件）或先收下、稍后才处理（SDK 收事件）的时间。为让它在几秒内，这几步遵守：
+
+- 哪些任务进程还活着（`core/run_dir.py` 的 `live_keys`、`live_dirs`，启动时要问四次）只问 `/proc` 里有本用户进程的命令行提到的 run 目录（`argv_dirs`），不逐个读 `runs/` 下上千个 `runner.json`（NAS 上每次几秒）；读不了 `/proc`，或调用方给了自己的判断函数时，照旧逐个问。
+- 问题核对一次建好任务的索引（`_lookup`），不为每个问题扫一遍全部任务；已答问题和后续任务已经一致时不再加锁重读、重写。
+- checkpoint 问题的核对（每个 Harness 一次）先按索引里的状态只取待答问题和它们的任务，有可能收起一张时才取全部（`_older_duplicate`）。
+- 启动卡、补充记录这类每条一个文件的目录用 `core/state.py` 的 `read_each` 并行读。
 
 ### 中断与恢复卡
 
@@ -330,8 +337,9 @@ CardKit 只接受比同一张卡已有写入（含结果不确定的）都大的
 
 - **四类事件一起走**：`im.message.receive_v1`、`card.action.trigger`、`application.bot.menu_v6`、`im.message.message_read_v1`。同一个应用只能有一个事件长连接，SDK 连着时 lark-cli 的 `event consume` 拒绝启动，所以开着时 lark-cli 消费者一个都不起，处理函数还是各自原来的那一个（`handle_event`、`CardLanes.submit`、`handle_menu_event`、`TopicSeen.handle`），`consume_events()` 的调用方不变。
 - **转换**：SDK 给的是 v2 原始信封，`ws_intake.py` 的 `message_event`、`card_action_event`、`menu_event`、`read_event` 转成与 `events.py` 里各 `*_JQ` 同形的 dict，下游分不出来源。消息事件带 `REPLY_CONTEXT`（原始事件本来就有类型、根、父、提及）；文本消息的 `content` 是读得懂的文字（`@_user_N` 换成名字）；富文本（`post`）照 lark-cli 的样子渲染（标题一行，段内元素连写，`**粗**`、`*斜*`、`<u>`、`~~`、Markdown 链接、`@名字`、图片写成 Markdown 图片（文字 Image、地址是 image_key）、代码块、`---`、`:表情:`）；其他类型保留消息 API 的 JSON，`message_parts.py` 两种都认。在测试机器人上对照过：多行文字、@ 提及、图片、文件、引用回复、话题里的回复、两种富文本，SDK 和 lark-cli 两条路交给 `enrich_incoming_event` 后的模型文字逐字相同；卡片表单提交的 `form_value` 同形。
-- **toast**：卡片回调的应答在同一帧里回 `{"toast": {"type": "info", "content": "收到"}}`（常量 `TOAST_TEXT`）。应答前只做解析和入队，点击在卡片的消费线程（`cards`）里走原来的 `CardLanes.submit`；SDK 的回调线程同时跑心跳，不做重活。转换失败时不回 toast。
-- **队列与线程**：每个 key 一个有界队列（256），由该 key 自己的消费线程取（和 lark-cli 时一样逐个处理，慢消息不拖连接）。第一个 `consume()` 调用起 `event-websocket` 线程，在线程里才导入 `lark_oapi`、取凭据（`feishu/sdk.py` 的 `client()`，只在内存）；断线重连由 SDK 自己做，客户端抛出（如连接数超限）时线程 20 秒内重来。Bridge 停止时 `stop_children` 关连接。
+- **toast**：卡片回调的应答在同一帧里回 `{"toast": {"type": "info", "content": "收到"}}`（常量 `TOAST_TEXT`；点击的消费者还没接上时是 `HELD_TOAST_TEXT`，见下文启动时先连）。应答前只做解析和入队，点击在卡片的消费线程（`cards`）里走原来的 `CardLanes.submit`；SDK 的回调线程同时跑心跳，不做重活。转换失败时不回 toast。
+- **队列与线程**：每个 key 一个有界队列（256），由该 key 自己的消费线程取（和 lark-cli 时一样逐个处理，慢消息不拖连接）。`Intake.start`（或第一个 `consume()`）起 `event-websocket` 线程，在线程里才导入 `lark_oapi`、取凭据（`feishu/sdk.py` 的 `client()`，只在内存）；断线重连由 SDK 自己做，客户端抛出（如连接数超限）时线程 20 秒内重来。Bridge 停止时 `stop_children` 关连接，只关一次（信号处理和 `main` 结束各调一次，第二次在已停的事件循环上会白等 2 秒，推迟进程退出和 Manager 起下一个）；停时还有收下没处理的点击或消息，日志记 `event websocket: stopping with events not handled <key>=<个数>`。
+- **启动时先连**：`main` 核对完应用身份（`init_target`）就调 `start_intake` 连上，比消费者早；消费者等[重启认领](#重启认领)做完、和后台线程一起起来。这段时间收到的事件在各自队列里等，按到达顺序处理；卡片点击当场回 `HELD_TOAST`（“收到，机器人刚重启，稍后处理”），不再因为没有连接被飞书拒掉、填的内容白丢。连上时还没有消费者，日志记 `event websocket connected; events wait for the start to finish`；`[event] ready` 仍在消费者接上时才写，所以部署脚本和 doctor 看到的就绪还是“开始处理”。lark-cli 收事件时不这样做，消费者照旧随后台线程起。已知限制：收下后进程没做完启动就退出（紧接着又一次部署、崩溃），队列里的事件随之丢失（正常停止时日志记上面那行）。
 - **去重**：按 `event_id` 在内存里记最近 2048 个，重投或重连重发的不再处理（点击仍回 toast）；不改 `claim_once`。
 - **健康**：每个已有消费者的 key 照旧一个 `ConsumerHealth`，连上时写 `[event] ready event_key=<key>`（`deploy_bridge.sh` 数的就是这行），断开记 `retrying/disconnected`，重连再写一遍。`feishu/connections.py` 的传输看门狗在这个模式下不看 lark-cli 总线，改报 SDK 连接状态（`receiving`/`disconnected`）；健康快照多一个 `event_transport: sdk`，`doctor` 据此看 Bridge 自己的消费者是否 ready，不因找不到总线报 degraded。
 - **切回**：去掉变量重启即可，不留状态。已知限制：靠 `lark_oapi` 1.7.4 客户端的 `_conn` 判断是否连上；@ 提及的 `id` 对机器人是它的 open_id（lark-cli 给的是 app_id），判断是否提到本机器人用的 `Access.own_ids` 两个都认。

@@ -264,6 +264,38 @@ class IndexedStorageTest(unittest.TestCase):
                              sorted(bridge.query(status='failed') + bridge.query(status='continued')))
             self.assertEqual(bridge.query(status=set()), [])
 
+    def test_count_reads_no_record_and_warm_reads_each_once_for_the_queries_after_it(self):
+        # The Bridge's start: how many answered questions there are (a count) without copying them, and every job record
+        # read on a thread while it checks its identity, for the recovery that reads them all.
+        from covey.core import store as store_module
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'jobs'
+            for number in range(1, 13):
+                write_private_text(path / f'{number}.json', json.dumps(
+                    {'topic_id': 't', 'job_id': number, 'status': 'failed' if number % 3 == 0 else 'done'}))
+            bridge = store_module.JsonDirectoryStore(path)
+            self.assertEqual(len(bridge.query()), 12)
+            self.assertTrue(bridge.save_index(every=0))
+            read, real = [], store_module.JsonDirectoryStore._read
+            with mock.patch.object(store_module.JsonDirectoryStore, '_read',
+                                   lambda self, file: read.append(file.name) or real(self, file)):
+                started = store_module.JsonDirectoryStore(path)
+                self.assertEqual((started.count(status='failed'), started.count(status={'done', 'failed'}),
+                                  started.count(topic_id='t', status='queued')), (4, 12, 0))
+                self.assertEqual(read, [])
+                started.warm()
+                self.assertEqual(sorted(read), sorted(f'{n}.json' for n in range(1, 13)))
+                self.assertEqual(len(started.query()), 12)
+                self.assertEqual(len(read), 12)  # The query after it reads none again.
+
+    def test_read_each_keeps_the_order_and_raises_what_a_read_raises(self):
+        from covey.core import state
+        with mock.patch.object(state, 'READ_THREADS', 4):
+            self.assertEqual(state.read_each(range(40), lambda n: n * n), [n * n for n in range(40)])
+            with self.assertRaises(ZeroDivisionError):
+                state.read_each([1, 0, 2], lambda n: 1 / n)
+        self.assertEqual((state.read_each([], str), state.read_each([7], str)), ([], ['7']))
+
     def test_the_boards_read_leaves_old_records_unread_and_says_the_same_as_reading_them_all(self):
         # P1: the butler's snapshot read ~3400 job records in a new process for the ~150 written within three
         # days; updated_at rides in .index (store.CARRIED) so board_read.read does not read the rest.

@@ -9,6 +9,7 @@ answers.py; the messages held while questions wait are HeldNotes (held_notes.py)
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import functools
 import json
@@ -591,6 +592,31 @@ def _unconfirmed(record):
             and "uncertain" in QUESTION_TRANSITIONS.get(record.get("status", "pending"), ()))
 
 
+def _lookup(jobs, field):
+    """``match(value)``: the jobs of ``jobs`` whose ``field`` == value, in their order, from one pass over them instead
+    of a scan of all of them for each question (1500 questions x 5900 jobs at a start, T648). An unhashable value (a
+    malformed record) is looked for by that scan."""
+    found = {}
+    for job in jobs:
+        try:
+            found.setdefault(job.get(field), []).append(job)
+        except TypeError:
+            pass  # A list or a dict: equal to no hashable value; an unhashable one is scanned for below.
+
+    def match(value):
+        try:
+            return found.get(value, ())
+        except TypeError:
+            return [job for job in jobs if job.get(field) == value]
+    return match
+
+
+def _in_scope(jobs, record):
+    """The first of ``jobs`` in the topic and chat of the question ``record``, None when none is."""
+    return next((j for j in jobs if j.get("topic_id") == record["topic_id"] and j.get("chat_id") == record["chat_id"]),
+                None)
+
+
 def recover_question_delivery(ctx, harness_questions, log):
     """Startup, before any job runs: settle the question records a restart left half-done
     (every Harness's: their records share the state directory), then let each Harness's
@@ -600,6 +626,7 @@ def recover_question_delivery(ctx, harness_questions, log):
     # A job still running in its task runner keeps its questions; that runner settles them.
     live = live_keys(ctx.state_dir)
     jobs = list_job_records(ctx.state_dir, limit=0)
+    by_key, by_message, by_number = (_lookup(jobs, field) for field in ("key", "message_id", "job_id"))
     settled = []
     for job in jobs:
         if job.get("key") in live:
@@ -614,15 +641,13 @@ def recover_question_delivery(ctx, harness_questions, log):
         if record.get("job_key") in live:
             continue
         if record.get("body_delivery_required") and record.get("display_pending") and not triage.held(record):
-            original = next((j for j in jobs if j.get("key") == record.get("job_key")
-                and j.get("topic_id") == record["topic_id"] and j.get("chat_id") == record["chat_id"]), None)
+            original = _in_scope(by_key(record.get("job_key")), record)
             if original and original.get("execution_status") == "waiting_user":
                 # Restart does not publish a form or assume an interrupted send succeeded.
                 upsert_job_record(ctx.state_dir, original["key"], status="failed", question_delivery_ok=False,
                     status_message=AUDIT_REFUSED_NOTE if original.get("delivery_error") == "audit_rejected"
                     else f"完整结果或问题控件尚未送达；{retry_hint()} 可重新投递")
-        continuation = next((r for r in jobs if r.get('message_id') == 'answer-' + record['token']
-            and r.get('topic_id') == record['topic_id'] and r.get('chat_id') == record['chat_id']), None)
+        continuation = _in_scope(by_message('answer-' + record['token']), record) if jobs else None
         if continuation and record.get('status') in {'submitting','uncertain','answered'}:
             def answered(current, job=continuation):
                 if current.get('status') not in {'submitting', 'uncertain', 'answered'}:
@@ -631,6 +656,12 @@ def recover_question_delivery(ctx, harness_questions, log):
                 if job['status'] in CONTINUATION_STATES:
                     current['delivery_state'] = job['status']
                 return current
+            if answered(copy.deepcopy(record)) == record:
+                # Already as the follow-up says (almost every answered question at every start): the settle below
+                # would write nothing and settle nothing, only lock and read the file twice, ~12 ms each on NAS (T648).
+                # The store has just caught up with the directory, and while the Bridge starts nothing else writes a
+                # question of a job without a live runner.
+                continue
             before, after = _settle_question(path, answered)
             if before and before.get('status') != 'answered' and after.get('status') == 'answered':
                 settled.append(after)
@@ -651,8 +682,7 @@ def recover_question_delivery(ctx, harness_questions, log):
         questions.reconcile_checkpoint_questions(ctx, backend=questions.harness.name)
     owners = {questions.harness.name: questions for questions in harness_questions}
     for record in settled:
-        job = next((j for j in jobs if j.get('job_id') == record.get('job_id')
-                    and j.get('topic_id') == record['topic_id'] and j.get('chat_id') == record['chat_id']), None)
+        job = _in_scope(by_number(record.get('job_id')), record)
         questions = owners.get((job or {}).get('backend'))
         if questions is None:
             continue  # A Harness no longer in the roster: its cards are retired.

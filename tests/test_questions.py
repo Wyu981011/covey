@@ -1189,6 +1189,24 @@ class DuplicateCheckpointQuestionTest(TopicFixture, unittest.TestCase):
         self.app.questions.reconcile_checkpoint_questions(self.ctx, backend='claude')
         self.assertEqual(json.loads(self.path(self.old_token).read_text())['status'], 'superseded')
 
+    def test_at_start_the_job_records_are_not_all_copied_unless_an_open_form_may_be_retired(self):
+        # At the Bridge's start this runs once per Harness: a copy of every job record each time made most of a start.
+        # For Codex nothing can be retired here (the open form's task is Claude's): only that task's record is copied.
+        from covey.core.store import JsonDirectoryStore
+        copied, real = [], JsonDirectoryStore.query
+
+        def query(store, where=None, **kwargs):
+            if store.directory.name == 'jobs' and where is None:
+                copied.append(kwargs)
+            return real(store, where, **kwargs)
+        with mock.patch.object(JsonDirectoryStore, 'query', query):
+            self.app.questions.reconcile_checkpoint_questions(self.ctx, backend='codex')
+            self.assertEqual(copied, [])
+            self.assertEqual(json.loads(self.path(self.old_token).read_text())['status'], 'pending')
+            self.app.questions.reconcile_checkpoint_questions(self.ctx, backend='claude')  # Retired as before.
+        self.assertEqual(copied, [{}])
+        self.assertEqual(json.loads(self.path(self.old_token).read_text())['status'], 'superseded')
+
     def test_a_message_reads_no_job_records_while_no_form_is_answered(self):
         # reconcile runs for every message: with no answered form nothing can be retired (S31).
         from covey.app import checkpoint_questions

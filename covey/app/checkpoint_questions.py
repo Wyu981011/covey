@@ -44,6 +44,30 @@ def _accepted_answer(record, jobs):
     return job, continuation
 
 
+def _open_job_keys(rows):
+    """The job keys of the open questions (pending, superseded) of ``rows``: the only jobs _older_duplicate looks at. A
+    key it cannot look up by (unhashable) is left out: its own lookup raises on it as before."""
+    keys = set()
+    for _, record in rows:
+        if record.get("status") in {"pending", "superseded"}:
+            try:
+                keys.add(record.get("job_key"))
+            except TypeError:
+                pass
+    return keys
+
+
+def _older_duplicate(old, jobs, backend):
+    """The job of the open checkpoint question ``old`` when a later identical form's accepted answer may retire it:
+    the job still waits for the answer (and is of ``backend``, when given). None otherwise."""
+    previous = _checkpoint_source(old, jobs)
+    if (previous is None or old.get("status") not in {"pending", "superseded"}
+            or previous.get("status") != "waiting_user"
+            or (backend is not None and previous.get("backend") != backend)):
+        return None
+    return previous
+
+
 def _answers_same_question(old, previous, newer, newer_job):
     """Whether the later accepted answer (``newer``, of ``newer_job``) answers the same form as
     the older question ``old`` of job ``previous``, in the same session and binding."""
@@ -67,18 +91,25 @@ class CheckpointQuestions:
         """Retire an older duplicate only after a later identical form has an accepted answer.
         ``chat`` limits it to ctx's topic; ``backend`` to the questions of that Harness's jobs."""
         filters = {"topic_id": ctx.topic_id, "chat_id": chat} if chat is not None else {}
-        rows = directory_store(ctx.state_dir / "questions").query(**filters)
+        questions = directory_store(ctx.state_dir / "questions")
         # It runs for every message: without an open form and an answered one there is nothing to
-        # retire, and the job records are not read.
-        if not (any(r.get("status") in {"pending", "superseded"} for _, r in rows)
-                and any(r.get("status") == "answered" for _, r in rows)):
+        # retire, and the job records are not read. At the Bridge's start it runs once per Harness: only
+        # the open questions and their jobs are copied out of the stores unless one of them may be retired
+        # (a copy of every record, 1500 questions and 5900 jobs, per Harness made most of a start, T648).
+        opened = questions.query(status=frozenset({"pending", "superseded"}), **filters)
+        if not (opened and questions.count(status="answered", **filters)):
             return
-        jobs = {row["key"]: row for _, row in directory_store(ctx.state_dir / "jobs").query(**filters) if row.get("key")}
+        store = directory_store(ctx.state_dir / "jobs")
+        wanted = _open_job_keys(opened)
+        jobs = {row["key"]: row for _, row in store.query(lambda row: row.get("key") in wanted, **filters)
+                if row.get("key")}
+        if not any(_older_duplicate(old, jobs, backend) for _, old in opened):
+            return
+        rows = questions.query(**filters)  # Then all of them, as before.
+        jobs = {row["key"]: row for _, row in store.query(**filters) if row.get("key")}
         for path, old in rows:
-            previous = _checkpoint_source(old, jobs)
-            if (previous is None or old.get("status") not in {"pending", "superseded"}
-                    or previous.get("status") != "waiting_user"
-                    or (backend is not None and previous.get("backend") != backend)):
+            previous = _older_duplicate(old, jobs, backend)
+            if previous is None:
                 continue
             for newer_path, newer in rows:
                 proof = _accepted_answer(newer, jobs)

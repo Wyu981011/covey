@@ -395,7 +395,7 @@
 ### 飞书 SDK 与直连
 
 - `COVEY_CARD_TRANSPORT=sdk`：CardKit 卡片接口、消息的发送和回复、读消息详情都用常驻的 `lark-oapi` 客户端；上传文件和图片、转发话题等只有 lark-cli 做得了的仍走 lark-cli（见[投递、重投与 outbox](architecture.md#投递重投与-outbox)）。先在运行 Bridge 的那个 Python 里 `python3 -m pip install '.[feishu-sdk]'`。SDK 只支持显式命名的 profile，应用密钥只在内存里读取。请求发出前取不到凭据时退回 CLI（日志 `CardKit SDK unavailable locally; using CLI`）；请求已发出后不换传输重发。
-- `COVEY_EVENT_TRANSPORT=sdk`：Bridge 不起 lark-cli 的事件消费者，用一个 `lark_oapi` WebSocket 长连接收四类事件（消息、卡片点击、机器人菜单、已读回执），卡片点击在应答里立刻回 toast“收到”。同一个应用只能有一个事件长连接，所以**打开后四类事件全走 SDK**，同时也不能在别处再跑这个应用的 `lark-cli event consume`。依赖同上（`.[feishu-sdk]`），要显式命名的 profile。切回：去掉这个变量（或设 `cli`）并重启 Bridge。细节见[事件长连接走 SDK](architecture.md#事件长连接走-sdk默认关)。
+- `COVEY_EVENT_TRANSPORT=sdk`：Bridge 不起 lark-cli 的事件消费者，用一个 `lark_oapi` WebSocket 长连接收四类事件（消息、卡片点击、机器人菜单、已读回执），卡片点击在应答里立刻回 toast“收到”。Bridge 重启时它在核对完身份后就连上，启动恢复期间的点击和消息先收下（点击回“收到，机器人刚重启，稍后处理”），恢复做完再处理。同一个应用只能有一个事件长连接，所以**打开后四类事件全走 SDK**，同时也不能在别处再跑这个应用的 `lark-cli event consume`。依赖同上（`.[feishu-sdk]`），要显式命名的 profile。切回：去掉这个变量（或设 `cli`）并重启 Bridge。细节见[事件长连接走 SDK](architecture.md#事件长连接走-sdk默认关)。
 - `COVEY_FEISHU_DIRECT`：默认直连飞书开放平台，`0`（也认 `false`、`no`、`off`）时都走环境里的代理。直连时 Bridge 启动先试一次连 `open.feishu.cn:443`（lark 品牌是 `open.larksuite.com`），连得上就把它加进本进程的 `no_proxy`、`NO_PROXY`，之后的子进程都继承，日志 `Feishu direct: lark-cli reaches open.feishu.cn without the proxy`；连不上记 `Feishu direct unavailable (<异常类型>); lark-cli keeps the proxy`，环境不动。事件长连接的主机不在其中，仍走代理。
 
 ### 其他

@@ -111,17 +111,29 @@ class JsonDirectoryStore:
         asked = time.monotonic()
         with self.lock:
             self._look(asked)
-            names = set(self.fields)
-            for key, value in filters.items():
-                if isinstance(value, (set, frozenset)):
-                    names &= set().union(*(self.index.get((key, one), set()) for one in value))
-                else:
-                    names &= self.index.get((key, value), set())
+            names = self._selected(filters)
             if narrow is not None:
                 names = {name for name in names if self._narrows(narrow, self.fields[name])}
             self._read_whole(names)
             return [(self.directory / name, copy.deepcopy(self.records[name])) for name in sorted(names)
                     if name in self.records and (where is None or self._accepts(where, name, log))]
+
+    def count(self, **filters):
+        """How many records the indexed ``filters`` (as query's) select, from the fields alone: none is read or copied."""
+        asked = time.monotonic()
+        with self.lock:
+            self._look(asked)
+            return len(self._selected(filters))
+
+    def _selected(self, filters):
+        """The names of the records whose indexed fields match ``filters``."""
+        names = set(self.fields)
+        for key, value in filters.items():
+            if isinstance(value, (set, frozenset)):
+                names &= set().union(*(self.index.get((key, one), set()) for one in value))
+            else:
+                names &= self.index.get((key, value), set())
+        return names
 
     def max_field(self, field):
         """The largest whole number in indexed ``field`` (one of INDEXED) over the records, 0 when none:
@@ -151,6 +163,13 @@ class JsonDirectoryStore:
         process's head start (app/runner.py warm_records)."""
         with self.lock:
             self._check(time.monotonic())
+
+    def warm(self):
+        """``catch_up`` and read every record known only by its fields: the head start of a process about to read them
+        all (the Bridge's start, app/unified.py warm_records). A query meanwhile waits for it, as for any scan."""
+        with self.lock:
+            self._check(time.monotonic())
+            self._read_whole(set(self.fields))
 
     def _check(self, now):
         """Catch up when the directory changed or the last look is over FRESH_SECONDS old: from the

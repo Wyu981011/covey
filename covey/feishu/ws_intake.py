@@ -6,9 +6,10 @@ no lark-cli consumer runs at all (lark-cli refuses to start while this one is co
 
 The SDK hands each event over as the raw v2 envelope; the converters below turn it into the dict lark-cli's ``--jq``
 of the same event key prints (feishu/events.py ``*_JQ``), so the handlers cannot tell the two transports apart. A
-callback (``card.action.trigger``) is answered with a toast in the same frame, once the click is queued: lark-cli
-always answers ``{"code":200}`` itself. Events are queued per key and handled on that key's own consumer thread,
-as with lark-cli, so a slow message never delays the connection's pings or a click's toast.
+callback (``card.action.trigger``) is answered with a toast in the same frame, once the click is queued (HELD_TOAST
+while the Bridge's start, which connects first with ``Intake.start``, has not attached the click consumer yet):
+lark-cli always answers ``{"code":200}`` itself. Events are queued per key and handled on that key's own consumer
+thread, as with lark-cli, so a slow message never delays the connection's pings or a click's toast.
 """
 from __future__ import annotations
 
@@ -30,6 +31,10 @@ from covey.feishu.events import (CARD_ACTION_EVENT_KEY, MENU_EVENT_KEY, MESSAGE_
 TRANSPORT_SWITCH = 'COVEY_EVENT_TRANSPORT'  # ``sdk``; empty or ``cli``: lark-cli's event consumers.
 TOAST_TEXT = '收到'
 TOAST = {'toast': {'type': 'info', 'content': TOAST_TEXT}}  # What the click's callback answers.
+# What it answers while the Bridge is still starting (``start`` came before the click consumer): the click waits in its
+# queue and is handled once the start's recovery is over, a few seconds later (docs/architecture.md 启动顺序).
+HELD_TOAST_TEXT = '收到，机器人刚重启，稍后处理'
+HELD_TOAST = {'toast': {'type': 'info', 'content': HELD_TOAST_TEXT}}
 DEDUP_LIMIT = 2048  # Event IDs remembered: an SDK reconnect or Feishu's redelivery repeats a recent one.
 QUEUE_LIMIT = 256  # Events waiting for one key's consumer thread.
 CONNECT_RETRY_SECONDS = 20  # Ceiling of the wait before the connection thread starts the client again.
@@ -256,7 +261,9 @@ class Intake:
     def __init__(self, ctx, shutdown: threading.Event, log, retry_seconds):
         self.ctx, self.shutdown, self.log = ctx, shutdown, log
         self.retry = min(retry_seconds, CONNECT_RETRY_SECONDS)
-        self.lock = threading.Lock()
+        # Reentrant: stop() takes it, and the Bridge's SIGTERM handler runs stop() on the main thread, which may be inside
+        # start() or the message consumer's consume() holding it at that moment.
+        self.lock = threading.RLock()
         self.queues = {key: queue.Queue(QUEUE_LIMIT) for key in SUBSCRIPTIONS}
         self.attached: set[str] = set()
         self.seen: OrderedDict[str, None] = OrderedDict()
@@ -300,7 +307,11 @@ class Intake:
             except queue.Full:
                 self.log(f'event websocket: {key} queue full; event dropped')
                 return None
-        return TOAST if key == CARD_ACTION_EVENT_KEY else None
+        if key != CARD_ACTION_EVENT_KEY:
+            return None
+        with self.lock:
+            attached = key in self.attached
+        return TOAST if attached else HELD_TOAST
 
     # -- consumers --
 
@@ -348,10 +359,18 @@ class Intake:
                 self._ready(key)
             else:
                 consumer(key).failed('disconnected')
+        if up and not keys:  # Connected during the Bridge's start (start): events are taken in, handled once it is over.
+            self.log('event websocket connected; events wait for the start to finish')
         if not up:
             self.log('event websocket disconnected; the SDK reconnects')
 
     # -- the client --
+
+    def start(self) -> None:
+        """Connect now, before any consumer attaches: the Bridge's start does, once the app's identity is checked, so
+        clicks and messages are taken in (a click answered with HELD_TOAST) while it recovers; each waits in its key's
+        queue for that key's consumer. Once only, as the first ``consume`` would."""
+        self._start()
 
     def _start(self) -> None:
         with self.lock:
@@ -386,7 +405,10 @@ class Intake:
         handler._do_without_validation = self.on_payload  # The raw envelope: no typed models, no validation.
         client = ws_client.Client(creds.config.app_id, creds.config.app_secret, log_level=LogLevel.ERROR,
                                   event_handler=handler, domain=creds.config.domain)
-        self.client, self.loop = client, ws_client.loop
+        with self.lock:
+            if self.shutdown.is_set():  # The Bridge began to stop while this connected: take nothing in now.
+                return
+            self.client, self.loop = client, ws_client.loop
         threading.Thread(target=self._watch, args=(client, over), name='event-websocket-watch', daemon=True).start()
         try:
             client.start()  # Blocks: the SDK reconnects by itself; ends when stop() stops its loop.
@@ -400,10 +422,17 @@ class Intake:
             self._set_connected(getattr(client, '_conn', None) is not None)
 
     def stop(self) -> None:
-        """Close the connection and stop the SDK's loop; called when the Bridge stops."""
-        client, loop = self.client, self.loop
+        """Close the connection and stop the SDK's loop, once; called when the Bridge stops. The Bridge calls it twice
+        (on the signal and at the end of its main): the second disconnect, on a loop already stopped, only waited out
+        its 2 s before the process could exit and the Manager start the next one (T648)."""
+        with self.lock:
+            client, loop, self.client, self.loop = self.client, self.loop, None, None
+            kept = {key: self.queues[key].qsize() for key in (MESSAGE_EVENT_KEY, CARD_ACTION_EVENT_KEY, *self.attached)}
         if client is None or loop is None:
             return
+        left = ' '.join(f'{key}={n}' for key, n in sorted(kept.items()) if n)
+        if left:  # Taken in (a click answered) and never handled: what the owner may have to send again.
+            self.log(f'event websocket: stopping with events not handled {left}')
         client._auto_reconnect = False
         try:
             import asyncio

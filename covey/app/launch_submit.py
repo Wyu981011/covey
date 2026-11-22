@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from covey.core import devices, timing
-from covey.core.state import read_json
+from covey.core.state import read_each, read_json
 from covey.core.locks import LOCK, resource_lock, topic_lock
 from covey.core.workspaces import RUN_MODES, add_topic_worktree, plan_topic_worktree, resolve_binding
 
@@ -401,10 +401,23 @@ def abandon_worktree_launch(app, ctx, path, reason, created=None):
         app.key('launch-worktree-failed', path.stem), voice=app.voice)
 
 
+def _form_status(path):
+    """The status of the launch form at ``path``, None when it cannot be read as one."""
+    try:
+        return read_json(path).get('status')
+    except Exception:  # noqa: BLE001 - recover_worktree_launches reads it again and logs why
+        return None
+
+
 def recover_worktree_launches(topics, ctx):
     """A restart stopped these checkouts; none queued a task, so each topic gets its card back."""
     folder = ctx.state_dir / 'launch-forms'
-    for path in sorted(folder.glob('*.json')) if folder.exists() else []:
+    paths = sorted(folder.glob('*.json')) if folder.exists() else []
+    # Which still create a worktree, read many at a time (one by one 718 forms took 1.6 s on NAS, T648). Each of those is
+    # read again below, as before, and so is one this could not read, for its failure to be logged as before.
+    for path, status in zip(paths, read_each(paths, _form_status)):
+        if status is not None and status != WORKTREE_STATUS:
+            continue
         try:
             record = read_json(path)
             if record.get('status') != WORKTREE_STATUS:

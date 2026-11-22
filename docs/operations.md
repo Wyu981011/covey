@@ -64,7 +64,7 @@ SERVICE_ROOT="$(python3 -B bin/covey_paths.py service-root)"
 - Bridge 一直起不来或收不到消息时，Manager 会在私聊里告诉主人，见下文[机器人停了会告诉主人](#机器人停了会告诉主人)。
 - 一个 lark-cli profile 只能被一份运行中的服务清单占用。另一个状态目录用同一 profile 注册时，`launch` 报 `another managed bridge already owns this profile`。
 
-开了 `COVEY_EVENT_TRANSPORT=sdk`（[配置](configuration.md#飞书-sdk-与直连)）时没有 lark-cli 事件消费者子进程，四类事件由 Bridge 的 `event-websocket` 线程收；`bridge.log` 里的 `ready event_key=` 两行照旧有，事件总线和 `bus.log` 这一层没有。
+开了 `COVEY_EVENT_TRANSPORT=sdk`（[配置](configuration.md#飞书-sdk-与直连)）时没有 lark-cli 事件消费者子进程，四类事件由 Bridge 的 `event-websocket` 线程收；`bridge.log` 里的 `ready event_key=` 两行照旧有，事件总线和 `bus.log` 这一层没有。这时 Bridge 启动后一核对完身份就连上（`event websocket connected; events wait for the start to finish`），重启认领那几秒里的点击和消息先收下，认领完再处理，见[启动时先连](architecture.md#事件长连接走-sdk默认关)。
 
 **一条消息怎么走。** 消费者读到事件 → Bridge 判断谁被服务、找话题 → 发启动卡或排队卡 → 调度器取到任务，写交接文件、启动任务进程 → 任务进程启动后端、读后端事件、写任务卡、投递结果 → 退出。点击先到 Bridge：任务进程还活着时整条转进它的收件箱，否则由 Bridge 处理。详见[架构与开发说明](architecture.md)。
 
@@ -296,6 +296,8 @@ python3 -B bin/covey_devices.py --state-dir "$STATE_DIR" list                 # 
 | --- | --- |
 | `bridge started pid=` | 每次启动的第一行：进程号、Manager 代次、release |
 | `ready event_key=` | 消费者就绪，每个订阅一行 |
+| `event websocket connected; events wait for the start to finish` | SDK 收事件时，启动中先连上了：之后的事件排队，消费者就绪（上一行）后处理 |
+| `event websocket: stopping with events not handled` | SDK 收事件时，停止时还有收下没处理的事件（按 key 计数），这些点击或消息要重新发 |
 | `consumer exited rc=` | 事件消费者退出，同一行写着多久后重启 |
 | `card action kind=` | 每次卡片点击一行，见[点按钮没有反应](troubleshooting.md#点按钮没有反应) |
 | `card follow-up kind=` | 点击回执之后的慢活做完一行，`elapsed_ms` 是它自己的耗时 |

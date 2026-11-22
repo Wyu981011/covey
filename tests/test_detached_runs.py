@@ -749,6 +749,59 @@ class BridgeSideTests(UnifiedCase):
                                  BridgeReplyJob(job_id=5, user_text="x", chat_id="chat", message_id="saved", timeout=0))
         self.assertEqual(sorted(b["key"] for b in detached.restart_blockers(ctx.state_dir)), ["inproc", "unsaved"])
 
+    def test_a_restart_reads_only_the_run_directories_a_live_process_names(self):
+        # Every finished run's runner.json read one by one took 3-8 s on NAS for 1700 of them, four looks a start: only
+        # the directories a process of ours names in its argv are asked now (core/run_dir.py argv_dirs).
+        app, ctx, directory, stub = self.running_job()
+        for n in range(20):
+            run_files(ctx.state_dir, f"ended-{n}", runner={"pid": os.getpid(), "key": f"ended-{n}"}, exit={})
+        asked, real = [], rd.process_identity
+        with mock.patch.object(rd, "process_identity", lambda pid: asked.append(pid) or real(pid)):
+            self.assertEqual(rd.live_keys(ctx.state_dir), {"task-7"})
+            self.assertEqual(detached.live_keys(ctx.state_dir), {"task-7"})
+            self.assertEqual(rd.live_dirs(ctx.state_dir), [directory])
+            self.assertEqual(detached.adopt_runners(self.app, self.ctx), {"task-7"})
+        self.assertEqual(set(asked), {stub.process.pid})
+        self.assertEqual(rd.argv_dirs(ctx.state_dir / rd.RUNS), {directory.name})
+
+    def test_without_proc_or_with_a_test_of_its_own_every_run_directory_is_asked_as_before(self):
+        app, ctx, directory, _ = self.running_job()
+        ended = run_files(ctx.state_dir, "ended", runner={"pid": os.getpid(), "key": "ended"}, exit={})
+        self.assertEqual(rd.live_keys(ctx.state_dir, lambda d: Path(d).name == ended.name), {"ended"})
+        self.assertEqual(rd.live_dirs(ctx.state_dir, lambda d: True), sorted([directory, ended]))
+        listdir = os.listdir
+
+        def no_proc(path="."):
+            if str(path) == "/proc":
+                raise PermissionError(path)
+            return listdir(path)
+        with mock.patch.object(rd.os, "listdir", no_proc):
+            self.assertIsNone(rd.argv_dirs(ctx.state_dir / rd.RUNS))
+            self.assertEqual(rd.live_keys(ctx.state_dir), {"task-7"})
+            self.assertEqual(rd.live_dirs(ctx.state_dir), [directory])
+
+    def test_a_restart_settles_only_the_answered_questions_their_follow_up_moved_on_from(self):
+        # Each answered question was locked and read twice at every start, 12 ms each on NAS for 1400 of them: one already
+        # as its follow-up says is left alone, one whose follow-up went on is settled as before.
+        from covey.app import questions as questions_module
+        app, ctx, _, _ = self.running_job(runner=False, status="done")
+        folder = ctx.state_dir / "questions"
+        folder.mkdir(exist_ok=True)
+        for token, job_id, delivery in (("a" * 16, 21, "done"), ("b" * 16, 22, "running")):
+            upsert_job_record(ctx.state_dir, "answer-" + token, job_id=job_id, topic_id=ctx.topic_id, chat_id="chat",
+                              message_id="answer-" + token, status="done", backend=app.spec.name)
+            (folder / (token + ".json")).write_text(json.dumps({
+                "token": token, "job_key": "task-7", "job_id": 7, "topic_id": ctx.topic_id, "chat_id": "chat",
+                "status": "answered", "continuation_job_id": job_id, "delivery_state": delivery, "questions": []}))
+        settled, real = [], questions_module._settle_question
+        with mock.patch.object(questions_module, "_settle_question",
+                               lambda path, change: settled.append(path.name) or real(path, change)):
+            recover_question_delivery(self.ctx, [a.questions for a in self.app.apps.values()], self.app.runtime.log)
+        self.assertEqual(settled, ["b" * 16 + ".json"])
+        record = json.loads((folder / ("b" * 16 + ".json")).read_text())
+        self.assertEqual((record["status"], record["delivery_state"]), ("answered", "done"))
+        self.assertEqual(json.loads((folder / ("a" * 16 + ".json")).read_text())["delivery_state"], "done")
+
     def test_a_restart_leaves_the_questions_of_a_live_runner_alone(self):
         app, ctx, directory, _ = self.running_job()
         upsert_job_record(ctx.state_dir, "gone", job_id=8, topic_id=ctx.topic_id, chat_id="chat", status="running",

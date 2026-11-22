@@ -141,6 +141,21 @@ def read_json(path: Path, default=_RAISE):
         return default
 
 
+READ_THREADS = 16  # Files read_each reads at a time.
+
+
+def read_each(paths, read):
+    """``[read(path) for path in paths]``, in that order, READ_THREADS at a time: on NAS a small file's read is mostly
+    a wait for the server (718 launch forms one by one took 1.6 s at the Bridge's start, T648). ``read`` must only read
+    and be safe on several threads; what it raises is raised here, as the loop would."""
+    paths = list(paths)
+    if len(paths) < 2:
+        return [read(path) for path in paths]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(min(READ_THREADS, len(paths))) as pool:
+        return list(pool.map(read, paths))
+
+
 def keyed_json_path(state_dir, folder, key) -> Path:
     """``<state_dir>/<folder>/<key>.json``, the record of one key in a records folder."""
     return Path(state_dir) / folder / f"{key}.json"
