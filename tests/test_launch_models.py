@@ -239,13 +239,13 @@ class ModelOrderTests(UnifiedCase):
         self.assertEqual(job.model_label, 'Claude Code · Fable 5.1')  # Carried to the task runner with the job.
         card = json.loads(lark.calls[0].data['data'])
         # The 输入/输出 box's 输入 names it, as the select does (the "E" sample, 2026-11-08; the title bar's subtitle
-        # did before); 任务详情 no longer repeats it (2026-11-04 15:07).
+        # did before, and the card has no title bar since 2026-11-22); 任务详情 no longer repeats it (2026-11-04 15:07).
         self.assertEqual(job.input_parts[:4], ['Claude Code', 'Claude 自带', 'Fable 5.1', '思考 high'])
         box = next(e for e in card['body']['elements'] if e.get('element_id') == 'task_io')
         words = json.dumps(box, ensure_ascii=False).replace('\\u2060', '').replace('\u2060', '').replace('\u00a0', ' ')
         self.assertIn('Claude Code', words)
         self.assertIn('Fable 5.1', words)
-        self.assertNotIn('subtitle', card['header'])
+        self.assertNotIn('header', card)  # Its title row says the topic and the turn's title, not what it runs with.
         # Nor any 任务详情 with nothing else to say (the owner, 2026-11-09).
         self.assertFalse(any(e.get('element_id') == 'task_details' for e in card['body']['elements']))
         # A MASO budget preset is named by its model's one entry (S27: one entry per model).
