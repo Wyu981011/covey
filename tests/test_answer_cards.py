@@ -66,6 +66,10 @@ class PartsTest(unittest.TestCase):
         trace.accept("progress_note", {"id": f"{RESTART_NOTE}{int(at) + 600}", "title": "机器人", "text": "又一次"})
         self.assertEqual(output_parts(trace.snapshot(), 60)[-1], "<font color='grey'>重启</font> **2 次没打断**")
         self.assertEqual(restarts({"bridge-restart-x": {"started": 5.0}, "other": {}}), [5.0])
+        # And on the running card the moment it went by, last on its 输出 line.
+        from covey.cards.answer_card import running_figures
+        self.assertEqual(running_figures(trace.snapshot())[-1], ["重启", "<font color='grey'>重启</font> **2 次没打断**"])
+        self.assertNotIn("重启", [label for label, _ in running_figures(SNAPSHOT)])
         self.assertNotIn("重启", " ".join(output_parts(SNAPSHOT, 760)))  # None: as before.
 
     def test_the_facts_are_a_line_each_with_a_grey_label_and_the_relay_s_ends_in_its_t_number(self):

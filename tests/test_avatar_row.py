@@ -253,12 +253,13 @@ class RelayTest(unittest.TestCase):
     def test_a_short_reply_stays_open_and_a_long_one_or_a_table_shows_its_opening_and_folds_the_rest(self):
         short, _ = relay_card("T623", DONE, text="## 结论\n好了\n\n细节：改了两处。", ask=self.asked())
         # The row (a link into the topic), his words one line under it, the reply as it is (its "## 结论" left off: no
-        # large row over it); no band, no fold, no 进话题 › line at the end (T638).
-        self.assertEqual(["interactive_container", "collapsible_panel", "markdown"],
+        # large row over it); no band, no fold, no 进话题 › line at the end (T638); the grey line where a reply goes last.
+        self.assertEqual(["interactive_container", "collapsible_panel", "markdown", "markdown"],
                          [element["tag"] for element in short["body"]["elements"]])
+        self.assertEqual("relay_hint", short["body"]["elements"][-1]["element_id"])
         self.assertEqual("好了\n\n细节：改了两处。", short["body"]["elements"][2]["content"])
         long, _ = relay_card("T623", DONE, text="## 结论\n好了。\n\n" + "细节很多。" * 160, ask=self.asked())
-        _, _, reply = long["body"]["elements"]
+        _, _, reply, _ = long["body"]["elements"]
         # Whole, as card text (the owner, 2026-11-22: 不折叠，直接展示全文): no fold, no arrow, nothing cut.
         self.assertEqual(("markdown", "relay_reply"), (reply["tag"], reply["element_id"]))
         self.assertEqual("好了。\n\n" + "细节很多。" * 160, reply["content"])
@@ -273,7 +274,7 @@ class RelayTest(unittest.TestCase):
         self.assertNotIn("answer_change", ids)  # No fold: the change is a line.
         self.assertIn("answer_change_check", ids)  # A commit the repository does not have stays in view.
         self.assertNotIn("a6bc148d38ce", json.dumps(built["body"]["elements"][2], ensure_ascii=False))  # Not in the reply's fold.
-        facts = built["body"]["elements"][-1]
+        facts = built["body"]["elements"][-2]  # Over the line where a reply goes (T647 P1-A3).
         self.assertEqual("answer_facts", facts["element_id"])
         plain = facts["content"].replace(" ", " ").replace("⁠", "")
         for words in ("输入", "Claude Code", "Claude 自带", "Opus 5.5", "思考 xhigh", "脱敏关", "covey", "输出", "用时", "token",
@@ -311,7 +312,8 @@ class MergedTest(unittest.TestCase):
     def test_the_merged_card_has_a_row_and_each_block_opens_its_topic(self):
         built, text = merged_card([{"label": "T1", "title": "改看板", "lead": "好了", "url": TOPIC_URL},
                                    {"label": "T2", "title": "", "lead": "", "url": ""}], avatar="img_topic")
-        head, one, two = built["body"]["elements"]
+        head, one, two, hint = built["body"]["elements"]
+        self.assertEqual("relay_hint", hint["element_id"])  # A reply to it is the butler's: its last line says so.
         self.assertEqual(("有结果", "green"), tag(head))
         self.assertTrue(text_of(head).startswith("**2 个话题做完了**"))
         self.assertEqual("img_topic", head["columns"][0]["elements"][0]["img_key"])

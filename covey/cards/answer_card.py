@@ -12,7 +12,7 @@ split "脱 / 敏关", "缓存 / 命中"), so a line wraps only after a separator
   turn's own process lived through, ``restart_part``) (``output_parts``, ``output_lines``);
 
 The task card's 输入/输出 box (cards/task_figures.py io_box) is the grey box, in the topic's thread: while its turn runs, 输出 is 开始 ｜ 已运行 ｜
-token ｜ token/s ｜ 上下文 (``running_figures``, ``RUNNING_LINES``).
+token ｜ token/s ｜ 上下文 (｜ 重启) (``running_figures``, ``RUNNING_LINES``).
 
 The parts under an answer that are there to look up (产物, 验收说明, 改动, 记下的事) go into one closed fold
 (``details``); what the owner must see (a commit not found, the completion criteria not met: ALERT_IDS) stays out of it,
@@ -103,8 +103,9 @@ def _usage(snapshot):
 def running_figures(snapshot=None, began=None) -> list:
     """A running turn's 输出 parts but 已运行 (the status line's ticks add it, ``with_ran``), as [label, Markdown]
     pairs a task card keeps (app/task_card.py StreamingReply.figures_parts): 开始 (``began``, the run's start,
-    core/metrics.py run_start, else the process record's), its tokens with the cache, the main task's output speed
-    and the context the next turn resumes with (a share of the model's window, its size alone without one)."""
+    core/metrics.py run_start, else the process record's), its tokens with the cache, the main task's output speed,
+    the context the next turn resumes with (a share of the model's window, its size alone without one) and the Bridge
+    restarts it has gone on through (``restart_part``)."""
     snapshot = snapshot or {}
     if not isinstance(began, (int, float)) or isinstance(began, bool):
         began = snapshot.get("started_at")
@@ -119,6 +120,9 @@ def running_figures(snapshot=None, began=None) -> list:
     context = context_text(figures["context"], figures["window"])
     if context:
         pairs.append(["上下文", figure("上下文", context)])
+    restarted = restart_part(restarts(snapshot.get("steps")))
+    if restarted:
+        pairs.append([RESTART_WORD, restarted])  # Seen on the running card the moment a restart went by (T647 E2).
     return pairs
 
 
