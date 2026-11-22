@@ -6,11 +6,15 @@ is settled (app/detached.py finish_detached, app/job_dispatch.py for a run in th
 
 It writes only when all of these hold, else it drops the list and logs ``knowledge remember ignored reason=…``:
 the turn ended normally (done, or waiting for the owner's answer); it is the owner's own turn (app/access.py
-owner_turn); the owner's words (user_text) hold a trigger word; it is not a turn the butler handed on
-(prompt_text: the butler recorded with its tool); the topic is not a 代答 topic and has no redaction (a setting
-that cannot be read counts as on). The entries are ``by=topic`` with the turn as their source; the same turn
-(job key) never writes twice (core/knowledge.py collected). Never raises: a failure is a log line and the turn's
-other ending steps go on.
+owner_turn); the owner's words (user_text) hold a trigger word; it is not a turn the butler or a lead handed on
+(its message id, core/butler_opened.py handed_on: the butler records with its own tool); the topic is not a 代答 topic
+and has no redaction (a setting that cannot be read counts as on). The entries are ``by=topic`` with the turn as their
+source; the same turn (job key) never writes twice (core/knowledge.py collected). Never raises: a failure is a log line
+and the turn's other ending steps go on.
+
+A job's ``prompt_text`` says nothing about who handed it on: every message the owner writes is queued with its expanded
+input there (app/app.py handle_event: the text, a group's sender line, attachments, quotes), and so are an answer, a
+page's words and a supplement queued again. Read as "handed on" it dropped every topic's 记一下 (2026-11-22, T651).
 """
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ from covey.core import knowledge, turn_source
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record
 from covey.core.butler import is_butler_topic
+from covey.core.butler_opened import handed_on
 from covey.core.redaction import topic_redaction
 from covey.core.topics import proxy_topic, topic_file
 from covey.core.state import read_object
@@ -40,7 +45,7 @@ def reason_to_ignore(runtime, ctx, job, record) -> str:
         return "not-owner"
     if not any(word in str(record.get("user_text") or getattr(job, "user_text", "") or "") for word in TRIGGERS):
         return "no-trigger"
-    if record.get("prompt_text") or getattr(job, "prompt_text", None):
+    if handed_on(record.get("message_id") or getattr(job, "message_id", "")):
         return "handed-on"
     if is_butler_topic(topic_id, str(record.get("chat_id") or getattr(job, "chat_id", ""))):
         return "main-thread"

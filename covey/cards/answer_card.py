@@ -540,7 +540,7 @@ def words_fold(meta):
                     for kind, text in parts[:ANSWER_FULL_PARTS]]
     else:
         whole = str(meta.get("full") or "").strip() or words
-        elements = [md(literal_text(whole), size="normal_v2")]
+        elements = [md(literal_lines(whole), size="normal_v2")]
     return fold(WORDS_ID, md(title, size="notation"), elements, title_padding="0px 0px 0px 0px",
                 icon_position="follow_text", spacing="4px")
 
@@ -555,7 +555,7 @@ def handoff_card(head, words, url):
     written, the whole block opening ``url``, his message at its place in the chat. The chat list previews ``head``."""
     text = str(words or "").strip()
     text = text if len(text) <= HANDOFF_CHARS else text[:HANDOFF_CHARS - 1] + "…"
-    elements = [md(grey(f"{head}　›"), size="notation")] + ([md(literal_text(text), size="normal_v2")] if text else [])
+    elements = [md(grey(f"{head}　›"), size="notation")] + ([md(literal_lines(text), size="normal_v2")] if text else [])
     box = {"tag": "interactive_container", "element_id": HANDOFF_ID, "width": "fill", "padding": "8px 10px 8px 10px",
            "corner_radius": "6px", "background_style": "grey-50", "vertical_spacing": "4px", "elements": elements,
            "behaviors": [{"type": "open_url", "default_url": url}]}
@@ -643,3 +643,10 @@ def answer_block(parts, words="", *, verb="你答", at=""):
 def literal_text(text):
     """``text`` shown as written: no Markdown or Feishu tag of the owner's message takes effect."""
     return literal(text)
+
+
+def literal_lines(text):
+    """``text`` of several lines shown as written, its line breaks kept: ``literal_text`` writes a break as "\\n" (a file
+    name stays one line), which the card showed as such in the owner's words and their 附件 line (2026-11-22, T651), so
+    each line is escaped on its own."""
+    return "\n".join(literal_text(line) for line in str(text or "").replace("\r\n", "\n").split("\n"))

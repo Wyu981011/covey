@@ -51,6 +51,11 @@ def subtitle(form):
     return (f"话题 {form['topic']} · " if form.get("topic") else "") + f"任务 #{form['job_id']}"
 
 
+# What drops the turn is never the card's main button (docs/ui.md 6 按钮: 停止、回退、删除这类会丢东西的操作，不能做主按钮):
+# bordered red, as 停止 is on the task card; 只回退对话 (undone before the next message) and 取消 plain.
+DROP_STYLE = "danger"
+
+
 def rewind_card(form):
     """The card a 回退 click opens: the turn it drops, the files it could put back, and the choices."""
     token, point = form["token"], form["point"]
@@ -71,10 +76,9 @@ def rewind_card(form):
         return callback_button(label, {"kind": CONFIRM, "token": token, "files": files}, style=style, width="fill"), 1
     cancel = (callback_button("取消", {"kind": CANCEL, "token": token}, style="default", width="fill"), 1)
     if count:
-        elements.append(row(button("对话和文件都回退", True, "primary_filled"), button("只回退对话", False, "default"),
-                            cancel))
+        elements.append(row(button("对话和文件都回退", True, DROP_STYLE), button("只回退对话", False, "default"), cancel))
     else:
-        elements.append(row(button("回退这一轮", False, "primary_filled"), cancel))
+        elements.append(row(button("回退这一轮", False, DROP_STYLE), cancel))
     return styled_panel(panel_header("rewind", "回退一步", subtitle(form)), elements, "回退一步 · 去掉最新一轮")
 
 

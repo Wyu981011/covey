@@ -19,7 +19,7 @@ from unittest import mock
 from support import REPO, exec_tempdir, make_context, quiet
 from support.fake_backends import FakeBackend
 from support.records import write_job, write_topic
-from support.world import harness_app
+from support.world import UnifiedCase, harness_app
 from covey.core import env as cenv
 from covey.app import digest, knowledge_collect, knowledge_turn, butler_knowledge, butler_tools
 from covey.app.butler_env import ButlerEnv
@@ -30,9 +30,11 @@ from covey.backends.claude.bridge import CLAUDE_SPEC
 from covey.backends.claude.sessions import ClaudeSessionStore
 from covey.cards.digest import digest_card, digest_text
 from covey.core import knowledge, butler_mcp, butler_requests, butler, butler_tool_specs
+from covey.core.attachments import ListedAttachment, attachment_block
 from covey.core.checkpoint import CHECKPOINT_RULES, checkpoint_rules
 from covey.core.jobs import BridgeReplyJob as ReplyJob
-from covey.core.jobs import find_job_record
+from covey.core.jobs import find_job_record, upsert_job_record
+from covey.feishu.media import enrich_incoming_event
 from covey.core.state import write_json
 
 ON = {knowledge.ENV: "1"}
@@ -426,6 +428,22 @@ class TurnTest(StateCase):
         self.assertNotIn("有的", text)
         self.assertIn(history_line("/absolute/kb-history"), text)  # The command line is every turn's.
 
+    def test_a_turn_the_butler_or_a_lead_handed_on_gets_no_remember_rule_and_the_owners_own_message_does(self):
+        """app/knowledge_collect.py drops a hand-on's remember (the butler took the owner's 记一下 with its own tool), so its
+        model is never told to write one and to tell the owner 已记下 (2026-11-22, T651). Its message id says it, not its
+        prompt_text: the owner's own message has one too."""
+        self.env(**ON)
+        runs = self.app().runs
+        handed = ReplyJob(job_id=6, user_text="这个坑记一下", chat_id=GROUP, message_id="main-tok1", timeout=0,
+                          sender_id=OWNER, prompt_text="[Bridge 说明] 管家把这件事交给你")
+        own = ReplyJob(job_id=7, user_text="这个坑记一下", chat_id=GROUP, message_id="om7", timeout=0, sender_id=OWNER,
+                       prompt_text="这个坑记一下")
+        for job, carried in ((handed, False), (own, True)):
+            with self.subTest(job.message_id):
+                self.assertEqual(REMEMBER_RULE in runs.bridge_rules(self.ctx, job), carried)
+                resumed = runs._with_rules(self.ctx, job, "MSG", "RULES", system=False, fresh=False, rules_session=False)
+                self.assertEqual(REMEMBER_RULE in resumed, carried)
+
     def test_the_session_that_has_the_rules_at_system_level_gets_no_reminder(self):
         self.env(**ON)
         runs = self.app().runs
@@ -717,7 +735,7 @@ class CollectTest(StateCase):
     def test_each_condition_that_fails_writes_nothing_and_says_why(self):
         cases = (("not-finished", dict(status="failed")), ("not-finished", dict(status="interrupted")),
                  ("not-owner", dict(sender=OTHER)), ("not-owner", dict(sender="", chat=GROUP)),
-                 ("no-trigger", dict(user_text="帮我看看这段代码")), ("handed-on", dict(prompt_text="管家整理的说明")),
+                 ("no-trigger", dict(user_text="帮我看看这段代码")), ("handed-on", dict(key="main-tok9", prompt_text="[Bridge 说明] 管家把这件事交给你")),
                  ("main-thread", dict(chat=DM, sender="", topic=butler.butler_topic_id(DM))))
         for reason, fields in cases:
             with self.subTest(reason, **{k: str(v)[:12] for k, v in fields.items()}):
@@ -727,6 +745,25 @@ class CollectTest(StateCase):
                 self.assertEqual(self.written(), [])
                 self.assertEqual(self.logs, [f"knowledge remember ignored reason={reason} job=#{job.job_id}"])
         self.assertFalse((self.state / "knowledge").exists())
+
+    def test_the_owners_own_turn_is_collected_whatever_its_prompt_text_holds(self):
+        """Every message the owner writes is queued with its expanded input as prompt_text (app/app.py handle_event), and so
+        are an answer, a page's words and a supplement queued again: none of them is a hand-on. Read as one, every topic's
+        记一下 was dropped while its model told the owner 已记下 (2026-11-22, T651)."""
+        listed = "\n".join(attachment_block([ListedAttachment("image", "a.png", "/absolute/incoming_media/a.png")]))
+        cases = {"as written": dict(prompt_text="这个坑记一下"),
+                 "a group's sender line": dict(prompt_text="发送者：主人\n\n这个坑记一下"),
+                 "attachments": dict(prompt_text="这个坑记一下\n\n" + listed),
+                 "merged before it started": dict(prompt_text="这个坑记一下\n\n用户在任务开始前补充：\n还有这个"),
+                 "the web page's words": dict(key="web-op1", prompt_text="这个坑记一下"),
+                 "a supplement queued again": dict(key="requeue-" + "a" * 24, prompt_text="这个坑记一下")}
+        for n, (name, fields) in enumerate(cases.items()):
+            with self.subTest(name):
+                self.logs.clear()
+                job = self.turn(remember=[{"kind": "pitfall", "text": f"坑 {n}", "scope": "workspace"}], **fields)
+                self.collect(job)
+                self.assertEqual(self.logs, [f"knowledge remember written=1 job=#{job.job_id}"])
+        self.assertEqual(sorted(e["text"] for e in self.written()), [f"坑 {n}" for n in range(len(cases))])
 
     def test_a_proxy_topic_and_a_redacted_topic_or_one_whose_setting_cannot_be_read_write_nothing(self):
         for topic_data in ({"proxy": {"contact": "ou_x"}}, {"redaction": True}):
@@ -775,6 +812,46 @@ class CollectTest(StateCase):
         self.assertEqual(find_job_record(self.state, "om5")["status"], "done")  # The record is as the turn left it.
         self.collect(job)  # And a later try writes.
         self.assertEqual(len(self.written()), 2)
+
+
+class OwnerMessageTest(UnifiedCase):
+    """The regression of 2026-11-22 (T651) end to end: the owner's message through handle_event, its job record as the
+    Bridge writes it (prompt_text set, as for every message), its 记一下 collected; a hand-on into the same topic is not."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = mock.patch.dict(os.environ, ON)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def finished(self, key, text) -> ReplyJob:
+        """Job ``key`` ended with ``text`` in its checkpoint's remember; the job as its record says."""
+        state = self.ctx.state_dir
+        path = state / f"cp-{key}.json"
+        write_json(path, {"phase": "完成", "remember": [{"kind": "pitfall", "text": text, "scope": "owner"}]})
+        for status in ("queued", "running", "done"):
+            record = upsert_job_record(state, key, status=status, checkpoint_path=str(path))
+        return ReplyJob(job_id=record["job_id"], user_text=record["user_text"], chat_id="dm", message_id=key, timeout=0,
+                        sender_id=record.get("sender_id") or "", topic_id=record["topic_id"],
+                        prompt_text=record.get("prompt_text") or None)
+
+    def test_the_owners_message_in_a_topic_is_collected_and_a_hand_on_is_not(self):
+        real = enrich_incoming_event
+        with mock.patch("covey.app.app.enrich_incoming_event",
+                        side_effect=lambda *a, **k: real(*a, **{**k, "fetch_message_details": False})):
+            self.app.handle_event({"chat_id": "dm", "chat_type": "p2p", "sender_type": "user", "sender_id": "owner",
+                                   "message_id": "d1", "content": "这个坑记一下：rg 会扫 NAS"}, self.ctx)
+        self.assertEqual(find_job_record(self.ctx.state_dir, "d1")["prompt_text"], "这个坑记一下：rg 会扫 NAS")
+        app, topic = self.app.topics.route(self.ctx, {"chat_id": "dm", "message_id": "d1"})
+        knowledge_collect.collect(self.app.runtime, self.finished("d1", "rg 会扫 NAS"), topic)
+        self.assertEqual([e["text"] for e in knowledge.entries(self.ctx.state_dir)], ["rg 会扫 NAS"])
+        # The butler hands the owner's words on into the same topic ("main-" + its request's token).
+        app.submission.enqueue_chat_job(topic, "这个也记一下", "dm", "main-tok1", prompt_content="[Bridge 说明] 管家转来",
+                                        sender_id="owner")
+        job = self.finished("main-tok1", "管家已经记过的")
+        knowledge_collect.collect(self.app.runtime, job, topic)
+        self.assertIn(f"knowledge remember ignored reason=handed-on job=#{job.job_id}", self.logs)
+        self.assertEqual([e["text"] for e in knowledge.entries(self.ctx.state_dir)], ["rg 会扫 NAS"])
 
 
 class DigestTest(StateCase):

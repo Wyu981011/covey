@@ -650,6 +650,29 @@ class SuggestionLayoutTest(TidyCase):
         self.assertIn('"好"', drawn)
         self.assertNotIn("band-line", drawn)
 
+    def test_the_cards_tag_counts_what_still_waits_and_says_done_once_it_is_all_decided(self):
+        # T647 B7: the tag counted the decided rows too: "1 条建议" in the waiting colour stayed on a card with nothing left
+        # to decide, under a band saying 这次的建议都定好了.
+        record, pid, members = self.split_run()
+        tags = lambda card: [(t["text"]["content"], t["color"]) for t in card["header"]["text_tag_list"]]  # noqa: E731
+        self.assertEqual(tags(cards.tidy_card(record["view"])), [("1 条建议", "orange")])
+        row = record["view"]["rows"][0]
+        self.assertEqual(self.click({"kind": cards.DECLINE_KIND, "run": "run-s", "proposal": row["proposal"]},
+                                    record["message_id"]), "tidy_row_decline")
+        drawn = self.patched()
+        self.assertEqual(tags(drawn), [("整理好了", "green")])
+        self.assertIn("这次的建议都定好了", text(drawn))
+        self.assertNotIn("条建议", text(drawn))
+        # A row kept before ``item``, drawn as before: its heading counts what is left too.
+        kept = [{**{key: value for key, value in row.items() if key != "item"}, "state": "declined"},
+                {"proposal": "f" * 16, "line": "改名", "state": "open"}]
+        view = {**record["view"], "rows": kept}
+        self.assertIn("要你定的（1 条）", text(cards.tidy_card(view)))
+        self.assertEqual(tags(cards.tidy_card(view)), [("1 条建议", "orange")])
+        view["rows"] = [{**each, "state": "done"} for each in kept]
+        self.assertIn("这次的建议都定好了（2 条）", text(cards.tidy_card(view)))
+        self.assertEqual(tags(cards.tidy_card(view)), [("整理好了", "green")])
+
     def test_the_web_page_lists_the_suggestion_and_decides_it_through_the_cards_click(self):
         record, pid, members = self.split_run()
         shown = self.tidy.web_view()["proposals"]

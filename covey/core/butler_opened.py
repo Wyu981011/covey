@@ -16,11 +16,22 @@ from pathlib import Path
 from covey.core.state import keyed_json_path, read_object, write_json
 
 OPENED = Path("main-thread") / "opened"
+# A hand-on's synthetic message id: HANDED + its request's token (app/butler_topics.py, app/butler_projects.py project_send;
+# a lead's project_topic_start and project_topic_send go through the butler's own).
+HANDED = "main-"
 
 
 def request_token(request) -> str:
     """The request's name in record files, send keys and synthetic message ids."""
     return hashlib.sha256(str(request.id).encode()).hexdigest()[:32]
+
+
+def handed_on(message_id) -> bool:
+    """Whether a job of ``message_id`` is a turn the butler or a lead handed on to a topic: the butler took the owner's
+    words with its own tools (记一下 with knowledge_save). A job's ``prompt_text`` says nothing about it: every message the
+    owner writes is queued with its expanded input there (app/app.py handle_event), and so are an answer, a page's words
+    (web-…) and a supplement queued again."""
+    return str(message_id or "").startswith(HANDED)
 
 
 def record_path(state_dir, request) -> Path:

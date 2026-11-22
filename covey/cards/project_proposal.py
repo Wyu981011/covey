@@ -245,9 +245,14 @@ def suggestion_block(row, run, index):
 TIDY_SPAN_COUNT = "最近 7 天动过的 {} 个话题"
 
 
+def undecided(rows) -> int:
+    """How many of the 整理专项 card's ``rows`` still wait for the owner: a row he decided (照办了、不用、没做成、已过时) does not."""
+    return sum(1 for row in rows if (row.get("state") or "open") == "open")
+
+
 def tidy_band(view, rows):
     """The 整理专项 card's conclusion band (docs/ui.md 5.1) over its suggestions: how many wait for the owner, and what was read."""
-    waiting = sum(1 for row in rows if (row.get("state") or "open") == "open")
+    waiting = undecided(rows)
     total = (view.get("progress") or {}).get("total") or 0
     read = "看了" + (TIDY_SPAN_COUNT.format(total) if total else TIDY_SPAN) + ("，每条单独定" if waiting > 1 else "")
     headline = ui.number(waiting, "条建议") if waiting else "**这次的建议都定好了**"
@@ -286,7 +291,8 @@ def tidy_card(view):
         elements.insert(0, tidy_band(view, rows))
         elements += [suggestion_block(row, view.get("run", ""), index) for index, row in enumerate(rows)]
     elif rows:
-        elements.append(section(f"要你定的（{len(rows)} 条）"))
+        waiting = undecided(rows)
+        elements.append(section(f"要你定的（{waiting} 条）" if waiting else f"这次的建议都定好了（{len(rows)} 条）"))
         for row in rows:
             line = row.get("line") or "" if row.get("md") else literal_text(row.get("line") or "")
             if (row.get("state") or "open") == "open":
@@ -307,7 +313,9 @@ def tidy_card(view):
         elements.append(md("专项和最近动过的话题都看过了，没有要改的。"))
     for words in view.get("skipped") or ():
         elements.append(note(words if view.get("skipped_md") else literal_text(words)))
-    count = len(rows) + len(proposed) + len(pending)
+    # What still waits for him, as the band counts it: a row he decided is not a suggestion any more (T647 B7: the tag said
+    # "3 条建议" in the waiting colour over a card whose one open row was left, and never 整理好了 once all were decided).
+    count = undecided(rows) + len(proposed) + len(pending)
     tags = ((("正在整理", "blue"),) if state == "running" else (("没整理成", "red"),) if state == "failed"
             else ((f"{count} 条建议", "orange"),) if count else (("整理好了", "green"),))
     head = panel_header(TIDY_ICON, "整理专项", subtitle=f"专项和{TIDY_SPAN}", tags=tags)

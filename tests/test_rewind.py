@@ -417,6 +417,18 @@ class RewindCardTest(unittest.TestCase):
         self.assertNotIn("对话和文件都回退", text)
         self.assertIn(cards.NO_CHECKPOINT, text)
 
+    def test_what_drops_the_turn_is_a_bordered_red_button_never_the_cards_main_one(self):
+        # docs/ui.md 6 按钮: 停止、回退、删除这类会丢东西的操作，不能做主按钮 (both drew as primary_filled, T647 A7).
+        form = {"token": "a" * 24, "job_id": 7, "topic": "T9", "user_text": "改 a.txt", "workdir": "/w",
+                "point": {"keep": "k", "checkpoint": True, "files": [("/w/a.txt", "restore")], "file_count": 1}}
+
+        def looks(built):
+            return [(b["text"]["content"], b["type"]) for b in walk_dicts(built) if b.get("tag") == "button"]
+        self.assertEqual(looks(cards.rewind_card(form)),
+                         [("对话和文件都回退", "danger"), ("只回退对话", "default"), ("取消", "default")])
+        form["point"] = {"keep": "k", "checkpoint": True, "files": [], "file_count": 0}
+        self.assertEqual(looks(cards.rewind_card(form)), [("回退这一轮", "danger"), ("取消", "default")])
+
     def test_after_a_conversation_rewind_the_files_left_as_they_are_are_a_list_of_their_own(self):
         # The 2026-11-03 client check: "文件没有动：- `a`：改回这一轮之前；- `b`：…" on one line, the action read as done.
         form = {"token": "a" * 24, "job_id": 7, "topic": "T9", "user_text": "改 a.txt", "workdir": "/w",

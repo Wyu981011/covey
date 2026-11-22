@@ -16,19 +16,12 @@ from covey.app import knowledge_turn, project_context
 from covey.app.prompts import memory_block
 from covey.core import knowledge, memory, principles, topic_memory, turn_source
 from covey.core.butler import is_butler_topic
+from covey.core.butler_opened import handed_on
 from covey.core.jobs import job_key, upsert_job_record
 from covey.core.topics import proxy_topic
 
 WORDS = ("以后", "每次", "别再", "不要再", "记住", "再也不要", "从现在起")  # The owner's words that start a correction.
 SAVED_WORDS = ("记一下", "记住", "记下来")  # COVEY_KNOWLEDGE's own (app/knowledge_collect.py): it takes those.
-HANDED = "main-"  # The message id of a turn the butler handed on to a topic (app/butler_topics.py ``_enqueue``: "main-" + token).
-
-
-def handed_on(message_id) -> bool:
-    """Whether the turn is one the butler handed on (the butler took the owner's words with its own tools). A job's
-    ``prompt_text`` says nothing about it: a page's words (web-…), a reply in a topic's thread (its first message as
-    background), attachments and supplements fill it too."""
-    return str(message_id or "").startswith(HANDED)
 
 
 def active(ctx) -> bool:

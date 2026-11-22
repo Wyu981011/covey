@@ -624,6 +624,24 @@ class HandoffTest(ButlerTopicsCase):
         records = [json.loads(path.read_text()) for path in (self.ctx.state_dir / "main-thread" / "opened").glob("*.json")]
         self.assertIn("om_line", [record.get("thread_message_id") for record in records])
 
+    def test_the_lines_card_keeps_the_owners_line_breaks_and_puts_the_attachments_on_a_line_of_their_own(self):
+        # 2026-11-22 (T651): the card read "看看昨晚的失败\\n附件：图片 1 张" with the "\\n" as written: the owner's words and
+        # their 附件 line were escaped as one line (cards/answer_card.py literal_lines).
+        from covey.app import answer_cards
+        from covey.core.text import literal
+        upsert_job_record(self.ctx.state_dir, "main-job", message_id="om_owner")
+        data = self.start("open")["data"]
+        job = self.job("open")
+        self.app.runtime.unregister_reply_job(job)
+        upsert_job_record(self.ctx.state_dir, job.message_id, status="done")
+        place = "https://applink.feishu.cn/client/chat/open?openChatId=oc&position=7"
+        with mock.patch.object(answer_cards, "ask_link", return_value=place):
+            self.assertTrue(self.call("topic_send", "n1", topic=data["label"], text="再跑一次")["ok"])
+        call = next(c for c in self.app.messenger.send_message.call_args_list if c.kwargs.get("card") is not None)
+        words = call.kwargs["card"]["body"]["elements"][0]["elements"][1]["content"]
+        self.assertEqual(words.split("\n"), [literal(self.WORDS), literal("附件：图片 1 张、文件 1 个")])
+        self.assertNotIn("&#92;", words)
+
     def test_with_the_owners_message_out_of_reach_the_line_is_text_as_before(self):
         data = self.start("open")["data"]
         job = self.job("open")

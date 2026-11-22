@@ -16,6 +16,7 @@ from covey.core import memory as core_memory
 from covey.core.board_read import ended_at
 from covey.core.jobs import jobs_dir
 from covey.core.butler import is_butler_topic
+from covey.core.butler_opened import handed_on
 from covey.core.redaction import topic_redaction
 from covey.core.statuses import RUNNING
 from covey.core.store import directory_store
@@ -64,12 +65,16 @@ def block(ctx, job, *, owner_turn, resumed: bool) -> str:
 
 def remembers(ctx, job, *, owner_turn) -> bool:
     """Whether the turn's rules carry the ``remember`` rule: entries are on, it is the owner's own turn in a topic of
-    their own (not the butler's, which has tools; not a 代答 topic; not one with redaction on, or whose setting
-    cannot be read), the cases app/knowledge_collect.py would collect from."""
+    their own (not the butler's, which has tools; not one the butler or a lead handed on, whose owner's words the butler
+    took with its own tool; not a 代答 topic; not one with redaction on, or whose setting cannot be read), the cases
+    app/knowledge_collect.py would collect from: a turn it drops is never told to write ``remember``, so its model does
+    not tell the owner 已记下 for nothing."""
     if not knowledge.enabled() or not owner_turn() or proxy_topic(ctx):
         return False
     if not turn_source.behavior(job).owner_words:
         return False  # A 协作 turn's words are not the owner's: no 记一下 from them (app/knowledge_collect.py skips it too).
+    if handed_on(getattr(job, "message_id", "")):
+        return False
     topic_id = getattr(job, "topic_id", "") or ctx.topic_id
     if is_butler_topic(topic_id, getattr(job, "chat_id", "")):
         return False

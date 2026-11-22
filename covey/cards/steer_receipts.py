@@ -10,7 +10,7 @@ import time
 from covey.cards.elements import button_row, card, markdown_panel, topic_button
 from covey.core.deliveries import (CHECK, INTERRUPT, REQUEUE, WITHDRAW, offers, on_arrival, shown_text,
                                    unread as unread_now)
-from covey.cards.ui import band_label, conclusion_band, styled, todo_bar
+from covey.cards.ui import conclusion_band, styled, todo_bar
 from covey.core.butler import worded
 from covey.core.text import literal
 
@@ -33,6 +33,9 @@ STAGE = {
     "refused": "没有发出",
     "uncertain": "送达未确认",
 }
+# The band's label (docs/ui.md 4 结论带): what it asks of the owner, never a task's state word (停住了 is a task that did
+# not succeed, docs/glossary.md 状态词): the task this went into may well be fine.
+BAND_LABEL = "要你处理"
 
 
 def _clock(value):
@@ -81,10 +84,11 @@ def history_lines(record):
              (record.get("ended_at") if record.get("status") == "sent" else None, "任务结束，模型未读取")]
     rows = [f"{label} {_clock(at)}" for at, label in sorted((s for s in steps if isinstance(s[0], (int, float))),
                                                              key=lambda s: s[0])]
+    why = str(record.get("error") or "")
     if record.get("status") == "refused":
-        rows.append("没有发出：" + str(record.get("error") or ""))
+        rows.append("没有发出" + ("：" + why if why else ""))  # No "没有发出：" left hanging without a reason.
     elif record.get("status") == "uncertain":
-        rows.append("送达未确认：" + str(record.get("error") or ""))
+        rows.append("送达未确认" + ("：" + why if why else ""))
     return " → ".join(rows)
 
 
@@ -98,22 +102,37 @@ def requeuing(record) -> bool:
                  or bool(record.get("requeue_next")) and REQUEUE in offers(record)))
 
 
+def _lost_head(record, job_id, unread) -> str:
+    """The receipt's line for a supplement queued again as a round of its own: what became of it in the task it was for."""
+    status = record.get("status")
+    if unread:
+        return f"**#{job_id} 结束前没有读到这条补充**"
+    if status == "refused":
+        return f"**#{job_id} 没有收到这条补充**"
+    if status == "withdrawn":
+        return f"**已撤回**，这条补充没有发给 #{job_id}"
+    if status == "uncertain":
+        return f"**补充 #{job_id} 送达未确认**"
+    return f"**补充 #{job_id}**"  # No other status is queued again (core/deliveries.py offers): nothing it did not say.
+
+
 def receipt_card(record, *, source=""):
     """The compact receipt: one line, details on demand, a check button while unconfirmed. A supplement that did not
     get through (the task ended before the model read it, refused, unconfirmed) leads with a conclusion band instead
-    (docs/ui.md 5.2: 停住了 · 补充 #N, why, what to do), the card ``styled``; one on its way is a line that does not
-    stand out (告诉你一声). A topic's message that went in as it arrived (core/deliveries.py on_arrival) says it went
-    into #N, not a round of its own; one its task never took becomes such a round by itself (``requeuing``), its
-    receipt a line saying so, with nothing to do."""
+    (docs/ui.md 4 结论带: 要你处理 · 补充 #N, what became of it, why, what to do), the card ``styled``; one on its way is
+    a line that does not stand out (告诉你一声). A topic's message that went in as it arrived (core/deliveries.py
+    on_arrival) says it went into #N, not a round of its own; one its task never took becomes such a round by itself
+    (``requeuing``). One queued again (``requeued_job_id``: by itself, or by a click on 重新排队 of any supplement) has
+    nothing left to do: its receipt is a line saying it went to #M, no band and no 重新排队 (until 2026-11-22, T651, one
+    queued by a click kept the band and its 在话题里再发一次 above 已重新排队为任务 #M)."""
     job_id = record.get("job_id")
     status = record.get("status", "submitting")
     unread = status == "sent" and record.get("target_ended") and not record.get("merged")
     arrived = on_arrival(record)
     again = record.get("requeued_job_id")
-    handled = arrived and (unread or status == "refused") and bool(again or requeuing(record))
+    handled = bool(again) or (arrived and (unread or status == "refused") and requeuing(record))
     if handled:
-        head = (f"**#{job_id} 结束前没有读到这条补充**" if unread else f"**#{job_id} 没有收到这条补充**") + (
-            f"，已排成新一轮 #{again}" if again else "，正在排成新一轮")
+        head = _lost_head(record, job_id, unread) + (f"，已排成新一轮 #{again}" if again else "，正在排成新一轮")
         summary = f"补充 #{job_id} 已排成新一轮" if again else f"补充 #{job_id} 正在排成新一轮"
     elif unread:
         head = f"**任务 #{job_id} 已结束，模型没有读到这条补充**"
@@ -165,7 +184,7 @@ def receipt_card(record, *, source=""):
         details.append("“后端已接收”表示任务进程已把补充交给模型后端。模型在手上这一步（一条命令、一个子任务）结束后才读到它，"
                        "长命令或子任务在跑时要等它们结束。Claude 读到后这里变成“模型已读取”；其他后端不提供读取回执，状态停在这里。")
     if status == "uncertain":
-        details.append("不会自动重发。点“查送达状态”重新核对；确认没有发出后可重新排队。")
+        details.append("不会自动重发。点“查送达状态”重新核对" + ("。" if handled else "；确认没有发出后可重新排队。"))
     if status == "held":
         details.append("任务开始接收补充后自动送入，只送一次；送入前可以撤回。任务在那之前结束时显示“没有发出”。")
     # The butler is no topic: its receipts say so (the owner's own words below stay as written).
@@ -173,13 +192,17 @@ def receipt_card(record, *, source=""):
     details.append("补充内容：\n" + "\n".join("> " + line for line in str(shown_text(record)).splitlines()[:40]))
     band = None
     if (unread or status in {"refused", "uncertain"}) and not handled:
-        if unread:
-            headline, why, todo = "模型没有读到这条补充", f"任务 #{job_id} 在它读到之前结束了", "重新排队，或在话题里再发一次"
+        again_too = "重新排队，或" if REQUEUE in offers(record) else ""  # Only where the button is.
+        if record.get("requeue_state") in {"submitting", "uncertain"}:
+            # 重新排队 was clicked and its result is not known: a second message might run it twice.
+            headline, why, todo = "重新排队结果未确认", "不会重复排队", "看话题里有没有新任务，没有再发一次"
+        elif unread:
+            headline, why, todo = "模型没有读到这条补充", f"任务 #{job_id} 在它读到之前结束了", again_too + "在话题里再发一次"
         elif status == "refused":
-            headline, why, todo = "没有发出", str(record.get("error") or "任务当前不能接收补充"), "在话题里再发一次"
+            headline, why, todo = "没有发出", str(record.get("error") or "任务当前不能接收补充"), again_too + "在话题里再发一次"
         else:
             headline, why, todo = "送达未确认", str(record.get("error") or ""), "先查送达状态，不会自动重发"
-        band = conclusion_band(band_label("stopped", f"补充 #{job_id}"), literal(headline),
+        band = conclusion_band(literal(f"{BAND_LABEL} · 补充 #{job_id}"), literal(headline),
                                literal(worded(why, record)), below=[todo_bar(worded(todo, record))])
     line = {"tag": "markdown", "element_id": "steer_receipt_line", "content": head + stage}
     if band is not None:

@@ -286,6 +286,59 @@ class ReceiptCardTest(unittest.TestCase):
             shown = [node["value"]["kind"] for node in walk_dicts(receipt_card(record)) if node.get("tag") == "button"]
             self.assertEqual(shown, [kind for offer, kind in kinds if offer in offers(record)], record)
 
+    BASE = {"job_id": 431, "text": "x", "saved_at": 1.0, "topic_id": "t", "token": "a" * 64}
+    UNREAD = {"status": "sent", "sent_at": 2.0, "target_ended": True, "ended_at": 3.0}
+
+    def test_a_supplement_queued_again_by_a_click_says_where_it_went_and_asks_nothing_more(self):
+        # 2026-11-22 (T651): after a click on 重新排队 the receipt kept its band (停住了, 要你做 在话题里再发一次) above
+        # 已重新排队为任务 #433; only a message that went in as it arrived lost it once queued.
+        again = {"requeue": {"text": "x"}, "requeue_state": "queued", "requeued_job_id": 433}
+        cases = (({"status": "refused", "error": "任务已结束"}, "**#431 没有收到这条补充**"),
+                 (self.UNREAD, "**#431 结束前没有读到这条补充**"),
+                 ({"status": "withdrawn", "withdrawn_at": 2.0}, "**已撤回**，这条补充没有发给 #431"),
+                 ({"status": "uncertain", "target_ended": True, "error": "任务 #431 已结束，无法确认是否收到这条补充"},
+                  "**补充 #431 送达未确认**"))
+        for fields, lead in cases:
+            with self.subTest(fields["status"]):
+                card = receipt_card({**self.BASE, **fields, **again})
+                line = next(e for e in card["body"]["elements"] if e.get("element_id") == "steer_receipt_line")
+                self.assertEqual(line, {"tag": "markdown", "element_id": "steer_receipt_line",
+                                        "content": lead + "，已排成新一轮 #433"})  # The line leads: no band above it.
+                self.assertEqual(card["config"]["summary"]["content"], "补充 #431 已排成新一轮")
+                self.assertNotIn("style", card["config"])  # Not styled: there is no band.
+                shown = text_of(card)
+                self.assertIn("已重新排队为任务 #433。", shown)
+                for words in ("停住了", "要你处理", "要你做", "再发一次", "可重新排队", REQUEUE_KIND):
+                    self.assertNotIn(words, shown)
+
+    def test_a_supplement_that_did_not_get_through_asks_for_what_it_needs_without_a_tasks_state_word(self):
+        # docs/glossary.md 状态词: 停住了 is a task that did not succeed, and the task this went into may be fine; the band
+        # says what it asks of the owner (docs/ui.md 4 结论带), its 要你做 only what the card's buttons offer.
+        from covey.core.text import literal
+        refused = {"status": "refused", "error": "任务已结束"}
+        offered = {"requeue": {"text": "x"}}
+        cases = ((self.UNREAD, "模型没有读到这条补充", "在话题里再发一次"),
+                 ({**self.UNREAD, **offered}, "模型没有读到这条补充", "重新排队，或在话题里再发一次"),
+                 (refused, "没有发出", "在话题里再发一次"),
+                 ({**refused, **offered}, "没有发出", "重新排队，或在话题里再发一次"),
+                 ({"status": "uncertain", "error": "飞书超时"}, "送达未确认", "先查送达状态，不会自动重发"),
+                 # 重新排队 was clicked and its result is not known: not 再发一次 blindly, it might run twice.
+                 ({**refused, **offered, "requeue_state": "uncertain"}, "重新排队结果未确认", "看话题里有没有新任务，没有再发一次"))
+        for fields, headline, todo in cases:
+            with self.subTest(headline, todo=todo):
+                card = receipt_card({**self.BASE, **fields})
+                band = text_of(card["body"]["elements"][0])
+                self.assertIn(literal("要你处理 · 补充 #431"), band)
+                self.assertIn(f'"text_size": "heading", "content": "{literal(headline)}"', band)
+                self.assertIn("　" + literal(todo) + '"', band)
+                self.assertNotIn("停住了", text_of(card))
+                self.assertIn("style", card["config"])
+
+    def test_a_refusal_without_a_reason_leaves_no_colon_hanging(self):
+        self.assertEqual(history_lines({**self.BASE, "status": "refused"}), "已保存 " + time.strftime(
+            "%H:%M:%S", time.localtime(1.0)) + " → 没有发出")
+        self.assertTrue(history_lines({**self.BASE, "status": "uncertain", "error": "超时"}).endswith("→ 送达未确认：超时"))
+
     def test_held_and_requeued_notes_reach_the_details_panel(self):
         record = {"status": "held", "job_id": 31, "text": "x", "saved_at": 1.0, "topic_id": "t", "token": "a" * 64}
         held = text_of(receipt_card(record))

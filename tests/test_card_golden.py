@@ -534,6 +534,9 @@ def steer_cards():
         "merged": {"merged": True},
         "requeue_uncertain": {"status": "refused", "sent_at": None, "requeue": True, "requeue_state": "uncertain"},
         "requeued": {"status": "refused", "sent_at": None, "requeue": True, "requeued_job_id": 433},
+        # Queued again by a click once its task ended unread: a line saying where it went, no band (T651).
+        "unread_requeued": {"target_ended": True, "ended_at": FROZEN - 2, "requeue": True, "requeue_state": "queued",
+                            "requeued_job_id": 433},
     }
     arrival = {"receipt": {"kind": "job", "key": "om_fake_next", "job_id": 432, "text": "再补充一点\n第二行",
                            "auto": True},

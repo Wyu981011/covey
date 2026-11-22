@@ -201,7 +201,9 @@ class RowTest(unittest.TestCase):
         title = words["header"]["title"]["content"]
         self.assertTrue(title.startswith("<font color='grey'>你问 14:43 · 把话题里的卡片"))
         self.assertTrue(title.endswith("…</font>"))  # One line: its opening, the fold has all of it.
-        self.assertIn("下载按钮也不要了", words["elements"][0]["content"])
+        # Opened, his words line by line as he wrote them: not one line with a "\\n" in it (2026-11-22, T651).
+        self.assertEqual(words["elements"][0]["content"].split("\n"),
+                         ["把话题里的卡片和私聊区对齐，", "任务详情不要了，下载按钮也不要了，换配置做小"])
 
     def test_a_tail_card_after_a_long_answer_has_the_row_too(self):
         block = ask_block("看板改成彩色块", at="20:41", url=URL, who="管家", avatar="img_b")
