@@ -14,7 +14,7 @@ from covey.core.turn_words import retry_hint
 from covey.core.jobs import job_key, quick_held, upsert_job_record
 from covey.core.locks import card_lock
 from covey.cards.elements import md
-from covey.cards.question_cards import (ASK_KIND, PICK, RESTORE_KIND, SET_ASIDE_KIND, SET_ASIDE_SETTLED, SKIP_ALL_KIND, folded,
+from covey.cards.question_cards import (ASK_KIND, DRAFT, PICK, RESTORE_KIND, SET_ASIDE_KIND, SET_ASIDE_SETTLED, SKIP_ALL_KIND, folded,
                                         folded_refusal, question_feedback_card)
 from covey.app.card_lanes import after_ack
 from covey.app.answers import ATTACHMENTS, AnswerIncomplete, picked_fields, skip_all_fields, with_note
@@ -336,6 +336,7 @@ class Interaction:
                     after_ack(lambda: self.cards.repaint_browse_card(ctx, chat, mid, event["message_id"], clicked_card(
                         event, ctx, scoped_question(ctx, chat, raw["token"]), self.questions.copy_card)))
                 return True
+            submitted = fields
             try:
                 if PICK in raw:  # An option's button on a top-level copy: that option is the answer.
                     fields = picked_fields(record["questions"], fields, raw[PICK])
@@ -343,7 +344,11 @@ class Interaction:
                     fields = with_note(record["questions"], fields)
                 self.questions.submit_answer(ctx, chat, raw["token"], fields, mid)
             except AnswerIncomplete as exc:
-                self.questions.show_answer_notice(ctx, chat, raw["token"], str(exc), mid)
+                # On the card clicked, with what was typed kept: a notice in the topic's thread was not seen from its
+                # copy at the top level (T631, 2026-11-22). A form on a task card still gets the notice.
+                reason = str(exc)
+                self.refuse_on_card(ctx, chat, event, token, f"回答还没提交：{reason}", mid, draft=submitted,
+                                    elsewhere=lambda _: self.questions.show_answer_notice(ctx, chat, token, reason, mid))
             except QuestionFolded:
                 self.show_folded(ctx, chat, event, token, mid)
         elif kind in (SKIP_ALL_KIND, ASK_KIND):  # A card sent before T631: its 补充说明 alone, as 提交回答 sends it.
@@ -375,24 +380,26 @@ class Interaction:
         try:
             answer = skip_all_fields(record["questions"], fields)
         except AnswerIncomplete as exc:
-            self.refuse_on_card(ctx, chat, event, token, str(exc), mid)
+            self.refuse_on_card(ctx, chat, event, token, str(exc), mid, draft=fields)
             return
         try:
             self.questions.submit_answer(ctx, chat, token, answer, mid)
         except QuestionFolded:
             self.show_folded(ctx, chat, event, token, mid)
 
-    def refuse_on_card(self, ctx, chat, event, token, text, mid, *, elsewhere=None):
+    def refuse_on_card(self, ctx, chat, event, token, text, mid, *, elsewhere=None, draft=None):
         """Say ``text`` under the form of the clicked card, redrawn whole and still open: the card in the topic, or its
-        copy at the top level (app/question_display.py). A form on a task card is not redrawn alone: ``elsewhere(text)``
-        then, by default the small notice card 提交回答 gets (show_answer_notice)."""
+        copy at the top level (app/question_display.py), its fields filled with ``draft``, what the click sent
+        (cards/question_cards.py DRAFT), so nothing typed is lost. A form on a task card is not redrawn alone:
+        ``elsewhere(text)`` then, by default the small notice card in the topic (show_answer_notice)."""
         source = event.get("message_id", "")
         with question_card_lock(question_path(ctx, token)):
             current = scoped_question(ctx, chat, token)
             build = (standalone_card if source == current.get("question_message_id")
                      else self.questions.copy_card if source == current.get("mirror_message_id") else None)
             if (current.get("status") == "pending" and source and build is not None
-                    and self.cards.repaint_browse_card(ctx, chat, mid, source, build(ctx, {**current, "refusal": text}))):
+                    and self.cards.repaint_browse_card(ctx, chat, mid, source, build(ctx, {
+                        **current, "refusal": text, **({DRAFT: draft} if isinstance(draft, dict) else {})}))):
                 return
         if elsewhere is None:
             self.questions.show_answer_notice(ctx, chat, token, text, mid)

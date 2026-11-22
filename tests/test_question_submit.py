@@ -14,7 +14,7 @@ from support.world import TopicFixture
 
 from covey.app.answers import NOTE_EMPTY, SKIPPED, UNANSWERED_NOTE, given, with_note
 from covey.app.card_actions import ACTIONS, moved_card_text
-from covey.cards.question_cards import (ASK_KIND, SET_ASIDE_KIND, SET_ASIDE_LABEL, SKIP_ALL_KIND, SUBMIT_LABEL, how_to_answer,
+from covey.cards.question_cards import (ASK_KIND, DRAFT, SET_ASIDE_KIND, SET_ASIDE_LABEL, SKIP_ALL_KIND, SUBMIT_LABEL, how_to_answer,
                                         question_card, question_element)
 from covey.core.jobs import find_job_record, upsert_job_record
 
@@ -172,8 +172,33 @@ class SubmitTest(TopicFixture, unittest.TestCase):
                             ({"option_0": "0"}, "还有 1 题没回答：还有别的要求吗？（不想回答可选“不回答此题”，或在补充说明里写一句再点“提交回答”）")):
             with self.subTest(form):
                 self.click(form)
-                self.assertIn(words, self.app.questions.show_answer_notice.call_args.args[3])
+                card = self.app.cards.repaint_browse_card.call_args.args[4]
+                self.assertIn("⚠️ 回答还没提交：" + words, text_of(card))
                 self.assertEqual((self.saved()["status"], self.follow_up()), ("pending", []))
+        self.app.questions.show_answer_notice.assert_not_called()
+
+    def test_a_refusal_is_on_the_card_clicked_with_what_was_typed(self):
+        """2026-11-22: a refusal went to a small card in the topic's thread, which the owner answering the copy at the top
+        level never saw, so 提交回答 seemed to do nothing. It is under the form of the card clicked, redrawn with what he
+        had picked and written; a form on a task card, which is not redrawn alone, still gets the small card."""
+        self.path.write_text(json.dumps({**self.record, "mirror_message_id": "om_top", "mirror_card_id": "card_top"},
+                                        ensure_ascii=False))
+        self.app.questions.copy_card = mock.Mock(side_effect=lambda ctx, record: question_card(record, "T70"))
+        typed = {"option_0": "1", "answer_0": "都不合适：先出两版样子给我挑"}
+        for message in ("om_qcard", "om_top"):
+            with self.subTest(message):
+                self.click(typed, message=message, event="ev-" + message)
+                _, chat, _, source, card = self.app.cards.repaint_browse_card.call_args.args
+                self.assertEqual((chat, source), ("oc_chat", message))
+                self.assertIn("回答还没提交：还有 1 题没回答：还有别的要求吗？", text_of(card))
+                fields = {e["name"]: e for e in walk_dicts(card) if e.get("name")}
+                self.assertEqual(fields["answer_0"]["default_value"], "都不合适：先出两版样子给我挑")
+                self.assertEqual(fields["option_0"]["initial_option"], "1")
+                self.assertNotIn("default_value", fields["answer_1"])
+        self.app.questions.show_answer_notice.assert_not_called()
+        self.click(typed, message="om_task_card", event="ev-task")
+        self.assertIn("还有 1 题没回答", self.app.questions.show_answer_notice.call_args.args[3])
+        self.assertEqual(self.saved()["status"], "pending")
 
     def test_an_old_cards_skip_and_ask_send_the_supplement_alone(self):
         for kind in (SKIP_ALL_KIND, ASK_KIND):
@@ -189,6 +214,23 @@ class SubmitTest(TopicFixture, unittest.TestCase):
         [job] = self.follow_up()
         self.assertEqual(self.saved()["answers"], {"fmt": {"answers": [SKIPPED]}, "note": {"answers": [SKIPPED]}})
         self.assertIn(UNANSWERED_NOTE, job.prompt_text)
+
+
+class DraftTest(unittest.TestCase):
+    def test_a_redrawn_form_keeps_what_the_click_sent(self):
+        record = checkpoint_question(questions=[*checkpoint_question()["questions"],
+                                                {"id": "who", "question": "通知谁？", "multiple": True,
+                                                 "options": [{"label": "我"}, {"label": "群"}]}])
+        drawn = question_element({**record, DRAFT: {"option_0": "skip", "answer_1": "没有", "skip_1": True,
+                                                    "option_2": ["1", "9"], "supplement": "先这样"}})
+        fields = {e["name"]: e for e in walk_dicts(drawn) if e.get("name")}
+        self.assertEqual(fields["option_0"]["initial_option"], "skip")
+        self.assertEqual((fields["answer_1"]["default_value"], fields["skip_1"]["checked"]), ("没有", True))
+        self.assertEqual(fields["option_2"]["selected_values"], ["1"])  # A value no option has is left out.
+        self.assertEqual(fields["supplement"]["default_value"], "先这样")
+        plain_form = {e["name"]: e for e in walk_dicts(question_element(record)) if e.get("name")}
+        self.assertFalse([k for e in plain_form.values() for k in e if k in ("default_value", "initial_option", "selected_values")])
+        self.assertFalse(plain_form["skip_1"]["checked"])
 
 
 class StandingRetiredTest(unittest.TestCase):

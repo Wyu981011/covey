@@ -23,6 +23,9 @@ SUPPLEMENT = "supplement"  # The card-wide 补充说明 field.
 SUBMIT_LABEL = "提交回答"
 SUPPLEMENT_HINT = "其他想说的：不答的原因、新要求，或想先问的话"
 STATUS_LABEL = "查看提交状态"
+# What a refused click had in the form (app/interaction.py refuse_on_card), never saved: the card redrawn with the refusal
+# keeps it, so nothing typed is lost (a redrawn card's fields are empty otherwise).
+DRAFT = "draft"
 # compat: 只发补充说明 and 先问一句 on cards sent before T631, which merged them into 提交回答. Each sends the 补充说明 with every
 # question 不回答此题 (app/interaction.py skip_all).
 SKIP_ALL_KIND = "bridge_question_skip"
@@ -283,13 +286,14 @@ def _question_form(record, token, tags="", headed=False):
     if triage.state(record) == triage.ESCALATED and triage.of(record).get("why"):
         elements[1:1] = lead_notes(record)
     elements.append(markdown_panel("qh_" + token, "怎么回答", how_to_answer(record), size="notation", quiet=True))
+    draft = record.get(DRAFT) if isinstance(record.get(DRAFT), dict) else {}
     for i, q in enumerate(record["questions"]):
-        elements.extend(_question_fields(i, q, count, record if buttons else None))
+        elements.extend(_question_fields(i, q, count, record if buttons else None, draft))
     # One place for anything beyond the answers, so no answer box doubles as a note.
     elements.append({"tag": "markdown", "content": "**补充说明**（可选）"})
     elements.append({"tag": "input", "name": SUPPLEMENT, "input_type": "multiline_text", "rows": 2,
                      "auto_resize": True, "max_rows": 5, "width": "fill", "max_length": 1000,
-                     "placeholder": {"tag": "plain_text", "content": SUPPLEMENT_HINT}})
+                     "placeholder": {"tag": "plain_text", "content": SUPPLEMENT_HINT}, **_typed(draft, SUPPLEMENT)})
     elements.append(_send_row(record, token))
     return {"tag": "form", "element_id": "q_" + token, "name": "question_form_" + token, "elements": elements}
 
@@ -346,10 +350,28 @@ def question_context(q):
     return compact_text(raw, CONTEXT_CHARS) if isinstance(raw, str) else ""
 
 
-def _question_fields(i, q, count=1, record=None):
+def _typed(draft, name):
+    """The ``default_value`` of input ``name`` that keeps what ``draft`` (DRAFT) had in it; {} without anything."""
+    value = draft.get(name)
+    return {"default_value": value[:1000]} if isinstance(value, str) and value.strip() else {}
+
+
+def _chosen(draft, name, options, multiple):
+    """The dropdown ``name``'s choice as ``draft`` (DRAFT) had it: ``initial_option`` or, ``multiple``, ``selected_values``;
+    {} without one or with a value no option of this card has."""
+    valid = [str(j) for j in range(len(options))] + [SKIP_VALUE]
+    value = draft.get(name)
+    if multiple:
+        chosen = [str(v) for v in value if str(v) in valid] if isinstance(value, list) else []
+        return {"selected_values": chosen} if chosen else {}
+    return {"initial_option": str(value)} if isinstance(value, (str, int)) and str(value) in valid else {}
+
+
+def _question_fields(i, q, count=1, record=None, draft=None):
     """Question ``i`` of ``count``: its number and header in bold, its text, its background (``question_context``) in
     small grey print under it, its options as a list, the dropdown (with ``record``, a picks() card's: a button per
-    option), the answer box and, without options, a skip box."""
+    option), the answer box and, without options, a skip box; each filled as ``draft`` (DRAFT) had it."""
+    draft = draft or {}
     elements = []
     lead = question_lead(i, count, q)
     for start in range(0, len(q["question"]), 6000):
@@ -377,6 +399,7 @@ def _question_fields(i, q, count=1, record=None):
                     {"text": {"tag": "plain_text", "content": o["label"][:100]}, "value": str(j)}
                     for j, o in enumerate(options)
                 ] + [{"text": {"tag": "plain_text", "content": SKIP_LABEL}, "value": SKIP_VALUE}],
+                **_chosen(draft, f"option_{i}", options, bool(q.get("multiple"))),
             }
         )
     elements.append(
@@ -386,11 +409,11 @@ def _question_fields(i, q, count=1, record=None):
             "input_type": "multiline_text",
             "rows": 2, "auto_resize": True, "max_rows": 5, "width": "fill",
             "placeholder": {"tag": "plain_text", "content": "选项都不合适时，在这里写你的回答" if options else "填写回答"},
-            "max_length": 1000,
+            "max_length": 1000, **_typed(draft, f"answer_{i}"),
         }
     )
     if not options:  # No dropdown to carry the choice.
-        elements.append({"tag": "checker", "name": f"skip_{i}", "checked": False,
+        elements.append({"tag": "checker", "name": f"skip_{i}", "checked": draft.get(f"skip_{i}") in (True, "true"),
                          "text": {"tag": "plain_text", "content": SKIP_LABEL}})
     return elements
 

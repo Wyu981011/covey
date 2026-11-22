@@ -373,6 +373,10 @@ def question_cards():
     # A record with a 先问一句 from before T631, which took it off the card: an open form like any, the old field unread.
     cards["card_asked_first"] = question_card(question_record(answers={}, asked_first={
         "at": FROZEN - 30, "text": "表格和列表在手机上哪个好看？", "event": "e"}), "T70")
+    # 提交回答 refused (app/interaction.py refuse_on_card): the card redrawn with the refusal under it and what the click
+    # sent kept in its fields (cards/question_cards.py DRAFT); the dropdown's choice, the answer box and 补充说明.
+    cards["card_refused_draft"] = question_card(question_record(answers={}, refusal="回答还没提交：还有 1 题没回答：…", draft={
+        "option_0": "1", "answer_0": "都不合适，先出两版给我挑", "supplement": "顺便说下为什么问"}), "T70")
     # One question with options at the private chat's top level: a button per option (cards/question_cards.py picks).
     cards["card_top_pick"] = question_card({**question_record(questions=question_record()["questions"][:1], answers={}),
                                             TOP_COPY: True}, "T70")
