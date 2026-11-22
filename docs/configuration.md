@@ -199,7 +199,7 @@
 | [内存看门狗](operations.md#内存看门狗) | `bin/covey_memguard.py enable` | 独立进程；`memguard` 后台线程转发告警 |
 | [本机运行锁](runtime-locks.md) | `COVEY_LOCK_ROOT` | 同机多个服务共用的锁 |
 | [到点回来看](usage.md#到点回来看) | `COVEY_REVISIT=1` | `revisits` 后台线程；普通话题每轮多一行规则；`revisits/` 记录；看板多“到点回来看”一组 |
-| [多参与者协作](architecture.md#多参与者协作开发中默认关)（开发中） | `COVEY_COLLAB=1` | 这一版不多线程、不派发：只认任务的轮次来源，不认识、不支持的不跑；开着也没有协作轮 |
+| [多参与者协作](architecture.md#多参与者协作开发中默认关)（开发中） | `COVEY_COLLAB=1` | `collab` 后台线程（派发、到期、重启对账）；主人在普通话题里的那一轮多一行规则（`collab_ask`）；`collab/` 记录，咨询通道话题目录 `topics/collab-*`；咨询轮只在声明了 `collab` 的 Harness（Claude Code、Codex）上跑 |
 
 ### 代答
 
@@ -421,7 +421,9 @@
 | `COVEY_DIGEST_TIMES` | `app/digest.py`、`core/app_manifest.py`（有它或 `COVEY_BOARD=1` 才要菜单「看板」）、`app/tidy_run.py`（`scheduled`：整理专项的定时也按这些时间）、`core/quiet_hours.py`（`COVEY_QUIET_HOURS` 没设时，夜里是最后一个时间到第一个时间） | 空：不发早晚汇总，整理专项也没有定时的一次 | 否 |
 | `COVEY_BOARD` | `core/app_manifest.py`（`board_switch`：`required` 据此要菜单「看板」，`app/digest.py` 的 `menu_items` 据此加这一项） | 关：菜单「看板」跟着早晚汇总，设了 `COVEY_DIGEST_TIMES` 才有，和原来一样；`1`：没有早晚汇总也有。`./install` 新装的服务写 `1`（`service/installer.py` 的 `INSTALL_SWITCHES`） | 否 |
 | `COVEY_REVISIT` | `core/revisits.py`（`enabled`：`app/revisits.py` 的 `revisits` 后台线程、`app/runs.py` 普通话题每轮的规则行、`app/digest.py` 看板的“到点回来看”一组都看它；任务进程里 `app/turn_delivery.py` 据此决定没有变化的那一轮不发；`app/revisit_hint.py` 据此决定说了稍后的答案卡下面有没有「约 30 分钟后回来看」，提示那一行不看开关） | 关：检查点里的 `revisit` 不读，不写 `revisits/`，和原来一样；`1` 开，见[到点回来看](usage.md#到点回来看) | 否 |
-| `COVEY_COLLAB` | `core/turn_source.py`（`enabled`：`refusal` 据此决定协作轮跑不跑；问它的有 `app/job_dispatch.py` 的 `refuse_source`，`app/worker.py` 开跑前） | 关：不派发协作轮；`1`：Bridge、任务进程、后端三方都支持时派发（这一版没有能派发的，见[多参与者协作](architecture.md#多参与者协作开发中默认关)） | 否 |
+| `COVEY_COLLAB` | `core/turn_source.py`（`enabled`：`refusal` 据此决定协作轮跑不跑；问它的有 `app/job_dispatch.py` 的 `refuse_source`，`app/worker.py` 开跑前）、`app/collab_flow.py`（线程、规则行、检查点的 `collab_ask`）、`app/collab_checks.py`（预检） | 关：不派发协作轮、不起线程、不加规则行；`1`：Bridge、任务进程、后端三方都支持时派发（见[多参与者协作](architecture.md#多参与者协作开发中默认关)） | 否 |
+| `COVEY_COLLAB_QUEUE_SECONDS` | `core/collab_records.py`（`queue_seconds`：一次咨询等接收方空出来的时限） | 600 | 否 |
+| `COVEY_COLLAB_WINDOW_SECONDS` | `core/collab_records.py`（`window_seconds`：一次协作的整个时限，到了没答复的咨询到期） | 1800 | 否 |
 | `COVEY_KNOWLEDGE` | `core/knowledge.py`（`enabled`）、`core/butler.py`（`mcp_config` 交给管家的 MCP 服务）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此列知识工具） | 空：不开知识条目 | 否 |
 | `COVEY_HISTORY_CMD` | `core/knowledge.py`（`history_cmd`）、`core/butler.py`（`mcp_config` 同上）、`core/butler_tool_specs.py`（`listed`：据此列 `history_search`） | 空：没有历史搜索；要绝对路径 | 否 |
 | `COVEY_EXTENSIONS` | `core/extensions.py` | 空：读仓库根和数据根的 `extensions/enabled`；设成空串表示一个都不要。逗号分隔的 Python 包名，见[扩展](architecture.md#扩展) | 否 |
@@ -507,7 +509,7 @@
 | `HOST_JOB_ID` | `service/boot.py` | 开发机自带 | 否 | <!-- privacy: allow 平台自带的环境变量名，boot.py 按它认开发机 -->
 | `COVEY_RUNNER_PYTHONPATH` | `app/runner.py` | Bridge 交给任务进程，不要手设 | 否 |
 | `COVEY_TASK_DIR` | `app/leftovers.py`、`core/device_link.py` | 任务进程给本轮命令设置，不要手设 | 否 |
-| `CODEX_HOME` | `core/paths.py`（`codex_home`，Codex 的会话目录和 Pi 借用的登录都从它取）、`core/model_settings.py` | `~/.codex` | 否 |
+| `CODEX_HOME` | `core/paths.py`（`codex_home`，Codex 的会话目录和 Pi 借用的登录都从它取）、`core/model_settings.py`、`backends/codex/consult.py`（协作咨询轮的私有 home 从它链接） | `~/.codex` | 否 |
 | `COVEY_CLAUDE_HOOKS` | `backends/claude/hooks.py`（`enabled`：`TurnHooks.registration` 据此在每轮 Claude Code 的 initialize 里注册 SDK hook） | 开：子 Agent（Explore 除外）开工时收到守则（`SubagentStart`），子 Agent 调 `mcp__bridge__*` 被拒（`PreToolUse`），管家这一轮自己调满 6 次非 Bridge 工具时提醒一次交给话题（`PostToolUse`，主人说了“你直接做”的那一轮没有）；`0` 关：不注册，每轮和原来一样 | 否 |
 | `CLAUDE_CONFIG_DIR` | `backends/claude/sessions.py`、`backends/claude/redaction.py`、`core/maintenance_rules.py`、`core/claude_retention.py`（只读它的 `settings.json`，诊断页和 `./install` 提示会话保留几天） | `~/.claude` | 否 |
 | `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`、`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` | `backends/claude/bridge.py`（Bridge 的环境里设了就用它的值，否则给 claude 子进程设成 `1`） | `1` | 否 |

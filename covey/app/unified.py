@@ -114,7 +114,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
              'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'digest',
              'topic_seen', 'app_setup', 'dispatch_cards', 'project_cards', 'projects', 'project_tidy',
              'project_loop', 'patrol', 'devices', 'nodes', 'web_sync', 'source_watch', 'extension_features', 'features', 'menu', 'group_menu', 'group_boards',
-             'welcome', 'revisits', 'review')
+             'welcome', 'revisits', 'review', 'collab')
 
     def __init__(self, *, script_path, component_factory=components, task_runner=False):
         self.runtime = Runtime(script_path=script_path)
@@ -194,6 +194,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.weekly_usage import WeeklyUsage
         from covey.app.welcome import Welcome
         from covey.app.revisits import Revisits
+        from covey.app.collab_flow import Collaboration
         from covey.app.workspace_manager import WorkspaceManager
         with self.parts_lock:
             if 'features' in self.__dict__:
@@ -281,12 +282,15 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.source_watch = SourceWatch(self.runtime, self.topics, self.messenger, self.voice)
             # 到点回来看 (app/revisits.py): the thread that queues a topic's turn at the time it asked, COVEY_REVISIT=1.
             self.revisits = Revisits(self.runtime, self.topics)
+            # 协作 (app/collab_flow.py), COVEY_COLLAB=1: the thread that dispatches, expires and reconciles its asks, and the
+            # API the web page and cards call; without the switch it has no thread.
+            self.collab = Collaboration(self.runtime, self.topics, self.messenger, self.voice)
             features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.proxy,
                         self.group_manager, self.overview, self.topic_seen, self.butler_tools,
                         self.butler_search, self.settings_hub, self.butler, self.digest, self.app_setup, self.welcome,
                         self.dispatch_cards, self.project_cards, self.projects, self.project_tidy,
                         self.project_loop, self.patrol, self.devices, self.nodes, self.web_sync, self.source_watch,
-                        self.revisits, *self.extension_features)
+                        self.revisits, self.collab, *self.extension_features)
             # The bot menu's items (app/bot_menu.py): each answers in the owner's private chat, its card
             # replacing the one it sent before, or folding and unfolding it while it is the newest (``menu_folds()``).
             self.menu = BotMenu(self.runtime, INBOUND_DIR,

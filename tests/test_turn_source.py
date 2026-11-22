@@ -41,16 +41,19 @@ class KindsTest(unittest.TestCase):
                 self.assertEqual(turn_source.behavior(item), turn_source.AS_BEFORE)
                 self.assertEqual(turn_source.refusal(item), "")
 
-    def test_this_release_runs_the_owner_and_a_handover_and_nothing_of_a_collaboration_whatever_the_switch(self):
+    def test_this_release_runs_the_owner_a_handover_and_a_collaboration_only_with_the_switch_and_the_harness(self):
         owner = {"turn_source": turn_source.make(OWNER, asserted_by="owner", origin={"message_id": "om_1"})}
         self.assertEqual(turn_source.refusal(owner), "")
         # 话题转交管家 (app/butler_asks.py) runs: no switch, no capability.
         handover = turn_source.make(HANDOVER, asserted_by="owner", origin={"message_id": "om_9", "topic": "t3"})
         self.assertEqual(turn_source.refusal({"turn_source": handover}), "")
-        for on in ("", "1"):
-            with self.subTest(switch=on), mock.patch.dict("os.environ", {turn_source.SWITCH: on}):
-                for made in (asked(), turn_source.make(REPLY, asserted_by="bridge", collab="c1")):
-                    self.assertIn("这个版本不执行", turn_source.refusal({"turn_source": made}, capabilities=FULL))
+        # 协作 (app/collab_flow.py): off by default whatever the Harness, on with COVEY_COLLAB=1 where it declares NEEDS.
+        for made in (asked(), turn_source.make(REPLY, asserted_by="bridge", collab="c1")):
+            with self.subTest(kind=made["kind"]):
+                self.assertEqual(turn_source.refusal({"turn_source": made}, capabilities=FULL), turn_source.SWITCH_OFF)
+                with mock.patch.dict("os.environ", {turn_source.SWITCH: "1"}):
+                    self.assertEqual(turn_source.refusal({"turn_source": made}, capabilities=FULL), "")
+                    self.assertIn("没有声明", turn_source.refusal({"turn_source": made}, capabilities=HarnessCapabilities()))
 
     def test_a_kind_a_version_or_a_shape_it_does_not_know_never_runs_and_may_do_nothing(self):
         for value in ({"v": 1, "kind": "lead_wake"}, {"v": 2, "kind": OWNER}, {"v": "1", "kind": OWNER}, {"kind": 3},
@@ -92,7 +95,7 @@ class KindsTest(unittest.TestCase):
         self.assertFalse(handover.answers_questions)
         self.assertEqual(set(turn_source.BEHAVIOR), {LEGACY, *ALL_KINDS})
         self.assertEqual(turn_source.KINDS, ALL_KINDS)
-        self.assertEqual(turn_source.RUNS, {OWNER, HANDOVER})
+        self.assertEqual(turn_source.RUNS, {OWNER, HANDOVER, ASK, REPLY})
 
     def test_the_first_item_with_a_source_decides(self):
         job = BridgeReplyJob(job_id=1, user_text="", chat_id="c", message_id="om_1", timeout=0)
@@ -152,10 +155,13 @@ class RecordsAndHandoffTest(unittest.TestCase):
                                     status="queued")
             self.assertEqual(upsert.call_args.kwargs["turn_source"]["kind"], ASK)
 
-    def test_no_harness_declares_a_collaboration_yet(self):
+    def test_only_the_harnesses_that_passed_the_real_write_refusal_check_declare_a_collaboration(self):
+        # C8 (tests/test_collab_c8.py on the installed CLI): Claude Code and Codex held to CONSULT refused every write.
+        # Pi, Antigravity and dsh have no read-only limit at all; an extension's Harness declares nothing of it.
         self.assertFalse(HarnessCapabilities().collab)
-        declared = [path for path in (REPO / "covey" / "backends").rglob("*.py") if "collab=True" in path.read_text()]
-        self.assertEqual(declared, [])  # The package that runs 协作 declares it, after its real write-refusal check.
+        declared = sorted(path.relative_to(REPO).as_posix() for path in (REPO / "covey" / "backends").rglob("*.py")
+                          if "collab=True" in path.read_text())
+        self.assertEqual(declared, ["covey/backends/claude/bridge.py", "covey/backends/codex/bridge.py"])
 
 
 class BridgeGateTest(UnifiedCase):
@@ -170,8 +176,15 @@ class BridgeGateTest(UnifiedCase):
         return app, self.app.runtime.jobs.queue.get_nowait()
 
     def test_a_job_of_a_collaboration_is_recorded_cancelled_and_never_runs_as_the_owners_message(self):
-        app, job = self.queued("asked")
-        job.turn_source = asked()
+        # With COVEY_COLLAB off (a rollback's state too, docs/architecture.md 开关、兼容与回退), and a newer release's kind.
+        for mid, source, words in (("asked", asked(), "协作没有打开"),
+                                    ("newer", {**asked(), "v": 2}, "这个版本不执行")):
+            with self.subTest(mid):
+                self.refused(mid, source, words)
+
+    def refused(self, mid, source, words):
+        app, job = self.queued(mid)
+        job.turn_source = source
         said = len(self.said())
         with mock.patch("covey.app.job_dispatch.check_or_raise") as check, \
              mock.patch.object(BridgeApp, "process_reply_job", autospec=True) as process, \
@@ -180,9 +193,9 @@ class BridgeGateTest(UnifiedCase):
         process.assert_not_called()
         check.assert_not_called()
         recovery.assert_not_called()
-        record = find_job_record(self.ctx.state_dir, "asked")
+        record = find_job_record(self.ctx.state_dir, mid)
         self.assertEqual((record["status"], record["never_started"]), ("cancelled", True))
-        self.assertIn("这个版本不执行", record["status_message"])
+        self.assertIn(words, record["status_message"])
         self.assertEqual(record["turn_source"]["kind"], ASK)
         self.assertNotIn(job.job_id, self.app.runtime.jobs.by_id)
         self.assertEqual(self.said()[said:], [])
@@ -241,12 +254,15 @@ class RunnerGateTest(unittest.TestCase):
         return job, record, start, logs
 
     def test_a_collaborations_job_is_cancelled_before_its_turn_starts(self):
-        job, record, start, logs = self.run_job(asked())
-        start.assert_not_called()
-        self.assertEqual(record.call_args.args[2], "cancelled")
-        self.assertIn("这个版本不执行", record.call_args.args[3])
-        self.assertTrue(job.cancelled_before_start)
-        self.assertEqual(logs, ["turn source refused job=#8 kind=collab_ask"])
+        # Switch off (the runner's own process reads it), then on with a Harness that declares nothing of 协作.
+        for on, words in (("", "协作没有打开"), ("1", "没有声明")):
+            with self.subTest(switch=on), mock.patch.dict("os.environ", {turn_source.SWITCH: on}):
+                job, record, start, logs = self.run_job(asked())
+                start.assert_not_called()
+                self.assertEqual(record.call_args.args[2], "cancelled")
+                self.assertIn(words, record.call_args.args[3])
+                self.assertTrue(job.cancelled_before_start)
+                self.assertEqual(logs, ["turn source refused job=#8 kind=collab_ask"])
 
     def test_a_job_without_a_source_starts_its_turn(self):
         job, record, start, _ = self.run_job({})

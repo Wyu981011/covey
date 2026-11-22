@@ -303,7 +303,8 @@ class Submission:
         try:
             # A butler turn of the 话题区 layout (core/placement.py Row.quiet): none yet either; its task runner
             # sends it once the turn has run CARD_AFTER seconds (Cards.reveal), the owner's message gets OnIt below.
-            job.card_deferred = placement.quiet(ctx.state_dir, job)
+            # A 协作 ask's (core/turn_source.py own_delivery): never one; its outcome is its collaboration record's.
+            job.card_deferred = placement.quiet(ctx.state_dir, job) or not turn_source.behavior(job).own_delivery
             if not job.card_deferred and plan.get("follow_up") and not ahead and not capacity_full and not held:
                 # A topic's follow-up that starts at once (追问只发答案卡): its card too, for a few seconds (quick_hold).
                 job.card_after = quick_hold(ctx, job)

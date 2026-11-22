@@ -31,7 +31,7 @@ from pathlib import Path
 from covey.app.butler_env import reply
 from covey.app.butler_tools import label, title, when
 from covey.core.board_read import job_number
-from covey.core import butler
+from covey.core import butler, collab
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import jobs_dir
 from covey.core.store import directory_store
@@ -166,13 +166,15 @@ class Hit:
 
 
 def turns_of(env, chat):
-    """Each turn of the owner's topics but the butler's, oldest first: its KEPT fields, taken from the jobs/ cache
-    as the query looks (``where``, which only reads; returning False, so no whole record is copied)."""
+    """Each turn of the owner's topics but the butler's (and a 咨询通道's, no topic of his), oldest first: its KEPT
+    fields, taken from the jobs/ cache as the query looks (``where``, which only reads; returning False, so no whole
+    record is copied)."""
     kept = []
 
     def keep(record):
         topic_id = record.get("topic_id")
-        if isinstance(topic_id, str) and topic_id and not butler.is_butler_topic(topic_id, chat):
+        if (isinstance(topic_id, str) and topic_id and not butler.is_butler_topic(topic_id, chat)
+                and not collab.is_channel(topic_id)):
             kept.append({key: record.get(key) for key in KEPT})
         return False
     directory_store(jobs_dir(env.state_dir)).query(keep, chat_id=chat)

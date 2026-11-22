@@ -19,6 +19,7 @@ from covey.app.prompts import workspace_gists_block
 from covey.core import env as cenv
 from covey.core import topic_gist
 from covey.core.butler import is_butler_topic
+from covey.core.collab import is_channel
 from covey.core.jobs import select_job_records
 from covey.core.redaction import topic_redaction
 from covey.core.state import epoch_seconds
@@ -64,7 +65,7 @@ def recent(state_dir, chat, workspace, topic_id, limit, *, redacted=False, now=N
         if topic in seen:
             continue
         seen.add(topic)
-        if is_butler_topic(topic, chat) or (_redacted(state_dir, topic) and not redacted):
+        if is_butler_topic(topic, chat) or is_channel(topic) or (_redacted(state_dir, topic) and not redacted):
             continue
         gist = topic_gist.gist_of(topic_gist.read(state_dir, topic))
         if gist:

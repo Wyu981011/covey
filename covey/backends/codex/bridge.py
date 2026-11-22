@@ -24,6 +24,8 @@ from covey.core.state import ensure_private_dir
 from covey.backends.codex.sessions import rollout_root
 from covey.backends.codex import gateway as gateway_models
 from covey.backends.codex.appserver import run_appserver, sandbox_mode
+from covey.backends.codex.consult import ConsultHome
+from covey.core.harness import CONSULT, TOOL_LIMIT
 from covey.backends.gateway.catalog import turn_relay
 from covey.core import gateways
 
@@ -92,8 +94,10 @@ class CodexBackend(BackendRuntime):
         return sandbox_mode(ctx)
 
     def capabilities(self, ctx):
+        # collab: a 协作 ask held to CONSULT in a private CODEX_HOME (backends/codex/consult.py; C8 on the installed CLI:
+        # tests/test_collab_c8.py, the exec-policy, apps, network and memory checks).
         return for_device(HarnessCapabilities(questions=True, steering=True, native_fork=True, turn_export=True,
-                                              bridge_tools=True, read_only=True), ctx)
+                                              bridge_tools=True, read_only=True, collab=True), ctx)
 
     # The signed-in account's models plus the gateways' Responses models (<prefix><model>, core/gateways.py).
     def model_catalog(self, ctx: BridgeContext) -> dict:
@@ -122,6 +126,13 @@ class CodexBackend(BackendRuntime):
         removed = retired_provider(ctx.model)
         if removed:  # A job queued on a removed provider's model before (core/providers.py RETIRED_PREFIXES).
             raise ValueError(retired_provider_notice(removed))
+        if ctx.options.get(TOOL_LIMIT) == CONSULT:
+            # A 协作 ask: its app server in a CODEX_HOME of its own (backends/codex/consult.py), for this turn alone.
+            with ConsultHome(ctx.state_dir, env) as env:
+                return self._run(request, ctx, env)
+        return self._run(request, ctx, env)
+
+    def _run(self, request, ctx, env):
         gateway = gateways.for_model("codex", ctx.model)
         if gateway is not None:
             gateway_models.check(ctx, gateway, self.account_models(ctx))

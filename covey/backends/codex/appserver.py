@@ -17,7 +17,8 @@ from covey.backends.codex.events import CodexEventAdapter
 from covey.backends.codex.rpc import AppServer, RpcError, failed
 from covey.backends.codex.turn import close_turn, paused_question_end, read_turn
 from covey.backends.codex.usage import CodexTurnUsage
-from covey.core.harness import LOOK, READ, TOOL_LIMIT, JobCancelled, RunResult
+from covey.backends.codex import consult
+from covey.core.harness import CONSULT, LOOK, READ, TOOL_LIMIT, JobCancelled, RunResult
 from covey.core.paths import entry_script
 from covey.core.process import device_of
 from covey.core.protocol import deliver_event
@@ -50,9 +51,16 @@ CODEX_INSTRUCTIONS = (
 BRIDGE_TOOL_SECONDS = 150.0
 
 
+# The turns held to reading (core/harness.py TOOL_LIMIT): the read-only sandbox for the thread and the turn.
+READ_ONLY = (READ, LOOK, CONSULT)
+
+
 def bridge_servers(ctx):
     """The thread config entries of ``options["mcp_config"]`` (the butler's Bridge tools, core/butler.py mcp_config):
-    each server of it as a stdio MCP server of this thread, beside the workspace reader. Empty for every other turn."""
+    each server of it as a stdio MCP server of this thread, beside the workspace reader. Empty for every other turn, and
+    for a CONSULT one whatever its options say (a 协作 ask never gets the Bridge's tools)."""
+    if ctx.options.get(TOOL_LIMIT) == CONSULT:
+        return {}
     config = {}
     for name, server in ((ctx.options.get("mcp_config") or {}).get("mcpServers") or {}).items():
         prefix = f"mcp_servers.{name}."
@@ -61,10 +69,10 @@ def bridge_servers(ctx):
                        prefix + "tool_timeout_sec": BRIDGE_TOOL_SECONDS})
     return config
 def sandbox_mode(ctx) -> str:
-    """The turn's sandbox: read-only for a turn held to READ or LOOK (core/harness.py TOOL_LIMIT), else the Harness's
-    --sandbox (danger-full-access unless it says otherwise). A 代答 turn keeps it: in a sandbox lark-cli could not read
-    the chats (no network, its login not refreshed)."""
-    if ctx.options.get(TOOL_LIMIT) in (READ, LOOK):
+    """The turn's sandbox: read-only for a turn held to READ, LOOK or CONSULT (core/harness.py TOOL_LIMIT), else the
+    Harness's --sandbox (danger-full-access unless it says otherwise). A 代答 turn keeps it: in a sandbox lark-cli could
+    not read the chats (no network, its login not refreshed)."""
+    if ctx.options.get(TOOL_LIMIT) in READ_ONLY:
         return "read-only"
     return str(ctx.options.get("sandbox") or "danger-full-access")
 
@@ -117,6 +125,13 @@ def thread_params(ctx, session_id, instructions="", process=None):
     return params, fork
 
 
+def server_flags(ctx) -> list:
+    """The app server's -c switches after its thread limit: the non-blocking question on, as before; a CONSULT turn's
+    (backends/codex/consult.py FLAGS) instead: apps, plugins, memories, hooks and the question off."""
+    flags = consult.FLAGS if ctx.options.get(TOOL_LIMIT) == CONSULT else ("features.default_mode_request_user_input=true",)
+    return [part for flag in flags for part in ("-c", flag)]
+
+
 def image_paths(ctx, attachments):
     """The paths the model's ``localImage`` inputs name: the files as the Harness sees them. On a device that is the copy
     put there (``device_path``, app/device_files.py); an image that was not put there is left out, never named by the hub's
@@ -137,7 +152,7 @@ def start_turn(rpc, request, ctx, prompt, session_id):
             **({"effort": ctx.effort} if ctx.effort else {}),
             # A read-only turn says so for the turn too, whatever the thread resumed with; any other turn sends nothing
             # here, as before (its thread/resume's sandbox holds).
-            **({"sandboxPolicy": {"type": "readOnly"}} if ctx.options.get(TOOL_LIMIT) in (READ, LOOK) else {}),
+            **({"sandboxPolicy": {"type": "readOnly"}} if ctx.options.get(TOOL_LIMIT) in READ_ONLY else {}),
         },
         timeout=60,
     )
@@ -186,9 +201,9 @@ def run_appserver(request, env):
     legacy_exception = None
     try:
         # Bound before anything can fail, so that finally closes the server.
-        rpc = AppServer([*ctx.backend_cmd, "app-server", "--stdio", "-c", "agents.max_threads=4",
-            "-c", "features.default_mode_request_user_input=true"], ctx.workdir, env,
-            **({"ctx": ctx} if device_of(ctx) else {}))
+        rpc = AppServer([*ctx.backend_cmd, "app-server", "--stdio", "-c", "agents.max_threads=4", *server_flags(ctx)],
+                        ctx.workdir, env, **({"ctx": ctx} if device_of(ctx) else {}))
+        rpc.no_questions = ctx.options.get(TOOL_LIMIT) == CONSULT  # A 协作 ask asks nobody (backends/codex/turn.py).
         open_thread(rpc, request, state, observe)
         # Its own thread is never one of its subtasks (CodexEventAdapter.agents).
         adapter = CodexEventAdapter(lambda kind, data: event(kind, data, rpc), rpc.thread_id)

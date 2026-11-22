@@ -9,8 +9,8 @@ its queued file and its handoff's extras; a model's tool argument never sets it.
 - ``behavior``: one row of ``BEHAVIOR`` a kind (owner's words or not, may answer a waiting question, may go in as a 补充, held to
   reading, is its topic's own delivery, may draft a 代发): every consumer asks it, none reads the kind itself. A kind this
   release does not know, or a malformed field, gets ``NOTHING``.
-- ``refusal``: why this release does not run a job ('' when it does). Outside ``RUNS`` (the two of 协作, ``handover``, a
-  newer release's kind, a newer version, a malformed field) it never runs, whatever the switch: app/job_dispatch.py and
+- ``refusal``: why this release does not run a job ('' when it does). Outside ``RUNS`` (a newer release's kind, a newer
+  version, a malformed field) it never runs, whatever the switch: app/job_dispatch.py and
   app/worker.py record it cancelled and never started instead of running its text as the owner's message. A kind in
   ``RUNS`` that ``SWITCHED`` lists runs only with COVEY_COLLAB=1, and only on a Harness that declares ``NEEDS`` of it
   (core/harness.py HarnessCapabilities ``collab``, ``read_only``).
@@ -38,10 +38,13 @@ HANDOVER = "handover"  # A butler turn for an owner's request a topic could not 
 MALFORMED = "?"  # A field that is not an object, or whose kind is not a string.
 KINDS = frozenset({OWNER, ASK, REPLY, HANDOVER})
 # The kinds this release runs, LEGACY aside. A package that runs another adds it here: ``handover`` since 话题转交管家
-# (app/butler_asks.py) queues such a turn of the butler's.
-RUNS = frozenset({OWNER, HANDOVER})
+# (app/butler_asks.py) queues such a turn of the butler's; the two of 协作 since app/collab_flow.py queues them (with the
+# switch, on a Harness that declares NEEDS: its consumers ask ``behavior``).
+RUNS = frozenset({OWNER, HANDOVER, ASK, REPLY})
 SWITCHED = frozenset({ASK, REPLY})  # Run only with SWITCH on.
-NEEDS = {ASK: ("collab", "read_only"), REPLY: ("collab",)}  # HarnessCapabilities fields each kind needs.
+# HarnessCapabilities fields each kind needs: an ask runs in a fork of its helper's session held to CONSULT
+# (app/collab_channel.py; with no session to fork, from the helper's record), a continuation is the integrator's own turn.
+NEEDS = {ASK: ("collab", "read_only"), REPLY: ("collab",)}
 
 # Who said it or wrote it down (``asserted_by``, ``recorded_by``).
 PARTY_OWNER, PARTY_BUTLER, PARTY_LEAD, PARTY_TOPIC, PARTY_BRIDGE = "owner", "butler", "lead", "topic", "bridge"
@@ -64,7 +67,10 @@ class Behavior:
     answers_questions: bool  # It may be the answer to a question waiting in its topic.
     steers: bool  # It may go into a running task of its topic as a 补充.
     read_only: bool  # Held to reading, where its Harness can hold it (core/harness.py TOOL_LIMIT); False: as the job says.
-    own_delivery: bool  # Its result is its topic's own: the answer card, the board, the relay, the lead's receipt.
+    # Its result is its topic's own: the answer card, the board, the relay, the lead's receipt, a revisit, the library. False
+    # (an ask's): nothing of it is in the chat, no task card, no recovery card, no automatic retry; what became of it is
+    # its collaboration record's (app/collab_flow.py), which settles it, queues it again or ends it.
+    own_delivery: bool
     owner_send: bool  # Its checkpoint's send_as_owner drafts are offered (the owner confirms each on its card).
 
 

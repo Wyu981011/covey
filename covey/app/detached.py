@@ -227,6 +227,7 @@ def finish_detached(gateway, app, job, ctx, directory: Path) -> None:
     if requested(ctx.state_dir, job.message_id):
         app.runtime.unregister_reply_job(job)
         queue_lost(app, job, ctx)
+        collab_after(gateway, job, ctx)  # A 协作 turn the guard stopped: its record settles it.
         butler_relay.after_runner(gateway, job, ctx)
         return  # The guard owns the stopped runner's final card and notice.
     try:
@@ -269,8 +270,17 @@ def finish_detached(gateway, app, job, ctx, directory: Path) -> None:
     memory_collect.collect(gateway.runtime, getattr(app, "messenger", None), job, ctx)  # The owner's 以后 / 别再 … (off without COVEY_MEMORY).
     owner_send.collect(gateway, job, ctx)  # The turn's send_as_owner drafts: 代发草稿 cards (off without a 代答 sender).
     butler_asks.collect(gateway, job, ctx)  # The turn's ask_butler: handed to the butler (off without COVEY_PROJECTS=1).
+    collab_after(gateway, job, ctx)  # 协作: an ask settled, a continuation's end, a turn's collab_ask (COVEY_COLLAB=1).
     butler_relay.after_runner(gateway, job, ctx)
     _compact_when_idle(gateway, app, job, ctx)
+
+
+def collab_after(gateway, job, ctx) -> None:
+    """协作's part of a runner's end (app/collab_flow.py Collaboration.after_runner, the Bridge's feature object
+    ``collab``; none in a gateway without it). Never raises."""
+    feature = getattr(gateway, "collab", None)
+    if feature is not None:
+        feature.after_runner(job, ctx)
 
 
 def device_notice(record, job_id, directory) -> str:

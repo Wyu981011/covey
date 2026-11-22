@@ -277,6 +277,7 @@
   - 协助方的话题里多一行 `role: event`“已协助 T3（看这次协作）”，它自己的“有结果”和最近交付不变。
 - **回复这次协作**：引用协作里的一句、或点回执上的“回复这次协作”时带 `quote.collab`，话进那次协作，由它的汇总方接；在协助方的话题里不带引用另说一句，仍是对那个话题自己工作的话。
 - **停这件事**：`stop` 多一个可选的 `payload.collab`：只停这次协作排队和在跑的咨询轮，不停接收方别的工作；迟到的答复只留档。
+- **后端已有的**（[执行闭环](architecture.md#执行闭环)）：`app/collab_flow.py` 的 `Collaboration`（Bridge 的 `collab`）给两端调用：`start`（根请求、汇总方、协助方和各自的问题、主人点了谁）、`clarify`、`stop`、`view`、`of_chat`；协作记录读成 `core/collab_records.py` 的 `view`：`{id, chat_id, state, integrator, helpers, goal_rev, root, stopped_by, deadline, asks, replies, created_at, updated_at}`，`asks` 每条 `{id, from, to, number, text, state, words, reason, evidence, reply, late}`，`reply` 是 `{text, at, goal_rev, owner_since, evidence, job_id}`。网页的 `topic_key`、`seq` 由同步按任务号对上。
 - **三层记忆的读法**：专项记忆和话题记忆的每条多这些字段。
   - `layer`：`rule`（长期约定）、`decision`（当前决定）、`history`（历史记录）。面板按这三层分组。
   - `asserted_by`、`recorded_by`、`level`、`origin`（`{message_id}` 或 `{question}`），含义同[来源](architecture.md#参与者交付与来源)。“你说的”“它总结的”由它们推出来，只作来源标签。

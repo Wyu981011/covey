@@ -45,7 +45,7 @@ from collections import namedtuple
 from pathlib import Path
 
 from covey.app import project_context, project_lead, triage as triage_flow
-from covey.core import board_read, projects, triage
+from covey.core import board_read, collab, projects, triage, turn_source
 from covey.core.history_storage import append_history
 from covey.core.jobs import find_job_record, job_field, job_key, topic_job_records
 from covey.core.loops import every
@@ -460,8 +460,8 @@ def after_runner(log, state_dir, job) -> None:
         key = job_key(str(job_field(job, "message_id")), job_field(job, "job_id"))
         record = find_job_record(Path(state_dir), key) or {}
         status = str(record.get("status") or "")
-        if status not in COUNTED:
-            return
+        if status not in COUNTED or not turn_source.behavior(record).own_delivery:
+            return  # Nor a 协作 ask's turn: its collaboration writes the lead's receipt (app/collab_flow.py), no thread_end.
         first, used = [], record_tokens(record)
 
         def change(data):
@@ -692,5 +692,9 @@ class ProjectLoop:
 
 def autowake_due(pending) -> bool:
     """Whether ``pending`` receipts wake the lead: a ``start``, the owner's choice on a pause card or a ``question`` (a held
-    question waits only 180 seconds, app/triage.py) always does, the others with COVEY_PROJECT_AUTOWAKE=1."""
-    return any(item.get("kind") in ALWAYS_WAKE for item in pending) or projects.autowake_enabled()
+    question waits only 180 seconds, app/triage.py) always does, the others with COVEY_PROJECT_AUTOWAKE=1. 协作's own
+    (core/collab.py RECEIPT_WAKES): a gap the integrator cannot close always wakes, an answer never does."""
+    kinds = [item.get("kind") for item in pending]
+    if any(kind in ALWAYS_WAKE or collab.RECEIPT_WAKES.get(kind) for kind in kinds):
+        return True
+    return projects.autowake_enabled() and any(kind not in collab.RECEIPT_WAKES for kind in kinds)

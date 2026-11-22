@@ -9,7 +9,7 @@ import signal
 import threading
 from pathlib import Path
 
-from covey.core import placement, recovery, timing
+from covey.core import placement, recovery, timing, turn_source
 from covey.core.butler import traits, worded
 from covey.core.checkpoint import read_checkpoint
 from covey.core.harness import BridgeContext
@@ -149,7 +149,11 @@ class TaskControls(Redelivery):
         """``record``'s card redrawn as its recovery card, else a new one. A quiet butler turn with no card yet
         (core/placement.py Row.quiet: 提问不开串) gets it at the top level, quoting nothing, with its
         你问 block (``TOP_CARD``), and the OnIt on the owner's message comes off (a resume puts it back,
-        ``requeue``)."""
+        ``requeue``). None for a 协作 ask's turn (core/turn_source.py own_delivery): nothing of it is in the chat; its
+        collaboration record settles it (app/collab_flow.py)."""
+        if not turn_source.behavior(record).own_delivery:
+            self.runtime.log(f"no recovery card for the 协作 ask job=#{record.get('job_id')}")
+            return True
         card = self.asked_card(ctx, record, recovery_card(record, state_dir=ctx.state_dir))
         if self.cards.replace_record_card(ctx, record, card):
             return True
@@ -181,6 +185,8 @@ class TaskControls(Redelivery):
         (auto_retry.schedule_restart), unless it has native questions. ``keep_question_forms``: a job with
         native questions gets nothing at all, so its durable question form stays usable after reconnect. The
         Bridge's start asks that; a runner's end still shows the recovery card (both ways are kept)."""
+        if not turn_source.behavior(record).own_delivery:
+            return  # A 协作 ask's turn: its collaboration record settles it (app/collab_flow.py), nothing is said here.
         questions = (keep_question_forms or restart) and self.questions.has_native_questions(ctx, record["job_id"])
         if questions and keep_question_forms:
             return
@@ -536,6 +542,9 @@ class TaskControls(Redelivery):
         for name in set(counts) - set(auto_retry.INIT_COUNTS):
             setattr(job, name, counts[name])
         carry_device(job, ctx)
+        if record.get(turn_source.FIELD):
+            # The same turn again keeps where it came from (a 协作 continuation stays one: its words are not the owner's).
+            job.turn_source = dict(record[turn_source.FIELD])
         if fallback:
             job.policy_retry = {name: fallback[name] for name in ("of", "category", "model")}
         elif record.get("policy_retry"):

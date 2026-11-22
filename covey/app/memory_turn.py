@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from covey.app import knowledge_turn, project_context
 from covey.app.prompts import memory_block
-from covey.core import knowledge, memory, principles, topic_memory
+from covey.core import knowledge, memory, principles, topic_memory, turn_source
 from covey.core.butler import is_butler_topic
 from covey.core.jobs import job_key, upsert_job_record
 from covey.core.topics import proxy_topic
@@ -93,6 +93,8 @@ def fix_rule(ctx, job, owner_turn) -> bool:
     try:
         if not active(ctx) or not owner_turn() or handed_on(getattr(job, "message_id", "")):
             return False
+        if not turn_source.behavior(job).owner_words:
+            return False  # A 协作 turn's words are not the owner's (core/turn_source.py): nothing of them is his to correct.
         if is_butler_topic(getattr(job, "topic_id", "") or ctx.topic_id, getattr(job, "chat_id", "")):
             return False
         takes = knowledge_turn.remembers(ctx, job, owner_turn=owner_turn)

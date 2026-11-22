@@ -33,7 +33,7 @@ from covey.cards.review import (compact_text, outcome_line, render_stream_final,
                                          running_summary, task_card_summary)
 from covey.cards.elements import grey
 from covey.cards.task_status import ACTIVITY_ELEMENT_ID, LOOK_ID, STATUS_MORE_ID, look_element
-from covey.core import butler, projects
+from covey.core import butler, projects, turn_source
 from covey.cards.streaming import (ACTION_ROW_ELEMENT_ID, SIDE_CHAT_ELEMENT_ID, STEER_ELEMENT_ID, answer_element,
                                    card_title_for_question, steer_button)
 from covey.cards.card_cost import exceeds_stream_card_limit
@@ -304,6 +304,8 @@ class Cards:
             return False
         if projects.is_wake(job.message_id):
             return False  # A lead's wake-up turn (app/project_loop.py): the project's card says what it does.
+        if not turn_source.behavior(job).own_delivery:
+            return False  # A 协作 ask's turn (app/collab_flow.py): nothing of it is in the chat.
         if not held_due(job):
             return False
         return self._send_held(ctx, job, content)

@@ -108,9 +108,10 @@ def completed_turn_reply(rpc, turn):
 
 def answer_server_request(rpc, row, p, method, generation_clock, event):
     """A request from the app server: the root turn's request_user_input becomes a question;
-    any other request is refused."""
+    any other request is refused, and so is every one of a turn that may ask nothing (``rpc.no_questions``: a 协作
+    ask's, backends/codex/consult.py)."""
     if (method == "item/tool/requestUserInput" and p.get("threadId") == rpc.thread_id
-            and p.get("turnId") == rpc.turn_id):
+            and p.get("turnId") == rpc.turn_id and not getattr(rpc, "no_questions", False)):
         if not request_identifier(row["id"]):
             raise failed("protocol_error")
         generation_clock.block("question-" + str(row["id"]), row.get("_received_at"))

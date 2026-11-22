@@ -85,6 +85,7 @@ class JobDispatch:
         memory_collect.collect(self.runtime, getattr(app, "messenger", None), job, ctx)
         owner_send.collect(self, job, ctx)
         butler_asks.collect(self, job, ctx)
+        detached.collab_after(self, job, ctx)  # 协作 (app/collab_flow.py), as a runner's end does.
         butler_relay.after_runner(self, job, ctx)
         if not job.progress:
             # A text fallback must still offer topic-scoped recovery now that

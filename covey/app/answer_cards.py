@@ -27,7 +27,7 @@ from covey.cards.answer_card import (ARTIFACTS_ID, MEMORY_ID, NOT_FOUND, accepta
                                      input_parts, output_parts)
 from covey.cards.elements import replace_element
 from covey.cards.review import answer_card, answer_lead, answer_summary, bare_answer_summary
-from covey.core import criteria
+from covey.core import collab, criteria
 from covey.core.checkpoint import (checkpoint_acceptance, checkpoint_delivery, delivery_commits, read_checkpoint,
                                    shows_change)
 from covey.core.diff import missing_commits
@@ -267,7 +267,7 @@ def asked(state_dir, record, *, topic_id="", at=(), profile=None, fetch=None, lo
 
     who = speaker(state_dir, str(topic_id or get("topic_id") or ""), str(get("chat_id") or ""), log)
     picture = avatar(state_dir, str(topic_id or get("topic_id") or ""), str(get("chat_id") or ""), profile, log) if who else ""
-    if projects.own_message(str(get("message_id") or "")):
+    if projects.own_message(str(get("message_id") or "")) or collab.own_message(str(get("message_id") or "")):
         # A project's lead woken by the Bridge or handed the butler's words: the owner asked nothing here; who speaks.
         return ask_block("", at=time_of_day(), who=who, doing="report", avatar=picture)
     text = str(get("user_text") or "")

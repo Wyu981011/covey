@@ -11,7 +11,7 @@ end), leaving out the ones that turn's own checkpoint made: the session wrote th
 from __future__ import annotations
 
 from covey.app.prompts import knowledge_block
-from covey.core import knowledge
+from covey.core import knowledge, turn_source
 from covey.core import memory as core_memory
 from covey.core.board_read import ended_at
 from covey.core.jobs import jobs_dir
@@ -68,6 +68,8 @@ def remembers(ctx, job, *, owner_turn) -> bool:
     cannot be read), the cases app/knowledge_collect.py would collect from."""
     if not knowledge.enabled() or not owner_turn() or proxy_topic(ctx):
         return False
+    if not turn_source.behavior(job).owner_words:
+        return False  # A 协作 turn's words are not the owner's: no 记一下 from them (app/knowledge_collect.py skips it too).
     topic_id = getattr(job, "topic_id", "") or ctx.topic_id
     if is_butler_topic(topic_id, getattr(job, "chat_id", "")):
         return False

@@ -33,7 +33,7 @@ from pathlib import Path
 
 from covey.app import memory_turn, track_judge
 from covey.app.track_standby import Failed
-from covey.core import principles, topic_gist
+from covey.core import principles, topic_gist, turn_source
 from covey.core.board_read import ended_at
 from covey.core.butler import is_butler_topic
 from covey.core.jobs import select_job_records
@@ -134,6 +134,7 @@ def sentences(state_dir, chat, since, until, owner_turn) -> list:
     for record in sorted(records, key=ended_at):
         topic = str(record.get("topic_id") or "")
         if (not topic or is_butler_topic(topic, chat) or memory_turn.handed_on(record.get("message_id"))
+                or not turn_source.behavior(record).owner_words  # A 协作 turn's words are not the owner's.
                 or not owner_turn(chat, str(record.get("sender_id") or "")) or _proxy(state_dir, topic)
                 or _redacted(state_dir, topic)):
             continue

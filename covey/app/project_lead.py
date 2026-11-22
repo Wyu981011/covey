@@ -435,3 +435,23 @@ def outcome_line(state_dir, key) -> str:
         return "🏁 专项完成：" + cut(str(record.get("state_reason") or ""), 30)
     notes = [row for row in record.get("notes") or () if isinstance(row, dict) and row.get("job") == key]
     return "📌 记进展：" + cut(str(notes[-1].get("text") or ""), 30) if notes else ""
+
+
+# What a 协作 consult of the lead reads (app/collab_channel.py): the pack, nothing taken.
+
+def peek_receipts(state_dir, project_id, limit=INBOX_ROWS) -> list:
+    """The receipts no turn of the lead has read for good, oldest first, read only: none is marked as taken (the lead's
+    own turn takes them, ``take_receipts``)."""
+    try:
+        paths = sorted(inbox_dir(state_dir, project_id).glob("*.json"))
+    except OSError:
+        return []
+    found = [item for item in (read_object(path) for path in paths)
+             if item.get("id") and took_it(state_dir, item.get("taken_by"), "")]
+    return found[:limit]
+
+
+def read_only_pack(state_dir, record, *, redacted=False) -> str:
+    """The lead's state pack (``state_pack``, whole) as a 协作 consult of the lead reads it: its receipts peeked
+    (``peek_receipts``), never taken, so the lead's next turn reads them all the same."""
+    return state_pack(state_dir, record, "", full=True, receipts=peek_receipts(state_dir, record["id"]), redacted=redacted)

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from covey.core import env as cenv
-from covey.core import butler_tracks, metrics, projects
+from covey.core import butler_tracks, collab, metrics, projects
 
 ENV = "COVEY_BUTLER"
 MCP_SERVER = "bridge"  # The MCP server's name in the butler's session: its tools are mcp__bridge__<tool> in Claude Code.
@@ -188,6 +188,11 @@ BUTLER_OFF = dataclasses.replace(BUTLER, name="butler_off", own_turn=False, answ
 LEAD = dataclasses.replace(BUTLER, name="lead", hold_seconds=0)
 LEAD_OFF = dataclasses.replace(LEAD, name="lead_off", own_turn=False, answers_in_place=False, lists_supplements=False,
                                wording=(), slim_card=False, linkify_body=False)
+# A 咨询通道 (core/collab.py channel_id, app/collab_channel.py): an ask of a collaboration runs there, in a fork of its
+# helper's session, an ordinary topic's turn otherwise; nothing of it is in the chat: no thread, no T number, not on the
+# board, no relay, no card names it (its turn has no task card either: core/turn_source.py own_delivery).
+CHANNEL = dataclasses.replace(TOPIC, name="channel", switch_config=False, rewind=False, card_target=False, numbered=False,
+                              listed=False, relays=False, has_thread=False)
 
 
 _state = None  # The process's state directory (``configure_state``); None: the mode as main-thread.json without one.
@@ -212,9 +217,11 @@ def run_seconds(job):
 def traits(topic_id, chat_id) -> Traits:
     """The row of ``topic_id`` in ``chat_id``: BUTLER, BUTLER_OFF with the butler off (``enabled``: the switch or
     the mode 纯话题), TOPIC for every other (an old front-desk topic too: retired, core/topics.py retired_topic; a
-    project's thread too). A project's lead topic is LEAD, LEAD_OFF with the butler off."""
+    project's thread too). A project's lead topic is LEAD, LEAD_OFF with the butler off; a 咨询通道 is CHANNEL."""
     if not topic_id:
         return TOPIC
+    if collab.is_channel(topic_id):
+        return CHANNEL
     if is_lead(topic_id, chat_id):
         return LEAD if enabled() else LEAD_OFF
     if not is_butler_topic(topic_id, chat_id):

@@ -55,7 +55,7 @@ from covey.app.relay_send import (QUESTION_RELAYS, SKIPPED, merge_seconds, messe
                                            relay_path, send_merged, send_once as _send_once)
 from covey.app.relay_targets import areas_of, awaited_target, relay_target
 from covey.cards.relay_card import DONE, STOPPED, WAITING
-from covey.core import butler, placement
+from covey.core import butler, placement, turn_source
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record, job_field, job_key
 from covey.core.state import read_object
@@ -268,6 +268,8 @@ def after_turn(delivery, delivered, execution_status, *, messenger, profile, voi
     log = getattr(getattr(delivery, "runtime", None), "log", None)
     outcome = None
     try:
+        if not turn_source.behavior(job).own_delivery:
+            return None  # A 协作 ask's turn: its answer is its collaboration's, never the top level's.
         state_dir = delivery.ctx.state_dir
         row = placement.plan(state_dir, job).row
         if not (row.question_copy or row.conclusion or row.stop):

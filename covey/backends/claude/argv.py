@@ -7,11 +7,12 @@ import json
 
 from covey.backends.claude import redaction, subagents, tool_guard
 from covey.backends.claude.sessions import ClaudeSessionStore, claude_projects_root
-from covey.core.harness import LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
+from covey.core.harness import CONSULT, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
 
-# No MCP server at all: the catalog's probe, and a turn held to READ or PROXY (none of the owner's MCP servers).
+# No MCP server at all: the catalog's probe, and a turn held to READ, PROXY or CONSULT (none of the owner's MCP servers).
 NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
-READ_TOOLS = ("Read", "Grep", "Glob")  # A READ turn's tools (core/harness.py), the lead's too (app/project_lead.py).
+# A READ or CONSULT turn's tools (core/harness.py), the lead's too (app/project_lead.py).
+READ_TOOLS = ("Read", "Grep", "Glob")
 FILE_TOOLS = ("Edit", "Write", "NotebookEdit")  # What a LOOK turn goes without: Claude Code's tools that change files.
 
 
@@ -61,14 +62,19 @@ def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""
             argv += ["--effort", ctx.effort]
         if ctx.skip_permissions:
             argv += ["--dangerously-skip-permissions"]
-        if ctx.options.get("mcp_config"):
+        limit = ctx.options.get(TOOL_LIMIT)
+        if ctx.options.get("mcp_config") and limit != CONSULT:
             # The butler's turn (the app sets it): its Bridge tools beside the user's own MCP servers, each
             # allowed without asking. Every other run has none of this.
             config = ctx.options["mcp_config"]
             argv += ["--mcp-config", json.dumps(config, ensure_ascii=False, separators=(",", ":")),
                      "--allowedTools", ",".join("mcp__" + name for name in config.get("mcpServers", {}))]
-        limit = ctx.options.get(TOOL_LIMIT)
-        if limit in (READ, PROXY):
+        if limit == CONSULT:
+            # A 协作 ask (core/harness.py CONSULT): Read, Grep and Glob and no MCP server at all, whatever the options
+            # carry (the Bridge's tools, a lead's tool list): what the turn was given before it was held to this is dropped
+            # here, the last word before the CLI starts. No shell, so no write and no network; no AskUserQuestion either.
+            argv += ["--tools", ",".join(READ_TOOLS), *NO_MCP]
+        elif limit in (READ, PROXY):
             # Its tools narrowed (core/harness.py TOOL_LIMIT), with none of the owner's MCP servers; a turn with Bridge
             # tools of its own (the butler's, a lead's) is never one of these.
             argv += ["--tools", ",".join(READ_TOOLS if limit == READ else tool_guard.TOOLS)]
@@ -113,6 +119,6 @@ def turn_env(ctx, env):
     backends/claude/subagents.py says."""
     child = {**subagents.turn_env(ctx, env), "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS": "1",
              "CLAUDE_CODE_SDK_READS_SESSION_STATE": "1"}
-    if ctx.options.get("mcp_config"):
+    if ctx.options.get("mcp_config") and ctx.options.get(TOOL_LIMIT) != CONSULT:
         child["ENABLE_TOOL_SEARCH"] = "false"
     return child

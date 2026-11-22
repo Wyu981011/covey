@@ -31,6 +31,7 @@ import time
 from pathlib import Path
 
 from covey.core import revisits as records
+from covey.core import turn_source
 from covey.core.board_read import ended_at, unrun
 from covey.core.butler import is_butler_topic
 from covey.core.checkpoint import read_checkpoint
@@ -72,8 +73,10 @@ def after_runner(log, state_dir, job) -> None:
     try:
         if not records.enabled() or not state_dir:
             return
-        settle(log, Path(state_dir), find_job_record(Path(state_dir), job_key(
-            str(job_field(job, "message_id")), job_field(job, "job_id"))) or {})
+        record = find_job_record(Path(state_dir), job_key(str(job_field(job, "message_id")), job_field(job, "job_id"))) or {}
+        if record and not turn_source.behavior(record).own_delivery:
+            return  # A 协作 ask's turn asks for no revisit and ends none.
+        settle(log, Path(state_dir), record)
     except Exception as exc:  # noqa: BLE001 - the task's end does not depend on it
         log(f"revisit after job #{job_field(job, 'job_id')} failed: {type(exc).__name__}")
 

@@ -41,6 +41,7 @@ from pathlib import Path
 from covey.core.jobs import jobs_dir, select_job_records, topic_job_records
 from covey.core import avatars, look, projects, turn_words
 from covey.core.butler import is_butler_topic, traits
+from covey.core.collab import is_channel
 from covey.core.failure import failure_view
 from covey.core.metrics import run_start, timings_of
 from covey.core.state import epoch_seconds, read_object
@@ -273,11 +274,12 @@ def starts(state, chat) -> dict:
 
 
 def topic_jobs(state, chat) -> dict:
-    """Every job record of ``chat``'s topics by topic id, each topic's oldest first; not the butler's."""
+    """Every job record of ``chat``'s topics by topic id, each topic's oldest first; not the butler's, no 咨询通道's
+    (core/collab.py is_channel: no topic of the owner's)."""
     topics = {}
     for _, record in directory_store(jobs_dir(state)).query(chat_id=chat):
         topic_id = record.get("topic_id")
-        if isinstance(topic_id, str) and topic_id and not is_butler_topic(topic_id, chat):
+        if isinstance(topic_id, str) and topic_id and not is_butler_topic(topic_id, chat) and not is_channel(topic_id):
             topics.setdefault(topic_id, []).append(record)
     for records in topics.values():
         records.sort(key=job_number)
@@ -288,7 +290,7 @@ def has_topics(state, chat) -> bool:
     """Whether ``chat`` ever had a topic: a job record of a topic that is not the butler's. The card that has nothing
     to list tells a first use from a clear board with it (cards/ui.py empty_words)."""
     return any(isinstance(row.get("topic_id"), str) and row["topic_id"] and not is_butler_topic(row["topic_id"], chat)
-               for _, row in directory_store(jobs_dir(state)).query(chat_id=chat))
+               and not is_channel(row["topic_id"]) for _, row in directory_store(jobs_dir(state)).query(chat_id=chat))
 
 
 def job_number(record):

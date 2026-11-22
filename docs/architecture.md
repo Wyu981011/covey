@@ -628,11 +628,11 @@ cancelled、superseded：终态
 
 ## 多参与者协作（开发中，默认关）
 
-一件交付由几个参与者共同办成：主人点名几位，参与者带着各自的上下文往返，由一个汇总方交出一份带出处的结论，主人不用转述。本节是它的契约：参与者、交付和来源的语义，协作记录与状态机，轮次来源和各消费者的统一行为，能力与预检，两端，话题转交管家，开关、兼容与回退，示例消息流。现在落地的只有兼容基线：`core/turn_source.py`（轮次来源、行为表、来源等级、开关 `COVEY_COLLAB`）、`core/collab.py`（交付归属 `route`、两张状态表、限额、幂等键），Bridge 出队处和任务进程开跑处的来源闸，以及几个按主人的话起作用的消费者。这一版不派发任何协作轮；协作记录、派发、卡片和网页由后面的实现按本节做。
+一件交付由几个参与者共同办成：主人点名几位，参与者带着各自的上下文往返，由一个汇总方交出一份带出处的结论，主人不用转述。本节是它的契约：参与者、交付和来源的语义，协作记录与状态机，执行闭环，轮次来源和各消费者的统一行为，能力与预检，两端，话题转交管家，开关、兼容与回退，示例消息流。已落地：兼容基线（`core/turn_source.py` 轮次来源、行为表、来源等级、开关 `COVEY_COLLAB`；`core/collab.py` 交付归属 `route`、两张状态表、限额、幂等键；出队处和任务进程开跑处的来源闸）和执行闭环（`core/collab_records.py` 协作记录，`app/collab_flow.py` 发起、派发、落账、续接、到期、停止、对账和对外的操作，`app/collab_checks.py` 预检，`app/collab_channel.py` 咨询通道，硬只读 `CONSULT`）。飞书上的协作卡片和网页的协作操作由两端的实现按本节做（见[两端](#两端)）。
 
 ### 参与者、交付与来源
 
-- **参与者**：能被点名、带着自己的上下文回答的一方，身份就是稳定的话题 id（`core/collab.py` 的 `Participant`）：管家（槽 0 的 `butler_topic_id`，同时做几件事的其余几个槽不算）、负责人（`lead_topic_id`）、话题（普通话题、专项的话题）。角色从记录读（`core/butler.py`、`core/projects.py`、topic.json 的 `project.role`），不建名册；换模型、压缩、换原生会话，身份不变。话题本身就是参与者：被问时在自己的会话里答，答完它原来的目标、任务和最近交付都不变。首版只在主人的私聊里，代答话题和群里的话题不参与。
+- **参与者**：能被点名、带着自己的上下文回答的一方，身份就是稳定的话题 id（`core/collab.py` 的 `Participant`）：管家（槽 0 的 `butler_topic_id`，同时做几件事的其余几个槽不算）、负责人（`lead_topic_id`）、话题（普通话题、专项的话题）。角色从记录读（`core/butler.py`、`core/projects.py`、topic.json 的 `project.role`），不建名册；换模型、压缩、换原生会话，身份不变。话题本身就是参与者：被问时在从自己原会话分叉出来的临时只读会话里答（[咨询通道](#执行闭环)），原会话不动，答完它原来的目标、任务和最近交付都不变。首版只在主人的私聊里，代答话题和群里的话题不参与。
 - **交付与汇总方**：每次协作只有一个汇总方（`integrator`，记录里的一个参与者），对主人交那一份结论；其余是协助方（`helpers`）。汇总方是这一次协作上的责任，不是新角色：已有话题里请人帮忙，原话题就是汇总方。专项负责人对专项的目标负责，和某次协作的汇总方是两层，不各发一份相同的总结。
 - **来源**：谁说的（`asserted_by`）和谁写下的（`recorded_by`）是两个字段，不合成一个；取值 `owner`、`butler`、`lead`、`topic`、`bridge`（`core/turn_source.py` 的 `PARTIES`）。来源等级 `level` 只由 Bridge 按真实入口写（`provenance`）：主人说的、而且出处是 Bridge 自己收进来的（飞书消息或网页 `say` 的消息 id、问题卡的 token），才是 `owner`；其余都是 `agent`，模型写的“主人同意了”也是。模型的工具参数里没有 `level`，把 `asserted_by` 写成 `owner` 也换不来更高的等级。转述主人的话引用同一个出处，不另起一条，免得越转越像“大家都确认过”。
 
@@ -659,6 +659,23 @@ cancelled、superseded：终态
   - 重启：按记录对账，记了 `taken` 而任务已结束的按任务终态补；不重跑模型来补投递，重投只发保存的答复（规则 5）。
 - **投递边界**：咨询轮的答复只回到协作记录和汇总方：不发到私聊顶层、不占接收方答案卡的结论位置、不算接收方“有结果”、不改它的话题要点和完成标准、不进专项回执的“做完了”；接收方的话题串里只多一条“已协助 T3”的回执。汇总方的续接轮是汇总方自己的交付，照它的放置表发。
 
+### 执行闭环
+
+`app/collab_flow.py`（`COVEY_COLLAB=1`；关着时不起线程、不加规则行、不读不写任何协作记录）：
+
+- **发起**：两个入口共用一套校验、预检、幂等和状态机，不双轨。
+  - 检查点：主人在普通话题（或专项的话题）里亲自发的那一轮（`direct`：飞书 `om_…` 或网页 `web-…`，来源是旧来源或 `owner`，不是自动重试），规则里多一行 `RULE`（`turn_note`，只在 Harness 声明了 `collab` 时），模型在检查点写 `collab_ask`：`[{to, question}]`（`to` 是 T 号、`管家` 或 `负责人`）。Bridge 在任务进程结束后读（`Collaboration.after_runner`，经 `app/detached.py` 的 `collab_after`），只认结束得好（`done`、`waiting_user`）且回复已授权的那一轮。主人原话里点了某位的 T 号，算主人点名。
+  - 操作：`Collaboration.start(ctx, chat, root=, integrator=, asks=, owner_named=, asserted_by=)`、`clarify(ctx, collab_id, helper, question)`、`stop(ctx, collab_id, by=)`、`view`、`of_chat`，给网页和飞书卡片直接调用；交付归属照 `collab.route` 先定好再调。
+  - 根请求是主人那句话的消息 id，`collab_id(根请求, 汇总方, 协助方)` 再提交一次找到的是原来那条。汇总方的话题串里多一行“🤝 协作 xxxx：已请 T5 协助；T7 未接手（原因）”。
+- **预检**（`app/collab_checks.py`）：发起时（`admission`）只在主人私聊（规则 11 的 `agent_chat`，群和代答都不行）、开关、汇总方的 Harness 声明 `collab`、不在设备上；人数：主人点名的最多 3 位，没点名的最多 2 位，多了什么都不发。每位协助方（`helper_refusal`）：不是自己、同一个私聊、不是代答话题或咨询通道、没下线、不在设备上、Harness 声明 `collab` 和 `read_only`、敏感词脱敏两边都开或都不开、在别的专项里只在主人亲自点名时。不过的那位是 `not_taken`，写原因。
+- **咨询通道**（`app/collab_channel.py`）：每个（协作，协助方）一个临时话题目录 `topics/collab-<协作>-<协助方摘要>/`（`core/collab.py` 的 `channel_id`；`core/butler.py` 的 `CHANNEL`：没有话题串、没有 T 号、不上看板、不回带、卡片寻址不到），有自己的 `history.jsonl`、会话指针和任务记录，`topic.json` 抄协助方的绑定（Harness、模型、工作区、脱敏）。咨询轮在这里跑，从协助方当前的原生会话分叉（`fork_start`：Claude 遇到协助方正在跑的一轮或等着的回退，用那一处的 `keep` 作 `fork_at`，只读、不删标记；Codex 只在协助方没有在跑时 `thread/fork`）；没有能分叉的会话时从协助方最近的话题记录开新会话，证据级别写“话题记录（无原会话）”。分叉了什么写进这一轮自己的任务记录（`collab_evidence`）。协助方的会话指针、历史、回退标记、任务记录和最近交付，管家的快照记录、分路账本、压缩请求，负责人收件箱的 `taken_by`，一样都不动（问管家时带一份不保存的快照 `take_snapshot(save=False)`，问负责人时带一份只看不取回执的状态包 `project_lead.read_only_pack`）。
+- **派发**（`dispatch`，发起时一次，之后 `collab` 线程每 15 秒）：协助方空闲才派：先把咨询记成 `taken`（消息 id `collab-<咨询>`，`core/collab.py` 的 `ask_message`），再在通道里 `enqueue_chat_job(source=turn_source.make(ASK, …))`；协助方有排队或在跑的任务就留在 `queued`（不当补充插进去，主人排着的话先走）；在等主人回答、从没开始、最近一轮被主人停了就是 `not_taken`，不碰那道题、不唤醒。咨询轮没有任务卡，结果静默落账（`own_delivery` 为否）。
+- **落账**（`settle_ask`）：咨询轮 `done` 且回复已授权（规则 5，`load_authorized_reply`）是 `replied`，存答复原文、证据（分叉还是话题记录、截至协助方的哪个任务）和当时的 `goal_rev`；协助方的话题串里多一行“🤝 已协助 T3：…（只读咨询：本话题的会话、记录和手上的事都没有动）”。失败或中断的那一次由协作记录用同一个咨询再排一次（`RETRIES` 1，消息 id 加 `-r2`），不走恢复卡和自动重试；再不行是 `failed`。
+- **续接**（`advance`）：没有咨询在等时，给汇总方排一轮 `collab_reply`（消息 id `collab-<协作>-reply-<n>`），带主人原话、每位的答复和证据、没答上的原因；这些咨询记成 `read`。续接轮是汇总方自己的交付（照它的放置表发）；它可以对同一位再澄清一次（检查点再写 `collab_ask`，第 2 次，`clarify`）：协助方在两次之间没跑过新任务，续接第 1 次的分叉（通道指针还在）；跑过，清空通道指针、重新分叉，提示里带第 1 次的问答原文和“又跑了 N 轮”。协助方不能再去请别人（咨询轮没有检查点）；对没请过的人只能等主人发话。续接轮没留下新的咨询就是 `done`。
+- **主人的新话优先**：续接轮的消息里，`goal_rev` 之后主人在汇总方话题里又说的话（`goal_note`）写在最后，说明以主人最新的要求为准、旧答复只作参考；续接轮排在主人已排着的消息后面，不当补充，不消费等着的题（`answers_questions` 为否，`Runs._continue_previous`）。
+- **到期、停止、重启**：排队超过 `QUEUE_SECONDS`，或整次超过 `WINDOW_SECONDS`，没答复的咨询 `expired`（在跑的那一轮停掉），汇总方拿已有的答复和缺口接着做，主人原来那一轮不标失败；主人停这件事（`stop`，或停汇总方的续接轮）：`cancelled`，排队和在跑的咨询轮、续接轮停掉，协助方别的工作不动，迟到的答复记在 `late` 里，不唤醒任何人；重启后线程按记录对账：记了 `taken` 却没有任务记录的按同一个消息 id 再排一次，任务已结束而没人落账的按任务终态落账，从不重跑模型补投递。
+- **负责人回执**：咨询有了结果，汇总方所在的专项（协助方在另一个专项时，那边也）收一条 `collab_answered`（不叫醒）；续接轮检查点写的 `collab_gap`（补不上的缺口、冲突、依赖）收一条 `collab_gap`（叫醒，`app/project_loop.py` 的 `autowake_due` 按 `collab.RECEIPT_WAKES`）。咨询轮不写 `thread_end`。
+
 ### 轮次来源
 
 - **字段** `turn_source`（`core/turn_source.py`，任务上是 `BridgeReplyJob.turn_source`）：`{v, kind, asserted_by, recorded_by, origin, level, collab, ask}`，只由 Bridge 建任务时写（`make`），有值时才进任务记录、`queued/` 和 `handoff.json` 的 `extras`。
@@ -676,7 +693,7 @@ cancelled、superseded：终态
   | `owner_send`：可以出代发草稿 | 是 | 否 | 是，主人在卡上确认 | 否 |
 
 - **已接上的消费者**：主人纠正的记忆（`app/memory_collect.py`）和记一下（`app/knowledge_collect.py`）的 `reason_to_ignore` 多一个 `not-owner-words`；代发草稿（`app/owner_send.py` 的 `collect`）；`Submission.enqueue_chat_job` 的 `source`：不是主人的话不触发负责人的主人触发轮（`project_loop.owner_turn`），也不当补充送进在跑的任务。
-- **派发的实现要接的**：协作轮不经 `BridgeApp.handle_event` 和网页 `say`，只经 `enqueue_chat_job(source=…)`，所以不消费等着的题；`own_delivery` 为否时不回带、不占结论位、不写 `thread_end` 回执（写协作的回执）、不排到点回来看、不进资料库；`owner_words` 为否时这一轮的规则里不加记忆的纠正规则和记一下（`app/memory_turn.py`、`app/knowledge_turn.py`）；协作轮失败后的检查并继续、自动重试由协作记录重新排一次咨询，不走话题的恢复卡重跑成主人的话。
+- **执行闭环接上的**：协作轮不经 `BridgeApp.handle_event` 和网页 `say`，只经 `enqueue_chat_job(source=…)`，所以不消费等着的题（`answers_questions` 为否时 `Runs._continue_previous` 也不收尾等着的那一轮）；`own_delivery` 为否（咨询轮）时：没有任务卡（`Submission.publish_submission`、`Cards.reveal`）、静默投递（`TurnDelivery.silent`，保存的回复照样算已投递）、不回带（`butler_relay.after_turn`）、不出恢复卡（`TaskControls.show_recovery_card`、`report_unfinished`）、不自动重试（`auto_retry.plan`、`plan_restart`、`policy_retry.at_stop`）、不写 `thread_end` 回执也不进资料库（`project_loop.after_runner`）、不排到点回来看（`revisits.after_runner`）；`owner_words` 为否时这一轮的规则里不加记忆的纠正规则和记一下（`app/memory_turn.py` 的 `fix_rule`、`app/knowledge_turn.py` 的 `remembers`），晚间汇总的“你反复说的”也不从它取（`app/memory_candidates.py`）；检查并继续、自动重试再排同一轮时带上它的来源（`TaskControls.requeue`），续接轮重试还是续接轮，不会变成主人的话。咨询通道的任务不进看板、网页的话题、话题搜索和工作区的最近话题（`core/board_read.py` 的 `topic_jobs`、`app/butler_search.py`、`app/workspace_gists.py`）。
 - **读主人的记忆和原则不看来源**：`Runs.owner_turn`、`Access.owner_turn` 回答的是“这一轮是不是在主人自己的空间里”（隐私闸：群成员的一轮不读主人的私人条目），协作轮在主人的私聊里，照常读；“这句话是不是主人说的”只看 `owner_words`。
 
 ### 能力与预检
@@ -684,7 +701,12 @@ cancelled、superseded：终态
 - **三方都声明才派发**（`refusal`；派发的实现把协作的 kind 加进 `RUNS`）：
   - Bridge：`COVEY_COLLAB=1`，而且本 release 的 `RUNS` 有这个 kind；
   - 任务进程：它自己 release 的 `RUNS` 有这个 kind，开跑前再查一次（`app/worker.py`）；
-  - 后端：`HarnessCapabilities.collab`（在接收方自己的原生会话里跑一轮，工具限制只管这一轮、不改会话原来的工具配置，真实拒写验过才声明），协作咨询另要 `read_only`（硬只读）。现在没有后端声明 `collab`，`read_only` 只有 Claude Code 和 Codex 有。
+  - 后端：`HarnessCapabilities.collab`（咨询在接收方原会话的临时分叉里跑，限制只管这一轮，接收方的会话、指针、历史、回退标记都不动；真实拒写验过才声明），协作咨询另要 `read_only`（硬只读）。Claude Code 和 Codex 声明了（C8 见下）；Pi、Antigravity、dsh 和扩展的 Harness 没有，预检就是 `not_taken`，后端不启动；设备上不声明（`DEVICE_OFF`）。
+- **硬只读 `CONSULT`**（`core/harness.py`，`app/tool_limits.py` 的 `limit`：咨询轮的来源 `behavior(...).read_only`；和群成员的 READ、管家判的 LOOK 分开，几种同时命中取最严：CONSULT、PROXY、READ、LOOK）：
+  - Claude Code（`backends/claude/argv.py`）：只给 `--tools Read,Grep,Glob`，`--strict-mcp-config --mcp-config {}`，不管 `options` 里有没有 Bridge 的工具（`mcp_config`）或负责人的工具表（`tools`）；没有 Bash、写工具、WebFetch、Agent、AskUserQuestion，没有检查点。
+  - Codex（`backends/codex/consult.py`、`appserver.py`）：私有 `CODEX_HOME`（`<state>/tmp/codex-consult-*`，链接真实 home 除 `rules/`、`hooks*`、`plugins/`、`skills/`、`memories*`、`history.jsonl`、`config.toml` 外的全部条目，自写只含 `model_provider`、`model`、`service_tier` 和自定义 provider 表的 `config.toml`，用完删掉）；app-server 加 `features.apps/plugins/remote_plugin/memories/hooks/goals/image_generation=false`、`memories.generate_memories/use_memories=false`、`web_search="disabled"`、不开非阻塞提问；线程和本轮都是 read-only 沙箱；不挂 Bridge 的工具；模型的 `request_user_input` 一律拒绝（`rpc.no_questions`）。
+  - 咨询轮不给检查点路径（规则里换成 `collab_channel.RULES`），Bridge 也不读它的检查点；不重试、不续接、不提问。
+- **C8 真实拒写验收**：层 1 `tests/test_collab_backends.py`（参数、私有 home、合并、分叉计划）；层 2 `tests/test_collab_c8.py`（`BRIDGE_C8_REAL_CLI=1`，本机 CLI 经 `ClaudeBackend.run`、`CodexBackend.run` 接脚本化的本地假模型，不花模型调用费）：Claude Code 2.1.330 上 Write、Edit、NotebookEdit、Bash、WebFetch、Agent、EnterWorktree、三类 MCP、AskUserQuestion 都是“No such tool available”，模型只拿到 Read、Grep、Glob；codex-cli 0.171.0 上源 home 带 `touch`、`curl` 的 allow 规则也被拒（Read-only file system），curl 连不出去，工具里没有 Bridge 工具、应用、web_search；两家都是分叉出新会话、原会话文件哈希不变、工作区和场外金丝雀不变、回环接收端 0 次、MCP 没被启动、Codex 的记忆不变。Harness 升级后重跑层 2；层 3（飞书真机）随两端的实现做。
 - **不支持时**：协作记录留在待校验或排队（协作待办），不建任务，绝不改成主人的消息再发。任务已经建了的（新版本写下、回滚后被这一版读到）：Bridge 出队处（`app/job_dispatch.py` 的 `refuse_source`）和任务进程开跑处都记 `cancelled`、`never_started`，状态说明写原因，不跑模型，也不出恢复卡；认识它的版本按任务终态对账。
 - **预检还查**：准入（`app/access.py`，规则 11）；共享范围：只在同一个主人的私聊里，跨专项只在主人这次亲自点名时；脱敏：开了脱敏的话题的内容只发给同样开了脱敏的接收方，不送到限制更弱的一端；设备：只传接收方够得着的证据引用和有限摘录，够不着的写明，不把本机路径当附件；接收方此刻的状态（见上）。
 
@@ -706,9 +728,9 @@ cancelled、superseded：终态
 
 ### 开关、兼容与回退
 
-- `COVEY_COLLAB`：不设是关，不派发任何协作轮；`1`：三方都支持时派发。这一版没有能派发的，开着也一样。
-- **兼容基线**就是这一版：认识 `turn_source`，不认识、不支持的不跑；没有 `turn_source` 的任务、`topic.json` 和 `runs/` 协议都和原来一字不差（`tests/golden/run_dir.json` 不变）。
-- 比这一版早的 release 不认识这个字段：`app/runner_spawn.py` 的 `load_job` 把它当一个不认识的属性带上，照主人的消息跑。所以有过协作任务的部署，回滚目标不得早于这一版。
+- `COVEY_COLLAB`：不设是关，不派发任何协作轮、不起 `collab` 线程、规则里没有 `collab_ask`；`1`：三方都支持时派发（`collab_ask`、`collab_reply` 在 `RUNS` 里）。
+- **兼容基线**是提交 38dd405 那一版：认识 `turn_source`，不认识、不支持的不跑；没有 `turn_source` 的任务、`topic.json` 和 `runs/` 协议都和原来一字不差（`tests/golden/run_dir.json` 不变）。执行闭环这一版只多跑两个 kind，不改协议。
+- 比兼容基线早的 release 不认识这个字段：`app/runner_spawn.py` 的 `load_job` 把它当一个不认识的属性带上，照主人的消息跑。所以有过协作任务的部署，回滚目标不得早于兼容基线；回滚到兼容基线时排着的协作轮记 `cancelled`、不跑，咨询通道的目录和 `collab/` 记录留着不读。
 - **回退步骤**：
   1. 关 `COVEY_COLLAB` 重启，停新的派发；
   2. 等在跑的协作轮结束或停掉：`collab/` 里没有已接手的咨询，`jobs/` 里没有带 `turn_source` 又没结束的任务；

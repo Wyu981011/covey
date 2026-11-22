@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from covey.app import (device_files, knowledge_turn, memory_turn, owner_send, project_context, repo_peers, subagent_recovery,
+from covey.app import (collab_channel, device_files, knowledge_turn, memory_turn, owner_send, project_context, repo_peers, subagent_recovery,
                        tool_limits, workspace_gists)
 from covey.core.statuses import ENDED
 from covey.app.leftovers import stop_task_leftovers
@@ -28,10 +28,10 @@ from covey.app.recovery_cards import paint_answered
 from covey.app.switch_handoff import capped
 from covey.cards.trace_view import BRIDGE_NOTE
 from covey.core.attachments import encoded_size, fit_images, native_image_attachments
-from covey.core import criteria, devices, turn_words
+from covey.core import criteria, devices, turn_source, turn_words
 from covey.core.checkpoint import (audit_recovery, checkpoint_note, checkpoint_rules, gist_note, images_note,
                                             read_checkpoint, release_user_wait)
-from covey.core.harness import (BridgeContext, JobCancelled, RunCallbacks, RunInputs, RunRequest, RunResult,
+from covey.core.harness import (CONSULT, TOOL_LIMIT, BridgeContext, JobCancelled, RunCallbacks, RunInputs, RunRequest, RunResult,
                                          backend_capabilities, normalize_run_result)
 from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.core.jobs import upsert_job_record
@@ -175,6 +175,8 @@ class Runs:
         uses for a ``slim`` one; all of it at the head of a topic's new session, which may run long, change code or
         show an image. A topic's ``resumed`` turn, whose session read that, is reminded of the part every turn uses and
         of what the topic uses (``_used``)."""
+        if ctx.options.get(TOOL_LIMIT) == CONSULT:
+            return collab_channel.RULES  # A 协作 ask: no checkpoint at all (app/tool_limits.py CONSULT).
         if self.slim(ctx, job):
             return checkpoint_rules(steps=False, delivery=False, images=False)
         if not resumed or job is None:
@@ -322,7 +324,11 @@ class Runs:
         source = session_id or ctx.options.get("fork_session")
         live.rules_session = system and (started_with_system_rules(ctx, self.harness.spec.name, source) if source else True)
         prompt = self._with_rules(ctx, job, prompt, rules, system=system, fresh=fresh, rules_session=live.rules_session)
-        prompt += self._checkpoint_note(ctx, job) + self._context_note(ctx, job, session_id) + self._repo_note(ctx, job) + tool_limits.note(ctx)
+        if ctx.options.get(TOOL_LIMIT) == CONSULT:
+            # A 协作 ask: no checkpoint file, no context or repository note; its limit's words last.
+            prompt += ("\n\n" + collab_channel.RECORD_NOTE if ctx.options.get(collab_channel.RECORD_ONLY) else "") + tool_limits.note(ctx)
+        else:
+            prompt += self._checkpoint_note(ctx, job) + self._context_note(ctx, job, session_id) + self._repo_note(ctx, job) + tool_limits.note(ctx)
         attachments = self._image_attachments(ctx, prompt)
         if ctx.device:
             prompt, attachments, live.ctx = self._stage_attachments(ctx, job, prompt, attachments)
@@ -431,6 +437,8 @@ class Runs:
             job.history_snapshot if job.history_snapshot is not None else recent_history(ctx.history_path)
         )
         ctx, history_snapshot = self.forks.fork_start(ctx, history_snapshot)
+        # A 协作 ask's channel (app/collab_channel.py): a fork of its helper's session, else the helper's record.
+        ctx, history_snapshot = collab_channel.fork_start(self.harness, self.runtime.log, ctx, job, history_snapshot)
         if getattr(job, "policy_retry", None):
             # A retry after a safety refusal (app/policy_retry.py) starts from its own snapshot, the refused round
             # taken out: a switch handoff would bring that round back, and the switch notice, again.
@@ -510,8 +518,8 @@ class Runs:
             prior = {"subagents": dead}  # No checkpoint to verify: only the block of what they delivered.
         shown = devices.device_checkpoint_path(ctx, job.checkpoint_path) if ctx.device else ""
         return ("\n\n" + checkpoint_note(Path(job.checkpoint_path), prior, shown=shown) + self._gist_note(ctx, job)
-                + self._revisit_note(ctx, job) + self._ask_note(ctx, job) + self._criteria_note(ctx, job)
-                + self._images_note(ctx, job))
+                + self._revisit_note(ctx, job) + self._ask_note(ctx, job) + self._collab_note(ctx, job)
+                + self._criteria_note(ctx, job) + self._images_note(ctx, job))
 
     def _dead_subagents(self, ctx: BridgeContext, job: ReplyJob) -> dict | None:
         """What the subagents of the topic's last ended task delivered (app/subagent_recovery.py), when that task failed
@@ -588,9 +596,23 @@ class Runs:
             return ""
         return "\n\n" + butler_asks.RULE
 
+    def _collab_note(self, ctx: BridgeContext, job: ReplyJob) -> str:
+        """协作 (app/collab_flow.py, COVEY_COLLAB=1): the rule for asking other topics in the owner's own turn of a topic
+        that may, or in an integrator's continuation what the owner said since; '' otherwise."""
+        from covey.app import collab_flow
+
+        try:
+            return collab_flow.turn_note(self.runtime.access, self.harness, ctx, job)
+        except Exception as exc:  # noqa: BLE001 - the turn goes on without it
+            self.runtime.log(f"collab note unavailable job=#{job.job_id}: {type(exc).__name__}")
+            return ""
+
     def _continue_previous(self, ctx: BridgeContext, job: ReplyJob) -> dict | None:
         """A task of the topic waiting for answers when ``job`` starts without being one: it becomes continued and
-        its card says its questions went unanswered. Its checkpoint, which ``job`` goes on from; None without one."""
+        its card says its questions went unanswered. Its checkpoint, which ``job`` goes on from; None without one. A turn whose
+        source may not answer a waiting question (core/turn_source.py answers_questions: a 协作 turn) leaves it waiting."""
+        if not turn_source.behavior(job).answers_questions:
+            return None
         previous = next((r for r in self.harness.topic_records(ctx,job.chat_id)
                          if r.get("status") == "waiting_user" and r.get("checkpoint_path")), None)
         if not previous:

@@ -11,6 +11,10 @@ dispatcher and the cards are later packages'), so the contract is tested alone. 
   defined before: no @ is the butler's, one @ and a quote are direct.
 - A collaboration's state goes by COLLAB_TRANSITIONS, each ask's by ASK_TRANSITIONS (rule 4: no other change; an ended
   state never goes back; a late answer is kept and wakes nobody).
+- 咨询通道: each (collaboration, helper) runs its asks in a topic of its own (``channel_id``), a temporary fork of the
+  helper's session, never in the helper's own topic: the helper's session pointer, history, 回退 marker, records and
+  latest delivery stay as they were. The ids of the channels and of 协作's turns are the Bridge's (``CHANNEL_PREFIX``,
+  ``MESSAGE_PREFIX``): no Feishu message and no hex topic id looks like one (``is_channel``, ``own_message``).
 """
 from __future__ import annotations
 
@@ -183,3 +187,42 @@ def ask_id(collab, to, number) -> str:
     if not 1 <= int(number) <= ASKS_PER_HELPER:
         raise ValueError(f"at most {ASKS_PER_HELPER} asks to one helper")
     return f"{collab}-{_digest('ask', to)[:8]}-{int(number)}"
+
+
+# 咨询通道 (app/collab_channel.py): the topic an ask runs in. Its id is no hex topic id (core/projects.py TOPIC_RE,
+# app/topics.py target pass it by) and core/butler.py traits reads it as CHANNEL: no T number, not listed, no thread.
+CHANNEL_PREFIX = "collab-"
+# The message ids of 协作's turns (an ask's, an integrator's continuation): the Bridge's, no Feishu message has one, so
+# no reply quotes it (core/topics.py context_for_topic) and no 你问 block shows its words (app/answer_cards.py asked).
+MESSAGE_PREFIX = "collab-"
+RETRIES = 1  # An ask's turn that ended for a passing cause (a limit, a server fault) is queued again this many times.
+# What an answer is grounded on: a fork of the helper's own session, or its topic's record alone (no session to fork).
+FORKED, RECORD = "fork", "record"
+EVIDENCE_WORDS = {FORKED: "原会话分叉", RECORD: "话题记录（无原会话）"}
+
+
+def channel_id(collab, helper) -> str:
+    """The channel topic of helper ``helper`` in collaboration ``collab``: its ask and its clarification run there."""
+    if not collab or not helper:
+        raise ValueError("a channel needs its collaboration and its helper")
+    return f"{CHANNEL_PREFIX}{collab}-{_digest('channel', helper)[:8]}"
+
+
+def is_channel(topic_id) -> bool:
+    """Whether ``topic_id`` is a 咨询通道's (``channel_id``)."""
+    return isinstance(topic_id, str) and topic_id.startswith(CHANNEL_PREFIX)
+
+
+def own_message(message_id) -> bool:
+    """Whether ``message_id`` is one the Bridge made up for a turn of 协作 (``ask_message``, ``reply_message``)."""
+    return isinstance(message_id, str) and message_id.startswith(MESSAGE_PREFIX)
+
+
+def ask_message(ask, attempt=1) -> str:
+    """The message id of try ``attempt`` of ask ``ask``'s turn (a try that ended for a passing cause is queued again)."""
+    return f"{MESSAGE_PREFIX}{ask}" + (f"-r{int(attempt)}" if int(attempt) > 1 else "")
+
+
+def reply_message(collab, number) -> str:
+    """The message id of the integrator's ``number``-th continuation turn of ``collab``."""
+    return f"{MESSAGE_PREFIX}{collab}-reply-{int(number)}"

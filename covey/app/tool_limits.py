@@ -12,12 +12,20 @@ before.
 - PROXY: a 代答 topic's turn (core/topics.py proxy_topic). Claude Code gets Read, Grep, Glob, Bash, Edit and Write and
   none of the owner's MCP servers, and a hook that lets its shell run only lark-cli's read commands and its edit tools
   write only in the contact's notes (backends/claude/tool_guard.py, TOOL_NOTES); the other Harnesses run as before.
+- CONSULT: a 协作 ask's turn (core/turn_source.py ``behavior(job).read_only``, COVEY_COLLAB=1), in its channel
+  (app/collab_channel.py). Claude Code gets Read, Grep and Glob and no MCP server at all, whatever the turn's options say
+  (the Bridge's tools, a lead's tool list); Codex runs read-only in a private CODEX_HOME with its apps, plugins, memories
+  and hooks off and none of the Bridge's tools (backends/codex/consult.py); any other Harness does not run it
+  (``refusal``). Its message ends with CONSULT_NOTE. Apart from the others: READ and LOOK are as they were.
+
+Several at once: the strictest (``limit``): CONSULT, then PROXY (a 代答 topic's own), then READ, then LOOK.
 """
 from __future__ import annotations
 
 import dataclasses
 
-from covey.core.harness import LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
+from covey.core import turn_source
+from covey.core.harness import CONSULT, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
 from covey.core.proxy import read_contacts
 from covey.core.topics import proxy_topic, read_topic
 
@@ -26,17 +34,33 @@ MEMBER_NOTE = ("[Bridge 说明] 这一轮只读：发起这一轮的是群成员
                "不能改文件、不能联网，也不执行有副作用的命令，检查点也不用写；要改东西才能做完的，在回复里写清楚要改什么，留给主人。")
 LOOK_NOTE = ("这一轮只读：这件事被判断为只要查看和回答，所以没等主人点开始就开工了。这一轮不改任何文件、"
              "不执行有副作用的命令，检查点也不用写；要改东西才能做完的，在回复里写清楚要改什么，等主人下一句。")
+# The end of a CONSULT turn's message (app/collab_channel.py puts the ask above it).
+CONSULT_NOTE = ("[Bridge 说明] 这一轮是只读咨询：只能读文件和搜索，不能改文件、不能执行命令、不能联网，"
+                "不写检查点、不提问。回复就是给对方的答复：先写结论，再写依据（文件路径、哪一轮做的结论）；"
+                "拿不准就说不知道或缺什么材料，不要猜。")
+# Strictest first: what ``limit`` takes when several apply.
+ORDER = (CONSULT, PROXY, READ, LOOK)
+
+
+def consult(job) -> bool:
+    """Whether ``job`` is a turn held to reading by its source (core/turn_source.py: a 协作 ask): CONSULT."""
+    return job is not None and turn_source.of(job) is not None and turn_source.behavior(job).read_only
 
 
 def limit(access, ctx, job) -> str:
-    """The turn's limit (core/harness.py READ, LOOK, PROXY), '' for none: see the module docstring."""
+    """The turn's limit (core/harness.py CONSULT, PROXY, READ, LOOK), '' for none; the strictest (``ORDER``) when
+    several apply: see the module docstring."""
+    found = set()
+    if consult(job):
+        found.add(CONSULT)
     if proxy_topic(ctx):
-        return PROXY
-    if job is None:
-        return ""
-    if getattr(job, "read_only", False) is True:
-        return LOOK
-    return READ if access.read_only(job.chat_id, getattr(job, "sender_id", "")) else ""
+        found.add(PROXY)
+    if job is not None:
+        if getattr(job, "read_only", False) is True:
+            found.add(LOOK)
+        if access.read_only(job.chat_id, getattr(job, "sender_id", "")):
+            found.add(READ)
+    return next((name for name in ORDER if name in found), "")
 
 
 def notes_of(ctx) -> str:
@@ -61,13 +85,17 @@ def limited(access, ctx, job, log=lambda _: None):
 
 
 def refusal(ctx, capabilities, title) -> str:
-    """Why a READ turn does not run on this Harness (it cannot hold the turn to reading), '' when it may."""
-    if ctx.options.get(TOOL_LIMIT) != READ or capabilities.read_only:
+    """Why a READ or CONSULT turn does not run on this Harness (it cannot hold the turn to reading), '' when it may."""
+    found = ctx.options.get(TOOL_LIMIT)
+    if found == CONSULT and not (capabilities.read_only and capabilities.collab):
+        return f"{title} 还不能做只读咨询，这一轮没有启动。"
+    if found != READ or capabilities.read_only:
         return ""
     return (f"这个群设成了群成员只读，{title} 做不到只读，这一轮没有启动。"
             "可以点“🔁 换配置”换到 Claude 或 Codex 的模型再发一次。")
 
 
 def note(ctx) -> str:
-    """What the turn's message ends with: MEMBER_NOTE for a READ turn, '' otherwise."""
-    return "\n\n" + MEMBER_NOTE if ctx.options.get(TOOL_LIMIT) == READ else ""
+    """What the turn's message ends with: MEMBER_NOTE for a READ turn, CONSULT_NOTE for a CONSULT one, '' otherwise."""
+    found = ctx.options.get(TOOL_LIMIT)
+    return "\n\n" + MEMBER_NOTE if found == READ else "\n\n" + CONSULT_NOTE if found == CONSULT else ""

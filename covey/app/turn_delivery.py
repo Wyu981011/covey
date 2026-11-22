@@ -15,7 +15,7 @@ from covey.core.checkpoint import QUESTION_ONLY_REPLY, checkpoint_reply_display,
 from covey.core.diff import append_diff_summary_note, finalize_job_diff
 from covey.core.saved_results import display_saved_reply, saved_delivery_kind, paused_question_delivery_key
 from covey.core.jobs import job_key, quick_held
-from covey.core import background, failure, placement
+from covey.core import background, failure, placement, turn_source
 from covey.core.metrics import mark
 from covey.feishu.outgoing_images import prepare_outgoing_markdown_images
 from covey.core.topics import proxy_topic
@@ -137,6 +137,10 @@ class TurnDelivery(AnswerParts, QuietDelivery):
             self.in_place = butler_reply.handed_quietly(self)
         self.quiet_revisit = standalone_verified and not self.in_place and revisits.silent(self)
         self.silent = self.quiet_revisit or standalone_verified and not self.in_place and project_loop.silent(self)
+        if not turn_source.behavior(job).own_delivery:
+            # A 协作 ask's turn (app/collab_flow.py): whatever its end, nothing is sent; its saved reply counts as delivered
+            # (rule 5: its record keeps it), and its collaboration record settles it once its runner is gone.
+            self.silent = True
         self.note_standalone_result(standalone_verified and not self.in_place and not self.silent, standalone_question)
         mark(job, 'delivery_started')
         set_failure(None)

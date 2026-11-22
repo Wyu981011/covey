@@ -25,7 +25,7 @@ import time
 
 from covey.app import auto_retry
 from covey.cards.streaming import answer_element
-from covey.core import butler
+from covey.core import butler, turn_source
 from covey.core.jobs import (context_for_record, find_job_record, job_key, select_job_records,
                                       update_job_record_if)
 from covey.core.locks import topic_lock
@@ -105,8 +105,8 @@ def at_stop(ctx, job, turn):
     outcome = turn.outcome
     event = getattr(outcome, "policy_event", None)
     if (event is None or job.cancel_event.is_set() or job.policy_retry or not outcome.cleanup_confirmed
-            or fallback_model(event) is None):
-        return None
+            or fallback_model(event) is None or not turn_source.behavior(job).own_delivery):
+        return None  # Nor a 协作 ask's turn: it is never retried on another model (app/collab_flow.py ends it).
     found = schedule(ctx.state_dir, job_key(job.message_id, job.job_id), event)
     if found is None:
         return None

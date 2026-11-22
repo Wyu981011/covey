@@ -118,9 +118,10 @@ class HarnessCapabilities:
     # holds a turn to its ``options[TOOL_LIMIT]`` (app/tool_limits.py): Claude Code's tools, Codex's sandbox. Without it
     # a READ turn does not run and the other limits are words in the prompt only.
     read_only: bool = False
-    # runs a 协作 turn (core/turn_source.py NEEDS): one in a topic's own native session whose tool limits hold for that turn
-    # alone and leave the session's own as they were, declared once a real write was refused in such a turn. None does
-    # yet: no 协作 turn runs (docs/architecture.md 多参与者协作).
+    # runs a 协作 turn (core/turn_source.py NEEDS): an ask in a temporary fork of the helper's native session, in a channel
+    # topic of its own (app/collab_channel.py), held to CONSULT there; the helper's session, its pointer, history and 回退
+    # marker are never touched, and the fork's limits hold for that turn alone. Declared once a real write was refused in
+    # such a turn on the installed CLI (C8, docs/architecture.md 多参与者协作 · 能力与预检).
     collab: bool = False
 
 
@@ -128,9 +129,11 @@ class HarnessCapabilities:
 # ``options[TOOL_LIMIT]``, set by app/runs.py from app/tool_limits.py's ``limit``, absent for a turn as before. READ: a
 # group member's turn in a group whose members are read-only (reading and searching only); LOOK: a turn started without
 # the owner's click because the butler judged it read-only (no file changes); PROXY: a 代答 topic's turn (reading,
-# searching, lark-cli's read commands, writing the contact's notes).
+# searching, lark-cli's read commands, writing the contact's notes); CONSULT: a 协作 ask's turn (core/turn_source.py ASK):
+# reading and searching only, none of the owner's MCP servers and none of the Bridge's tools whatever the turn's options
+# say, no shell, no network, no question, no checkpoint (Codex: its read-only sandbox in a private CODEX_HOME).
 TOOL_LIMIT = "tool_limit"
-READ, LOOK, PROXY = "read", "look", "proxy"
+READ, LOOK, PROXY, CONSULT = "read", "look", "proxy", "consult"
 TOOL_NOTES = "tool_notes"  # With PROXY: the contact's notes directory, the one place its edit tools may write ('' none).
 
 
@@ -141,8 +144,9 @@ def backend_capabilities(backend, ctx):
 
 # What a Harness process on a device cannot do: each reads files of the hub (the session store, the request log, the
 # file snapshots) or runs the hub's relay, none of which exist there.
-# bridge_tools: the butler's tools are a process on this machine, its state directory too.
-DEVICE_OFF = ("native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools")
+# bridge_tools: the butler's tools are a process on this machine, its state directory too. collab: no device ran C8, and
+# its session store is the device's (app/collab_checks.py refuses a topic on a device).
+DEVICE_OFF = ("native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools", "collab")
 
 
 def for_device(capabilities, ctx):

@@ -35,7 +35,7 @@ from covey.app.outbox import RETRY_NOTE, retry_label
 from covey.cards.recovery import (FOLLOW_UP_NOTES, FOLLOW_UPS, OTHER_HARNESS, REPORT_NOTE, SWITCH_MODEL,
                                   failure_details, interrupted_summary, result_actions, result_note, retry_status, switch_route)
 from covey.core import env as cenv
-from covey.core import failure
+from covey.core import failure, turn_source
 from covey.core.harness import backend_capabilities
 from covey.core.jobs import find_job_record, job_key, select_job_records, update_job_record_if
 from covey.core.metrics import run_seconds
@@ -192,6 +192,8 @@ def plan(harness, ctx, job, turn, now=None):
     outcome = turn.outcome
     if outcome is not None and getattr(outcome, "policy_event", None) is not None:
         return None  # Even a cleanup/transport failure cannot erase a latched policy stop.
+    if not turn_source.behavior(job).own_delivery:
+        return None  # A 协作 ask's turn: its collaboration record queues it again (app/collab_flow.py).
     kind = next((name for name, spec in KINDS.items()
                  if outcome is not None and (outcome.status, outcome.error_code) == spec.outcome), None)
     if (kind is None or turn.verified_delivery is not None or not job.topic_id
@@ -235,6 +237,8 @@ def plan_restart(record, now=None):
     "sigterm", core/jobs.py interrupted_fields), or None: one that 检查并继续 would queue again (not a stop the
     user asked for, an official refusal or a saved reply to deliver), once along a chain."""
     spec = KINDS[RESTARTED]
+    if not turn_source.behavior(record).own_delivery:
+        return None  # A 协作 ask's turn: its collaboration record queues it again (app/collab_flow.py).
     if (record.get("status") != "interrupted" or record.get("interrupted_by") not in ("restart", "sigterm")
             or record.get("kind") != "chat" or not record.get("topic_id") or record.get("cancel_requested_by")
             or record.get("retried_by") or record.get("auto_retry_state") in ("pending", "submitting")
