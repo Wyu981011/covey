@@ -5,14 +5,17 @@
 ## 要先有
 
 1. **飞书企业开通了妙搭**，你能在妙搭里建全栈应用、开数据库。没有的话脚本第一步就会告诉你，改用自托管。
-2. **本机有** `python3`（3.10 及以上）、`git`、`lark-cli`（`npm i -g @larksuite/cli`）。妙搭在云上构建，本机不用装 Node 依赖。
+2. **本机有** `python3`（3.10 及以上）、`git`、`lark-cli`（`npm i -g @larksuite/cli`），以及 **npm 11 或更低**。
+   - 妙搭的初始化（`lark-cli apps +init` 里用 npx 拉模板）还不认 npm 12 起的 `npm pack --json` 输出，会报“npm pack 未返回 filename”。
+   - 脚本发现是 npm 12 会先停下：`npm i -g npm@11` 或把 npm 11 放到 PATH 前面后重跑即可。
+   - 妙搭在云上构建，本机不用装网页的 Node 依赖。
 3. **lark-cli 用你自己（Covey 的主人）的飞书账号登录过，且有妙搭权限**：
 
    ```bash
-   lark-cli auth login --domain apps --profile covey
+   lark-cli auth login --domain apps
    ```
 
-   `--profile` 用 Covey 在用的那个（默认 `covey`），这样脚本认出的“你”和 Covey 认的主人是同一个人。
+   妙搭应用属于登录的人，部署出来的网页只认这个人。Covey 用的是哪个飞书应用都可以：lark-cli 和 Covey 用同一个应用时，脚本会核对登录的人就是 Covey 记的主人；不是同一个应用时，就按登录的人当主人并提示你确认。用非默认 profile 的话，登录和部署都加 `--profile <名字>`。
 4. **Covey 的状态目录**（里面有 `bot-identity.json`，记着主人是谁）。不知道在哪，看 Covey 的 `docs/operations.md`「找到数据根」。
 
 ## 两步

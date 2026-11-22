@@ -32,11 +32,14 @@ class DeployTest(unittest.TestCase):
         wrapper = bin_dir / "lark-cli"
         wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} {HERE / 'fake_lark_cli.py'} \"$@\"\n")
         wrapper.chmod(0o755)
+        npm = bin_dir / "npm"  # 部署前会看 npm 的大版本（npm 12 起妙搭的初始化拉不了模板）
+        npm.write_text("#!/bin/sh\necho \"${FAKE_NPM_VERSION:-10.9.0}\"\n")
+        npm.chmod(0o755)
         self.out = self.tmp / "out"
         self.env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_LARK_STATE": str(self.tmp / "fake.json"), "FAKE_OWNER": OWNER}
-        self.saved_env = {k: os.environ.get(k) for k in ("PATH", "FAKE_LARK_STATE", "FAKE_OWNER", "FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV")}
+        self.saved_env = {k: os.environ.get(k) for k in ("PATH", "FAKE_LARK_STATE", "FAKE_OWNER", "FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV", "FAKE_NPM_VERSION")}
         os.environ.update(self.env)
-        for k in ("FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV"):
+        for k in ("FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV", "FAKE_NPM_VERSION"):
             os.environ.pop(k, None)
         self.addCleanup(self.restore_env)
 
@@ -168,6 +171,19 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("重置", text)
         self.assertEqual(len(self.fake()["keys"]), 1)
+
+    def test_npm_12_stops_before_init_and_resumes(self):
+        os.environ["FAKE_NPM_VERSION"] = "12.2.1"
+        code, text = self.run_deploy("--yes")
+        self.assertEqual(code, 2)
+        self.assertIn("npm 11", text)
+        self.assertNotIn("+init", " ".join(self.writes()))
+        state = json.loads((self.out / "miaoda-deploy.json").read_text())
+        self.assertTrue(state["app_id"])
+        os.environ["FAKE_NPM_VERSION"] = "11.6.0"
+        code, text = self.run_deploy("--yes")
+        self.assertEqual(code, 0, text)
+        self.assertEqual([c.split()[1] for c in self.writes()].count("+create"), 1)
 
     def test_render_schema(self):
         sql = deploy.render_schema("100000000042")

@@ -15,7 +15,7 @@
 用法：
   python3 web/deploy/miaoda/deploy.py --covey-state <Covey 状态目录> --dry-run     # 先看要做什么，不调任何接口
   python3 web/deploy/miaoda/deploy.py --covey-state <Covey 状态目录> --yes         # 真做
-常用参数：--profile（lark-cli 的 profile，默认 covey）、--out-dir（web.json、密钥和进度文件放哪，默认 <状态目录>/web）、
+常用参数：--profile（lark-cli 的 profile，默认用 lark-cli 的默认 profile）、--out-dir（web.json、密钥和进度文件放哪，默认 <状态目录>/web）、
   --name（应用名）、--app-id + --adopt-existing（接手一个已有的应用；会覆盖它的代码，慎用）。
 退出码：0 做完；1 某一步失败；2 前提不满足（没登录、缺命令、参数不对）；3 发布在等审批。
 """
@@ -145,29 +145,33 @@ def step_preflight(ctx: Ctx) -> None:
             raise StepFailed(f"找不到 {tool}：先装好它（lark-cli 用 `npm i -g @larksuite/cli`）。", 2)
     if not (WEB / "package.json").is_file() or not SCHEMA.is_file():
         raise StepFailed(f"{WEB} 不像 covey 仓库的 web/ 目录。", 2)
-    owner = ctx.args.owner_open_id or read_owner(ctx.args.covey_state)
-    if not owner.startswith("ou_"):
-        raise StepFailed("不知道主人是谁：给 --owner-open-id ou_…，或给 --covey-state（读其中的 bot-identity.json）。", 2)
     status = subprocess.run(["lark-cli", "auth", "status", "--json"] + (["--profile", ctx.args.profile] if ctx.args.profile else []),
                             text=True, capture_output=True)
     st = parse_envelope(status.stdout) or {}
     user = ((st.get("identities") or {}).get("user") or {})
     me = user.get("openId") or user.get("open_id") or ""
     if not me:
-        raise StepFailed("lark-cli 还没用你的飞书账号登录：运行 `lark-cli auth login --domain apps` 后重跑。", 2)
-    if me != owner:
-        raise StepFailed("lark-cli 登录的不是 Covey 的主人：妙搭应用属于登录的人，请用主人的账号登录（`lark-cli auth login --domain apps`）。", 2)
+        raise StepFailed("lark-cli 还没用你的飞书账号登录：运行 `lark-cli auth login --domain apps`（用了 --profile 就两处都加）后重跑。", 2)
+    if ctx.args.owner_open_id and ctx.args.owner_open_id != me:
+        raise StepFailed("lark-cli 登录的不是 Covey 的主人（和 --owner-open-id 不一致）：妙搭应用属于登录的人，请用主人的账号登录。", 2)
+    ident = read_identity(ctx.args.covey_state)
+    if ident.get("owner") and ident.get("app_id") == st.get("appId") and ident["owner"] != me:
+        raise StepFailed("lark-cli 登录的不是 Covey 的主人：妙搭应用属于登录的人，请用主人的账号登录。", 2)
+    if ident.get("owner") and ident.get("app_id") != st.get("appId"):
+        say("提示：lark-cli 用的飞书应用和 Covey 的不是同一个，open_id 没法直接对；按 lark-cli 登录的人当主人，请确认这就是你自己。")
+    owner = me
     ctx.state["owner_open_id"] = owner
 
 
-def read_owner(state_dir: str | None) -> str:
+def read_identity(state_dir: str | None) -> dict:
+    """Covey 记的主人和飞书应用（<状态目录>/bot-identity.json 的 owner、app_id）；open_id 按应用区分，只有同一个应用才能直接比。"""
     if not state_dir:
-        return ""
-    path = Path(state_dir) / "bot-identity.json"
+        return {}
     try:
-        return str(json.loads(path.read_text()).get("owner") or "")
+        data = json.loads((Path(state_dir) / "bot-identity.json").read_text())
     except (OSError, ValueError):
-        return ""
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def step_app(ctx: Ctx) -> None:
@@ -225,6 +229,13 @@ def step_code(ctx: Ctx) -> None:
         say(f"3. 代码：[不执行] 在 {work} 下 lark-cli apps +init --app-id {app} --dir {app}，覆盖 web/，git commit，git push origin {BRANCH}")
         return
     if not (repo / ".spark" / "meta.json").is_file():
+        major = npm_major()
+        if major >= 12:
+            raise StepFailed(f"本机是 npm {major}：妙搭的初始化（lark-cli apps +init 里用 npx 拉模板）还不认 npm 12 起的 `npm pack --json` 输出，"
+                             "会报“npm pack 未返回 filename”。先临时换 npm 11 或更低（如 `npm i -g npm@11`，或把 npm 11 放到 PATH 前面）再重跑，"
+                             "已建好的应用会接着用。", 2)
+        if repo.exists():  # 上次 +init 半路失败留下的目录：挪开，不删
+            repo.rename(repo.with_name(f"{app}.failed-{int(time.time())}"))
         work.mkdir(parents=True, exist_ok=True)
         cli(ctx, "apps", "+init", "--app-id", app, "--dir", app, write=True, cwd=work)
     git(repo, "checkout", BRANCH)
@@ -232,8 +243,10 @@ def step_code(ctx: Ctx) -> None:
     overlay(WEB, repo)
     git(repo, "add", "-A")
     if git(repo, "status", "--porcelain").strip():
+        # 应用仓库自带的提交前检查用的是模板装的依赖（+init 只装模板的），我们多出来的依赖（@tiptap 等）会被当成找不到而误报；
+        # 同样的 lint、类型检查和单测已在 web/ 上跑过，所以这里跳过它。妙搭构建时会按我们的 package.json 装全依赖。
         git(repo, "-c", "user.name=Covey 部署", "-c", "user.email=covey-deploy@users.noreply.github.com",
-            "commit", "-q", "-m", f"部署 Covey 网页工作台（web/ {web_revision()}）")
+            "commit", "-q", "--no-verify", "-m", f"部署 Covey 网页工作台（web/ {web_revision()}）")
         git(repo, "push", "origin", f"HEAD:{BRANCH}", retry_credentials=ctx)
         ctx.state["code_changed"] = True
     else:
@@ -241,6 +254,14 @@ def step_code(ctx: Ctx) -> None:
     ctx.state["commit"] = git(repo, "rev-parse", "HEAD").strip()
     ctx.save()
     say(f"3. 代码：{'推上去了' if ctx.state['code_changed'] else '没有变化'}（{ctx.state['commit'][:8]}）")
+
+
+def npm_major() -> int:
+    try:
+        out = subprocess.run(["npm", "--version"], text=True, capture_output=True, timeout=30).stdout.strip()
+        return int(out.split(".")[0])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0
 
 
 def web_revision() -> str:
@@ -477,9 +498,9 @@ def step_config(ctx: Ctx) -> None:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="把 web/ 一键部署成你自己飞书里的妙搭全栈应用")
     ap.add_argument("--covey-state", help="Covey 的状态目录（读 bot-identity.json 里的主人；默认把 web.json、密钥和进度放到它下面的 web/）")
-    ap.add_argument("--owner-open-id", default="", help="主人的 open_id（不给就从 --covey-state 读）")
+    ap.add_argument("--owner-open-id", default="", help="可选：主人的 open_id，给了就核对 lark-cli 登录的是不是这个人")
     ap.add_argument("--out-dir", help="web.json、密钥文件和进度文件放哪（默认 <covey-state>/web）")
-    ap.add_argument("--profile", default="covey", help="lark-cli 的 profile（默认 covey，和 Covey 用同一个）")
+    ap.add_argument("--profile", default=None, help="lark-cli 的 profile（不给用 lark-cli 的默认 profile）；要用你本人登录过、有妙搭权限的那个")
     ap.add_argument("--name", default="Covey 网页工作台", help="新建应用的名字")
     ap.add_argument("--app-id", help="接着用一个已有的应用（不是本脚本建的要再加 --adopt-existing）")
     ap.add_argument("--adopt-existing", action="store_true", help="允许接手不是本脚本建的应用：会覆盖它的代码、改它的库和可见范围")

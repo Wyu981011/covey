@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CORE = ("covey", "bin", "scripts", "docs", "tests", "skills", "integrations", ".github", "install",
+CORE = ("covey", "bin", "scripts", "docs", "tests", "skills", "integrations", ".github", "install", "web",
         "README.md", "README.en.md", "CONTRIBUTING.md", "LICENSE", "AGENTS.md", "pyproject.toml")
 # 默认不扫的相对路径前缀：历史文档、生成的测试地图、本脚本自己（规则里有样例）
 EXCLUDED = ("docs/history/", "tests/test_map.json", "scripts/privacy_check.py",
