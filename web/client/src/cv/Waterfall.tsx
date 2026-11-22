@@ -144,7 +144,7 @@ export const Waterfall: React.FC<{ steps: StepView[]; live: boolean; rows?: numb
         {r.s.status === 'failed' ? (
           <>
             <span className="sep">｜</span>
-            <span className="wfd-f">失败</span>
+            <span className="wfd-f">出错</span>
           </>
         ) : null}
       </div>

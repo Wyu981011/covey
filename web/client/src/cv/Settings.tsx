@@ -28,11 +28,13 @@ import { ago } from './topicText';
 import { useTick } from './ui';
 import { pickKind } from './launch';
 import { appendLines, dropLine, planTerms, type TermLine, type TermPlan } from './redactionTerms';
+import { opWords, plainReceipt } from './opWords';
 import './settings.css';
 
 /* ---------- 发件：每个动作一个 id，保存中 → 回执（Covey 回的话，回执前 Covey 已推新快照）→ 立刻重拉快照，2 秒后再拉一次保险 ---------- */
+/** late：等满了 Covey 还没回音（不是失败：操作还在发件箱里，Covey 回来会照做；说法同 opWords，P1-C2） */
 interface Phase {
-  phase: 'saving' | 'done' | 'failed';
+  phase: 'saving' | 'done' | 'failed' | 'late';
   message: string;
 }
 interface Ops {
@@ -68,7 +70,7 @@ function useOps(): Ops {
       try {
         await postOutbox({ op_id: opId, kind: 'settings', payload });
       } catch (e) {
-        const message = `没发出去：${errorText(e)}`;
+        const message = opWords('unsent', errorText(e));
         put({ phase: 'failed', message });
         fade(message);
         return;
@@ -84,7 +86,7 @@ function useOps(): Ops {
             } catch {
               /* 快照这次没拉到，后面还有一次 */
             }
-            const message = r.state === 'done' ? r.message : r.message || '没有成功';
+            const message = r.state === 'done' ? plainReceipt(r.message) : opWords('failed', r.message);
             put({ phase: r.state, message });
             window.setTimeout(() => void refetch(), 2000);
             if (r.state === 'failed') fade(message);
@@ -94,9 +96,8 @@ function useOps(): Ops {
           /* 取不到就接着等 */
         }
       }
-      const message = 'Covey 没有回应，过一会儿再看';
-      put({ phase: 'failed', message });
-      fade(message);
+      put({ phase: 'late', message: opWords('timeout') });
+      window.setTimeout(() => void refetch(), 2000);
     },
     [qc],
   );
@@ -107,7 +108,7 @@ const Receipt: React.FC<{ s?: Phase; cell?: boolean }> = ({ s, cell }) => {
   if (!s) return null;
   if (cell) {
     // 配置页的格子：保存中、成功都不占位（格子自己有转圈和半透明）；失败是格子下方浮着的一条，不撑高格子
-    return s.phase === 'failed' ? <div className="st-pop" role="alert">{s.message}</div> : null;
+    return s.phase === 'failed' ? <div className="st-pop" role="alert">{s.message}</div> : s.phase === 'late' ? <div className="st-pop late" role="status">{s.message}</div> : null;
   }
   if (s.phase === 'saving') return <div className="st-rc">保存中…</div>;
   if (s.phase === 'failed') return <div className="st-rc bad">{s.message}</div>;
@@ -817,7 +818,7 @@ const NodesTab: React.FC<{ p: SettingsNodesPage; ops: Ops; feishu: string }> = (
             <div className="st-wh">
               <i className={`st-dot ${j.state === 'joining' ? 'busy' : 'down'}`} aria-hidden="true" />
               <b className="st-wn">{j.alias}</b>
-              <span className={`st-nl ${j.state === 'failed' ? 'st-fail' : 'st-usev'}`}>{j.state === 'joining' ? '安装中…' : `失败：${j.message}`}</span>
+              <span className={`st-nl ${j.state === 'failed' ? 'st-fail' : 'st-usev'}`}>{j.state === 'joining' ? '安装中…' : `没装上：${j.message}`}</span>
             </div>
           </div>
         ))}

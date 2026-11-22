@@ -22,7 +22,11 @@ const ButlerPage: React.FC = () => {
       {key ? (
         <Conversation key={key} topicKey={key} mode="chat" who="管家" butler room={ROOM} placeholder="对管家说一句；打 @ 点名负责人或话题" launch={launch} />
       ) : (
-        <p className="t3" style={{ padding: 24 }}>Covey 还没推管家对话。</p>
+        // 空状态照 docs/ui.md 第 7 节：说真的，说下一步做什么
+        <div className="nb-empty">
+          <b>还没有管家的对话</b>
+          <span>在飞书私聊里给 Covey 发一句话，管家答了就会出现在这里；管家关着时这一页一直是空的。</span>
+        </div>
       )}
     </div>
   );

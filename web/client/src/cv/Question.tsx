@@ -5,6 +5,7 @@ import type { OutboxView, QuestionItem, QuestionOption, QuestionView } from '@sh
 import { newOpId, useSendOutbox } from '@client/src/hooks/use-workbench';
 import { errorText } from '@client/src/lib/workbench-format';
 import { SEND_KEY } from './composerText';
+import { opWords } from './opWords';
 
 const REC = /[（(]?推荐[）)]?/u;
 export const isRec = (o: QuestionOption): boolean => REC.test(o.label);
@@ -97,6 +98,8 @@ export interface QuestionForm {
   act: QuestionAct | '';
   phase: 'idle' | 'sent' | 'done' | 'failed';
   failedMsg: string;
+  /** 没办成是因为请求本身没发出去（网络、校验），不是 Covey 说不行 */
+  unsent: boolean;
   locked: boolean;
   pending: boolean;
   /** 几道题没答完就按了 Enter：面板上标出没答的题 */
@@ -115,8 +118,9 @@ export function useQuestionForm(topicKey: string, question: QuestionView | null,
   const [askedFor, setAskedFor] = useState<string>('');
   const opId: string = askedFor === token ? ans.opId : '';
   const row: OutboxView | undefined = opId ? ops.find((o: OutboxView) => o.op_id === opId) : undefined;
-  const failedMsg: string = opId && ans.error ? ans.error : row?.state === 'failed' ? row.message || '没有成功' : '';
-  const phase: QuestionForm['phase'] = !opId ? 'idle' : failedMsg ? 'failed' : row?.state === 'done' ? 'done' : 'sent';
+  const unsent: boolean = !!opId && !!ans.error;
+  const failedMsg: string = unsent ? ans.error : row?.state === 'failed' ? row.message || '' : '';
+  const phase: QuestionForm['phase'] = !opId ? 'idle' : unsent || row?.state === 'failed' ? 'failed' : row?.state === 'done' ? 'done' : 'sent';
   // 动作发出后锁住，等页面更新
   const closing: boolean = askedFor === token;
   const locked: boolean = (closing && (phase === 'sent' || phase === 'done')) || (ans.pending && askedFor === token);
@@ -201,6 +205,7 @@ export function useQuestionForm(topicKey: string, question: QuestionView | null,
     act: askedFor === token ? ans.act : '',
     phase,
     failedMsg,
+    unsent,
     locked,
     pending: ans.pending,
     nudged: cur.nudged,
@@ -413,10 +418,10 @@ export const QuestionPanel: React.FC<{ form: QuestionForm; text: string; onWrite
   );
 };
 
-/** 动作发出后的一行：失败的原因、已提交、已执行 */
+/** 动作发出后的一行（说法同 opWords，P1-C2）：没办成的原因、已发出等 Covey、已执行 */
 const PhaseLine: React.FC<{ form: QuestionForm }> = ({ form }) => {
-  if (form.phase === 'failed') return <div role="alert" style={{ color: 'var(--fail)', fontSize: 12, marginTop: 6 }}>失败：{form.failedMsg}，可以再试一次</div>;
-  if (form.phase === 'sent') return <div role="status" className="t3" style={{ fontSize: 12, marginTop: 6 }}>已提交，等 Covey 执行</div>;
+  if (form.phase === 'failed') return <div role="alert" style={{ color: 'var(--fail)', fontSize: 12, marginTop: 6 }}>{opWords(form.unsent ? 'unsent' : 'failed', form.failedMsg)}，可以再试一次</div>;
+  if (form.phase === 'sent') return <div role="status" className="t3" style={{ fontSize: 12, marginTop: 6 }}>{opWords('waiting')}</div>;
   if (form.phase !== 'done') return null;
   const words: string = form.act === 'aside' ? '已先不管，等页面更新' : form.act === 'restore' ? '已撤销，等页面更新' : '已执行，等页面更新';
   return <div role="status" className="t3" style={{ fontSize: 12, marginTop: 6 }}>{words}</div>;

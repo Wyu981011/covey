@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { SnapshotProject } from '@shared/api.interface';
-import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
 import { newOpId, TIDY_KEY, useSnapshot, useTidy } from '@client/src/hooks/use-workbench';
-import { errorText } from '@client/src/lib/workbench-format';
 import { pref, setPref } from './lib';
+import { opWords, plainReceipt } from './opWords';
+import { sendOp, type OpResult } from './sendOp';
 import {
   choice, dismissible, isOpen, look, outcome, panelWords, remember, shown,
   TIDY_SHOW_ALL, TIDY_WORD, type TidyChoice, type TidyLook, type TidyProposal, type TidyTopic,
@@ -25,8 +25,6 @@ function readGone(): string[] {
     return [];
   }
 }
-
-const sleep = (ms: number): Promise<void> => new Promise<void>((r) => window.setTimeout(r, ms));
 
 /** 话题列表：不多于 4 个全列；多于 4 个先列前 3 个，其余折成“还有 N 个话题”，点开展开。T 号是链接 */
 const TopicList: React.FC<{ topics: TidyTopic[] }> = ({ topics }) => {
@@ -60,7 +58,8 @@ const Facts: React.FC<{ p: TidyProposal }> = ({ p }) => (
   </>
 );
 
-type Phase = { phase: 'saving' | 'done' | 'failed'; message: string };
+/** late：等满一分钟 Covey 还没回音（不是失败，操作还在发件箱里；按钮放开，再点一次 Covey 会说定过没有） */
+type Phase = { phase: 'saving' | 'done' | 'failed' | 'late'; message: string };
 
 /** 要你定的一条：一块，点按钮发 tidy_decide，等 Covey 回结果，结果原地显示在这一块底部；新快照到了它就变成定好的一行 */
 const OpenCard: React.FC<{ p: TidyProposal; onDecided: (id: string) => void }> = ({ p, onDecided }) => {
@@ -75,27 +74,17 @@ const OpenCard: React.FC<{ p: TidyProposal; onDecided: (id: string) => void }> =
     const put = (x: Phase): void => { if (alive.current) setPh(x); };
     const refetch = (): void => void qc.invalidateQueries({ queryKey: TIDY_KEY });
     onDecided(p.id);
-    put({ phase: 'saving', message: choice === 'ok' ? `正在${p.verb}…` : '正在告诉 Covey…' });
-    const opId: string = newOpId();
-    try {
-      await postOutbox({ op_id: opId, kind: 'tidy_decide', payload: { proposal: p.id, choice } });
-    } catch (e) {
-      put({ phase: 'failed', message: `没发出去：${errorText(e)}` });
+    put({ phase: 'saving', message: choice === 'ok' ? `正在${p.verb}…` : opWords('sending') });
+    // 说法同 opWords（P1-C2）：没发出去、没办成写原因；等满一分钟没回音不算失败，操作还在发件箱里
+    const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'tidy_decide', payload: { proposal: p.id, choice } }, undefined, () => !alive.current);
+    if (r.phase === 'done' || r.phase === 'failed') {
+      put({ phase: r.phase, message: r.phase === 'done' ? (plainReceipt(r.message) || TIDY_WORD[choice === 'ok' ? 'done' : 'declined']) : opWords('failed', r.message) });
+      window.setTimeout(refetch, 1500);
+      window.setTimeout(refetch, 4000);
       return;
     }
-    for (let i = 0; i < 40; i += 1) {
-      await sleep(i < 3 ? 700 : 1500);
-      try {
-        const r = await fetchOutboxStatus(opId);
-        if (r.state === 'done' || r.state === 'failed') {
-          put({ phase: r.state, message: r.message || (r.state === 'done' ? (TIDY_WORD[choice === 'ok' ? 'done' : 'declined']) : '没做成') });
-          window.setTimeout(refetch, 1500);
-          window.setTimeout(refetch, 4000);
-          return;
-        }
-      } catch { /* 下一轮再问 */ }
-    }
-    put({ phase: 'failed', message: 'Covey 还没回，稍后刷新看结果' });
+    put({ phase: r.phase === 'timeout' ? 'late' : 'failed', message: opWords(r.phase, r.message) });
+    if (r.phase === 'timeout') window.setTimeout(refetch, 4000);
   };
   const busy: boolean = ph?.phase === 'saving';
   return (
@@ -122,7 +111,8 @@ const SettledRow: React.FC<{ p: TidyProposal; project: string; said: boolean }> 
   const [open, setOpen] = useState<boolean>(false);
   const id: string = `td-${useId().replace(/:/gu, '')}`;
   const o = outcome(p);
-  const note: string = p.note || TIDY_WORD[p.state] || '';
+  // Covey 写的结果照原样说，只去掉开关名这类内部词（P2：整理回执不露开关名）
+  const note: string = plainReceipt(p.note) || TIDY_WORD[p.state] || '';
   const bad: boolean = o.tone === 'bad';
   return (
     <div className={`td-row${open ? ' open' : ''}`}>

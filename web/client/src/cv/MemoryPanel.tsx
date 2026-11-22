@@ -147,7 +147,8 @@ const Row: React.FC<{
               {can.scope ? <button type="button" disabled={busy} onClick={() => setEditing(true)} title="改它的适用范围或条件">改条件</button> : null}
               {can.once ? <button type="button" disabled={busy} onClick={() => void fix('once', '已发出：只限当次')} title="只算那一次，以后不照着做">只限当次</button> : null}
               {can.confirm ? <button type="button" disabled={busy} onClick={() => void fix('confirm', '已发出：确认长期')} title="你确认：以后一直照着做">确认长期</button> : null}
-              {can.forget ? <button type="button" className="bad" disabled={busy} onClick={() => void forget()} title="这条记错了：作废它，以后不再照着做">作废</button> : null}
+              {/* 撤销一条记忆网页上一律叫「不对」（同飞书答案卡；专项右栏也是它），点了作废这条；红色只给停住了，这里不用红 */}
+              {can.forget ? <button type="button" disabled={busy} onClick={() => void forget()} title="这条记错了：作废它，以后不再照着做">不对</button> : null}
             </div>
           )}
         </div>

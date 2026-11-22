@@ -51,7 +51,7 @@ import {
 import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
-import { answersOf, configOf, failureOf, gistOf, progressOf } from './workbench.v4';
+import { answersOf, configOf, failureOf, gistOf, progressOf, recoverShape } from './workbench.v4';
 
 interface TopicRow {
   key: string;
@@ -102,6 +102,7 @@ interface SnapTopicRow {
   progress: unknown;
   latest_status: string | null;
   latest_key: string | null;
+  latest_job: string | null;
   latest_failure: unknown;
   tone: string | null;
   board: string | null;
@@ -145,13 +146,13 @@ const TOPIC_SELECT = sql`select t.key, t.number, t.title, t.project_key, t.state
  * 段尾切在汉字中间就报 22021“invalid byte sequence”，整条查询失败（2026-11-18 现网首推后整页 500）。 */
 const SNAP_TOPICS = sql`select t.key, t.number, t.title, t.project_key, t.state, t.unseen, t.updated_at,
   coalesce(nullif(t.data->>'kind', ''), 'topic') as kind, t.data->>'harness' as harness, t.data->>'model' as model,
-  t.data->>'model_name' as model_name, left(l.body || '', 600) as latest, l.role as latest_role, l.status as latest_status, l.lkey as latest_key, l.failure as latest_failure,
+  t.data->>'model_name' as model_name, left(l.body || '', 600) as latest, l.role as latest_role, l.status as latest_status, l.lkey as latest_key, l.ljob as latest_job, l.failure as latest_failure,
   t.data->>'round' as round,
   case when jsonb_typeof(t.data->'started_at') = 'number' then (t.data->>'started_at')::float8 end as started_at,
   t.data->'context' as context, t.data->'gist' as gist, t.data->'progress' as progress, t.data->>'tone' as tone, t.data->>'board' as board,
   case when jsonb_typeof(t.data->'joined_at') = 'number' then (t.data->>'joined_at')::float8 end as joined_at, t.data->'config' as config, r.data as rdata
   from topics t left join lateral (
-    select ${SHOWN} as body, role, status, u.key as lkey, u.data->'failure' as failure from turns u where u.topic_key = t.key and ${OWN_TURN}
+    select ${SHOWN} as body, role, status, u.key as lkey, u.data->>'job_id' as ljob, u.data->'failure' as failure from turns u where u.topic_key = t.key and ${OWN_TURN}
       order by u.seq desc limit 1
   ) l on true
   left join lateral (
@@ -245,6 +246,8 @@ function v4Topic(r: SnapTopicRow): Partial<SnapshotTopic> {
   if (progress) out.progress = progress;
   if (r.latest_status) out.latest_status = r.latest_status;
   if (r.latest_key) out.latest_key = r.latest_key;
+  // v33 recover 要任务号：看板上停住的那张卡直接点「检查并继续」
+  if (r.latest_job && /^\d{1,12}$/u.test(r.latest_job)) out.latest_job_id = r.latest_job;
   if (failure) out.latest_failure = failure;
   if (r.tone) out.tone = r.tone;
   if (typeof r.board === 'string') out.board = r.board;
@@ -1152,6 +1155,13 @@ export class WorkbenchQueryService {
     }
     if (kind === 'reopen') {
       if (!str(req.project_key)) throw new BadRequestException('reopen 要 project_key');
+      return;
+    }
+    if (kind === 'recover') {
+      // v33：没成功的一轮上的按钮（检查并继续、现在重试、看原因、拆小再试、停止自动重试），同任务卡上点同名按钮；能不能做由 Covey 按记录定
+      const shape = recoverShape(payload, str(req.topic_key), str(req.project_key));
+      if ('error' in shape) throw new BadRequestException(shape.error);
+      payload.job_id = shape.job_id;
       return;
     }
     if (!str(req.topic_key)) throw new BadRequestException(`${kind} 要 topic_key`);

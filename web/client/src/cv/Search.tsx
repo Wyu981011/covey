@@ -8,11 +8,13 @@ import { shortTime } from '@client/src/lib/workbench-format';
 import { Head } from './Shell';
 import { Dot } from './ui';
 import { toneOf, toneWord, topicNumberOf } from './lib';
+import { TopicBadge } from './RoleAvatar';
 
 const Marked: React.FC<{ text: string; q: string }> = ({ text, q }) => {
   const i: number = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
   if (i < 0) return <>{text}</>;
-  return <>{text.slice(0, i)}<mark style={{ background: 'color-mix(in srgb,var(--wait) 30%,transparent)', color: 'inherit', borderRadius: 3 }}>{text.slice(i, i + q.length)}</mark>{text.slice(i + q.length)}</>;
+  // 命中的字用品牌色淡底（橙色只说等你和可能卡住，docs/ui.md 2.2）
+  return <>{text.slice(0, i)}<mark className="a-hit">{text.slice(i, i + q.length)}</mark>{text.slice(i + q.length)}</>;
 };
 
 const hitPath = (h: SearchHit): string => {
@@ -65,7 +67,7 @@ const SearchPage: React.FC = () => {
               onTouchStart={() => prefetchTurns(qc, direct.key)}
             >
               <span className="a-sdl">打开</span>
-              <span className="mono">T{direct.number}</span>
+              <TopicBadge number={direct.number} />
               <b>{direct.title}</b>
               {state(direct.key)}
               <ArrowRight />
@@ -77,7 +79,7 @@ const SearchPage: React.FC = () => {
           {topicHits.map((h: SearchHit, i: number) => (
             <Link key={`t:${h.topic_key}:${i}`} to={hitPath(h)} className="old a-shit" onMouseEnter={() => prefetchTurns(qc, h.topic_key)} onTouchStart={() => prefetchTurns(qc, h.topic_key)}>
               <div className="tl1">
-                {h.number ? <span className="mono">T{h.number}</span> : null}
+                {h.number ? <TopicBadge number={h.number} /> : null}
                 <b><Marked text={h.title} q={term} /></b>
                 {state(h.topic_key)}
                 <span>{shortTime(h.at)}</span>
@@ -88,7 +90,7 @@ const SearchPage: React.FC = () => {
           {msgHits.map((h: SearchHit, i: number) => (
             <Link key={`m:${h.topic_key}:${h.seq}:${i}`} to={hitPath(h)} className="old a-shit" onMouseEnter={() => prefetchTurns(qc, h.topic_key)} onTouchStart={() => prefetchTurns(qc, h.topic_key)}>
               <div className="tl1">
-                {h.number ? <span className="mono">T{h.number}</span> : null}
+                {h.number ? <TopicBadge number={h.number} /> : null}
                 <b>{h.title}</b>
                 <span>{shortTime(h.at)}</span>
               </div>

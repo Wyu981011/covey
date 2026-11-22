@@ -7,7 +7,7 @@ export const TOPIC_STATES = ['等你', '在做', '做完', '已停止', '失败'
 export type TopicState = (typeof TOPIC_STATES)[number];
 
 /** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload */
-export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix'] as const;
+export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover'] as const;
 export type OutboxKind = (typeof OUTBOX_KINDS)[number];
 export const isOutboxKind = (v: string): v is OutboxKind =>
   (OUTBOX_KINDS as readonly string[]).includes(v);
@@ -279,8 +279,23 @@ export interface TopicProgress {
   last_activity?: string;
   /** 估不出来时为 null */
   eta_seconds?: number | null;
-  /** 超过 30 分钟没有动静 */
+  /** 超过 Covey 设的分钟数（COVEY_PROGRESS_STUCK_MINUTES）没有动静；最新一步是还在跑的命令时不算 */
   maybe_stuck?: boolean;
+  /** 当前这步比此前平均每步慢时才有（docs/web.md 进度）：第几步、几时开始、已做几秒、此前平均每步几秒；否则为 null */
+  slow_step?: TopicSlowStep | null;
+  /** 最新一步是还在跑的命令时才有：几时开始、已跑几秒（到分钟）、是否已跑满卡住的分钟数 */
+  command?: TopicCommand;
+}
+export interface TopicSlowStep {
+  number: number;
+  since: number | null;
+  seconds: number;
+  usual: number | null;
+}
+export interface TopicCommand {
+  since: number | null;
+  seconds: number;
+  long: boolean;
 }
 export interface TurnAnswer {
   question: string;
@@ -288,10 +303,38 @@ export interface TurnAnswer {
 }
 export const FAILURE_ACTIONS = ['continue', 'retry', 'diagnose', 'split', 'switch_model'] as const;
 export type FailureAction = (typeof FAILURE_ACTIONS)[number];
+/** v33：网页发 recover 操作能做的（和任务卡上同名按钮是同一个调用）；stop_auto_retry 只在排着自动重试时有 */
+export const RECOVER_ACTIONS = ['continue', 'retry', 'diagnose', 'split', 'stop_auto_retry'] as const;
+export type RecoverAction = (typeof RECOVER_ACTIONS)[number];
+/** 一颗按钮在网页上怎么做（v33 failure.how）：recover 发 recover 操作、switch 打开同页的换配置、feishu 只有飞书能做 */
+export const FAILURE_HOWS = ['recover', 'switch', 'feishu'] as const;
+export type FailureHow = (typeof FAILURE_HOWS)[number];
+/** 按钮的 key：没成功的一轮能做的，加上排着自动重试时的“停止自动重试” */
+export type FailureButton = FailureAction | 'stop_auto_retry';
+/** v33：排好的自动重试（只在排着时有）：几点重试（秒）、第几次、一共几次（限流那条有进展就重新数，为 null）、为什么、现在就跑它的是哪个 action */
+export interface TurnAutoRetry {
+  state: 'pending';
+  at: number | null;
+  attempt: number | null;
+  total: number | null;
+  kind: string;
+  now: 'retry' | 'continue';
+}
 export interface TurnFailure {
   title: string;
   detail?: string;
   actions: FailureAction[];
+  /** v33：按钮上的字（和任务卡一样：continue 是“检查并继续”，结果没发出去时是“重新投递结果”；retry 是“现在重试”） */
+  labels?: Partial<Record<FailureButton, string>>;
+  /** v33：每颗按钮怎么做 */
+  how?: Partial<Record<FailureButton, FailureHow>>;
+  /** v33：排着的自动重试；有它时只画“现在重试”“停止自动重试”和 actions 里别的，不另画 continue/retry */
+  auto_retry?: TurnAutoRetry;
+}
+/** v33：recover 操作的 payload（topic_key 是那一轮所在的话题、管家或负责人） */
+export interface RecoverPayload {
+  job_id: string;
+  action: RecoverAction;
 }
 
 /* ---- v31：多参与者协作（docs/web.md 协作与三层记忆；规则在 Covey core/collab.py，网页一侧的移植在 shared/collab.ts） ---- */
@@ -500,6 +543,8 @@ export interface SnapshotTopic {
   latest_failure?: TurnFailure;
   /** 最新一轮的 key（“先放着”记的是它） */
   latest_key?: string;
+  /** 最新一轮的任务号（v33 recover 要它：看板上的「检查并继续」直接点，不用先进话题） */
+  latest_job_id?: string;
   /** v5：状态词表的 key（covey core/look.py STATES：waiting、stopped、stuck、result、running、queued、done、cancelled、idle）。
    * 网页按它上色、取词；旧 Bridge 推的数据没有它，退回看 state */
   tone?: string;

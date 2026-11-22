@@ -195,7 +195,7 @@ const ProjectGraph: React.FC<{ p: SnapshotProject; topics: SnapshotTopic[]; lead
         </div>
       );
     if (n.kind === 'lead') {
-      const line: string = !lead ? '' : lead.running && ls.tone === 'running' ? lead.running.plan_doing || lead.running.step_label || '在派活' : ls.tone === 'waiting' ? '等你回答' : oneLineText(lead.gist?.goal || p.goal || '', 40);
+      const line: string = !lead ? '' : lead.running && ls.tone === 'running' ? lead.running.plan_doing || lead.running.step_label || '在派活' : ls.tone === 'waiting' ? '等你' : oneLineText(lead.gist?.goal || p.goal || '', 40);
       const tok: number | undefined = lead ? m.per.get(lead.key)?.tokens : undefined;
       return (
         <div
@@ -266,7 +266,7 @@ const ProjectGraph: React.FC<{ p: SnapshotProject; topics: SnapshotTopic[]; lead
       if (!topics.length) return null;
       return <div key="lp" className={`elb run${cls}`} style={{ left: l.x, top: l.y }}>派活 · {topics.length} 个话题{doneN ? ` · ${doneN} 做完` : ''}</div>;
     }
-    return <div key="lw" className={`elb wait${cls}`} style={{ left: l.x, top: l.y }}>{waiting.length === 1 ? `T${waiting[0].number} 等你回答` : `${waiting.length} 个等你回答`}</div>;
+    return <div key="lw" className={`elb wait${cls}`} style={{ left: l.x, top: l.y }}>{waiting.length === 1 ? `T${waiting[0].number} 等你` : `${waiting.length} 个等你`}</div>;
   };
 
   return (

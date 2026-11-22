@@ -29,7 +29,7 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 ```bash
 npm ci
 npm run lint                     # eslint、类型检查、stylelint
-npm run test:collab              # 单测：scripts/*.test.mjs，一共 15 组，package.json 里 test: 开头的都是
+npm run test:collab              # 单测：scripts/*.test.mjs，一共 18 组 165 条，package.json 里 test: 开头的都是
 npm run build:server             # 服务端（NestJS）构建到 dist/server
 MIAODA_APP_TYPE=3 npm run build:client   # 前端（Vite + React）构建到 dist/client，和妙搭上的构建一致
 ```
@@ -57,4 +57,4 @@ python3 -B -m unittest discover -s web/deploy/miaoda/tests
 
 ## 维护说明
 
-现阶段 `web/` 由维护者从网页工作台的开发仓库同步过来（同步时去掉平台元数据和模板残留、做脱敏核查）。要改网页，请提 issue 或 PR，合进开发仓库后会再同步到这里。
+`web/` 是网页工作台唯一的源码：改网页就改这里，提 issue 或 PR 都行。部署到妙搭时由 `deploy/miaoda/deploy.py` 把这里的代码推到你自己应用的仓库，不要反过来在应用仓库里改。

@@ -1,7 +1,71 @@
 import type { ReportResponse, ReportTurn, SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { cacheShare, closedAt, sinceOf } from './reportData';
 import { PRESSING, type ToneKey } from './look.gen';
-import { toneOf } from './lib';
+import { byAsked, byNumberDesc, byRecent, isWaiting, toneOf } from './lib';
+import { isStopped } from './topicText';
+
+/* ---- 专项自己停住的口径（covey core/projects.py pause_tone、halted；docs/ui.md 2.2：护栏停住的专项是“停住了”的红） ----
+ * Covey 推的专项 status 是中文：停住、收起、做完、已取消、等你、在做；停住时 status_reason 是护栏的原因
+ * （token 用完了、连续唤醒次数到上限、很久没有动静），你自己停的是“主人停止”。 */
+const OWNER_STOP = '主人停止';
+/** 护栏停住的专项（停住了，要你处理，能「继续」）：停住、不是你自己停的；认不得的原因也算（和 Covey 一样，不当成你停的） */
+export const isHalted = (p: Pick<SnapshotProject, 'status' | 'status_reason'>): boolean => p.status === '停住' && p.status_reason !== OWNER_STOP;
+/** 专项自己的状态词表 key：护栏停住 stopped、你停的 cancelled、收起 idle；别的（在做、等你、做完）不归它说，是 '' */
+export function projectTone(p: Pick<SnapshotProject, 'status' | 'status_reason'>): ToneKey | '' {
+  if (p.status === '停住') return isHalted(p) ? 'stopped' : 'cancelled';
+  if (p.status === '收起') return 'idle';
+  if (p.status === '已取消') return 'cancelled';
+  return '';
+}
+/** 胶囊和卡上的字：护栏停住的“停住了 · token 用完了”，你停的“已停止” */
+export function haltWords(p: Pick<SnapshotProject, 'status' | 'status_reason'>): string {
+  if (!isHalted(p)) return p.status === '停住' ? '已停止' : p.status;
+  return p.status_reason ? `停住了 · ${p.status_reason}` : '停住了';
+}
+
+/** 专项名下面那行灰字：目标；没写目标时用 Covey 给的一句状态说明（有问题等你回答、没有新的事）。
+ * 停住的不用：原因已经在胶囊上（停住了 · token 用完了），你自己停的那句是内部的“主人停止”，不给人看 */
+export const projectNote = (p: Pick<SnapshotProject, 'goal' | 'status' | 'status_reason'>): string =>
+  (p.goal || (p.status === '停住' ? '' : p.status_reason) || '').replace(/^\s*目标\s*[:：]\s*/u, '');
+
+/* ---- 要你处理（T647 P0-2）：看板、侧栏角标、手机标签栏共用这一个数，口径同 covey core/board_read.py Asks ----
+ * - 等你：每个话题一件，有题在等或在等你点开始的；管家、负责人的题也算（要你定的事谁问都进等你）；
+ * - 停住了：普通话题最新一轮停住了（跟看板分组走：看过 12 小时、点了“不管了”的不算），加上护栏停住的专项；
+ * - 可能卡住：普通话题在做、可能卡住（Covey 已除去在等命令跑完的）。
+ * 「不管了」（以前网页上只记在本机的“先放着”，P1-C3 并过来了）告诉 Covey 把话题从看板拿掉，Covey 推回 board 为空，这里就不算了。 */
+export interface Asks {
+  waiting: SnapshotTopic[];
+  stopped: SnapshotTopic[];
+  stuck: SnapshotTopic[];
+  /** 护栏停住的专项：算进停住了 */
+  projects: SnapshotProject[];
+}
+
+export function asks(snap: Pick<SnapshotResponse, 'topics' | 'projects' | 'questions'>, now: number): Asks {
+  const qKeys = new Set<string>(snap.questions.map((q) => q.topic_key));
+  const waits = (t: SnapshotTopic): boolean => isWaiting(t) || qKeys.has(t.key);
+  const topics: SnapshotTopic[] = snap.topics.filter((t: SnapshotTopic) => t.kind === 'topic');
+  return {
+    waiting: snap.topics.filter(waits).sort(byAsked),
+    stopped: topics.filter((t: SnapshotTopic) => !waits(t) && isStopped(t, now)).sort(byRecent),
+    stuck: topics.filter((t: SnapshotTopic) => !waits(t) && toneOf(t) === 'stuck').sort(byNumberDesc),
+    projects: snap.projects.filter(isHalted).sort((a: SnapshotProject, b: SnapshotProject) => b.updated_at - a.updated_at || a.key.localeCompare(b.key)),
+  };
+}
+
+/** 各状态几件（covey board_read Asks.counts）：护栏停住的专项和停住的话题一起算停住了 */
+export const askCounts = (a: Asks): { waiting: number; stopped: number; stuck: number } => ({
+  waiting: a.waiting.length,
+  stopped: a.stopped.length + a.projects.length,
+  stuck: a.stuck.length,
+});
+/** 要你处理一共几件：每处说的都是这个数（covey board_read act_count） */
+export const askTotal = (a: Asks): number => {
+  const c = askCounts(a);
+  return c.waiting + c.stopped + c.stuck;
+};
+/** 停住了的话题（看板、侧栏、专项一览都按它画红点） */
+export const stoppedSet = (a: Asks): Set<string> => new Set<string>(a.stopped.map((t: SnapshotTopic) => t.key));
 
 export function leadOf(snap: SnapshotResponse, p: SnapshotProject): SnapshotTopic | undefined {
   return (
@@ -68,11 +132,13 @@ export function metrics(rep: ReportResponse | undefined, p: SnapshotProject, top
   };
 }
 
-/** 专项的胶囊：话题里最急的那件（look 的 PRESSING；话题按列表里的颜色传进来，负责人按它自己的）；都不急时是专项自己的状态，灰色 */
+/** 专项的胶囊：护栏停住的专项先说它自己（红色“停住了 · 原因”，docs/ui.md 2.2）；其余是话题里最急的那件（look 的 PRESSING；
+ * 话题按列表里的颜色传进来，负责人按它自己的）；都不急时是专项自己的状态，灰色（你停的写“已停止”） */
 export function projectPill(p: SnapshotProject, tones: ToneKey[], lead: SnapshotTopic | undefined): { tone: ToneKey; text: string | undefined } {
+  if (isHalted(p)) return { tone: 'stopped', text: haltWords(p) };
   const all: ToneKey[] = lead ? [...tones, toneOf(lead)] : tones;
   const tone: ToneKey = PRESSING.find((k: ToneKey) => all.includes(k)) ?? 'idle';
-  return { tone, text: tone === 'idle' ? p.status : undefined };
+  return { tone, text: tone === 'idle' ? haltWords(p) : undefined };
 }
 
 /** 按状态数话题：要紧的在前、做完在后，已停止、空闲、排队不单列；只留有的 */

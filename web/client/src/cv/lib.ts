@@ -77,6 +77,21 @@ export function shortWhen(sec: number | null | undefined, now: number = nowSec()
   return day(sec) === day(now) ? hhmm(sec) : `${day(sec)} ${hhmm(sec)}`;
 }
 
+/** 网页超过这么久没收到 Covey 的同步，就说“N 分钟没同步”（docs/ui.md 第 7 节：3 分钟，灰字，不用橙色） */
+export const STALE_MS = 3 * 60 * 1000;
+/** Covey 停推的那句灰字：同步在 3 分钟内是空串；“5 分钟没同步”“2 小时没同步”“3 天没同步”；从没同步过是“还没同步” */
+export function staleWords(at: string | number | null | undefined, nowMs: number = Date.now()): string {
+  if (at === null || at === undefined || at === '') return '还没同步';
+  const t: number = typeof at === 'number' ? (at < 1e12 ? at * 1000 : at) : Date.parse(at);
+  if (!Number.isFinite(t)) return '还没同步';
+  const age: number = nowMs - t;
+  if (age <= STALE_MS) return '';
+  const m: number = Math.floor(age / 60000);
+  if (m < 60) return `${m} 分钟没同步`;
+  if (m < 48 * 60) return `${Math.floor(m / 60)} 小时没同步`;
+  return `${Math.floor(m / 1440)} 天没同步`;
+}
+
 export function waitText(sec: number): string {
   const m: number = Math.max(1, Math.round(sec / 60));
   if (m >= 24 * 60) return `${Math.floor(m / 1440)} 天 ${Math.floor((m % 1440) / 60)} 小时`;
@@ -124,6 +139,28 @@ export function topicNumberOf(q: string): number | null {
   const m: RegExpMatchArray | null = /^\s*[tT]\s*(\d{1,6})\s*$/u.exec(q);
   return m ? Number(m[1]) : null;
 }
+
+/** 以前只记在这台浏览器上的「先放着」（covey.later，一列轮次 key）。T647 P1-C3 起并成会告诉 Covey 的「不管了」，
+ * 这份不再读：打开页面时删掉，免得旧缓存悄悄把话题从要你处理里藏起来 */
+export const LEGACY_KEYS: readonly string[] = ['covey.later'];
+export function dropLegacy(storage: Pick<Storage, 'getItem' | 'removeItem'> | null | undefined): string[] {
+  const gone: string[] = [];
+  if (!storage) return gone;
+  for (const k of LEGACY_KEYS) {
+    try {
+      if (storage.getItem(k) !== null) {
+        storage.removeItem(k);
+        gone.push(k);
+      }
+    } catch {
+      /* 隐私模式：读写都可能抛 */
+    }
+  }
+  return gone;
+}
+
+/** 开着看板（Covey 推话题的 board，v6）：只有这时「不管了」才有用（Covey 把话题从看板拿掉，要你处理跟着少一件） */
+export const boardOn = (topics: readonly { board?: string }[]): boolean => topics.some((t: { board?: string }) => typeof t.board === 'string');
 
 /** 本地偏好 */
 export function pref(name: string, fallback: string): string {

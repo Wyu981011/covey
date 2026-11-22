@@ -3,8 +3,9 @@ import { Link } from 'react-router-dom';
 import { Check, ChevronDown, ChevronRight, Copy, FileText, Image as ImageIcon, Loader2, PackageCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import type { LibraryItem, MemoryItem, SnapshotProject, SnapshotTopic } from '@shared/api.interface';
-import { newOpId, useSendOutbox, useTopicByNumber } from '@client/src/hooks/use-workbench';
-import { errorText, toDate } from '@client/src/lib/workbench-format';
+import { newOpId, useTopicByNumber } from '@client/src/hooks/use-workbench';
+import { toDate } from '@client/src/lib/workbench-format';
+import { sendAndWait } from './sendOp';
 import { useTick } from './ui';
 import { fmtDur, fmtTok, isRunning, topicHref } from './lib';
 import { isLayered } from './memoryLayers';
@@ -116,7 +117,6 @@ const MemRow: React.FC<{ m: MemoryItem; open: boolean; onToggle: () => void; onF
 };
 
 const MemBlock: React.FC<{ p: SnapshotProject }> = ({ p }) => {
-  const send = useSendOutbox();
   const [all, setAll] = useState<boolean>(false);
   const [who, setWho] = useState<Who>('all');
   const [open, setOpen] = useState<string | null>(null);
@@ -124,11 +124,10 @@ const MemBlock: React.FC<{ p: SnapshotProject }> = ({ p }) => {
   const you: number = list.filter(isYou).length;
   const pick: MemoryItem[] = who === 'all' ? list : list.filter((m: MemoryItem) => isYou(m) === (who === 'you'));
   const shown: MemoryItem[] = all ? pick : pick.slice(0, MEM_FIRST);
-  const forget = (m: MemoryItem): void =>
-    send.mutate(
-      { op_id: newOpId(), kind: 'forget', project_key: p.key, payload: { project_key: p.key, entry_id: m.id } },
-      { onSuccess: () => toast.success('已发出：作废这条记忆'), onError: (e: Error) => toast.error(errorText(e)) },
-    );
+  // 「不对」：作废这条专项记忆（同飞书专项卡上的删、三层记忆面板的不对），等 Covey 的回执（“已作废：…”）再说结果
+  const forget = (m: MemoryItem): void => {
+    void sendAndWait({ op_id: newOpId(), kind: 'forget', project_key: p.key, payload: { project_key: p.key, entry_id: m.id } }, '已发出：作废这条记忆');
+  };
   const keyOf = (m: MemoryItem, i: number): string => m.id ?? `i${i}`;
   return (
     <div className="rps a-rblk">
@@ -145,7 +144,7 @@ const MemBlock: React.FC<{ p: SnapshotProject }> = ({ p }) => {
           <MemRow key={keyOf(m, i)} m={m} open={open === keyOf(m, i)} onToggle={() => setOpen(open === keyOf(m, i) ? null : keyOf(m, i))} onForget={forget} />
         ))
       ) : (
-        <p className="t3 a-rempty">还没有记忆。主人定下的事、负责人总结的约定会记在这里。</p>
+        <p className="t3 a-rempty">还没有记忆。你定下的事、负责人总结的约定会记在这里。</p>
       )}
       {pick.length > MEM_FIRST ? <Fold open={all} total={pick.length} unit="条" onToggle={() => { setAll(!all); if (all) setWho('all'); }} /> : null}
     </div>

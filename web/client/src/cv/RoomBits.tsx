@@ -5,6 +5,7 @@ import type { SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { TOPIC } from '@shared/collab';
 import { Md } from './Md';
 import { hasPicture, RoleAvatar as Picture, TopicBadge } from './RoleAvatar';
+import { AnswerFoot } from './AnswerFoot';
 import { ArtifactFold } from './ArtifactFold';
 import { hhmm } from './lib';
 import { firstParagraph } from './topicText';
@@ -183,7 +184,7 @@ export const RelayTurn: React.FC<{ t: RoomTurn; topic: SnapshotTopic | undefined
         {open ? <ChevronDown /> : <ChevronRight />}
         <TopicBadge number={topic?.number} />
         <b>{name}</b>
-        <span className={failed ? 'rm-bad' : 't3'}>{failed ? '停了' : '做完了'}</span>
+        <span className={t.status === 'failed' ? 'rm-bad' : 't3'}>{t.status === 'stopped' ? '已停止' : failed ? '停住了' : '做完了'}</span>
         <span className="rm-first">{open ? '' : firstParagraph(t.body, 120)}</span>
         <span className="t3 rm-tm">{hhmm(t.room_at)}</span>
       </button>
@@ -195,6 +196,8 @@ export const RelayTurn: React.FC<{ t: RoomTurn; topic: SnapshotTopic | undefined
         <div className="rm-rbody">
           <Md body={t.body} dim={false} />
           <ArtifactFold items={t.artifacts} />
+          {/* 和飞书回带卡一样，展开后有输入、输出两行（T647 P2） */}
+          <AnswerFoot turn={t} />
         </div>
       ) : null}
     </div>

@@ -16,6 +16,7 @@ import { Md } from './Md';
 import { composerWords, QuestionPanel, useQuestionForm } from './Question';
 import { ctxLimitOk, fmtDur, fmtWindow, harnessName, hhmm, isRunning, isWaiting, toneOf } from './lib';
 import { FailBox, stopWords } from './Timeline';
+import { opLine, opWords } from './opWords';
 import { Hx } from './ui';
 import { AgentTurn, ChatRound, OwnerBubble } from './chatTurn';
 import { saidLabel, shownText, stopPressing } from './topicText';
@@ -38,12 +39,13 @@ import {
 /** 没有协作时用同一个空数组（免得每次重算对话的分组） */
 const NO_COLLABS: CollabView[] = [];
 
-/** 刚发出的一句话：状态按 outbox 行走（已发出 → 已执行 / 失败：原因），失败的可以关掉 */
+/** 刚发出的一句话：状态按 outbox 行走（发送中 → 已发出，等 Covey → 已执行 / 没办成：原因，opWords.ts），没办成的可以关掉 */
 const PendingBubble: React.FC<{ p: Pending; row: OutboxView | undefined; onClose: () => void }> = ({ p, row, onClose }) => {
   const failed: boolean = p.phase === 'failed' || row?.state === 'failed';
-  const text: string = failed
-    ? `失败：${p.error ?? (row?.message || '没有成功')}`
-    : row?.state === 'done' ? '已执行' : p.phase === 'sent' ? '已发出，等 Covey 执行' : '发送中…';
+  const text: string = p.phase === 'failed'
+    ? opWords('unsent', p.error)
+    : row?.state === 'failed' ? opWords('failed', row.message)
+      : row?.state === 'done' ? opWords('done') : p.phase === 'sent' ? opWords('waiting') : opWords('sending');
   return (
     <div className="um" style={{ opacity: failed ? 1 : 0.8 }}>
       <div className="um-tx">
@@ -68,14 +70,6 @@ const PendingBubble: React.FC<{ p: Pending; row: OutboxView | undefined; onClose
   );
 };
 
-const OP_WORD: Record<string, string> = { answer: '回答', stop: '停止', reopen: '重开', forget: '忘记', switch: '换配置', memory_fix: '纠正记忆' };
-/** 一条动作（回答、补充说明、停止、换配置…）的结果行：已发出 / 已执行 / 失败：原因。换配置成功时写 Covey 的回执（从什么换成什么） */
-const opLabel = (o: OutboxView): string => {
-  const lesser: string = o.kind !== 'answer' ? '' : o.payload?.skip === true ? '补充说明' : o.payload?.ask === true ? '先问一句' : o.payload?.aside === true ? '不处理' : o.payload?.restore === true ? '撤销不处理' : '';
-  const what: string = lesser || (o.kind === 'stop' && o.payload?.collab ? '停止本次协作' : OP_WORD[o.kind] ?? o.kind);
-  if (o.kind === 'switch' && o.state === 'done' && o.message) return o.message;
-  return `${what}：${o.state === 'done' ? '已执行' : o.state === 'failed' ? `失败：${o.message || '没有成功'}` : '已发出'}`;
-};
 /** 聊天样式（管家、负责人）的刻度：你说的每一句；卡片正文是紧跟着的那条回答 */
 function chatMarks(groups: Group[]): Mark[] {
   const out: Mark[] = [];
@@ -559,9 +553,19 @@ export const Conversation: React.FC<{
     }, 0);
   };
   const turnTopic = (key: string): SnapshotTopic | undefined => snap?.topics.find((x: SnapshotTopic) => x.key === key);
+  // 大厅、负责人对话：每个说话人自己最新的一轮回答（停住了才给按钮），和它现在是不是在做、等你
+  const roomLast: Map<string, string> = useMemo(() => {
+    const m = new Map<string, string>();
+    if (room) for (const t of roomTurns) if (t.role !== 'owner' && t.role !== 'event' && !t.synth && t.topic_key) m.set(t.topic_key, t.key);
+    return m;
+  }, [room, roomTurns]);
+  const busyTopic = (key: string): boolean => {
+    const t: SnapshotTopic | undefined = turnTopic(key);
+    return !!t && (isRunning(t) || isWaiting(t));
+  };
 
   const stop = (): void =>
-    send.mutate({ op_id: newOpId(), kind: 'stop', topic_key: topicKey, payload: {} }, { onError: (e: Error) => toast.error(errorText(e)) });
+    send.mutate({ op_id: newOpId(), kind: 'stop', topic_key: topicKey, payload: {} }, { onError: (e: Error) => toast.error(opWords('unsent', errorText(e))) });
   // 专项页里点开的成员话题也有配置栏（话题页由 TopicPage 给）：和话题页一样能换配置
   const ownConfig: React.ReactNode = mode === 'topic' && !butler && topic?.kind === 'topic'
     ? <ConfigBar topic={topic} workspace={data?.topic.workspace ?? ''} busy={running || toneOf(topic) === 'queued'} />
@@ -677,10 +681,11 @@ export const Conversation: React.FC<{
                     fail={g.agent ? (
                       <FailBox
                         failure={g.agent.failure}
-                        turnKey={g.agent.key}
+                        turn={g.agent}
+                        topicKey={topicKey}
                         actionable={g.agent.seq === lastAgentSeq && !running && !asking}
-                        say={(text: string) => say(text, maxSeq)}
                         pressing={!topic || stopPressing(topic)}
+                        canSwitch={topic?.kind === 'topic'}
                       />
                     ) : undefined}
                     hideBody={!!g.agent && stopWords(g.agent)}
@@ -700,6 +705,19 @@ export const Conversation: React.FC<{
                         avatar={<RoleAvatar who={speaker(rt, snap, butlerKey)} />}
                         onQuote={() => quoteOf(rt)}
                         roomKey={rt.key}
+                        // 停住的那一轮，正文是停下时的原话（已在技术详情里），不当回答画（同话题页）
+                        hideBody={stopWords(g.agent)}
+                        fail={g.agent.status === 'failed' && g.agent.failure ? (
+                          // v33：管家、负责人停住的那一轮也能「检查并继续」（recover 认管家和负责人）；只给它自己最新的一轮、没在跑时
+                          <FailBox
+                            failure={g.agent.failure}
+                            turn={{ key: g.agent.key, job_id: g.agent.job_id }}
+                            topicKey={rt.topic_key}
+                            actionable={roomLast.get(rt.topic_key) === rt.key && !busyTopic(rt.topic_key)}
+                            pressing={false}
+                            canSwitch={false}
+                          />
+                        ) : undefined}
                       />
                     ) : null}
                   </>
@@ -714,10 +732,10 @@ export const Conversation: React.FC<{
           ))}
           {recentOps.map((o: OutboxView) => (
             <div className="mem" key={o.op_id} role={o.state === 'failed' ? 'alert' : undefined} style={{ justifyContent: 'center', color: o.state === 'failed' ? 'var(--fail)' : undefined }}>
-              <span>{opLabel(o)}</span>
+              <span>{opLine(o)}</span>
             </div>
           ))}
-          {mode !== 'topic' && !asking && !running && !butler && ((!!topic && toneOf(topic) === 'stopped') || turns[turns.length - 1]?.status === 'failed') ? (
+          {mode !== 'topic' && !asking && !running && !butler && !turns[turns.length - 1]?.failure && ((!!topic && toneOf(topic) === 'stopped') || turns[turns.length - 1]?.status === 'failed') ? (
             <p className="t3" role="note" style={{ fontSize: 12, textAlign: 'center', margin: '10px 0' }}>这一轮没有做完。在下面写一句话，会开始下一轮。</p>
           ) : null}
           {question ? (

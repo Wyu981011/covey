@@ -11,6 +11,7 @@ import { Head } from './Shell';
 import { Pill } from './ui';
 import { engineText, harnessName, isRunning, isWaiting, toneOf, toneWord, type ToneKey } from './lib';
 import { MobileProgress, ProgressRail, TopicOverview } from './TopicOverview';
+import { TopicBadge } from './RoleAvatar';
 import { lastAgent, listTone, stopPressing } from './topicText';
 
 /** 页头：T 号、标题、状态和轮次；右边一行小字（Harness · 模型 · 工作区 · 几号起）。token 总数这类挪进每轮的“过程” */
@@ -26,10 +27,10 @@ export const TopicHead: React.FC<{ t: SnapshotTopic | undefined; workspace: stri
   const meta: string = [engineText(t), workspace, started].filter(Boolean).join(' · ');
   return (
     <Head
-      title={desktop || !t.number ? t.title : `T${t.number} ${t.title}`}
+      title={desktop || !t.number ? t.title : <><TopicBadge number={t.number} />{t.title}</>}
       sub={desktop ? undefined : stateText}
       back={desktop ? undefined : t.project_key ? `/projects/${encodeURIComponent(t.project_key)}` : '/'}
-      tags={t.number ? <span className="a-tno">T{t.number}</span> : undefined}
+      tags={t.number && desktop ? <TopicBadge number={t.number} /> : undefined}
       badge={<Pill tone={tn} text={desktop ? stateText : word} />}
       right={
         desktop ? (

@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { LaunchData, LaunchModel, SnapshotTopic, SwitchPayload } from '@shared/api.interface';
-import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
 import { newOpId, SNAPSHOT_KEY, turnsKey, useSettings } from '@client/src/hooks/use-workbench';
-import { errorText } from '@client/src/lib/workbench-format';
 import { LaunchPanel, type PanelBox } from './LaunchPanel';
 import { engineText } from './lib';
+import { opWords } from './opWords';
+import { sendOp, type OpResult } from './sendOp';
+import { onOpenSwitch } from './switchOpen';
 import { changedFields, fromConfig, switchBlock, type SwitchSel } from './switchConfig';
 import './launch.css';
 import './composer.css';
@@ -15,8 +17,6 @@ import './composer.css';
 const FIELD_WORD: Record<string, string> = {
   model: '模型', effort: '思考预算', work_mode: '工作模式', workspace: '工作区', run_mode: '运行方式', redaction: '脱敏',
 };
-const sleep = (ms: number): Promise<void> => new Promise<void>((r) => window.setTimeout(r, ms));
-
 type Phase = 'idle' | 'sending' | 'failed';
 
 /**
@@ -42,6 +42,31 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
     };
   }, []);
   const base: SwitchSel | null = useMemo(() => (data && config ? fromConfig(data, config) : null), [data, config]);
+  // 没成功的一轮上的「换个模型」（v33 how=switch）直接展开这里，不再让你去飞书点「换配置」；
+  // 从看板点过来的带 ?switch=1，面板能用了就展开一次
+  const live: boolean = !!base && !!topic;
+  const loc = useLocation();
+  const asked: boolean = new URLSearchParams(loc.search).get('switch') === '1';
+  const [opened, setOpened] = useState<string>('');
+  const show = (): void => {
+    setSel(null);
+    setPhase('idle');
+    setMessage('');
+    setOpen(true);
+    window.requestAnimationFrame(() => wrap.current?.scrollIntoView({ block: 'nearest' }));
+  };
+  useEffect(() => {
+    if (!live || !topic) return undefined;
+    return onOpenSwitch(topic.key, show);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, topic?.key]);
+  useEffect(() => {
+    if (live && asked && topic && opened !== `${loc.key}:${topic.key}`) {
+      setOpened(`${loc.key}:${topic.key}`);
+      show();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, asked, topic?.key, loc.key]);
   // 点面板外面、按 Esc 收起（发送中不收，免得回执没人看）
   useEffect(() => {
     if (!open) return undefined;
@@ -94,37 +119,19 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
         setPhase('failed');
         setMessage(m);
       };
-      const opId: string = newOpId();
-      try {
-        await postOutbox({ op_id: opId, kind: 'switch', topic_key: topic.key, payload: { ...payload } });
-      } catch (e) {
-        fail(`没发出去：${errorText(e)}`);
+      const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'switch', topic_key: topic.key, payload: { ...payload } }, undefined, () => !alive.current);
+      if (r.phase !== 'done') {
+        fail(opWords(r.phase, r.message));
         return;
       }
-      for (let i = 0; i < 80; i += 1) {
-        await sleep(i < 3 ? 700 : 1500);
-        let r;
-        try {
-          r = await fetchOutboxStatus(opId);
-        } catch {
-          continue;
-        }
-        if (r.state === 'failed') {
-          fail(r.message || '没有换成');
-          return;
-        }
-        if (r.state !== 'done') continue;
-        void qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
-        void qc.invalidateQueries({ queryKey: turnsKey(topic.key) });
-        toast.success(r.message || '已换配置');
-        if (alive.current) {
-          setPhase('idle');
-          setSel(null);
-          setOpen(false);
-        }
-        return;
+      void qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
+      void qc.invalidateQueries({ queryKey: turnsKey(topic.key) });
+      toast.success(opWords('done', r.message || '已换配置'));
+      if (alive.current) {
+        setPhase('idle');
+        setSel(null);
+        setOpen(false);
       }
-      fail('Covey 没有回应，过一会儿再看');
     })();
   };
   const foot = (

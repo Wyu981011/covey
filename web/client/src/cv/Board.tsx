@@ -1,43 +1,55 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { RotateCcw, Sparkles } from 'lucide-react';
+import { Play, Sparkles } from 'lucide-react';
 import type {
   ActivityItem, FeedItem, OutboxStatus, QuestionView, SnapshotProject, SnapshotResponse, SnapshotTopic, StatsResponse, UsageDay,
 } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { newOpId, postOutboxQuiet, prefetchTurns, useSendOutbox, useSnapshot, useStats, useUsage } from '@client/src/hooks/use-workbench';
-import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
-import { ageMs, errorText, oneLineText } from '@client/src/lib/workbench-format';
+import { newOpId, postOutboxQuiet, prefetchTurns, useSendOutbox, useSettings, useSnapshot, useStats, useTidy, useUsage } from '@client/src/hooks/use-workbench';
+import { fetchOutboxStatus } from '@client/src/api/workbench';
+import { errorText, oneLineText } from '@client/src/lib/workbench-format';
 import { cleanLabel, isRec, quickAnswerable, useAnswer } from './Question';
 import { Head, SyncDot } from './Shell';
-import { useSay } from './Composer';
 import { ConclusionBand, Dot, Pill, RollNum, Spark, StateBar, StepCells, TodoBar, useTick } from './ui';
-import { byAsked, byNumberDesc, byRecent, fmtTok, hhmm, isWaiting, pref, setPref, toneOf, waitText, type ToneKey } from './lib';
+import { byNumberDesc, byRecent, fmtTok, hhmm, pref, setPref, staleWords, toneOf, waitText, type ToneKey } from './lib';
 import { BRAND, STATES } from './look.gen';
-import { putLater, useLater } from './store';
 import { TidyPanel } from './Tidy';
-import { etaText, isStopped, listTone } from './topicText';
+import { etaText, FALLBACK_FAILURE, listTone, progressNote, splitTitle } from './topicText';
 import { UsageBars } from './UsageBars';
 import { cachePct, shownDays, spanOf, weekWord } from './usageData';
+import { askCounts, asks, askTotal, haltWords, isHalted, type Asks } from './projectData';
+import { DismissButton, RecoverActions, useBoardOn } from './RecoverBits';
+import { RoleAvatar, TopicBadge } from './RoleAvatar';
+import { useOutboxOp } from './sendOp';
+import { OP_WAIT_MS, opWords } from './opWords';
 
 const topicPath = (t: SnapshotTopic): string => `/topics/${encodeURIComponent(t.key)}`;
 const tno = (t: SnapshotTopic): string => (t.number ? `T${t.number}` : '');
+/** 卡上写谁：话题是 T 号头像加标题，负责人是专项头像加“专项名 · 负责人”，管家是管家头像（和侧栏、大厅一套） */
+const whoName = (t: SnapshotTopic, p: SnapshotProject | undefined): string =>
+  t.kind === 'butler' ? '管家' : t.kind === 'lead' ? `${p?.title ?? '专项'} · 负责人` : t.title;
+const Who: React.FC<{ t: SnapshotTopic; p: SnapshotProject | undefined }> = ({ t, p }) => (
+  <>
+    {t.kind === 'butler' ? <RoleAvatar name="butler" size={20} /> : t.kind === 'lead' ? <RoleAvatar name={p?.avatar} size={20} /> : <TopicBadge number={t.number} />}
+    <span className="nb-who">{whoName(t, p)}</span>
+  </>
+);
 
-/** 话题的“要你处理”卡：等你、停住了、可能卡住。一张卡最多一个主按钮 */
+/** 话题、管家、负责人的“要你处理”卡：等你、停住了、可能卡住。一张卡最多一个主按钮。
+ * 等你：管家的题只能在飞书里答（Covey 不收网页替管家答），负责人的题在它的话题页答；停住了：按钮照 v33 的 failure 画，点了发 recover */
 const ActCard: React.FC<{ t: SnapshotTopic; tone: ToneKey; snap: SnapshotResponse; q?: QuestionView }> = ({ t, tone, snap, q }) => {
   const nav = useNavigate();
   const qc = useQueryClient();
   const now: number = useTick(30000);
   const ans = useAnswer(t.key);
-  const say = useSay(t.key);
-  const [sent, setSent] = useState<boolean>(false);
-  const [dis, setDis] = useState<string>('');
+  const board: boolean = useBoardOn();
+  const feishu: string = useSettings().data?.data?.feishu ?? '';
   const p: SnapshotProject | undefined = snap.projects.find((x: SnapshotProject) => x.key === t.project_key);
   const item = q?.questions[0];
-  const quick: boolean = tone === 'waiting' && !!q && quickAnswerable(q) && (item?.options.length ?? 0) <= 3;
+  const butler: boolean = t.kind === 'butler';
+  const quick: boolean = tone === 'waiting' && !butler && !!q && quickAnswerable(q) && (item?.options.length ?? 0) <= 3;
   const f = t.latest_failure;
-  const canContinue: boolean = !f || !f.actions.length || f.actions.includes('continue');
   const since: string = waitText(Math.max(60, now - t.updated_at));
   let line: React.ReactNode;
   let meta: string;
@@ -45,47 +57,27 @@ const ActCard: React.FC<{ t: SnapshotTopic; tone: ToneKey; snap: SnapshotRespons
     line = <>要你定：{item ? item.question : oneLineText(t.latest, 120) || '在等你的回复'}</>;
     meta = `等了 ${since}`;
   } else if (tone === 'stopped') {
-    line = <>原因：{f ? f.title : '上一轮没做完'}</>;
+    line = <>原因：{f ? splitTitle(f.title)[0] : '上一轮没做完'}</>;
     meta = `${hhmm(t.updated_at)} 停住`;
   } else {
-    line = <>{t.progress?.last_activity ? `${t.progress.last_activity}，` : ''}{waitText(Math.max(60, now - (t.progress?.last_activity_at ?? t.updated_at)))}没有新动静</>;
+    // 可能卡住：多久没动静从最后动静算（阈值是 Covey 的设置，不写死）
+    const note = progressNote(t.progress, now);
+    const quiet: string = note.text || `${waitText(Math.max(60, now - (t.progress?.last_activity_at ?? t.updated_at)))}没有新动静`;
+    line = <>{t.progress?.last_activity ? `${t.progress.last_activity}，` : ''}{quiet}</>;
     meta = t.progress?.plan_total ? `${t.progress.plan_done ?? 0}/${t.progress.plan_total} 步` : '';
   }
-  const open = (): void => { void nav(topicPath(t)); };
-  /** 不管了：发 dismiss 让 Covey 真的放下这个话题；没开看板（failed）就退回只记在这台设备上，并说一句 */
-  const dismiss = async (): Promise<void> => {
-    const key: string = t.latest_key ?? '';
-    const opId: string = newOpId();
-    setDis('正在告诉 Covey…');
-    let state = 'failed';
-    try {
-      await postOutbox({ op_id: opId, kind: 'dismiss', topic_key: t.key, payload: {} });
-      for (let i = 0; i < 12; i += 1) {
-        await new Promise<void>((r) => window.setTimeout(r, i < 3 ? 600 : 1200));
-        const r: OutboxStatus = await fetchOutboxStatus(opId).catch(() => ({ state: 'new' }) as unknown as OutboxStatus);
-        if (r.state === 'done' || r.state === 'failed') {
-          state = r.state;
-          break;
-        }
-      }
-    } catch {
-      state = 'failed';
-    }
-    if (state === 'done') {
-      putLater(key);
-      void qc.invalidateQueries({ queryKey: ['snapshot'] });
-      return;
-    }
-    setDis('Covey 那边没有处理（没开看板），先只记在这台设备上');
-    window.setTimeout(() => putLater(key), 2500);
-  };
+  // 负责人的题在它的话题页答（专项页的负责人对话里没有问题面板）；管家的在大厅看、去飞书答
+  const where: string = butler ? '/butler' : topicPath(t);
+  const open = (): void => { void nav(where); };
+  // 不管了：告诉 Covey 把话题从看板拿掉（同飞书看板卡），推回来 board 为空就不算要你处理了；不再在本机另记（P1-C3）
+  const dismissBtn: React.ReactNode = board && t.kind === 'topic' ? <DismissButton topicKey={t.key} /> : null;
   return (
     <article className={`nb-act tone-${tone}`} onMouseEnter={() => prefetchTurns(qc, t.key)} onTouchStart={() => prefetchTurns(qc, t.key)}>
       <div className="nb-acth">
         <Pill tone={tone} />
         <span className="nb-meta">{meta}</span>
       </div>
-      <Link to={topicPath(t)} className="nb-actt"><span className="nb-tno">{tno(t)}</span>{t.number ? ' · ' : ''}{t.title}</Link>
+      <Link to={where} className="nb-actt" title={t.kind === 'topic' && t.number ? `${tno(t)} ${t.title}` : undefined}><Who t={t} p={p} /></Link>
       <p className="nb-clamp2">{line}</p>
       {quick && q && item ? (
         <div className="nb-opts">
@@ -96,46 +88,82 @@ const ActCard: React.FC<{ t: SnapshotTopic; tone: ToneKey; snap: SnapshotRespons
           ))}
         </div>
       ) : null}
-      <div className="nb-btns">
-        {tone === 'waiting' ? (
-          <>
-            {quick ? null : <button type="button" className="btn sm pri" onClick={open}>去回答</button>}
-            <button type="button" className="btn sm" onClick={open}>打开话题</button>
-          </>
-        ) : tone === 'stopped' ? (
-          sent ? (
-            <span className="nb-meta">已发出，等 Covey 接着做</span>
+      {tone === 'stopped' ? (
+        <RecoverActions
+          className="nb-btns"
+          failure={f ?? FALLBACK_FAILURE}
+          topicKey={t.key}
+          jobId={t.latest_job_id}
+          canSwitch={t.kind === 'topic'}
+          noJob={open}
+          // 换个模型：进话题页，输入框下沿的换配置面板直接展开（?switch=1）
+          onSwitch={() => { void nav(`${topicPath(t)}?switch=1`); }}
+          extra={<>{dismissBtn}<button type="button" className="btn sm" onClick={open}>打开话题</button></>}
+        />
+      ) : (
+        <div className="nb-btns">
+          {tone === 'waiting' ? (
+            butler ? (
+              <>
+                {feishu ? <a className="btn sm pri" href={feishu} target="_blank" rel="noopener noreferrer">去飞书回答</a> : null}
+                <button type="button" className={`btn sm${feishu ? '' : ' pri'}`} onClick={open}>打开大厅</button>
+              </>
+            ) : (
+              <>
+                {quick ? null : <button type="button" className="btn sm pri" onClick={open}>去回答</button>}
+                <button type="button" className="btn sm" onClick={open}>打开话题</button>
+              </>
+            )
           ) : (
-            <>
-              {canContinue ? (
-                <button type="button" className="btn sm pri" onClick={() => { say('继续', Number.MAX_SAFE_INTEGER); setSent(true); }}>
-                  <RotateCcw /> 检查并继续
-                </button>
-              ) : null}
-              <button type="button" className={`btn sm${canContinue ? '' : ' pri'}`} onClick={open}>看原因</button>
-              {t.latest_key ? <button type="button" className="btn sm txt" disabled={!!dis} onClick={() => void dismiss()} title="这一轮不再出现在要你处理里">不管了</button> : null}
-            </>
-          )
-        ) : (
-          <button type="button" className="btn sm pri" onClick={open}>打开话题</button>
-        )}
-        <span className="nb-meta nb-proj">{p ? p.title : ''}</span>
-      </div>
-      {dis ? <div className="nb-meta">{dis}</div> : null}
-      {ans.error ? <div role="alert" className="a-errt">发送失败：{ans.error}</div> : null}
+            <button type="button" className="btn sm pri" onClick={open}>打开话题</button>
+          )}
+          <span className="nb-meta nb-proj">{p && t.kind === 'topic' ? p.title : ''}</span>
+        </div>
+      )}
+      {ans.error ? <div role="alert" className="a-errt">{opWords('unsent', ans.error)}</div> : null}
     </article>
   );
 };
 
-/** 话题行 topic_row（在做，夜航 v2 的表格行）：状态点、T 号、标题和一行“现在”，右边预计、步骤格和步数；只有一条发丝线 */
+/** 护栏停住的专项（T647 P0-3，docs/ui.md 2.2）：红色“停住了 · 原因”和「继续」（发 reopen，同飞书停住卡的继续），算进要你处理 */
+const HaltCard: React.FC<{ p: SnapshotProject }> = ({ p }) => {
+  const nav = useNavigate();
+  const op = useOutboxOp();
+  const base: string = `/projects/${encodeURIComponent(p.key)}`;
+  return (
+    <article className="nb-act tone-stopped">
+      <div className="nb-acth">
+        <Pill tone="stopped" />
+        <span className="nb-meta">{hhmm(p.updated_at)} 停住</span>
+      </div>
+      <Link to={base} className="nb-actt"><RoleAvatar name={p.avatar} size={20} /><span className="nb-who">{p.title}</span></Link>
+      <p className="nb-clamp2">原因：{p.status_reason || '护栏停住了'}；点「继续」接着做</p>
+      <div className="nb-btns">
+        {op.phase === 'done' ? null : (
+          <button type="button" className="btn sm pri" disabled={op.busy} onClick={() => void op.run({ op_id: newOpId(), kind: 'reopen', project_key: p.key, payload: {} })}>
+            <Play /> 继续
+          </button>
+        )}
+        <button type="button" className="btn sm" onClick={() => void nav(base)}>打开专项</button>
+        <span className="nb-meta nb-proj">专项</span>
+      </div>
+      {op.line ? <div className={`nb-meta${op.phase === 'failed' || op.phase === 'unsent' ? ' a-errt' : ''}`}>{op.line}</div> : null}
+    </article>
+  );
+};
+
+/** 话题行 topic_row（在做，夜航 v2 的表格行）：状态点、T 号头像、标题和一行“现在”，右边预计、步骤格和步数；只有一条发丝线。
+ * “现在”那行后面跟进度说明：在等一条命令跑完、这步比平均慢（slow_step、command，同飞书任务卡） */
 const RunRow: React.FC<{ t: SnapshotTopic }> = ({ t }) => {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const now: number = useTick(30000);
   const r = t.running;
   const p = t.progress;
   const total: number = p?.plan_total ?? r?.plan_total ?? 0;
   const done: number = p?.plan_total ? (p.plan_done ?? 0) : (r?.plan_done ?? 0);
   const phase: string = p?.phase || r?.plan_doing || (t.latest_role !== 'owner' ? oneLineText(t.latest, 80) : '') || '在做';
+  const note: string = progressNote(p, now).text;
   const eta: string = etaText(p?.eta_seconds);
   return (
     <div
@@ -148,10 +176,10 @@ const RunRow: React.FC<{ t: SnapshotTopic }> = ({ t }) => {
       onTouchStart={() => prefetchTurns(qc, t.key)}
     >
       <Dot tone="running" />
-      <span className="nb-tno">{tno(t)}</span>
+      <TopicBadge number={t.number} />
       <span className="nb-tt">
         <b>{t.title}</b>
-        <small>{phase}</small>
+        <small>{note ? `${phase} · ${note}` : phase}</small>
       </span>
       <span className="nb-eta">{eta}</span>
       {total ? <StepCells done={done} total={total} /> : <span />}
@@ -169,7 +197,8 @@ const ResultRow: React.FC<{ t: SnapshotTopic }> = ({ t }) => {
     <div className="nb-row nb-res" role="link" tabIndex={0} onClick={() => nav(topicPath(t))} onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') nav(topicPath(t)); }}>
       <div className="nb-rowh">
         <Pill tone="result" />
-        <b className="nb-rowt"><span className="nb-tno">{tno(t)}</span>{t.number ? ' · ' : ''}{t.title}</b>
+        <TopicBadge number={t.number} />
+        <b className="nb-rowt">{t.title}</b>
         <span className="nb-rowl nb-inl">{line}</span>
         {seen ? (
           <span className="nb-meta nb-right">已记为看过</span>
@@ -193,13 +222,14 @@ interface ProjectView {
   last: number;
 }
 
-/** 专项（右栏是索引）：名字和一行计数；描述和进度条在专项页，不在这里重复 */
+/** 专项（右栏是索引）：名字和一行计数；护栏停住的写红色“停住了 · 原因”（「继续」在上面要你处理的卡上）。描述和进度条在专项页，不在这里重复 */
 const ProjectCard: React.FC<{ x: ProjectView }> = ({ x }) => {
   const { p } = x;
   const parts: [ToneKey, number][] = (['waiting', 'stopped', 'stuck', 'result', 'running', 'done'] as ToneKey[]).map((k: ToneKey): [ToneKey, number] => [k, x.tones.filter((v: ToneKey) => v === k).length]);
   return (
     <Link to={`/projects/${encodeURIComponent(p.key)}`} className="nb-proj-card">
       <b className="nb-clamp1" title={p.goal || p.title}>{p.title}</b>
+      {isHalted(p) ? <span className="nb-pc tone-stopped nb-halt">{haltWords(p)}</span> : null}
       <span className="nb-meta">
         {p.counts.topics} 个话题
         {parts.filter(([, n]) => n > 0).map(([k, n]) => <span key={k} className={`nb-pc tone-${k}`}> · {n} {STATES[k].word}</span>)}
@@ -250,7 +280,7 @@ const WeekUsage: React.FC<{ st: StatsResponse | undefined }> = ({ st }) => {
 const TIDY_KEY = 'tidy.op';
 const TIDY_SHOW_MS = 30 * 60 * 1000;
 
-/** 「整理」：发件箱写一条 tidy，按钮旁边原地显示 Covey 回的结果 */
+/** 「整理」：发件箱写一条 tidy，按钮旁边原地显示 Covey 回的结果（说法同 opWords：等满一分钟没回音不算失败）。只在开了整理专项时出现 */
 const TidyButton: React.FC = () => {
   const send = useSendOutbox();
   const [op, setOp] = useState<{ id: string; at: number } | null>(() => {
@@ -262,6 +292,7 @@ const TidyButton: React.FC = () => {
     }
   });
   const [err, setErr] = useState<string>('');
+  const now: number = useTick(5000);
   const st = useQuery<OutboxStatus>({
     queryKey: ['outbox', op?.id],
     queryFn: () => fetchOutboxStatus(op?.id ?? ''),
@@ -285,13 +316,15 @@ const TidyButton: React.FC = () => {
     );
   };
   const s: OutboxStatus | undefined = st.data;
-  const busy: boolean = send.isPending || (!!op && (!s || s.state === 'new'));
+  const waiting: boolean = !!op && (!s || s.state === 'new');
+  const late: boolean = waiting && !!op && now * 1000 - op.at > OP_WAIT_MS;
+  const busy: boolean = send.isPending || (waiting && !late);
   let note: React.ReactNode = null;
-  if (err) note = <span className="a-errt">没发出去：{err}</span>;
-  else if (send.isPending) note = <span className="a-faint">发送中…</span>;
-  else if (op && (!s || s.state === 'new')) note = <span className="a-faint">已发出，等 Covey 回…</span>;
-  else if (s?.state === 'done') note = <span className="a-okt">{s.message || '已开始整理，结果发到私聊'}</span>;
-  else if (s?.state === 'failed') note = <span className="a-errt">没成：{s.message || '没有成功'}</span>;
+  if (err) note = <span className="a-errt">{opWords('unsent', err)}</span>;
+  else if (send.isPending) note = <span className="a-faint">{opWords('sending')}</span>;
+  else if (waiting) note = <span className="a-faint">{opWords(late ? 'timeout' : 'waiting')}</span>;
+  else if (s?.state === 'done') note = <span className="a-okt">{opWords('done', s.message || '已开始整理，结果发到私聊')}</span>;
+  else if (s?.state === 'failed') note = <span className="a-errt">{opWords('failed', s.message)}</span>;
   return (
     <span className="a-tidy">
       {note}
@@ -321,41 +354,57 @@ function mergedFeed(st: StatsResponse | undefined): FeedItem[] {
 const feedText = (f: FeedItem): string =>
   [f.done ? `做完 ${f.done} 轮` : '', f.failed ? `没做完 ${f.failed} 轮` : '', f.asked ? `问过 ${f.asked} 次` : ''].filter(Boolean).join(' · ');
 
-/** 最后同步超过 3 分钟，时间变橙 */
+/** 最后同步的时刻；超过 3 分钟后面跟一句灰字“N 分钟没同步”（docs/ui.md 第 7 节，不用橙色） */
 const Updated: React.FC<{ at: string | null | undefined }> = ({ at }) => {
-  useTick(15000);
-  const age: number | null = ageMs(at);
+  const now: number = useTick(15000);
+  const stale: string = staleWords(at, now * 1000);
   const t: string = at ? hhmm(Date.parse(at) / 1000) : '';
-  return <p className={`nb-updated${age !== null && age > 180000 ? ' stale' : ''}`}>{t ? `更新于 ${t}` : '还没同步'}</p>;
+  return <p className={`nb-updated${stale && at ? ' stale' : ''}`}>{t ? `更新于 ${t}${stale ? ` · ${stale}` : ''}` : '还没同步'}</p>;
 };
+
+/** 结论带下面那条“要你做”：最急的那一件是谁、什么事 */
+function firstAsk(a: Asks, qBy: Map<string, QuestionView>, snap: SnapshotResponse): string {
+  const proj = (t: SnapshotTopic): SnapshotProject | undefined => snap.projects.find((x: SnapshotProject) => x.key === t.project_key);
+  const name = (t: SnapshotTopic): string => (t.kind === 'topic' ? tno(t) || t.title : whoName(t, proj(t)));
+  if (a.waiting[0]) return `${name(a.waiting[0])}：${qBy.get(a.waiting[0].key)?.questions[0]?.question ?? a.waiting[0].title}`;
+  if (a.stopped[0]) return `${name(a.stopped[0])}：${a.stopped[0].latest_failure ? splitTitle(a.stopped[0].latest_failure.title)[0] : '上一轮没做完'}`;
+  if (a.projects[0]) return `${a.projects[0].title}：${haltWords(a.projects[0])}`;
+  if (a.stuck[0]) return `${name(a.stuck[0])}：可能卡住了`;
+  return '';
+}
 
 const Board: React.FC = () => {
   const desktop: boolean = useIsDesktop();
   const { data: snap } = useSnapshot();
   const { data: st } = useStats();
-  const later = useLater();
+  const tidyOn: boolean = !!useTidy().data;
   const now: number = useTick(30000);
   if (!snap) return null;
   const topics: SnapshotTopic[] = snap.topics.filter((t: SnapshotTopic) => t.kind === 'topic');
   const qBy = new Map<string, QuestionView>(snap.questions.map((q: QuestionView) => [q.topic_key, q]));
-  const waiting: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => isWaiting(t) || qBy.has(t.key)).sort(byAsked);
-  const stopped: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => !qBy.has(t.key) && isStopped(t, now, later)).sort(byRecent);
-  const stuck: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => !qBy.has(t.key) && toneOf(t) === 'stuck').sort(byNumberDesc);
+  // 要你处理：和侧栏角标、手机标签栏同一个算法（projectData.ts asks，口径同 covey board_read）：管家、负责人的题也算，护栏停住的专项算停住了
+  const a: Asks = asks(snap, now);
+  const { waiting, stopped, stuck, projects: halted } = a;
+  const c = askCounts(a);
+  const act: number = askTotal(a);
   const running: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => toneOf(t) === 'running' && !qBy.has(t.key)).sort(byNumberDesc);
   const unseen: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => toneOf(t) === 'result').sort(byRecent);
-  const act: number = waiting.length + stopped.length + stuck.length;
   const views: ProjectView[] = snap.projects.map((p: SnapshotProject): ProjectView => {
     const own: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => t.project_key === p.key);
     return { p, tones: own.map(listTone), last: Math.max(p.updated_at, ...own.map((t: SnapshotTopic) => t.updated_at)) };
   });
   const rank = (x: ProjectView): number => {
+    if (isHalted(x.p)) return 0;
     const hot: number = ['waiting', 'stopped', 'stuck', 'running', 'result'].findIndex((k: string) => x.tones.includes(k as ToneKey));
-    return hot < 0 ? (['做完', '收起', '已取消'].includes(x.p.status) ? 9 : 8) : hot;
+    return hot < 0 ? (['做完', '收起', '已取消'].includes(x.p.status) ? 9 : 8) : hot + 1;
   };
-  views.sort((a: ProjectView, b: ProjectView) => rank(a) - rank(b) || b.last - a.last || a.p.key.localeCompare(b.p.key));
+  views.sort((x: ProjectView, y: ProjectView) => rank(x) - rank(y) || y.last - x.last || x.p.key.localeCompare(y.p.key));
   const feed: FeedItem[] = mergedFeed(st);
+  // Covey 停推了（超过 3 分钟没同步）：右上和结论带都照实说，不再写“已同步”“都在掌握中”（T647 P1-C1）
+  const stale: string = staleWords(snap.synced_at, now * 1000);
+  const syncedAt: number | null = snap.synced_at ? Date.parse(snap.synced_at) / 1000 : null;
   // 结论带：按 look 的 PRESSING 说最急的；等你、停住了时数字旁的点慢慢呼吸
-  const breathe: ToneKey | null = waiting.length ? 'waiting' : stopped.length ? 'stopped' : null;
+  const breathe: ToneKey | null = c.waiting ? 'waiting' : c.stopped ? 'stopped' : null;
   const sub: string[] = [];
   let n: number | null = null;
   let words = '都在掌握中';
@@ -371,35 +420,38 @@ const Board: React.FC = () => {
   }
   if (running.length && words !== '件在做') sub.push(`${running.length} 件在做`);
   if (unseen.length && words !== '个结果没看') sub.push(`${unseen.length} 个结果没看`);
-  if (!n) sub.push('现在没有在等你的事');
-  if (!act && n) sub.unshift('没有事等你，都在掌握中');
-  const first: SnapshotTopic | undefined = waiting[0] ?? stopped[0] ?? stuck[0];
-  const firstLine: string = first
-    ? `${tno(first) || first.title}：${waiting[0] === first ? (qBy.get(first.key)?.questions[0]?.question ?? first.title) : stopped[0] === first ? (first.latest_failure?.title ?? '上一轮没做完') : '可能卡住了'}`
-    : '';
+  if (!n) {
+    if (stale) words = syncedAt ? `${hhmm(syncedAt)} 时没有事要你处理` : '还没同步';
+    else sub.push('现在没有在等你的事');
+  }
+  if (!act && n) sub.unshift(stale ? '没有事等你' : '没有事等你，都在掌握中');
+  // 停推的那句单独一行在最前（灰字），不和件数挤在一句里折行
+  const staleLine: string = stale && syncedAt ? `Covey ${stale}，这里是 ${hhmm(syncedAt)} 的样子` : '';
+  const firstLine: string = firstAsk(a, qBy, snap);
   const band = (
     <ConclusionBand
-      label={<span className="nb-l1t">现在</span>}
+      label={<span className="nb-l1t">{stale && syncedAt ? `${hhmm(syncedAt)} 时` : '现在'}</span>}
       n={n}
       words={words}
       breathe={breathe}
-      sub={sub.join('，')}
-      counts={[['waiting', waiting.length], ['stopped', stopped.length], ...(stuck.length ? [['stuck', stuck.length] as [ToneKey, number]] : []), ['result', unseen.length], ['running', running.length]]}
+      sub={staleLine ? <><span className="nb-stale">{staleLine}</span>{sub.length ? <><br />{sub.join('，')}</> : null}</> : sub.join('，')}
+      counts={[['waiting', c.waiting], ['stopped', c.stopped], ...(c.stuck ? [['stuck', c.stuck] as [ToneKey, number]] : []), ['result', unseen.length], ['running', running.length]]}
     >
       {/* 只有 1 件时下面的卡就是它，结论带不再重复 */}
       {act > 1 && firstLine ? <TodoBar>{oneLineText(firstLine, 60)}</TodoBar> : null}
-      <StateBar legend={false} parts={[['waiting', waiting.length], ['stopped', stopped.length], ['stuck', stuck.length], ['result', unseen.length], ['running', running.length]]} />
+      <StateBar legend={false} parts={[['waiting', c.waiting], ['stopped', c.stopped], ['stuck', c.stuck], ['result', unseen.length], ['running', running.length]]} />
     </ConclusionBand>
   );
   const projects = views.length ? (
     <section className="nb-panel">
-      <h3 className="nb-ph">专项<em>{views.length}</em><TidyButton /></h3>
+      <h3 className="nb-ph">专项<em>{views.length}</em>{tidyOn ? <TidyButton /> : null}</h3>
       <div className="nb-plist">{views.slice(0, 8).map((x: ProjectView) => <ProjectCard key={x.p.key} x={x} />)}</div>
     </section>
   ) : (
     <section className="nb-panel">
-      <h3 className="nb-ph">专项<TidyButton /></h3>
-      <p className="nb-note">还没有专项。点「整理」让 Covey 看看哪些话题该归成专项。</p>
+      <h3 className="nb-ph">专项{tidyOn ? <TidyButton /> : null}</h3>
+      {/* 空状态照 docs/ui.md 第 7 节：说的是真的、下一步做什么；没开整理专项时不让你去点「整理」 */}
+      <p className="nb-note">{tidyOn ? '还没有专项。点「整理」让 Covey 看看哪些话题该归成专项。' : '还没有专项。对管家说一件要做很久的事，它会开成专项。'}</p>
     </section>
   );
   const rail = (
@@ -414,7 +466,7 @@ const Board: React.FC = () => {
               <li key={f.topic_key}>
                 <span className="a-tmc">{hhmm(f.at)}</span>
                 <Link to={`/topics/${encodeURIComponent(f.topic_key)}`} title={f.title}>
-                  <span className="a-fl1"><b>{f.number ? `T${f.number}` : '话题'}</b> · {feedText(f)}</span>
+                  <span className="a-fl1">{f.number ? <TopicBadge number={f.number} /> : <b>话题</b>} {feedText(f)}</span>
                   <span className="a-ft2">{f.title}</span>
                 </Link>
               </li>
@@ -424,16 +476,19 @@ const Board: React.FC = () => {
       ) : null}
     </>
   );
+  // 卡和行里的 T 号头像一样宽（按最长的号码，至少 T 加三位），标题对成一条线（同侧栏 --tw）
+  const logoChars: number = topics.reduce((most: number, t: SnapshotTopic) => Math.max(most, t.number ? String(t.number).length + 1 : 0), 4);
   return (
-    <div className="a-board nb-board">
+    <div className="a-board nb-board" style={{ '--tw': logoChars } as React.CSSProperties}>
       <div className="a-center">
-        <Head title="看板" right={<span className="nb-synced"><SyncDot at={snap.synced_at} />{desktop ? '已同步' : ''}</span>} />
+        <Head title="看板" right={<span className={`nb-synced${stale ? ' stale' : ''}`}><SyncDot at={snap.synced_at} />{stale || (desktop ? '已同步' : '')}</span>} />
         <div className="a-scroll nb-scroll">
           {band}
           {act ? (
             <div className="nb-actgrid">
               {waiting.map((t: SnapshotTopic) => <ActCard key={t.key} t={t} tone="waiting" q={qBy.get(t.key)} snap={snap} />)}
               {stopped.map((t: SnapshotTopic) => <ActCard key={t.key} t={t} tone="stopped" snap={snap} />)}
+              {halted.map((p: SnapshotProject) => <HaltCard key={p.key} p={p} />)}
               {stuck.map((t: SnapshotTopic) => <ActCard key={t.key} t={t} tone="stuck" snap={snap} />)}
             </div>
           ) : null}
@@ -451,7 +506,12 @@ const Board: React.FC = () => {
             </>
           ) : null}
           {!desktop ? <div className="nb-mrail">{rail}</div> : null}
-          {!topics.length ? <p className="nb-note">还没有话题。Covey 一推数据这里就有了。</p> : null}
+          {!topics.length ? (
+            <div className="nb-empty">
+              <b>还没有话题</b>
+              <span>在飞书里给 Covey 发一句要做的事，开出话题后这里就会列出来。</span>
+            </div>
+          ) : null}
           <Updated at={snap.synced_at} />
         </div>
       </div>

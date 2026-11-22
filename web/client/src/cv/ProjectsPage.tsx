@@ -2,14 +2,14 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight, Sparkles } from 'lucide-react';
 import type { SnapshotProject, SnapshotTopic } from '@shared/api.interface';
-import { useSnapshot } from '@client/src/hooks/use-workbench';
+import { useSnapshot, useTidy } from '@client/src/hooks/use-workbench';
 import { Head } from './Shell';
 import { Dot, Pill, useTick } from './ui';
 import { STATES, TONE_KEYS } from './look.gen';
 import { byRecent, fmtDur, isRunningTone, isWaiting, pref, setPref, shortWhen, toneOf, TONE_RANK, type ToneKey } from './lib';
 import { isStopped, listTone } from './topicText';
-import { leadOf, projectPill, toneCounts } from './projectData';
-import { useLater } from './store';
+import { isHalted, leadOf, projectNote, projectPill, toneCounts } from './projectData';
+import { TopicBadge } from './RoleAvatar';
 import './projects.css';
 
 /** 专项一览（/projects）：手机底部「专项」标签打开的就是这一页（以前是侧栏抽屉，只有屏幕六成宽、和最近话题混在一起）。
@@ -50,7 +50,7 @@ const ProjectCard: React.FC<{ x: View; now: number }> = ({ x, now }) => {
   const tones: ToneKey[] = x.topics.map((t: SnapshotTopic) => x.tones.get(t.key) ?? listTone(t));
   const pill = projectPill(p, tones, lead);
   const counts: [ToneKey, number][] = toneCounts(tones);
-  const goal: string = (p.goal || p.status_reason || '').replace(/^\s*目标\s*[:：]\s*/u, '');
+  const goal: string = projectNote(p);
   const leadWaits: boolean = !!lead && isWaiting(lead);
   const shown: SnapshotTopic[] = x.hot.slice(0, HOT_SHOWN);
   const more: number = x.hot.length - shown.length;
@@ -86,7 +86,7 @@ const ProjectCard: React.FC<{ x: View; now: number }> = ({ x, now }) => {
             return (
               <Link key={t.key} to={`/topics/${encodeURIComponent(t.key)}`} className="pl-row">
                 <Dot tone={k} />
-                <span className="pl-no short">T{t.number}</span>
+                <TopicBadge number={t.number} />
                 <span className="pl-tt">{t.title}</span>
                 <span className={`pl-st short tone-${k}`}>{sec ? fmtDur(sec, false) : STATES[k].word}</span>
               </Link>
@@ -105,14 +105,14 @@ const ProjectCard: React.FC<{ x: View; now: number }> = ({ x, now }) => {
 
 const ProjectsPage: React.FC = () => {
   const { data: snap } = useSnapshot();
+  const tidyOn: boolean = !!useTidy().data;
   const now: number = useTick(30000);
-  const later = useLater();
   const [oldOpen, setOldOpen] = useState<boolean>(() => pref('grp.old', '0') === '1');
   if (!snap) return null;
   const topics: SnapshotTopic[] = snap.topics.filter((t: SnapshotTopic) => t.kind === 'topic');
   const qKeys = new Set<string>(snap.questions.map((q) => q.topic_key));
   // 和侧栏一样读一个话题的状态：有题在等是等你；停住了跟看板走（点过“不管了”的不算）；其余按列表的颜色
-  const toneFor = (t: SnapshotTopic): ToneKey => (qKeys.has(t.key) || isWaiting(t) ? 'waiting' : isStopped(t, now, later) ? 'stopped' : listTone(t));
+  const toneFor = (t: SnapshotTopic): ToneKey => (qKeys.has(t.key) || isWaiting(t) ? 'waiting' : isStopped(t, now) ? 'stopped' : listTone(t));
   const views: View[] = snap.projects.map((p: SnapshotProject): View => {
     const own: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => t.project_key === p.key).sort(byRecent);
     const tones = new Map<string, ToneKey>(own.map((t: SnapshotTopic) => [t.key, toneFor(t)]));
@@ -128,7 +128,8 @@ const ProjectsPage: React.FC = () => {
       hot,
       lead,
       last: Math.max(p.updated_at, ...own.map((t: SnapshotTopic) => t.updated_at)),
-      rank: waitN ? 0 : hot.length || leadHot ? 1 : 2,
+      // 护栏停住的专项自己就是一件停住了（要你处理），排最前
+      rank: waitN || isHalted(p) ? 0 : hot.length || leadHot ? 1 : 2,
     };
   });
   const quiet = (x: View): boolean => x.rank === 2 && (['做完', '收起', '已取消'].includes(x.p.status) || now - x.last > QUIET_DAYS * 86400);
@@ -143,10 +144,10 @@ const ProjectsPage: React.FC = () => {
   return (
     <>
       <Head title="专项" sub={sub || undefined} />
-      <div className="scroll pl-page">
+      <div className="scroll pl-page" style={{ '--tw': topics.reduce((most: number, t: SnapshotTopic) => Math.max(most, t.number ? String(t.number).length + 1 : 0), 4) } as React.CSSProperties}>
         <div className="pl-col">
           {!views.length ? (
-            <p className="pl-empty">还没有专项。让管家把一件长期的事开成专项，或在看板上点「整理」，Covey 会看看哪些话题该归到一起。</p>
+            <p className="pl-empty">{tidyOn ? '还没有专项。对管家说一件要做很久的事，它会开成专项；或在看板上点「整理」，Covey 会看看哪些话题该归到一起。' : '还没有专项。对管家说一件要做很久的事，它会开成专项。'}</p>
           ) : null}
           {live.map((x: View) => <ProjectCard key={x.p.key} x={x} now={now} />)}
           {old.length ? (

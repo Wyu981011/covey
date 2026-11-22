@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { pref, setPref } from './lib';
+import { dropLegacy, pref, setPref } from './lib';
 
 /** 界面小状态：主题、侧栏收起、手机侧栏抽屉。主题和收起记在本地。 */
 interface UiState {
@@ -33,30 +33,10 @@ export const setCollapsed = (v: boolean): void => {
 };
 export const setMenu = (v: boolean, focus: UiState['focus'] = ''): void => set({ menu: v, focus });
 
-/** 先放着：主人在网页上把某一轮没做完的先搁下，它就不再出现在“等你的事”和看板的等你里（记在本地） */
-const LATER_KEY = 'covey.later';
-let later: ReadonlySet<string> = (() => {
-  try {
-    return new Set<string>(JSON.parse(window.localStorage.getItem(LATER_KEY) ?? '[]') as string[]);
-  } catch {
-    return new Set<string>();
-  }
-})();
-const laterListeners = new Set<() => void>();
-export const useLater = (): ReadonlySet<string> =>
-  useSyncExternalStore(
-    (cb: () => void) => {
-      laterListeners.add(cb);
-      return () => laterListeners.delete(cb);
-    },
-    () => later,
-  );
-export const putLater = (turnKey: string): void => {
-  later = new Set<string>([...later, turnKey].slice(-200));
-  try {
-    window.localStorage.setItem(LATER_KEY, JSON.stringify([...later]));
-  } catch {
-    /* 隐私模式 */
-  }
-  laterListeners.forEach((l: () => void) => l());
-};
+/* 以前的「先放着」只记在这台浏览器上（covey.later）、只改这一端的计数；T647 P1-C3 起并成会告诉 Covey 的「不管了」（dismiss，
+ * RecoverBits.tsx DismissButton）。旧缓存打开页面时删掉（lib.ts dropLegacy），不再读 */
+try {
+  dropLegacy(typeof window === 'undefined' ? null : window.localStorage);
+} catch {
+  /* 隐私模式 */
+}

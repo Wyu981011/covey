@@ -1,8 +1,9 @@
 import React from 'react';
 import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
+import { Play } from 'lucide-react';
 import type { SnapshotProject, SnapshotTopic } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { useReport, useSnapshot } from '@client/src/hooks/use-workbench';
+import { newOpId, useReport, useSnapshot } from '@client/src/hooks/use-workbench';
 import { shortTime } from '@client/src/lib/workbench-format';
 import { Conversation } from './Conversation';
 import ProjectGraph from './ProjectGraph';
@@ -11,7 +12,10 @@ import ProjectReport from './ProjectReport';
 import { ToneBar } from './ProjectsPage';
 import { Head } from './Shell';
 import { DurValue, Pill, Tile, useTick } from './ui';
-import { leadOf, metrics, ownTopics, projectPill, toneCounts, type ProjectMetrics } from './projectData';
+import { haltWords, isHalted, leadOf, metrics, ownTopics, projectNote, projectPill, toneCounts, type ProjectMetrics } from './projectData';
+import { TopicBadge } from './RoleAvatar';
+import { useOutboxOp } from './sendOp';
+import './recover.css';
 import './mproj.css';
 import { STATES } from './look.gen';
 import { byUpdated, fmtTok, hhmm, isRunning, isWaiting, toneOf, type ToneKey } from './lib';
@@ -54,7 +58,7 @@ export const MetricStrip: React.FC<{ m: ProjectMetrics; topics: SnapshotTopic[] 
           <div className="v">{topics.length}</div>
           <div className="seg">
             {topics.map((t: SnapshotTopic) => (
-              <i key={t.key} className={`tone-${toneOf(t)}`} style={{ flex: 1, background: 'var(--c)' }} />
+              <i key={t.key} className={`tone-${listTone(t)}`} style={{ flex: 1, background: 'var(--c)' }} />
             ))}
           </div>
         </div>
@@ -97,6 +101,23 @@ const MetricLine: React.FC<{ m: ProjectMetrics; topics: SnapshotTopic[] }> = ({ 
   );
 };
 
+/** 护栏停住的专项（T647 P0-3，docs/ui.md 2.2）：头部下面一条红色“停住了 · 原因”和「继续」。继续发 reopen，
+ * 同飞书停住卡上的继续（Covey 把专项改回在做、唤醒次数重新数，token 用完的从现在重新算），回执原地写 */
+const HaltBar: React.FC<{ p: SnapshotProject }> = ({ p }) => {
+  const op = useOutboxOp();
+  return (
+    <div className="pj-halt" role="status">
+      <span className="pj-hw">{haltWords(p)}</span>
+      <span className="pj-hn">{op.line || `停住时负责人不会被叫醒；点「继续」让专项接着做${/token/iu.test(p.status_reason) ? '，token 从现在重新算' : ''}`}</span>
+      {op.phase === 'done' ? null : (
+        <button type="button" className="btn sm pri" disabled={op.busy} onClick={() => void op.run({ op_id: newOpId(), kind: 'reopen', project_key: p.key, payload: {} })}>
+          <Play /> 继续
+        </button>
+      )}
+    </div>
+  );
+};
+
 /** 还没有负责人那一路时，退回 v1：话题列表 + 选中话题的对话 */
 const Fallback: React.FC<{ topics: SnapshotTopic[]; sel: string | undefined; desktop: boolean }> = ({ topics, sel, desktop }) => {
   const list: SnapshotTopic[] = [...topics].sort(byUpdated);
@@ -106,7 +127,7 @@ const Fallback: React.FC<{ topics: SnapshotTopic[]; sel: string | undefined; des
       <div className="rps">
         {list.map((t: SnapshotTopic) => (
           <Link key={t.key} to={`/topics/${encodeURIComponent(t.key)}`} className={`row${cur?.key === t.key && desktop ? ' on' : ''}`}>
-            <i className={`dot tone-${toneOf(t)}`} /><span className="id">T{t.number}</span><span className="t">{t.title}</span>
+            <i className={`dot tone-${toneOf(t)}`} /><TopicBadge number={t.number} /><span className="t">{t.title}</span>
           </Link>
         ))}
         {!list.length ? <p className="t3 a-pempty">这个专项还没有话题。</p> : null}
@@ -147,7 +168,7 @@ const ProjectPage: React.FC = () => {
     <>
       <Head
         title={p.title}
-        sub={<>{p.goal ? `目标：${p.goal.replace(/^\s*目标\s*[:：]\s*/u, '')}` : p.status_reason}</>}
+        sub={<>{p.goal ? `目标：${projectNote(p)}` : projectNote(p)}</>}
         badge={<Pill tone={pillTone} text={pillText} big />}
         tags={undefined}
         back={desktop ? undefined : '/projects'}
@@ -163,6 +184,7 @@ const ProjectPage: React.FC = () => {
           ) : undefined
         }
       />
+      {isHalted(p) ? <HaltBar key={p.key} p={p} /> : null}
       {desktop ? null : <ProjectTabs base={base} view={view} mobile rail={!!lead} />}
       {view === 'chat' && !lead && !desktop ? null : view === 'report' || view === 'rail' ? null : desktop ? <MetricStrip m={m} topics={topics} /> : <MetricLine m={m} topics={topics} />}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, marginTop: view === 'report' || view === 'rail' ? 0 : desktop ? 10 : 4 }}>

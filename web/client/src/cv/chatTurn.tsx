@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Copy } from 'lucide-react';
-import { toast } from 'sonner';
-import type { TurnAnswer, TurnRanWith, TurnView } from '@shared/api.interface';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import type { TurnAnswer, TurnView } from '@shared/api.interface';
+import { AnswerFoot } from './AnswerFoot';
 import { ArtifactFold } from './ArtifactFold';
 import { Md } from './Md';
 import { QuoteButton } from './RoomBits';
@@ -39,6 +39,9 @@ export const AnswerTable: React.FC<{ answers: TurnAnswer[]; label?: string; bare
 
 const isAnswer = (o: TurnView): boolean => !!o.answers?.length || isAnswerBody(o.body);
 
+/** 跳到某一轮时闪的那一圈：品牌色（橙色只说等你和可能卡住，docs/ui.md 2.2） */
+const JUMP_RING = '0 0 0 2px color-mix(in srgb, var(--a1) 70%, transparent)';
+
 /** 你说的一句（或负责人、管家替你说的）：靠右的气泡。答题的那句画成“问题 → 选择”的表，选项外写的字跟在下面；改过的能看原文 */
 export const OwnerBubble: React.FC<{
   o: TurnView; answers?: TurnAnswer[] | null; hl?: boolean;
@@ -50,7 +53,7 @@ export const OwnerBubble: React.FC<{
   const qa: TurnAnswer[] | null = answer ? (o.answers?.length ? o.answers : answers ?? null) : null;
   const label: string | null = answer || (o.by && o.by !== 'owner') || o.via || o.edited ? saidLabel(o, answer) : null;
   return (
-    <div className={`um${o.images?.length ? ' has-img' : ''}${qa ? ' has-qa' : ''}`} data-seq={o.seq} style={hl ? { boxShadow: '0 0 0 2px var(--wait)' } : undefined}>
+    <div className={`um${o.images?.length ? ' has-img' : ''}${qa ? ' has-qa' : ''}`} data-seq={o.seq} style={hl ? { boxShadow: JUMP_RING } : undefined}>
       <div className="um-tx">
         {label ? (
           <span className="a-who">
@@ -105,91 +108,6 @@ const Figures: React.FC<{ turn: TurnView }> = ({ turn }) => {
   );
 };
 
-/** 复制一段字：先用剪贴板接口，嵌在飞书里拿不到时退回选中再复制 */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // 落到下面的老办法
-  }
-  try {
-    const area: HTMLTextAreaElement = document.createElement('textarea');
-    area.value = text;
-    area.setAttribute('readonly', '');
-    area.style.position = 'fixed';
-    area.style.opacity = '0';
-    document.body.appendChild(area);
-    area.select();
-    const ok: boolean = document.execCommand('copy');
-    area.remove();
-    return ok;
-  } catch {
-    return false;
-  }
-}
-
-/** 回答下面一行的“输入”：Harness ｜ 供应商 ｜ 模型 ｜ 思考 ｜ 脱敏 ｜ 工作区（v27 ran_with，没有的不写） */
-export function inputBits(r: TurnRanWith | undefined): string[] {
-  if (!r) return [];
-  return [r.harness, r.provider, r.model, r.effort ? `思考 ${r.effort}` : '', r.redaction ? (r.redaction === 'on' ? '脱敏开' : '脱敏关') : '', r.workspace]
-    .filter((x): x is string => !!x);
-}
-
-/** “输出”：用时 ｜ 速度 ｜ token ｜ 缓存命中（缓存读到的占输入的几成） */
-export function outputBits(t: TurnView): string[] {
-  const out: string[] = [];
-  const secs: number | null | undefined = turnStats(t)?.seconds ?? t.seconds;
-  if (secs) out.push(`用时 ${fmtDur(secs)}`);
-  if (t.speed) out.push(`${Math.round(t.speed)} token/s`);
-  if (t.usage?.total) out.push(`token ${fmtTok(t.usage.total)}`);
-  const input: number = t.usage?.input ?? 0;
-  if (input > 0 && t.usage?.cache_read !== undefined) out.push(`缓存命中 ${((t.usage.cache_read / input) * 100).toFixed(1)}%`);
-  return out;
-}
-
-/** 回答下面两行（像 Codex，和飞书答案卡一样）：输入（用的什么配置）、输出（用了多久、多少 token），各占一行、两个字左对齐；
- *  复制正文放在最后一行的末尾（T645：放在最前面时把“输入”挤到右边，和下一行的“输出”错开了） */
-export const AnswerFoot: React.FC<{ turn: TurnView }> = ({ turn }) => {
-  const [done, setDone] = useState<boolean>(false);
-  const rows: { label: string; tip: string; bits: string[] }[] = [
-    { label: '输入', tip: '这一轮用的配置', bits: inputBits(turn.ran_with) },
-    { label: '输出', tip: '这一轮的用时和用量', bits: outputBits(turn) },
-  ].filter((r) => r.bits.length > 0);
-  const copy = (): void => {
-    void copyText(turn.body).then((ok: boolean) => {
-      if (!ok) {
-        toast.error('没复制上，请手动选中');
-        return;
-      }
-      setDone(true);
-      window.setTimeout(() => setDone(false), 1500);
-    });
-  };
-  const button: React.ReactNode = (
-    <button type="button" className="afoot-copy" onClick={copy} title="复制这条回答" aria-label="复制这条回答">
-      {done ? <Check /> : <Copy />}
-      <span>{done ? '已复制' : '复制'}</span>
-    </button>
-  );
-  return (
-    <div className="afoot">
-      {rows.map((r, i: number) => (
-        <div className="afoot-row" key={r.label}>
-          <b>{r.label}</b>
-          <span className="afoot-bits">
-            {r.bits.map((x: string, j: number) => <span key={j} title={r.tip}>{x}</span>)}
-            {i === rows.length - 1 ? button : null}
-          </span>
-        </div>
-      ))}
-      {rows.length ? null : <div className="afoot-row">{button}</div>}
-    </div>
-  );
-};
-
 /** 回答的那一轮：谁、几点 → 工具（点开是过程）→ 正文 → 图、说明、开的话题、产物 → 没做完时的那一块 */
 export const AgentTurn: React.FC<{
   turn: TurnView;
@@ -213,7 +131,7 @@ export const AgentTurn: React.FC<{
   const hasFigs: boolean = !!(turn.usage || turn.speed || turn.context);
   const chip: boolean = !live && !!(st || hasFigs);
   const showFall: boolean = (live && !!turn.steps?.length) || (open && (!!turn.steps?.length || hasFigs));
-  const ring: React.CSSProperties = hl ? { boxShadow: '0 0 0 2px var(--wait)', borderRadius: 10 } : {};
+  const ring: React.CSSProperties = hl ? { boxShadow: JUMP_RING, borderRadius: 10 } : {};
   return (
     <div className="msg" data-seq={turn.seq} data-room-key={roomKey} style={ring}>
       <div className="who">
@@ -245,7 +163,11 @@ export const AgentTurn: React.FC<{
       {/* 在做的那一轮不显示模型中途的过程话（常是英文的半句），做完才显示结论 */}
       {turn.body && !live && !hideBody ? <Md body={turn.body} dim={false} /> : null}
       {live ? null : <ArtifactFold items={turn.artifacts} />}
+      {/* 停住的那一轮也有底栏（输入、输出两行，T647 P2）：正文是停下时的原话不画时，复制的是原因和技术详情 */}
       {!live && turn.body && !hideBody ? <AnswerFoot turn={turn} /> : null}
+      {!live && hideBody && turn.status === 'failed' ? (
+        <AnswerFoot turn={turn} copy={{ text: [turn.failure?.title ?? '', turn.failure?.detail ?? turn.body].filter(Boolean).join('\n'), label: '复制停住的原因' }} />
+      ) : null}
       {turn.images?.length ? <ShownImages images={turn.images} /> : null}
       {live ? (
         <div className="typing">
@@ -255,8 +177,8 @@ export const AgentTurn: React.FC<{
       ) : null}
       {turn.notes?.length ? <Notes notes={turn.notes} /> : null}
       {turn.started_topics?.length ? <StartedChips items={turn.started_topics} /> : null}
-      {turn.status === 'failed' ? fail ?? <p style={{ color: 'var(--fail)', fontSize: 12 }}>这一轮失败了</p> : null}
-      {turn.status === 'stopped' ? <p className="t3" style={{ fontSize: 12 }}>这一轮被停止了</p> : null}
+      {turn.status === 'failed' ? fail ?? <p style={{ color: 'var(--fail)', fontSize: 12 }}>这一轮停住了</p> : null}
+      {turn.status === 'stopped' ? <p className="t3" style={{ fontSize: 12 }}>这一轮已停止</p> : null}
     </div>
   );
 };

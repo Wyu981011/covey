@@ -1,6 +1,6 @@
 /* 话题页（样张 A）用的纯函数：把轮次分成“你问 → 结论”，取结论第一段、第一句，概括主人那句话。 */
-import type { FailureAction, SnapshotTopic, TurnAnswer, TurnFailure, TurnView } from '@shared/api.interface';
-import { isRunningTone, toneOf, toneWord, type ToneKey } from './lib';
+import type { SnapshotTopic, TopicProgress, TurnAnswer, TurnFailure, TurnView } from '@shared/api.interface';
+import { isRunningTone, toneOf, toneWord, waitText, type ToneKey } from './lib';
 
 /** 一轮：主人的几句话 + Covey 的回答（还没回答时 agent 为 null）；event 行单独成一组 */
 export interface Round {
@@ -151,24 +151,31 @@ export function lastDoneAgent(turns: TurnView[]): TurnView | undefined {
   return undefined;
 }
 
-/** 按钮的叫法照 docs/ui.md 第 6 节 */
-export const ACTION_LABEL: Record<FailureAction, string> = {
-  continue: '检查并继续',
-  retry: '重新来一遍',
-  diagnose: '看原因',
-  split: '拆小再试',
-  switch_model: '换个模型',
-};
-/** 网页上点了按钮，发给这个话题的那句话（发件箱 say）；换模型网页做不了，没有这句 */
-export const ACTION_SAY: Partial<Record<FailureAction, string>> = {
-  continue: '继续',
-  retry: '重新来一遍这一轮',
-  diagnose: '查一下这一轮为什么没做完（只读排查，先别改东西）',
-  split: '把这一轮拆小一点再试',
-};
+/* 没成功的一轮的按钮怎么叫、怎么做在 recover.ts（v33：照 failure.labels、how 发 recover，不再替你说一句话） */
 
-/** 没有 failure 字段的失败轮：只给「检查并继续」 */
+/** 没有 failure 字段的失败轮：只给「检查并继续」（发 recover，Covey 按记录定能不能做） */
 export const FALLBACK_FAILURE: TurnFailure = { title: '上一轮没做完', actions: ['continue'] };
+
+/** 在做的话题此刻的进度说明（T647 P1-C4，同飞书任务卡的状态行；docs/web.md 进度 slow_step、command）：
+ * - 在等一条命令跑完：“在等一条命令跑完 · 已 38 分钟”（仍是在做，不算卡住）；
+ * - 这步比平均慢：“第 3 步已做 35 分钟，此前平均每步约 6 分钟”；
+ * - 可能卡住：“40 分钟没有动静，可能卡住了”（分钟数从最后动静算，不写死 30 分钟：阈值是 Covey 的 COVEY_PROGRESS_STUCK_MINUTES）。
+ * 都没有是空串。stuck：这句说的是可能卡住（橙色） */
+export function progressNote(p: TopicProgress | undefined, now: number): { text: string; stuck: boolean } {
+  if (!p) return { text: '', stuck: false };
+  const since = (at: number | null | undefined, secs: number): number => (at ? Math.max(secs, now - at) : secs);
+  if (p.command) return { text: `在等一条命令跑完 · 已 ${waitText(since(p.command.since, p.command.seconds))}`, stuck: false };
+  if (p.maybe_stuck) {
+    const quiet: string = p.last_activity_at ? `${waitText(now - p.last_activity_at)}没有动静，` : '';
+    return { text: `${quiet}可能卡住了`, stuck: true };
+  }
+  if (p.slow_step) {
+    const s = p.slow_step;
+    const usual: string = s.usual ? `，此前平均每步约 ${waitText(s.usual)}` : '';
+    return { text: `第 ${s.number} 步已做 ${waitText(since(s.since, s.seconds))}${usual}`, stuck: false };
+  }
+  return { text: '', stuck: false };
+}
 
 /** 页面上的状态字：look 的词表（等你、停住了、可能卡住、有结果、在做……） */
 export function stateWord(t: Pick<SnapshotTopic, 'state' | 'unseen' | 'tone'>): string {
@@ -201,14 +208,14 @@ export function listTone(t: SnapshotTopic): ToneKey {
   return k === 'stopped' && typeof t.board === 'string' && t.board !== 'stopped' ? 'cancelled' : k;
 }
 
-/** 停住：最新一轮没做完、话题不在做也不在等你，三天内的（更早的不再占看板） */
+/** 停住：最新一轮没做完、话题不在做也不在等你。开着看板时跟看板分组走（点了「不管了」、看过 12 小时的不算，和飞书一个数）；
+ * 没开看板的旧数据取三天内的（更早的不再占要你处理） */
 const STOP_WINDOW = 3 * 86400;
-export function isStopped(t: SnapshotTopic, now: number, later: ReadonlySet<string>): boolean {
+export function isStopped(t: SnapshotTopic, now: number): boolean {
   if (t.kind !== 'topic') return false;
-  if (typeof t.board === 'string') return t.board === 'stopped' && !(t.latest_key && later.has(t.latest_key));
+  if (typeof t.board === 'string') return t.board === 'stopped';
   const k = toneOf(t);
   if (isRunningTone(k) || k === 'waiting') return false;
-  if (t.latest_key && later.has(t.latest_key)) return false;
   return (k === 'stopped' || t.latest_status === 'failed') && now - t.updated_at < STOP_WINDOW;
 }
 

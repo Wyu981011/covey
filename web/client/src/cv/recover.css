@@ -1,0 +1,15 @@
+/* 没成功的一轮的按钮（RecoverBits.tsx，T647 P0-5）：按钮一行，排着自动重试时前面一句倒计时，点完后面一句回执 */
+.cv .rc-acts{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
+.cv .rc-btns{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.cv .rc-auto{font-size:12px;color:var(--t2);font-variant-numeric:tabular-nums}
+.cv .rc-said{font-size:12px;color:var(--t2);line-height:1.5}
+.cv .rc-said.bad{color:var(--fail)}
+/* 失败说明的第二行：能做什么（同 core/failure.py split_title） */
+.cv .a-ft .a-frest{display:block;font-size:12.5px;color:var(--t2);margin-top:2px}
+/* 在做的进度说明：在等命令、这步比平均慢（不是卡住，用灰；卡住才是橙 .a-stuck） */
+.cv .a-slow{color:var(--t2)}
+/* 护栏停住的专项（T647 P0-3）：红色“停住了 · 原因”和「继续」 */
+.cv .pj-halt{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:8px 16px 0;padding:8px 12px;border:1px solid var(--line2);border-left:2px solid var(--fail);border-radius:10px}
+.cv .pj-halt .pj-hw{color:var(--fail);font-weight:600;font-size:13px}
+.cv .pj-halt .pj-hn{font-size:12px;color:var(--t2);flex:1;min-width:0}
+.cv.m .pj-halt{margin:6px 12px 0}

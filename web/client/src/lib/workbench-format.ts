@@ -30,20 +30,6 @@ export function ageSeconds(v: string | null | undefined): number | null {
   return d ? Math.max(0, Math.round((Date.now() - d.getTime()) / 1000)) : null;
 }
 
-export const OP_LABELS: Record<string, string> = {
-  say: '说了一句',
-  answer: '提交了回答',
-  stop: '要求停止',
-  reopen: '要求重新展开',
-  seen: '标记已看',
-};
-
-export function opState(state: string, message: string): string {
-  if (state === 'done') return '已执行';
-  if (state === 'failed') return message ? `失败：${message}` : '失败';
-  return '已发出';
-}
-
 export function errorText(e: unknown): string {
   const err = e as { response?: { data?: { error?: { message?: string } } }; message?: string };
   return err?.response?.data?.error?.message ?? err?.message ?? '出错了';

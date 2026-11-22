@@ -11,8 +11,9 @@ import { ageMs, errorText } from '@client/src/lib/workbench-format';
 import { byRecent, isRunning, isWaiting, pref, setPref, toneOf, toneWord, topicNumberOf, type ToneKey } from './lib';
 import { Avatar, Dot, useTick } from './ui';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
-import { setCollapsed, setMenu, useLater, useUi } from './store';
-import { isStopped, listTone } from './topicText';
+import { setCollapsed, setMenu, useUi } from './store';
+import { listTone } from './topicText';
+import { asks, askTotal, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
 import './covey.css';
 import './layout-a.css';
 import './night.css';
@@ -20,6 +21,7 @@ import './reading.css';
 import './v2.css';
 import './tags.css';
 import './sidebar.css';
+import './unify.css';
 
 
 /** 侧栏话题行右下角画状态点的状态：要你处理、告诉你一声和在做的；做完、空闲、排队、已停止不画（灰点不带信息） */
@@ -83,8 +85,8 @@ const ProjectGroup: React.FC<{ x: SideProject; snap: SnapshotResponse; stoppedKe
   const base: string = `/projects/${encodeURIComponent(p.key)}`;
   const activeTopic: SnapshotTopic | undefined = x.topics.find((t: SnapshotTopic) => loc.pathname === `/topics/${encodeURIComponent(t.key)}`);
   const onProject: boolean = loc.pathname === base || loc.pathname.startsWith(`${base}/`);
-  // 有等你、停住或在做的话题时默认展开；手动收起过的照手动的
-  const attention: boolean = x.waiting > 0 || x.stopped > 0 || x.running > 0;
+  // 有等你、停住或在做的话题（或专项自己被护栏停住）时默认展开；手动收起过的照手动的
+  const attention: boolean = x.waiting > 0 || x.stopped > 0 || x.running > 0 || isHalted(p);
   const saved: string = pref(`grp.${p.key}`, '');
   const [open, setOpen] = useState<boolean>(saved ? saved === '1' : attention);
   const [all, setAll] = useState<boolean>(false);
@@ -102,8 +104,10 @@ const ProjectGroup: React.FC<{ x: SideProject; snap: SnapshotResponse; stoppedKe
   let list: SnapshotTopic[] = all ? ordered : ordered.slice(0, n);
   if (activeTopic && !list.includes(activeTopic)) list = [...list, activeTopic];
   const lead: SnapshotTopic | undefined = snap.topics.find((t: SnapshotTopic) => t.key === p.lead_topic_key);
-  const cnt: React.ReactNode = x.waiting || x.stopped
-    ? <em className="a-cnt wait" title={`${x.waiting} 等你 · ${x.stopped} 停住`}>{x.waiting + x.stopped}</em>
+  // 护栏停住的专项自己也算一件停住了（和看板、飞书一个数），名字后面的数是红的
+  const halted: boolean = isHalted(p);
+  const cnt: React.ReactNode = x.waiting || x.stopped || halted
+    ? <em className={`a-cnt wait${halted ? ' halt' : ''}`} title={`${x.waiting} 等你 · ${x.stopped + (halted ? 1 : 0)} 停住了${halted ? `（专项${haltWords(p)}）` : ''}`}>{x.waiting + x.stopped + (halted ? 1 : 0)}</em>
     : x.running ? <em className="a-cnt run" title={`${x.running} 在做`}>{x.running}</em> : <em className="a-cnt">{x.topics.length}</em>;
   const toggle = (): void => {
     setPref(`grp.${p.key}`, show ? '0' : '1');
@@ -249,7 +253,6 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
   const { data } = useSnapshot();
   const ui = useUi();
   const loc = useLocation();
-  const later = useLater();
   const now: number = useTick(60000);
   const [shown, setShown] = useState<number>(LOOSE_PAGE);
   const scroller = React.useRef<HTMLDivElement>(null);
@@ -265,9 +268,12 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
   // 话题头像一样宽（按最长的号码，至少 T 加三位）：一列标题对成一条线，T7 和 T645 不会让标题错开
   const logoChars: number = topics.reduce((most: number, t: SnapshotTopic) => Math.max(most, t.number ? String(t.number).length + 1 : 0), 4);
   const qKeys = new Set<string>(data.questions.map((q) => q.topic_key));
-  const waitingN: number = topics.filter((t: SnapshotTopic) => isWaiting(t) || qKeys.has(t.key)).length;
-  const stoppedKeys = new Set<string>(topics.filter((t: SnapshotTopic) => !qKeys.has(t.key) && isStopped(t, now, later)).map((t: SnapshotTopic) => t.key));
-  const running: number = topics.filter(isRunning).length;
+  // 要你处理：和看板、手机标签栏同一个数（projectData.ts asks）：管家、负责人的题，可能卡住，护栏停住的专项都算
+  const a: Asks = asks(data, now);
+  const act: number = askTotal(a);
+  const stoppedKeys: Set<string> = stoppedSet(a);
+  // “N 在做”同看板结论带：可能卡住的算在要你处理里，不再数一遍
+  const running: number = topics.filter((t: SnapshotTopic) => toneOf(t) === 'running').length;
   const ids = new Set<string>(data.projects.map((p: SnapshotProject) => p.key));
   const groups: SideProject[] = data.projects.map((p: SnapshotProject): SideProject => {
     const own: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => t.project_key === p.key).sort(byRecent);
@@ -281,8 +287,8 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
     };
   });
   const quiet = (x: SideProject): boolean =>
-    !x.waiting && !x.stopped && !x.running && p2done(x.p.status, now - x.last > QUIET_DAYS * 86400);
-  const rank = (x: SideProject): number => (x.waiting || x.stopped ? 0 : x.running ? 1 : 2);
+    !x.waiting && !x.stopped && !x.running && !isHalted(x.p) && p2done(x.p.status, now - x.last > QUIET_DAYS * 86400);
+  const rank = (x: SideProject): number => (x.waiting || x.stopped || isHalted(x.p) ? 0 : x.running ? 1 : 2);
   const live: SideProject[] = groups.filter((x: SideProject) => !quiet(x)).sort((a: SideProject, b: SideProject) => rank(a) - rank(b) || b.last - a.last || a.p.key.localeCompare(b.p.key));
   const old: SideProject[] = groups.filter(quiet).sort((a: SideProject, b: SideProject) => b.last - a.last);
   const hot = (t: SnapshotTopic): boolean => isWaiting(t) || isRunning(t) || qKeys.has(t.key) || stoppedKeys.has(t.key);
@@ -346,7 +352,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
               <>
                 <span className="t">看板</span>
                 <span className="r">
-                  {waitingN + stoppedKeys.size ? <em className="a-badge wait" title="要你处理">{waitingN + stoppedKeys.size} 件</em> : null}
+                  {act ? <em className="a-badge wait" title="要你处理（等你、停住了、可能卡住）">{act} 件</em> : null}
                   {running ? <em className="a-badge run">{running} 在做</em> : null}
                 </span>
               </>
@@ -467,11 +473,9 @@ const TabBar: React.FC = () => {
   const loc = useLocation();
   const ui = useUi();
   const { data } = useSnapshot();
-  const later = useLater();
   const now: number = useTick(60000);
-  const topics: SnapshotTopic[] = (data?.topics ?? []).filter((t: SnapshotTopic) => t.kind === 'topic');
-  const qKeys = new Set<string>((data?.questions ?? []).map((q) => q.topic_key));
-  const act: number = topics.filter((t: SnapshotTopic) => isWaiting(t) || qKeys.has(t.key) || toneOf(t) === 'stuck' || isStopped(t, now, later)).length;
+  // 和看板、侧栏同一个数（projectData.ts asks）
+  const act: number = data ? askTotal(asks(data, now)) : 0;
   const on = (focus: 'topics'): boolean => ui.menu && ui.focus === focus;
   return (
     <nav className="nb-tabs" aria-label="主导航" style={gap ? { paddingRight: gap } : undefined}>

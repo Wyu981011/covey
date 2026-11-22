@@ -1,17 +1,14 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertTriangle, Check, ChevronDown, Clock, Loader2, RotateCcw } from 'lucide-react';
-import type { FailureAction, PlanItem, SnapshotProject, SnapshotTopic, StepView, TopicProgress, TurnFailure, TurnView } from '@shared/api.interface';
+import { AlertTriangle, Check, ChevronDown, Clock, Loader2 } from 'lucide-react';
+import type { PlanItem, SnapshotProject, SnapshotTopic, StepView, TopicProgress, TurnFailure, TurnView } from '@shared/api.interface';
 import { useSnapshot, useTurns } from '@client/src/hooks/use-workbench';
-import { usePending } from '@client/src/lib/conv-store';
-import { useSay } from './Composer';
-import { runAction } from './Timeline';
+import { DismissButton, RecoverActions, useBoardOn } from './RecoverBits';
 import { Dot, useTick } from './ui';
 import { fmtDur, hhmm, isFinished, isRunning, isWaiting, shortWhen, toneOf, toneWord, type ToneKey } from './lib';
-import { putLater, useLater } from './store';
 import { TopicMemory } from './MemoryPanel';
 import {
-  ACTION_LABEL, FALLBACK_FAILURE, ago, etaText, firstParagraph, firstSentence, groupRounds, isHelperTurn, lastAgent, lastDoneAgent, splitTitle, stateWord, stopPressing, type Round,
+  FALLBACK_FAILURE, ago, etaText, firstParagraph, firstSentence, groupRounds, isHelperTurn, lastAgent, lastDoneAgent, listTone, progressNote, splitTitle, stopPressing, type Round,
 } from './topicText';
 
 /** 一个话题此刻的进度：v4 的 progress 优先，没有就从 v3 的 plan / steps 和轮次里凑 */
@@ -87,9 +84,7 @@ export const TopicOverview: React.FC<{ topicKey: string; mobile?: boolean; compa
   const { data } = useTurns(topicKey);
   const nav = useNavigate();
   const now: number = useTick(30000);
-  const say = useSay(topicKey);
-  const later = useLater();
-  const pending = usePending(topicKey);
+  const board: boolean = useBoardOn();
   const t: SnapshotTopic | undefined = v.topic;
   if (!t) return null;
   const p: TopicProgress | undefined = v.progress;
@@ -99,7 +94,6 @@ export const TopicOverview: React.FC<{ topicKey: string; mobile?: boolean; compa
   const doneRound: Round | undefined = doneT ? v.rounds.find((r: Round) => r.agent === doneT) : undefined;
   const concl: string = doneT ? firstParagraph(doneT.body, 220) : '';
   const question = data?.question ?? null;
-  const maxSeq: number = v.turns.length ? v.turns[v.turns.length - 1].seq : 0;
   const lastRound: Round | undefined = v.rounds.filter((r: Round) => !r.event).slice(-1)[0];
   // 停住的还在看板上（要你处理）才是“等你的事”；看板不列了，就只说原因和能做什么（T550 P1-4）
   const pressing: boolean = v.pressing;
@@ -108,17 +102,19 @@ export const TopicOverview: React.FC<{ topicKey: string; mobile?: boolean; compa
   let where: React.ReactNode = null;
   const stepPill: React.ReactNode = v.total > 0 ? <span className="a-step">步骤 {v.done}/{v.total}</span> : null;
   const eta: string = etaText(p?.eta_seconds);
-  if (p?.phase || p?.last_activity) {
+  // 在等命令、这步比平均慢、可能卡住（slow_step、command，同飞书任务卡的状态行）
+  const note = v.live ? progressNote(p, now) : { text: '', stuck: false };
+  if (p?.phase || p?.last_activity || note.text) {
     where = (
       <>
-        {p.phase ? <b>{p.phase}</b> : null}
+        {p?.phase ? <b>{p.phase}</b> : null}
         <span className="a-sub">
           {stepPill}
           {eta ? <span>预计{v.failed ? ' 继续后' : '还要'} {eta}</span> : null}
-          {p.last_activity ? (
+          {p?.last_activity ? (
             <span><Clock />{p.last_activity_at ? `${ago(p.last_activity_at, now)}：` : ''}{p.last_activity}</span>
           ) : null}
-          {p.maybe_stuck ? <span className="a-stuck">可能卡住了（30 分钟没有动静）</span> : null}
+          {note.text ? <span className={note.stuck ? 'a-stuck' : 'a-slow'}>{note.text}</span> : null}
         </span>
       </>
     );
@@ -149,7 +145,7 @@ export const TopicOverview: React.FC<{ topicKey: string; mobile?: boolean; compa
   } else if (v.last) {
     where = (
       <b className="a-plain">
-        {isFinished(t) ? `第 ${lastRound?.n ?? t.round} 轮做完了` : `${stateWord(t)} · 第 ${lastRound?.n ?? t.round} 轮`}
+        {isFinished(t) ? `第 ${lastRound?.n ?? t.round} 轮做完了` : `${toneWord(listTone(t))} · 第 ${lastRound?.n ?? t.round} 轮`}
         <span className="a-mute"> · {hhmm(v.last.ended_at ?? v.last.started_at)}</span>
       </b>
     );
@@ -184,28 +180,19 @@ export const TopicOverview: React.FC<{ topicKey: string; mobile?: boolean; compa
         </button>
       </>
     );
-  } else if (v.failed && v.last && !(pressing && later.has(v.last.key))) {
+  } else if (v.failed && v.last) {
+    // v33：按钮照 failure 的 labels、how、auto_retry 画，点了发 recover（同飞书任务卡上的同名按钮），点完原地写 Covey 的回执；
+    // 「不管了」告诉 Covey 从看板拿掉（P1-C3，以前的“先放着”只记在本机）
     const f: TurnFailure = v.last.failure ?? FALLBACK_FAILURE;
-    const sent: boolean = pending.some((x) => x.baseSeq >= v.last!.seq && x.phase !== 'failed');
-    const [head, rest] = splitTitle(f.title);
-    wait = sent ? (
-      <span className="a-mute">已发出，等 Covey 接着做</span>
-    ) : (
-      <>
-        <span className="a-why">
-          <b>{head}</b>
-          {rest ? <span className="a-mute">{rest}</span> : null}
-        </span>
-        <span className="a-wb">
-          {f.actions.map((a: FailureAction, i: number) => (
-            <button type="button" key={a} className={`btn sm${i === 0 ? ' pri' : ''}`} onClick={() => runAction(a, (text: string) => say(text, maxSeq))}>
-              {a === 'continue' ? <RotateCcw /> : null}
-              {ACTION_LABEL[a]}
-            </button>
-          ))}
-          {pressing ? <button type="button" className="btn sm a-ghost" onClick={() => putLater(v.last!.key)}>先放着</button> : null}
-        </span>
-      </>
+    wait = (
+      <RecoverActions
+        className="a-wb"
+        failure={f}
+        topicKey={topicKey}
+        jobId={v.last.job_id}
+        canSwitch={t.kind === 'topic'}
+        extra={pressing && board && t.kind === 'topic' ? <DismissButton topicKey={topicKey} className="btn sm a-ghost" /> : null}
+      />
     );
   }
 
@@ -281,7 +268,9 @@ export const ProgressRail: React.FC<{ topicKey: string }> = ({ topicKey }) => {
   const p: TopicProgress | undefined = v.progress;
   const project: SnapshotProject | undefined = snap?.projects.find((x: SnapshotProject) => x.key === t?.project_key);
   const eta: string = etaText(p?.eta_seconds);
-  const stuck: boolean = !!p?.maybe_stuck;
+  // 进度说明：可能卡住时说它多久没动静（阈值是 Covey 的设置，不写死 30 分钟）；在等命令、这步比平均慢也说一句
+  const note = v.live ? progressNote(p, now) : { text: '', stuck: false };
+  const stuck: boolean = note.stuck;
   return (
     <aside className="a-rail" aria-label="进度">
       <h3>进度</h3>
@@ -295,11 +284,12 @@ export const ProgressRail: React.FC<{ topicKey: string }> = ({ topicKey }) => {
         </>
       ) : (
         <div className="a-rbig">
-          <b>{v.live ? '在做' : t ? stateWord(t) : ''}</b>
+          {/* 停住的跟看板走：点过不管了、看板不列了是灰的已停止，和页头、结论带一个说法 */}
+          <b>{v.live ? '在做' : t ? toneWord(listTone(t)) : ''}</b>
           {v.live?.started_at ? <span>本轮已跑 {fmtDur(now - v.live.started_at, false)}</span> : eta ? <span>预计还要{eta}</span> : null}
         </div>
       )}
-      {stuck ? <p className="a-stuck">30 分钟没有动静，可能卡住了</p> : null}
+      {note.text ? <p className={note.stuck ? 'a-stuck' : 'a-slow'}>{note.text}</p> : null}
       {v.plan.length ? (
         <ol className="a-steps">
           {v.plan.map((s: PlanItem, i: number) => {

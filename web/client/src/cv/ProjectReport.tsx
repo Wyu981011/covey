@@ -114,7 +114,7 @@ const Timeline: React.FC<{ model: ReportModel; lead: Lane | undefined; now: numb
           <span><i className="sw" style={{ background: 'var(--run)' }} />在做</span>
           <span><i className="sw" style={{ background: GREY }} />做完的轮次</span>
           <span><i className="sw" style={{ background: 'var(--fail)' }} />没做成</span>
-          <span><i className="sw" style={{ background: 'var(--wait)', height: 2 }} />等你回答</span>
+          <span><i className="sw" style={{ background: 'var(--wait)', height: 2 }} />等你</span>
           <span><span style={{ color: 'var(--done)' }}>●</span>&nbsp;话题做完</span>
         </span>
         <span className="rtl-seg">

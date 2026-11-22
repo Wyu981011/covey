@@ -2,10 +2,10 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import type { LaunchData, LaunchModel, LaunchPayload, LaunchWorkspace, SayFile, SettingsOption, SnapshotResponse } from '@shared/api.interface';
-import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
 import { newOpId, SNAPSHOT_KEY, useSettings } from '@client/src/hooks/use-workbench';
-import { errorText } from '@client/src/lib/workbench-format';
 import { pref, setPref } from './lib';
+import { opWords } from './opWords';
+import { sendOp, type OpResult } from './sendOp';
 
 /* ---------- 联动（和飞书启动卡一样，只有这几条；v17） ---------- */
 export type Sel = Omit<LaunchPayload, 'text'>;
@@ -106,7 +106,8 @@ const useStore = (): Store =>
     () => store,
   );
 
-export type Phase = 'idle' | 'sending' | 'done' | 'failed';
+/** late：等满了 Covey 还没回音（不是失败：操作还在发件箱里，Covey 回来会照开；说法同 opWords，P1-C2） */
+export type Phase = 'idle' | 'sending' | 'done' | 'failed' | 'late';
 export interface LaunchBox {
   data: LaunchData;
   sel: Sel;
@@ -157,43 +158,30 @@ export function useLaunchBox(): LaunchBox | null {
           setMessage(m);
         }
       };
-      const opId: string = newOpId();
-      try {
-        await postOutbox({ op_id: opId, kind: 'launch', payload: { ...payload } });
-      } catch (e) {
-        show('failed', `没发出去：${errorText(e)}`);
+      // 开话题要先取回附件，回执可能比别的操作慢：多等一会（2 分钟），等满了也不算失败
+      const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'launch', payload: { ...payload } }, undefined, () => !alive.current, 120000);
+      if (r.phase === 'unsent' || r.phase === 'failed') {
+        show('failed', opWords(r.phase, r.message));
         return;
       }
-      for (let i = 0; i < 80; i += 1) {
-        await sleep(i < 3 ? 700 : 1500);
-        let r;
-        try {
-          r = await fetchOutboxStatus(opId);
-        } catch {
-          continue;
-        }
-        if (r.state === 'failed') {
-          show('failed', r.message || '没有成功');
+      if (r.phase === 'timeout') {
+        show('late', opWords('timeout'));
+        return;
+      }
+      put({ touched: null });
+      if (alive.current) onDone();
+      show('done', r.message);
+      const num: number = Number(/T(\d+)/.exec(r.message)?.[1] ?? 0);
+      // 等新话题推上来再跳（Covey 回执前就推它；现网第一次验收等了一分多钟，这里最多等 90 秒）
+      for (let k = 0; num && k < 90 && alive.current; k += 1) {
+        void qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
+        const t = qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY)?.topics.find((x) => x.number === num && x.kind === 'topic');
+        if (t) {
+          nav(`/topics/${encodeURIComponent(t.key)}`);
           return;
         }
-        if (r.state !== 'done') continue;
-        put({ touched: null });
-        if (alive.current) onDone();
-        show('done', r.message);
-        const num: number = Number(/T(\d+)/.exec(r.message)?.[1] ?? 0);
-        // 等新话题推上来再跳（Covey 回执前就推它；现网第一次验收等了一分多钟，这里最多等 90 秒）
-        for (let k = 0; num && k < 90 && alive.current; k += 1) {
-          void qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
-          const t = qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY)?.topics.find((x) => x.number === num && x.kind === 'topic');
-          if (t) {
-            nav(`/topics/${encodeURIComponent(t.key)}`);
-            return;
-          }
-          await sleep(1000);
-        }
-        return;
+        await sleep(1000);
       }
-      show('failed', 'Covey 没有回应，过一会儿再看');
     })();
   };
   return {

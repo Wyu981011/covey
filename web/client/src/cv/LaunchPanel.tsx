@@ -125,6 +125,7 @@ export const LaunchNote: React.FC<{ box: LaunchBox }> = ({ box }) => {
       {worktree ? <div className="lx-hint">独立 worktree 要在飞书启动卡上点开始（建 worktree 只有启动卡能做）</div> : null}
       {box.phase === 'sending' ? <div className="lx-hint">正在开话题…</div> : null}
       {box.phase === 'failed' ? <div className="lx-hint bad" role="alert">{box.message}</div> : null}
+      {box.phase === 'late' ? <div className="lx-hint" role="status">{box.message}</div> : null}
       {box.phase === 'done' && box.message ? <div className="lx-hint" role="status">{box.message}</div> : null}
     </>
   );

@@ -1,0 +1,96 @@
+import React, { useState } from 'react';
+import { Check, Copy } from 'lucide-react';
+import { toast } from 'sonner';
+import type { TurnRanWith, TurnView } from '@shared/api.interface';
+import { fmtDur, fmtTok, turnStats } from './lib';
+
+/* 回答下面的输入、输出两行和「复制」（T645）：话题页、大厅的回答和大厅里展开的话题结论（回带）共用，和飞书答案卡、回带卡一样 */
+
+/** 复制一段字：先用剪贴板接口，嵌在飞书里拿不到时退回选中再复制 */
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // 落到下面的老办法
+  }
+  try {
+    const area: HTMLTextAreaElement = document.createElement('textarea');
+    area.value = text;
+    area.setAttribute('readonly', '');
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    const ok: boolean = document.execCommand('copy');
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/** 回答下面一行的“输入”：Harness ｜ 供应商 ｜ 模型 ｜ 思考 ｜ 脱敏 ｜ 工作区（v27 ran_with，没有的不写） */
+export function inputBits(r: TurnRanWith | undefined): string[] {
+  if (!r) return [];
+  return [r.harness, r.provider, r.model, r.effort ? `思考 ${r.effort}` : '', r.redaction ? (r.redaction === 'on' ? '脱敏开' : '脱敏关') : '', r.workspace]
+    .filter((x): x is string => !!x);
+}
+
+/** “输出”：用时 ｜ 速度 ｜ token ｜ 缓存命中（缓存读到的占输入的几成） */
+export function outputBits(t: TurnView): string[] {
+  const out: string[] = [];
+  const secs: number | null | undefined = turnStats(t)?.seconds ?? t.seconds;
+  if (secs) out.push(`用时 ${fmtDur(secs)}`);
+  if (t.speed) out.push(`${Math.round(t.speed)} token/s`);
+  if (t.usage?.total) out.push(`token ${fmtTok(t.usage.total)}`);
+  const input: number = t.usage?.input ?? 0;
+  if (input > 0 && t.usage?.cache_read !== undefined) out.push(`缓存命中 ${((t.usage.cache_read / input) * 100).toFixed(1)}%`);
+  return out;
+}
+
+/** 回答下面两行（像 Codex，和飞书答案卡一样）：输入（用的什么配置）、输出（用了多久、多少 token），各占一行、两个字左对齐；
+ *  复制正文放在最后一行的末尾（T645：放在最前面时把“输入”挤到右边，和下一行的“输出”错开了） */
+export const AnswerFoot: React.FC<{
+  turn: TurnView;
+  /** 复制什么（默认是回答正文）；停住那一轮正文是停下时的原话、不画，复制的是原因和技术详情 */
+  copy?: { text: string; label: string };
+}> = ({ turn, copy: what }) => {
+  const [done, setDone] = useState<boolean>(false);
+  const rows: { label: string; tip: string; bits: string[] }[] = [
+    { label: '输入', tip: '这一轮用的配置', bits: inputBits(turn.ran_with) },
+    { label: '输出', tip: '这一轮的用时和用量', bits: outputBits(turn) },
+  ].filter((r) => r.bits.length > 0);
+  const copy = (): void => {
+    void copyText(what?.text ?? turn.body).then((ok: boolean) => {
+      if (!ok) {
+        toast.error('没复制上，请手动选中');
+        return;
+      }
+      setDone(true);
+      window.setTimeout(() => setDone(false), 1500);
+    });
+  };
+  const button: React.ReactNode = (
+    <button type="button" className="afoot-copy" onClick={copy} title={what?.label ?? '复制这条回答'} aria-label={what?.label ?? '复制这条回答'}>
+      {done ? <Check /> : <Copy />}
+      <span>{done ? '已复制' : '复制'}</span>
+    </button>
+  );
+  return (
+    <div className="afoot">
+      {rows.map((r, i: number) => (
+        <div className="afoot-row" key={r.label}>
+          <b>{r.label}</b>
+          <span className="afoot-bits">
+            {r.bits.map((x: string, j: number) => <span key={j} title={r.tip}>{x}</span>)}
+            {i === rows.length - 1 ? button : null}
+          </span>
+        </div>
+      ))}
+      {rows.length ? null : <div className="afoot-row">{button}</div>}
+    </div>
+  );
+};
