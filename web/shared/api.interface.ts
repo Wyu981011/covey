@@ -15,8 +15,9 @@ export const isOutboxKind = (v: string): v is OutboxKind =>
 export const OUTBOX_STATES = ['new', 'done', 'failed'] as const;
 export type OutboxState = (typeof OUTBOX_STATES)[number];
 
-/** collab（v31）：一次协作（多参与者的往返），见 CollabView */
-export const SYNC_TYPES = ['project', 'topic', 'turn', 'question', 'settings', 'collab'] as const;
+/** collab（v31）：一次协作（多参与者的往返），见 CollabView。
+ * login（自托管，T653）：主人在飞书对一个网页登录请求点了允许或拒绝，key 是请求 id，data 是 `{decision: 'approved' | 'denied', decided_at}`；妙搭模式没有这张表，收到就跳过 */
+export const SYNC_TYPES = ['project', 'topic', 'turn', 'question', 'settings', 'collab', 'login'] as const;
 export type SyncType = (typeof SYNC_TYPES)[number];
 export const isSyncType = (v: string): v is SyncType =>
   (SYNC_TYPES as readonly string[]).includes(v);

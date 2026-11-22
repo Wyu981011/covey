@@ -59,6 +59,7 @@ from covey.cards.overview import DISMISS as OVERVIEW_DISMISS, UNDO as OVERVIEW_U
 from covey.cards.board import KINDS as BOARD_KINDS
 from covey.cards.app_setup import SKIP as APP_SETUP_SKIP, START as APP_SETUP_START
 from covey.cards.welcome import KIND as WELCOME_KIND
+from covey.cards.web_login import KINDS as WEB_LOGIN_KINDS
 from covey.cards.proxy_panel import KINDS as PROXY_PANEL_KINDS
 from covey.cards.proxy_resend import RESEND as PROXY_RESEND, SUGGEST as PROXY_SUGGEST
 from covey.cards.owner_send import (ASK as OWNER_SEND_ASK, DROP as OWNER_SEND_DROP, PICK as OWNER_SEND_PICK,
@@ -693,6 +694,7 @@ class RetiredHarnessTests(unittest.TestCase):
         private |= BOARD_KINDS  # The 看板's 刷新 and 记为看过 (tests/test_digest.py).
         private |= {REMEMBER_KIND}  # 你反复说的 on the evening digest (tests/test_memory_candidates.py).
         private |= {APP_SETUP_START, APP_SETUP_SKIP}  # 飞书应用待补 (tests/test_app_setup.py).
+        private |= WEB_LOGIN_KINDS  # 网页登录确认 (tests/test_web_login.py).
         private |= {WELCOME_KIND}  # 发这句 on the welcome card (tests/test_welcome.py).
         private |= {GROUP_MENU_KIND}  # A personal group's menu card (tests/test_personal_spaces.py).
         private |= REDACTION_KINDS  # The 设置 card's 脱敏 tab (tests/test_redaction_panel.py).

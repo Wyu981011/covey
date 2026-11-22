@@ -119,7 +119,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
     EARLY = ('workspace_manager', 'launch_model_picker', 'directory_picker', 'harness_switch', 'rewind')
     PANELS = ('proxy.panel', 'proxy.resend', 'proxy.owner_send', 'group_manager', 'redaction_panel', 'nodes.panel',
               'butler_panel', 'settings_hub', 'settings_hub.memory', 'overview', 'digest', 'app_setup', 'welcome',
-              'group_menu', 'project_tidy', 'review', 'collab.cards')
+              'group_menu', 'project_tidy', 'review', 'collab.cards', 'web_login')
 
     # What only the Bridge uses, built by _build_parts: at once in the Bridge (the default), on first use in a
     # task runner (``task_runner=True``), which rarely meets any of it.
@@ -127,7 +127,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
              'weekly_usage', 'group_manager', 'redaction_panel', 'butler_panel',
              'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'digest',
              'topic_seen', 'app_setup', 'dispatch_cards', 'project_cards', 'projects', 'project_tidy',
-             'project_loop', 'patrol', 'devices', 'nodes', 'web_sync', 'source_watch', 'extension_features', 'features', 'menu', 'group_menu', 'group_boards',
+             'project_loop', 'patrol', 'devices', 'nodes', 'web_sync', 'web_login', 'source_watch', 'extension_features', 'features', 'menu', 'group_menu', 'group_boards',
              'welcome', 'revisits', 'review', 'collab')
 
     def __init__(self, *, script_path, component_factory=components, task_runner=False):
@@ -188,6 +188,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.devices import Devices
         from covey.app.nodes import Nodes
         from covey.app.web_sync import WebSync
+        from covey.app.web_login import WebLogin
         from covey.app.group_boards import GroupBoards
         from covey.app.group_manager import GroupManager
         from covey.app.group_menu import GroupMenu
@@ -293,7 +294,10 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # The devices thread (app/devices.py): probes, replays the pending reaps, gc; none while COVEY_DEVICES is off.
             self.devices = Devices(self.runtime)
             # The web workbench's sync (app/web_sync.py): two threads with COVEY_WEB=1, none without.
-            self.web_sync = WebSync(self.runtime, self.butler_env, self.web_message)
+            # The 网页登录确认 card (app/web_login.py): the page's ``login`` operation, and the owner's 允许 / 不是我 told back to it.
+            self.web_login = WebLogin(self.runtime, self.messenger, self.voice,
+                                      lambda *args, **kwargs: self.web_sync.client.request(*args, **kwargs))
+            self.web_sync = WebSync(self.runtime, self.butler_env, self.web_message, login=self.web_login)
             # The owner's recalled or edited messages (app/source_watch.py): one thread unless COVEY_SOURCE_WATCH=0.
             self.source_watch = SourceWatch(self.runtime, self.topics, self.messenger, self.voice)
             # 到点回来看 (app/revisits.py): the thread that queues a topic's turn at the time it asked, COVEY_REVISIT=1.

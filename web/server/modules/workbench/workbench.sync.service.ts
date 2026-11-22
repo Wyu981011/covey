@@ -32,6 +32,8 @@ export class WorkbenchSyncService {
   private readonly logger = new Logger(WorkbenchSyncService.name);
   /** 还没建 collabs 表时只记一次（协作条目跳过，别的照常收） */
   private noCollabTable = false;
+  /** 妙搭模式没有登录表，第一次发现后不再查 */
+  private noLoginTable = false;
 
   constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
 
@@ -122,8 +124,25 @@ export class WorkbenchSyncService {
             data = excluded.data, updated_at = excluded.updated_at, _updated_at = now()
           where collabs.rev <> excluded.rev or excluded.rev = ''
           returning 1 as n`);
+      case 'login':
+        return this.loginDecide(it.key, str(d.decision));
       default:
         return 0;
+    }
+  }
+
+  /** 自托管（T653）：主人在飞书点了允许或拒绝。只改还没处理、没过期的请求；妙搭模式没有 login_requests 表，跳过不报错（同 collabs） */
+  private async loginDecide(id: string, decision: string): Promise<number> {
+    if (decision !== 'approved' && decision !== 'denied') throw new BadRequestException('login 的 decision 只能是 approved 或 denied');
+    if (this.noLoginTable) return 0;
+    try {
+      return await this.write(sql`update login_requests set state = ${decision}, decided_at = now(), _updated_at = now()
+        where id = ${id} and state = 'pending' and expires_at > now() returning 1 as n`);
+    } catch (e) {
+      if (!missingTable(e)) throw e;
+      this.noLoginTable = true;
+      this.logger.warn('login_requests 表不存在（不是自托管库）：login 条目跳过');
+      return 0;
     }
   }
 
@@ -153,6 +172,7 @@ export class WorkbenchSyncService {
   }
 
   private async deleteOne(type: string, key: string): Promise<number> {
+    if (type === 'login') return 0;
     if (type === 'collab') return this.collabWrite(sql`delete from collabs where key = ${key} returning 1 as n`);
     const q =
       type === 'project'

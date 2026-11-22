@@ -1,0 +1,25 @@
+/* 替代 @lark-apaas/client-toolkit/lib/index.css：层顺序、Tailwind 入口和几条基础样式（不含平台的审查器和水印样式） */
+@layer theme, base, antd, components, utilities;
+@import 'tailwindcss' source(none);
+@source "../**/*.{ts,tsx}";
+
+@layer base {
+  * {
+    border-color: var(--border);
+    outline-color: var(--ring);
+
+    @supports (color: color-mix(in lab, red, red)) {
+      outline-color: color-mix(in oklab, var(--ring) 50%, transparent);
+    }
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+
+  .container {
+    margin-left: auto;
+    margin-right: auto;
+  }
+}

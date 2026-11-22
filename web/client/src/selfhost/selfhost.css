@@ -1,0 +1,13 @@
+/* 自托管登录页和错误页的样式：不依赖 .cv 的主题，固定深色 */
+.sh-box { max-width: 420px; margin: 12vh auto 0; padding: 24px; color: #e6e8ec; font: 14px/1.6 system-ui, -apple-system, 'Segoe UI', sans-serif; text-align: center; }
+.sh-box h1 { font-size: 28px; margin: 0 0 16px; }
+.sh-box h2 { font-size: 18px; margin: 0 0 12px; }
+.sh-faint { color: #8b919c; }
+.sh-warn { color: #e6a23c; }
+.sh-btn { display: inline-block; margin-top: 12px; padding: 8px 18px; border: 1px solid #3a3f4a; border-radius: 8px; background: #1c2027; color: inherit; font: inherit; cursor: pointer; text-decoration: none; }
+.sh-btn:hover { background: #262b34; }
+.sh-primary { background: #3b6cf6; border-color: #3b6cf6; color: #fff; }
+.sh-primary:hover { background: #2f5bd8; }
+.sh-code { margin: 8px 0 16px; font: 700 44px/1.2 ui-monospace, 'SF Mono', 'JetBrains Mono', monospace; letter-spacing: 0.25em; padding-left: 0.25em; }
+/* 只铺在登录页、读取中和连不上的那几屏；登录后的页面用自己的主题（浅色也对） */
+.sh-page { position: fixed; inset: 0; overflow: auto; background: #14171c; }

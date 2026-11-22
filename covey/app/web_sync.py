@@ -51,17 +51,17 @@ IMAGES_WAIT = 300  # Seconds images are held back after the page did not take on
 
 class WebSync:
     """The feature object (``threads()``). ``runtime``: app/runtime.py Runtime; ``env``: app/butler_env.py ButlerEnv; ``hear``: app/unified.py
-    web_message, how the owner's words to the butler get in (None: none can)."""
+    web_message, how the owner's words to the butler get in (None: none can); ``login``: app/web_login.py WebLogin, which the ``login`` operation hands its card to (None: it is ``failed``)."""
     name = "web-sync"
 
-    def __init__(self, runtime, env, hear=None) -> None:
+    def __init__(self, runtime, env, hear=None, login=None) -> None:
         self.runtime, self.env = runtime, env
         self.client = Client()
         self.stuck = {}  # topic id -> the left-behind thread stuck reading it: looks leave the topic out while that thread lives.
         self.images = None  # web_images.WebImages, made once the state directory is known (images_ready)
         self.collector = Collector(env, self.stuck, runtime.log)
         self.images_ready()
-        self.ops = Ops(env, hear, fetch=self.client.request)
+        self.ops = Ops(env, hear, fetch=self.client.request, login=login)
         self.sent = {}  # (type, key) -> the rev pushed last.
         self.backlog = {}  # (type, key) -> an item of a pass not sent yet, the newest read of it (push_once).
         self.sent_loaded, self.sent_saved, self.sent_changed = False, 0.0, False  # <state>/web/sent.json (load_sent, save_sent).

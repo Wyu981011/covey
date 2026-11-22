@@ -36,6 +36,26 @@
 
 开着时 Bridge 里多两条后台线程：`web-push`（推）和 `web-inbox`（取网页上的操作并执行）；没开时没有线程、没有请求，行为和没有这个功能时一样。
 
+### 自托管（本机上跑网页，默认关）
+
+不想依赖外面的网页应用时，网页也可以跑在同一台机器上：Manager 拉起一个只监听 `127.0.0.1` 的 Node 进程，Covey 通过回环地址（`http://127.0.0.1:端口/openapi`）和它说话。构建产物和部署说明在 `web/deploy/selfhost/README.md`。Covey 一侧：
+
+1. 构建网页：`bash web/deploy/selfhost/build.sh /absolute/path/to/covey-web`（把 `web/` 拷到那个目录、`npm ci`、构建，打印 `dist-selfhost` 的路径；详见 `web/deploy/selfhost/README.md`）。
+2. 备好密钥和配置：`python3 -B -m covey.service.web_selfhost --dir /absolute/path/to/covey-web/dist-selfhost`（可加 `--port`、`--data-root`、`--page-url`）。它在数据根的 `web/` 下生成开放接口密钥文件（权限 600，已存在不覆盖）和 `web.json`（`base_url` 为 `http://127.0.0.1:18650/openapi`，`page_url` 默认 `http://127.0.0.1:18650/`：飞书卡片「打开网页」打开的地址；从别的设备访问时用 `--page-url` 换成那边能打开的地址，已有的 `page_url` 不给参数时保留），并打印要设的开关。
+3. 服务清单里设打印出来的 `COVEY_WEB=1`、`COVEY_WEB_CONFIG`、`COVEY_WEB_SELFHOST=1`、`COVEY_WEB_SELFHOST_DIR`（端口不是默认的再设 `COVEY_WEB_SELFHOST_PORT`），重新注册服务。
+4. Manager 之后拉起 `node <COVEY_WEB_SELFHOST_DIR>/server/selfhost/main.js`（`node` 按服务清单的 `PATH` 找），环境变量 `COVEY_WEB_HOST=127.0.0.1`、`COVEY_WEB_PORT`、`COVEY_WEB_DB_DIR=<数据根>/web/db`、`COVEY_WEB_KEY_FILE=<数据根>/web/web-openapi.key`；挂了按服务的退避（5 秒到 5 分钟）重启，Manager 退出时整组回收（Manager 被强杀时，网页进程发现父进程不在了几秒内自己退出，不占着端口），日志在 `<数据根>/web/logs/selfhost.log`（超过 10 MB 轮转）。机器上要有 `node`，找不到只在 `manager.log` 记一次、之后照退避重试。
+
+`base_url` 只接受 `https://`，唯一的例外是本机回环的 `http://127.0.0.1`、`http://localhost`、`http://[::1]`（可带端口）；其他 `http://` 一律拒绝，密钥不会走明文发到别的机器（早先的版本也收任意 `http://`；升级后这种配置读不进来，同步停住、日志里写明原因，改成 `https://` 即可）。要从别的设备访问，在前面放自己的反向代理并用 `https://`，写在 `page_url` 里；回环端口本身不要对外开。没设 `COVEY_WEB_SELFHOST` 时 Manager 不起线程、不起进程。
+
+### 网页登录确认
+
+自托管的网页用飞书确认登录：在网页上点“用飞书登录”，网页往发件箱写一条 `login` 操作（`op_id` 是 `login-<request_id>`，`payload` 带 `request_id`、4 位对照码 `code`、`browser`、`os`、来源地址 `ip` 和发起时间 `at`，秒）。Covey 取到后在你的私聊发一张「网页登录确认」卡：写明浏览器、系统、来源（本机回环写“本机”，经 Tailscale 或反向代理来的写对方地址；旧网页不带 `ip` 时不写这一行）、对照码和发起时间，按钮「允许」「不是我」；这条操作的回执只说“已发出确认卡”，不代表你同意了。
+
+- 只有主人能点。点了之后 Covey 向网页的 `POST /sync/upsert` 推一条 `login` 条目：`{"type": "login", "key": <request_id>, "rev": <唯一值>, "data": {"decision": "approved" 或 "denied", "decided_at": <秒>}}`，推成功后整卡换成“已允许 · 时间”或“已拒绝 · 时间”；推失败卡上写明原因、按钮还在，可以再点。
+- 发起超过 5 分钟再点，卡显示“已过期”，什么也不推；同一个请求只处理一次，已决定后再点只是重画结果。对照码要和网页上显示的一致，不是你发起的就点「不是我」。
+- 点击先应答飞书，推送在应答之后、记录锁之外发。网页回答了却没收下（`upserted` 为 0：网页上这次登录已过期、已处理，或不是自托管的网页）时，卡显示“已失效”，没有登录，也不再推。
+- 确认卡的记录在 `<state>/web/logins.json`（最近 100 条）。
+
 ### 连不上时
 
 | 现象 | 先看 |
@@ -224,6 +244,7 @@
 | `switch`（v21） | 换话题的配置，见下 |
 | `settings` | 改一项设置，见下 |
 | `recover`（v33） | 没成功的一轮上的按钮，见下 |
+| `login` | 自托管网页的“用飞书登录”：`op_id` 是 `login-<request_id>`，`payload` 是 `{request_id, code, browser, os, ip, at}`；Covey 在私聊发确认卡（[网页登录确认](#网页登录确认)），回执只说卡发出了；主人的决定由 Covey 推 `type` 为 `login` 的条目（`key` 是 `request_id`，`data` 是 `{decision: approved \| denied, decided_at}`）告诉网页 |
 
 **`say`**：
 

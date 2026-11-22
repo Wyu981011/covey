@@ -9,7 +9,7 @@ pickers, the workspace manager, 换配置 (app/harness_switch.py) and 回退
 这些都不用回答了, 飞书应用待补's, the welcome card's, a group's menu card and the shared session's control are here but never reach a task, so
 they name no handler: the Bridge handles them before topic routing (app/proxy_panel.py, app/proxy_resend.py,
 app/owner_send.py, app/group_manager.py, app/redaction_panel.py, app/butler_panel.py, app/settings_hub.py, app/memory_panel.py,
-app/overview.py, app/digest.py, app/app_setup.py, app/welcome.py, app/group_menu.py, app/collab_cards.py). The enabled extensions' kinds (core/extensions.py CARD_KINDS) are
+app/overview.py, app/digest.py, app/app_setup.py, app/welcome.py, app/group_menu.py, app/collab_cards.py, app/web_login.py). The enabled extensions' kinds (core/extensions.py CARD_KINDS) are
 added below, bot_only, their features claiming the clicks.
 """
 from __future__ import annotations
@@ -224,6 +224,10 @@ ACTIONS = {
     # 发这句 on the welcome card (cards/welcome.py KIND): the owner's, taken before topic routing (app/welcome.py); bot_only:
     # its example becomes a message of the owner's, which starts a task.
     "bridge_welcome_try": CardAction("发欢迎卡上的示例", bot_only=True),
+    # 允许 / 不是我 on the 网页登录确认 card (cards/web_login.py, COVEY_WEB=1 with a self-hosted page): the owner's, taken before topic
+    # routing (app/web_login.py); starts no task, only tells the page.
+    "bridge_web_login_allow": CardAction("允许网页登录"),
+    "bridge_web_login_deny": CardAction("拒绝网页登录"),
     # The menu card of a group with a butler (app/group_menu.py KIND).
     "bridge_group_menu": CardAction("群里的菜单"),
     # 停止这次协作 on the 协作卡 (cards/collab_card.py KIND, COVEY_COLLAB=1): the owner's, taken before topic routing

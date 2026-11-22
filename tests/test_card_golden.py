@@ -1766,6 +1766,18 @@ def welcome_cards():
                                    "notice": f"「{EXAMPLES[2]}」没发出去，再点一次。"})}
 
 
+def web_login_cards():
+    """网页登录确认 (cards/web_login.py): the request waiting, with the page's refusal said, decided both ways, void (the page took nothing)
+    and past its five minutes."""
+    from covey.cards.web_login import expired_card, pending_card, result_card, void_card
+
+    view = {"request_id": "req-0123456789", "code": "4827", "browser": "Chrome 130", "os": "macOS 15", "ip": "203.0.113.7",
+            "at": FROZEN - 30}
+    return {"pending": pending_card(view), "pending_failed": pending_card(view, "http 401"),
+            "approved": result_card(view, True, FROZEN), "denied": result_card(view, False, FROZEN),
+            "void": void_card(view, True), "expired": expired_card(view)}
+
+
 def project_cards():
     """The 专项卡 (cards/project_card.py): the live card in each state, and the lines it shrinks to."""
     from covey.cards import project_card as pc, triage_card
@@ -1975,7 +1987,7 @@ GROUPS = {"task": task_cards, "trace": trace_panels, "launch": launch_cards, "qu
           "turn_export": turn_export_panels, "switch": switch_cards, "topic": topic_panels,
           "weekly_usage": usage_cards, "menu": menu_panels, "main_topic": main_topic_cards, "main_task": main_task_cards, "status_card": status_cards_samples,
           "main_thread": butler_panels, "settings": settings_cards,
-          "overview": overview_cards, "digest": digest_cards, "app_setup": app_setup_cards, "welcome": welcome_cards,
+          "overview": overview_cards, "digest": digest_cards, "app_setup": app_setup_cards, "welcome": welcome_cards, "web_login": web_login_cards,
           "project": project_cards, "tidy": tidy_cards, "nodes": node_cards_samples, "group_ask": group_ask_cards,
           "pages": paged_cards}
 

@@ -5,6 +5,7 @@ module.exports = tseslint.config(
   {
     ignores: [
       'dist',
+      'dist-selfhost',
       'dist-server',
       'node_modules',
       'source_package',

@@ -10,7 +10,7 @@
   6. 建开放接口密钥（+openapi-key-create），只写进密钥文件（权限 600），不打印
   7. 发布（+release-create / +release-get），拿到线上地址
   8. 可见范围设成只有你（+access-scope-set）
-  9. 写 Covey 的网页配置（web.json：base_url、key_file），告诉你怎么在 Covey 里打开 COVEY_WEB
+  9. 写 Covey 的网页配置（web.json：base_url、key_file、page_url），告诉你怎么在 Covey 里打开 COVEY_WEB
 
 用法：
   python3 web/deploy/miaoda/deploy.py --covey-state <Covey 状态目录> --dry-run     # 先看要做什么，不调任何接口
@@ -480,11 +480,12 @@ def step_config(ctx: Ctx) -> None:
     online = (ctx.state.get("release") or {}).get("online_url") or ""
     url = base_url(online, ctx.state["app_id"])
     if ctx.args.dry_run:
-        say(f"9. Covey 配置：[不执行] 写 {path}：base_url 由发布后的线上地址推出（https://<域名>/app/<应用 ID>/openapi），key_file 指向密钥文件")
+        say(f"9. Covey 配置：[不执行] 写 {path}：base_url 由发布后的线上地址推出（https://<域名>/app/<应用 ID>/openapi），page_url 是线上地址本身，key_file 指向密钥文件")
         return
     if not url:
         raise StepFailed("发布完成了，但没拿到线上地址，推不出 base_url：在妙搭后台看应用地址，按 web/README.md 手写 web.json。")
-    cfg = {"base_url": url, "key_file": ctx.state["key_file"], "push_seconds": 1, "poll_seconds": 1}
+    # page_url：飞书卡片上「打开网页」按钮打开的地址（Covey core/web_sync.py 的 page_url）
+    cfg = {"base_url": url, "key_file": ctx.state["key_file"], "push_seconds": 1, "poll_seconds": 1, "page_url": online}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(cfg, ensure_ascii=False, indent=1) + "\n")
     ctx.state["web_config"] = str(path)

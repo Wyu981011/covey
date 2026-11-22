@@ -49,6 +49,7 @@ SERVICE_ROOT="$(python3 -B bin/covey_paths.py service-root)"
           └─ 后端进程（codex app-server、claude、pi、dsh、agy，或扩展的隔离解释器）
 
 内存看门狗：bin/covey_memguard.py，独立于以上进程，由 Manager 拉起
+自托管网页进程（可选，COVEY_WEB_SELFHOST=1）：node <目录>/server/selfhost/main.js，由 Manager 拉起，见 web.md 自托管
 ```
 
 | 组件 | 谁拉起、谁重启它 | 它退出时 |
@@ -58,6 +59,7 @@ SERVICE_ROOT="$(python3 -B bin/covey_paths.py service-root)"
 | 事件消费者 | Bridge。启动 60 秒内没有输出 `[event] ready` 就替换；退出后 5 秒重启，卡片回调消费者异常退出时 300 秒后重启 | 任务不受影响 |
 | 后台线程 | Bridge。异常退出 5 秒后重建，日志 `worker <名称> failed` | 任务不受影响 |
 | 任务进程 | Bridge 在任务出队时启动 | 没到终态就退出时标为中断，不自动重跑，见[任务进程](#任务进程) |
+| 自托管网页进程 | Manager，只在 `COVEY_WEB_SELFHOST=1` 时；意外退出按服务的退避重启，开关关掉、设置变了或 Manager 退出时整组停掉（和 Bridge 不同，它不留给下一个 Manager；Manager 被强杀时它几秒内自己退出） | 网页打不开，推送退避重试；任务不受影响，见[网页工作台 · 自托管](web.md#自托管本机上跑网页默认关) |
 | 内存看门狗 | Manager 每 30 秒看一次，已启用而没在运行时拉起 | 见[内存看门狗](#内存看门狗) |
 
 - 一个状态目录同时只能有一个 Bridge（单实例锁）。不要手工再启动一个，也不要删 `bridge.pid` 来绕过检查。

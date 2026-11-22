@@ -94,6 +94,7 @@ class DeployTest(unittest.TestCase):
         cfg = json.loads((self.out / "web.json").read_text())
         self.assertEqual(cfg["base_url"], "https://fake.example.com/app/app_demo01/openapi")
         self.assertEqual(cfg["key_file"], str(key))
+        self.assertEqual(cfg["page_url"], "https://fake.example.com/app/app_demo01")  # 飞书卡片的「打开网页」靠它
         f = self.fake()
         sql = f["sql"]
         self.assertTrue(sql.startswith("BEGIN;"))

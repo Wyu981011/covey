@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Navigate, NavLink, useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
+import { SELFHOST } from '@client/src/selfhost/flag';
 import type {
   SettingsConfigPage,
   SettingsData,
@@ -885,6 +886,9 @@ const ProxyTab: React.FC<{ p: SettingsProxyPage; ops: Ops; feishu: string }> = (
   );
 };
 
+/** 自托管构建才有的“已登录的浏览器”（妙搭上不渲染，也不会加载这一块） */
+const SessionsPanel = lazy(() => import('@client/src/selfhost/SessionsPanel'));
+
 /** 页底的外观：所有标签页下面都有 */
 const Appearance: React.FC = () => {
   const ui = useUi();
@@ -948,6 +952,7 @@ const SettingsPage: React.FC = () => {
             </div>
           )}
           <Appearance />
+          {SELFHOST ? <Suspense fallback={null}><SessionsPanel /></Suspense> : null}
         </div>
       </div>
     </div>

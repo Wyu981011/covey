@@ -415,7 +415,7 @@
 
 | 环境变量 | 谁读 | 默认 | 弃用 |
 | --- | --- | --- | --- |
-| `COVEY_DATA_HOME` | `core/paths.py`、`core/devices.py`（找 `devices.json`）、`core/extensions.py`（找本部署启用、停用的扩展 `extensions/enabled`） | 按 [数据目录](operations.md#数据目录) 推算 | 否 |
+| `COVEY_DATA_HOME` | `core/paths.py`、`service/web_selfhost.py`（`wanted`：自托管网页的数据放它下面的 `web/`）、`core/devices.py`（找 `devices.json`）、`core/extensions.py`（找本部署启用、停用的扩展 `extensions/enabled`） | 按 [数据目录](operations.md#数据目录) 推算 | 否 |
 | `COVEY_SERVICE_ROOT` | `core/paths.py` | `<数据根>/bridge-services` | 否 |
 | `COVEY_REVIEW` | `app/review.py`（`enabled`，`buttons` 据此画按钮） | 关（`./install` 新装的服务写 `1`）；`1`：改了代码的答案卡和回带卡多「独立复核」 | 否 |
 | `COVEY_TURN_EXPORT` | `app/turn_export.py`（`enabled`，`attach_export_controls` 据此加按钮） | 关；`1`：结束的任务卡多「下载请求与结果」 | 否 |
@@ -500,7 +500,10 @@
 | `COVEY_PATROL_DAILY_CALLS` | `core/patrol.py`（`number`） | 48：小模型一天最多调几次（1 到 1000） | 否 |
 | `COVEY_PATROL_JUDGE_MS` | `core/patrol.py`（`number`） | 30000：小模型一次调用的硬上限，毫秒（1000 到 120000） | 否 |
 | `COVEY_WEB` | `core/web_sync.py`（`enabled`）、`app/web_sync.py`（`WebSync.threads`） | 空：关。`1`：开网页工作台同步，`web-push`、`web-inbox` 两条线程；要同时设 `COVEY_WEB_CONFIG` | 否 |
-| `COVEY_WEB_CONFIG` | `core/web_sync.py`（`load_config`） | 空。指向一个 JSON：`base_url`、`key_file`（只从这个文件读密钥）、`push_seconds`（默认 1）、`poll_seconds`（默认 0.5）；文件缺了或写错只记一行失败、退避重试 | 否 |
+| `COVEY_WEB_CONFIG` | `core/web_sync.py`（`load_config`） | 空。指向一个 JSON：`base_url`（`https://`，或本机回环的 `http://127.0.0.1:端口`、`http://localhost`、`http://[::1]` 供自托管用，其他 `http://` 拒绝）、`key_file`（只从这个文件读密钥）、`push_seconds`（默认 1）、`poll_seconds`（默认 0.5）；文件缺了或写错只记一行失败、退避重试 | 否 |
+| `COVEY_WEB_SELFHOST` | `service/web_selfhost.py`（`enabled`、`spec`、`wanted`）、`service/manager.py`（`Manager.ensure_selfhost`） | 空：关，Manager 不起线程、不起进程。`1`：Manager 拉起自托管网页进程 `node <COVEY_WEB_SELFHOST_DIR>/server/selfhost/main.js`（`node` 按服务清单的 `PATH` 找），只监听 `127.0.0.1`，挂了按服务的退避重启，Manager 退出时整组回收（Manager 被强杀时网页进程发现父进程不在了自己退出）；要同时设 `COVEY_WEB_SELFHOST_DIR`，Bridge 一侧另要 `COVEY_WEB=1` 和 `COVEY_WEB_CONFIG`（`python3 -B -m covey.service.web_selfhost` 一次备好） | 否 |
+| `COVEY_WEB_SELFHOST_DIR` | `service/web_selfhost.py`（`spec`） | 空。自托管网页的构建产物目录（`web/deploy/selfhost/build.sh` 打印的 `dist-selfhost`，`node_modules` 在它旁边），绝对路径，里面要有 `server/selfhost/main.js`；没设或不是绝对路径，开关开着也不起进程 | 否 |
+| `COVEY_WEB_SELFHOST_PORT` | `service/web_selfhost.py`（`port_of`） | 18650：自托管网页进程监听的本机端口（1 到 65535，其他值按默认）；`web.json` 的 `base_url` 要和它一致 | 否 |
 | `COVEY_PROJECT_TIDY` | `core/project_proposals.py`、`app/project_tidy.py`、`app/runs.py`、`core/butler.py`、`core/butler_tool_specs.py`、`app/web_sync.py`、`app/butler_panel.py` | 空或 `off`：关。`suggest`：只提议（能归进已有专项的直接归，新建要主人点）；`auto`：新建也直接做。`./install` 新装的服务写 `suggest`。见[整理专项](#整理专项) | 否 |
 | `COVEY_PROJECT_TIDY_MODEL` | `core/project_proposals.py`（`model`）、`app/project_sorter.py`（`ask`） | `sonnet`：补话题要点和整理判断用的 Claude Code 模型别名或 id；写错按默认 | 否 |
 | `COVEY_PROJECT_TIDY_DAYS` | `core/project_proposals.py`（`number`） | 7：整理看最近几天有过一轮的话题（专项里的话题不论多久都看） | 否 |
@@ -567,6 +570,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--root`、`--state-dir`、`--workdir`、`--profile`、`--interval`、`--health-timeout`、`--log`、`--dry-run`、`--preset` | `service/manager.py`（`bin/covey_service.py`；`--dry-run` 是 `set`、`unset` 的：只打印会改什么，见[改开关三步](#改开关三步)；`--preset showcase` 是 `set` 的：打开[演示套餐](#演示套餐)里清单没设或设成关的开关） | 见 `--help` | 否 |
 | `--root`、`--mode`、`--activate`、`--label`、`--status`、`--uninstall`、`--no-autostart` | `service/install.py` | 见 `--help`（`--mode` 有 `auto`、`systemd`、`launchd`、`cron`、`manager`，扩展可加；`auto` 在没有 systemd/launchd 时给 crontab 加一行 `@reboot`，`--no-autostart` 跳过；`--label` 是 launchd 标签，默认 `com.covey.manager`；公司托管模式的 `--persistent-virtio-pfs` 见扩展 README） | 否 |
 | `--root`、`--runtime-only`、`--skip-events`、`--probe-harnesses`、`--json`、`--summary` | `service/doctor.py`（`bin/covey_doctor.py`；`--json` 打完整的 JSON 报告，`--summary` 打中文摘要和每项的下一步，见[排障 · 健康诊断](troubleshooting.md#健康诊断)） | 都不给时：输出是终端就打中文摘要，管道和脚本照旧拿到 JSON | 否 |
+| `--data-root`、`--dir`、`--port`、`--page-url` | `service/web_selfhost.py`（`python3 -B -m covey.service.web_selfhost`，不另设 `bin/` 入口） | 准备自托管网页：写开放接口密钥文件（600，已有的不覆盖）和 `web.json`，打印要在服务清单里设的开关。`--data-root` 默认数据根，`--dir` 自托管构建产物目录（`dist-selfhost` 的绝对路径），`--port` 默认 18650，`--page-url` 写进 `web.json` 的 `page_url`（飞书卡片「打开网页」的地址，默认 `http://127.0.0.1:<端口>/`，已有的不给参数时保留） | 否 |
 | `--state-dir`、`--app-id` | `service/pairing.py` | 见 `--help` | 否 |
 | `--config`、`--data-dir`、`--dry-run`、`--duration`、`--kill`、`--parent-pid`、`--target`、`--as-mib`、`--alert-levels-mib`、`--rg-guard`、`--search-kill-mib` | `service/memguard.py` | 见[内存看门狗](operations.md#内存看门狗) | 否 |
 | `--state-dir`、`--apply`、`--dry-run`、`--destination`、`--restore`、`--verify` | `core/maintenance.py` | 见 [备份、归档与维护](operations.md#备份归档与维护) | 否 |

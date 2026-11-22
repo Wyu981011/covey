@@ -17,6 +17,7 @@ import hashlib
 import json
 import threading
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from covey.core import env as cenv
 from covey.core.state import read_object, write_json
@@ -31,7 +32,7 @@ BODY_BYTES = 64 * 1024
 CUT_NOTE = "\n\n（内容太长，已截断）"
 LEDGER_KEPT = 2000
 KINDS = ("say", "answer", "stop", "reopen", "seen", "forget", "tidy", "settings", "dismiss", "tidy_decide", "launch", "switch",
-         "memory_fix", "recover")
+         "memory_fix", "recover", "login")
 TYPES = ("project", "topic", "turn", "question", "settings", "collab")
 SETTINGS_KEY = "settings"  # The one ``settings`` item's key (app/web_settings.py).
 USAGE_KEY = "usage"  # The ``settings`` item of 本周用量 as the bot menu's card counts it (app/web_settings.py usage).
@@ -58,6 +59,12 @@ class Config:
     poll_seconds: float = POLL_SECONDS
 
 
+def page_url_ok(url) -> bool:
+    """Whether ``url`` may be the config's ``page_url``: http:// or https://, no whitespace."""
+    url = str(url or "")
+    return url.startswith(("https://", "http://")) and not any(ch.isspace() for ch in url)
+
+
 def page_url(path=None) -> str:
     """The address the owner opens the web page at (the config's ``page_url``, https:// or http://), with COVEY_WEB=1; '' when
     the switch is off, the config does not say it or cannot be read (the cards then have no 打开网页). Reads no key; never raises."""
@@ -68,7 +75,25 @@ def page_url(path=None) -> str:
         url = str(read_object(Path(path)).get("page_url") or "").strip() if path else ""
     except (OSError, ValueError, TypeError):
         return ""
-    return url if url.startswith(("https://", "http://")) and not any(ch.isspace() for ch in url) else ""
+    return url if page_url_ok(url) else ""
+
+
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")  # urlsplit(...).hostname has no brackets.
+
+
+def base_url_ok(url) -> bool:
+    """Whether ``url`` may be the config's base_url: https://, or http:// to this machine's loopback alone (a self-hosted page on the
+    same machine, docs/web.md 自托管); the key never goes over plain http to anywhere else."""
+    url = str(url or "")
+    if url.startswith("https://"):
+        return True
+    if not url.startswith("http://") or any(ch.isspace() for ch in url):
+        return False
+    try:
+        parts = urlsplit(url)
+        return parts.hostname in LOOPBACK_HOSTS and parts.username is None and (parts.port is None or parts.port > 0)
+    except ValueError:
+        return False
 
 
 def _seconds(value, default) -> float:
@@ -82,8 +107,8 @@ def load_config(path=None) -> Config:
         raise ValueError("COVEY_WEB_CONFIG 没有设置")
     data = read_object(Path(path))
     base = str(data.get("base_url") or "").strip().rstrip("/")
-    if not base.startswith(("https://", "http://")):
-        raise ValueError("配置里的 base_url 要以 https:// 开头")
+    if not base_url_ok(base):
+        raise ValueError("配置里的 base_url 要以 https:// 开头（自托管在本机时可以是 http://127.0.0.1:端口）")
     key_file = str(data.get("key_file") or "").strip()
     try:
         key = Path(key_file).read_text().strip() if key_file else ""

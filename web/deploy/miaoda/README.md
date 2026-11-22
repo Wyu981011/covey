@@ -38,7 +38,7 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 6. 建开放接口密钥 `covey-sync`，只写进本机的密钥文件（权限 600），不打印
 7. 发布，拿到线上地址
 8. 可见范围设成只有你
-9. 写 Covey 的网页配置 `web.json`（`base_url` 指向应用的 `/openapi`，`key_file` 指向密钥文件）
+9. 写 Covey 的网页配置 `web.json`（`base_url` 指向应用的 `/openapi`，`key_file` 指向密钥文件，`page_url` 是网页地址，飞书卡片上的「打开网页」用它）
 
 做完后在 Covey 这边打开网页工作台：服务清单里设 `COVEY_WEB=1` 和 `COVEY_WEB_CONFIG=<脚本打印的 web.json 路径>`，再重新注册服务（Covey `docs/configuration.md`「改开关三步」）。一两分钟内网页上就有你私聊里最近的话题。
 
@@ -50,7 +50,7 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 | --- | --- |
 | `miaoda-deploy.json` | 进度：应用 ID、做完了哪几步、最近一次发布。不含密钥 |
 | `web-openapi.key` | 开放接口密钥，权限 600 |
-| `web.json` | Covey 的网页配置 |
+| `web.json` | Covey 的网页配置：`base_url`（开放接口）、`key_file`、`page_url`（网页地址，飞书卡片上的「打开网页」按钮用它） |
 | `repo/<应用 ID>/` | 应用代码仓库的本地副本 |
 
 ## 重跑和出错

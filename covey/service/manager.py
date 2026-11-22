@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -24,7 +25,7 @@ from urllib.parse import urlsplit
 from covey.core import env as cenv
 from covey.core.paths import entry_script, service_root
 from covey.core.file_lock import file_lock
-from covey.service import memguard
+from covey.service import memguard, web_selfhost
 from covey.service.boot import serve
 from covey.service.down_notice import DownNotice, enabled as notice_enabled
 from covey.core.process import (cleanup_group, instance_lock, is_owned, log_to, process_identity, query,
@@ -49,6 +50,8 @@ PROXY_ENV_KEYS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"
 # <state>/bridge.log as soon as it owns the state directory, so this holds only what came before (a start
 # that failed). An older Manager rotates this file at each start, no longer bridge.log (repo review E3).
 CONSOLE_LOG = "bridge-console.log"
+# Seconds the self-hosted page (COVEY_WEB_SELFHOST) gets after SIGTERM to close its database before SIGKILL; it ends itself at 8.
+SELFHOST_STOP = 10
 
 
 def say(message):
@@ -192,6 +195,8 @@ class Manager:
         self.reported = {}  # The error last said for each service, for when it cannot be saved (a full disk).
         # The owner's word when a service stays down and when it is back (COVEY_DOWN_NOTICE), sent through the bot's
         # lark-cli profile in the service's own environment.
+        # COVEY_WEB_SELFHOST's page process (ensure_selfhost); ``identity`` tells its session's leftovers from a later process's.
+        self.selfhost = {"child": None, "identity": None, "spec": None, "failures": 0, "retry_at": 0.0, "started": 0.0}
         self.notices = DownNotice(root, say, lambda manifest: service_environment(os.environ, manifest["environment"]))
 
     def health_server(self, sock):
@@ -357,6 +362,95 @@ class Manager:
         if outcome not in {"running", "disabled", "not_installed", "waiting"}:
             say(f"memory watchdog: {outcome}")
 
+    def ensure_selfhost(self):
+        """The self-hosted page's Node process (COVEY_WEB_SELFHOST=1 in a running service's manifest, service/web_selfhost.py): started
+        here, started again after an exit with the services' backoff, stopped (its whole process group) when the switch goes off, its
+        settings change or the Manager ends. Switched off, nothing is read beyond the manifests and nothing runs."""
+        try:
+            self._selfhost_pass()
+        except Exception as exc:  # noqa: BLE001 - never the services' problem
+            if self.reported.get("selfhost") != type(exc).__name__:
+                say(f"web selfhost: pass failed: {type(exc).__name__}: {exc}")
+            self.reported["selfhost"] = type(exc).__name__
+        else:
+            self.reported.pop("selfhost", None)
+
+    def _selfhost_pass(self):
+        state, now = self.selfhost, time.monotonic()
+        want = web_selfhost.wanted(self.root, os.environ, service_environment)
+        child = state["child"]
+        if child is not None and child.poll() is not None:
+            state["child"], state["failures"], delay = None, *self._backoff({"failures": state["failures"]})
+            state["retry_at"] = now + delay
+            say(f"web selfhost pid={child.pid} exited rc={child.returncode} (failure {state['failures']}); starting again in {delay:.0f}s")
+            cleanup_group(state["identity"])  # Whatever it left in its own session.
+            child = None
+        if child is not None and (want is None or want != state["spec"]):
+            self.stop_selfhost()
+            child = None
+        if want is None:
+            state.update(spec=None, failures=0, retry_at=0.0)
+            return
+        if child is not None:
+            rotate_live(Path(want["log"]), LOG_BYTES, LOG_KEEP)
+            if now - state["started"] > 300:
+                state["failures"] = 0
+            return
+        if now < state["retry_at"]:
+            return
+        self._start_selfhost(want, now)
+
+    def _start_selfhost(self, want, now):
+        state = self.selfhost
+        node = shutil.which("node", path=want.get("path") or None)
+        entry = Path(want["argv"][1])
+        problem = "node 不在服务的 PATH 里" if not node else "" if entry.is_file() else f"{entry} 不存在"
+        if problem:
+            state["failures"], delay = self._backoff({"failures": state["failures"]})
+            state.update(retry_at=now + delay, spec=want)
+            if self.reported.get("selfhost-start") != problem:
+                say(f"web selfhost not started: {problem}; trying again in {delay:.0f}s")
+            self.reported["selfhost-start"] = problem
+            return
+        self.reported.pop("selfhost-start", None)
+        log = Path(want["log"])
+        log.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        Path(want["env"]["COVEY_WEB_DB_DIR"]).mkdir(parents=True, exist_ok=True, mode=0o700)
+        rotate_live(log, LOG_BYTES, LOG_KEEP)
+        # Not the Manager's whole environment: the page needs no setting or token of the services. PATH is the service's.
+        keep = RUNTIME_ENV_KEYS | PROXY_ENV_KEYS | {"HOME", "USER", "TZ", "NODE_EXTRA_CA_CERTS"}
+        env = {**{name: value for name, value in os.environ.items() if name in keep}, **({"PATH": want["path"]} if want.get("path") else {}),
+               **want["env"], "COVEY_WEB_PARENT_PID": str(os.getpid())}  # The page ends itself once this Manager is gone (a SIGKILL).
+        fd = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            child = subprocess.Popen([node, *want["argv"][1:]], cwd=want["dir"], env=env, stdin=subprocess.DEVNULL,
+                                     stdout=fd, stderr=fd, start_new_session=True)
+        finally:
+            os.close(fd)
+        state.update(child=child, identity=process_identity(child.pid), spec=want, started=now)
+        say(f"web selfhost started pid={child.pid} port={want['port']}")
+
+    def stop_selfhost(self):
+        """Stop the page's process group: SIGTERM, up to SELFHOST_STOP seconds (the page closes its database), then SIGKILL; and what
+        it left in its session."""
+        state = self.selfhost
+        child, identity = state["child"], state["identity"]
+        state["child"] = None
+        if child is None:
+            return
+        if child.poll() is None:  # Not reaped yet: its PID (and group) is still its own.
+            with contextlib.suppress(OSError):
+                os.killpg(child.pid, signal.SIGTERM)
+            try:
+                child.wait(timeout=SELFHOST_STOP)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(OSError):
+                    os.killpg(child.pid, signal.SIGKILL)
+                with contextlib.suppress(subprocess.TimeoutExpired):
+                    child.wait(timeout=5)
+        cleanup_group(identity)
+        say(f"web selfhost stopped pid={child.pid}")
+
     def record(self):
         """Write manager.json (who the Manager is, for deploys and the status command); False when it cannot
         be written yet, and the next pass tries again."""
@@ -393,6 +487,7 @@ class Manager:
                     recorded = recorded or self.record()
                     self.reconcile_all()
                     self.ensure_memguard()
+                    self.ensure_selfhost()
                     rotate_live(self.root / 'manager.log', LOG_BYTES, LOG_KEEP)
                 except OSError as exc:
                     # Storage that takes no writes or reads for a while (a full quota, a stalled mount) is no
@@ -405,6 +500,7 @@ class Manager:
                 self.last_tick = time.monotonic()
                 self.stop.wait(self.interval)
         finally:
+            self.stop_selfhost()  # Unlike the services, the page's process goes with the Manager.
             # Services outlive a manager update and are adopted by its successor.
             say(f"manager stopping pid={os.getpid()}; its services go on")
             lock.close()

@@ -57,6 +57,9 @@ KINDS) as the owner's own and says (state, message) for the ack.
   ``fix_memory``): ``what`` ``scope`` (``applies``), ``once`` or ``confirm``; a topic's own memory is not corrected from the page yet.
 - ``recover`` (data contract v33): a button of a turn that did not succeed, ``job_id`` its task, done as the task card's button does it
   (``recover``): 检查并继续 redelivers a saved result or question when the record says so, never running the model again for it.
+- ``login`` (self-hosted page, docs/web.md 网页登录确认): a browser asks to sign in, payload ``{request_id, code, browser, os, at}``; the 网页登录确认
+  card goes to the private chat (app/web_login.py) and the owner's 允许 / 不是我 is told to the page as a ``login`` item; ``done`` says the card was sent
+  (not that the owner agreed), a request over 5 minutes old or without the part is ``failed``.
 The topic or project has to be the owner's private chat's, known and not over; anything else is ``failed`` with the reason.
 
 Rules (AGENTS.md): nothing is sent from under a record's lock; a write to a task is not replayed (the ledger, core/web_sync.py, keeps an
@@ -107,8 +110,9 @@ class Ops:
     the owner's top-level message ``event`` as the Feishu consumer would give it and answers why it did not take it ('' when it did);
     None: the butler cannot be spoken to from the page."""
 
-    def __init__(self, env, hear=None, fetch=None) -> None:
+    def __init__(self, env, hear=None, fetch=None, login=None) -> None:
         self.env = env
+        self.web_login = login  # app/web_login.py WebLogin: the 网页登录确认 card of ``login``; None: ``login`` is refused.
         self.hear = hear
         self.fetch = fetch  # request(method, path) of the page's /openapi (app/web_push_client.py Client.request): a say's files; None: none taken.
         self.web_settings = WebSettings(env)  # The 设置 page's snapshot (app/web_sync.py) and its changes (``settings``).
@@ -124,7 +128,8 @@ class Ops:
             handler = {"say": self.say, "answer": self.answer, "stop": self.stop, "reopen": self.reopen, "seen": self.seen,
                        "forget": self.forget, "tidy": self.tidy, "settings": self.settings,
                        "dismiss": self.dismiss, "tidy_decide": self.tidy_decide, "launch": self.launch,
-                       "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover}.get(kind)
+                       "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover,
+                       "login": self.login}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -591,6 +596,11 @@ class Ops:
         return "已停止这次协作" + (f"（停了 {'、'.join(part for part in parts if part)}）" if live or reply else "") + "：各话题手上别的工作没有动"
 
     # -- recover -----------------------------------------------------------------------------------------------------------
+
+    def login(self, state, chat, row, payload) -> str:
+        if self.web_login is None:
+            raise ValueError("这个 Covey 不能发网页登录确认卡")
+        return self.web_login.send(state, chat, self.env.profile, payload)
 
     def recover(self, state, chat, row, payload) -> str:
         """检查并继续 (``action`` continue, and retry: 现在重试), 看原因 (diagnose), 拆小再试 (split) and 停止自动重试 (stop_auto_retry) of

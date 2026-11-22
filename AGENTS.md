@@ -33,7 +33,7 @@
 | 专项（`COVEY_PROJECTS=1`）：负责人、专项卡、问题分流、停住后问主人、满额腾位置、话题转给管家 | `core/projects.py`、`app/project_lead.py`、`app/project_tools.py`、`app/project_loop.py`（`make_room`）、`app/butler_asks.py`、`app/project_cards.py`、`cards/project_card.py`、`app/triage.py`、`core/project_memory.py`、`core/project_library.py` | [projects.md](docs/projects.md)、[架构 · 专项](docs/architecture.md#专项第-2-期开发中默认关) |
 | 多参与者协作（`COVEY_COLLAB`，开发中）：轮次来源、交付归属、协作的状态表；执行闭环（发起、咨询通道、派发、落账、续接、到期、停止、对账）和咨询轮的硬只读 | `core/turn_source.py`（来源、行为表 `behavior`、`refusal`、来源等级 `provenance`）、`core/collab.py`（`route`、状态表、限额、幂等键、通道和消息 id）；来源闸在 `app/job_dispatch.py` 的 `refuse_source` 和 `app/worker.py` 开跑前；`core/collab_records.py`（记录）、`app/collab_flow.py`（`Collaboration`：线程、检查点的 `collab_ask`、`start`/`clarify`/`stop`）、`app/collab_checks.py`（预检）、`app/collab_channel.py`（通道、分叉、咨询轮的文字）；硬只读 `CONSULT`：`app/tool_limits.py`、`backends/claude/argv.py`、`backends/codex/consult.py` | [多参与者协作](docs/architecture.md#多参与者协作开发中默认关)、[执行闭环](docs/architecture.md#执行闭环) |
 | 负责人对照目标跟进（`COVEY_COLLAB`，开发中）：目标检查表和收尾门禁、回执合批、不重复转述、咨询轮计进专项预算、替主人答题的依据校验 | `core/project_checklist.py`（条目、协作缺口、`unmet`、`apply`）、`app/project_tools.py`（`project_checklist`、`checklist_gate`、`project_answer`）、`app/triage.py`（`grounds`）、`app/project_lead.py`（`COLLAB_RULES`、`checklist_block`、`inbox_block`）、`app/project_loop.py`（`settling`、`told_already`、`consult_tokens`） | [负责人对照目标跟进](docs/projects.md#负责人对照目标跟进)、[分流的依据](docs/projects.md#分流的依据) |
-| 网页工作台（`COVEY_WEB=1`） | `core/web_sync.py`、`app/web_sync.py`、`app/web_collect.py`、`app/web_ops.py`、`app/web_settings.py`；换配置 `app/web_switch.py`，附件 `app/web_files.py` | [web.md](docs/web.md) |
+| 网页工作台（`COVEY_WEB=1`） | `core/web_sync.py`、`app/web_sync.py`、`app/web_collect.py`、`app/web_ops.py`、`app/web_settings.py`；换配置 `app/web_switch.py`，附件 `app/web_files.py`；网页登录确认卡 `app/web_login.py`、`cards/web_login.py`；自托管网页进程 `service/web_selfhost.py`（Manager 的 `ensure_selfhost`） | [web.md](docs/web.md) |
 | 到点回来看（`COVEY_REVISIT=1`）：话题约好几点再看一次，到点 Bridge 排一轮 | `app/revisits.py`（线程、`after_runner`、`silent`、看板的行）、`app/revisit_hint.py`（普通话题说了稍后没人回来时答案卡的提示和按钮）、`core/revisits.py`（记录）、`cards/board.py` 的 `revisit_blocks` | [到点回来看](docs/usage.md#到点回来看) |
 | 早晚汇总 | `app/digest.py`、`cards/digest.py`；晚间汇总的“你反复说的” `app/memory_candidates.py`，“本周找你” `app/weekly_usage.py` 的 `reached` | [早晚汇总](docs/usage.md#早晚汇总)、[配置](docs/configuration.md#早晚汇总) |
 | 启动卡与工作区 | `app/launch.py`、`app/launch_submit.py`、`app/model_picker.py`、`app/directory_picker.py`、`core/workspaces.py` | [开始一个任务](docs/usage.md#开始一个任务) |
@@ -249,6 +249,7 @@
 | `app/web_files.py` | 网页上传的附件 (docs/web.md, COVEY_WEB=1 |
 | `app/web_images.py` | The images of a turn on the web page |
 | `app/web_launch.py` | 网页开新话题 (docs/web.md, COVEY_WEB=1 |
+| `app/web_login.py` | 网页登录确认: the page's `login` operation becomes a card in the owner's private chat, and the owner's click on it … |
 | `app/web_ops.py` | 网页上发来的操作怎么执行: `Ops.run` does one operation of the page's outbox as the owner's own and says (state, message) … |
 | `app/web_pairing.py` | 网页工作台同步里不碰 Collector 缓存的那部分 |
 | `app/web_panels.py` | 网页设置页的设备和代答两页 (docs/web.md, COVEY_WEB=1 |
@@ -321,6 +322,7 @@
 | `cards/triage_card.py` | The 不对 form of the 专项卡's 分流记录: a card of its own with one input, because the 专项卡 is redrawn and holds no field |
 | `cards/turn_export.py` | The 下载请求与结果 element at the bottom of an ended task card |
 | `cards/ui.py` | The shared parts of the 夜航 look as schema 2.0 card elements |
+| `cards/web_login.py` | The 网页登录确认 card: a browser asks to sign in to the 网页工作台 and the owner says 允许 or 不是我 in the private chat |
 | `cards/weekly_usage.py` | The 本周用量 card, the bot menu's 用量 panel, in the 夜航 look: the window in its title bar |
 | `cards/welcome.py` | The welcome card in the 夜航 look: what this machine has, how a message is answered, three examples |
 | `cards/workspace_manager.py` | The 工作区 card, the bot menu's 工作区 panel and the launch card's ⚙️ 添加或管理工作区… |
@@ -509,6 +511,7 @@
 | `service/memguard.py` | Memory watchdog: stop runaway search tools before they exhaust the machine |
 | `service/pairing.py` | Issue a one-time owner pairing code for an explicitly configured bot app |
 | `service/plugins.py` | Extensions (插件) from the command line |
+| `service/web_selfhost.py` | 自托管网页工作台的准备和托管参数: what `COVEY_WEB_SELFHOST=1` asks of the Manager (`wanted`, `spec` |
 
 ### backends/agy
 
