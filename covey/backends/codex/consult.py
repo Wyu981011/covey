@@ -19,8 +19,15 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-import tomllib
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 (pyproject requires-python >=3.10): tomllib is 3.11's; tomli is the same reader.
+    try:
+        import tomli as tomllib
+    except ModuleNotFoundError:
+        tomllib = None
 
 from covey.core.state import ensure_private_dir
 
@@ -73,7 +80,10 @@ def _toml_key(key) -> str:
 
 def minimal_config(text: str) -> str:
     """The config.toml of a consult's home from the owner's ``text``: ``KEPT`` and, for a provider of the owner's own
-    (not ``BUILT_IN``), its ``model_providers`` table. '' for a config that does not read as TOML."""
+    (not ``BUILT_IN``), its ``model_providers`` table. '' for a config that does not read as TOML, and where nothing reads
+    TOML (Python 3.10 without tomli): the consult runs on Codex's defaults then, the import never fails."""
+    if tomllib is None:
+        return ""
     try:
         data = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, ValueError):

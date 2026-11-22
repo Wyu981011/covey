@@ -152,6 +152,7 @@ class CodexConsultTest(unittest.TestCase):
         self.assertEqual(sent[0]["id"], 7)
         self.assertIn("error", sent[0])
 
+    @unittest.skipIf(consult.tomllib is None, "nothing reads TOML here (Python 3.10 without tomli)")
     def test_the_private_home_links_all_but_rules_hooks_plugins_skills_memories_history_and_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             real, state = Path(tmp) / "real", Path(tmp) / "state"
@@ -178,13 +179,13 @@ class CodexConsultTest(unittest.TestCase):
                 self.assertNotIn("mcp_servers", config)
                 self.assertNotIn("projects", config)
                 self.assertNotIn("approval_policy", config)
-                import tomllib
-                parsed = tomllib.loads(config)
+                parsed = consult.tomllib.loads(config)
                 self.assertEqual((parsed["model"], parsed["model_provider"], parsed["service_tier"]), ("gpt-x", "acme", "flex"))
                 self.assertEqual(parsed["model_providers"]["acme"]["http_headers"], {"X-A": "b"})
             self.assertFalse(home.exists())  # Removed with the turn: its links, never what they point at.
             self.assertTrue((real / "rules" / "default.rules").exists() and (real / "sessions").is_dir())
 
+    @unittest.skipIf(consult.tomllib is None, "nothing reads TOML here (Python 3.10 without tomli)")
     def test_a_built_in_provider_takes_no_table_and_an_unreadable_config_gives_an_empty_one(self):
         self.assertEqual(consult.minimal_config('model_provider = "openai"\nmodel = "m"\n[model_providers.openai]\nx = 1\n'),
                          'model_provider = "openai"\nmodel = "m"\n')
@@ -287,3 +288,12 @@ class ForkPlanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoTomlTest(unittest.TestCase):
+    """Python 3.10 (requires-python >=3.10) has no tomllib: the Codex backend still imports, and a consult's config is
+    empty instead of the import failing (CI's 3.10 job was red on it from 9f648d6)."""
+
+    def test_without_a_toml_reader_the_config_is_empty(self):
+        with mock.patch.object(consult, "tomllib", None):
+            self.assertEqual(consult.minimal_config('model = "m"\n'), "")
