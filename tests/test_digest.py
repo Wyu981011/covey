@@ -42,6 +42,34 @@ def texts(card):
     return [element.get("content", "") for element in card["body"]["elements"]]
 
 
+def words(card):
+    """Every Markdown of ``card`` at any depth, in order (a topic row's lines sit inside it)."""
+    found = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            if value.get("tag") == "markdown":
+                found.append(value.get("content", ""))
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+    walk(card["body"]["elements"])
+    return found
+
+
+def texts_of(element):
+    """Every Markdown inside ``element``, joined."""
+    return "\n".join(words({"body": {"elements": [element]}}))
+
+
+def badges(card):
+    """The T numbers of the topic badges on ``card`` (cards/ui.py topic_badge), in order."""
+    return [text.removeprefix("<font color='white'>**").removesuffix("**</font>") for text in words(card)
+            if text.startswith("<font color='white'>**T")]
+
+
 def buttons(card):
     found = []
 
@@ -235,6 +263,7 @@ class TickTests(Records, unittest.TestCase):
     def bridge(self):
         feature = Digest(self.runtime, self.messenger, Voice("lark-bridge", "LARK_BRIDGE"))
         feature.link = lambda ctx, chat, text, cards=None: "\n".join(f"[{label}](https://link/{label})" for label in text.split("\n"))
+        feature.url = lambda ctx, topic, card="": f"https://link/{topic}"  # Each row's link (Digest.link_rows), no Feishu read.
         return feature
 
     def record(self):
@@ -251,7 +280,10 @@ class TickTests(Records, unittest.TestCase):
         self.feature.tick(self.ctx, self.times, now=self.slot + 5)
         self.assertEqual(len(self.messenger.sends), 1)
         card = self.messenger.sends[0]["card"]
-        self.assertIn("[T403](https://link/T403) · 话题 403 · 在做", texts(card)[1])
+        # The 看板's topic row (T657 B1): its badge, its state and title, the whole row opening the topic.
+        self.assertEqual(badges(card), ["T403"])
+        self.assertIn("<font color='blue'>**在做**</font> **话题 403**", "\n".join(words(card)))
+        self.assertIn('"default_url": "https://link/run"', json.dumps(card))
         self.assertEqual(self.record()["message_id"], "om_digest")
         self.feature.tick(self.ctx, self.times, now=self.slot + 40)
         self.feature = self.bridge()
@@ -263,9 +295,11 @@ class TickTests(Records, unittest.TestCase):
             self.topic(f"t{number}", 500 + number)
             self.job(f"j{number}", number + 1, "running", f"t{number}", timings={"backend_started": self.now - number})
         self.feature.tick(self.ctx, self.times, now=self.slot + 5)
-        lines = texts(self.messenger.sends[0]["card"])
-        self.assertEqual(lines[0], f"**在做（{SHOWN + 3}）**")
-        self.assertEqual(lines[SHOWN + 1], "<font color='grey'>另有 3 个</font>")
+        card = self.messenger.sends[0]["card"]
+        self.assertIn(f"**在做**  <font color='grey'>{SHOWN + 3}</font>", texts(card))
+        self.assertEqual(len(badges(card)), SHOWN)
+        more = [line for line in texts(card) if line.startswith("<font color='grey'>另有 3 个：")]
+        self.assertEqual(len(more), 1)
 
     def test_only_old_questions_is_sent_with_the_line(self):
         self.topic("old", 404)
@@ -273,12 +307,75 @@ class TickTests(Records, unittest.TestCase):
         with mock.patch.dict(os.environ, ON):
             self.feature.tick(self.ctx, self.times, now=self.slot + 5)
         card = self.messenger.sends[0]["card"]
-        self.assertIn("另有 1 个等了一天以上：[T404](https://link/T404)", json.dumps(card, ensure_ascii=False))
+        self.assertIn("另有 1 个等了一天以上：[T404](https://link/old)", json.dumps(card, ensure_ascii=False))
         self.assertEqual(buttons(card), [{"kind": DISMISS, "topics": ["old"], "from": "digest"}])
         self.assertIn("另有 1 个等了一天以上", self.messenger.sends[0]["text"])
         saved = self.record()["sent"]["om_digest"]
         self.assertEqual(saved["slot"], self.slot)
         self.assertEqual([row["topic"] for row in saved["view"]["stale"]], ["old"])
+
+    def test_its_band_counts_what_asks_for_him_as_the_board_does(self):
+        """B1 (T657): the 早晚汇总 is the 看板's look and its count: a turn that stopped is listed and counted however long before
+        the digest before it ended (core/board_read.py Asks), so its 要你处理 and the 看板's are one number at the same time;
+        a row's link is read before the card is built (Digest.link_rows); the 看板's own 检查并继续 is not on it."""
+        self.topic("old", 405)
+        self.job("j-old", 3, "failed", "old", failure_code="root_failed",
+                 timings={"backend_started": self.now - 2 * 86400 - 60, "execution_finished": self.now - 2 * 86400})
+        self.topic("run", 403)
+        self.job("j-run", 2, "running", "run", timings={"backend_started": self.now - 300})
+        self.feature.tick(self.ctx, self.times, now=self.slot + 5)
+        card = self.messenger.sends[0]["card"]
+        text = json.dumps(card, ensure_ascii=False)
+        self.assertIn("**1**</font> **件事**", text)  # The stop of two days ago.
+        self.assertIn("**停住了**  <font color='grey'>1</font>", texts(card))
+        self.assertIn('"default_url": "https://link/old"', text)
+        self.assertNotIn("bridge_board_recover", text)  # A record of its time: 去任务卡 alone.
+        self.assertNotIn("recover", json.dumps(self.record()["sent"]["om_digest"]["view"]))
+        board = self.feature.board_view(self.ctx, CHAT, self.now)
+        self.assertIn("**1**</font> **件事**", json.dumps(board_card(board), ensure_ascii=False))
+
+    def test_a_project_a_guard_paused_and_a_proposal_waiting_are_on_it_as_on_the_board(self):
+        """B1, B3 (T657): what 要你处理 counts beyond the topics is on the 早晚汇总 too: a project a guard paused under 停住了 (继续
+        is on the 看板), a proposal of 整理专项 under 等你 without its buttons (decided on its card or the 看板)."""
+        from covey.core import project_proposals as tidy, projects
+        record = projects.new_record(chat_id=CHAT, name="把订单库迁到新集群", goal="周末前切完")
+        projects.create(self.state, {**record, "state": projects.PAUSED, "state_reason": "tokens"})
+        for topic, number in (("a1" * 8, 406), ("b2" * 8, 407)):
+            self.topic(topic, number)
+        proposal = tidy.new_proposal(tidy.CREATE, topics=["a1" * 8, "b2" * 8], name="迁库收尾")
+        proposal["card"] = {"message_id": "om_proposal"}
+        tidy.put_proposal(self.state, proposal)
+        with mock.patch.dict(os.environ, {projects.ENV: "1", tidy.ENV: "suggest"}):
+            self.feature.tick(self.ctx, self.times, now=self.slot + 5)
+        card = self.messenger.sends[0]["card"]
+        text = json.dumps(card, ensure_ascii=False)
+        self.assertIn("**2**</font> **件事**", text)
+        self.assertIn("专项「把订单库迁到新集群」", text)
+        self.assertIn("token 用完了；在菜单「看板」上点「继续」接着做", text)
+        self.assertIn("「迁库收尾」", text)
+        self.assertIn("在它的提议卡或菜单「看板」上定", text)
+        self.assertEqual([value for value in buttons(card) if "proposal" in value], [])
+
+    def test_the_web_page_s_link_is_on_its_last_line_only_once_its_address_is_set(self):
+        """B9 (T657): 打开网页 with COVEY_WEB=1 and the config's ``page_url``; without, the card is as it was."""
+        import tempfile
+        from pathlib import Path
+        from covey.core import web_sync
+        self.topic("run", 403)
+        self.job("j-run", 2, "running", "run", timings={"backend_started": self.now - 300})
+        folder = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or None)
+        self.addCleanup(folder.cleanup)
+        config = Path(folder.name) / "web.json"
+        config.write_text(json.dumps({"page_url": "https://example.invalid/app/x"}))
+        with mock.patch.dict(os.environ, {web_sync.ENV: "1", web_sync.CONFIG_ENV: str(config)}):
+            self.feature.tick(self.ctx, self.times, now=self.slot + 5)
+            board = self.feature.board_view(self.ctx, CHAT, self.now)
+        self.assertIn('"default_url": "https://example.invalid/app/x"', json.dumps(self.messenger.sends[0]["card"]))
+        self.assertEqual(board["web"], "https://example.invalid/app/x")
+        self.assertIn("打开网页", json.dumps(board_card(board), ensure_ascii=False))
+        plain = self.feature.board_view(self.ctx, CHAT, self.now)
+        self.assertNotIn("web", plain)
+        self.assertNotIn("打开网页", json.dumps(board_card(plain), ensure_ascii=False))
 
     def test_a_send_that_fails_is_tried_again_with_the_same_key_then_given_up(self):
         self.topic("run", 403)
@@ -294,13 +391,19 @@ class TickTests(Records, unittest.TestCase):
 
 
 class CardTests(unittest.TestCase):
-    def test_empty_parts_are_left_out_and_seen_rows_are_grey(self):
+    def test_empty_parts_are_left_out_and_seen_rows_are_folded(self):
+        """The 看板's look (T657 B1): the band first, each part only when it has rows; a result seen is in the folded 做完."""
         row = {"label": "T1", "title": "a", "state": "做完", "took": "用时 5秒", "seen": True}
         card = digest_card({"slot": at(8, 9, 30), "since": at(7, 23, 30), "waiting": [], "running": [],
                             "done": [row]})
-        lines = texts(card)
-        self.assertTrue(lines[0].startswith("**做完（1） · "))
-        self.assertEqual(lines[1], "<font color='grey'>T1 · a · 做完 · 用时 5秒 · 已看</font>")
+        self.assertEqual(card["body"]["elements"][0]["border_color"], "band-line")  # The conclusion band.
+        self.assertIn("要你处理 · 09:30", texts_of(card["body"]["elements"][0]))
+        self.assertIn("**都在掌握中**", texts_of(card["body"]["elements"][0]))
+        headings = [line for line in texts(card) if line.startswith("**")]
+        self.assertEqual(headings, [])  # No 等你, 停住了, 有结果没看 or 在做 heading: none of them has a row.
+        fold = next(element for element in card["body"]["elements"] if element.get("element_id") == "board_done")
+        self.assertEqual(fold["header"]["title"]["content"], "23:30 以来做完的话题 1 个，都看过了")
+        self.assertIn("T1 a <font color='grey'>· 做完 · 用时 5秒</font>", words(card))
 
 
     def stale_view(self, **fields):
@@ -310,20 +413,20 @@ class CardTests(unittest.TestCase):
 
     def test_the_stale_line_has_its_button_only_while_it_takes_effect(self):
         card = digest_card(self.stale_view(dismissable=True))
-        self.assertEqual(texts(card)[0], "**等你（2）**")
+        self.assertIn("**等你**  <font color='grey'>2</font>", texts(card))
         self.assertEqual(buttons(card), [{"kind": DISMISS, "topics": ["t1", "t2"], "from": "digest"}])
         card = digest_card(self.stale_view(dismissable=False))
         self.assertEqual(buttons(card), [])
-        self.assertEqual(texts(card)[1], "<font color='grey'>另有 2 个等了一天以上：T1、T2</font>")
+        self.assertIn("<font color='grey'>另有 2 个等了一天以上：T1、T2</font>", texts(card))
 
     def test_once_taken_off_the_line_is_grey_without_the_button(self):
         view = digest.cleared(self.stale_view(dismissable=True), {"t1", "t2"})
         card = digest_card(view)
         self.assertEqual(buttons(card), [])
         # The ones taken off count no more: the part and the header drop them (2026-11-09).
-        self.assertEqual(texts(card)[0], "**等你（0）**")
+        self.assertIn("**等你**  <font color='grey'>0</font>", texts(card))
         self.assertNotIn("等你", json.dumps(card["header"], ensure_ascii=False))
-        self.assertIn("等你 2", json.dumps(digest_card(self.stale_view(dismissable=True))["header"], ensure_ascii=False))
+        self.assertIn("2 等你", json.dumps(digest_card(self.stale_view(dismissable=True))["header"], ensure_ascii=False))
         self.assertIn("<font color='grey'>已撤下 2 个：T1、T2</font>", texts(card))
         self.assertIn("已撤下 2 个：T1、T2", digest_text(view))
         self.assertIsNone(digest.cleared(view, {"t1"}))  # Nothing of theirs left on it.
@@ -342,11 +445,26 @@ class CardTests(unittest.TestCase):
         self.assertIsNone(digest.undone(digest.cleared(self.stale_view(), {"t1"}), {"t1"}, {"t1"}))  # No ats saved.
         self.assertIsNone(digest.undone(taken, {"t9"}, {"t9"}))
 
-    def test_a_view_saved_before_the_line_draws_as_before(self):
+    def test_a_view_saved_by_an_older_release_is_drawn_in_the_same_look(self):
+        """A view saved before the 看板's look (这些都不用回答了 and 记下 redraw a card from it): its link in its label, a state and
+        a time in place of a line and figures, no tone. Drawn as a view of now is (T657 B1)."""
         row = {"label": "T1", "title": "a", "state": "在做", "took": "", "seen": False}
         card = digest_card({"slot": at(8, 9, 30), "since": at(7, 23, 30), "waiting": [], "running": [row],
                             "done": []})
-        self.assertEqual(texts(card)[:2], ["**在做（1）**", "T1 · a · 在做"])
+        self.assertIn("**在做**  <font color='grey'>1</font>", texts(card))
+        self.assertEqual(badges(card), ["T1"])
+        self.assertIn("<font color='blue'>●</font> <font color='blue'>**在做**</font> **a**", words(card))  # No line: its
+        # state's words were the state's word alone.
+        old = {"slot": at(8, 9, 30), "since": at(7, 23, 30), "running": [],
+               "waiting": [{"label": "[T2](https://link/2)", "title": "b", "state": "等你：用表格吗？", "took": "等了 3分00秒"}],
+               "done": [{"label": "T3", "title": "c", "state": "失败", "took": "用时 5秒"}]}
+        card = digest_card(old)
+        self.assertEqual(badges(card), ["T2", "T3"])
+        self.assertIn('"default_url": "https://link/2"', json.dumps(card))  # Its link out of its label.
+        self.assertIn("**停住了**  <font color='grey'>1</font>", texts(card))  # An old word read as the state it says.
+        self.assertIn("要你定：用表格吗？", "\n".join(words(card)))  # A question as the 看板 says it.
+        self.assertIn("**2**</font> **件事**", json.dumps(card, ensure_ascii=False))
+
 
 
 class SwitchTests(UnifiedCase):
@@ -449,6 +567,41 @@ class ClickTests(UnifiedCase):
                          "owner_only")
         self.assertFalse((self.state / pins.RECORD).exists())
         self.app.messenger.patch_card.assert_not_called()
+
+
+class RecoverRedeliveryTest(unittest.TestCase):
+    """The 看板's 检查并继续 on a turn whose result did not go out, through the real task controls (T657 B10): the saved result is
+    sent again (重新投递结果), the model does not run again, as the task card's click and the web page's recover do."""
+
+    def test_the_board_redelivers_the_saved_result(self):
+        import tempfile
+        from pathlib import Path
+        from support import make_context
+        from support.world import build_claude_app
+        from covey.app import auto_retry
+        topic = "cd" * 16
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        app = build_claude_app()
+        self.addCleanup(app.runtime.shutdown.set)
+        ctx = make_context(Path(tmp.name), topic_id=topic)
+        state = ctx.state_dir
+        write_topic(state, {"chat_id": CHAT, "harness_id": "claude", "root_id": "om_root", "topic_number": 61}, topic_id=topic)
+        upsert_job_record(state, "job-k", job_id=5, chat_id=CHAT, topic_id=topic, backend="claude", harness_id="claude",
+                          kind="chat", status="failed", execution_status="done", final_text="回答全文", delivery_ok=False,
+                          delivery_error="network_timeout", message_id="job-k")
+        record = digest.find_job_record(state, "job-k")
+        self.assertEqual(digest.recovery(state, record, digest.failure_view(record)["actions"])["label"], "重新投递结果")
+        board = Digest(app.runtime, app.messenger, app.voice)
+        board.topics = SimpleNamespace(apps={"claude": app})
+        with mock.patch.object(auto_retry, "retry_context", return_value=ctx), \
+                mock.patch.object(auto_retry, "record_topic", return_value={}), \
+                mock.patch.object(app.controls.messenger, "reply", return_value=True) as reply:
+            said = board.recovered(ctx, CHAT, topic, 5, "continue", "c1")
+        self.assertEqual(said, "↪ T61 的结果已重新发出")
+        self.assertEqual(reply.call_args.args[2], "回答全文")
+        self.assertIs(digest.find_job_record(state, "job-k")["delivery_ok"], True)
+        self.assertEqual(app.runtime.jobs.topic_jobs(topic, CHAT), [])  # Nothing queued: the model did not run again.
 
 
 class BoardTests(UnifiedCase):
@@ -572,6 +725,108 @@ class BoardTests(UnifiedCase):
         self.assertIn("专项负责人停了它", text)
         self.assertIn("去任务卡", text)
         self.assertIn("https://applink.example/lead/om_lead", text)
+
+    STOPPED = "ab" * 16  # A topic id as the Bridge makes them (the 看板's 检查并继续 names it, Digest.claim checks its form).
+
+    def stopped_topic(self, number=560, job_id=21, **fields):
+        """A topic whose latest turn stopped (``fields`` on its record), and the app the 看板's 检查并继续 runs it in: its
+        retry_topic as the task card's click runs it (TaskControls.retry_topic: a stopped task queued again, once)."""
+        write_topic(self.state, {"topic_number": number, "chat_id": CHAT, "harness_id": "claude"}, topic_id=self.STOPPED)
+        upsert_job_record(self.state, f"j-{job_id}", job_id=job_id, chat_id=CHAT, topic_id=self.STOPPED, backend="claude",
+                          harness_id="claude", card_message_id=f"om_card{job_id}", message_id=f"om_j{job_id}",
+                          **{"status": "failed", "failure_code": "root_failed",
+                             "timings": {"backend_started": self.now - 900, "execution_finished": self.now - 600}, **fields})
+        self.retries = []
+
+        def retry_topic(ctx, chat, message, *, job_id=None):
+            self.retries.append((ctx.topic_id, chat, message, job_id))
+            upsert_job_record(self.state, f"j-{job_id}", retried_by="j-next")
+            upsert_job_record(self.state, "j-next", job_id=job_id + 1, chat_id=CHAT, topic_id=self.STOPPED, backend="claude",
+                              harness_id="claude", message_id=message, status="queued")
+            return f"本话题任务已重新入队，任务 #{job_id + 1}。"
+        self.app.digest.topics = SimpleNamespace(apps={"claude": SimpleNamespace(controls=SimpleNamespace(retry_topic=retry_topic))})
+        from covey.app import auto_retry
+        for name, value in (("retry_context", SimpleNamespace(topic_id=self.STOPPED)), ("record_topic", {})):
+            self.enterContext(mock.patch.object(auto_retry, name, return_value=value))
+
+    def recover_buttons(self, card):
+        from covey.cards.board import RECOVER_KIND
+        return [value for value in buttons(card) if value.get("kind") == RECOVER_KIND]
+
+    def test_a_stopped_row_takes_its_check_and_continue_from_the_board_once_and_says_what_came_of_it(self):
+        """B10 (T657): a stopped row whose record 检查并继续 takes on has that button on the 看板 (not 去任务卡, two clicks
+        away): it does what the task card's does (TaskControls.retry_topic, the click's event id the new turn's message) and the
+        card is redrawn in place, the row gone to 在做 and one line saying so. A second click, a repeated event, or the owner's
+        click on the task card first: nothing starts twice. Only the owner's click counts."""
+        self.stopped_topic()
+        with mock.patch("time.time", return_value=self.now):
+            self.press("ev1")
+            value, = self.recover_buttons(self.card())
+            self.assertEqual(value, {"kind": "bridge_board_recover", "topic_id": self.STOPPED, "job_id": 21, "action": "continue"})
+            self.assertNotIn("去任务卡", json.dumps(self.card(), ensure_ascii=False))
+            self.assertNotIn("下一步：在任务卡上点", json.dumps(self.card(), ensure_ascii=False))  # Its button says it.
+            click = {"operator_id": "owner", "chat_id": CHAT, "message_id": "om_board1", "action_value": value}
+            self.app.handle_card_action_event({**click, "event_id": "c0", "operator_id": "someone"}, self.ctx)
+            self.assertEqual(self.retries, [])  # The owner's only.
+            self.app.handle_card_action_event({**click, "event_id": "c1"}, self.ctx)
+            self.assertEqual(self.retries, [(self.STOPPED, CHAT, "c1", 21)])
+            redrawn = json.dumps([c for cid, c, _ in self.puts if cid == "bcard"][-1], ensure_ascii=False)
+            self.assertIn("↪ T560 已接着做 · 任务 &#35;22", redrawn)  # What came of it, under the band.
+            self.assertNotIn("bridge_board_recover", redrawn)  # Not 停住了 any more: queued again, under 在做.
+            self.assertIn("<font color='blue'>**在做**</font>", redrawn)
+            self.app.handle_card_action_event({**click, "event_id": "c2"}, self.ctx)  # The same button again.
+        self.assertEqual(len(self.retries), 1)
+        again = json.dumps([c for cid, c, _ in self.puts if cid == "bcard"][-1], ensure_ascii=False)
+        self.assertIn("T560 已经接着做了 · 任务 &#35;22，没有再开一次", again)
+        later = self.app.digest.board_view(self.ctx, CHAT)  # The line is that redraw's alone: not kept in the view.
+        self.assertNotIn("已经接着做了", json.dumps(board_card(later), ensure_ascii=False))
+
+    def test_a_stop_the_board_cannot_take_on_keeps_its_task_card_button(self):
+        """B10 (T657): 去任务卡 stays for a stop whose record takes no 检查并继续 here: one that wants another model, one taken on
+        already, one from before the topic's latest 换配置 (its card's click starts nothing then), and with no app to run it in."""
+        self.app.digest.url = lambda ctx, topic, card="": f"https://applink.example/{card}"
+        cases = (("model", {"failure_code": "quota_exhausted"}), ("taken", {"retried_by": "j-other"}),
+                 ("switched", {"binding_revision": 1}))
+        for name, fields in cases:
+            with self.subTest(name), mock.patch("time.time", return_value=self.now):
+                self.stopped_topic(**fields)
+                if name == "switched":
+                    write_topic(self.state, {"topic_number": 560, "chat_id": CHAT, "harness_id": "claude",
+                                             "switches": [{"revision": 2}]}, topic_id=self.STOPPED)
+                card = board_card(self.app.digest.board_view(self.ctx, CHAT))
+                self.assertEqual(self.recover_buttons(card), [])
+                self.assertIn("https://applink.example/om_card21", json.dumps(card, ensure_ascii=False))  # 去任务卡.
+        self.stopped_topic()
+        self.app.digest.topics = None
+        with mock.patch("time.time", return_value=self.now):
+            self.assertEqual(self.recover_buttons(board_card(self.app.digest.board_view(self.ctx, CHAT))), [])
+
+    def test_a_click_the_records_no_longer_allow_says_why_and_starts_nothing(self):
+        """B10 (T657): between the card's drawing and the click the topic was switched, or its Harness went: the redraw says why,
+        nothing is queued; a value not of a stopped row's button is ignored."""
+        from covey.cards.board import RECOVER_KIND
+        self.stopped_topic()
+        with mock.patch("time.time", return_value=self.now):
+            self.press("ev1")
+            value, = self.recover_buttons(self.card())
+            write_topic(self.state, {"topic_number": 560, "chat_id": CHAT, "harness_id": "claude",
+                                     "switches": [{"revision": 2}]}, topic_id=self.STOPPED)
+            upsert_job_record(self.state, "j-21", binding_revision=1)
+            self.app.handle_card_action_event({"event_id": "c1", "operator_id": "owner", "chat_id": CHAT,
+                                               "message_id": "om_board1", "action_value": value}, self.ctx)
+            self.assertIn("T560 现在不能在这里接着做了", json.dumps([c for cid, c, _ in self.puts if cid == "bcard"][-1],
+                                                              ensure_ascii=False))
+            self.app.digest.topics = SimpleNamespace(apps={})
+            self.app.handle_card_action_event({"event_id": "c2", "operator_id": "owner", "chat_id": CHAT,
+                                               "message_id": "om_board1", "action_value": value}, self.ctx)
+            self.assertIn("Harness 现在不可用", json.dumps([c for cid, c, _ in self.puts if cid == "bcard"][-1],
+                                                       ensure_ascii=False))
+            for bad in ({"topic_id": "stop"}, {"job_id": "21"}, {"action": "diagnose"}):
+                outcome = self.app.digest.claim(self.ctx, {"event_id": "c3", "message_id": "om_board1", "chat_id": CHAT},
+                                                {**value, **bad}, True)
+                self.assertEqual(outcome, "board_recover_ignored")
+        self.assertEqual(self.retries, [])
+        self.assertEqual(value["kind"], RECOVER_KIND)
 
     def test_a_result_is_marked_seen_from_the_board_and_refresh_redraws_it_in_place(self):
         """看板走查 2 and 6: 记为看过 under a result marks its topic seen and redraws the card; 刷新 redraws it in place,

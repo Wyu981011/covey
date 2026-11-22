@@ -31,6 +31,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
+from covey.app.answer_cards import avatar as avatar_of
 from covey.app.card_publish import digest_of, publish, safely, titles_of
 from covey.app.project_facts import facts, pending_question
 from covey.cards.project_card import ask_card, asked_card, idle_card, moved_card, project_card, settled_card
@@ -80,7 +81,9 @@ def _created(env, record) -> str:
     saved = projects.read_record(state, pid) or record
     if projects.card_message(saved):
         return projects.card_message(saved)
-    card = project_card(facts(state, saved, time.time(), titles_of(env.topics)))
+    lead = str(saved.get("lead_topic_id") or "")
+    picture = avatar_of(state, lead, str(saved.get("chat_id") or ""), getattr(env, "profile", None), env.runtime.log)
+    card = project_card(facts(state, saved, time.time(), titles_of(env.topics), avatar=picture))
     pending = (saved.get("card") or {}).get("pending_card_id") or ""
 
     def store(card_id, message, digest):
@@ -196,7 +199,7 @@ class ProjectCards:
             return self.fold(ctx, record, card, seen, now)
         if now - float(card.get("created_at") or record.get("created_at") or now) > FLIP_AFTER:
             return self.flip(ctx, record, card, seen, now)
-        view = facts(ctx.state_dir, record, now, self.titles, self.links(ctx, record, seen, now))
+        view = facts(ctx.state_dir, record, now, self.titles, self.links(ctx, record, seen, now), self.avatar(ctx, record, seen, now))
         built = project_card(view)
         digest = digest_of(built)
         if digest == seen["digest"] or now - seen["wrote"] < MIN_GAP:
@@ -294,6 +297,16 @@ class ProjectCards:
             self.runtime.log(f"project card link failed: {type(exc).__name__}")
         return found
 
+    def avatar(self, ctx, record, seen, now) -> str:
+        """The image key of the lead's picture (app/answer_cards.py avatar: uploaded the first time, then kept), once a project;
+        one that could not be had is asked again LINK_RETRY later. A call of its own: never under a record's lock."""
+        if seen.get("avatar") or now < seen.get("avatar_at", 0.0):
+            return str(seen.get("avatar") or "")
+        seen["avatar_at"] = now + LINK_RETRY
+        seen["avatar"] = avatar_of(ctx.state_dir, str(record.get("lead_topic_id") or ""), str(record.get("chat_id") or ""),
+                                   getattr(ctx, "profile", None), self.runtime.log)
+        return seen["avatar"]
+
     def put(self, ctx, project_id, card_id, sequence, save, built, label) -> bool:
         """One whole-card write: the sequence reserved first (saved before the request goes out), never reused."""
         handle = CardHandle(card_id, save, sequence, shared=False)
@@ -354,7 +367,8 @@ class ProjectCards:
         one whose outcome was unknown posts nothing new), the record points at it, the old one is shrunk by ``retire_old``."""
         pid, state, chat = str(record["id"]), ctx.state_dir, str(record.get("chat_id") or "")
         generation = int(card.get("generation") or 0) + 1
-        built = project_card(facts(state, record, now, self.titles, self.links(ctx, record, seen, now)))
+        built = project_card(facts(state, record, now, self.titles, self.links(ctx, record, seen, now),
+                                   self.avatar(ctx, record, seen, now)))
         card_id, message = self.messenger.create_and_send_card(
             ctx.profile, chat, built, self.voice.key("project-card", f"{pid}-{generation}"), voice=self.voice,
             card_id=card.get("pending_card_id") or "",

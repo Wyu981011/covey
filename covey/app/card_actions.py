@@ -210,6 +210,9 @@ ACTIONS = {
     # 继续 on the 看板's block of a project a guard paused (cards/board.py PROJECT_GO_KIND, app/digest.py Digest.claim): the
     # project starts again as the pause card's 继续 starts it (app/project_loop.py resume), which wakes its lead: bot_only.
     "bridge_board_project_go": CardAction("在看板上继续专项", bot_only=True),
+    # 检查并继续 on the 看板's row of a topic that stopped (cards/board.py RECOVER_KIND, app/digest.py Digest.recover): the task
+    # card's click done from the 看板, which is then redrawn; it may queue the topic's next turn.
+    "bridge_board_recover": CardAction("在看板上检查并继续", bot_only=True),
     # 你反复说的 on the evening digest (cards/digest.py REMEMBER_KIND, COVEY_MEMORY=1): 记下 writes a principle (app/digest.py).
     "bridge_digest_remember": CardAction("记下或不用汇总里的候选"),
     # 飞书应用待补 (cards/app_setup.py): the owner's, in the private chat (app/app_setup.py).

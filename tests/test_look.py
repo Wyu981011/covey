@@ -210,8 +210,9 @@ class BoardTest(unittest.TestCase):
                     if element.get("tag") == "markdown" and element.get("icon")]
         self.assertEqual(headings, ["停住了", "可能卡住", "有结果没看", "在做", "专项"])
         text = json.dumps(card, ensure_ascii=False)
-        for listed in ("**T1**", "**T7**", "T3 卡住", "T5 专项里卡住", "T2 在跑"):
-            self.assertIn(listed, text)
+        for number, title in (("T1", ""), ("T7", ""), ("T3", "**卡住**"), ("T5", "**专项里卡住**"), ("T2", "**在跑**")):
+            self.assertIn(f"<font color='white'>**{number}**</font>", text)  # Its badge (cards/ui.py topic_row, T657 B6).
+            self.assertIn(title, text)
         self.assertNotIn("T6", text)  # A live project's topic at work: its block counts it.
         self.assertIn("1 个停住了、1 个可能卡住、1 个在做", text)
         self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["2 停住了", "2 可能卡住", "1 在做"])
@@ -260,15 +261,21 @@ class BoardTest(unittest.TestCase):
         self.assertLessEqual(element_count(card), CARD_NODES)
         self.assertLessEqual(json_size(card), CARD_BYTES)
         text = json.dumps(card, ensure_ascii=False)
-        # 等你 17 (12 + the 5 old), 停住了 12 and the 10 projects a guard paused, 可能卡住 12.
-        self.assertIn("**51**</font> **件事**", text)
-        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["17 等你", "22 停住了", "12 可能卡住"])
+        # 等你 29 (12, the 5 old and the 12 proposals: T657 B3), 停住了 12 and the 10 projects a guard paused, 可能卡住 12.
+        self.assertIn("**63**</font> **件事**", text)
+        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["29 等你", "22 停住了", "12 可能卡住"])
         self.assertIn("另有", text)  # What is left out is said in one line.
-        # A board that fits is drawn whole as before: every group's first SHOWN rows.
-        few = {"waiting": rows("w", board.SHOWN), "running": rows("k", board.SHOWN, stuck=True), "done": [], "stale": []}
+        # A board that fits is drawn whole as before: every row. (A row with its T number's badge, T657 B6, costs more than
+        # one without: two groups of SHOWN rows this long no longer fit, two of six do.)
+        few = {"waiting": rows("w", 6), "running": rows("k", 6, stuck=True), "done": [], "stale": []}
         drawn = json.dumps(board.board_card(few), ensure_ascii=False)
         self.assertNotIn("另有", drawn)
-        self.assertEqual(drawn.count("去任务卡"), board.SHOWN)
+        self.assertEqual(drawn.count("去任务卡"), 6)
+        full = {"waiting": rows("w", board.SHOWN), "running": rows("k", board.SHOWN, stuck=True), "done": [], "stale": []}
+        drawn = board.board_card(full)
+        self.assertLessEqual(element_count(drawn), CARD_NODES)
+        self.assertLessEqual(json_size(drawn), CARD_BYTES)
+        self.assertIn("另有", json.dumps(drawn, ensure_ascii=False))  # Fewer a group, the rest one line.
 
     def test_a_goal_in_paragraphs_is_one_line_on_the_board(self):
         """T545's dark screenshot (2026-11-19): a goal with blank lines read \\n\\n on the 看板."""

@@ -2,8 +2,9 @@
 ledger of the operations fetched from it. Pure functions and one small file; no request is made here (app/web_sync.py asks, app/web_ops.py
 does what the page asked for).
 
-- ``COVEY_WEB_CONFIG`` names a JSON {base_url, key_file, push_seconds, poll_seconds}: the key is read from ``key_file`` alone and never
-  stored in the config object's repr, a log line or a record.
+- ``COVEY_WEB_CONFIG`` names a JSON {base_url, key_file, push_seconds, poll_seconds, page_url}: the key is read from ``key_file`` alone and
+  never stored in the config object's repr, a log line or a record. ``page_url`` (optional): the address the owner opens the page at,
+  for the cards' 打开网页 (``page_url``); without it the cards are as they were.
 - Items: ``project``, ``topic``, ``turn``, ``question``, ``collab`` (COVEY_COLLAB=1 only: one collaboration, app/web_collect.py) (the contract's fields, in Chinese words for states) and one ``settings`` (the 设置
   card's tabs, app/web_settings.py); ``rev`` is the hash of an item's data, so only what changed is pushed. A batch is at most ``BATCH_ITEMS`` items or ``BATCH_BYTES`` bytes.
 - The ledger (``<state>/web/inbox.json``): an operation's op_id and seq are written before it is done, so a restart does not do it
@@ -55,6 +56,19 @@ class Config:
     key: str = dataclasses.field(repr=False)
     push_seconds: float = PUSH_SECONDS
     poll_seconds: float = POLL_SECONDS
+
+
+def page_url(path=None) -> str:
+    """The address the owner opens the web page at (the config's ``page_url``, https:// or http://), with COVEY_WEB=1; '' when
+    the switch is off, the config does not say it or cannot be read (the cards then have no 打开网页). Reads no key; never raises."""
+    if not enabled():
+        return ""
+    path = str(path or cenv.get(CONFIG_ENV, "") or "").strip()
+    try:
+        url = str(read_object(Path(path)).get("page_url") or "").strip() if path else ""
+    except (OSError, ValueError, TypeError):
+        return ""
+    return url if url.startswith(("https://", "http://")) and not any(ch.isspace() for ch in url) else ""
 
 
 def _seconds(value, default) -> float:

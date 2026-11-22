@@ -7,9 +7,11 @@ grey figures; a question's row opens its card and has 去回答). Times are time
 changes with its content, not with the clock (a row's 等了 18 小时 5 分 would rewrite it every minute). Questions waiting
 over STALE seconds are one grey line of topic numbers (such ones can wait for days).
 
-要你处理 is the 看板's number (core/board_read.py Asks, act_count): 等你, 停住了 (a topic's result that stopped however
+要你处理 is the 看板's number (core/board_read.py Asks, act_count): 等你 (with 整理专项's proposals waiting for his 好,
+``proposals``, drawn as the 看板 draws them: cards/project_proposal.py waiting_block), 停住了 (a topic's result that stopped however
 long ago, a project a guard paused) and 可能卡住, listed in that order (docs/ui.md 5.1). A stop the owner made himself is
-已停止, background (core/look.py record_tone).
+已停止, background (core/look.py record_tone). Every row opens what it is about (``url``: a question's card, a task's
+task card, a result's card in its thread), the whole row. ``web``: the web page's address, 打开网页 on the last line.
 
 ``view`` is plain data from app/overview.py: ``waiting`` rows (label, title, ask, since, url), newest first, ``stopped``
 rows (label, title, status, at, line: why it stopped, url: its task card or its project's card), ``running`` rows (label,
@@ -164,13 +166,26 @@ def part(rows, draw, now, key, shown=SHOWN, word=None, kind=None):
             *rows_part(rows, draw, now, kind or (lambda row: key), shown)]
 
 
-def _waiting_part(rows, now, count=None, word=None, shown=SHOWN):
-    """等你: the recent questions as rows, the ones waiting over STALE as one line of their topic numbers."""
+def proposal_part(proposals, shown=SHOWN):
+    """整理专项's proposals waiting for his 好, under 等你 as the 看板 draws them (cards/project_proposal.py waiting_block: 建专项
+    and 不管了 act on them from here), ``shown`` of them, the rest one line."""
+    from covey.cards.project_proposal import waiting_block
+
+    elements = [waiting_block(entry) for entry in proposals[:shown]]
+    if len(proposals) > shown:
+        elements.append(note(f"还有 {len(proposals) - shown} 个提议，在私聊里的提议卡上定"))
+    return elements
+
+
+def _waiting_part(rows, now, count=None, word=None, shown=SHOWN, proposals=()):
+    """等你: the recent questions as rows, the proposals waiting (``proposal_part``), the ones waiting over STALE as one line
+    of their topic numbers."""
     recent = [row for row in rows if not row.get("since") or now - row["since"] < STALE]
     old = [row for row in rows if row not in recent]
-    elements = [heading(word or look.group_word("waiting"), len(rows) if count is None else count,
+    elements = [heading(word or look.group_word("waiting"), len(rows) + len(proposals) if count is None else count,
                         look.STATES["waiting"].icon)]
     elements += rows_part(recent, waiting_row, now, lambda row: "waiting", shown)
+    elements += proposal_part(list(proposals), shown)
     if old:
         elements.append(stale_line(old))
     return elements
@@ -180,7 +195,8 @@ def split(view):
     """The rows of a view without the board, by state: {waiting, stopped, stuck, running, ended} (``ended``: 刚结束, what
     is not 停住了 among them shown there; one that stopped is listed under 停住了 when Asks counts it)."""
     running = list(view.get("running") or ())
-    return {"waiting": list(view.get("waiting") or ()), "stopped": list(view.get("stopped") or ()),
+    return {"waiting": list(view.get("waiting") or ()), "proposals": list(view.get("proposals") or ()),
+            "stopped": list(view.get("stopped") or ()),
             "stuck": [row for row in running if running_kind(row) == "stuck"],
             "running": [row for row in running if running_kind(row) != "stuck"],
             "ended": list(view.get("ended") or ())}
@@ -190,7 +206,8 @@ def sizes(found):
     """{state key: how many} in core/look.py PRESSING's order, as the 看板 counts them (cards/board.py state_counts):
     要你处理 from its rows (core/board_read.py Asks names them), 有结果 the results not seen among the ended ones."""
     kinds = [ended_kind(row) for row in found["ended"]]
-    return {"waiting": len(found["waiting"]), "stopped": len(found["stopped"]), "stuck": len(found["stuck"]),
+    return {"waiting": len(found["waiting"]) + len(found.get("proposals") or ()), "stopped": len(found["stopped"]),
+            "stuck": len(found["stuck"]),
             "result": kinds.count("result"), "running": len(found["running"])}
 
 
@@ -198,7 +215,8 @@ def band(found, now, empty=None):
     """The conclusion band (cards/board.py band): how many things ask for him (core/board_read.py act_count), the most
     pressing topic, every state's count as a bar. When nothing asks, its grey line says so, and that nothing runs only
     when nothing does."""
-    lead = {"waiting": [waiting_row(row, now) for row in found["waiting"]],
+    lead = {"waiting": [waiting_row(row, now) for row in found["waiting"]]
+            or [{"label": f"提议「{entry.get('name') or ''}」"} for entry in found.get("proposals") or ()],
             "stopped": [ended_row(row, now) for row in found["stopped"]],
             "stuck": [running_row(row, now) for row in found["stuck"]],
             "result": [ended_row(row, now) for row in found["ended"] if ended_kind(row) == "result"],
@@ -280,14 +298,14 @@ def dismissed_line(labels, taken=None, origin=""):
     return item(line, undo_button(taken, origin=origin)) if taken else line
 
 
-BOARD_LISTS = ("waiting", "stopped", "running", "result", "cancelled", "stale", "dismissed")  # A board view's row lists.
+BOARD_LISTS = ("waiting", "stopped", "running", "result", "cancelled", "stale", "dismissed", "proposals")  # A board view's row lists.
 
 
 def lists(view) -> bool:
     """Whether ``view`` lists anything: its own rows, or the board's (rows, pins, old questions, the topics taken off).
     A card that lists nothing tells a first use (还没有话题) from a clear board by it (app/overview.py)."""
     board = view.get("board") or {}
-    return bool(any(view.get(key) for key in ("waiting", "stopped", "running", "ended")) or board.get("pinned")
+    return bool(any(view.get(key) for key in ("waiting", "stopped", "running", "ended", "proposals")) or board.get("pinned")
                 or any(board.get(key) for key in BOARD_LISTS))
 
 
@@ -305,8 +323,9 @@ def _board(board, now, shown=SHOWN, empty=None):
     elements = [ui.conclusion_band("要你处理", ui.number(asked, "件事") if asked else empty[0] if empty else "**都在掌握中**", line,
                                    below=ui.seg_bar(sized))]
     unpinned = " · 未 Pin"
-    if board["waiting"]:
-        elements += _waiting_part(board["waiting"], now, word=f"{look.group_word('waiting')}{unpinned}", shown=shown)
+    if board["waiting"] or board.get("proposals"):
+        elements += _waiting_part(board["waiting"], now, word=f"{look.group_word('waiting')}{unpinned}", shown=shown,
+                                  proposals=board.get("proposals") or ())
     running = board.get("running") or []
     elements += part(board.get("stopped") or [], ended_row, now, "stopped", shown, f"{look.word('stopped')}{unpinned}")
     elements += part([row for row in running if running_kind(row) == "stuck"], running_row, now, "stuck", shown,
@@ -350,8 +369,8 @@ def _drawn(view, now, stamp, where, shown):
         rows = split(view)
         top, counts = band(rows, now, empty)
         elements, found = [top], tags(counts, empty)
-        if rows["waiting"]:
-            elements += _waiting_part(rows["waiting"], now, shown=shown)
+        if rows["waiting"] or rows["proposals"]:
+            elements += _waiting_part(rows["waiting"], now, shown=shown, proposals=rows["proposals"])
         elements += part(rows["stopped"], ended_row, now, "stopped", shown)
         elements += part(rows["stuck"], running_row, now, "stuck", shown)
         elements += part(rows["running"], running_row, now, "running", shown)
@@ -361,7 +380,8 @@ def _drawn(view, now, stamp, where, shown):
         subtitle = f"{where}里在推进的事"
         summary = f"{TITLE} · {counts_words(view, empty)}"
     if stamp:
-        elements.append(note(f"更新于 {stamp} · 只列这个{where}里的任务"))
+        line = note(f"更新于 {stamp} · 只列这个{where}里的任务")
+        elements.append(item(line, ui.link_button("打开网页", view["web"])) if view.get("web") else line)
     return ui.styled(styled_panel(head(subtitle, found), elements, summary, spacing="8px"))
 
 

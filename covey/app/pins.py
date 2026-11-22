@@ -428,12 +428,14 @@ class PinnedTopics:
         pins = record.get("pins") if ours and isinstance(record.get("pins"), list) else []
         return self.rows, {pin.get("topic_id") for pin in pins if isinstance(pin, dict) and pin.get("message_id")}
 
-    def asks(self, state, chat, waits, now, off=None):
+    def asks(self, state, chat, waits, now, off=None, *, proposals=False):
         """要你处理 of ``chat`` as the last ``look`` found it (core/board_read.py asking): ``waits`` (core/board_read.py waits,
-        as the caller read it), its results that stopped and its running that may be stuck, the projects a guard paused;
-        the topics taken off (``off``, else the look's ``dismissed``) left out. What 手上的事 and the 看板 both count."""
+        as the caller read it), its results that stopped and its running that may be stuck, the projects a guard paused,
+        and with ``proposals`` (the owner's private chat: a group has none) 整理专项's proposals waiting for his 好; the topics
+        taken off (``off``, else the look's ``dismissed``) left out. What 手上的事 and the 看板 both count."""
         return board_read.asking(waits, self.topics, now, self.dismissed if off is None else off,
-                                 board_read.halted_projects(state, chat))
+                                 board_read.halted_projects(state, chat),
+                                 board_read.waiting_proposals(state) if proposals else None)
 
     def tick(self, ctx, chat, index, now):
         """One round toward the board ``look`` found, once 手上的事 (``index``, its record) is pinned in ``chat``."""

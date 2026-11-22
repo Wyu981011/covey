@@ -241,7 +241,7 @@ class UpgradeTest(UpCase):
         self.assertEqual((args[1], kwargs["sequence"]), (dispatch["card_id"], 8))
         self.assertIn("由管家转成专项", find_element(args[2], "pj_meta")["content"])
         self.assertIsNotNone(find_element(args[2], "pj_down"))  # 不要专项.
-        self.assertIn("你问", text(find_element(args[2], "answer_ask")))
+        self.assertIn("你问", text(find_element(args[2], "answer_words")))
 
     def test_the_other_live_cards_of_the_topic_become_a_line_and_route_to_the_lead(self):
         topic, dispatch = self.plain()
@@ -464,11 +464,13 @@ class DirectTest(UpCase):
         self.assertEqual(project["threads"], [])
         self.assertEqual(self.sent.call_count, 1)  # The project's card, not a topic card and not a 派发卡.
         (profile, chat, card, key), kwargs = self.sent.call_args
-        self.assertEqual((chat, card["header"]["title"]["content"]), (CHAT, "迁移订单库"))
+        # The lead's speaker row (T657 B2): the project's name, its row opening the owner's words, folded under it.
+        row = find_element(card, "speaker_row")
+        self.assertEqual(chat, CHAT)
+        self.assertIn("**迁移订单库 · 负责人**", text(row))
         self.assertFalse(kwargs.get("reply_to_message_id"))
-        ask = find_element(card, "answer_ask")
-        self.assertIn(ASK, text(ask))
-        self.assertEqual(ask["behaviors"][0]["default_url"], ASK_URL)
+        self.assertIn(ASK, text(find_element(card, "answer_words")))
+        self.assertEqual(row["behaviors"][0]["default_url"], ASK_URL)
         self.assertEqual(self.dispatch_sends(), [])
         self.assertEqual(records.live_paths(self.state), [])
         (receipt,) = self.receipts(pid)
@@ -611,7 +613,7 @@ class StyleKeepTest(UpCase):
         self.assertNotIn("direction", project)
         self.assertNotIn("style", project)
         self.assertFalse((self.state / "directions.json").exists())
-        self.assertEqual(len(self.sent.call_args.args[2]["header"]["text_tag_list"]), 1)
+        self.assertEqual(text(find_element(self.sent.call_args.args[2], "speaker_row")).count("<text_tag"), 1)  # Its state alone.
 
     def test_an_old_records_direction_is_neither_drawn_nor_an_error(self):
         from covey.app.project_facts import facts

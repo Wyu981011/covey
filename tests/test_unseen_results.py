@@ -138,6 +138,23 @@ class OneSetTest(unittest.TestCase):
         self.assertNotIn(self.topics[6], unseen)
         self.assertIn(self.topics[6], off)
 
+def callbacks(card):
+    """The callback values of every button on ``card``."""
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("type") == "callback" and isinstance(node.get("value"), dict):
+                found.append(node["value"])
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+    walk(card)
+    return found
+
+
 class AsksTest(unittest.TestCase):
     """要你处理 is one count (P0-2, T647: the 看板 counted 等你, 停住了 and 可能卡住, 手上的事 only 等你): the 看板, 手上的事 and
     its index over the pinned board say the same number at the same time, from core/board_read.py Asks, and list what it
@@ -220,6 +237,51 @@ class AsksTest(unittest.TestCase):
                 if switches:  # The owner's own stop: 已停止, apart from 有结果, not counted.
                     self.assertEqual([number[row["topic"]] for row in shown["board"]["cancelled"]], [14])
                     self.assertEqual(shown["board"]["counts"]["stopped"], 3)
+
+    def test_a_proposal_waiting_is_counted_and_listed_alike_by_the_board_and_both_overviews(self):
+        """B3 (T657, docs/ui.md 2.2: 等你定的 are 等你): with 整理专项 on, its proposal waiting for his 好 is 等你 on every card at
+        once: counted in 要你处理 (core/board_read.py Asks.proposals) by the 看板, 手上的事 and its index over the pinned board,
+        listed under 等你 with 建专项 and 不管了; decided, it is counted by none. A personal group's cards have none."""
+        from covey.cards.project_proposal import BOARD_FROM, CREATE_KIND
+        from covey.core import board_read, project_proposals as tidy, projects
+        record = tidy.new_proposal(tidy.CREATE, topics=[self.topics[16], self.topics[17]], name="迁库收尾", goal="周末前收完")
+        record["card"] = {"message_id": "om_proposal"}
+        tidy.put_proposal(self.state, record)
+        tags = ["2 等你", "3 停住了", "1 可能卡住"]
+        for switches in ({}, ON):
+            with self.subTest(board=bool(switches)), mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1",
+                                                                                  tidy.ENV: "suggest", **switches}):
+                looked = pins.board_look(self.state, CHAT, self.now)
+                asks = looked.asks(self.state, CHAT, board_read.waits(self.state, CHAT, self.now), self.now, proposals=True)
+                self.assertEqual((asks.counts()["waiting"], asks.count()), (2, 6))
+                self.assertEqual(list(asks.proposals), [record["id"]])
+                # 还有 N 件等你 under an answered question (app/question_display.py): the 看板's 等你, in the private chat.
+                self.assertEqual(overview.waiting_count(self.state, CHAT, self.now, proposals=True), 2)
+                self.assertEqual(overview.waiting_count(self.state, CHAT, self.now), 1)
+                view, card = self.board()
+                self.assertEqual(self.counted(card), (6, tags))
+                self.assertIn({"from": BOARD_FROM, "kind": CREATE_KIND, "proposal": record["id"]}, callbacks(card))
+                self.assertIn("「迁库收尾」", json.dumps(card, ensure_ascii=False))
+                shown, drawn = self.overview()
+                self.assertEqual(self.counted(drawn), (6, tags))
+                listed = (shown["board"] if switches else shown)["proposals"]
+                self.assertEqual([row["id"] for row in listed], [record["id"]])
+                self.assertIn({"from": BOARD_FROM, "kind": CREATE_KIND, "proposal": record["id"]}, callbacks(drawn))
+        tidy.update_proposal(self.state, record["id"], lambda data: data.update(state=tidy.DECLINED))
+        with mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1", tidy.ENV: "suggest", **ON}):
+            self.assertEqual(self.counted(self.board()[1])[0], 5)
+            self.assertEqual(self.counted(self.overview()[1])[0], 5)
+            group = overview.Overview(None, None, None, {}, chat=CHAT)  # A personal group's own card.
+            group.link = lambda state, topic, card: ""
+            self.assertNotIn("proposals", group.view(SimpleNamespace(state_dir=self.state), CHAT, self.now))
+        with mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1", tidy.ENV: "suggest"}):
+            record = tidy.new_proposal(tidy.CREATE, topics=[self.topics[11], self.topics[17]], name="另一件")
+            record["card"] = {"message_id": "om_proposal2"}
+            tidy.put_proposal(self.state, record)
+            self.assertEqual(self.counted(self.board()[1])[0], 6)  # A new one is read at once (its file changes the folder).
+        with mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1", tidy.ENV: ""}):  # 整理专项 off: as before.
+            self.assertEqual(self.counted(self.board()[1])[0], 5)
+            self.assertEqual(self.counted(self.overview()[1])[0], 5)
 
 
 if __name__ == "__main__":

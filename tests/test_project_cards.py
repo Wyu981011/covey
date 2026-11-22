@@ -5,6 +5,7 @@ COVEY_PROJECTS unset."""
 from __future__ import annotations
 
 import dataclasses
+import html
 import itertools
 import json
 import os
@@ -64,28 +65,46 @@ def text(card):
     return json.dumps(card, ensure_ascii=False)
 
 
+def state_tag(card):
+    """(text, colour) of the project's state on the lead's speaker row (cards/ui.py speaker_row: the card has no title bar,
+    T657 B2); None without one."""
+    found = re.search(r"<text_tag color='(\w+)'>(.*?)</text_tag>", text(find_element(card, "speaker_row")))
+    return (html.unescape(found.group(2)), found.group(1)) if found else None
+
+
+def rows(card):
+    """The element ids of the member rows (cards/ui.py topic_row), in order."""
+    return [element["element_id"] for element in card["body"]["elements"]
+            if element.get("tag") == "interactive_container" and str(element.get("element_id") or "").startswith("pt_")]
+
+
 class CardTest(UnifiedCase):
-    def test_the_header_names_the_project_and_its_state(self):
-        head = view.project_card(project())["header"]
-        self.assertEqual(head["title"]["content"], "把订单库迁到新集群")
-        self.assertEqual([tag["text"]["content"] for tag in head["text_tag_list"]], ["在做"])
-        self.assertEqual([tag["color"] for tag in head["text_tag_list"]], ["blue"])
-        plain = view.project_card(project(status=view.WAITING))["header"]
-        self.assertEqual([tag["text"]["content"] for tag in plain["text_tag_list"]], ["等你"])
-        self.assertEqual(plain["text_tag_list"][0]["color"], "orange")
+    def test_the_lead_s_speaker_row_names_the_project_and_its_state(self):
+        """B2 (T657): the lead's card has the lead's speaker row first (docs/ui.md 4 说话人), no title bar: its picture, the
+        project's name · 负责人, the state as a tag in its colour."""
+        card = view.project_card(project())
+        self.assertNotIn("header", card)
+        self.assertEqual(card["body"]["elements"][0]["element_id"], "speaker_row")
+        self.assertIn("**把订单库迁到新集群 · 负责人**", text(card["body"]["elements"][0]))
+        self.assertEqual(state_tag(card), ("在做", "blue"))
+        self.assertEqual(state_tag(view.project_card(project(status=view.WAITING))), ("等你", "orange"))
         for status in (view.RUNNING, view.WAITING, view.STOPPED, view.CANCELLED, view.DONE):
-            self.assertEqual(view.project_card(project(status))["header"]["text_tag_list"][0]["text"]["content"],
-                             look.word(status))
+            self.assertEqual(state_tag(view.project_card(project(status)))[0], look.word(status))
+        pictured = view.project_card(project(avatar="img_v3_fake"))["body"]["elements"][0]
+        self.assertIn('"img_key": "img_v3_fake"', text(pictured))  # The lead's picture, the one its answers have.
+        self.assertNotIn("img_key", text(card["body"]["elements"][0]))  # None uploaded: the name alone.
+        asked = view.project_card(project(ask_text="迁库", ask_at="09:10", ask_url=URL))
+        row = find_element(asked, "speaker_row")
+        self.assertEqual(row["behaviors"][0]["default_url"], URL)  # The row opens the owner's message.
+        self.assertIn("在办你 09:10 交代的事", text(row))
+        self.assertIn("answer_words", ids(asked))  # His words, one line that opens.
 
     def test_a_guards_pause_is_停住了_in_red_with_why_and_the_owners_stop_is_已停止(self):
         """P0-3 (T647, docs/ui.md 2.2): 护栏停住的专项是“停住了”的红, why after it in its tag; the owner's own stop is 已停止,
         grey, as every other card says them (core/look.py STATES)."""
-        head = view.project_card(project(view.STOPPED, reason="token 用完了"))["header"]
-        tag = head["text_tag_list"][0]
-        self.assertEqual((tag["text"]["content"], tag["color"], head["icon"]["color"]), ("停住了 · token 用完了", "red", "red"))
-        mine = view.project_card(project(view.CANCELLED))["header"]
-        self.assertEqual((mine["text_tag_list"][0]["text"]["content"], mine["text_tag_list"][0]["color"]), ("已停止", "neutral"))
-        self.assertNotIn("icon", mine)
+        card = view.project_card(project(view.STOPPED, reason="token 用完了"))
+        self.assertEqual(state_tag(card), ("停住了 · token 用完了", "red"))
+        self.assertEqual(state_tag(view.project_card(project(view.CANCELLED))), ("已停止", "neutral"))
         self.assertEqual(view.project_card(project(view.STOPPED, reason="token 用完了"))["config"]["summary"]["content"],
                          "停住了 · token 用完了 · 把订单库迁到新集群")
 
@@ -96,16 +115,16 @@ class CardTest(UnifiedCase):
                    thread(T3, view.CANCELLED, label="T503"), thread("d4e5f6" + "0" * 10, view.WAITING, label="T504"),
                    thread("e5f6a7" + "0" * 10, view.STUCK, label="T505"))
         card = view.project_card(project(members=members))
-        folds = [element for element in card["body"]["elements"] if element.get("tag") == "collapsible_panel"
-                 and element["element_id"].startswith("pt_")]
-        self.assertEqual([(fold["element_id"], fold["expanded"]) for fold in folds],
-                         [("pt_d4e5f6_w", True), ("pt_b2c3d4_s", True), ("pt_e5f6a7_k", True), ("pt_a1b2c3_d", False),
-                          ("pt_c3d4e5_c", False)])
-        self.assertEqual([fold["header"]["title"]["content"].rsplit(" · ", 1)[-1] for fold in folds],
-                         ["等你", "停住了", "可能卡住", "做完", "已停止"])
-        stopped = find_element(card, "pb_b2c3d4_s")["content"]
+        # What asks first, a row each as the 看板 draws a topic (T657 B6); the ones done or stopped by the owner one shut fold.
+        self.assertEqual(rows(card), ["pt_d4e5f6_w", "pt_b2c3d4_s", "pt_e5f6a7_k"])
+        stopped = text(find_element(card, "pt_b2c3d4_s"))
         self.assertIn("<font color='red'>**停住了**</font>", stopped)
         self.assertIn("这一轮没有成功", stopped)
+        self.assertIn("<font color='white'>**T502**</font>", stopped)  # Its T number's badge.
+        ended = find_element(card, "pj_ended")
+        self.assertFalse(ended["expanded"])
+        self.assertEqual(ended["header"]["title"]["content"], "做完 1 个 · 已停止 1 个")
+        self.assertIn("· 已停止", text(ended))
         self.assertIn("话题 5（等你 1 · 停住了 1 · 可能卡住 1 · 做完 1 · 已停止 1）", find_element(card, "pj_meta")["content"])
 
     def test_the_elements_in_order_and_every_id_is_valid_and_there_is_no_input(self):
@@ -113,45 +132,53 @@ class CardTest(UnifiedCase):
                                          lead_note="先迁小表", triage=("答了 一条",), memory=(("m1", "窗口在周六"),),
                                          library=(("方案.md",),), ask_text="迁库", ask_at="09:10", ask_url=URL))
         found = ids(card["body"]["elements"])
-        self.assertEqual([name for name in found if not name.startswith(("pb_", "pq_"))],
-                         ["answer_ask", "pj_need", "pj_meta", "pj_lead", "pt_a1b2c3_r", "pj_triage", "pj_mem", "pj_lib", "pj_io",
-                          "pj_btns", "pj_steer", "pj_stop", "pj_down"])
+        self.assertEqual(found, ["speaker_row", "answer_words", "pj_need", "pj_meta", "pj_lead", "pt_a1b2c3_r", "pj_triage",
+                                 "pj_mem", "pj_lib", "pj_io", "pj_btns", "pj_steer", "pj_stop", "pj_down"])
         self.assertEqual(len(found), len(set(found)))
         self.assertTrue(all(ELEMENT_ID.match(name) for name in found), found)
         self.assertNotIn('"tag": "input"', text(card))
         self.assertNotIn('"tag": "form"', text(card))
-        self.assertIn("打开问题卡 ›", find_element(card, "pj_need")["content"])
-        self.assertIn(URL, find_element(card, "pj_need")["content"])
+        need = find_element(card, "pj_need")  # The band: what waits, opening the question card.
+        self.assertEqual(need["border_color"], "band-line")
+        self.assertEqual(need["behaviors"][0]["default_url"], URL)
+        self.assertIn("要你定：T503 按日期还是按租户分区？", text(need))
         self.assertIn("话题 1（在做 1） · 用时 3分00秒 · token 33万", find_element(card, "pj_meta")["content"])
         self.assertIn("先迁小表", find_element(card, "pj_lead")["content"])
 
     def test_what_is_empty_is_not_drawn(self):
         card = view.project_card(project(tokens="", lead_state="", members=()))
         found = ids(card)
-        for name in ("pj_need", "answer_ask", "pj_triage", "pj_mem", "pj_lib", "pj_more"):
+        for name in ("pj_need", "answer_ask", "answer_words", "pj_triage", "pj_mem", "pj_lib", "pj_more", "pj_ended"):
             self.assertNotIn(name, found)
         self.assertEqual(find_element(card, "pj_meta")["content"], "<font color='grey'>话题 0 · 用时 3分00秒</font>")
         self.assertIn("待命", find_element(card, "pj_lead")["content"])
 
-    def test_threads_at_work_or_waiting_are_open_those_done_shut_and_a_change_of_state_is_a_new_element(self):
+    def test_threads_at_work_or_waiting_are_rows_those_done_one_shut_fold_and_a_change_of_state_is_a_new_element(self):
         threads = (thread(T1, view.RUNNING), thread(T2, view.DONE, label="T502"), thread(T3, view.WAITING, label="T503"))
         card = view.project_card(project(members=threads))
-        folds = [element for element in card["body"]["elements"] if element.get("tag") == "collapsible_panel"
-                 and element["element_id"].startswith("pt_")]
-        self.assertEqual([(fold["element_id"], fold["expanded"]) for fold in folds],
-                         [("pt_c3d4e5_w", True), ("pt_a1b2c3_r", True), ("pt_b2c3d4_d", False)])  # Waiting first, done last.
+        self.assertEqual(rows(card), ["pt_c3d4e5_w", "pt_a1b2c3_r"])  # Waiting first.
+        row = find_element(card, "pt_a1b2c3_r")
+        self.assertEqual(row["behaviors"][0]["default_url"], URL)  # The whole row opens its thread.
+        self.assertIn("第 2/5 步", text(row))
+        fold = find_element(card, "pj_ended")
+        self.assertFalse(fold["expanded"])
+        self.assertIn(f"[T502]({URL})", text(fold))  # Done last, its T number a link.
+        waiting = view.project_card(project(members=(thread(T1, view.WAITING),)))
+        self.assertEqual(rows(waiting), ["pt_a1b2c3_w"])  # The same thread, another state: another id.
         ended = view.project_card(project(members=(thread(T1, view.DONE),)))
-        self.assertEqual(ids(ended).count("pt_a1b2c3_d"), 1)
-        self.assertNotIn("pt_a1b2c3_r", ids(ended))  # The same thread, another state: another id, so the client redraws it.
-        self.assertNotIn("pb_a1b2c3_r", ids(ended))
+        self.assertEqual(rows(ended), [])
+        self.assertIn("pj_ended", ids(ended))
 
-    def test_at_most_eight_threads_are_folds_and_the_rest_is_one_line(self):
-        many = tuple(thread(f"{index:02x}" * 3 + "0" * 10, view.DONE if index % 3 else view.RUNNING) for index in range(11))
+    def test_at_most_eight_threads_are_rows_and_the_rest_is_one_line(self):
+        many = tuple(thread(f"{index:02x}" * 3 + "0" * 10, view.RUNNING, label=f"T{600 + index}") for index in range(11))
         card = view.project_card(project(members=many))
-        folds = [name for name in ids(card) if name.startswith("pt_")]
-        self.assertEqual(len(folds), 8)
-        self.assertIn("更早 3 条", find_element(card, "pj_more")["content"])
-        self.assertLess(len(json.dumps(card, ensure_ascii=False, separators=(",", ":")).encode()), 14000)
+        self.assertEqual(len(rows(card)), view.MAX_FOLDS)
+        self.assertIn("还有 T608、T609、T610 3 个话题", find_element(card, "pj_more")["content"])
+        self.assertLess(len(json.dumps(card, ensure_ascii=False, separators=(",", ":")).encode()), 16000)
+        ended = tuple(thread(f"{index:02x}" * 3 + "0" * 10, view.DONE if index % 3 else view.RUNNING) for index in range(11))
+        card = view.project_card(project(members=ended))
+        self.assertEqual(len(rows(card)), 4)
+        self.assertEqual(find_element(card, "pj_ended")["header"]["title"]["content"], "做完 7 个")
 
     def test_memory_and_library_rows_carry_their_delete_button_the_triage_none(self):
         card = view.project_card(project(triage=("答了 一条", "转给你 一条"), memory=(("m1", "窗口在周六"), ("m2", "只读到周日")),
@@ -298,7 +325,7 @@ class HarnessLabelTest(CardCase):
         shown = self.facts()
         self.assertEqual(shown.members[0].harness, "Codex")
         self.assertEqual(shown.inputs[0], "Claude Code")  # The box is the lead's.
-        self.assertIn("Codex", find_element(view.project_card(shown), "pq_a1b2c3_r")["content"])
+        self.assertIn("Codex", text(find_element(view.project_card(shown), "pt_a1b2c3_r")))  # On its row's figures.
 
     def test_a_thread_with_no_job_yet_is_named_by_its_binding(self):
         self.bind(T1, "codex")
@@ -348,8 +375,27 @@ class RefreshTest(CardCase):
         self.job(T1, 1, "done", status_message="完成了")
         self.tick(1020.0)
         self.assertEqual([call.kwargs["sequence"] for call in self.put.call_args_list], [41, 42])
-        self.assertIn("pt_a1b2c3_d", ids(self.put.call_args.args[2]))
+        self.assertIn("pj_ended", ids(self.put.call_args.args[2]))  # Done: a line of the shut fold, no row.
+        self.assertNotIn("pt_a1b2c3_r", ids(self.put.call_args.args[2]))
         self.assertEqual(len({call.kwargs["key"] for call in self.put.call_args_list}), 2)
+
+    def test_the_lead_s_picture_is_had_once_and_is_on_its_speaker_row(self):
+        """B2 (T657): the lead's picture (app/answer_cards.py avatar: uploaded the first time, then kept) on the card's speaker
+        row, asked for once a project; one not to be had is asked again LINK_RETRY later, the card going with the name alone."""
+        calls = []
+
+        def avatar(state, topic, chat, profile=None, log=None):
+            calls.append(topic)
+            return "" if len(calls) == 1 else "img_v3_lead"
+        with mock.patch.object(project_cards, "avatar_of", side_effect=avatar):
+            self.tick(1010.0)
+            self.assertNotIn("img_key", text(self.put.call_args.args[2]))
+            self.tick(1020.0)
+            self.assertEqual(len(calls), 1)  # Not again within LINK_RETRY.
+            self.tick(1010.0 + project_cards.LINK_RETRY + 1)
+            self.assertIn('"img_key": "img_v3_lead"', text(self.put.call_args.args[2]))
+            self.tick(1010.0 + 2 * project_cards.LINK_RETRY + 2)
+        self.assertEqual(calls, [LEAD, LEAD])
 
     def test_a_write_that_failed_backs_off_and_the_next_try_has_a_new_sequence(self):
         self.put.return_value = None
@@ -373,29 +419,28 @@ class RefreshTest(CardCase):
         self.job(T1, 1, "waiting_user", status_message="等你回答：按日期还是按租户分区？")
         self.tick(1010.0)
         card = self.put.call_args.args[2]
-        self.assertEqual(card["header"]["text_tag_list"][0]["text"]["content"], "等你")
-        self.assertIn("按日期还是按租户分区", find_element(card, "pj_need")["content"])
+        self.assertEqual(state_tag(card), ("等你", "orange"))
+        self.assertIn("按日期还是按租户分区", text(find_element(card, "pj_need")))
         projects.set_state(self.state, PID, projects.PAUSED, "主人停止")
         self.tick(1020.0)
-        self.assertEqual(self.put.call_args.args[2]["header"]["text_tag_list"][0]["text"]["content"], "已停止")
+        self.assertEqual(state_tag(self.put.call_args.args[2])[0], "已停止")
         self.assertIsNone(find_element(self.put.call_args.args[2], "pj_stop"))
         projects.set_state(self.state, PID, projects.ACTIVE)
         projects.set_state(self.state, PID, projects.PAUSED, "wakes")  # A guard's: 停住了 and why, in red.
         self.tick(1030.0)
-        tag = self.put.call_args.args[2]["header"]["text_tag_list"][0]
-        self.assertEqual((tag["text"]["content"], tag["color"]), ("停住了 · 连续唤醒次数到上限", "red"))
+        self.assertEqual(state_tag(self.put.call_args.args[2]), ("停住了 · 连续唤醒次数到上限", "red"))
 
     def test_a_thread_that_failed_or_was_stopped_by_the_lead_is_停住了_on_the_card(self):
         self.job(T1, 1, "failed", status_message="任务异常（transport_error）")
         self.tick(1010.0)
         card = self.put.call_args.args[2]
         self.assertIsNotNone(find_element(card, "pt_a1b2c3_s"))
-        self.assertIn("停住了", find_element(card, "pt_a1b2c3_s")["header"]["title"]["content"])
+        self.assertIn("<font color='red'>**停住了**</font>", text(find_element(card, "pt_a1b2c3_s")))
         self.assertIn("停住了 1", find_element(card, "pj_meta")["content"])
         self.job(T1, 2, "cancelled", cancel_requested_by="card")  # The owner's own stop.
         self.tick(1020.0)
         card = self.put.call_args.args[2]
-        self.assertIn("已停止", find_element(card, "pt_a1b2c3_c")["header"]["title"]["content"])
+        self.assertEqual(find_element(card, "pj_ended")["header"]["title"]["content"], "已停止 1 个")
 
     def test_the_card_says_what_the_record_and_the_files_say(self):
         projects.update(self.state, PID, lambda record: record.update(direction="旧的方向", lead_note={"text": "先迁小表"},
@@ -406,7 +451,7 @@ class RefreshTest(CardCase):
         (folder / "memory.json").write_text(json.dumps({"entries": [{"id": "m1", "text": "窗口在周六"}]}))
         self.tick(1010.0)
         card = self.put.call_args.args[2]
-        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["在做"])
+        self.assertEqual(state_tag(card), ("在做", "blue"))
         self.assertIn("先迁小表", find_element(card, "pj_lead")["content"])
         self.assertIn("token 33万", find_element(card, "pj_meta")["content"])
         self.assertTrue(all(name in ids(card) for name in ("pj_triage", "pj_mem", "pj_lib")))

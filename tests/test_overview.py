@@ -8,6 +8,7 @@ import os
 import re
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from support.world import UnifiedCase
@@ -27,10 +28,13 @@ def plain(content):
     return " ".join(text.replace("　", " ").split())
 
 
+BADGE = "<font color='white'>**"  # A topic row's T number, on its badge (cards/ui.py topic_badge), before its line.
+
+
 def texts(card):
     """What the card says, one string per element of its body in order (the band, a group's heading, a topic row
-    (cards/ui.py topic_row: its state word and head / its line / its figures), a grey note), its Markdown read as
-    ``plain``."""
+    (cards/ui.py topic_row: its state word, its T number off its badge, its title / its line / its figures), a grey
+    note), its Markdown read as ``plain``."""
     def contents(node):
         if isinstance(node, dict):
             if node.get("tag") == "markdown":
@@ -40,7 +44,16 @@ def texts(card):
         elif isinstance(node, list):
             for value in node:
                 yield from contents(value)
-    return [" / ".join(part for part in map(plain, contents(element)) if part) for element in card["body"]["elements"]]
+
+    def read(element):
+        found = [line for content in contents(element) for line in content.split("\n")]  # A row's head and line: one element.
+        if len(found) > 1 and found[0].startswith(BADGE):  # The badge is first; the row reads state, number, title.
+            word, _, title = plain(found[1]).partition(" ")
+            found = [f"{word} {plain(found[0])} {title}".strip(), *map(plain, found[2:])]
+        else:
+            found = list(map(plain, found))
+        return " / ".join(part for part in found if part)
+    return [read(element) for element in card["body"]["elements"]]
 
 
 def hm(seconds):
@@ -89,7 +102,8 @@ class CardTests(unittest.TestCase):
         # The question's row opens its card and has 去回答; nothing else is a button.
         shown = json.dumps(card, ensure_ascii=False)
         self.assertEqual(re.findall(r'"text": \{"tag": "plain_text", "content": "([^"]+)"\}, "type"', shown), ["去回答"])
-        self.assertEqual(shown.count('"default_url": "https://applink.example/q"'), 3)  # The band, the row, its button.
+        # The band, the row, its T number's badge (its own link: a click on it stops there) and its button.
+        self.assertEqual(shown.count('"default_url": "https://applink.example/q"'), 4)
 
     def test_a_task_that_may_be_stuck_says_so_first(self):
         card = overview_card(view(running=[{"label": "T395", "title": "跑测试", "status": "running", "started": NOW - 3600,
@@ -181,7 +195,8 @@ class CardTests(unittest.TestCase):
         self.assertLessEqual(element_count(card), CARD_NODES)
         self.assertLessEqual(json_size(card), CARD_BYTES)
         lines = texts(card)
-        self.assertEqual(lines.count("还有 6 件没列出"), 3)  # Six rows a group, then a line saying how many more.
+        # Four rows a group (a row with its T number's badge costs more nodes, T657 B6), then a line saying how many more.
+        self.assertEqual(lines.count("还有 8 件没列出"), 3)
         self.assertIn("等你 12", lines)
 
     def test_ended_rows_have_a_line_cut_to_the_rows_length(self):
@@ -379,6 +394,60 @@ class OverviewTests(OverviewCase):
         done = {row["topic"]: row for row in collect(self.state, "oc_dm", NOW + 60, NOW - 60, NOW + 60)["done"]}
         self.assertEqual(done["t1"]["line"], stopped.split(" / ")[1])
         self.assertEqual(done["t2"]["line"], "已经改好了，测试都过。")
+
+    def test_every_row_opens_what_it_is_about(self):
+        """B5 (T657): not only a question's row is a link: a running task's opens its task card (看看, 补充, 停止 are there), one
+        that ended a moment ago its card in the topic's thread, the whole row (› after its title); a task in the queue with
+        no card yet is no link. Each link is read once and kept by its card (or its topic, for one with none)."""
+        seen = []
+        self.overview.link = lambda state, topic, card: (seen.append((topic, card)), f"https://applink.example/{card or topic}")[1]
+        self.job("om_a", 1, card_message_id="om_task1", timings={"backend_started": NOW})
+        self.topic("t2", 396, "排着队的")
+        self.job("om_b", 2, status="queued", topic="t2")
+        self.overview.tick(self.ctx, NOW)
+        card = self.card(self.app.messenger.create_and_send_card.call_args)
+        rows = [element for element in card["body"]["elements"] if element.get("tag") == "interactive_container"
+                and "badge" not in json.dumps(element) and "T395" in json.dumps(element)]
+        self.assertEqual(rows[0]["behaviors"], [{"type": "open_url", "default_url": "https://applink.example/om_task1"}])
+        self.assertIn(f"在做 T395 为啥这么多重复的 › / {hm(NOW)} 开始 ｜ Claude Code ｜ demo-app", texts(card))
+        self.assertIn("在做 T396 排着队的 / 排队中 ｜ Claude Code ｜ demo-app", texts(card))  # No card yet: no ›.
+        self.job("om_a", 1, status="done")
+        self.overview.tick(self.ctx, NOW + 30)
+        card = self.card(self.app.messenger.put_card.call_args)
+        self.assertIn(f"有结果 T395 为啥这么多重复的 › / {hm(NOW + 30)}", texts(card))
+        self.assertIn('"default_url": "https://applink.example/om_task1"', json.dumps(card))
+        self.assertEqual(seen.count(("t1", "om_task1")), 2)  # The running row's and the ended row's (the stub keeps nothing).
+
+    def test_a_link_without_a_card_is_kept_by_its_topic(self):
+        """The process keeps a link by its card; one without (a result's topic at its newest card) by its topic, so two such
+        topics never share one."""
+        with mock.patch.object(overview, "link_for", side_effect=lambda state, topic, card="", profile=None: f"https://x/{topic}"):
+            self.assertEqual(self.overview.link(self.state, "t1", ""), "https://x/t1")
+            self.assertEqual(self.overview.link(self.state, "t2", ""), "https://x/t2")
+            self.assertEqual(self.overview.link(self.state, "", ""), "")
+
+    def test_the_web_page_s_link_is_on_the_last_line_only_once_its_address_is_set(self):
+        """B9 (T657): with COVEY_WEB=1 and the web page's address in its config (``page_url``) the last line has 打开网页; with
+        the switch off or no address the card is as it was."""
+        from covey.core import web_sync
+        import tempfile
+        folder = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or None)
+        self.addCleanup(folder.cleanup)
+        config = Path(folder.name) / "web.json"
+        config.write_text(json.dumps({"base_url": "https://example.invalid/app/x/openapi", "key_file": "/absolute/key",
+                                      "page_url": "https://example.invalid/app/x"}))
+        self.job("om_a", 1, timings={"backend_started": NOW})
+        plain_view = self.overview.view(self.ctx, "oc_dm", NOW)
+        self.assertNotIn("web", plain_view)
+        with mock.patch.dict(os.environ, {web_sync.CONFIG_ENV: str(config)}):
+            self.assertNotIn("web", self.overview.view(self.ctx, "oc_dm", NOW))  # The switch off.
+            with mock.patch.dict(os.environ, {web_sync.ENV: "1"}):
+                shown = self.overview.view(self.ctx, "oc_dm", NOW)
+        self.assertEqual(shown["web"], "https://example.invalid/app/x")
+        drawn = json.dumps(overview_card(shown, NOW, "14:40"), ensure_ascii=False)
+        self.assertIn('"content": "打开网页"', drawn)
+        self.assertIn('"default_url": "https://example.invalid/app/x"', drawn)
+        self.assertNotIn("打开网页", json.dumps(overview_card(plain_view, NOW, "14:40"), ensure_ascii=False))
 
     def test_a_task_that_ended_stays_under_recently_ended_for_a_while(self):
         self.job("om_a", 1, timings={"backend_started": NOW})

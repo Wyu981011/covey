@@ -880,7 +880,7 @@ class DigestTest(StateCase):
         shown = {"slot": 1.0, "since": 0.0, "waiting": [], "stale": [], "running": [], "done": [], "older": 0,
                  "knowledge": view}
         card = json.dumps(digest_card(shown), ensure_ascii=False)
-        self.assertIn("新记的知识（13）", card)
+        self.assertIn("**新记的知识**  <font color='grey'>13</font>", card)  # A part's heading as the 看板 draws one (T657 B1).
         self.assertIn("新增 · ", card)
         self.assertIn("另有 3 条", card)
         text = digest_text(shown)

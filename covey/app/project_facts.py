@@ -176,8 +176,9 @@ def library_rows(state_dir, project_id) -> tuple:
     return (*rows, *((name,) for name in sorted(names)))[:LIST_CAP]
 
 
-def facts(state_dir, record, now, titles=None, links=None) -> Project:
-    """What the card of ``record`` says now. ``links``: {"need": url of the question card, "threads": {topic id: url}}."""
+def facts(state_dir, record, now, titles=None, links=None, avatar="") -> Project:
+    """What the card of ``record`` says now. ``links``: {"need": url of the question card, "threads": {topic id: url}};
+    ``avatar``: the image key of the lead's picture (app/project_cards.py had it uploaded), '' for its name alone."""
     from covey.app import dispatch_cards as dc
 
     links = links or {}
@@ -194,10 +195,10 @@ def facts(state_dir, record, now, titles=None, links=None) -> Project:
         status = {"stopped": STOPPED, "cancelled": CANCELLED}.get(projects.pause_tone(record), IDLE)
     else:
         status = WAITING if waiting or lead_state(state_dir, record, now).startswith("等你") else RUNNING
-    need = ""
-    if status == WAITING:
+    need, need_from = "", ""
+    if status == WAITING:  # What waits and who asks it: a member's T number, else the lead.
         need = waiting.body.removeprefix(dc.ASK_WORDS) if waiting else lead_state(state_dir, record, now).removeprefix("等你 · ")
-        need = " · ".join(part for part in (waiting.label if waiting else "", need) if part)
+        need_from = (waiting.label or "话题") if waiting else "负责人"
     began = float(record.get("created_at") or now)
     end = now if status != DONE else float(record.get("updated_at") or now)
     elapsed = dc.quantize(max(0.0, end - began))
@@ -218,7 +219,8 @@ def facts(state_dir, record, now, titles=None, links=None) -> Project:
         parts.append(answer_card.figure("token", tokens))
     ask = record.get("ask") if isinstance(record.get("ask"), dict) else {}
     return Project(project_id=pid, lead_topic=lead, name=str(record.get("name") or ""), status=status,
-                   reason=projects.stop_reason(record), need=need, need_url=str(links.get("need") or ""), members=members,
+                   reason=projects.stop_reason(record), need=need, need_url=str(links.get("need") or ""), need_from=need_from,
+                   members=members, avatar=str(avatar or ""),
                    elapsed=elapsed, tokens=tokens,
                    lead_state=projects.reason_words(record) or lead_state(state_dir, record, now), lead_note=lead_note(record),
                    triage=triage_lines(record), joins=join_lines(state_dir, record), memory=memory_rows(state_dir, record), library=library_rows(state_dir, pid),

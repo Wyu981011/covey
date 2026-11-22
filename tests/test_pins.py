@@ -774,11 +774,13 @@ class CardTests(unittest.TestCase):
         text = json.dumps(card, ensure_ascii=False)
         self.assertIn("**1**</font> **件事**", text)  # 要你处理: the stop.
         self.assertIn("**停住了 · 未 Pin**  <font color='grey'>1</font>", text)
-        self.assertIn("<font color='red'>**停住了**</font> **T400 迁库**", text)
+        # Each a topic row: its T number on its badge (T657 B6), its state's word, its title.
+        for number, color, word, title in (("T400", "red", "停住了", "迁库"), ("T402", "green", "有结果", "查日志"),
+                                           ("T401", "grey", "已停止", "改看板")):
+            self.assertIn(f"<font color='white'>**{number}**</font>", text)
+            self.assertIn(f"<font color='{color}'>**{word}**</font> **{title}**", text)
         self.assertIn("**有结果 · 未 Pin**  <font color='grey'>1</font>", text)
-        self.assertIn("<font color='green'>**有结果**</font> **T402 查日志**", text)
         self.assertIn("**已停止 · 未 Pin**  <font color='grey'>1</font>", text)
-        self.assertIn("<font color='grey'>**已停止**</font> **T401 改看板**", text)
         order = [element["content"].split("**")[1] for element in card["body"]["elements"]
                  if element.get("tag") == "markdown" and element.get("icon")]
         self.assertEqual(order, ["停住了 · 未 Pin", "有结果 · 未 Pin", "已停止 · 未 Pin"])

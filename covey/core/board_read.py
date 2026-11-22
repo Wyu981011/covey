@@ -13,9 +13,10 @@ the project card (``asks``) and the web page (app/web_sync.py) take it, and each
 has it, the topics whose result as the board keeps one (``groups``, read topic by topic, and however long before the
 board was on it ended: app/pins.py PinnedTopics.look) stopped (core/look.py record_tone 停住了: failed, interrupted,
 timed out, refused, or stopped by someone other than the owner), the topics running that may be stuck
-(core/progress.py maybe_stuck) and the projects a guard paused (core/projects.py halted). The 看板 and 手上的事 (the
-pinned one too) take it from the same read with the same rules (app/pins.py PinnedTopics.asks), list what it names
-under those words, and count with ``act_count``: the same number on every card at the same time.
+(core/progress.py maybe_stuck), the projects a guard paused (core/projects.py halted) and, in the owner's private chat
+with 整理专项 on, its proposals waiting for his 好 (``waiting_proposals``: 等你定 is 等你, docs/ui.md 2.2). The 看板 and
+手上的事 (the pinned one too) take it from the same read with the same rules (app/pins.py PinnedTopics.asks), list what
+it names under those words, and count with ``act_count``: the same number on every card at the same time.
 
 A reader that also needs the board's ``taken off`` reads once with the board record's ``keep`` (app/pins.py kept)
 and hands the read to the board's look; the jobs it judges itself are those ``fresh`` picks, as read without it. So
@@ -597,15 +598,19 @@ def act_count(counts) -> int:
 class Asks:
     """要你处理 of a chat now (``asking``). ``waiting``: the topics of 等我 (``waits``, live and stale, newest first);
     ``stopped``: topic -> the job record of its result that stopped (停住了); ``stuck``: topic -> its running job that
-    may be stuck; ``projects``: project id -> the record of a project a guard paused (停住了 too)."""
+    may be stuck; ``projects``: project id -> the record of a project a guard paused (停住了 too); ``proposals``: proposal
+    id -> the record of a proposal of 整理专项 waiting for the owner's 好 (等你 too, ``waiting_proposals``)."""
     waiting: tuple = ()
     stopped: dict = dataclasses.field(default_factory=dict)
     stuck: dict = dataclasses.field(default_factory=dict)
     projects: dict = dataclasses.field(default_factory=dict)
+    proposals: dict = dataclasses.field(default_factory=dict)
 
     def counts(self) -> dict:
-        """{state key: how many} of ``ACT``: a project a guard paused is 停住了 as a topic that stopped is."""
-        return {"waiting": len(self.waiting), "stopped": len(self.stopped) + len(self.projects), "stuck": len(self.stuck)}
+        """{state key: how many} of ``ACT``: a project a guard paused is 停住了 as a topic that stopped is, a proposal waiting
+        for his 好 等你 as a question is."""
+        return {"waiting": len(self.waiting) + len(self.proposals), "stopped": len(self.stopped) + len(self.projects),
+                "stuck": len(self.stuck)}
 
     def count(self) -> int:
         """The number of 要你处理 every card says (``act_count``)."""
@@ -635,9 +640,39 @@ def halted_projects(state, chat) -> dict:
     return {str(record.get("id")): record for record in projects.records(state, chat) if projects.halted(record)}
 
 
-def asking(found_waits: Waits, found: Groups, now, off=(), halted=None) -> Asks:
+PROPOSALS_AGE = 60.0  # Seconds ``waiting_proposals`` keeps what it read while the proposals' folder is unchanged.
+_proposals_read: dict = {}  # str(state) -> (the folder's mtime, when read, what was found)
+
+
+def waiting_proposals(state) -> dict:
+    """proposal id -> the record of each proposal of 整理专项 waiting for the owner's 好 (core/project_proposals.py waiting: the
+    看板, the butler's projects_list and 整理专项's 还在等你定 list the same), the newest first; {} with 整理专项 off. Only
+    the owner's private chat has them (整理专项 sorts its topics): a reader of a group asks none. 手上的事 asks every few
+    seconds and a proposal is a file of its own: what was read is kept while the folder is unchanged (every write of a
+    proposal replaces its file, which changes the folder), at most PROPOSALS_AGE."""
+    import time
+
+    from covey.core import project_proposals
+
+    if not project_proposals.enabled():
+        return {}
+    try:
+        stamp = project_proposals.proposals_dir(state).stat().st_mtime_ns
+    except OSError:
+        return {}
+    key, now = str(Path(state).absolute()), time.monotonic()
+    kept = _proposals_read.get(key)
+    if kept and kept[0] == stamp and now - kept[1] < PROPOSALS_AGE:
+        return dict(kept[2])
+    found = {str(record.get("id") or ""): record for record in project_proposals.waiting(state) if record.get("id")}
+    _proposals_read[key] = (stamp, now, found)
+    return dict(found)
+
+
+def asking(found_waits: Waits, found: Groups, now, off=(), halted=None, proposals=None) -> Asks:
     """要你处理 now: 等我 (``found_waits``, the topics ``waits`` found), the results that stopped and the running that may be
     stuck of ``found`` (``groups`` of a ``read``, topic by topic: no ``cells``, a project's topics counted each), the
-    topics in ``off`` (taken off the board) left out, and the projects ``halted`` names (``halted_projects``)."""
+    topics in ``off`` (taken off the board) left out, the projects ``halted`` names (``halted_projects``) and the
+    proposals ``proposals`` names (``waiting_proposals``, the private chat's alone)."""
     return Asks(tuple(wait.topic for wait in found_waits.all), stopped_results(found, off), stuck_running(found, now, off),
-                dict(halted or {}))
+                dict(halted or {}), dict(proposals or {}))

@@ -4,7 +4,9 @@ digest before (cards/digest.py). Off unless the variable holds a valid time (doc
 it there is no thread.
 
 What it lists is read from the records, as the pinned board reads them (core/board_read.py read: the indexes of
-questions/ and jobs/, no record lock, no Feishu call, the butler's topics left out), never from a model:
+questions/ and jobs/, no record lock, no Feishu call, the butler's topics left out), never from a model, and drawn as
+the 看板 draws it (cards/digest.py: the conclusion band counts 要你处理 as the 看板 and 手上的事 count it, ``asked``, and
+each topic is the same topic row, opening its card: ``url``, read before the card is built):
 - 等你: 等我 as every reader counts it (core/board_read.py waits): each topic's newest question shown, the butler's
   and the leads' too, else its task waiting for 开始 on a launch card, asked within QUESTION_AGE (one day); those
   waiting longer are not listed one by one but as one line of topic numbers (``stale``), as on 手上的事. Each row
@@ -13,7 +15,9 @@ questions/ and jobs/, no record lock, no Feishu call, the butler's topics left o
 - 做完: each other topic's latest turn (not one cancelled before it ran: board_read.unrun) that ended after the
   digest before (``since``) and by this one's time, and every result the owner has not seen however old (有结果未看,
   pins.board_results: the board's rule, core/board_read.py unseen; ``older`` counts those that ended before
-  ``since``), the latest first; one not 有结果未看 is marked 已看.
+  ``since``), the latest first; one not 有结果未看 is marked 已看. What stopped is listed however long ago it ended, as
+  要你处理 counts it (core/board_read.py Asks), and so are the projects a guard paused (``halted``) and, in the owner's
+  private chat with 整理专项 on, its proposals waiting for his 好 (``pending``, listed under 等你).
 With 手上的事 and the board on (overview.dismissable), the topics the owner took off the board (pins.taken_off: the
 board's own reading of its record) are in none of it, and the line of old questions has 手上的事's button
 这些都不用回答了 (cards/overview.py stale_line, its value's ``from`` "digest"). Its click is 手上的事's
@@ -41,12 +45,17 @@ topics, each with 「记下」「不用」. A click on one (cards/digest.py REME
 sent; an open candidate does, as the line of old questions does.
 
 看板 (the bot menu's BOARD_KEY, with a time set or COVEY_BOARD=1, core/app_manifest.py board_switch: with neither, no
-such item) is the same card at any time, 随时查看 · HH:MM in its title (the view's ``asked``): what waits and runs now, and what ended since the
+such item) is cards/board.py's card at any time, 随时查看 · HH:MM in its title (the view's ``asked``): what waits and runs now, and what ended since the
 last digest time (``last_slot``, ``board_since``; without the digest, the last day). It reads digest.json and never writes it: the times and their
 sends go on as before. Nothing to list, the card says so (a click wants an answer). Its record is
 <state>/BOARD_FOLDER/<token>.json (app/menu_panel.py), the view in ``digest``; the bot menu keeps one such card and a
 second click on the newest folds and unfolds it in place (app/bot_menu.py), unfolded with a fresh view. Its
-这些都不用回答了 is handed on as the timed card's (``dismissed``), the card redrawn from the record's view.
+这些都不用回答了 is handed on as the timed card's (``dismissed``), the card redrawn from the record's view. A stopped
+topic's own 检查并继续 on it (cards/board.py RECOVER_KIND, ``recover`` on its row: core/failure.py says the record takes
+one) is done as its task card's click does it (``recover``: app/task_controls.py retry_topic, in the context an automatic
+retry runs in; a saved result or question sent again, never run twice: a task once taken on is not taken on again) and
+the card is redrawn in place with one line of what came of it. With the web page's address set (core/web_sync.py
+page_url) its last line has 打开网页 (``web``), as the timed card's and 手上的事's do.
 """
 from __future__ import annotations
 
@@ -54,6 +63,7 @@ import datetime
 import re
 import time
 from concurrent import futures as concurrent_futures
+from pathlib import Path
 
 from covey.core import env as cenv
 from covey.app import memory_candidates, weekly_usage
@@ -64,20 +74,21 @@ from covey.app.topic_links import link_for, linkify
 from covey.app.form_cards import settle
 from covey.app.menu_panel import MenuPanel
 from covey.app.card_lanes import after_ack
-from covey.cards.board import (KINDS as BOARD_KINDS, OPEN_KIND, PROJECT_GO_KIND, REVISIT_KIND, SEEN_KIND, SEEN_MAX,
-                               board_card)
+from covey.cards.board import (KINDS as BOARD_KINDS, OPEN_KIND, PROJECT_GO_KIND, RECOVER_KIND, REVISIT_KIND, SEEN_KIND,
+                               SEEN_MAX, board_card)
 from covey.cards.digest import ORIGIN, REMEMBER_KIND, digest_card, digest_text, folded_board
-from covey.core import app_manifest, board_read, knowledge, look, memory, patrol, projects, turn_words
+from covey.core import app_manifest, board_read, failure, knowledge, look, memory, patrol, projects, turn_words, web_sync
 from covey.core import project_proposals
 from covey.core import progress as turn_progress
 from covey.core.board_read import ended_at, order, started_at, unrun
 from covey.core.failure import LABELS as FAILURE_LABELS, failure_view
+from covey.core.jobs import find_job_record, topic_job_records
 from covey.core.locks import resource_lock
 from covey.core.loops import every
 from covey.core.metrics import run_seconds, took_text
 from covey.core.state import read_object, write_json
 from covey.core.statuses import RUNNING, TERMINAL
-from covey.core.topics import label_title
+from covey.core.topics import label_title, topic_file, topic_label as number_of
 
 ENV = "COVEY_DIGEST_TIMES"
 RECORD = "digest.json"
@@ -95,6 +106,8 @@ BOARD_KIND = "digest-board"
 BOARD_FOLDER = "digest-boards"  # Its cards' records (app/menu_panel.py).
 BOARD_FAILED = "看板没能发出去，请稍后再点机器人菜单「看板」。"
 BOARD_SCANNED = 20  # The newest board records ``dismissed`` looks a card up in.
+RECOVER_ACTIONS = (failure.CONTINUE, failure.RETRY)  # What a stopped row's own button does (cards/board.py RECOVER_KIND).
+TOPIC_ID = re.compile(r"[0-9a-f]{16,128}")
 
 
 def parse_times(raw, log=lambda _: None):
@@ -207,6 +220,13 @@ def board_since(times, now, last):
     past = slots(times, now)
     start = last if isinstance(last, (int, float)) else past[-1] if past else now - 86400
     return max(start, now - LOOKBACK)
+
+
+def web_view() -> dict:
+    """{"web": the web page's address} with COVEY_WEB=1 and the address set (core/web_sync.py page_url): the 看板's and the
+    早晚汇总's last line has 打开网页; {} otherwise, the card as it was."""
+    url = web_sync.page_url()
+    return {"web": url} if url else {}
 
 
 def topic_label(state, topic_id):
@@ -334,23 +354,45 @@ def collect(state, chat, slot, since, now, *, board=False, asked=False):
         took = run_seconds(record.get("timings"), now=ended_at(record))
         status = record["status"]
         line, meta, card = "", [f"用时 {turn_words.wait_words(took)}" if took is not None else ""], ""
+        recover = {}
         if status in ("failed", "cancelled", "interrupted"):  # 停住了 on the 看板: why, where it stopped, what next.
             failed = failure_view(record, now)
             line = board_read.ended_line(record, now)  # The same line 手上的事's 刚结束 row says.
             acts = (failed or {}).get("actions") or []
+            recover = recovery(state, record, acts) if asks is not None and topic in asks.stopped else {}
             step = FAILURE_LABELS.get(acts[0], "") if acts else ""
-            meta = [f"{clock_words(ended_at(record), now)} 停", f"下一步：在任务卡上点「{step}」" if step else ""]
+            # Its own button says what next when it has one (``recover``); else where to click it.
+            meta = [f"{clock_words(ended_at(record), now)} 停", f"下一步：在任务卡上点「{step}」" if step and not recover else ""]
             card = str(record.get("card_message_id") or "")  # The 看板's row opens its task card (its buttons are there).
         elif status == "done":
             line = board_read.ended_line(record, now)
         done.append({**row(topic, turn_words.STATES.get(status, status), f"用时 {took_text(took)}" if took is not None else "",
                            topic not in unseen), "status": status, "line": line, "meta": meta, "card": card,
                      # 停住了, 已停止 (the owner's own stop), 有结果 or 做完 (core/look.py; cards/board.py groups by it).
-                     "tone": look.record_tone(record, seen=topic not in unseen)})
+                     "tone": look.record_tone(record, seen=topic not in unseen), **({"recover": recover} if recover else {})})
     view = {"slot": slot, "since": since, "waiting": waiting, "stale": stale, "running": running_rows, "done": done,
             "older": older, "dismissable": bool(board and stale)}
     new, wanted = knowledge_view(state, since, slot), wanted_view(state, chat, since, slot)
     return {**view, **({"knowledge": new} if new else {}), **({"wanted": wanted} if wanted else {})}
+
+
+def recovery(state, record, actions) -> dict:
+    """What a stopped row's own button does (cards/board.py RECOVER_KIND): {action, label, job} of the first of
+    RECOVER_ACTIONS that core/failure.py offers for ``record`` (``actions``: 检查并继续, 现在重试, or 重新投递结果 for a result
+    that did not go out), {} when there is none (a pending automatic retry, a refusal that wants another model), the task
+    went on already (``retried_by``) or its topic was switched since (app/binding.py stale_job_card: its card's click
+    starts nothing then): such a row keeps 去任务卡."""
+    from covey.app.binding import stale_job_card
+
+    name = next((name for name in RECOVER_ACTIONS if name in (actions or ())), "")
+    if not name or record.get("retried_by") or not isinstance(record.get("job_id"), int):
+        return {}
+    try:
+        if stale_job_card(read_object(topic_file(Path(state), str(record.get("topic_id") or ""))), record):
+            return {}
+    except (OSError, TypeError, ValueError):
+        return {}
+    return {"action": name, "label": failure.label(record, name), "job": record["job_id"]}
 
 
 KNOWLEDGE_SHOWN = 10  # Rows of 新记的知识; the rest is one line.
@@ -454,6 +496,9 @@ class Digest:
         self.link = lambda ctx, chat, text, cards=None: linkify(text, ctx.state_dir, chat, profile=ctx.profile, cards=cards)
         self.menu = MenuPanel(self, BOARD_KIND, BOARD_FOLDER, BOARD_KIND)
         self.candidates = None  # 你反复说的 (app/memory_candidates.py Candidates): the private chat's digest only (app/unified.py).
+        # The Bridge's Topics (app/unified.py, app/group_boards.py): their apps take a stopped row's 检查并继续 (``recover``);
+        # None: the 看板's stopped rows keep 去任务卡.
+        self.topics = None
 
     def menu_items(self):
         """The bot menu's 看板, with a digest time set or COVEY_BOARD=1 (app/unified.py menu)."""
@@ -478,20 +523,30 @@ class Digest:
         # A 等你 row's opens the card it is acted on (core/board_read.py waits): the question card, the launch card.
         # The old ones' labels link through their ``url`` (cards/overview.py stale_line), plain for the band to lead with.
         # All of them read at once (``urls``): one by one, eight topics whose cards were not kept took four seconds.
-        rows = [row for key in ("waiting", "running", "done", "stale") for row in view[key]]
-        urls = self.urls(ctx, [(row.get("topic") or "", row.get("card") or "") for row in rows])
-        for row in rows:
-            row["url"] = urls.get((row.get("topic") or "", row.get("card") or ""), "")
-            if row.get("kind") == "start":
-                row["act"] = turn_words.START_ACT
+        self.link_rows(ctx, view)
+        if self.topics is None:  # Nothing here to take a 检查并继续 on: the row's task card does.
+            for row in view["done"]:
+                row.pop("recover", None)
         # ``at``: when it was read (a redraw from this view later says so, cards/board.py empty_state); ``first_use``: it
         # lists nothing and the chat never had a topic (还没有话题), told from a clear board.
         first = not any(view[key] for key in ("waiting", "stale", "running", "done")) and not board_read.has_topics(ctx.state_dir, chat)
         return {**view, "asked": True, "stamp": clock_words(now, now), "at": now, "can_dismiss": dismissable(),
                 **({"first_use": True} if first else {}),
                 "done_since": clock_words(view["since"], now) if view.get("since") else "",
-                **self.where(chat), **self.tidy(ctx, chat),
+                **self.where(chat), **self.tidy(ctx, chat), **web_view(),
                 **self.projects_view(ctx, chat, view), **self.revisit_view(ctx, chat, now)}
+
+    def link_rows(self, ctx, view):
+        """Each row of ``view``'s 等你, 在做, 做完 and old questions with the link that opens it (``url``): a 等我's the card it
+        is acted on (core/board_read.py waits), a stopped one's and a running one's its task card (``card``), any other its
+        topic at its newest card; all read at once (``urls``: one by one, eight topics whose cards were not kept took four
+        seconds). A task waiting for 开始 says so on its button (``act``). Feishu reads: outside any lock."""
+        rows = [row for key in ("waiting", "running", "done", "stale") for row in view.get(key) or ()]
+        urls = self.urls(ctx, [(row.get("topic") or "", row.get("card") or "") for row in rows])
+        for row in rows:
+            row["url"] = urls.get((row.get("topic") or "", row.get("card") or ""), "")
+            if row.get("kind") == "start":
+                row["act"] = turn_words.START_ACT
 
     def revisit_view(self, ctx, chat, now):
         """到点回来看's rows on the 看板 (app/revisits.py board_rows), each with its topic's link; {} without any (the switch
@@ -557,18 +612,9 @@ class Digest:
                                       not entry["stopped"], not entry["stuck"], not entry["running"], -entry["_at"]))
         for entry in found:
             entry.pop("_at")
-        # The proposals waiting for him, each with its topics, to decide right on the 看板, not by
-        # scrolling up the chat. One of a single topic is no project any more (app/project_sorter.py MIN_CREATE): left out.
-        pending = []
-        if project_proposals.enabled():
-            for record in project_proposals.waiting(ctx.state_dir):  # The same list as projects_list and 整理专项's 还在等你定.
-                topics = list(dict.fromkeys(record.get("topics") or ()))
-                rows = []
-                for topic in topics:
-                    label, title = label_title(ctx.state_dir, topic)
-                    rows.append({"topic": topic, "label": label, "title": title})
-                pending.append({"id": record["id"], "name": record.get("name") or "",
-                                "goal": record.get("goal") or "", "why": record.get("why") or "", "rows": rows})
+        # The proposals waiting for him, each with its topics, to decide right on the 看板 (under 等你), not by scrolling up
+        # the chat.
+        pending = self.pending(ctx, chat)
         urls = self.urls(ctx, [(entry["lead"], "") for entry in found]
                          + [(row["topic"], "") for entry in pending for row in entry["rows"]])
         for entry in found:
@@ -577,6 +623,40 @@ class Digest:
             for row in entry["rows"]:
                 row["url"] = urls.get((row["topic"], ""), "")
         return {"projects": found, "proposals": len(pending), "pending": pending}
+
+    def pending(self, ctx, chat) -> list:
+        """The proposals of 整理专项 waiting for the owner's 好 (core/board_read.py waiting_proposals: 要你处理 counts them, as
+        projects_list and 整理专项's 还在等你定 list them), each {id, name, goal, why, rows: its topics {topic, label, title}};
+        [] in a group (整理专项 sorts the private chat's topics) and with 整理专项 off."""
+        if self.where(chat):
+            return []
+        found = []
+        for record in board_read.waiting_proposals(ctx.state_dir).values():
+            rows = []
+            for topic in dict.fromkeys(record.get("topics") or ()):
+                label, title = label_title(ctx.state_dir, topic)
+                rows.append({"topic": topic, "label": label, "title": title})
+            found.append({"id": record["id"], "name": record.get("name") or "", "goal": record.get("goal") or "",
+                          "why": record.get("why") or "", "rows": rows})
+        return found
+
+    def asks_view(self, ctx, chat):
+        """What 要你处理 counts beyond the topics, for the 早晚汇总 (the 看板 has them in its 专项 part): the projects a guard
+        paused (``projects``, each {id, name, halted, url}: cards/board.py halted) and the proposals waiting (``pending``,
+        each topic with its link); {} for none. A project here names no topics: the 早晚汇总 lists its topics as any others."""
+        halted = [] if self.where(chat) else [
+            {"id": key, "name": record.get("name") or "", "goal": "", "topics": [], "lead": record.get("lead_topic_id") or "",
+             "halted": projects.stop_reason(record) or True}
+            for key, record in board_read.halted_projects(ctx.state_dir, chat).items()]
+        pending = self.pending(ctx, chat)
+        urls = self.urls(ctx, [(entry["lead"], "") for entry in halted if entry["lead"]]
+                         + [(row["topic"], "") for entry in pending for row in entry["rows"]])
+        for entry in halted:
+            entry["url"] = urls.get((entry.pop("lead"), ""), "")
+        for entry in pending:
+            for row in entry["rows"]:
+                row["url"] = urls.get((row["topic"], ""), "")
+        return {**({"projects": halted} if halted else {}), **({"pending": pending} if pending else {})}
 
     def tidy(self, ctx, chat):
         """The 专项 part (cards/project_proposal.py board_rows): with 整理专项 on, in the owner's private chat (a group's
@@ -637,6 +717,16 @@ class Digest:
                 return "board_revisit_ignored"
             gone = revisits.records.cancel(ctx.state_dir, topic, set_at)
             self.runtime.log(f"revisit cancelled topic={topic[-8:]} gone={gone}")
+        elif kind == RECOVER_KIND:
+            # 检查并继续 on a stopped row (cards/board.py ``recover``): its task card's click, done after the acknowledgement
+            # in the topic's lane (its value names the topic), then the card redrawn in place saying what came of it.
+            topic, job, action = raw.get("topic_id"), raw.get("job_id"), raw.get("action")
+            if not (isinstance(topic, str) and TOPIC_ID.fullmatch(topic) and isinstance(job, int) and not isinstance(job, bool)
+                    and action in RECOVER_ACTIONS):
+                return "board_recover_ignored"
+            source = str(event.get("event_id") or message)
+            after_ack(lambda: self.recover(ctx, topic, job, action, source, message))
+            return "board_recover"
         elif kind == PROJECT_GO_KIND:
             # 继续 on the block of a project a guard paused: what the pause card's 继续 does (app/project_loop.py resume).
             chat, project = self.fixed or self.runtime.access.notify_chat(), raw.get("project")
@@ -659,6 +749,54 @@ class Digest:
             after_ack(lambda: self.board_refresh(ctx, message))
         return {SEEN_KIND: "board_seen", REVISIT_KIND: "board_revisit_cancel",
                 PROJECT_GO_KIND: "board_project_go"}.get(kind, "board_refresh")
+
+    def recover(self, ctx, topic, job_id, action, source, message):
+        """A stopped row's 检查并继续 (``claim``), after the acknowledgement: done (``recovered``), then the 看板 card ``message``
+        redrawn from a fresh view, with what came of it under the band."""
+        chat = self.fixed or self.runtime.access.notify_chat()
+        notice = self.recovered(ctx, chat, topic, job_id, action, source) if chat else ""
+        self.runtime.log(f"digest board recover topic={topic[-8:]} job={job_id} action={action} said={notice[:40]!r}")
+        if message:
+            self.board_refresh(ctx, message, notice=notice)
+
+    def recovered(self, ctx, chat, topic, job_id, action, source) -> str:
+        """The task card's 检查并继续 of task #``job_id`` of ``topic`` (``action``: core/failure.py continue or retry; 重新投递结果
+        for a result that did not go out), as the web page's ``recover`` does it (app/web_ops.py): app/task_controls.py
+        retry_topic in the context an automatic retry runs in (app/auto_retry.py retry_context), ``source`` (the click's
+        event id) the new turn's message id. What the 看板 then says of it: ↪ 已接着做 · 任务 #N, or why nothing was done
+        (it went on already: a second click or a repeated event starts nothing, the record says ``retried_by``; the topic
+        has a task at work; it was switched since; the record takes it on no more). Never raises."""
+        state = Path(ctx.state_dir)
+        label = number_of(state, topic) or "话题"
+        try:
+            record = next((each for each in topic_job_records(state, topic, chat_id=chat) if each.get("job_id") == job_id), None)
+            if record is None:
+                return f"⚠️ {label} 找不到任务 #{job_id}，没有接着做"
+            if record.get("retried_by"):
+                moved = find_job_record(state, str(record["retried_by"])) or {}
+                return f"↪ {label} 已经接着做了 · 任务 #{moved.get('job_id') or '?'}，没有再开一次"
+            app = getattr(self.topics, "apps", {}).get(record.get("backend")) if self.topics is not None else None
+            if app is None:
+                return f"⚠️ {label} 这个任务的 Harness 现在不可用，去任务卡上看"
+            offered = (failure_view(record) or {}).get("actions") or ()
+            if action not in offered or not recovery(state, record, (action,)):  # Its record takes it on no more.
+                return f"⚠️ {label} 现在不能在这里接着做了，去任务卡上看"
+            from covey.app import auto_retry
+
+            target = auto_retry.retry_context(app, record, auto_retry.record_topic(app, record))
+            if target.topic_id != topic:
+                return f"⚠️ {label} 现在读不到，没有接着做"
+            said = app.controls.retry_topic(target, chat, source, job_id=job_id)
+            after = find_job_record(state, record["key"]) or {}
+            if after.get("retried_by") and after.get("retried_by") != record.get("retried_by"):
+                moved = find_job_record(state, str(after["retried_by"])) or {}
+                return f"↪ {label} 已接着做 · 任务 #{moved.get('job_id') or '?'}"
+            if any(after.get(name) is True and record.get(name) is not True for name in ("delivery_ok", "question_delivery_ok")):
+                return f"↪ {label} 的结果已重新发出"
+            return f"⚠️ {label} {said}" if said else f"⚠️ {label} 没有接着做，去任务卡上看"
+        except Exception as exc:  # noqa: BLE001 - the card says so; the task card's button is still there
+            self.runtime.log(f"digest board recover failed topic={topic[-8:]} job={job_id}: {type(exc).__name__}")
+            return f"⚠️ {label} 没能接着做（{type(exc).__name__}），去任务卡上点「{failure.LABELS.get(action, failure.LABELS[failure.CONTINUE])}」"
 
     def remember(self, ctx, event, raw):
         """「记下」 or 「不用」 on one of 你反复说的 (the owner's): decided and the card redrawn once acknowledged."""
@@ -728,9 +866,10 @@ class Digest:
                 found["remember"] = rows
         return found
 
-    def board_refresh(self, ctx, message_id):
+    def board_refresh(self, ctx, message_id, notice=""):
         """A 看板 card redrawn from a fresh view, after a proposal on it was decided (app/project_tidy.py ``handed``),
-        or its 刷新 or 记为看过 was clicked (``claim``)."""
+        its 刷新 or 记为看过 was clicked (``claim``) or a stopped row's 检查并继续 was done (``recover``: ``notice``, what came
+        of it, under the band of this redraw alone). Whether ``message_id`` is a 看板 card."""
         chat = self.fixed or self.runtime.access.notify_chat()
         folder = self.menu.directory(ctx)
         try:
@@ -746,7 +885,7 @@ class Digest:
                 if record.get("message_id") != message_id or not isinstance((record.get("view") or {}).get("revision"), int):
                     return True
                 changed = {**record, "digest": view, "view": {**record["view"], "revision": record["view"]["revision"] + 1}}
-                confirmed = settle(ctx, path, record, changed, board_card(view), self.messenger, BOARD_KIND)
+                confirmed = settle(ctx, path, record, changed, board_card(view, notice=notice), self.messenger, BOARD_KIND)
             self.runtime.log(f"digest board refreshed message={message_id[-8:]} confirmed={bool(confirmed)}")
             return True
         return False
@@ -803,39 +942,27 @@ class Digest:
         chat = self.fixed or self.runtime.access.notify_chat()
         if not chat:
             return  # No private chat with the owner known yet: tried again until the time is CATCH_UP old.
-        view = {**collect(ctx.state_dir, chat, slot, since_of(times, slot, last), now, board=dismissable()),
-                **self.where(chat)}  # 整理专项 is the 看板's alone.
+        # 要你处理 as the 看板 and 手上的事 count it (``asked``: what stopped however long ago, what may be stuck, the projects a
+        # guard paused, the proposals waiting); 整理专项's button is the 看板's alone.
+        view = {**collect(ctx.state_dir, chat, slot, since_of(times, slot, last), now, board=dismissable(), asked=True),
+                **self.where(chat), **web_view()}
+        view.update(self.asks_view(ctx, chat))
         if not self.fixed and last_of_day(times, slot):
             view.update(self.daily(ctx, chat, slot, now))
         waits = any(row.get("state") == memory_candidates.OPEN for row in view.get("remember") or ())
-        if not (view["waiting"] or view["stale"] or view["running"] or view["done"] or waits):
+        if not (view["waiting"] or view["stale"] or view["running"] or view["done"] or view.get("pending")
+                or view.get("projects") or waits):
             self.save(ctx, last_slot=slot, pending=None)
             self.runtime.log("digest not sent: nothing to list")
             return
-        for key in ("waiting", "stale", "running", "done"):
-            self.linked(ctx, chat, view[key])
+        for row in view["done"]:
+            row.pop("recover", None)  # The 看板's button: this card is a record of its time.
+        self.link_rows(ctx, view)
         named = f"{self.fixed}-{int(slot)}" if self.fixed else str(int(slot))  # A group's send is its own.
         pending = {"slot": slot, "chat_id": chat, "key": self.voice.safe_key(self.voice.key("digest", named)),
                    "view": view, "card": digest_card(view), "text": digest_text(view), "tries": 0, "tried_at": 0}
         self.save(ctx, pending=pending)
         self.send(ctx, slot, pending, now)
-
-    def linked(self, ctx, chat, rows):
-        """Each row's T number as a link to its topic, where one is found (app/topic_links.py): a 等我 row's to the
-        card it is acted on (its ``card``)."""
-        labels = [row["label"] for row in rows if row["label"]]
-        if not labels:
-            return
-        cards = {row["topic"]: row["card"] for row in rows if row.get("topic") and row.get("card")}
-        done = iter(self.link(ctx, chat, "\n".join(labels), cards or None).split("\n"))
-        for row in rows:
-            if row["label"]:
-                label = next(done, row["label"])
-                if label == row["label"] and row.get("card") and not board_read.listed(row.get("topic") or "", chat):
-                    # The butler or a lead, no T number: its name opens the card at the top level.
-                    url = self.url(ctx, row["topic"], row["card"])
-                    label = f"[{label}]({url})" if url else label
-                row["label"] = label
 
     def send(self, ctx, slot, pending, now):
         pending = {**pending, "tries": int(pending.get("tries") or 0) + 1, "tried_at": now}

@@ -255,6 +255,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.digest = Digest(self.runtime, self.messenger, self.voice)
             # 你反复说的 on the evening digest (app/memory_candidates.py), COVEY_MEMORY=1: the Claude Code that groups them.
             self.digest.candidates = Candidates(self.runtime, self.topics)
+            self.digest.topics = self.topics  # A stopped row's 检查并继续 on the 看板 runs in its topic's app (Digest.recover).
             # Its line of old questions has 手上的事's 这些都不用回答了: the click is 手上的事's, then the digest card's.
             self.overview.handed[self.digest.origin] = self.digest.dismissed
             self.overview.unhanded[self.digest.origin] = self.digest.undismissed  # 撤销 under its 已撤下 line.
@@ -275,7 +276,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # 整理专项 (app/project_tidy.py), COVEY_PROJECT_TIDY: 话题要点, the real-time and scheduled 整理, its cards' clicks.
             self.project_tidy = ProjectTidy(self.runtime, self.messenger, self.voice, self.butler_env)
             self.butler_env.tidy = self.project_tidy  # The butler's projects_tidy and the web page's ``tidy``.
-            self.project_tidy.handed["board"] = self.digest.board_refresh  # A proposal decided on the 看板: it is redrawn.
+            # A proposal decided on the 看板 or on 手上的事 (its rows are the 看板's): that card is redrawn.
+            self.project_tidy.handed["board"] = self.proposal_decided
             # Wakes a project's lead when receipts wait and applies the guards (app/project_loop.py), COVEY_PROJECTS=1.
             self.project_loop = ProjectLoop(self.runtime, self.butler_env, stop_tasks)
             # What the butler would have told the owner, only recorded (app/patrol.py), COVEY_PATROL=shadow; the digest lists it.
@@ -321,6 +323,12 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.group_boards = GroupBoards(self.runtime, self.messenger, self.voice, self.titles, self.overview,
                                             digest=self.digest)
             self.features = features  # Last: 'features' in the instance says the build is done.
+
+    def proposal_decided(self, ctx, message_id):
+        """A proposal of 整理专项 decided on a card that lists it under 等你 (cards/board.py proposal_block, ``from`` board): the
+        看板 card ``message_id`` redrawn from a fresh view, else 手上的事 now (it lists them too; no wait for its next look)."""
+        if not self.digest.board_refresh(ctx, message_id) and self.overview.enabled():
+            self.overview.tick(ctx, redraw=True)
 
     def web_message(self, event) -> str:
         """The owner's words from the web page (app/web_ops.py tell_butler) as the message of a Feishu event at the top level of the

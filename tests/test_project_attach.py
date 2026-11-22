@@ -131,7 +131,7 @@ class BoardTest(AttachTest):
     def view(self):
         from covey.app.digest import Digest
 
-        fake = SimpleNamespace(where=lambda chat: "", urls=lambda ctx, pairs: {})
+        fake = SimpleNamespace(where=lambda chat: "", urls=lambda ctx, pairs: {}, pending=lambda ctx, chat: [])
         return Digest.projects_view(fake, SimpleNamespace(state_dir=self.state), CHAT,
                                     {"waiting": [{"topic": "w" * 32}], "running": [], "done": []})
 

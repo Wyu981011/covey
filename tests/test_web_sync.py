@@ -2401,6 +2401,32 @@ class RecoverRedeliveryTest(unittest.TestCase):
         self.assertEqual(app.runtime.jobs.topic_jobs(TOPIC, CHAT), [])  # Nothing queued: the model did not run again.
 
 
+class PageUrlTest(unittest.TestCase):
+    """The web page's address for the cards' 打开网页 (core/web_sync.py page_url, T657 B9): only with COVEY_WEB=1 and a
+    ``page_url`` of http(s) in the config; the key is not read for it, and nothing raises."""
+
+    def test_only_with_the_switch_and_an_address(self):
+        import tempfile
+        from pathlib import Path
+        folder = tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or None)
+        self.addCleanup(folder.cleanup)
+        config = Path(folder.name) / "web.json"
+        cases = ({"page_url": "https://example.invalid/app/x"}, {}, {"page_url": "ftp://example.invalid"},
+                 {"page_url": "javascript:alert(1)"}, {"page_url": "https://exa mple.invalid"})
+        for data, want in zip(cases, ("https://example.invalid/app/x", "", "", "", "")):
+            config.write_text(json.dumps({"base_url": "https://example.invalid/openapi", "key_file": "/absolute/none", **data}))
+            with mock.patch.dict(os.environ, {web_sync.ENV: "1", web_sync.CONFIG_ENV: str(config)}):
+                self.assertEqual(web_sync.page_url(), want, data)
+        with mock.patch.dict(os.environ, {web_sync.ENV: "0", web_sync.CONFIG_ENV: str(config)}):
+            config.write_text(json.dumps(cases[0]))
+            self.assertEqual(web_sync.page_url(), "")
+        with mock.patch.dict(os.environ, {web_sync.ENV: "1", web_sync.CONFIG_ENV: str(config) + ".missing"}):
+            self.assertEqual(web_sync.page_url(), "")
+        config.write_text("{not json")
+        with mock.patch.dict(os.environ, {web_sync.ENV: "1", web_sync.CONFIG_ENV: str(config)}):
+            self.assertEqual(web_sync.page_url(), "")
+
+
 class OffTest(WebCase):
     def test_forget_is_one_of_the_kinds_and_the_off_switch_still_means_no_request(self):
         self.assertIn("forget", web_sync.KINDS)

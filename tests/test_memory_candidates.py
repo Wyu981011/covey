@@ -308,7 +308,7 @@ class EveningTests(State):
             self.feature.tick(self.ctx, self.evening, now=self.slot + 5)
         card = self.messenger.sends[0]["card"]
         text = json.dumps(card, ensure_ascii=False)
-        self.assertIn("你反复说的（1）", text)
+        self.assertIn("**你反复说的**  <font color='grey'>1</font>", text)  # A part's heading as the 看板 draws one.
         self.assertIn("来源：T1、T2 · 记到工作区 covey", text)
         self.assertIn("本周找你 0 次：问题 0 次、停住 0 次", text)
         self.assertEqual([b for b in buttons(card) if b["kind"] == REMEMBER_KIND],

@@ -47,10 +47,15 @@ class StatusLineTest(unittest.TestCase):
                 self.assertNotIn(LONG[:12], str(elements))
 
     def test_a_topic_row_says_its_state_before_its_title(self):
+        """The T number is the row's badge, first (cards/ui.py topic_badge, T657 B6); the line beside it starts with the state's
+        word, the title after it: a long title is what is cut."""
         row = ui.topic_row("stopped", "T70 " + LONG, "测试没过", url="https://example.invalid/t70")
-        line = row["elements"][0]["columns"][0]["elements"][0]["content"]
+        badge, text = (column["elements"][0] for column in row["elements"][0]["columns"])
+        self.assertEqual(badge["elements"][0]["content"], "<font color='white'>**T70**</font>")
+        line = text["content"]
         self.assertEqual(first_word(line), "停住了")
-        self.assertLess(line.index("停住了"), line.index("T70"))
+        self.assertLess(line.index("停住了"), line.index(LONG[:6]))
+        self.assertNotIn("T70", line)  # Said once, by its badge.
 
 
 class PreviewTest(unittest.TestCase):

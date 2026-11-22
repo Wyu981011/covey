@@ -554,7 +554,7 @@ class WantedTests(Records, unittest.TestCase):
         view = self.view()
         card = digest_card(view)
         texts = [element.get("content", "") for element in card["body"]["elements"]]
-        self.assertIn("**我本来想找你的事（1）**", texts)
+        self.assertIn("**我本来想找你的事**  <font color='grey'>1</font>", texts)  # A part's heading as the 看板 draws one.
         self.assertIn("事 ask:a · 因 ask:a · 本来会：叫醒负责人看一眼", texts)
         self.assertIn("我本来想找你的事（1）", digest_text(view))
         plain = digest_card({k: v for k, v in view.items() if k != "wanted"})

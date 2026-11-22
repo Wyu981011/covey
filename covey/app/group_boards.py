@@ -52,6 +52,7 @@ class GroupBoards:
             self.board(chat).unhanded[digest.origin] = digest.undismissed
             if self.main_digest is not None:
                 self.main_digest.others[chat] = digest  # Its 看板's 刷新 and 记为看过 (cards/board.py KINDS).
+                digest.topics = self.main_digest.topics  # Its stopped rows' 检查并继续 (Digest.recover).
         return digest
 
     def threads(self):

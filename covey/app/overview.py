@@ -9,6 +9,13 @@ The card writes times of day, not durations, so it changes only with its content
 A job seen running that has ended stays under 刚结束 for RECENT seconds; this is the process's memory, a restart
 forgets it.
 
+Every row opens what it is about, the whole row (cards/ui.py topic_row): a question's its card, a stopped or running
+task's its task card (检查并继续, 看看, 补充 and 停止 are there), one that ended a moment ago its card in the topic's thread
+(``link``: read once from Feishu, then kept). In the owner's private chat with 整理专项 on, its proposals waiting for his
+好 are 等你 too (core/board_read.py Asks.proposals): listed and counted as the 看板 lists and counts them, with its
+建专项 and 不管了 (a click redraws this card at once: app/unified.py proposal_decided). With the web page's address set
+(core/web_sync.py page_url) the last line has 打开网页.
+
 The card's record is <state>/pinned-overview.json: its chat, card and message, the CardKit sequence of its last
 write (reserved and saved before the write, as for form cards: core/card_sequence.py), its generation and when it
 was sent and pinned. Once the owner's private chat is known (Access.owner_chat) the card goes out as a new message
@@ -44,7 +51,7 @@ from covey.cards.overview import DISMISS, DISMISS_MAX, UNDO, clock, lists, overv
 from covey.core.card_sequence import CardHandle, file_card, reserve
 from covey.core.jobs import job_path, read_job_record
 from covey.core.locks import resource_lock
-from covey.core import board_read, look, projects, turn_words
+from covey.core import board_read, look, projects, turn_words, web_sync
 from covey.core import progress as turn_progress
 from covey.core.loops import every
 from covey.core.state import read_object, write_json
@@ -82,10 +89,12 @@ def dismissable():
     return Overview.enabled() and PinnedTopics.enabled()
 
 
-def waiting_count(state, chat, now) -> int:
+def waiting_count(state, chat, now, *, proposals=False) -> int:
     """How many things wait for the owner in ``chat``, counted as the 看板 and 手上的事 count them: core/board_read.py
-    waits with the topics taken off the board left out while the board is on (app/digest.py collect), its ``count``."""
-    return board_read.waits(state, chat, now, off=taken_off(state, chat, now) if dismissable() else ()).count()
+    waits with the topics taken off the board left out while the board is on (app/digest.py collect), its ``count``, and
+    with ``proposals`` (the owner's private chat) 整理专项's proposals waiting for his 好 (core/board_read.py Asks.proposals)."""
+    found = board_read.waits(state, chat, now, off=taken_off(state, chat, now) if dismissable() else ()).count()
+    return found + (len(board_read.waiting_proposals(state)) if proposals else 0)
 
 
 class Overview:
@@ -109,7 +118,7 @@ class Overview:
         self.send_tried = 0.0
         self.pin_tried = 0.0
         self.pins = PinnedTopics(runtime, messenger, voice)
-        self.links, self.profile = {}, None  # A 等我 card -> (its applink, when read); the profile of the last view.
+        self.links, self.profile = {}, None  # A card (or a topic) -> (its applink, when read); the profile of the last view.
         self.turn = threading.Lock()  # One tick at a time: the loop's, or one after a click.
         # A card other than this one with the line of old questions (its value's ``from``) -> what it does once a
         # click there is acknowledged: (ctx, the clicked message's id, the topics taken off).
@@ -126,6 +135,11 @@ class Overview:
 
     def chat(self):
         return self.fixed or self.runtime.access.notify_chat()
+
+    def private(self, chat) -> bool:
+        """Whether this card in ``chat`` is the owner's private chat's: a group's has no proposals of 整理专项 (it sorts the
+        private chat's topics)."""
+        return not self.fixed and chat not in getattr(getattr(self.runtime, "access", None), "agent_groups", ())
 
     @property
     def where(self):
@@ -185,8 +199,9 @@ class Overview:
         # 等我 as every reader counts it (core/board_read.py waits), the latest first: the questions, the butler's and
         # the leads' too, and the tasks waiting for 开始; with the board on, its topics taken off left out (its look).
         found = board_read.waits(state, chat, now, off=off)
-        # 要你处理 as the 看板 counts it (core/board_read.py Asks): 等我, the results that stopped, what may be stuck.
-        asks = self.pins.asks(state, chat, found, now, off)
+        # 要你处理 as the 看板 counts it (core/board_read.py Asks): 等我, the results that stopped, what may be stuck, the
+        # projects a guard paused and, in the private chat, 整理专项's proposals waiting for his 好.
+        asks = self.pins.asks(state, chat, found, now, off, proposals=self.private(chat))
         jobs = sorted([record for record in read.jobs if record.get("status") in RUNNING],
                       key=lambda record: int(record.get("job_id") or 0))
         # The topics' earlier turns as the read has them, for the estimate (core/progress.py).
@@ -201,10 +216,12 @@ class Overview:
                 record = read_job_record(job_path(state, key)) or {}
                 status = record.get("status")
                 if status in TERMINAL:
-                    # Its line as the 看板 says it; no ``now``, so that the card changes with its content only.
+                    # Its line as the 看板 says it; no ``now``, so that the card changes with its content only. It opens its
+                    # card in the topic's thread (the answer follows it there).
+                    card = str(record.get("card_message_id") or "")
                     self.ended[key] = {"label": row["label"], "title": row["title"], "topic": row["topic"],
                                        "status": status, "at": now, "tone": look.record_tone(record),
-                                       "line": board_read.ended_line(record)}
+                                       "line": board_read.ended_line(record), "url": self.link(state, row["topic"], card)}
         self.seen = running
         self.ended = {key: row for key, row in self.ended.items() if now - row["at"] < RECENT and key not in running}
         waiting = [self.waiting_row(state, wait) for wait in found.all]
@@ -214,8 +231,14 @@ class Overview:
         view = {"waiting": waiting, "stopped": stopped, "running": list(running.values()),
                 "ended": sorted((row for row in self.ended.values() if row["topic"] not in busy),
                                 key=lambda row: row["at"], reverse=True)}
+        proposals = self.proposal_rows(state, asks)
+        if proposals:
+            view["proposals"] = proposals
         if board:
             view["board"] = self.board(state, chat, found, looked, asks, stopped)
+        url = web_sync.page_url()
+        if url:
+            view["web"] = url
         if self.never_had is not False and not lists(view):
             # Nothing to list: a first use (还没有话题) or a clear board (cards/ui.py empty_words). Once the chat had a
             # topic it is no first use again.
@@ -249,6 +272,18 @@ class Overview:
                          "url": self.link(state, lead, card) if lead and card else ""})
         return rows
 
+    def proposal_rows(self, state, asks):
+        """整理专项's proposals waiting for his 好 as 要你处理 names them (``asks.proposals``), the newest first: each its id, name,
+        goal and topics (T number and title: no link, one read each would be too many), for 建专项 and 不管了
+        (cards/board.py proposal_block)."""
+        rows = []
+        for key, record in asks.proposals.items():
+            topics = [{"topic": topic, "label": self.topic(state, topic)[0], "title": ""}
+                      for topic in dict.fromkeys(record.get("topics") or ())]
+            rows.append({"id": key, "name": str(record.get("name") or ""), "goal": str(record.get("goal") or ""),
+                         "rows": topics})
+        return rows
+
     def board(self, state, chat, found, looked, asks, stopped):
         """What the card shows over the pinned board: each state's count (要你处理 as ``asks`` counts it, core/board_read.py
         Asks; 有结果 the results on it not seen yet, 在做 the rest of what runs), how many are pinned, the rows without a pin
@@ -278,17 +313,21 @@ class Overview:
         counts = {**asks.counts(), "result": tones.count("result"),
                   "running": sum(row["group"] == "running" for row in rows) - stuck}
         undo = last_click(off, self.now)  # 撤销最近一次: his latest 不管了 click, if still on.
+        proposals = self.proposal_rows(state, asks)  # Never pinned: each is a row here.
         return {"counts": counts, "pinned": sum(row["topic"] in held for row in rows), **listed, "stale": old,
-                "dismissed": [self.topic(state, topic)[0] for topic in gone], **({"undo": undo} if undo else {})}
+                "dismissed": [self.topic(state, topic)[0] for topic in gone], **({"undo": undo} if undo else {}),
+                **({"proposals": proposals} if proposals else {})}
 
     def board_row(self, state, row, asks):
         record = row["record"]
         if row["group"] == "running":
             return self.running_row(state, record, asks)
         label, title = self.topic(state, row["topic"])
+        card = str(record.get("card_message_id") or "")
         return {"label": label, "title": title, "topic": row["topic"], "status": record.get("status"),
                 "at": row["at"], "seen": row["topic"] not in self.pins.unseen,
-                "tone": board_row_tone(row, self.pins.unseen), "line": board_read.ended_line(record)}
+                "tone": board_row_tone(row, self.pins.unseen), "line": board_read.ended_line(record),
+                "url": self.link(state, row["topic"], card)}
 
     def waiting_row(self, state, wait):
         """The row of ``wait`` (core/board_read.py Wait): who asks, what (or that it waits for 开始), since when, and
@@ -305,16 +344,20 @@ class Overview:
                 "url": self.link(state, topic, wait.card)}
 
     def link(self, state, topic, card):
-        """The applink of ``card`` in ``topic`` (app/topic_links.py link_for: one read of the message, then kept), this
-        process's memory first; one that could not be read is tried again LINK_RETRY seconds later."""
-        known = self.links.get(card)
+        """The applink of ``card`` in ``topic`` (app/topic_links.py link_for: one read of the message, then kept), else
+        (no ``card``) of the topic at its newest card; this process's memory first; one that could not be read is tried
+        again LINK_RETRY seconds later. '' for no topic."""
+        if not topic:
+            return ""
+        key = card or f"topic:{topic}"
+        known = self.links.get(key)
         if known and (known[0] or time.monotonic() - known[1] < LINK_RETRY):
             return known[0]
         try:
             url = link_for(state, topic, card=card, profile=self.profile)
         except Exception:  # noqa: BLE001 - a row without a link, as before
             url = ""
-        self.links[card] = (url, time.monotonic())
+        self.links[key] = (url, time.monotonic())
         return url
 
     def running_row(self, state, record, asks=None):
@@ -325,7 +368,9 @@ class Overview:
         phase = str(record.get("phase") or "")
         harness = record.get("harness_id") or record.get("backend") or ""
         stuck = bool(asks is not None and record.get("status") == "running" and record.get("topic_id") in asks.stuck)
+        card = str(record.get("card_message_id") or "")  # Its task card: 看看, 补充 and 停止 are there.
         return {"label": label, "title": title, "topic": record.get("topic_id") or "", "stuck": stuck,
+                "url": self.link(state, record.get("topic_id") or "", card) if card else "",
                 "harness": self.titles.get(harness, harness),
                 "workspace": record.get("workspace_name") or "", "status": record.get("status"),
                 "started": timings.get("backend_started") or timings.get("dispatched"),

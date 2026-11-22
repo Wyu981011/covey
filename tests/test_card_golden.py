@@ -1439,7 +1439,17 @@ def overview_cards():
                           {"label": "T399", "title": "写文档", "harness": "Claude Code", "workspace": "covey",
                            "status": "running", "started": FROZEN - 600, "phase": "改 README", "stuck": False}]}
     calm = {**view, "running": asking["running"][1:]}
+    # Every row opens what it is about (T657 B5): a running task's and a result's card too; 整理专项's proposals waiting
+    # are 等你, counted and listed as the 看板 lists them (B3); the web page's link on the last line (B9).
+    proposals = [{"id": "b84c9a1e00000000", "name": "提示词优化", "goal": "各环节新提示词验证通过",
+                  "rows": [{"topic": "h", "label": "T488", "title": ""}, {"topic": "i", "label": "T505", "title": ""}]}]
+    linked = {**view, "proposals": proposals, "web": "https://example.invalid/app/covey",
+              "running": [{**asking["running"][1], "url": "https://applink.feishu.cn/t/399"}],
+              "ended": [{**ended["ended"][1], "url": "https://applink.feishu.cn/t/395"}]}
     return {"pinned_board": overview_card({**view, "board": board}, FROZEN, "14:40"),
+            "overview_linked": overview_card(linked, FROZEN, "14:40"),
+            "pinned_board_proposals": overview_card({**view, "web": "https://example.invalid/app/covey", "board": {
+                **board, "counts": {**board["counts"], "waiting": 3}, "proposals": proposals}}, FROZEN, "14:40"),
             "overview_ended": overview_card(ended, FROZEN, "14:40"),
             "pinned_board_undo": overview_card({**view, "board": undo}, FROZEN, "14:40"),
             "overview_butler_waiting": overview_card(butler_waiting, FROZEN, "14:40"),
@@ -1455,22 +1465,49 @@ def digest_cards():
     from covey.cards.board import board_card
     from covey.cards.digest import digest_card, folded_board
 
-    def row(label, title, state, took, seen=False):
+    def old_row(label, title, state, took, seen=False):  # As an older release saved a view (its link in its label).
         return {"label": label, "title": title, "state": state, "took": took, "seen": seen}
 
+    def row(label, title, state, took, line, meta, url="", **fields):  # As app/digest.py collect and tick give it now.
+        return {"topic": label.lower(), "label": label, "title": title, "state": state, "took": took, "line": line,
+                "meta": meta, "url": url, **fields}
+
     view = {"slot": FROZEN, "since": FROZEN - 9.5 * 3600,
-            "waiting": [row("[T396](https://applink.feishu.cn/client/thread/open?open_chat_id=oc_fake_chat)",
-                            "你为啥没有pin？", "等你回答：置顶汇总卡", "等了 3分00秒"),
-                        row("T397", "新话题", "等你开工", "等了 40秒")],
-            "running": [row("T390", "重构", "跑全量 · 预计还要约 40 分钟", "已运行 1小时5分")],
-            "done": [row("T394", "群晖公钥", "失败", "用时 2分10秒"),
-                     row("T393", "日志", "做完", "用时 45秒", seen=True)]
-                    + [row(f"T{n}", "旧", "做完", "用时 1秒") for n in range(380, 388)]}
+            "waiting": [row("T396", "你为啥没有pin？", "等你：置顶汇总卡", "等了 3分00秒", "要你定：置顶汇总卡", ["等了 3 分钟"],
+                            "https://applink.feishu.cn/t/396", kind="question", card="om_q396"),
+                        row("T397", "新话题", "等你开工", "等了 40秒", "等你在启动卡上点开始", ["等了 1 分钟"],
+                            "https://applink.feishu.cn/t/397", kind="start", card="om_launch397", act="去开始")],
+            "running": [row("T390", "重构", "跑全量 · 预计还要约 40 分钟", "已运行 1小时5分", "现在：跑全量",
+                            ["4/7 步", "预计还要约 40 分钟", "2 分钟前有动静", "已跑 1 小时 5 分钟"], "https://applink.feishu.cn/t/390",
+                            card="om_t390", stuck=False)],
+            "done": [row("T394", "群晖公钥", "停住了", "用时 2分10秒", "这一轮没有成功；可以接着做，或先看原因",
+                         ["20:31 停", "下一步：在任务卡上点「检查并继续」"], "https://applink.feishu.cn/t/394c", card="om_t394",
+                         status="failed", tone="stopped", seen=False),
+                     row("T393", "日志", "做完", "用时 45秒", "日志切到新目录了", ["用时 1 分钟"], "https://applink.feishu.cn/t/393",
+                         status="done", tone="done", seen=True)]
+                    + [row(f"T{n}", "旧", "做完", "用时 1秒", "做好了", ["用时 不到 1 分钟"], status="done", tone="result",
+                           seen=False) for n in range(380, 388)]}
+    # A view an older release saved (这些都不用回答了 and 记下 redraw the card from it): drawn the same way.
+    legacy = {"slot": FROZEN, "since": FROZEN - 9.5 * 3600,
+              "waiting": [old_row("[T396](https://applink.feishu.cn/client/thread/open?open_chat_id=oc_fake_chat)",
+                                  "你为啥没有pin？", "等你：置顶汇总卡", "等了 3分00秒")],
+              "running": [old_row("T390", "重构", "跑全量 · 预计还要约 40 分钟", "已运行 1小时5分")],
+              "done": [old_row("T394", "群晖公钥", "停住了", "用时 2分10秒"), old_row("T393", "日志", "做完", "用时 45秒", seen=True)]}
     from covey.app.digest import cleared
 
     old = {**view, "dismissable": True, "done": view["done"][:2],
            "stale": [{"topic": f"t{n}", "label": f"T{n}", "title": "旧问题"} for n in (370, 371, 372)]}
     return {"three_parts": digest_card(view),
+            "legacy_view": digest_card(legacy),
+            # 要你处理 as the 看板 counts it (T657 B1, B3): a project a guard paused under 停住了, a proposal under 等你 with no
+            # buttons (this card is a record of its time); the web page's address on the last line.
+            "asks": digest_card({**view, "waiting": view["waiting"][:1], "running": [], "done": view["done"][:2],
+                                 "projects": [{"id": "a1b2c3d4e5f6", "name": "把订单库迁到新集群", "goal": "", "topics": [],
+                                               "halted": "token 用完了", "url": "https://applink.feishu.cn/t/540"}],
+                                 "pending": [{"id": "b84c9a1e00000000", "name": "提示词优化", "goal": "各环节新提示词验证通过",
+                                              "why": "", "rows": [{"topic": "h", "label": "T488", "title": "修数据包",
+                                                                   "url": "https://applink.feishu.cn/t/488"}]}],
+                                 "web": "https://example.invalid/app/covey"}),
             "done_only": digest_card({**view, "waiting": [], "running": [], "done": view["done"][:1]}),
             # Results not seen that ended before the digest before are listed too, the heading says how many.
             "older_unseen": digest_card({**view, "waiting": [], "running": [], "done": view["done"][:2], "older": 1}),
@@ -1536,6 +1573,22 @@ def digest_cards():
                                                  "tone": "cancelled", "state": "已取消", "took": "用时 2分0秒"},
                                                 {"topic": "l", "label": "T533", "title": "看板", "status": "done",
                                                  "tone": "done", "state": "做完", "took": "用时 9分0秒", "seen": True}]}),
+            # A stopped row whose record takes 检查并继续 on has it as its button (T657 B10); 重新投递结果 for a result that did
+            # not go out; one without (a pending automatic retry, a refusal) keeps 去任务卡. The web page's link (B9).
+            "board_recover": board_card({"waiting": [], "stale": [], "running": [], "stamp": "08:00", "can_dismiss": True,
+                                         "web": "https://example.invalid/app/covey",
+                                         "done": [{"topic": "c" * 16, "label": "T551", "title": "跑全量", "status": "failed",
+                                                   "tone": "stopped", "line": "这一轮没有成功；可以接着做，或先看原因",
+                                                   "meta": ["07:40 停"], "url": "https://applink.feishu.cn/t/551c", "card": "om_t551",
+                                                   "recover": {"action": "continue", "label": "检查并继续", "job": 41}},
+                                                  {"topic": "d" * 16, "label": "T552", "title": "发结论", "status": "failed",
+                                                   "tone": "stopped", "line": "结果没能发出去；可以重新投递",
+                                                   "meta": ["07:41 停"], "url": "https://applink.feishu.cn/t/552c", "card": "om_t552",
+                                                   "recover": {"action": "continue", "label": "重新投递结果", "job": 42}},
+                                                  {"topic": "e" * 16, "label": "T553", "title": "限流", "status": "failed",
+                                                   "tone": "stopped", "line": "上游限流，08:10 自动重试",
+                                                   "meta": ["07:42 停"], "url": "https://applink.feishu.cn/t/553c", "card": "om_t553"}]},
+                                        notice="↪ T551 已接着做 · 任务 #43"),
             # A project a guard paused (P0-3, T647): 停住了 and why in red, 继续 on its block, counted among 要你处理; one the
             # owner stopped 已停止; a stopped topic of a live project is listed under 停住了 too (it asks for him).
             "board_halted_project": board_card({"waiting": [], "stale": [], "running": [], "stamp": "08:00",
@@ -1678,8 +1731,10 @@ def project_cards():
              pc.Member("f6a7b8" + "0" * 10, pc.STUCK, "T506", "核对行数", "第 1/2 步：逐表比对", "40分00秒", link))
     return {"running": pc.project_card(work),
             "running_full": pc.project_card(full),
+            # The lead's speaker row with its picture (T657 B2), what waits for the owner as a band opening the question card.
             "waiting": pc.project_card(pc.Project(**{**full.__dict__, "status": pc.WAITING, "members": threads,
-                                                     "need": "T503 按日期还是按租户分区？", "need_url": ask})),
+                                                     "need": "按日期还是按租户分区？", "need_from": "T503", "need_url": ask,
+                                                     "avatar": "img_v3_fake_lead"})),
             # A guard's pause: 停住了 and why, red (P0-3); the owner's own stop: 已停止, grey.
             "paused": pc.project_card(pc.Project(**{**work.__dict__, "status": pc.STOPPED, "reason": "token 用完了",
                                                     "lead_state": "停住了 · token 用完了"})),

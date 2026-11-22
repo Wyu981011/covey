@@ -16,8 +16,10 @@ no card here is sent by itself, the cards that move to this look use these parts
 - ``peek``: a settled question's opening in view and the rest one click away, a fold whose title is that opening
   (cards/review.py ``opening`` cuts it) and whose body goes on from there. Answers and a turn's output are not folded:
   they are shown whole (the owner, 2026-11-22).
-- ``topic_row``: a state's dot and word, ``T31 title ›``, a line in words, grey figures; buttons at the right; the
-  whole opens ``url``.
+- ``topic_row``: one topic, the same wherever a card lists topics (the 看板, 手上的事, 早晚汇总, the 专项卡): its T number
+  as its badge (``topic_badge``, the colour every card gives that topic), a state's dot and word, its title bold with ›,
+  a line in words, grey figures; buttons at the right; the whole opens ``url``. ``topic_ref`` is the same topic in a line
+  of text (a fold's rows, a list of T numbers): its T number a link.
 
 Colours a card defines itself (``config.style.color``: the band's, a badge's) are put there by ``styled`` or
 ``banded``, the last thing a card with them goes through.
@@ -101,6 +103,25 @@ def container(elements, *, background="", border="", radius="10px", padding="0px
     if url:
         box["behaviors"] = [{"type": "open_url", "default_url": url}]
     return box
+
+
+def row_button(label, *, tone="", value=None, url="") -> dict:
+    """A row's small button (the 看板's, 手上的事's): ``tone`` "primary" (its one main button), "text" (giving up on
+    something: 不管了) or bordered; it opens ``url``, else calls back with ``value``."""
+    behaviors = [{"type": "open_url", "default_url": url}] if url else [{"type": "callback", "value": value or {}}]
+    return {"tag": "button", "text": {"tag": "plain_text", "content": label}, "type": tone or "default", "size": "small",
+            "behaviors": behaviors}
+
+
+def beside(left, buttons) -> dict:
+    """``left`` (elements) filling the width, ``buttons`` side by side at its right, all centred on the row."""
+    columns = [{"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "vertical_spacing": "2px",
+                "elements": left}]
+    if buttons:
+        columns.append({"tag": "column", "width": "auto", "vertical_align": "center", "elements": [
+            {"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "6px",
+             "columns": [{"tag": "column", "width": "auto", "elements": [one]} for one in buttons]}]})
+    return {"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "8px", "columns": columns}
 
 
 def side_by_side(left, right, *, align="top") -> dict:
@@ -282,17 +303,53 @@ def seg_bar(counts) -> list:
     return [md(bar, size="notation"), md(legend, size="notation")]
 
 
-def topic_row(key, head, line="", figures=(), *, url="", buttons=()) -> dict:
-    """One topic: ``key``'s dot and word, ``head`` (``T31 title``) and › when it opens ``url``, ``line`` in words,
-    ``figures`` grey; ``buttons`` (elements) at the right."""
-    left = [md(f"{state_word(key)} **{literal(head)}**" + (f"　{grey('›')}" if url else ""), size="normal_v2")]
-    if line:
-        left.append(md(literal(line), size="normal_v2"))
+def topic_row(key, head, line="", figures=(), *, url="", buttons=(), element_id="") -> dict:
+    """One topic (docs/ui.md 4 话题行): ``head`` ("T31 title") with its T number as the topic's badge (``topic_badge``,
+    opening ``url`` too) and the title after ``key``'s dot and word, bold, › when it opens ``url``; a head without a T
+    number (管家, 专项「名」· 负责人) has no badge and is bold whole. Then ``line`` in words and ``figures`` grey;
+    ``buttons`` (elements) at the right. The state's word comes before the title (docs/ui.md 8): a long title is what is
+    cut. ``element_id``: the row's, for a card that names its elements (the 专项卡)."""
+    number, title = split_number(head)
+    badge = topic_badge(number, url=url) if number else None
+    name = title if badge else " ".join(str(head or "").split())
+    # The head and the line in one element (one node less a row: a crowded card keeps more rows, cards/board.py FIT_SHOWN).
+    words = state_word(key) + (f" **{literal(name)}**" if name else "") + (f"　{grey('›')}" if url else "")
+    left = [md(words + (f"\n{literal(line)}" if line else ""), size="normal_v2")]
     shown = " ｜ ".join(literal(part) for part in figures if part)
     if shown:
         left.append(md(grey(shown), size="notation"))
-    return container([side_by_side(left, list(buttons), align="center")], padding="6px 4px 6px 4px", radius="8px",
-                     url=url)
+    row = side_by_side(left, list(buttons), align="center")
+    if badge:  # The badge first, at the top of the row: as tall as the first line and the dot beside it.
+        row["columns"].insert(0, {"tag": "column", "width": "auto", "vertical_align": "top", "elements": [badge]})
+    box = container([row], padding="6px 4px 6px 4px", radius="8px", url=url)
+    if element_id:
+        box["element_id"] = element_id
+    return box
+
+
+_LINK = re.compile(r"\[([^\]\n]*)\]\(([^)\n]*)\)")
+
+
+def split_link(label):
+    """(text, url) of a label written as a Markdown link, "[T12](https://…)" -> ("T12", "https://…"); (``label``, '')
+    for any other (a row saved by an older release carried its link in its label)."""
+    found = _LINK.fullmatch(str(label or "").strip())
+    return (found.group(1), found.group(2)) if found else (str(label or ""), "")
+
+
+def topic_ref(label, title="", url="") -> str:
+    """A topic in a line of text, where a row would cost too much (a fold's lines, a proposal's topics): its T number
+    (``label``) a link to ``url`` when there is one, its title after it, both escaped."""
+    label = " ".join(str(label or "").split()) or "话题"
+    ref = f"[{literal(label)}]({url})" if url else literal(label)
+    title = " ".join(str(title or "").split())
+    return f"{ref} {literal(title)}" if title else ref
+
+
+def link_button(label, url) -> dict:
+    """A small text button that opens ``url`` (``打开网页``): what a card points to elsewhere, never its main button."""
+    return {"tag": "button", "text": {"tag": "plain_text", "content": label}, "type": "text", "size": "small",
+            "behaviors": [{"type": "open_url", "default_url": url}]}
 
 
 DONE_MARK = "✓"  # The mark the setting cards' notices started with before docs/ui.md 5.2.

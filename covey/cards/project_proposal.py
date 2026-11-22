@@ -7,7 +7,7 @@ from __future__ import annotations
 from covey.cards import ui
 from covey.cards.elements import (button_row, callback, callback_button, card, collapsible, grey, item, md, note, panel_header,
                                   plain, section, styled_panel, text_button)
-from covey.core.text import literal as literal_text
+from covey.core.text import cut, literal as literal_text
 
 CREATE_KIND = "bridge_tidy_create"  # 建专项
 RENAME_KIND = "bridge_tidy_rename"  # 改个名再建 (a card sent before name_form): the card becomes the rename form
@@ -21,6 +21,7 @@ ALL_KIND = "bridge_tidy_all"  # 全部照办 (a card of an older release: no new
 LEAVE_KIND = "bridge_tidy_leave"  # 移出 on a topic's card
 LESSON_KIND = "bridge_tidy_lesson"  # 记下 under a 不用 or 移出: the owner's reason
 START_KIND = "bridge_tidy_start"  # 整理专项 on the 设置 card
+BOARD_FROM = "board"  # As app/tidy_clicks.py BOARD_FROM: a proposal decided under 等你 on the 看板 or 手上的事 (waiting_block).
 KINDS = (CREATE_KIND, RENAME_KIND, NAMED_KIND, BACK_KIND, DECLINE_KIND, NEVER_KIND, AUTO_KIND, OK_KIND, ALL_KIND, LEAVE_KIND,
          LESSON_KIND, START_KIND)
 LABELS = {CREATE_KIND: "建专项", RENAME_KIND: "改个名再建专项", NAMED_KIND: "改名后建专项", BACK_KIND: "取消改名",
@@ -336,6 +337,32 @@ def joined_card(name, topic, pid):
 
 TIDY_SPAN = "最近 7 天动过的话题"  # Topics with a turn in the last 7 days, not the ones opened then.
 START_LINE = f"把专项和{TIDY_SPAN}重新看一遍，给出建议"
+
+
+WAITING_LINE = "要你定：建个专项"  # A waiting proposal's line, its topics after it (``waiting_block``).
+WAITING_WHERE = "在它的提议卡或菜单「看板」上定"  # Where one without buttons is decided.
+GOAL_CHARS = 60  # Of a proposal's goal on its grey line (as cards/board.py GOAL_CHARS).
+
+
+def waiting_block(item, origin=BOARD_FROM, *, act=True):
+    """A proposal waiting for the owner (core/board_read.py Asks.proposals), drawn under 等你 as a topic row is (docs/ui.md
+    2.2: 等你定 is 等你) on the 看板, 手上的事 and 早晚汇总: 等你 in its colour, 提议 and its name, its topics (each a link of its
+    own: the block is not one), its goal, and 建专项 / 不管了 that act on it from there (app/tidy_clicks.py BOARD_FROM: the
+    proposal's own card is redrawn, then the one clicked). ``item``: {id, name, goal, rows: its topics {label, title, url}};
+    ``origin``: the clicks' ``from``; ``act`` False: no buttons, where it is decided said instead (a card that is a record
+    of its time)."""
+    topics = " · ".join(ui.topic_ref(row.get("label"), row.get("title"), row.get("url") or "") for row in item.get("rows") or ())
+    left = [md(f"{ui.state_word('waiting')} <text_tag color='violet'>提议</text_tag> "
+               f"**「{literal_text(item.get('name') or '')}」**", size="normal_v2"),
+            md(WAITING_LINE + (f"，收进 {topics}" if topics else ""), size="normal_v2")]
+    if item.get("goal"):
+        left.append(md(grey("目标：" + literal_text(cut(item["goal"], GOAL_CHARS))), size="notation"))
+    if not act:
+        left.append(md(grey(WAITING_WHERE), size="notation"))
+    value = {"proposal": item.get("id") or "", "from": origin}
+    buttons = [ui.row_button("建专项", tone="primary", value={"kind": CREATE_KIND, **value}),
+               ui.row_button("不管了", tone="text", value={"kind": DECLINE_KIND, **value})] if act else []
+    return ui.container([ui.beside(left, buttons)], padding="6px 4px 6px 4px", radius="8px")
 
 
 def board_rows(names):

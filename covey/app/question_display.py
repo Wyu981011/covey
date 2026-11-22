@@ -91,7 +91,8 @@ class QuestionDisplay:
         try:
             from covey.app.overview import waiting_count  # Not at start: a task runner never needs 手上的事 until it paints.
 
-            waiting = waiting_count(ctx.state_dir, chat, time.time())
+            # The private chat's 等你 has 整理专项's proposals too, as its 看板 counts them; a group's has none.
+            waiting = waiting_count(ctx.state_dir, chat, time.time(), proposals=chat not in getattr(access, "agent_groups", ()))
         except Exception as exc:  # noqa: BLE001 - the card without its line
             self.runtime.log(f"waiting count unreadable: {type(exc).__name__}")
             return record
