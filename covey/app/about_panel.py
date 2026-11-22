@@ -107,7 +107,7 @@ def _overview(probe):
 def _dispatch(probe):
     from covey.app import dispatch_cards
     if dispatch_cards.enabled():
-        return True, "管家把事转给已有话题后，私聊多一张实时刷新的卡", dispatch_cards.ENV
+        return True, "管家把事转给已有话题后，你的提问下面挂一张实时刷新的卡", dispatch_cards.ENV
     return False, "设 COVEY_DISPATCH_CARD=1", dispatch_cards.ENV
 
 

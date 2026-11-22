@@ -1,9 +1,11 @@
-"""派发卡 (docs/butler.md 派发卡), when COVEY_DISPATCH_CARD=1: the card the butler's topic_send leaves at the chat's top
-level when it hands work to a topic that was there, a message of its own with the "你问" block (cards/dispatch_card.py)
-naming the owner's message, saying how the job it handed to that topic is going, kept up to date until the conclusion
-comes back and the card shrinks to one line (cards/dispatch_card.py). A topic topic_start or topic_fork opens gets none:
-its thread hangs under the owner's question, or its own card is at the top level (app/butler_topics.py dispatch_card);
-the records of cards those sent before still refresh and settle as they did.
+"""派发卡 (docs/butler.md 派发卡), when COVEY_DISPATCH_CARD=1: the card the butler's topic_send leaves when it hands work to a
+topic that was there, saying how the job it handed to that topic is going, kept up to date until the conclusion comes back
+and the card shrinks to one line (cards/dispatch_card.py). It is a reply in the thread of the owner's question, so the
+chat's top level keeps one answer, the butler's (``created``); only a card the butler marked as a long job (``project``,
+the 专项卡 it may become) is a message of its own at the top level, with the "你问" block naming his message. A topic
+topic_start or topic_fork opens gets none: its thread hangs under the owner's question, or its own card is at the top level
+(app/butler_topics.py dispatch_card). The records of cards sent before (at the top level, start and fork ones too) still
+refresh and settle as they did.
 
 - ``created`` (called by app/butler_topics.py once a topic took the work): sends the card, records it
   (core/dispatch_records.py), and makes a quote of it go to the topic (``route_message``). Never raises: the topic
@@ -40,7 +42,8 @@ from covey.core.metrics import run_seconds, timings_of, took_text
 from covey.core.state import epoch_seconds, read_object, write_json
 from covey.core.store import directory_store
 from covey.core.status_line import step_text
-from covey.core.topics import topic_label, topic_title
+from covey.core.butler import is_butler_topic
+from covey.core.topics import message_topic, topic_label, topic_title
 from covey.core.turn_words import UNSET_PHASES, ask_words, request_line
 
 ENV = "COVEY_DISPATCH_CARD"
@@ -226,7 +229,8 @@ def facts(state_dir, record, now, titles, url="") -> Dispatch:
                     workspace=str((job or {}).get("workspace_name") or ""), started=clock(record.get("started_at")),
                     took=took, body=body, inputs=inputs, outputs=outputs,
                     job_id=str(job_number(job)) if job is not None and job_number(job) else "", url=url,
-                    ask_at=str(record.get("ask_at") or ""), ask_url=str(record.get("ask_url") or ""))
+                    ask_at=str(record.get("ask_at") or ""), ask_url=str(record.get("ask_url") or ""),
+                    threaded=bool(record.get("in_thread")))
 
 
 # Sending the card ---------------------------------------------------------------------------------------------------
@@ -260,7 +264,15 @@ def created(env, request, topic_id, job_key="", *, token, mid="", project=False)
     job a 补充 went into (default the turn the request started, "main-" + ``token``, the request's: app/butler_topics.py
     request_token). Once a request: a second call finds the card sent. Does nothing with the switch off, or when the
     owner's message is not known. Never raises. ``project``: the butler said this work is a long job (topic_send with
-    ``project``): ``upgrade_hint.project`` in the record, which app/projects.py reads (COVEY_PROJECT_UPGRADE)."""
+    ``project``): ``upgrade_hint.project`` in the record, which app/projects.py reads (COVEY_PROJECT_UPGRADE).
+
+    Where it goes, decided once (the record's ``in_thread``): a reply in the thread of the owner's question, which the
+    butler's turn answered with its own words at the top level, so his question gets one answer there and the card hangs
+    under it as a new topic's thread does. A quote of the card goes to the topic (``route_message``); a message written in
+    that thread quoting nothing goes to the butler, the thread's root being his question (app/butler.py app_for), which
+    hands it on. None when the question's thread is another topic's already (a topic_start of the same turn took it: the
+    hook under his message names this topic, app/butler_reply.py). With ``project`` the card stays a message of its own at
+    the top level, as the 专项卡 it may become."""
     if not enabled():
         return ""
     return safely(env, lambda: _created(env, request, topic_id, job_key or request.job_key, token, mid, project),
@@ -299,10 +311,16 @@ def _created(env, request, topic_id, job_key, token, mid, project=False) -> str:
         # one for the 补充 would never get the conclusion's note either.
         env.runtime.log(f"dispatch card skipped topic={str(topic_id)[:12]}: a supplement to the turn the topic opened with")
         return ""
+    held = message_topic(state, chat, owner)
+    if not record and not project and held and not is_butler_topic(held, chat):
+        # The question hangs another topic's thread (topic_start of this turn took it): no card in that thread, and none
+        # at the top level beside the butler's answer either.
+        env.runtime.log(f"dispatch card skipped topic={str(topic_id)[:12]}: the question's thread is another topic's")
+        return ""
     if not record:
         record = records.new_record(token=token, chat_id=chat, topic_id=topic_id, job_key=job_key,
                                     mid=mid or MAIN + token, kind=SEND, owner_message=owner,
-                                    request=request_words(state, job_key), starts=True,
+                                    request=request_words(state, job_key), starts=True, in_thread=not project,
                                     rounds=records.rounds_for(state, owner, topic_id), **ask_of(env, state, job_key))
         if project:
             record["upgrade_hint"]["project"] = True
@@ -319,8 +337,10 @@ def _created(env, request, topic_id, job_key, token, mid, project=False) -> str:
     # A quote of the card goes to the topic (the owner's reply to it is a word to the job), as the hook's does.
     sent = publish(env, state, chat, card, env.voice.key("main-dispatch", token), card_id=record.get("card_id", ""),
                    on_created=saved, record=store, topic=topic_id, route_chat=chat,
+                   reply_to=owner if record.get("in_thread") else "",
                    not_sent=f"dispatch card not sent topic={str(topic_id)[:12]}",
-                   sent=f"dispatch card sent topic={str(topic_id)[:12]} message=")
+                   sent=f"dispatch card sent topic={str(topic_id)[:12]} "
+                        f"{'in the question thread' if record.get('in_thread') else 'at the top level'} message=")
     return token if sent else ""
 
 
@@ -460,9 +480,10 @@ class DispatchCards:
         url = ""
         if status == DONE and note.get("message_id"):
             url = self.message_url(ctx, record, note["message_id"])
-        label = topic_label(Path(ctx.state_dir), str(record.get("topic_id") or ""))
+        topic = str(record.get("topic_id") or "")
+        label = topic_label(Path(ctx.state_dir), topic)
         card = settled_card(status, record.get("request"), url=url, reason=words(reason, 60) if status != DONE else "",
-                            label=label)
+                            label=label, threaded=bool(record.get("in_thread")), title=topic_title(Path(ctx.state_dir), topic))
         if self.write(ctx, path, record, seen, card, now):
             self.finish(path, record, "relay", digest=digest_of(card))
 

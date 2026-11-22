@@ -46,13 +46,16 @@ def safely(env, send, failed: str) -> str:
         return ""
 
 
-def publish(env, state, chat, card, key, *, card_id, on_created, record, topic, route_chat, not_sent, sent) -> str:
-    """Send ``card`` to ``chat`` (not a reply: Feishu would put it into a thread) under the idempotency ``key``, resuming
-    ``card_id`` when one was created before. ``record(card_id, message, digest)`` stores the sent card; ``topic`` and
-    ``route_chat`` are where a click on it and a quote of it go; ``not_sent`` is the log line when nothing went out, ``sent``
-    the start of the one when it did (the message's tail follows). The message id, '' when it did not go out."""
+def publish(env, state, chat, card, key, *, card_id, on_created, record, topic, route_chat, not_sent, sent,
+            reply_to="") -> str:
+    """Send ``card`` to ``chat`` under the idempotency ``key``, resuming ``card_id`` when one was created before: a message
+    of its own at the chat's top level, or with ``reply_to`` a reply in that message's thread (opening it when it has
+    none). ``record(card_id, message, digest)`` stores the sent card; ``topic`` and ``route_chat`` are where a click on it
+    and a quote of it go; ``not_sent`` is the log line when nothing went out, ``sent`` the start of the one when it did
+    (the message's tail follows). The message id, '' when it did not go out."""
+    where = {"reply_to_message_id": reply_to, "in_thread": True} if reply_to else {}
     card_id, message = env.messenger.create_and_send_card(
-        env.profile, chat, card, key, voice=env.voice, card_id=card_id, on_created=on_created)
+        env.profile, chat, card, key, voice=env.voice, card_id=card_id, on_created=on_created, **where)
     if not message:
         env.runtime.log(not_sent)
         return ""

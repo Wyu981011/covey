@@ -869,6 +869,12 @@ def answer_tail_cards():
             "dispatch_line_done": settled_card(dc.DONE, asked_words, url=thread_url, label="T453"),
             "dispatch_line_failed": settled_card(dc.FAILED, asked_words, reason="后端退出", label="T453"),
             "dispatch_line_stopped": settled_card(dc.STOPPED, asked_words, label="T453"),
+            # In the thread of the owner's question (topic_send's, T636): no "你问" block, the topic heads it.
+            "dispatch_thread_running": dispatch_card(Dispatch(**{**work.__dict__, "threaded": True})),
+            "dispatch_thread_waiting": dispatch_card(Dispatch(**{**work.__dict__, "threaded": True, "status": dc.WAITING,
+                                                                 "body": "等你回答：推哪几个提交？"})),
+            "dispatch_thread_line_done": settled_card(dc.DONE, asked_words, url=thread_url, label="T453", threaded=True,
+                                                      title="比对公司主干和 GitHub 快照"),
             "answer_card_tail": answer_card(text, "✅ T439 · 结论", tail(files, inputs, outputs)),
             # COVEY_MEMORY=1: the memory lines at the bottom (cards/answer_card.py memory_element, app/memory_collect.py).
             "answer_card_memory": answer_card(text, "✅ T439 · 结论", [*tail(files, inputs, outputs), memory_element([

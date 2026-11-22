@@ -14,8 +14,9 @@ What each topic's model gets is app/butler_handoff.py's: the Bridge's note, the 
 from the butler turn's record and its attachments, carried into the topic's incoming_media; its card and
 history show the owner's words.
 - ``topic_fork`` forks a topic's last finished turn (app/forks.py create_fork) and submits the new topic's first.
-- The 派发卡 (``dispatch_card``, COVEY_DISPATCH_CARD=1) is topic_send's alone: a topic topic_start or topic_fork opens
-  shows at the top level already, its thread under the owner's question or its own card there.
+- The 派发卡 (``dispatch_card``, COVEY_DISPATCH_CARD=1) is topic_send's alone, in the thread of the owner's question
+  (app/dispatch_cards.py created): a topic topic_start or topic_fork opens shows at the top level already, its thread
+  under the owner's question or its own card there.
 
 Which Harness, model and budget a new topic gets is app/butler_model_choice.py's (``resolve``, used by ``plan_start``).
 
@@ -37,7 +38,7 @@ from covey.app.butler_env import arg_text, reply
 from covey.app.butler_model_choice import resolve
 from covey.cards.topic_card import topic_card
 from covey.app.relay_targets import butler_job_owner_message
-from covey.core import criteria, devices, butler, butler_settings, projects
+from covey.core import criteria, devices, butler, butler_settings, dispatch_records, projects
 from covey.core.attachments import attachment_block
 from covey.core.card_sequence import file_card, reserve
 from covey.core.harness import backend_capabilities
@@ -71,11 +72,11 @@ def lead_of(env, request):
 
 
 def dispatch_card(env, request, topic_id, **how):
-    """The 派发卡 of the work topic_send ``request`` handed to the topic ``topic_id`` that was there (app/dispatch_cards.py),
-    only with COVEY_DISPATCH_CARD=1: without it nothing is called and the topic's own cards are all there is. None for a
-    project's lead's call: the project's card is the one (phase 2's P2-4). topic_start and topic_fork call none: the
-    topic they open hangs its thread under the owner's question, or has its own card at the chat's top level (a second
-    topic of the question, a question not known), and a 派发卡 there said the same again."""
+    """The 派发卡 of the work topic_send ``request`` handed to the topic ``topic_id`` that was there (app/dispatch_cards.py:
+    a reply in the thread of the owner's question), only with COVEY_DISPATCH_CARD=1: without it nothing is called and the
+    topic's own cards are all there is. None for a project's lead's call: the project's card is the one (phase 2's P2-4).
+    topic_start and topic_fork call none: the topic they open hangs its thread under the owner's question, or has its own
+    card at the chat's top level (a second topic of the question, a question not known), and a 派发卡 said the same again."""
     if dispatch_cards.enabled() and lead_of(env, request) is None:
         token = dispatch_cards.created(env, request, topic_id, request.job_key, token=request_token(request), **how)
         if token and getattr(env, "projects", None) is not None and projects.enabled():
@@ -342,7 +343,8 @@ def _enqueue(env, app, request, record, chat, prompt, event, token, label) -> bo
 def place(env, request, chat) -> tuple:
     """(area root, taken) of a topic ``request`` opens, decided once: a 话题区 (docs/butler.md 话题), its thread
     hanging under the owner's question the request answers, the area root; a message has one thread, so a second
-    topic opened on the same question gets a topic card at the top level as its root (area root '', taken). ('',
+    topic opened on the same question gets a topic card at the top level as its root (area root '', taken), and so does
+    one whose question's thread holds the 派发卡 of a topic_send before it (core/dispatch_records.py threaded). ('',
     False) with the switch off or that message not known: the topic card and its thread, as before."""
     if not butler.enabled():
         return "", False
@@ -350,7 +352,7 @@ def place(env, request, chat) -> tuple:
     if not owner:
         return "", False
     held = message_topic(Path(env.state_dir), chat, owner)
-    free = not held or is_butler_topic(held, chat)
+    free = (not held or is_butler_topic(held, chat)) and not dispatch_records.threaded(env.state_dir, chat, owner)
     return owner if free else "", not free
 
 

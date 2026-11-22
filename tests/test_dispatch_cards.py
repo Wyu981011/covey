@@ -1,7 +1,7 @@
 """The 派发卡 (app/dispatch_cards.py, cards/dispatch_card.py, core/dispatch_records.py): sent when the butler's
-topic_send hands work to a topic that was there (none for a topic topic_start or topic_fork opens), kept up to date by
-one thread (throttled, a new sequence for every write, a failed write backed off), one line once the conclusion went
-out, and none of it with COVEY_DISPATCH_CARD off."""
+topic_send hands work to a topic that was there, in the thread of the owner's question (none for a topic topic_start or
+topic_fork opens), kept up to date by one thread (throttled, a new sequence for every write, a failed write backed off),
+one line once the conclusion went out, and none of it with COVEY_DISPATCH_CARD off."""
 from __future__ import annotations
 
 import itertools
@@ -25,10 +25,11 @@ from covey.core import butler_opened, butler_settings
 from covey.core.jobs import BridgeReplyJob, upsert_job_record
 from covey.core.butler_requests import Request
 from covey.core.state import read_object, write_json
-from covey.core.topics import routed_topic
+from covey.core.topics import move_topic_message, routed_topic, topic_label
 
 CHAT = "oc_owner_dm"
 OWNER = "om_owner_question"
+EARLIER = "om_earlier_question"  # The question an earlier butler turn opened the topic on.
 ASK = "把这块代码提交到 GitHub 上吧，推之前先问我推哪些"
 ELEMENT_ID = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,19}$")
 URL = "https://applink.example/client/thread/open?open_chat_id=oc_x"
@@ -111,6 +112,12 @@ class CardTest(UnifiedCase):
     def test_the_single_line_says_what_ended_and_opens_the_conclusion_only_for_a_finished_job(self):
         done = view.settled_card(view.DONE, ASK, url=URL, label="T453")
         self.assertIn("✅ 做完 · 结论在下方", json.dumps(done, ensure_ascii=False))
+        # In the question's thread the conclusion is not below it: 看结论, and the topic's title in place of his words.
+        threaded = json.dumps(view.settled_card(view.DONE, ASK, url=URL, label="T453", threaded=True, title="比对快照"),
+                              ensure_ascii=False)
+        self.assertIn("✅ 做完 · 看结论", threaded)
+        self.assertIn("T453 · 比对快照", threaded)
+        self.assertNotIn("结论在下方", threaded)
         self.assertEqual(find_element(done, "dp_line")["behaviors"], [{"type": "open_url", "default_url": URL}])
         self.assertEqual(done["config"]["width_mode"], "compact")
         failed = view.settled_card(view.FAILED, ASK, reason="后端退出", label="T453")
@@ -171,6 +178,8 @@ class DispatchCase(UnifiedCase):
         self.ids = itertools.count(1)
         upsert_job_record(self.ctx.state_dir, "main-job", message_id=OWNER, reply_to_message_id=OWNER, chat_id=CHAT,
                           user_text=ASK, job_id=1, status="done", topic_id="main")
+        upsert_job_record(self.ctx.state_dir, "open-job", message_id=EARLIER, reply_to_message_id=EARLIER, chat_id=CHAT,
+                          user_text="先看看昨晚的失败", job_id=2, status="done", topic_id="main")
         link = mock.patch("covey.app.topic_links.topic_thread_link", return_value=(URL, "thread"))
         link.start()
         self.addCleanup(link.stop)
@@ -187,12 +196,12 @@ class DispatchCase(UnifiedCase):
         """The calls that sent a 派发卡 (the ones whose card has the 线程 fold; a topic's own root card has none)."""
         return [call for call in self.sent.call_args_list if find_element(call.args[2], "dp_thread")]
 
-    def start(self, request_id="r1", **args):
-        """topic_start ``request_id``: a topic of the owner's question, which leaves no 派发卡."""
+    def start(self, request_id="r1", job="main-job", **args):
+        """topic_start ``request_id`` of the butler job ``job``: a topic of the owner's question, which leaves no 派发卡."""
         fields = dict(title="查日志", prompt="看看昨晚的失败", workspace="project", readonly=True, user_requested=False,
                       why="日志在这个仓库")
         fields.update(args)
-        request = Request(request_id, "topic_start", fields, "main-job", 0.0)
+        request = Request(request_id, "topic_start", fields, job, 0.0)
         return butler_topics.TOOLS["topic_start"](self.env, request)
 
     def send(self, request_id, topic, text):
@@ -200,10 +209,10 @@ class DispatchCase(UnifiedCase):
         return butler_topics.TOOLS["topic_send"](self.env, request)
 
     def dispatched(self, request_id="r1", **args):
-        """The 派发卡 of ``request_id``: a topic the butler opened (topic_start "open-" + ``request_id``, no card) whose first
-        turn ended, and the work topic_send ``request_id`` handed to it again, a turn of its own (its key ``job_key``).
-        topic_send's answer."""
-        opened = self.start("open-" + request_id, **args)
+        """The 派发卡 of ``request_id``: a topic an earlier butler turn opened on an earlier question (topic_start "open-" +
+        ``request_id``, no card) whose first turn ended, and the work the owner's question now hands to it again
+        (topic_send ``request_id``, a turn of its own, its key ``job_key``). topic_send's answer."""
+        opened = self.start("open-" + request_id, job="open-job", **args)
         self.assertTrue(opened["ok"], opened)
         first = self.app.runtime.jobs.find(0, self.job_key("open-" + request_id))
         if first is not None:
@@ -252,14 +261,34 @@ class DirectionGoneTest(DispatchCase):
 
 
 class CreatedTest(DispatchCase):
-    def test_the_card_is_a_message_of_its_own_in_the_chat_with_a_link_to_the_owners_and_a_quote_of_it_goes_to_the_topic(self):
-        # Feishu puts a reply to a message that has a thread already into that thread (the topic hangs under the owner's
-        # message), whatever reply_in_thread says: so the card is no reply (the 2026-11-15 check found it in the thread).
+    def test_the_card_hangs_in_the_thread_of_the_owners_question_headed_by_the_topic_and_a_quote_of_it_goes_there(self):
+        # T636 (2026-11-22): at the top level the card was a second answer beside the butler's; under the question it is
+        # the work's progress, as a new topic's thread is. His question is the thread's root: no "你问" block.
         answer = self.dispatched()
         self.assertTrue(answer["ok"], answer)
         topic = answer["data"]["topic_id"]
+        label = topic_label(self.ctx.state_dir, topic)
         (profile, chat, card, key), kwargs = self.dispatch_sends()[-1]
         self.assertEqual(chat, CHAT)
+        self.assertEqual((kwargs.get("reply_to_message_id"), kwargs.get("in_thread")), (OWNER, True))
+        self.assertEqual(card["header"]["title"]["content"], f"{label} 查日志")
+        self.assertIsNone(find_element(card, "answer_ask"))
+        self.assertNotIn(ASK, json.dumps(card, ensure_ascii=False))
+        self.assertEqual(card["config"]["summary"]["content"], f"{label} 在做 · 查日志")  # The preview under his question.
+        self.assertNotIn(label, find_element(card, "dp_meta")["content"])
+        record = self.record()
+        message = record["card_message_id"]
+        self.assertEqual((record["state"], record["topic_id"], record["owner_message"], record["rounds"],
+                          record["project_id"], record["in_thread"]), ("live", topic, OWNER, 1, None, True))
+        self.assertTrue(message.startswith("om_card"))
+        self.assertEqual(routed_topic(self.ctx.state_dir, CHAT, message), topic)
+        self.assertTrue(any("in the question thread" in line for line in self.logs))
+
+    def test_a_long_job_card_is_a_message_of_its_own_with_the_owners_words_as_before(self):
+        # The butler's ``project``: the card may become the 专项卡, a message of its own at the top level.
+        with mock.patch.object(butler_topics, "project_hint", return_value={"project": True}):
+            self.assertTrue(self.dispatched()["ok"])
+        (_, _, card, _), kwargs = self.dispatch_sends()[-1]
         self.assertFalse(kwargs.get("reply_to_message_id"), kwargs)
         self.assertEqual(card["header"]["title"]["content"], ASK)
         ask = find_element(card, "answer_ask")
@@ -270,12 +299,31 @@ class CreatedTest(DispatchCase):
         self.assertRegex(speaker, r"\*\*T\d+")
         self.assertRegex(speaker, "在办你|办你.*要你定")
         self.assertNotIn("你问 ·", speaker)
-        record = self.record()
-        message = record["card_message_id"]
-        self.assertEqual((record["state"], record["topic_id"], record["owner_message"], record["rounds"],
-                          record["project_id"]), ("live", topic, OWNER, 1, None))
-        self.assertTrue(message.startswith("om_card"))
-        self.assertEqual(routed_topic(self.ctx.state_dir, CHAT, message), topic)
+        self.assertEqual((self.record()["in_thread"], self.record()["upgrade_hint"]), (False, {"project": True}))
+
+    def test_no_card_when_the_question_hangs_a_topic_of_the_same_turn(self):
+        # topic_start before topic_send in one turn: the question's thread is the new topic's (claim_area_root); the card
+        # would be another topic's in it, or a second answer at the top level. The hook under his message names it.
+        topic = self.start("open-r1", job="open-job")["data"]["topic_id"]
+        first = self.app.runtime.jobs.find(0, self.job_key("open-r1"))
+        self.app.runtime.unregister_reply_job(first)
+        self.set_job("open-r1", status="done")
+        move_topic_message(self.ctx.state_dir, "f" * 64, CHAT, OWNER)  # The new topic's root now.
+        self.assertTrue(self.send("r1", topic, "再看看前天的")["ok"])
+        self.assertEqual(self.dispatch_sends(), [])
+        self.assertEqual(self.record("r1"), {})
+        self.assertTrue(any("the question's thread is another topic's" in line for line in self.logs))
+
+    def test_a_topic_opened_after_the_card_takes_no_root_in_the_questions_thread(self):
+        # topic_send before topic_start in one turn: the card hangs in the question's thread, the new topic gets its own
+        # card at the top level (app/butler_topics.py place).
+        request = Request("o2", "topic_start", {}, "main-job", 0.0)
+        with mock.patch.object(butler_topics.butler, "enabled", return_value=True):
+            self.assertEqual(butler_topics.place(self.env, request, CHAT), (OWNER, False))
+            self.assertTrue(self.dispatched()["ok"])
+            self.assertEqual(butler_topics.place(self.env, request, CHAT), ("", True))
+        self.assertTrue(records.threaded(self.ctx.state_dir, CHAT, OWNER))
+        self.assertFalse(records.threaded(self.ctx.state_dir, CHAT, EARLIER))
 
     def test_a_request_asked_twice_sends_one_card(self):
         self.dispatched()
@@ -338,6 +386,7 @@ class CreatedTest(DispatchCase):
         write_json(records.record_path(self.ctx.state_dir, token), record)
         self.tick(time.time())
         self.assertEqual(self.last_card()["header"]["text_tag_list"][0]["text"]["content"], "等你")
+        self.assertIsNotNone(find_element(self.last_card(), "answer_ask"))  # At the top level: the old look, his words.
 
 
 class OpenedTest(DispatchCase):
@@ -506,7 +555,7 @@ class SettleTest(DispatchCase):
         self.settle()
         card = self.last_card()
         self.assertEqual(ids(card), ["dp_line"])
-        self.assertIn("✅ 做完 · 结论在下方", json.dumps(card, ensure_ascii=False))
+        self.assertIn("✅ 做完 · 看结论", json.dumps(card, ensure_ascii=False))  # The card is in his question's thread.
         self.assertIn("applink.feishu.cn/client/chat/open?openChatId=oc_owner_dm&position=88",
                       find_element(card, "dp_line")["behaviors"][0]["default_url"])
         record = self.record()

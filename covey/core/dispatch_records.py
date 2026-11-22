@@ -38,15 +38,18 @@ def relay_note_path(state_dir, token) -> Path:
     return folder(state_dir) / f"{token}{RELAY_SUFFIX}"
 
 
-def new_record(*, token, chat_id, topic_id, job_key, mid, kind, owner_message, request, starts, rounds=1, now=None, ask_at="", ask_url="") -> dict:
+def new_record(*, token, chat_id, topic_id, job_key, mid, kind, owner_message, request, starts, rounds=1, now=None, ask_at="", ask_url="",
+               in_thread=False) -> dict:
     """A fresh live record. ``job_key`` the butler job that sent the card, ``mid`` the key or message id of the
     topic's job it follows, ``kind`` send (start or fork in older records), ``starts`` whether the topic starts at once
     (else it waits on its launch card: an older start record's). ``ask_at``, ``ask_url``: the owner's message the card's
-    "你问" block names (the time he wrote it, the link that opens it)."""
+    "你问" block names (the time he wrote it, the link that opens it). ``in_thread``: the card is a reply in the thread of
+    the owner's message (app/dispatch_cards.py), not a message of its own at the chat's top level (an older record's)."""
     request = " ".join(str(request or "").split())
     return {"schema_version": SCHEMA, "token": token, "chat_id": chat_id, "topic_id": topic_id, "job_key": job_key,
             "mid": mid, "kind": kind, "owner_message": owner_message, "request": request[:REQUEST_CHARS],
-            "starts": bool(starts), "ask_at": ask_at, "ask_url": ask_url, "card_id": "", "card_message_id": "", "sequence": 0, "state": LIVE,
+            "starts": bool(starts), "ask_at": ask_at, "ask_url": ask_url, "in_thread": bool(in_thread),
+            "card_id": "", "card_message_id": "", "sequence": 0, "state": LIVE,
             "started_at": time.time() if now is None else now,
             # upgrade_hint: the butler's ``project`` is added by app/dispatch_cards.py. No keyword of the owner's is matched any more
             # (older records may still carry ``long_word``; nothing reads it).
@@ -105,3 +108,16 @@ def sent(state_dir, token) -> bool:
     if not token or "/" in str(token):
         return False
     return bool(read_object(record_path(state_dir, token)).get("card_message_id"))
+
+
+def threaded(state_dir, chat_id, owner_message) -> bool:
+    """Whether a card went out in the thread of the owner's message ``owner_message`` (``in_thread``): that thread holds
+    another topic's card, so a topic opened on the same question takes no root there (app/butler_topics.py place)."""
+    if not chat_id or not owner_message:
+        return False
+    for path in live_paths(state_dir):
+        saved = read_object(path)
+        if (saved.get("in_thread") and saved.get("card_message_id") and saved.get("owner_message") == owner_message
+                and saved.get("chat_id") == chat_id):
+            return True
+    return False
