@@ -272,7 +272,7 @@ Bridge 记一份主人的长期原则，所有 Harness 的话题和管家都带�
 
 ## 知识库
 
-主人说“记一下”的东西集中存放，所有 Harness 的新会话都带上，管家能搜索和修改。`COVEY_KNOWLEDGE=1` 才开（[配置](configuration.md#知识条目与历史搜索)）；关着时不建目录、规则和提示词一字不变、工具清单里没有这些工具、汇总里没有这一节。
+主人说“记一下”的东西集中存放，所有 Harness 的新会话都带上，管家能搜索和修改。`COVEY_KNOWLEDGE=1` 才开（`./install` 新装的默认开，见[配置](configuration.md#知识条目与历史搜索)）；关着时不建目录、规则和提示词一字不变、工具清单里没有这些工具、汇总里没有这一节。
 
 - **存储**（`core/knowledge.py`，只用标准库）：`<state>/knowledge/` 下通用一份、每个工作区一份，只追加的事件（新增、改写、作废），读时重放。条目分 decision、practice、pitfall、fact、question 五类，正文最多 200 字。
 - **管家**：`knowledge_save`、`knowledge_update`、`knowledge_drop`、`knowledge_search`（`app/butler_knowledge.py`）；以后每次都要遵守的做法仍用 `principle_save`。查以前的事按 `knowledge_search` → `topics_search` → `history_search`。
@@ -286,7 +286,7 @@ Bridge 记一份主人的长期原则，所有 Harness 的话题和管家都带�
 
 ## 记忆（开关默认关）
 
-`COVEY_MEMORY=1` 才开（[配置](configuration.md#记忆)）；关着时规则、续接提醒、答案卡和任务记录逐字不变，不读不写话题的 `memory.json`。它把“主人的原则”“知识库”“专项记忆”和话题自己的记忆合成一种东西，对主人只说“记忆”。
+`COVEY_MEMORY=1` 才开（`./install` 新装的默认开，见[配置](configuration.md#记忆)）；关着时规则、续接提醒、答案卡和任务记录逐字不变，不读不写话题的 `memory.json`。它把“主人的原则”“知识库”“专项记忆”和话题自己的记忆合成一种东西，对主人只说“记忆”。
 
 - **一个读口**（`core/memory.py`；每轮的接线 `app/memory_turn.py`）：原则、知识条目、专项记忆（`core/project_memory.py`）和话题记忆（`core/topic_memory.py`）拼成一块，每条一行“`- M12 · 管这个专项 · 当前决定 · 你说的：…`”：编号、管哪儿（全局、这个工作区、这个专项、这个话题）、专项的条目在哪一段（长期约定、当前决定、待核对参考）、谁说的。谁读什么和原来一样：全局的只在主人自己的一轮，代答的话题什么都不带。
 - **标出处**：主人自己的话是“你说的”，负责人总结的是“它总结的”；块后面的规则写明谁说了算。

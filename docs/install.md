@@ -45,6 +45,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 | `--no-autostart` | 没有 systemd、launchd 时不往 crontab 加开机自启的一行 |
 | `--profile`、`--app-name` | `lark-cli` profile 名（默认 `covey`）、新应用的名称（默认 `Covey`） |
 | `--no-start` | 只准备到飞书应用为止，不注册、不启动服务 |
+| `--showcase` | 演示套餐：默认开的之外，再开协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡，见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动。已经装好、在运行的服务只把套餐里的开关改进服务清单（同 `covey_service.py set --preset showcase`），别的设置不动 |
 
 ## 第一个回答
 
@@ -65,7 +66,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 
 ## 装好以后
 
-- **默认开着的**：管家、专项、整理专项（只提议）、问题卡上的「以后这类按推荐走」、菜单「看板」、撤回或编辑消息后跟着处理、自动补齐飞书应用。推荐再打开的（早晚汇总、置顶的「手上的事」、记忆等）见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做。
+- **默认开着的**：管家、专项（连同叫醒负责人、停住问你、专项记忆、问题分流四个进阶开关）、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目、撤回或编辑消息后跟着处理、自动补齐飞书应用。推荐再打开的（早晚汇总、置顶的「手上的事」等）见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做；想一次都打开，装的时候加 `--showcase`（[演示套餐](configuration.md#演示套餐)）。
 - **怎么用**：一页纸的[五分钟上手](quickstart.md)；[使用指南](usage.md)从[第一次使用](usage.md#第一次使用)开始。
 - **扩展**：装好后用 `bin/covey_plugins.py` 查看、启用、停用，见[扩展的装和卸](operations.md#扩展的装和卸)。
 - **升级**：`git fetch` 后用 `scripts/deploy_bridge.sh` 把新提交部署成固定的 release 目录（先 `--check-only`），见[升级与回滚](deploy.md#升级与回滚)。`./install` 装的服务直接从这个检出运行，在这里 `git pull` 之后新开的任务立刻用新代码，机器人本身却还是旧的，所以不要直接 `git pull`。

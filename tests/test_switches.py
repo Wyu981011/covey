@@ -36,9 +36,33 @@ class SwitchesTests(unittest.TestCase):
     def test_a_manifest_environment_in_its_stored_spellings_gives_names_and_values(self):
         found = switches.shown({"LARK_BRIDGE_MAIN_THREAD": "1", "COVEY_REVISIT": "1", "COVEY_DIGEST_TIMES": "09:30,21:30",
                                 "COVEY_PROJECT_TIDY": "", "PATH": "/usr/bin", "COVEY_NOT_A_SWITCH": "1"})
-        self.assertEqual(found, [("COVEY_BUTLER", "1"), ("COVEY_PROJECT_TIDY", switches.EMPTY),
-                                 ("COVEY_DIGEST_TIMES", "09:30,21:30"), ("COVEY_REVISIT", "1")])
+        self.assertEqual(found, [("COVEY_BUTLER", "1"), ("COVEY_PROJECT_TIDY", switches.EMPTY), ("COVEY_REVISIT", "1"),
+                                 ("COVEY_DIGEST_TIMES", "09:30,21:30")])
         self.assertEqual(switches.words(found[:2]), "COVEY_BUTLER=1；COVEY_PROJECT_TIDY=空")
+
+    def test_install_and_showcase_name_known_switches_and_the_showcase_holds_the_install_set(self):
+        self.assertEqual(switches.INSTALL, {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD": "1",
+                                            "COVEY_REVIEW": "1", "COVEY_REVISIT": "1", "COVEY_MEMORY": "1",
+                                            "COVEY_KNOWLEDGE": "1", "COVEY_PROJECT_AUTOWAKE": "1", "COVEY_PROJECT_ASK": "1",
+                                            "COVEY_PROJECT_MEMORY": "1", "COVEY_PROJECT_TRIAGE": "1"})
+        self.assertEqual({k: v for k, v in switches.SHOWCASE.items() if k in switches.INSTALL}, switches.INSTALL)
+        self.assertEqual([name for name in switches.SHOWCASE if name not in switches.KNOWN], [])
+        lines = (REPO / "docs" / "configuration.md").read_text().splitlines()
+        showcase = "\n".join(lines[lines.index("### 演示套餐"):lines.index("### 改开关三步")])
+        extra = sorted(set(switches.SHOWCASE) - set(switches.INSTALL))
+        self.assertEqual([name for name in extra if f"`{name}=" not in showcase], [])  # Its table names each one.
+
+    def test_a_preset_turns_on_what_is_unset_or_off_whatever_the_spelling_and_keeps_other_values(self):
+        environ = {"LARK_BRIDGE_DIGEST_TIMES": "10:00", "LARK_BRIDGE_MAIN_TRACKS": "off", "COVEY_PROJECT_TIDY": "auto",
+                   "COVEY_REVIEW": "1", "COVEY_MEMORY": "", "COVEY_COLLAB": "No"}
+        found = switches.preset_changes("showcase", environ)
+        self.assertEqual({name: found.get(name) for name in ("COVEY_DIGEST_TIMES", "COVEY_PROJECT_TIDY", "COVEY_REVIEW")},
+                         {"COVEY_DIGEST_TIMES": None, "COVEY_PROJECT_TIDY": None, "COVEY_REVIEW": None})
+        self.assertEqual((found["COVEY_BUTLER_TRACKS"], found["COVEY_MEMORY"], found["COVEY_COLLAB"]), ("1", "1", "1"))
+        self.assertEqual(set(found), set(switches.SHOWCASE) - {"COVEY_DIGEST_TIMES", "COVEY_PROJECT_TIDY", "COVEY_REVIEW"})
+        self.assertEqual(switches.preset_changes("showcase", dict(switches.SHOWCASE)), {})
+        with self.assertRaises(KeyError):
+            switches.preset_changes("other", {})
 
     def test_a_path_an_address_a_long_or_secret_looking_value_is_not_shown(self):
         for value in ("/absolute/path/x.json", "https://example.com/hook", "a" * 40,
@@ -92,7 +116,7 @@ class WhereTheyAreSaidTests(unittest.TestCase):
                  mock.patch("covey.service.doctor.query", return_value={"process": identity, "status": "ready"}):
                 found = diagnose(root, check_events=False)
         [service] = found["services"]
-        self.assertEqual(service["switches"], [["COVEY_WEB_CONFIG", "已设"], ["COVEY_REVISIT", "1"]])
+        self.assertEqual(service["switches"], [["COVEY_REVISIT", "1"], ["COVEY_WEB_CONFIG", "已设"]])
 
 
 if __name__ == "__main__":

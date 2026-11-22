@@ -16,7 +16,8 @@ from unittest import mock
 
 from support import REPO, exec_tempdir
 
-from covey.core import app_manifest, qr, welcome
+from covey.core import app_manifest, qr, switches, welcome
+from covey.core import env as cenv
 from covey.service import install_probe, installer
 from covey.service.install_probe import Probe
 
@@ -513,6 +514,28 @@ class ServiceTest(InstallerCase):
         ins = self.make(env=self.env(COVEY_PINNED_TOPICS="1"))
         ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["codex"]
         self.assertEqual("1", ins.fingerprint(self.data / "harnesses.json")["settings"]["LARK_BRIDGE_PINNED_TOPICS"])  # Fingerprints keep the old spelling (core/env.py canonical).
+
+    def test_a_new_service_gets_the_install_switches_and_showcase_the_demo_set_on_top(self):
+        ins, _ = self.start()
+        self.assertEqual({key: cenv.get(key, None, ins.env) for key in switches.SHOWCASE},
+                         {key: switches.INSTALL.get(key) for key in switches.SHOWCASE})
+        self.assertEqual("1", cenv.get("COVEY_REVIEW", None, ins.env))  # 独立复核, 到点回来看, 记忆 ... are on.
+        ins, ran = self.start(False, 0, "--showcase")  # Registered (the service is not up) with the 演示套餐.
+        self.assertEqual(2, len(ran))
+        self.assertEqual({key: cenv.get(key, None, ins.env) for key in switches.SHOWCASE}, switches.SHOWCASE)
+        report = {"changed": {"LARK_BRIDGE_COLLAB": {"from": None, "to": "1"}}}
+        with mock.patch.object(installer, "change_settings", return_value=report) as changed:
+            ins, ran = self.start(True, 0, "--showcase")  # Running unchanged: only its manifest's switches change.
+        self.assertEqual([], ran)
+        changed.assert_called_once_with(self.data / "bridge-services", self.data / "harness-cli_fake", {}, preset="showcase")
+        self.assertIn("演示套餐打开了 1 个开关", self.text())
+        with mock.patch.object(installer, "change_settings", side_effect=ValueError("job #3 (running) would be interrupted")):
+            ins, ran = self.start(True, 0, "--showcase")
+        self.assertIn("演示套餐没打开（job #3 (running) would be interrupted）", "\n".join(ins.leftovers))
+        ins = self.make("--showcase", env=self.env(COVEY_DIGEST_TIMES="10:00", COVEY_COLLAB="0"))
+        ins.default_switches()  # What the shell set stays, as with the install switches.
+        self.assertEqual(("10:00", "0", "1"), tuple(cenv.get(key, None, ins.env)
+                                                for key in ("COVEY_DIGEST_TIMES", "COVEY_COLLAB", "COVEY_PINNED_TOPICS")))
 
     def test_the_checkout_is_precompiled_before_registering_even_when_nothing_else_changed(self):
         self.start()

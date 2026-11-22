@@ -485,7 +485,7 @@ def deploy_lock(root, take=True):
         os.close(fd)
 
 
-def change_settings(root, state, changes, *, dry_run=False):
+def change_settings(root, state, changes, *, dry_run=False, preset=None):
     """Change the settings ``changes`` names ({name: value, None to remove it}) in the service manifest of ``state`` and
     register it again with its own command, workdir, profile, log and health timeout: what docs/deploy.md 改设置后重新注册
     does from a terminal that loaded the manifest's environment, without a terminal. The generation goes up by one and the
@@ -493,8 +493,10 @@ def change_settings(root, state, changes, *, dry_run=False):
     does not keep (a credential's, anything but COVEY_*, LARK_*_BRIDGE_*, PATH, LANG, CODEX_HOME, CLAUDE_CONFIG_DIR, DSH_HOME
     and the proxy variables), a value it cannot keep, what scripts/deploy_bridge.sh's pre-check stops (a loosened
     permission variable, jobs a restart would interrupt, a deploy running), and an unset the Manager's own environment
-    would undo. ``dry_run``: the report of what would change, nothing changed. The report: {state_dir, changed:
-    {name: {from, to}}, dry_run, generation}."""
+    would undo. ``dry_run``: the report of what would change, nothing changed. ``preset`` (core/switches.py PRESETS, the
+    演示套餐 ``showcase``) adds its switches the manifest does not set or sets off (switches.preset_changes); ``changes``
+    win over it. The report: {state_dir, changed: {name: {from, to}}, dry_run, generation}, with ``preset`` when one was given."""
+    from covey.core import switches
     from covey.core.ignored_env import loosened
     state = Path(state).expanduser().resolve()
     with deploy_lock(root, take=not dry_run):
@@ -506,6 +508,10 @@ def change_settings(root, state, changes, *, dry_run=False):
             raise ValueError("the service is stopped: start it first (covey_service.py start), then change the setting")
         old = dict(manifest.get("environment") or {})
         new, changed, inherited = dict(old), {}, None
+        if preset:  # A switch ``changes`` names in any spelling is not the preset's to set.
+            given = {spelling for name in changes for spelling in cenv.spellings(name)}
+            changes = {**{name: value for name, value in switches.preset_changes(preset, old).items() if name not in given},
+                       **changes}
         for name, value in changes.items():
             if not persistable(name):
                 raise ValueError(f"{name} is not kept in a service manifest: " + (
@@ -531,7 +537,7 @@ def change_settings(root, state, changes, *, dry_run=False):
             if before != value:
                 changed[spellings[-1]] = {"from": before, "to": value}
         report = {"state_dir": str(state), "changed": changed, "dry_run": dry_run,
-                  "generation": manifest.get("generation")}
+                  "generation": manifest.get("generation"), **({"preset": preset} if preset else {})}
         if not changed:
             return report
         validate_environment(new)
@@ -562,6 +568,7 @@ def ensure_manager(root):
 
 
 def main(argv=None):
+    from covey.core.switches import PRESETS
     parser = argparse.ArgumentParser(prog="covey_service.py", description=__doc__)
     parser.add_argument("--root", type=Path, default=service_root())
     sub = parser.add_subparsers(dest="action", required=True)
@@ -581,7 +588,10 @@ def main(argv=None):
                                          "(docs/configuration.md 改开关)")
         p.add_argument("--state-dir", type=Path, required=True)
         p.add_argument("--dry-run", action="store_true", help="print what would change; change nothing")
-        p.add_argument("settings", nargs="+", metavar=words)
+        if action == "set":
+            p.add_argument("--preset", choices=sorted(PRESETS), help="also turn on a preset's switches the manifest does "
+                           "not set or sets off: showcase is the 演示套餐 (docs/configuration.md 演示套餐)")
+        p.add_argument("settings", nargs="*" if action == "set" else "+", metavar=words)
     run = sub.add_parser("run")
     run.add_argument("--interval", type=float, default=2, help=argparse.SUPPRESS)  # seconds between reconciles
     args = parser.parse_args(argv)
@@ -590,8 +600,12 @@ def main(argv=None):
         log_to(root / "manager.log")
         return Manager(root, interval=args.interval).run()
     if args.action in ("set", "unset"):
-        changes = parse_settings(args.settings, unset=args.action == "unset")
-        print(json.dumps(change_settings(root, args.state_dir, changes, dry_run=args.dry_run), ensure_ascii=False))
+        preset = getattr(args, "preset", None)
+        if not args.settings and not preset:
+            parser.error("set needs KEY=VALUE or --preset")
+        changes = parse_settings(args.settings, unset=args.action == "unset") if args.settings else {}
+        print(json.dumps(change_settings(root, args.state_dir, changes, dry_run=args.dry_run, preset=preset),
+                         ensure_ascii=False))
         return 0
     if args.action == "launch":
         command = args.command[1:] if args.command[:1] == ["--"] else args.command

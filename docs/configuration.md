@@ -4,11 +4,11 @@
 
 ## 开关速查
 
-可选功能都靠服务清单里的环境变量开关。下面三张表回答“我这个机器人开了什么、还能开什么”；每个开关的全部取值和细节在后文各节和[一览](#环境变量与选项一览)里。
+可选功能都靠服务清单里的环境变量开关。下面几张表回答“我这个机器人开了什么、还能开什么”；每个开关的全部取值和细节在后文各节和[一览](#环境变量与选项一览)里。
 
 ### 默认已开
 
-`./install` 新装的服务就有这些（前四行是安装器写进服务清单的 `INSTALL_SWITCHES`，代码本身的默认是关；其余是代码默认开）。
+`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`），代码本身的默认是关，所以装这个版本之前注册的服务不变，要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。
 
 | 功能 | 开关 | 怎么确认开着 | 怎么关 |
 | --- | --- | --- | --- |
@@ -16,6 +16,11 @@
 | [专项](projects.md) | `COVEY_PROJECTS=1`（`./install` 写） | 管家把长期要跟进的事开成专项时，私聊出现专项卡 | `COVEY_PROJECTS=0` |
 | [整理专项](#整理专项)（只提议） | `COVEY_PROJECT_TIDY=suggest`（`./install` 写，要 `COVEY_PROJECTS=1`） | 话题多了以后私聊出现“建个专项？”的提议卡；有菜单「看板」时看板卡上有「整理专项」 | `COVEY_PROJECT_TIDY=off` |
 | [菜单「看板」](usage.md#看板) | `COVEY_BOARD=1`（`./install` 写） | 菜单里有「看板」，随时点开看现在等你、停住、在做的事；不用开早晚汇总（应用里还没有这一项时，「飞书应用待补」卡会补上） | `COVEY_BOARD=0`（开了早晚汇总时「看板」照旧跟着它） |
+| [独立复核](usage.md#答案在哪里) | `COVEY_REVIEW=1`（`./install` 写） | 改了代码的答案卡下面多「独立复核」：点了才开一个只读话题，换一家的模型只看你的原话、完成标准和这一轮的改动 | `COVEY_REVIEW=0` |
+| [到点回来看](usage.md#到点回来看) | `COVEY_REVISIT=1`（`./install` 写；看和取消在菜单「看板」） | 话题要等训练、CI 这类外部的事时，这一轮说好几点回来看就结束，到点自己再起一轮；菜单「看板」里有“到点回来看”一组 | `COVEY_REVISIT=0` |
+| [记忆](#记忆) | `COVEY_MEMORY=1`（`./install` 写） | 你在话题里说的长期要求一轮结束后记下，答案卡底部露一行和“不对”按钮；设置卡多「记忆」标签 | `COVEY_MEMORY=0` |
+| [知识条目](#知识条目与历史搜索) | `COVEY_KNOWLEDGE=1`（`./install` 写） | 说“记一下”的事记成条目，那一轮结束时卡上说记下了；话题首轮带上，汇总多一节 | `COVEY_KNOWLEDGE=0` |
+| [专项的进阶](projects.md#使用者概览) | `COVEY_PROJECT_AUTOWAKE=1`、`COVEY_PROJECT_ASK=1`、`COVEY_PROJECT_MEMORY=1`、`COVEY_PROJECT_TRIAGE=1`（`./install` 写，都要 `COVEY_PROJECTS=1`） | 依次是：话题一轮结束就叫醒负责人（负责人多跑几轮，多花些 token）；专项停住时发卡问你继续、收尾还是停；专项有自己的记忆和资料库；话题的选择题先给负责人分流 | 各设成 `0` |
 | 撤回与编辑 | `COVEY_SOURCE_WATCH`（默认开） | 撤回一条已变成任务的消息，任务跟着停；编辑后任务收到改后的内容 | `COVEY_SOURCE_WATCH=0` |
 | [任务在跑时发的话补充给它](usage.md#追问排队与并行) | `COVEY_TOPIC_STEER`（默认开） | 话题里任务在跑时发一句，那张卡变成回执“已补充到 #N，不另开一轮”，你那句话上加一个 ✅ 表情（DONE），不再排成下一轮 | `COVEY_TOPIC_STEER=0`（照旧排成下一轮） |
 | [追问只发答案卡](usage.md#追问排队与并行) | `COVEY_QUICK_ANSWER_SECONDS`（默认 10） | 话题里追问一句、它不用工具几秒内就答完时，串里只有答案卡，没有任务卡 | `COVEY_QUICK_ANSWER_SECONDS=0`（每轮先出任务卡） |
@@ -34,19 +39,16 @@
 
 ### 推荐打开
 
-不需要别的东西，设上变量、重新注册就有。
+不需要别的东西，设上变量、重新注册就有；想一次都打开，用[演示套餐](#演示套餐)。
 
 | 功能 | 开关 | 打开后多什么、怎么确认 |
 | --- | --- | --- |
 | [早晚汇总](#早晚汇总) | `COVEY_DIGEST_TIMES=09:30,21:30`（按 Asia/Shanghai） | 到点在私聊发汇总卡；没设 `COVEY_BOARD=1` 时菜单也多「看板」（应用里还没有这一项时，「飞书应用待补」卡会补上） |
 | [手上的事与话题看板](#手上的事与话题看板) | `COVEY_PINNED_OVERVIEW=1`，再加 `COVEY_PINNED_TOPICS=1` | 私聊置顶一张「手上的事」；后者再把等你、在做、有结果的话题自动 Pin 上（要置顶权限和“消息已读”事件，「飞书应用待补」卡会提示） |
-| [记忆](#记忆) | `COVEY_MEMORY=1` | 你在话题里说的长期要求一轮结束后记下，答案卡底部露一行和“不对”按钮；设置卡多「记忆」标签 |
-| [知识条目](#知识条目与历史搜索) | `COVEY_KNOWLEDGE=1` | 说“记一下”的事记成条目，话题首轮带上，汇总多一节 |
 | [同时做几件事](butler.md#同时做几件事开关默认关) | `COVEY_BUTLER_TRACKS=1` | 管家在做一件事时，你的下一句可以并进去或另起一件，不用等 |
 | [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` | 管家把事转给已有话题后，你的提问下面挂一张实时刷新的卡 |
 | [群成员只读](#群成员只读) | `COVEY_GROUP_MEMBERS=read` | 没在群聊卡上单独选过的群，群成员开的任务只能读文件和搜索；群聊卡上这些群写着「群成员只读」，启用确认卡也照这个写 |
-| [独立复核](usage.md#答案在哪里) | `COVEY_REVIEW=1` | 改了代码的答案卡下面多「独立复核」：点了才开一个只读话题，换一家的模型只看你的原话、完成标准和这一轮的改动 |
-| 专项的进阶 | `COVEY_PROJECT_AUTOWAKE=1`、`COVEY_PROJECT_ASK=1`、`COVEY_PROJECT_MEMORY=1`、`COVEY_PROJECT_TRIAGE=1`、`COVEY_PROJECT_UPGRADE=butler`（都要 `COVEY_PROJECTS=1`，最后一个还要派发卡） | 依次是：话题一轮结束就叫醒负责人；专项停住时发卡问你继续、收尾还是停；专项有自己的记忆和资料库；话题的问题先给负责人分流；管家派出的事能静默转成专项。说明见[专项 · 专项卡](projects.md#专项卡) |
+| 派出的事转成专项 | `COVEY_PROJECT_UPGRADE=butler`（要 `COVEY_PROJECTS=1` 和派发卡） | 管家派出去的话题要长期跟进时，能静默转成专项。说明见[专项 · 使用者概览](projects.md#使用者概览) |
 
 ### 按需打开
 
@@ -67,7 +69,23 @@
 | [飞书 SDK](#飞书-sdk-与直连) | 在运行 Bridge 的 Python 里装 `.[feishu-sdk]` | `COVEY_CARD_TRANSPORT=sdk`、`COVEY_EVENT_TRANSPORT=sdk` |
 | [内存看门狗](operations.md#内存看门狗) | 不是环境变量 | `python3 -B bin/covey_memguard.py enable` |
 | [本机运行锁](runtime-locks.md) | 同一台机器上有几个服务要共用锁 | `COVEY_LOCK_ROOT` |
-| [到点回来看](usage.md#到点回来看) | 菜单「看板」（看和取消在那里，`COVEY_BOARD=1`）；话题常要等训练、CI 这类外部的事 | `COVEY_REVISIT=1` |
+
+### 演示套餐
+
+演示、截图或想一次看全时用：[默认已开](#默认已开)里安装器写的那些之外，再开下面几项（`core/switches.py` 的 `SHOWCASE`）。它只是一组开关，不装别的东西。
+
+| 功能 | 开关 |
+| --- | --- |
+| [多参与者协作](architecture.md#多参与者协作开发中默认关)（开发中）和[负责人对照目标跟进](projects.md#负责人对照目标跟进) | `COVEY_COLLAB=1` |
+| [手上的事与话题看板](#手上的事与话题看板) | `COVEY_PINNED_OVERVIEW=1`、`COVEY_PINNED_TOPICS=1` |
+| [早晚汇总](#早晚汇总) | `COVEY_DIGEST_TIMES=09:30,21:30` |
+| [同时做几件事](butler.md#同时做几件事开关默认关) | `COVEY_BUTLER_TRACKS=1` |
+| [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` |
+
+- **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动。已经装好、在运行的服务再跑一次 `./install --showcase` 也行，这时它和下一条一样只改服务清单里的这几个开关。
+- **已经装好的**：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" --preset showcase`，先加 `--dry-run` 看会改什么（见[改开关三步](#改开关三步)）。它打开套餐里服务清单还没设、或设成关闭值（空、`0`、`off`、`false`、`no`）的开关，安装器写的那些也算在内，所以装这个版本之前注册的服务一条命令就补齐；设了别的值的不动（比如你自己的汇总时间、`COVEY_PROJECT_TIDY=auto`）；同一条命令里另写的 `KEY=VALUE` 盖过套餐。
+- 置顶和自动 Pin 要应用有置顶权限和“消息已读”事件，「飞书应用待补」卡会提示；汇总的两个时间也是[夜里不打扰](usage.md#早晚汇总)的时段（没设 `COVEY_QUIET_HOURS` 时）。
+- 套餐没有一键关：不要哪一项，照[改开关三步](#改开关三步)把它设成关闭值。
 
 ### 改开关三步
 
@@ -253,14 +271,14 @@
 - `auto`：再加新建专项也直接做（专项卡上留「不要专项」撤回）。主人在提议卡上点了「以后直接建」，效果和 `auto` 一样。
 - 不设、`off` 或别的值：关。没有后台线程、管家没有 `projects_tidy`、设置卡没有这一行、每轮的消息里没有话题要点那段，行为和原来一样。
 
-仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 写服务清单时，终端里没设的就写上 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`、`COVEY_BOARD=1` 这三个（`service/installer.py` 的 `INSTALL_SWITCHES`，见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
+仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 写服务清单时，终端里没设的就写上安装器的那组开关（`core/switches.py` 的 `INSTALL`，其中有 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`，全部见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
 
 可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断用 Claude Code 的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装，和[同时做几件事](butler.md#同时做几件事开关默认关)的小模型判断同一套做法。没有 Claude Harness（比如只装了 Codex）时，设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>` 就改问那个[模型网关](harnesses.md#模型网关codexpi-与-dsh)（`harnesses.json` 的 `gateways` 或扩展带的网关，用你给它配的个人密钥；这时 `COVEY_PROJECT_TIDY_MODEL` 不管用，模型就是这里写的，选一个读得懂整段对话的）；不设时判断不了，整理卡写“没有可用的 Claude Code 来判断”。
 
 ### 记忆
 
 - `COVEY_MEMORY=1`（只认 `1`）：打开“记忆”（[管家 · 记忆](butler.md#记忆开关默认关)）。不依赖别的开关：原则一直有，`COVEY_KNOWLEDGE=1` 时知识条目也进来，`COVEY_PROJECTS=1` 且 `COVEY_PROJECT_MEMORY=1` 时专项记忆也进来；话题自己的记忆放在 `<state>/topics/<话题>/memory.json`，打开后才会有。
-- 关着（默认）：规则、续接提醒、答案卡和任务记录都和没有这个功能时一样，不读不写话题的 `memory.json`，设置卡没有「记忆」标签。
+- 关着（代码的默认；`./install` 新装的服务写 `COVEY_MEMORY=1`，见[默认已开](#默认已开)）：规则、续接提醒、答案卡和任务记录都和没有这个功能时一样，不读不写话题的 `memory.json`，设置卡没有「记忆」标签。
 - 开着时设置卡多一个「记忆」标签（`app/memory_panel.py`）：按范围列出每一条、能删、能把原则标成常驻（`principles.json` 里那一条多 `"pinned": true`，每组最多 8 条，放不下时也照带），并显示选中工作区下一轮会带上的那一块和每个范围的余量。
 - 开着且设了[早晚汇总](#早晚汇总)时，每天的晚间汇总多一节“你反复说的”（`app/memory_candidates.py`）：从那之前 24 小时里结束的普通话题（不读开了脱敏的话题、管家话题、代答话题，只读主人自己那一轮的原话里带纠正字眼的句子）找主人在两个以上话题里重复说的纠正，最多 3 条，每天看一次。分组用 Claude Code 的小模型（Haiku，和[同时做几件事](butler.md#同时做几件事开关默认关)的判断同一套做法，最多 30 秒）；没有 Claude Code 或调用失败时只按“几乎一样的话”分组。点「记下」才记成一条原则（来源话题都在一个工作区就记到那个工作区，否则通用），点「不用」以后不再提同一句；记录在 `<state>/memory-candidates.json`。日志：`memory candidates found=N via=model|rules sentences=N`、`memory candidates none: …`、`memory candidates judge failed reason=…`，不写原话。
 - 关掉：按[改开关三步](#改开关三步)设成 `0`；已经写下的记忆留着，标了常驻的原则在原则块里照样不被挤掉。
@@ -277,7 +295,7 @@
 
 ### 知识条目与历史搜索
 
-两个变量互相独立，都只在主人自己的部署里设；没设时不建目录、不改规则和提示词、管家的工具清单里没有对应的工具、汇总里没有这一节。设计和实现见[管家 · 知识库](butler.md#知识库)，主人怎么用见[使用指南 · 知识条目](usage.md#知识条目)。
+两个变量互相独立，都只在主人自己的部署里设（`./install` 新装的服务写 `COVEY_KNOWLEDGE=1`，见[默认已开](#默认已开)）；没设时不建目录、不改规则和提示词、管家的工具清单里没有对应的工具、汇总里没有这一节。设计和实现见[管家 · 知识库](butler.md#知识库)，主人怎么用见[使用指南 · 知识条目](usage.md#知识条目)。
 
 - `COVEY_KNOWLEDGE=1`（只认 `1`）：打开知识条目。记录在 `<state>/knowledge/`；管家多 `knowledge_save`、`knowledge_update`、`knowledge_drop`、`knowledge_search`；每个话题的新会话带上条目，续接的会话只补上一轮之后新增或改动的；主人在话题里明确说“记一下 / 记住 / 记下来”时，Bridge 在那一轮结束后把检查点的 `remember` 记下来；早晚汇总多“新记的知识”。
 - `COVEY_HISTORY_CMD=/absolute/path/to/kb-history`：历史搜索命令的**绝对路径**（相对路径等于没设）。设了以后，主人自己的话题规则里多一行“要查以前做过的事用 `<命令> search <一句话>`”，管家多 `history_search`（跑 `<命令> search [--workspace W] [--since Nd] -- <一句话>`，自己的进程组里最多等 70 秒，超时整组杀，输出最多 20 KB）。命令本身不在这个仓库。
@@ -398,7 +416,7 @@
 | --- | --- | --- | --- |
 | `COVEY_DATA_HOME` | `core/paths.py`、`core/devices.py`（找 `devices.json`）、`core/extensions.py`（找本部署启用、停用的扩展 `extensions/enabled`） | 按 [数据目录](operations.md#数据目录) 推算 | 否 |
 | `COVEY_SERVICE_ROOT` | `core/paths.py` | `<数据根>/bridge-services` | 否 |
-| `COVEY_REVIEW` | `app/review.py`（`enabled`，`buttons` 据此画按钮） | 关；`1`：改了代码的答案卡和回带卡多「独立复核」 | 否 |
+| `COVEY_REVIEW` | `app/review.py`（`enabled`，`buttons` 据此画按钮） | 关（`./install` 新装的服务写 `1`）；`1`：改了代码的答案卡和回带卡多「独立复核」 | 否 |
 | `COVEY_TURN_EXPORT` | `app/turn_export.py`（`enabled`，`attach_export_controls` 据此加按钮） | 关；`1`：结束的任务卡多「下载请求与结果」 | 否 |
 | `COVEY_STATE_DIR`；`LARK_CLAUDE_BRIDGE_STATE_DIR`、`LARK_DSH_BRIDGE_STATE_DIR`、`LARK_PI_BRIDGE_STATE_DIR`、`COVEY_AGY_STATE_DIR` | `app/harnesses.py`（只有默认 Harness 读，其余总用 Bridge 的 `--state-dir`） | `<数据根>/<Harness 的目录名>` | 否 |
 | `COVEY_PROFILE` | `backends/codex/bridge.py`、`backends/dsh/bridge.py`、`backends/pi/bridge.py`、`backends/agy/bridge.py`（Bridge 的 `--profile`） | 空：lark-cli 的默认 profile | 否 |
@@ -421,13 +439,13 @@
 | `COVEY_GROUP_ALL_MESSAGES` | `app/access.py`（`free_talk_on`；群聊卡 `app/group_manager.py` 经它） | 关；`1` 开（还要应用开通 `im:message.group_msg`） | 否 |
 | `COVEY_GROUP_MEMBERS` | `app/access.py`（`members_default`；群聊卡、启用确认卡和 `app/tool_limits.py` 经它） | `full`：没在群聊卡上选过的群，群成员的任务和你的一样；`read`：这些群的群成员任务只读（见[群成员只读](#群成员只读)） | 否 |
 | `COVEY_DIGEST_TIMES` | `app/digest.py`、`core/app_manifest.py`（有它或 `COVEY_BOARD=1` 才要菜单「看板」）、`app/tidy_run.py`（`scheduled`：整理专项的定时也按这些时间）、`core/quiet_hours.py`（`COVEY_QUIET_HOURS` 没设时，夜里是最后一个时间到第一个时间） | 空：不发早晚汇总，整理专项也没有定时的一次 | 否 |
-| `COVEY_BOARD` | `core/app_manifest.py`（`board_switch`：`required` 据此要菜单「看板」，`app/digest.py` 的 `menu_items` 据此加这一项） | 关：菜单「看板」跟着早晚汇总，设了 `COVEY_DIGEST_TIMES` 才有，和原来一样；`1`：没有早晚汇总也有。`./install` 新装的服务写 `1`（`service/installer.py` 的 `INSTALL_SWITCHES`） | 否 |
-| `COVEY_REVISIT` | `core/revisits.py`（`enabled`：`app/revisits.py` 的 `revisits` 后台线程、`app/runs.py` 普通话题每轮的规则行、`app/digest.py` 看板的“到点回来看”一组都看它；任务进程里 `app/turn_delivery.py` 据此决定没有变化的那一轮不发；`app/revisit_hint.py` 据此决定说了稍后的答案卡下面有没有「约 30 分钟后回来看」，提示那一行不看开关） | 关：检查点里的 `revisit` 不读，不写 `revisits/`，和原来一样；`1` 开，见[到点回来看](usage.md#到点回来看) | 否 |
+| `COVEY_BOARD` | `core/app_manifest.py`（`board_switch`：`required` 据此要菜单「看板」，`app/digest.py` 的 `menu_items` 据此加这一项） | 关：菜单「看板」跟着早晚汇总，设了 `COVEY_DIGEST_TIMES` 才有，和原来一样；`1`：没有早晚汇总也有。`./install` 新装的服务写 `1`（`core/switches.py` 的 `INSTALL`） | 否 |
+| `COVEY_REVISIT` | `core/revisits.py`（`enabled`：`app/revisits.py` 的 `revisits` 后台线程、`app/runs.py` 普通话题每轮的规则行、`app/digest.py` 看板的“到点回来看”一组都看它；任务进程里 `app/turn_delivery.py` 据此决定没有变化的那一轮不发；`app/revisit_hint.py` 据此决定说了稍后的答案卡下面有没有「约 30 分钟后回来看」，提示那一行不看开关） | 关（`./install` 新装的服务写 `1`）：检查点里的 `revisit` 不读，不写 `revisits/`，和原来一样；`1` 开，见[到点回来看](usage.md#到点回来看) | 否 |
 | `COVEY_COLLAB` | `core/turn_source.py`（`enabled`：`refusal` 据此决定协作轮跑不跑；问它的有 `app/job_dispatch.py` 的 `refuse_source`，`app/worker.py` 开跑前）、`app/collab_flow.py`（线程、规则行、检查点的 `collab_ask`）、`app/collab_checks.py`（预检）；负责人这一侧也问 `turn_source.enabled`：`app/project_lead.py`（协作职责规则、状态包的目标检查表和缺口、记忆条目 id、收件箱分组）、`app/project_tools.py`（`project_checklist`、`project_finish` 的 `checklist_gate`、`project_answer` 的依据）、`app/project_loop.py`（回执合批、收尾回执的检查表一句）；`core/butler.py`（`mcp_config` 只在负责人的任务里把它交给 MCP 服务）、`core/butler_tool_specs.py`（`lead_tools`：据此列 `project_checklist`、`project_answer` 要 `evidence`） | 关：不派发协作轮、不起线程、不加规则行，负责人的规则、状态包、工具和收尾都和原来一样；`1`：Bridge、任务进程、后端三方都支持时派发（见[多参与者协作](architecture.md#多参与者协作开发中默认关)），负责人对照目标检查表跟进、替主人答题要写依据（见[负责人对照目标跟进](projects.md#负责人对照目标跟进)） | 否 |
 | `COVEY_COLLAB_QUEUE_SECONDS` | `core/collab_records.py`（`queue_seconds`：一次咨询等接收方空出来的时限） | 600 | 否 |
 | `COVEY_COLLAB_WINDOW_SECONDS` | `core/collab_records.py`（`window_seconds`：一次协作的整个时限，到了没答复的咨询到期） | 1800 | 否 |
 | `COVEY_PROJECT_BATCH_SECONDS` | `app/project_loop.py`（`batch_seconds`：`ProjectLoop.look` 的 `settling`） | 20：开了 `COVEY_COLLAB` 时，话题结束这类普通回执攒这么多秒再叫醒负责人（最新一条到了这么久没有新的才叫，最早一条最多等 4 倍），几个话题前后脚结束只叫醒一次；开工、主人在停住卡上的选择、扣住的问题、协作缺口马上叫醒。`0` 不攒；`COVEY_COLLAB` 关着时不读，和原来一样到下一次查看就叫醒 | 否 |
-| `COVEY_KNOWLEDGE` | `core/knowledge.py`（`enabled`）、`core/butler.py`（`mcp_config` 交给管家的 MCP 服务）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此列知识工具） | 空：不开知识条目 | 否 |
+| `COVEY_KNOWLEDGE` | `core/knowledge.py`（`enabled`）、`core/butler.py`（`mcp_config` 交给管家的 MCP 服务）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此列知识工具） | 空：不开知识条目（`./install` 新装的服务写 `1`） | 否 |
 | `COVEY_HISTORY_CMD` | `core/knowledge.py`（`history_cmd`）、`core/butler.py`（`mcp_config` 同上）、`core/butler_tool_specs.py`（`listed`：据此列 `history_search`） | 空：没有历史搜索；要绝对路径 | 否 |
 | `COVEY_EXTENSIONS` | `core/extensions.py` | 空：读仓库根和数据根的 `extensions/enabled`；设成空串表示一个都不要。逗号分隔的 Python 包名，见[扩展](architecture.md#扩展) | 否 |
 | `COVEY_EXTENSION_PATH` | `core/extensions.py` | 空：仓库根的 `extensions/`。`os.pathsep` 分隔的目录，扩展包在这些目录里找 | 否 |
@@ -457,14 +475,14 @@
 | `COVEY_BUTLER_STATE`（旧名 COVEY_MAIN_STATE、LARK_BRIDGE_MAIN_STATE） | `core/butler_mcp.py`、（管家任务的 MCP 配置写进去，告诉工具服务 Bridge 的状态目录） | 无；缺了每次调用都回错误 | 否 |
 | `COVEY_BUTLER_JOB`（旧名 COVEY_MAIN_JOB、LARK_BRIDGE_MAIN_JOB） | `core/butler_mcp.py`（管家任务的任务键，Bridge 据此核对调用） | 无；缺了每次调用都回错误 | 否 |
 | `COVEY_PROJECT_LEAD` | `core/butler.py`（`mcp_config`：只在专项负责人的任务里把专项 id 写进 MCP 配置，要 `COVEY_PROJECTS=1`）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此只列负责人的工具） | 无；设了就列 `topic_read`、`topics_search`、`workspaces_list` 加 `project_*`，其余管家工具都不列 | 否 |
-| `COVEY_PROJECT_AUTOWAKE` | `core/projects.py`（`autowake_enabled`，要 `COVEY_PROJECTS=1`）、`app/project_loop.py`（`ProjectLoop` 据此决定哪些回执唤醒负责人、要不要查停滞） | 空：关，只有专项的第一条回执唤醒负责人；`1`：话题一轮结束、主人在专项的话题里说话、停滞提醒也唤醒，并开停滞检查。见[架构 · 专项](architecture.md#专项第-2-期开发中默认关) | 否 |
-| `COVEY_PROJECT_MEMORY` | `core/projects.py`（`memory_enabled`，要 `COVEY_PROJECTS=1`）、`app/project_context.py`（专项的话题开工带上记忆和资料库索引、主人答专项的问题卡记一条决定、主人发给负责人的文件和各话题的产物、交付进资料库）、`app/project_lead.py`（`library_index`：状态包的资料库）、`app/runs.py`（`bridge_rules`、`_with_rules` 取专项块） | 空：关，专项的话题开工不多带东西、不自动记、不收资料库；`1`：开工带上专项记忆和资料库索引，主人的回答记成决定，主人发的文件和话题的产物进资料库。见[专项记忆与资料库](projects.md#专项记忆与资料库) | 否 |
-| `COVEY_MEMORY` | `core/memory.py`（`enabled`）；用它的：`app/memory_turn.py`（每轮那一块“记忆”）、`app/memory_collect.py`（话题一轮结束后核对 `memory`、`memory_void`）、`app/runs.py`、`app/knowledge_turn.py`、`app/project_context.py` | 空：关，规则、续接提醒和答案卡与没有这个功能时逐字相同；`1`：原则、知识条目、专项记忆、话题记忆拼成一块“记忆”，主人说的长期要求一轮结束后记下。见[记忆](#记忆) | 否 |
+| `COVEY_PROJECT_AUTOWAKE` | `core/projects.py`（`autowake_enabled`，要 `COVEY_PROJECTS=1`）、`app/project_loop.py`（`ProjectLoop` 据此决定哪些回执唤醒负责人、要不要查停滞） | 空：关（`./install` 新装的服务写 `1`），只有专项的第一条回执唤醒负责人；`1`：话题一轮结束、主人在专项的话题里说话、停滞提醒也唤醒，并开停滞检查。见[架构 · 专项](architecture.md#专项第-2-期开发中默认关) | 否 |
+| `COVEY_PROJECT_MEMORY` | `core/projects.py`（`memory_enabled`，要 `COVEY_PROJECTS=1`）、`app/project_context.py`（专项的话题开工带上记忆和资料库索引、主人答专项的问题卡记一条决定、主人发给负责人的文件和各话题的产物、交付进资料库）、`app/project_lead.py`（`library_index`：状态包的资料库）、`app/runs.py`（`bridge_rules`、`_with_rules` 取专项块） | 空：关（`./install` 新装的服务写 `1`），专项的话题开工不多带东西、不自动记、不收资料库；`1`：开工带上专项记忆和资料库索引，主人的回答记成决定，主人发的文件和话题的产物进资料库。见[专项记忆与资料库](projects.md#专项记忆与资料库) | 否 |
+| `COVEY_MEMORY` | `core/memory.py`（`enabled`）；用它的：`app/memory_turn.py`（每轮那一块“记忆”）、`app/memory_collect.py`（话题一轮结束后核对 `memory`、`memory_void`）、`app/runs.py`、`app/knowledge_turn.py`、`app/project_context.py` | 空：关（`./install` 新装的服务写 `1`），规则、续接提醒和答案卡与没有这个功能时逐字相同；`1`：原则、知识条目、专项记忆、话题记忆拼成一块“记忆”，主人说的长期要求一轮结束后记下。见[记忆](#记忆) | 否 |
 | `COVEY_WORKSPACE_GISTS` | `app/workspace_gists.py`（`count`；`app/runs.py` 的 `Runs.bridge_rules` 只在新会话的规则里放这一块）、`app/about_panel.py`（设置卡「能做什么」那一行） | 空：关，规则和原来逐字相同。`1` 到 `10`：同一聊天、同一工作区新开的话题，第一轮的规则带上这个工作区最近这么多个别的话题的[话题要点](projects.md#整理专项)（要点要整理专项开着才会写）；只在主人自己的一轮、普通话题里带，脱敏话题的要点只给脱敏话题。见[新话题带上最近话题的要点](#新话题带上最近话题的要点) | 否 |
-| `COVEY_PROJECT_TRIAGE` | `core/triage.py`（`enabled`，要 `COVEY_PROJECTS=1`）、`core/butler.py`（`mcp_config` 把它交给负责人的 MCP 服务）、`core/butler_tool_specs.py`（`lead_tools`）、`app/triage.py`、`app/project_loop.py`（`ProjectLoop.tick` 扫扣住的问题） | 空：关，专项的话题的问题直接发给主人；`1`：选择题先交给负责人，3 分钟内它能替主人答的就答，其余才发问题卡。见[专项的问题分流](projects.md#专项的问题分流) | 否 |
+| `COVEY_PROJECT_TRIAGE` | `core/triage.py`（`enabled`，要 `COVEY_PROJECTS=1`）、`core/butler.py`（`mcp_config` 把它交给负责人的 MCP 服务）、`core/butler_tool_specs.py`（`lead_tools`）、`app/triage.py`、`app/project_loop.py`（`ProjectLoop.tick` 扫扣住的问题） | 空：关（`./install` 新装的服务写 `1`），专项的话题的问题直接发给主人；`1`：选择题先交给负责人，3 分钟内它能替主人答的就答，其余才发问题卡。见[专项的问题分流](projects.md#专项的问题分流) | 否 |
 | `COVEY_PROJECT_BUDGET` | `core/projects.py`（`token_limit`）、`app/project_loop.py`（`hold`） | 空：没有上限，专项不会因为 token 停住；正整数：一个专项的 token 合计（负责人和各话题，缓存算在输入里）到了就停住（`state_reason` 是 `tokens`） | 否 |
 | `COVEY_PROJECT_TOKENS` | `core/projects.py`（`token_limit`） | `COVEY_PROJECT_BUDGET` 的旧名，它没设时才读。名字里有 TOKEN，服务清单把它当成密钥不保存，重新 `launch` 带不进去：要设上限用 `COVEY_PROJECT_BUDGET` | 否 |
-| `COVEY_PROJECT_ASK` | `core/projects.py`（`ask_enabled`，要 `COVEY_PROJECTS=1`）、`app/project_loop.py`（`ProjectLoop.pause`）、`app/project_cards.py`（`ProjectCards.ask`、`ask_choice`） | 空：关，护栏停住的专项只在专项卡上写“停住 · 原因”；`1`：再发一张卡问 继续 / 收尾 / 停 | 否 |
+| `COVEY_PROJECT_ASK` | `core/projects.py`（`ask_enabled`，要 `COVEY_PROJECTS=1`）、`app/project_loop.py`（`ProjectLoop.pause`）、`app/project_cards.py`（`ProjectCards.ask`、`ask_choice`） | 空：关（`./install` 新装的服务写 `1`），护栏停住的专项只在专项卡上写“停住 · 原因”；`1`：再发一张卡问 继续 / 收尾 / 停 | 否 |
 | `COVEY_PROJECT_STALL_SECONDS` | `core/projects.py`（`stall_seconds`）、`app/project_loop.py`（`ProjectLoop.stall`） | 1800：专项有负责人能推动的事却这么多秒没进展，提醒负责人一次，再过同样久就停住 | 否 |
 | `COVEY_PROJECT_IDLE_DAYS` | `core/projects.py`（`idle_days`）、`app/project_loop.py`（`ProjectLoop.rest`）、`app/project_cards.py`（`ProjectCards.fold`） | 7：专项没有要做的事、主人也这么多天没提它，就收起（专项卡缩成一行）；主人对它说话或管家交给它新的事时自动展开。可以写小数 | 否 |
 | `COVEY_PROJECT_STYLE_KEEP` | `core/projects.py`（`style_keep_enabled`，要 `COVEY_PROJECTS=1`）、`app/project_tools.py`（`project_style`）、`app/projects.py`（`seed_style`） | 空：关，新专项的汇报风格是默认值；`1`：负责人改过的风格记进 `<state>/project-style.json`，之后新开的专项从它开始 | 否 |
@@ -545,7 +563,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 
 | 参数 | 谁读 | 默认 | 弃用 |
 | --- | --- | --- | --- |
-| `--root`、`--state-dir`、`--workdir`、`--profile`、`--interval`、`--health-timeout`、`--log`、`--dry-run` | `service/manager.py`（`bin/covey_service.py`；`--dry-run` 是 `set`、`unset` 的：只打印会改什么，见[改开关三步](#改开关三步)） | 见 `--help` | 否 |
+| `--root`、`--state-dir`、`--workdir`、`--profile`、`--interval`、`--health-timeout`、`--log`、`--dry-run`、`--preset` | `service/manager.py`（`bin/covey_service.py`；`--dry-run` 是 `set`、`unset` 的：只打印会改什么，见[改开关三步](#改开关三步)；`--preset showcase` 是 `set` 的：打开[演示套餐](#演示套餐)里清单没设或设成关的开关） | 见 `--help` | 否 |
 | `--root`、`--mode`、`--activate`、`--label`、`--status`、`--uninstall`、`--no-autostart` | `service/install.py` | 见 `--help`（`--mode` 有 `auto`、`systemd`、`launchd`、`cron`、`manager`，扩展可加；`auto` 在没有 systemd/launchd 时给 crontab 加一行 `@reboot`，`--no-autostart` 跳过；`--label` 是 launchd 标签，默认 `com.covey.manager`；公司托管模式的 `--persistent-virtio-pfs` 见扩展 README） | 否 |
 | `--root`、`--runtime-only`、`--skip-events`、`--probe-harnesses` | `service/doctor.py` | 见 `--help` | 否 |
 | `--state-dir`、`--app-id` | `service/pairing.py` | 见 `--help` | 否 |
@@ -560,7 +578,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--home`、`--start`、`--idle`、`--max`、`--dy` | `feishu/web_client.py`（`bin/covey_feishu_web.py`） | 见 [浏览器服务](testing.md#浏览器服务) | 否 |
 | `--app-id`、`--home`、`--plan`、`--login-from`、`--console`、`--login-seconds` | `feishu/app_console.py`（`bin/covey_app_console.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |
 | `--profile`、`--app-id`、`--review`、`--json`、`--python`、`--login-from`、`--work` | `service/app_check.py`（`bin/covey_app_setup.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |
-| `--reconfigure`、`--skills`、`--non-interactive`、`--data-home`、`--workdir`、`--keep-login`、`--no-browser`、`--no-autostart`、`--profile`、`--app-name`、`--no-start`、`--browser-login-dir`（验收用，隐藏，见[运维](operations.md#服务托管)） | `service/installer.py`（`./install`、`bin/covey_install.py`） | 见[安装](install.md#选项) | 否 |
+| `--reconfigure`、`--skills`、`--non-interactive`、`--data-home`、`--workdir`、`--keep-login`、`--no-browser`、`--no-autostart`、`--profile`、`--app-name`、`--no-start`、`--showcase`、`--browser-login-dir`（验收用，隐藏，见[运维](operations.md#服务托管)） | `service/installer.py`（`./install`、`bin/covey_install.py`） | 见[安装](install.md#选项)；`--showcase` 写[演示套餐](#演示套餐) | 否 |
 | `--home`、`--console`、`--shots` | `feishu/install_browser.py`（`bin/covey_install_browser.py`，`./install` 起的浏览器会话） | 见[安装](install.md#它做了什么) | 否 |
 
 ## 已下架项与旧配置

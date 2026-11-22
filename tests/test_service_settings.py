@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from covey.core import switches
 from covey.service import manager
 from covey.service.manager import change_settings, main, parse_settings, read_json, register, service_key, set_desired
 
@@ -126,6 +127,30 @@ class SettingsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no service is registered"):
             change_settings(self.services, self.root / "other", {"COVEY_DIGEST_TIMES": "21:30"})
 
+    def test_the_showcase_preset_turns_on_what_is_unset_or_off_and_keeps_the_rest(self):
+        self.change(["COVEY_REVIEW=0"])
+        first = self.manifest()
+        report = change_settings(self.services, self.state, {}, preset="showcase", dry_run=True)
+        self.assertEqual(self.manifest(), first)
+        self.assertEqual(report["preset"], "showcase")
+        changed = {name: row["to"] for name, row in report["changed"].items()}
+        # The owner's own digest time and the tracks already on stay; COVEY_REVIEW=0 is off, so it is turned on.
+        self.assertNotIn("LARK_BRIDGE_DIGEST_TIMES", changed)
+        self.assertNotIn("LARK_BRIDGE_MAIN_TRACKS", changed)
+        self.assertEqual(report["changed"]["LARK_BRIDGE_REVIEW"], {"from": "0", "to": "1"})
+        self.assertEqual(len(changed), len(switches.SHOWCASE) - 2)
+        report = self.change(["COVEY_COLLAB=0"], preset="showcase")  # A setting given with it wins.
+        environment = self.manifest()["environment"]
+        self.assertEqual(report["generation"], first["generation"] + 1)
+        self.assertEqual(manager.cenv.get("COVEY_COLLAB", None, environment), "0")
+        self.assertEqual(manager.cenv.get("COVEY_DIGEST_TIMES", None, environment), "09:30")
+        for name in set(switches.SHOWCASE) - {"COVEY_COLLAB", "COVEY_DIGEST_TIMES"}:
+            self.assertEqual(manager.cenv.get(name, None, environment), switches.SHOWCASE[name], name)
+        # Set off is the preset's to turn on again; once all are on, it changes nothing.
+        self.assertEqual(change_settings(self.services, self.state, {}, preset="showcase")["changed"],
+                         {"LARK_BRIDGE_COLLAB": {"from": "0", "to": "1"}})
+        self.assertEqual(change_settings(self.services, self.state, {}, preset="showcase")["changed"], {})
+
     def test_the_words_of_the_command(self):
         self.assertEqual(parse_settings(["COVEY_A=1", "COVEY_B="]), {"COVEY_A": "1", "COVEY_B": ""})
         self.assertEqual(parse_settings(["COVEY_A"], unset=True), {"COVEY_A": None})
@@ -138,6 +163,16 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(main(["--root", str(self.services), "set", "--state-dir", str(self.state), "--dry-run",
                                    "COVEY_DIGEST_TIMES=21:30"]), 0)
         self.assertEqual(json.loads(said.getvalue())["changed"]["LARK_BRIDGE_DIGEST_TIMES"]["to"], "21:30")
+        self.assertEqual(self.manifest(), self.first)
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):  # A preset alone is enough.
+            self.assertEqual(main(["--root", str(self.services), "set", "--state-dir", str(self.state), "--dry-run",
+                                   "--preset", "showcase"]), 0)
+        self.assertEqual(json.loads(said.getvalue())["changed"]["LARK_BRIDGE_COLLAB"]["to"], "1")
+        for argv in (["set", "--state-dir", str(self.state)], ["set", "--state-dir", str(self.state), "--preset", "other"],
+                     ["unset", "--state-dir", str(self.state), "--preset", "showcase", "COVEY_A"]):
+            with self.subTest(argv=argv), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                main(["--root", str(self.services), *argv])
         self.assertEqual(self.manifest(), self.first)
 
 

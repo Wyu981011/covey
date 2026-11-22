@@ -33,17 +33,18 @@ import threading
 import time
 from pathlib import Path
 
-from covey.core import app_manifest, claude_retention, extensions, qr, welcome
+from covey.core import app_manifest, claude_retention, extensions, qr, switches, welcome
 from covey.core import env as cenv
 from covey.core.paths import REPO_ROOT, data_home
 from covey.core.state import write_json
 from covey.feishu.app_config import remove, survey
 from covey.service import browser_setup, install_probe
 from covey.service.app_check import draw, profile_app_id, profile_app_name
-from covey.service.manager import PROXY_ENV_KEYS, persistable, validate_environment
+from covey.service.manager import PROXY_ENV_KEYS, change_settings, persistable, validate_environment
 
 # What ./install switches on in the service it registers (docs/install.md): the code's default stays off (AGENTS.md rule 4).
-INSTALL_SWITCHES = {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD": "1"}
+# One table with the 演示套餐 `--showcase` writes instead (core/switches.py SHOWCASE).
+INSTALL_SWITCHES = switches.INSTALL
 
 DEFAULT_PROFILE = "covey"
 DEFAULT_APP_NAME = "Covey"
@@ -98,6 +99,8 @@ def parser():
     p.add_argument("--browser-login-dir", help=argparse.SUPPRESS)  # 验收用：浏览器从这份已登录的用户目录副本开始，跳过二维码
     p.add_argument("--no-autostart", action="store_true", help="没有 systemd/launchd 时不往 crontab 加开机自启的一行")
     p.add_argument("--no-start", action="store_true", help="只准备到飞书应用为止，不注册、不启动服务")
+    p.add_argument("--showcase", action="store_true", help="演示套餐：新装默认开的之外，再开协作（开发中）、置顶的手上的事和"
+                   "话题看板、早晚汇总、管家同时做几件事、派发卡（docs/configuration.md 演示套餐）")
     return p
 
 
@@ -666,10 +669,12 @@ class Installer:
                 "repo": str(REPO_ROOT), "settings": settings}
 
     def default_switches(self):
-        """The switches a new service starts with on (INSTALL_SWITCHES: 专项, 整理专项 只提议 and 菜单「看板」:
-        装好就开): put into this shell's environment, which the launch saves in the manifest; one the environment already
-        sets stays, under either spelling (``self.env`` holds the old one: ``COVEY_PROJECTS=0`` is ``LARK_BRIDGE_PROJECTS`` there)."""
-        for key, value in INSTALL_SWITCHES.items():
+        """The switches a new service starts with on (INSTALL_SWITCHES, core/switches.py INSTALL: 装好就开; with
+        ``--showcase`` the 演示套餐 SHOWCASE): put into this shell's environment, which the launch saves in the manifest; one
+        the environment already sets stays, under either spelling (``self.env`` holds the old one: ``COVEY_PROJECTS=0`` is
+        ``LARK_BRIDGE_PROJECTS`` there)."""
+        showcase = getattr(getattr(self, "args", None), "showcase", False)
+        for key, value in (switches.SHOWCASE if showcase else INSTALL_SWITCHES).items():
             if not str(cenv.get(key, "", self.env)).strip():
                 self.env[key] = value
 
@@ -704,7 +709,10 @@ class Installer:
         except (OSError, ValueError):
             before = None
         if before == now and not self.args.reconfigure and self.service_up():
-            self.note("服务已在运行，配置没变")
+            if getattr(self.args, "showcase", False):
+                self.showcase_running()
+            else:
+                self.note("服务已在运行，配置没变")
             return
         # Hosting first (the unit's Manager takes the single-instance lock), then the registration; without systemd or
         # launchd ("manager" mode) nothing is hosted here and the bootstrap's own launch starts the Manager.
@@ -722,6 +730,19 @@ class Installer:
         write_json(record, now)
         if not hosted:
             self.leftovers.append("开机自启没注册上（服务已在运行，重启这台机器后要再运行 ./install）：" + tail)
+
+    def showcase_running(self):
+        """`--showcase` for a service running unchanged: the 演示套餐 goes into its manifest the way `covey_service.py set
+        --preset showcase` puts it (only the switches it lacks or has off, everything else as it is), never by registering
+        again from this shell, which would drop what was set with `covey_service.py set`. A refusal is only said."""
+        state = self.service_state()
+        try:
+            changed = change_settings(self.data / "bridge-services", state, {}, preset="showcase")["changed"]
+        except (OSError, ValueError) as exc:
+            self.leftovers.append(f"演示套餐没打开（{exc}）；稍后运行 python3 -B bin/covey_service.py set --state-dir {state} "
+                                  "--preset showcase")
+            return
+        self.note(f"服务已在运行：演示套餐打开了 {len(changed)} 个开关" if changed else "服务已在运行，演示套餐的开关都开着")
 
     def wait_ready(self):
         self.step(6, "等待就绪")

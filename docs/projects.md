@@ -4,14 +4,14 @@
 
 ## 使用者概览
 
-**默认开不开。** 代码里不设是关；`./install` 新装的服务写上 `COVEY_PROJECTS=1` 和 `COVEY_PROJECT_TIDY=suggest`（整理专项只提议），所以装好就有。专项由管家开，私聊模式要是“管家”。关掉：`COVEY_PROJECTS=0` 重新注册服务。进阶开关都要 `COVEY_PROJECTS=1`：
+**默认开不开。** 代码里不设是关；`./install` 新装的服务写上 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`（整理专项只提议）和下表前四个进阶开关，所以装好就有。专项由管家开，私聊模式要是“管家”。关掉：`COVEY_PROJECTS=0` 重新注册服务。进阶开关都要 `COVEY_PROJECTS=1`：
 
 | 开关 | 打开后多什么 |
 | --- | --- |
-| `COVEY_PROJECT_AUTOWAKE=1` | 专项的话题一轮结束就叫醒负责人 |
-| `COVEY_PROJECT_ASK=1` | 专项被护栏停住时发卡问你继续、收尾还是停（[专项停住后问主人](#专项停住后问主人)） |
-| `COVEY_PROJECT_MEMORY=1` | 专项的话题每轮带上专项记忆（长期约定、当前决定、待核对参考三段）和资料库，你答的问题一题记一条（[专项记忆与资料库](#专项记忆与资料库)） |
-| `COVEY_PROJECT_TRIAGE=1` | 专项的话题问的选择题先交给负责人（[专项的问题分流](#专项的问题分流)） |
+| `COVEY_PROJECT_AUTOWAKE=1`（`./install` 写） | 专项的话题一轮结束就叫醒负责人 |
+| `COVEY_PROJECT_ASK=1`（`./install` 写） | 专项被护栏停住时发卡问你继续、收尾还是停（[专项停住后问主人](#专项停住后问主人)） |
+| `COVEY_PROJECT_MEMORY=1`（`./install` 写） | 专项的话题每轮带上专项记忆（长期约定、当前决定、待核对参考三段）和资料库，你答的问题一题记一条（[专项记忆与资料库](#专项记忆与资料库)） |
+| `COVEY_PROJECT_TRIAGE=1`（`./install` 写） | 专项的话题问的选择题先交给负责人（[专项的问题分流](#专项的问题分流)） |
 | `COVEY_PROJECT_UPGRADE=butler` | 管家可以把一个派发出去的话题转成专项（还要开[派发卡](butler.md#派发卡开关默认关)） |
 | `COVEY_PROJECT_TIDY` | `suggest` 只提议、`auto` 直接建、`off` 关（[整理专项](#整理专项)） |
 | `COVEY_PROJECT_STYLE_KEEP=1` | 负责人改过的汇报风格成为新专项的默认（[汇报风格的默认值](#汇报风格的默认值)） |

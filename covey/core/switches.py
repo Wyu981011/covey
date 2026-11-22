@@ -1,7 +1,10 @@
-"""Which of the optional switches (docs/configuration.md 开关速查) a service has set, for the people who help with it: the 复制诊断
-block (app/diag_summary.py) and the 设置 card's 诊断 tab (service/doctor.py, app/doctor_panel.py, cards/doctor_card.py).
+"""The optional switches (docs/configuration.md 开关速查): what a new service starts with, the 演示套餐, and which a service has set.
 
-Read only, and limited on purpose: a name is shown only when it is one of ``KNOWN`` (the switches that table names; a test keeps
+``INSTALL`` is what ./install writes into a new service's manifest (service/installer.py), ``SHOWCASE`` the 演示套餐 on top
+of it (`./install --showcase`, `covey_service.py set --preset showcase` through ``preset_changes``).
+
+Which a service has set is for the people who help with it: the 复制诊断 block (app/diag_summary.py) and the 设置 card's 诊断
+tab (service/doctor.py, app/doctor_panel.py, cards/doctor_card.py). Read only, and limited on purpose: a name is shown only when it is one of ``KNOWN`` (the switches that table names; a test keeps
 the two the same) and not credential-like (``SECRET_NAME``), a value only when it is short, plain and unchanged by core/text.py
 ``redact`` (a path, an address or anything long reads 已设). The environment is a service manifest's ``environment`` (the names
 it stores, core/env.py ``spellings``) or the Bridge's own. Standard library only (the doctor imports it)."""
@@ -14,18 +17,29 @@ from covey.core import env as cenv
 from covey.core.text import redact
 
 KNOWN = (
-    "COVEY_BUTLER", "COVEY_PROJECTS", "COVEY_PROJECT_TIDY", "COVEY_BOARD",
-    "COVEY_SOURCE_WATCH", "COVEY_TOPIC_STEER", "COVEY_QUICK_ANSWER_SECONDS", "COVEY_QUIET_HOURS",
-    "COVEY_RELAY_MERGE_SECONDS", "COVEY_APP_CHECK", "COVEY_CLAUDE_HOOKS", "COVEY_WELCOME", "COVEY_AUTO_RETRY_LONG",
-    "COVEY_LIMIT_NOTICE", "COVEY_STRANGER_REPLY", "COVEY_INVITE_URL", "COVEY_DOWN_NOTICE", "COVEY_OWNER_SEND",
-    "COVEY_PROXY_REPLY_CHECK", "COVEY_DIGEST_TIMES", "COVEY_PINNED_OVERVIEW", "COVEY_PINNED_TOPICS", "COVEY_MEMORY",
-    "COVEY_KNOWLEDGE", "COVEY_BUTLER_TRACKS", "COVEY_DISPATCH_CARD", "COVEY_GROUP_MEMBERS", "COVEY_REVIEW",
-    "COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY", "COVEY_PROJECT_TRIAGE",
-    "COVEY_PROJECT_UPGRADE", "COVEY_PROXY_PROFILE", "COVEY_JUDGE_GATEWAY", "COVEY_WEB", "COVEY_WEB_CONFIG",
-    "COVEY_DEVICES", "COVEY_NODE_LISTEN", "COVEY_GROUP_ALL_MESSAGES", "COVEY_HISTORY_CMD", "COVEY_BUTLER_RULES",
-    "COVEY_PATROL", "COVEY_WORKSPACE_GISTS", "COVEY_CARD_TRANSPORT", "COVEY_EVENT_TRANSPORT", "COVEY_LOCK_ROOT",
-    "COVEY_REVISIT",
+    "COVEY_BUTLER", "COVEY_PROJECTS", "COVEY_PROJECT_TIDY", "COVEY_BOARD", "COVEY_REVIEW", "COVEY_REVISIT",
+    "COVEY_MEMORY", "COVEY_KNOWLEDGE", "COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY",
+    "COVEY_PROJECT_TRIAGE", "COVEY_SOURCE_WATCH", "COVEY_TOPIC_STEER", "COVEY_QUICK_ANSWER_SECONDS",
+    "COVEY_QUIET_HOURS", "COVEY_RELAY_MERGE_SECONDS", "COVEY_APP_CHECK", "COVEY_CLAUDE_HOOKS", "COVEY_WELCOME",
+    "COVEY_AUTO_RETRY_LONG", "COVEY_LIMIT_NOTICE", "COVEY_STRANGER_REPLY", "COVEY_INVITE_URL", "COVEY_DOWN_NOTICE",
+    "COVEY_OWNER_SEND", "COVEY_PROXY_REPLY_CHECK", "COVEY_DIGEST_TIMES", "COVEY_PINNED_OVERVIEW", "COVEY_PINNED_TOPICS",
+    "COVEY_BUTLER_TRACKS", "COVEY_DISPATCH_CARD", "COVEY_GROUP_MEMBERS", "COVEY_PROJECT_UPGRADE", "COVEY_PROXY_PROFILE",
+    "COVEY_JUDGE_GATEWAY", "COVEY_WEB", "COVEY_WEB_CONFIG", "COVEY_DEVICES", "COVEY_NODE_LISTEN",
+    "COVEY_GROUP_ALL_MESSAGES", "COVEY_HISTORY_CMD", "COVEY_BUTLER_RULES", "COVEY_PATROL", "COVEY_WORKSPACE_GISTS",
+    "COVEY_CARD_TRANSPORT", "COVEY_EVENT_TRANSPORT", "COVEY_LOCK_ROOT", "COVEY_COLLAB",
 )
+# What ./install writes into a new service's manifest where the shell sets neither spelling (service/installer.py
+# default_switches; docs/configuration.md 默认已开). The code's own default of each stays off (AGENTS.md rule 4), so a
+# service registered before keeps what it had.
+INSTALL = {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD": "1", "COVEY_REVIEW": "1",
+           "COVEY_REVISIT": "1", "COVEY_MEMORY": "1", "COVEY_KNOWLEDGE": "1", "COVEY_PROJECT_AUTOWAKE": "1",
+           "COVEY_PROJECT_ASK": "1", "COVEY_PROJECT_MEMORY": "1", "COVEY_PROJECT_TRIAGE": "1"}
+# 演示套餐 (docs/configuration.md 演示套餐): INSTALL and what a demo shows on top of it. `./install --showcase` writes it as
+# INSTALL is written; `covey_service.py set --preset showcase` turns it on in a registered service (preset_changes).
+SHOWCASE = {**INSTALL, "COVEY_COLLAB": "1", "COVEY_PINNED_OVERVIEW": "1", "COVEY_PINNED_TOPICS": "1",
+            "COVEY_DIGEST_TIMES": "09:30,21:30", "COVEY_BUTLER_TRACKS": "1", "COVEY_DISPATCH_CARD": "1"}
+PRESETS = {"showcase": SHOWCASE}
+OFF_VALUES = ("", "0", "off", "false", "no")  # A preset turns on a switch set to one of these (core/process_env.py's and empty).
 SECRET_NAME = re.compile(r"SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|(^|_)KEY($|_)")
 PLAIN = re.compile(r"[A-Za-z0-9_.:,=+-]{1,32}")
 LONG_RUN = re.compile(r"[A-Za-z0-9]{12,}")  # No switch word is this long; a key or an id is.
@@ -63,3 +77,15 @@ def shown(environ=None) -> list:
 def words(pairs) -> str:
     """The pairs as "NAME=value" apart by "；"; "" without one."""
     return "；".join(f"{name}={value}" for name, value in pairs)
+
+
+def preset_changes(name, environ) -> dict:
+    """{switch: value} of the preset ``name`` (PRESETS) that ``environ`` (a service manifest's environment, any spelling) does
+    not set or sets to an off value (OFF_VALUES): what `covey_service.py set --preset` turns on. A switch set to anything else
+    (the owner's own digest times, ``COVEY_PROJECT_TIDY=auto``) stays. KeyError for a preset there is not."""
+    found = {}
+    for switch, value in PRESETS[name].items():
+        current = next((environ[spelling] for spelling in cenv.spellings(switch) if spelling in environ), None)
+        if current is None or str(current).strip().lower() in OFF_VALUES:
+            found[switch] = value
+    return found
