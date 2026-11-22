@@ -480,11 +480,11 @@ class CardTest(unittest.TestCase):
                               outputs=[took], files=self.files, url="https://x/t439")
         # The speaker's row, then the reply as it is (no band since T638); 输入 and 输出 are the same two lines as the
         # answer card's, with 进话题 ›.
-        self.assertEqual(ids(relay), ["speaker_row", None, ARTIFACTS_ID, FACTS_ID])
+        self.assertEqual(ids(relay), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID])
         self.assertEqual("好了。\n\n细节在下面", relay["body"]["elements"][1]["content"])  # Without its "## 结论".
         whole, _ = relay_card("T439", DONE, text="## 结论\n好了", inputs=["Claude Code"], outputs=[took],
                               files=self.files)
-        self.assertEqual(ids(whole), ["speaker_row", None, ARTIFACTS_ID, FACTS_ID])
+        self.assertEqual(ids(whole), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID])
         self.assertIn("[进话题 ›](https://x/t439)", json.dumps(relay, ensure_ascii=False))
         self.assertIn("用时", relay["body"]["elements"][-1]["content"].replace("\u2060", ""))
         self.assertNotIn("进话题", json.dumps(built, ensure_ascii=False))
@@ -496,7 +496,7 @@ class CardTest(unittest.TestCase):
         self.assertIsNone(relay_card("T439", DONE, text="字" * 9000, inputs=[], outputs=[])[0])
         # Held by a release before 2026-11-08: at, took and artifacts, no inputs. The reply alone, no grey line.
         old, text = relay_card("T439", DONE, text="好了", at=1.0, took=60, artifacts=2)
-        self.assertEqual(ids(old), ["speaker_row", None])  # The reply alone under the row; no 输入/输出 lines.
+        self.assertEqual(ids(old), ["speaker_row", "relay_reply"])  # The reply alone under the row; no 输入/输出 lines.
         self.assertEqual(text, "好了")
         self.assertNotIn("产物 2 个", json.dumps(old, ensure_ascii=False))
         self.assertEqual(text, "好了")

@@ -6,7 +6,7 @@ import re
 from covey.cards.board import OPEN_KIND
 from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, grey, item,
                                   markdown_panel, note, plain, text_button)
-from covey.cards.review import PEEK_WIDTH, compact_text, opening
+from covey.cards.review import compact_text, opening
 from covey.cards.ui import (BODY_PADDING, BODY_SPACING, ask_footnote, band_label, banded, conclusion_band, peek, receipt,
                             speaker_row, split_ask, styled)
 from covey.core import look, triage, turn_words
@@ -481,7 +481,7 @@ def settled_peek(record):
     count, first = len(questions), questions[0]
     header = question_header(first) if count == 1 else f"{count} 道题"
     lead = f"**{literal(header)}** " if header else ""
-    head, rest = opening(first.get("question") or "", PEEK_WIDTH - 2 * len(header) - 2)
+    head, rest = opening(first.get("question") or "", QUESTION_WIDTH - 2 * len(header) - 2)
     head = head or compact_text(first.get("question") or "", 40)
     plain = (count == 1 and record.get("status") == "answered"
              and record.get("response_kind") not in ("feedback", SET_ASIDE))
@@ -500,14 +500,15 @@ def settled_peek(record):
 
 
 OUTPUT_ID = "mirror_output"
+QUESTION_WIDTH = 120  # A settled question's opening, in its fold's title: about two lines.
 OUTPUT_LABEL = "这一轮输出"
 
 
 def mirror_card(record, topic="", output="", ask=None, files=None):
     """The question card again at the private chat's top level (app/question_display.py mirror): the same form, under
     the speaker's row that says whose it is (cards/ui.py speaker_row: ``ask``, the "你问" block, becomes the row, its way
-    back a line at the end). The question and its options come first; ``output``, what the turn wrote before it asked,
-    comes under them with its first lines in view and the rest folded (cards/relay_card.py reply_peek), then ``files``,
+    back a line at the end). ``output``, what the turn wrote before it asked, comes first, its first few hundred
+    characters in view and the rest folded (cards/relay_card.py reply_peek), then the question and its options, then ``files``,
     the asking turn's 产物 panel as its answer card in the topic has it (app/artifacts.py answer_files). Settled, the
     question shows its first lines and folds the rest with the answer (``settled_peek``), and a line under it says
     what he answered (``settled_line``); the output stays."""
@@ -518,6 +519,8 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
     settled = SETTLED_TAGS.get(record.get("status"))
     legacy = [ask] if ask and meta is None else []  # A block sent before the title bar: kept as it was, at the top.
     elements = list(built["body"]["elements"])
+    # The turn's output first (the owner, 2026-11-22: without it the questions cannot be understood), then the question.
+    said = reply_peek(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL) if output else []
     line = settled_line(record)
     if line:  # The question's fold (q_<token>) becomes its peek, the answer's line under it.
         at = next((n for n, element in enumerate(elements) if element.get("element_id") == "q_" + record["token"]), None)
@@ -525,8 +528,7 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
             elements = [line, *elements]
         else:
             elements[at:at + 1] = [settled_peek(record), line]
-    if output:
-        elements.append(reply_peek(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL))
+    elements = [*said, *elements]
     if files:
         elements.append(files)
     back = ask_footnote(meta)

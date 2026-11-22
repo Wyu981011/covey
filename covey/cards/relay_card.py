@@ -9,9 +9,9 @@ import re
 
 from covey.cards.answer_card import check_element, facts_element, tail as answer_tail
 from covey.cards.elements import card, collapsible, grey, json_size, md, note
-from covey.cards.review import (ANSWER_CARD_BYTES, answer_lead, bold_minor_headings, drop_part_heading,
+from covey.cards.review import (ANSWER_CARD_BYTES, answer_lead, bold_minor_headings, drop_part_heading, fits,
                                 inline_one_line_code, opening)
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, peek,
+from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, read_more,
                             speaker_row, split_ask, styled, topic_badge)
 from covey.core import look
 from covey.core.failure import HEADLINE_CHARS, split_title
@@ -68,23 +68,25 @@ def reply_fold(text):
 
 
 def whole_words(text) -> str:
-    """How much there is in all, said after a peek's opening: "全文约 1800 字 · 含 1 张表"."""
-    return "全文" + size_words(text)
+    """The title of the fold under a long text's opening: "点开看全文 · 约 1800 字 · 含 1 张表"."""
+    return "点开看全文 · " + size_words(text)
 
 
-def reply_peek(text, element_id=FOLD_ID, *, label=""):
-    """A long reply (Markdown) as 犹抱琵琶半遮面 (docs/ui.md 4 露一截, cards/ui.py peek): its first lines in view
-    (cards/review.py opening, ``label`` grey before them), then how much there is in all, the rest one click away and
-    going on from there; nothing to fold, the reply as it is; one that does not start with words (a table, code), the
-    fold titled with its size (``reply_fold``)."""
+def reply_peek(text, element_id=FOLD_ID, *, label="") -> list:
+    """A reply (Markdown) as 犹抱琵琶半遮面 (docs/ui.md 4 露一截, cards/ui.py read_more): its first few hundred
+    characters in view as card text (cards/review.py opening, ``label`` grey before them), then a fold that says how
+    much there is in all and goes on from there; a reply that fits, as it is; one that does not start with words (a
+    table, code), the fold titled with its size (``reply_fold``). Elements, one or two."""
+    if fits(text):  # Short: all of it (the owner: 短回复直接完整展示).
+        return [{**read_more(element_id, text, "", label=label)[0], "element_id": element_id}]
     head, rest = opening(text)
     if not head:
-        return reply_fold(text) if element_id == FOLD_ID else collapsible(
+        return [reply_fold(text) if element_id == FOLD_ID else collapsible(
             element_id, " · ".join(part for part in (label, size_words(text)) if part) + "（点开看）", [md(text)],
-            quiet=True, spacing="6px")
+            quiet=True, spacing="6px")]
     if not rest.strip():
-        return md(" ".join(part for part in (grey(label) if label else "", head) if part), element_id=element_id)
-    return peek(element_id, head, rest, hint=whole_words(text), label=label)
+        return [{**read_more(element_id, head, "", label=label)[0], "element_id": element_id}]
+    return read_more(element_id, head, rest, hint=whole_words(text), label=label)
 
 
 def foot(inputs, outputs, *, change=None, links=()):
@@ -149,7 +151,7 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         shown_change = change or delivery
         line = shown_change if isinstance(shown_change, dict) and shown_change else None  # Its 改动 is a line of the foot.
         shown = drop_part_heading(body)  # Its first words say it: no "## 结论" row over them.
-        reply = [] if not shown.strip() else [reply_peek(shown)] if long_reply(shown) else [md(shown)]
+        reply = reply_peek(shown) if shown.strip() else []  # A reply that fits is all of it, a longer one its opening.
         ending = foot(inputs, outputs, change=line, links=links)
         tail = [*answer_tail(files, (), (), change=None if line else shown_change, notes=notes),
                 *([check_element(shown_change)] if line and check_element(shown_change) else []),

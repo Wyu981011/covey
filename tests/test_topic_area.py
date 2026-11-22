@@ -455,8 +455,10 @@ class MirrorFilesTest(MirrorCase):
         built = sends.call_args.args[2]
         elements = built["body"]["elements"]
         ids = [e.get("element_id") for e in elements]
-        self.assertEqual(ids[ids.index("mirror_output") + 1], ARTIFACTS_ID)  # Right under the output's fold, after the form.
-        self.assertLess([i for i, e in enumerate(ids) if e and e.startswith("q_")][0], ids.index("mirror_output"))
+        # The turn's output first, then the question, then its files (the owner, 2026-11-22: 先展示这一轮输出).
+        form = [i for i, e in enumerate(ids) if e and e.startswith("q_")][0]
+        self.assertLess(ids.index("mirror_output"), form)
+        self.assertLess(form, ids.index(ARTIFACTS_ID))
         self.assertIn("https://drive.invalid/a.png", json.dumps(built, ensure_ascii=False))
         self.assertTrue(answer_cards.clicked(self.ctx.state_dir, self.key, mid))  # Its 重新上传 is the answer cards'.
         self.assertFalse(answer_cards.holds_files(self.ctx.state_dir, "other"))

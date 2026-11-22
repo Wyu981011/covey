@@ -109,8 +109,9 @@ def after_lead(text: Any, lead: str) -> str:
 
 
 # 露一截 (cards/ui.py peek): how much of a long text's opening stays in view.
-PEEK_WIDTH = 120  # Display width (a CJK character two): about two lines of a card on a computer, three or four on a phone.
-PEEK_LINES = 3  # Lines at most: short lines (a list) fill the height before the width.
+# The owner, 2026-11-22 on a phone: two lines (twenty-odd characters) were too little to tell what a reply says, "起码几百字".
+PEEK_WIDTH = 600  # Display width (a CJK character two): about 300 汉字, eight lines on a computer, fifteen on a phone.
+PEEK_LINES = 12  # Lines at most: short lines (a list) fill the height before the width.
 PEEK_FILL = 0.5  # An opening narrower than this share of the width takes the next line in too, cut to fit.
 PEEK_CUT = 0.4  # A line is cut at a sentence end, else a pause, no nearer its start than this share of the room left.
 # A line that never goes into an opening: a table's row, a code fence, a rule, an image.
@@ -121,7 +122,7 @@ _BOLD_LINE = re.compile(r"\*\*[^*].*\*\*[:：]?")
 _ATOM = re.compile(r"`[^`\n]*`|\*\*[^*\n](?:.*?[^*\n])?\*\*|!?\[[^\]\n]*\]\([^)\n]*\)|<(\w+)\b[^>\n]*>.*?</\1>|<[^>\n]+>")
 _ENDS, _PAUSES = "。！？!?；;", "，、：,:"
 _ORDERED = re.compile(r" {0,3}(\d{1,9})[.)]\s")
-_LISTED = re.compile(r" {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>)")
+_BLOCK_START = re.compile(r" {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|#{1,6}\s)")
 
 
 def _width(text) -> int:
@@ -154,6 +155,13 @@ def _cut(line, room):
     return (line[:at].rstrip() + "…", line[at:].lstrip()) if at else ("", line)
 
 
+def fits(text, width=PEEK_WIDTH) -> bool:
+    """Whether a Markdown text is short enough to show whole where its opening would be shown (cards/ui.py read_more):
+    no wider than ``width`` and no more than twice PEEK_LINES lines, a small table included."""
+    lines = [line for line in str(text or "").split("\n") if line.strip()]
+    return _width(plain_markdown(text)) <= width and len(lines) <= 2 * PEEK_LINES
+
+
 def drop_part_heading(text) -> str:
     """``text`` (Markdown) without a first line that only names a part ("## 结论", "**总结**") when words follow it: a
     card that shows the text's first lines as they are needs no heading over them (it read as a large 结论 row)."""
@@ -179,21 +187,19 @@ def opening(text, width=PEEK_WIDTH):
     when the text does not start with words (a table, code); (``text``, '') when it all fits."""
     lines = drop_part_heading(str(text or "").replace("\r\n", "\n")).split("\n")
     at = 0
-    taken, used, rest, crossed = [], 0, [], False
+    taken, used, rest = [], 0, []
     while at < len(lines):
         line = lines[at]
         if not line.strip():
             if taken and used >= width * PEEK_FILL:
                 break
-            crossed = crossed or bool(taken)
+            if taken:
+                taken.append("")  # The opening is Markdown of its own: its paragraphs stay apart.
             at += 1
             continue
-        heading = _HEADING_LINE.fullmatch(line)
-        if _NOT_OPENING.match(line) or len(taken) >= PEEK_LINES or (heading and taken):
-            break  # A new part (a heading) after words starts the rest.
-        if crossed and _LISTED.match(line):
-            break  # Past a blank line only words go on: a list or a quote there is a part of its own.
-        shown = f"**{heading.group(1).replace('**', '').strip()}**" if heading else line.rstrip()
+        if _NOT_OPENING.match(line) or len(taken) >= PEEK_LINES:
+            break
+        shown = line.rstrip()
         wide = _width(plain_markdown(shown))
         if used + wide <= width:
             taken.append(shown)
@@ -218,7 +224,7 @@ def opening(text, width=PEEK_WIDTH):
             start -= 1
         if 0 < start < len(taken):
             taken, rest = taken[:start], "\n".join(taken[start:]) + "\n" + rest
-    return "\n".join(taken), rest
+    return "\n".join(taken).strip("\n"), rest
 
 
 def question_preview(value: Any, *, max_lines: int, max_chars: int) -> str:

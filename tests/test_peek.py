@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import unittest
 
-from covey.cards.review import PEEK_LINES, PEEK_WIDTH, drop_part_heading, opening
-from covey.cards.ui import badge_colors, peek, split_number, topic_badge
+from covey.cards.review import PEEK_LINES, PEEK_WIDTH, drop_part_heading, fits, opening
+from covey.cards.ui import badge_colors, peek, read_more, split_number, topic_badge
 from covey.core import look
 
 
@@ -19,11 +19,10 @@ class OpeningTest(unittest.TestCase):
         self.assertEqual(("短短一句。", ""), opening("短短一句。"))
         self.assertEqual(("", ""), opening(""))
 
-    def test_a_heading_that_only_names_a_part_is_left_out_and_another_is_bold(self):
+    def test_a_heading_that_only_names_a_part_is_left_out_and_the_rest_stays_as_written(self):
         head, rest = opening("## 结论\n看板的颜色还没换成：深色那套还没有。\n\n## 原因\n1. 对比度不够。")
-        self.assertEqual("看板的颜色还没换成：深色那套还没有。", head)  # A heading after words starts the rest.
-        self.assertEqual("## 原因\n1. 对比度不够。", rest)
-        self.assertEqual(("**卡片改版**\n已经改好了。", "- a\n- b"), opening("## 卡片改版\n已经改好了。\n\n- a\n- b"))
+        self.assertEqual(("看板的颜色还没换成：深色那套还没有。\n\n## 原因\n1. 对比度不够。", ""), (head, rest))
+        self.assertEqual(("## 卡片改版\n已经改好了。\n\n- a\n- b", ""), opening("## 卡片改版\n已经改好了。\n\n- a\n- b"))
         self.assertEqual("好了", drop_part_heading("**总结**\n好了"))
         self.assertEqual("## 结论", drop_part_heading("## 结论"))  # Nothing after it: kept.
 
@@ -35,12 +34,12 @@ class OpeningTest(unittest.TestCase):
         self.assertEqual(text, head + rest)  # Nothing lost, nothing twice.
 
     def test_without_a_sentence_end_the_cut_is_at_a_pause_then_anywhere_with_an_ellipsis(self):
-        text = "按新办法重排，每页把三组草图和参考图放在一起，先看每张草图的配色对不对，再看各组之间是否一致，最后写进文件，" * 2
+        text = "按新办法重排，每页把三组草图和参考图放在一起，先看每张草图的配色对不对，再看各组之间是否一致，最后写进文件，" * 8
         head, rest = opening(text)
         self.assertTrue(head.endswith("…"))
         self.assertEqual(text, head[:-1] + "，" + rest)  # The pause went for the "…".
-        head, rest = opening("字" * 200)
-        self.assertEqual(("字" * (PEEK_WIDTH // 2) + "…", "字" * (200 - PEEK_WIDTH // 2)), (head, rest))
+        head, rest = opening("字" * 400)
+        self.assertEqual(("字" * (PEEK_WIDTH // 2) + "…", "字" * (400 - PEEK_WIDTH // 2)), (head, rest))
 
     def test_a_cut_never_falls_inside_bold_code_or_a_link(self):
         text = ("前面先写一些铺垫的话把宽度用掉一些再说，" * 2 + "**这一段是加粗的重点内容不能切开**" + "，后面还有很多字"
@@ -57,18 +56,18 @@ class OpeningTest(unittest.TestCase):
         self.assertEqual(("", "| a |\n| --- |"), opening("| a |\n| --- |"))
 
     def test_at_most_a_few_lines_and_a_numbered_list_is_not_split_after_words(self):
-        head, rest = opening("改好了：\n- A\n- B\n- C\n- D")
+        head, rest = opening("改好了：\n" + "\n".join(f"- 第 {n} 项" for n in range(20)))
         self.assertEqual(PEEK_LINES, len(head.split("\n")))
-        self.assertEqual("- C\n- D", rest)
-        head, rest = opening("改好了，已合进 main。\n\n1. 卡片 A 改好了\n2. 卡片 B 改好了\n3. 文档\n4. 测试")
+        self.assertTrue(rest.startswith(f"- 第 {PEEK_LINES - 1} 项"))
+        head, rest = opening("改好了，已合进 main。\n\n" + "\n".join(f"{n}. 卡片 {n} 改好了" for n in range(1, 21)))
         self.assertEqual("改好了，已合进 main。", head)  # Not "1. … 2. …" with the rest starting at "3.".
-        self.assertTrue(rest.startswith("1. 卡片 A"))
+        self.assertTrue(rest.startswith("1. 卡片 1"))
 
-    def test_past_a_blank_line_a_short_opening_takes_more_words_but_no_list(self):
-        head, rest = opening("先说结论。\n\n第二段继续说，" + "细节。" * 60)
-        self.assertTrue(head.startswith("先说结论。\n第二段继续说，"))
+    def test_a_short_opening_goes_on_past_a_blank_line_its_paragraphs_kept_apart(self):
+        head, rest = opening("先说结论。\n\n第二段继续说，" + "细节。" * 200)
+        self.assertTrue(head.startswith("先说结论。\n\n第二段继续说，"))
         self.assertTrue(rest.startswith("细节。"))
-        self.assertEqual(("先说结论，后面有一个列表要看。", "- a\n- b"), opening("先说结论，后面有一个列表要看。\n\n- a\n- b"))
+        self.assertEqual(("先说结论，后面有一个列表要看。\n\n- a\n- b", ""), opening("先说结论，后面有一个列表要看。\n\n- a\n- b"))
 
 
 class PeekTest(unittest.TestCase):
@@ -82,6 +81,20 @@ class PeekTest(unittest.TestCase):
         self.assertNotIn("border", built)
         self.assertEqual([{"tag": "markdown", "content": "后面的内容"}], built["elements"])
         self.assertEqual([{"tag": "hr"}], peek("x", "头", [{"tag": "hr"}])["elements"])  # Elements as they are.
+
+
+class ReadMoreTest(unittest.TestCase):
+    def test_the_opening_is_card_text_and_the_fold_under_it_goes_on(self):
+        opened, fold = read_more("relay_reply", "- 第一项\n- 第二项", "后面的内容", hint="点开看全文 · 约 900 字",
+                                 label="这一轮输出")
+        self.assertEqual(("markdown", "relay_reply_open"), (opened["tag"], opened["element_id"]))
+        self.assertEqual("<font color='grey'>这一轮输出</font>\n- 第一项\n- 第二项", opened["content"])  # A list stays one.
+        self.assertEqual(("collapsible_panel", "relay_reply", False), (fold["tag"], fold["element_id"], fold["expanded"]))
+        self.assertEqual("<font color='grey'>点开看全文 · 约 900 字</font>", fold["header"]["title"]["content"])
+        self.assertEqual([{"tag": "markdown", "content": "后面的内容"}], fold["elements"])
+        self.assertNotIn("border", fold)
+        self.assertTrue(fits("短短一句。\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"))  # A short reply with a table: whole.
+        self.assertFalse(fits("字" * 301))
 
 
 class BadgeTest(unittest.TestCase):

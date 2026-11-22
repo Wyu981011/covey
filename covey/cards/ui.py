@@ -220,7 +220,26 @@ def split_number(who):
     return (found.group(1), found.group(2) or "") if found else ("", str(who or ""))
 
 
-# 露一截 (docs/ui.md 4 ``peek``): a long text's opening stays in view, the rest is a click away.
+# 露一截 (docs/ui.md 4 ``read_more``): a long text's first few hundred characters in view, the rest one click away.
+def read_more(element_id, head, rest, *, hint="", label="", spacing="4px") -> list:
+    """犹抱琵琶半遮面 for a long text: ``head`` (Markdown, its opening as cards/review.py opening cut it, ``label`` grey
+    before it) as the card's own text, lists and links working, then an unframed fold whose title is ``hint`` (grey,
+    点开看全文 and how much in all) and whose body is ``rest``, going on from where ``head`` stopped. Two elements: the
+    opening ``<element_id>_open``, the fold ``element_id``."""
+    if label:
+        head = grey(label) + ("\n" if _BLOCK_START.match(head) else " ") + head
+    fold = {"tag": "collapsible_panel", "element_id": element_id, "expanded": False,
+            "header": {"title": {"tag": "markdown", "content": grey(hint or "点开看全文")}, "vertical_align": "center",
+                       "icon": chevron(), "icon_position": "follow_text", "icon_expanded_angle": -180},
+            "padding": "0px 0px 0px 0px", "vertical_spacing": spacing,
+            "elements": [md(rest)] if isinstance(rest, str) else list(rest)}
+    return [md(head, element_id=f"{element_id}_open"), fold]
+
+
+_BLOCK_START = re.compile(r" {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|#{1,6}\s|\|)")
+
+
+# 露一截 for a short text in a fold's title (a settled question): its opening in view, the rest a click away.
 def peek(element_id, head, rest, *, hint="", label="", spacing="4px") -> dict:
     """犹抱琵琶半遮面: a fold whose title is ``head`` (Markdown, the text's opening as cards/review.py opening cut it),
     ``label`` grey before it and ``hint`` grey after it (how much there is in all), and whose body is ``rest``
