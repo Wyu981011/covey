@@ -1,6 +1,7 @@
-"""The 设置 card's 脱敏 tab (app/redaction_panel.py), one layer: a small stats line, 填词 (a box a term a line, 加入词表 or
-从词表删除),
-a search box, the list a term a line each with its 删除, then folds for 开关与上游地址, 试一下 and 记录 (closed).
+"""The 设置 card's 脱敏 tab (app/redaction_panel.py), one layer: a small stats line, how it takes effect (``how_lines``: the
+新话题 page's default as it is now, which models can redact), 填词 (a box a term a line, 加入词表 or 从词表删除), 试一下 always
+open under it (T647 E3: it sat behind a 展开 at the bottom), a search box, the list a term a line each with its 删除, then
+folds for 开关与上游地址 and 记录 (closed). Its title is TITLE, not 看板: the bot menu's 看板 is another card.
 
 No term is on the card (docs/usage.md 敏感词脱敏): a row names a term by core/redaction.py ``masked`` and by a key that
 tells nothing of it, a stand-in is never shown (RX and 8 hex digits of the term's hash, next to its first character and
@@ -16,9 +17,9 @@ from covey.core.text import literal
 from covey.cards.elements import (button_row, callback_button, collapsible, grey, item, md, note, panel_header, plain,
                                   styled_panel, tag, text_button)
 
-TITLE = '脱敏看板'
+TITLE = '敏感词脱敏'  # 脱敏看板 until T647 E3: the bot menu's 看板 is another card.
 SUBTITLE = '填入敏感词，替身词自动生成'
-# One layer: the stats line, 填词, the list, three folds (开关, 试一下, 记录).
+# One layer: the stats line, how it takes effect, 填词, 试一下, the list, two folds (开关, 记录).
 PAGE = 'bridge_redaction_page'  # Retired: the tab row of the four pages (a card of the older layout still has it).
 LIST = 'bridge_redaction_list'  # The list's page (``at``); ``clear`` ends a search.
 FIND = 'bridge_redaction_find'  # 查找: the form's QUERY.
@@ -31,7 +32,8 @@ SWITCH = 'bridge_redaction_switch'  # ``name`` (a SWITCH_ROWS key) set to ``on``
 UPSTREAM = 'bridge_redaction_upstream'  # ``op`` save (the form's UPSTREAM_FIELD) or clear.
 PROBE = 'bridge_redaction_probe'  # 探测.
 PREVIEW = 'bridge_redaction_preview'  # 试一下: the form's TEXT.
-OPEN = 'bridge_redaction_open'  # 试一下 or 修改地址 (``name`` try, upstream) opened or closed (``on``): a form cannot sit in a fold.
+OPEN = 'bridge_redaction_open'  # 修改地址 (``name`` upstream) opened or closed (``on``): a form cannot sit in a fold. 试一下's
+#   (``name`` try) is an older card's: 试一下 is always open now.
 ROTATE = 'bridge_dashboard_rotate'  # Retired: the web dashboard's 换口令 (app/redaction_panel.py PAGE_GONE).
 RETIRED = frozenset({PAGE, EDIT})  # Their click draws the card again with RETIRED_WORDS.
 KINDS = frozenset({PAGE, LIST, OPEN, FIND, ADD, REMOVE, TERM, EDIT, UNDO, SWITCH, UPSTREAM, PROBE, PREVIEW, ROTATE})
@@ -44,13 +46,17 @@ TOPICS = 10  # Topics it lists.
 SWITCH_ROWS = {'ignore_case': ('不区分大小写', '其他大小写写法各有自己的自动替身，还原成原样写法'),
                'restore': ('回复还原', '关掉后模型回复里的替身词原样留着')}
 FOLDS = {'switches': '开关与上游地址', 'records': '记录'}  # element_id -> title: collapsible_panel can hold no form (the client
-#   refuses the card: 10002), so 试一下 and the upstream address's box open by a click and a redraw (OPEN).
+#   refuses the card: 10002), so the upstream address's box opens by a click and a redraw (OPEN), and 试一下 is outside them.
 EMPTY = '词表是空的：在上面的框里填词。'
 IDLE = '⚠️ 词表是空的：开着脱敏的 {} 个话题现在什么都不替换。'
 NOT_FOUND = '没有找到。'
 ADD_HINT = '每行一个词，一次最多 1000 字，可以整批粘贴；删除时每行要和词表里的词一字不差。替身词自动生成。'
 RETIRED_WORDS = 'ℹ️ 这个按钮已更新：卡片按新布局重画了（替身词现在自动生成，不再手动指定）。'
 TRY_HINT = '用已保存的词表和开关替换一段文字。卡片上只显示替换后的样子，不显示原文和还原结果。'
+# How it takes effect (``how_lines``): the 新话题 page's 脱敏 row (cards/butler_panel.py topic_settings), 换配置 for a topic
+# that runs, and the models that can (core/harness.py capabilities: Claude Code's alone).
+HOW_DEFAULT = ' · 在「配置」页“新话题”一段改；已开的话题用换配置改'
+HOW_MODELS = '只有 Claude Code 的模型能脱敏；默认开着时选了别的，启动卡和管家会先问你'
 NOTE = '改动从下一轮起生效。卡上的词只显示首字和字数，框里输入的内容不留在卡片上。'
 
 
@@ -91,26 +97,42 @@ def redaction_card(token, view, data, *, top=()):
     else:
         if not data['count'] and data['topics']:
             elements.append(md(IDLE.format(len(data['topics']))))
+        elements += how_lines(data)
+        elements += add_part(value)
+        elements += try_part(value, view)
         elements += terms_part(value, view, data)
         opened = view.get('open') if isinstance(view.get('open'), list) else []
         elements += [collapsible('rx_switches', FOLDS['switches'], switches_part(value, view, data['config'], opened))]
         if 'upstream' in opened:
             elements += upstream_form(value, data['config'])
-        elements += try_part(value, view, 'try' in opened)
         elements.append(collapsible('rx_records', FOLDS['records'], records_part(data)))
     elements.append(note(NOTE))
     return styled_panel(panel_header('redaction', TITLE, SUBTITLE), elements, TITLE)
 
 
+def how_lines(data):
+    """How the list takes effect, two grey lines: the 新话题 page's default as it is (``default_on``, app/redaction_panel.py
+    facts; a view drawn without it says nothing of it) and where to change it, then which models can redact."""
+    lines = []
+    if 'default_on' in data:
+        state = tag('开', 'green') if data['default_on'] else tag('关')
+        lines.append(grey('新话题默认') + f' {state}' + grey(HOW_DEFAULT))
+    lines.append(grey(HOW_MODELS))
+    return [md('\n'.join(lines), size='notation')]
+
+
+def add_part(value):
+    """填词: a box a term a line, 加入词表 or 从词表删除, and the line on how."""
+    return [form('redaction_add', box(LINES, '每行一个词', lines=4),
+                 button_row([submit('加入词表', value(ADD), 'add', primary=True),
+                             submit('从词表删除', value(REMOVE), 'remove')])),
+            note(ADD_HINT)]
+
+
 def terms_part(value, view, data):
-    """填词 (a box a term a line, 加入词表), the search box (always there; what it found under it) and a page of rows,
-    newest first."""
+    """The search box (always there; what it found under it) and a page of rows, newest first."""
     rows, found = data['rows'], view.get('found')
-    parts = [form('redaction_add', box(LINES, '每行一个词', lines=4),
-                  button_row([submit('加入词表', value(ADD), 'add', primary=True),
-                              submit('从词表删除', value(REMOVE), 'remove')])),
-             note(ADD_HINT),
-             form('redaction_find', item(box(QUERY, '搜索词表里的词'), submit('查找', value(FIND), 'find')))]
+    parts = [form('redaction_find', item(box(QUERY, '搜索词表里的词'), submit('查找', value(FIND), 'find')))]
     if found is not None:
         keys = set(found)
         rows = [r for r in rows if r['key'] in keys]
@@ -176,13 +198,10 @@ def upstream_form(value, config):
                                                                           'save_upstream')))]
 
 
-def try_part(value, view, opened):
-    """试一下: a button that opens the box (a form, so not a fold) and what the text would go out as."""
-    parts = [item(md('**试一下**'), text_button('收起' if opened else '展开', value(OPEN, name='try', on=not opened)))]
-    if not opened:
-        return parts
-    parts += [note(TRY_HINT), form('redaction_try', box(TEXT, '粘贴一段文字', lines=4),
-                                   submit('试一下', value(PREVIEW), 'try', primary=True))]
+def try_part(value, view):
+    """试一下, always open under 填词 (a form, so not in a fold): its box and what the text would go out as."""
+    parts = [md('**试一下**'), note(TRY_HINT), form('redaction_try', box(TEXT, '粘贴一段文字，看发出去的样子', lines=2),
+                                                   submit('试一下', value(PREVIEW), 'try'))]
     result = view.get('preview')
     if isinstance(result, dict):
         shown = '\n'.join(literal(line) for line in str(result.get('redacted', '')).splitlines()) or grey('（空）')

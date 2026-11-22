@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ from covey.app.artifacts import Artifacts, answer_files
 from covey.cards.relay_card import DONE, relay_card
 from covey.app.turn_delivery import TurnDelivery
 from covey.cards.answer_card import (ARTIFACTS_ID, FACTS_ID, figure, facts_element, input_lines, input_parts,
-                                              output_parts, tail)
+                                              output_lines, output_parts, tail)
 from covey.cards.elements import replace_element
 from covey.cards.review import ANSWER_CARD_BYTES, answer_card
 from covey.core.jobs import job_key, upsert_job_record
@@ -49,6 +50,23 @@ class PartsTest(unittest.TestCase):
         for part in ("**12分40秒**", "**41** <font color='grey'>token/s</font>", "**76万**", "缓存命中</font> **92%**"):
             self.assertIn(part, out)
         self.assertEqual(output_parts({}, None), [])
+
+    def test_a_restart_the_turn_went_on_through_is_said_on_the_output_line(self):
+        # T647 E2: "机器人 22:31 重启过，任务未中断。" was a line folded in 执行过程 alone (app/runner_ipc.py writes it).
+        from covey.core.trace import RESTART_NOTE, restarts, task_trace
+        at = time.mktime((2026, 11, 22, 22, 31, 0, 0, 0, -1))
+        trace = task_trace()
+        trace.accept("progress_note", {"id": f"{RESTART_NOTE}{int(at)}", "title": "机器人", "text": "机器人 22:31 重启过，任务未中断。"})
+        trace.note("n1", "一句进展")
+        snapshot = trace.snapshot()
+        self.assertEqual(restarts(snapshot["steps"]), [float(int(at))])
+        parts = output_parts(snapshot, 60)
+        self.assertEqual(parts[-1], "<font color='grey'>重启</font> **22:31 没打断**")
+        self.assertEqual(output_lines(parts)[0].replace("\u2060", "").count("重启"), 1)  # On the 输出 line, last.
+        trace.accept("progress_note", {"id": f"{RESTART_NOTE}{int(at) + 600}", "title": "机器人", "text": "又一次"})
+        self.assertEqual(output_parts(trace.snapshot(), 60)[-1], "<font color='grey'>重启</font> **2 次没打断**")
+        self.assertEqual(restarts({"bridge-restart-x": {"started": 5.0}, "other": {}}), [5.0])
+        self.assertNotIn("重启", " ".join(output_parts(SNAPSHOT, 760)))  # None: as before.
 
     def test_the_facts_are_a_line_each_with_a_grey_label_and_the_relay_s_ends_in_its_t_number(self):
         box = facts_element(["Claude Code", "Opus 5.5"], ["**1**"], link="T439")
@@ -452,14 +470,14 @@ class CardTest(unittest.TestCase):
         relay, _ = relay_card("T439", DONE, text="## 结论\n好了。\n\n细节在下面", inputs=["Claude Code"],
                               outputs=[took], files=self.files, url="https://x/t439")
         # The speaker's row (a link into the topic), then the reply as it is (no band since T638); 输入 and 输出 are the
-        # same two lines as the answer card's, no 进话题 › after them.
-        self.assertEqual(ids(relay), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID])
+        # same two lines as the answer card's, no 进话题 › after them; the relay's last line says where a reply goes.
+        self.assertEqual(ids(relay), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID, "relay_hint"])
         self.assertEqual("好了。\n\n细节在下面", relay["body"]["elements"][1]["content"])  # Without its "## 结论".
         whole, _ = relay_card("T439", DONE, text="## 结论\n好了", inputs=["Claude Code"], outputs=[took],
                               files=self.files)
-        self.assertEqual(ids(whole), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID])
+        self.assertEqual(ids(whole), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID, "relay_hint"])
         self.assertEqual("https://x/t439", relay["body"]["elements"][0]["behaviors"][0]["default_url"])
-        self.assertIn("用时", relay["body"]["elements"][-1]["content"].replace("\u2060", ""))
+        self.assertIn("用时", relay["body"]["elements"][-2]["content"].replace("\u2060", ""))
         self.assertNotIn("进话题", json.dumps(relay, ensure_ascii=False))
         self.assertNotIn("进话题", json.dumps(built, ensure_ascii=False))
         # Without artifacts: the box alone; a plain answer card without a tail as before.
@@ -470,7 +488,8 @@ class CardTest(unittest.TestCase):
         self.assertIsNone(relay_card("T439", DONE, text="字" * 9000, inputs=[], outputs=[])[0])
         # Held by a release before 2026-11-08: at, took and artifacts, no inputs. The reply alone, no grey line.
         old, text = relay_card("T439", DONE, text="好了", at=1.0, took=60, artifacts=2)
-        self.assertEqual(ids(old), ["speaker_row", "relay_reply"])  # The reply alone under the row; no 输入/输出 lines.
+        # The reply alone under the row, no 输入/输出 lines; then where a reply goes.
+        self.assertEqual(ids(old), ["speaker_row", "relay_reply", "relay_hint"])
         self.assertEqual(text, "好了")
         self.assertNotIn("产物 2 个", json.dumps(old, ensure_ascii=False))
         self.assertEqual(text, "好了")

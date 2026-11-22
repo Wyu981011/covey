@@ -86,9 +86,10 @@ class ButtonTest(unittest.TestCase):
                 from covey.core.butler import butler_topic_id
                 butler = SimpleNamespace(**{**job.__dict__, "chat_id": "oc_1", "topic_id": butler_topic_id("oc_1")})
                 self.assertEqual(review.buttons(butler), [])  # The butler's own turn.
-            # With the parts to look up (in their fold when there are more), above the 输入/输出 lines, as on the relay.
-            shown = tail(None, ("Claude Code",), ("用时 1分",), buttons=built)
-            self.assertEqual([element.get("element_id") for element in shown], [REVIEW_ID, "answer_facts"])
+            # Under the 输入/输出 lines, never folded (T647 P1-A2), as on the relay.
+            shown = tail({"tag": "collapsible_panel", "element_id": "answer_artifacts", "elements": []}, ("Claude Code",),
+                         ("用时 1分",), change={"commit": "951327a"}, buttons=built)
+            self.assertEqual([element.get("element_id") for element in shown], ["relay_details", "answer_facts", REVIEW_ID])
 
 
 class OpenTest(ButlerTopicsCase):

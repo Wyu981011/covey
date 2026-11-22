@@ -442,7 +442,7 @@ class SixTabsTests(HubCase):
         self.assertFalse((self.state / 'workspace-managers').exists())  # No card of its own.
         self.app.menu.owner_said('dm')
         self.open('ev-r', 'redaction_dashboard')
-        self.assertEqual((self.title(), self.tabs()), ('脱敏看板', row_of('脱敏')))
+        self.assertEqual((self.title(), self.tabs()), ('敏感词脱敏', row_of('脱敏')))
         self.app.messenger.recall.assert_called_once_with(self.ctx.profile, 'om_s1')  # One 设置 card in the chat.
         self.assertFalse((self.state / 'dashboard-links').exists())
         self.assertEqual(values(self.card(), 'bridge_dashboard_rotate'), [])  # The web dashboard is gone.
@@ -520,7 +520,7 @@ class SixTabsTests(HubCase):
         self.assertEqual(self.press(rotate, 'ev-x1'), 'redaction_tab')
         self.assertEqual(self.press(rotate, 'ev-x1'), 'duplicate')
         self.assertEqual((self.puts[-1][0], self.title(), self.app.messenger.create_and_send_card.call_count),
-                         ('hubcard', '脱敏看板', 1))
+                         ('hubcard', '敏感词脱敏', 1))
         self.assertIn(PAGE_GONE, json.dumps(self.card(), ensure_ascii=False))
         self.assertFalse((self.state / 'redaction' / 'dashboard-token').exists())
         self.assertEqual(self.press(rotate, 'ev-x2', operator=MEMBER), 'not_owner')

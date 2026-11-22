@@ -171,7 +171,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `topics_search` | clues*、limit | 按线索找是哪个话题哪一轮做的 |
 | `topic_read` | topic*、job、turns | 读话题最近几轮：问题、结论、检查点、没答的问题 |
 | `workspaces_list` | 无 | 列工作区：名字、路径、用途、最近的话题 |
-| `topic_start` | title*、prompt*、workspace*、readonly*、user_requested*、why*、attachments、criteria、harness、model、effort | 为新的事开话题 |
+| `topic_start` | title*、prompt*、workspace*、readonly*、user_requested*、why*、attachments、criteria、harness、model、effort、redaction | 为新的事开话题；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)） |
 | `topic_send` | topic*、text*、note、title、criteria、attachments | 把主人的话追加给已有话题 |
 | `topic_fork` | topic*、title*、prompt*、attachments | 从已有话题分叉 |
 | `question_answer` | topic*、answers* | 替主人答选择题 |
@@ -233,7 +233,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 
 | 结果 | 回带 |
 | --- | --- |
-| 完成，回答已送达 | 结论卡（`cards/relay_card.py`）：头像行是 T 号头像、标题和状态（整行进话题），下面一行收着你那句话，再是回答全文（开头只写“结论”的小标题不显示），后面跟这一轮较长的进展说明；产物、改动、验收说明、独立复核等收进一个折叠（标题列出里面有什么），末尾两行小字“输入”“输出”（内容和答案卡一样，末尾不接链接），改了代码的一轮再加一行“改动 提交号 ｜ 第 N 代 ｜ 已自检” |
+| 完成，回答已送达 | 结论卡（`cards/relay_card.py`）：头像行是 T 号头像、标题和状态（整行进话题），下面一行收着你那句话，再是回答全文（开头只写“结论”的小标题不显示），后面跟这一轮较长的进展说明；要你看的提醒露在外面、不折（提交号对不上、没满足的完成标准），产物、改动、验收说明收进一个折叠（标题列出里面有什么），再是两行小字“输入”“输出”（内容和答案卡一样，末尾不接链接），改了代码的一轮再加一行“改动 提交号 ｜ 第 N 代 ｜ 已自检”，开着独立复核时下面是「独立复核」按钮；最后一行灰字“回复这张卡，就是接着跟 T12 说” |
 | 等你回答 | 问题卡顶层副本，上方的输出同样跟着较长的进展说明；放不了时发带“要你定：”的回带卡 |
 | 失败或停止，没排上自动重试 | 停住卡：结论带写原因、第二行写下一步（`core/failure.py`，和任务卡、恢复卡、网页同一句话，不写记录的状态行），下面是任务卡的“检查并继续”（限流叫“现在重试”）和“看原因”（超时等是“拆小再试”）；点了以后这张卡原地改成一行“↪ 已接着做 · 任务 #12”或没做的原因，再点、话题后来有了新的一轮、换过配置都不会再开一轮（`app/relay_stops.py`）。主人自己点的停止不发 |
 | 没送达、排上了自动重试 | 不回带 |
@@ -241,7 +241,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 - **较长的进展说明跟着回带**：一轮里写完一段话再调工具，这段话进了任务卡的「执行过程」（进展说明）。长任务边等边写的阶段汇报（“基线组已经补跑起来了……”“初步结果：……”）就是这样，只看最后的回答会漏掉。不少于 300 字的进展说明（`core/trace.py` 的 `stage_notes`、`STAGE_NOTE_CHARS`）按写的顺序、各带时间，放在回答后面“这一轮中途的汇报”下；短的过程话不带。负责人转给你的、一轮结束时提的问题，副本也带（`app/triage.py` 的 `show`，从任务的过程记录读）。一轮中途提的实时问题，副本本来就带这一轮到提问为止的全部进展说明。
 - **只发一次**（`app/relay_send.py` 的 `send_once`）：锁内写意图、锁外发，没确认记 `uncertain`，从不重发（规则 1）。
 - 回带消息是话题的消息，看过它就算看过话题。
-- **连着做完的合成一条**（`send_merged`，`COVEY_RELAY_MERGE_SECONDS`，默认 20 秒，0 关）：“完成”的回带发出时聊天里还有别的话题的任务在跑或排队、或者已有回带在等，就先记 `pending`（`main-thread/relays/waiting.json` 按聊天列着）等这么多秒，再把这期间等着的一起发：只有自己的照常是结论卡，两条以上发一张「N 个话题做完了」卡（`cards/relay_card.py` 的 `merged_card`：有头像行，每个话题一块，T 号、标题和回答第一句，整块点开那个话题）。哪条记录都只从 `pending` 被取走一次（锁内改成 `submitting`），仍然只发一次；合成的那条算顶层的消息，引用它交给管家。没有别的任务在做时照旧马上发。“等你”和“停住了”从不等、不合并。
+- **连着做完的合成一条**（`send_merged`，`COVEY_RELAY_MERGE_SECONDS`，默认 20 秒，0 关）：“完成”的回带发出时聊天里还有别的话题的任务在跑或排队、或者已有回带在等，就先记 `pending`（`main-thread/relays/waiting.json` 按聊天列着）等这么多秒，再把这期间等着的一起发：只有自己的照常是结论卡，两条以上发一张「N 个话题做完了」卡（`cards/relay_card.py` 的 `merged_card`：有头像行，每个话题一块，T 号、标题、回答第一句和“产物 N 个”，整块点开那个话题；最后一行灰字“回复这张卡是跟管家说；要接着跟某个话题说，点那一行进话题”）。哪条记录都只从 `pending` 被取走一次（锁内改成 `submitting`），仍然只发一次；合成的那条算顶层的消息，引用它交给管家。没有别的任务在做时照旧马上发。“等你”和“停住了”从不等、不合并；带提醒的“完成”（提交号对不上、完成标准没满足，`cards/answer_card.py` 的 `alerts`）也不等，照常一张结论卡，提醒不会被合并卡吞掉，回复它也照常交给那个话题。
 
 记录文件、产物更新和维护见[实现细节 · 结论回到顶层的细节](butler-internals.md#结论回到顶层的细节)。
 

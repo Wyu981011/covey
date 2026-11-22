@@ -29,6 +29,7 @@ from covey.cards.launch_config import SUBMIT_PREFIX
 from covey.app.policy_guard import requested
 from covey.app.topics import topic_target
 from covey.core.store import directory_store
+from covey.core.trace import RESTART_NOTE
 from covey.core.topics import load_topic
 
 ACK_TIMEOUT = 8.0
@@ -425,7 +426,7 @@ def take_inbox(gateway, app, job, ctx, directory: Path) -> None:
                 if app.runtime.jobs.find(job.job_id) is job:
                     at = _dt.datetime.fromtimestamp(payload["at"]).astimezone().strftime("%H:%M")
                     app.interaction.structured_harness_event(job_ctx, job, "progress_note", {
-                        "id": f"bridge-restart-{int(payload['at'])}", "title": "机器人",
+                        "id": f"{RESTART_NOTE}{int(payload['at'])}", "title": "机器人",
                         "text": f"机器人 {at} 重启过，任务未中断。"}, None, from_backend=False)
         except Exception as exc:  # noqa: BLE001 - one bad request never stops the task
             gateway.runtime.log(f"runner inbox {kind} failed: {type(exc).__name__}")

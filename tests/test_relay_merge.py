@@ -81,6 +81,24 @@ class AloneTest(MergeCase):
         for raw in ("x", "-1", str(relay_send.MERGE_MAX + 1)):
             self.assertEqual(relay_send.merge_seconds({relay_send.MERGE_ENV: raw}), relay_send.MERGE_SECONDS)
 
+    def test_one_with_what_the_owner_must_see_goes_at_once_on_its_own_card(self):
+        # T647 P1-A2: merged, its 没满足 or 提交号对不上 was gone, and a reply to it went to the butler.
+        from covey.cards.answer_card import criteria_element
+        self.working()
+        send = self.send()
+        unmet = [criteria_element([("没满足", "全量测试过")])]
+        self.assertEqual("sent", relay(self.state, self.job(), DONE, send=send, text=REPLY, inputs=[], outputs=[],
+                                       notes=unmet))
+        self.assertEqual(self.later, [])
+        self.assertIn("全量测试过", json.dumps(send.call_args.args[4], ensure_ascii=False))
+        self.assertEqual(TOPIC, message_topic(self.state, CHAT, "om_relay"))  # A reply to it goes to T410.
+        mismatch = {"commit": "951327a", "not_found": ["951327a"]}
+        other = self.job("main-t2", 10, topic=OTHER)
+        self.working("om_y", 14, topic=TOPIC)
+        self.assertEqual("sent", relay(self.state, other, DONE, send=send, text="查完了", inputs=[], outputs=[],
+                                       change=mismatch))
+        self.assertEqual(self.later, [])
+
     def test_the_butlers_own_turn_and_its_own_topic_do_not_count(self):
         self.working("om_x", 12, topic=TOPIC)  # The same topic's next message: it relays after this one, not with it.
         upsert_job_record(self.state, job_key(OWNER, 13), job_id=13, message_id=OWNER,
@@ -115,6 +133,24 @@ class MergedTest(MergeCase):
         self.assertEqual(message_topic(self.state, CHAT, "om_relay"), BUTLER)  # Several topics'.
         self.assertEqual("sent", relay(self.state, other, DONE, send=send, text="又一次"))  # Never again.
         send.assert_called_once()
+
+    def test_a_rows_files_are_counted_on_the_merged_card(self):
+        # T647 P1-A2: merged, a turn's 产物 were gone without a word.
+        upsert_job_record(self.state, job_key("main-t1", 9), job_id=9, message_id="main-t1",
+                          result_file_path="/absolute/out/report.md", diff_artifact_path="/absolute/out/changes.diff")
+        self.working()
+        send = self.send()
+        panel = {"tag": "collapsible_panel", "element_id": "answer_artifacts", "elements": []}
+        self.assertEqual(relay_send.PENDING, relay(self.state, self.job(), DONE, send=send, text=REPLY, files=panel))
+        self.assertEqual(self.saved("main-t1", 9)["item"]["files"], 2)
+        upsert_job_record(self.state, job_key("main-t2", 10), status="done")
+        self.assertEqual(relay_send.PENDING, relay(self.state, self.job("main-t2", 10, topic=OTHER), DONE, send=send,
+                                                   text="查完了：没有异常。"))
+        self.assertNotIn("files", self.saved("main-t2", 10)["item"])
+        self.wait()
+        shown = json.dumps(send.call_args.args[4], ensure_ascii=False)
+        self.assertIn("两种做法都行，先用第一种 · 产物 2 个", shown)
+        self.assertIn("回复这张卡是跟管家说", shown)
 
     def test_one_alone_after_its_window_is_its_own_card(self):
         self.working()
@@ -169,7 +205,9 @@ class CardTest(unittest.TestCase):
     def test_the_merged_card(self):
         built, text = merged_card([{"label": "T12", "title": "改看板", "lead": "按钮改好了", "url": "https://x/t12"},
                                    {"label": "T13", "title": "", "lead": ""}])
-        head, first, second = built["body"]["elements"]
+        head, first, second, hint = built["body"]["elements"]
+        # A reply to it is the butler's (it holds several topics): its last line says so (T647 P1-A2).
+        self.assertEqual("<font color='grey'>回复这张卡是跟管家说；要接着跟某个话题说，点那一行进话题</font>", hint["content"])
         self.assertTrue(head["content"].startswith("**2 个话题做完了** <text_tag color='green'>有结果</text_tag>"))
         # Each row is one block, the whole of it opening its topic; one whose link is not known opens nothing.
         self.assertEqual([{"type": "open_url", "default_url": "https://x/t12"}], first["behaviors"])
@@ -184,7 +222,15 @@ class CardTest(unittest.TestCase):
         self.assertNotIn("behaviors", badge)
         self.assertEqual("**T13**", words["content"])  # Nothing else to say: the number again, not an empty line.
         self.assertEqual({"topic-0", "topic-5"}, set(built["config"]["style"]["color"]))  # 12 × 5 % 12, 13 × 5 % 12.
-        self.assertEqual(text, "**2 个话题做完了**\n- T12 改看板：按钮改好了\n- T13")
+        self.assertEqual(text, "**2 个话题做完了**\n- T12 改看板：按钮改好了\n- T13\n\n回复这张卡是跟管家说；要接着跟某个话题说，点那一行进话题")
+
+    def test_a_row_counts_its_turns_files(self):
+        built, text = merged_card([{"label": "T12", "title": "改看板", "lead": "按钮改好了", "files": 3},
+                                   {"label": "T13", "title": "查日志", "lead": "", "files": 1}])
+        first, second = (row["elements"][0]["columns"][1]["elements"][0]["content"] for row in built["body"]["elements"][1:3])
+        self.assertEqual("**改看板**\n<font color='grey'>按钮改好了 · 产物 3 个</font>", first)
+        self.assertEqual("**查日志**\n<font color='grey'>产物 1 个</font>", second)
+        self.assertIn("- T12 改看板：按钮改好了（产物 3 个）", text)
 
 
 class RunnerTest(unittest.TestCase):

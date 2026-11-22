@@ -40,7 +40,7 @@ LABELS = {CONFIG: '配置', MODELS: '模型', TOPIC: '新话题', BUTLER: '管�
           ABOUT: '能做什么', DOCTOR: '诊断', PROXY: '代答'}
 # Each panel's title (cards/butler_panel.py TITLES, cards/workspace_manager.py, cards/redaction_panel.py,
 # cards/proxy_panel.py, cards/group_manager.py, cards/memory_panel.py, cards/about_panel.py) and icon.
-TITLES = {CONFIG: '配置', MODELS: '模型', BUTLER: '管家', TOPIC: '新话题', WORKSPACE: '工作区', NODES: '设备', REDACTION: '脱敏看板', PROXY: '代答',
+TITLES = {CONFIG: '配置', MODELS: '模型', BUTLER: '管家', TOPIC: '新话题', WORKSPACE: '工作区', NODES: '设备', REDACTION: '敏感词脱敏', PROXY: '代答',
           GROUPS: '群聊', MEMORY: '记忆', ABOUT: '能做什么', DOCTOR: '诊断'}
 ICONS = {CONFIG: 'robot_outlined', MODELS: 'robot_outlined', BUTLER: 'robot_outlined', TOPIC: 'launch', WORKSPACE: 'workspaces', NODES: 'computer_outlined', REDACTION: 'redaction',
          PROXY: 'proxy',

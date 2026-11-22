@@ -342,7 +342,7 @@ class AnswerCardTest(unittest.TestCase):
             self.assertEqual(answer_cards.change(SimpleNamespace(checkpoint_path=str(point), diff_json_path=str(diff))), {})
             self.assertEqual(answer_cards.change(SimpleNamespace(checkpoint_path="")), {})
 
-    def test_a_commit_its_workdir_lacks_is_marked_under_the_fold(self):
+    def test_a_commit_its_workdir_lacks_is_marked_over_the_change(self):
         # #18: the commit is what the model wrote; the Bridge looks it up in the repository of the turn's workdir.
         from support.git import commit_all, init_git_repo, run_git
         from covey.cards.answer_card import CHECK_ID
@@ -359,11 +359,9 @@ class AnswerCardTest(unittest.TestCase):
             changed = answer_cards.change(job)
             self.assertEqual(changed["not_found"], ["a6bc148d38"])
             shown = tail(None, self.inputs, self.outputs, change=changed)
-            self.assertEqual([element.get("element_id") for element in shown], ["relay_details", "answer_facts"])
-            self.assertEqual([part.get("element_id") for part in shown[0]["elements"]], [CHANGE_ID, CHECK_ID])
-            self.assertIn("提交号对不上", shown[0]["header"]["title"]["content"])  # The fold's title names it.
-            self.assertEqual(shown[0]["elements"][1]["content"], "**提交号对不上**"
-                                                                "<font color='grey'>：工作区的仓库里没有 a6bc148</font>")
+            # Out on the card, never folded (T647 P1-A2: in the fold it went unseen), over the 改动 alone left to look up.
+            self.assertEqual([element.get("element_id") for element in shown], [CHECK_ID, CHANGE_ID, "answer_facts"])
+            self.assertEqual(shown[0]["content"], "**提交号对不上**<font color='grey'>：工作区的仓库里没有 a6bc148</font>")
             rows = self.fold(shown)["elements"]
             self.assertEqual(rows[0]["columns"][1]["elements"][0]["content"].split("\n"),
                              [head, "a6bc148d38 <font color='grey'>（工作区的仓库里没有）</font>"])

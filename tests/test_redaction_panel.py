@@ -20,7 +20,7 @@ from covey.backends.claude.redaction import Unavailable
 from covey.cards import redaction_panel as cards
 from covey.cards.elements import walk
 from covey.cards.redaction_panel import ROTATE as ROTATE_KIND
-from covey.core import migrate
+from covey.core import butler_settings, migrate
 from covey.core.redaction import (ALREADY, Refused, TermEdit, auto_stand_in, config_path, edit_terms, load_config, masked,
                                   put_back, record_turn, save_config, term_lines, term_problem, update_config,
                                   upstream_problem)
@@ -176,7 +176,7 @@ class RedactionTabTests(HubCase):
     def show(self):
         self.open()
         self.assertEqual(self.press(self.tab('脱敏'), 'ev-tab'), 'settings_tab')
-        self.assertEqual(self.title(), '脱敏看板')
+        self.assertEqual(self.title(), '敏感词脱敏')  # Not 脱敏看板: the bot menu's 看板 is another card.
 
     def button(self, kind, **match):
         """The value of the card's button of ``kind`` whose value holds ``match``."""
@@ -215,9 +215,23 @@ class RedactionTabTests(HubCase):
         for _, _, panel in self.walk():  # The client refuses a form in a fold (10002), as it did live.
             if panel.get('tag') == 'collapsible_panel':
                 self.assertNotIn('"tag": "form"', json.dumps(panel))
-        self.assertEqual(values(self.card(), cards.PREVIEW), [])  # 试一下 is shut until opened.
+        self.assertEqual(len(values(self.card(), cards.PREVIEW)), 1)  # 试一下 is always open (T647 E3), no 展开 before it.
+        self.assertEqual([v for _, v in values(self.card(), cards.OPEN) if v.get('name') == 'try'], [])
+        self.assertLess(text.index('加入词表'), text.index('**试一下**'))  # Under 填词, above the list and the folds.
+        self.assertLess(text.index('**试一下**'), text.index('搜索词表里的词'))
         self.assertNotIn('"expanded": true', text)
         self.assertNoTerm()
+
+    def test_the_tab_says_how_it_takes_effect(self):
+        self.show()
+        text = self.text()
+        self.assertIn('新话题默认</font> <text_tag', text)
+        self.assertIn('在「配置」页“新话题”一段改；已开的话题用换配置改', text)
+        self.assertIn('只有 Claude Code 的模型能脱敏；默认开着时选了别的，启动卡和管家会先问你', text)
+        self.assertIn("关</text_tag>", text)
+        butler_settings.update(self.state, topic_defaults=butler_settings.TopicDefaults(redaction=True))
+        self.press(self.button(cards.FIND), 'ev-f1', form_value={cards.QUERY: 'x'})  # Any click draws it again.
+        self.assertIn("开</text_tag>", self.text())
 
     def walk(self):
         return list(walk(self.card()['body']['elements'] if 'body' in self.card() else self.card()['elements']))
@@ -389,7 +403,6 @@ class RedactionTabTests(HubCase):
     def test_a_try_out_shows_what_goes_out_and_not_the_text_typed(self):
         save_config(self.state, {'terms': rows(SECRET[0])})
         self.show()
-        self.press(self.button(cards.OPEN, name='try'), 'ev-v0')
         self.press(self.button(cards.PREVIEW), 'ev-v1', form_value={cards.TEXT: f'我们的{SECRET[0]}\n上线了'})
         text = self.text()
         self.assertIn('替换了 1 处（1 个词）', text)

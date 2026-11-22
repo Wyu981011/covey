@@ -227,7 +227,8 @@ def redaction_facts(rows=3, upstream=""):
     labels = ["机··（4 字）", "P··（11 字）", "张··（3 字）"]
     made = [{"key": "abcdef"[i % 6] * 12, "label": labels[i % 3], "anywhere": i % 2 == 0, "restore": "还原" if i % 3 else "不还原",
              "hits": i * 3, "week": i} for i in range(rows)]
-    return {"error": "", "config": {"default_on": True, "ignore_case": True, "restore": False, "upstream": upstream},
+    return {"error": "", "default_on": True,
+            "config": {"default_on": True, "ignore_case": True, "restore": False, "upstream": upstream},
             "rows": made, "count": rows, "week": 4, "updated": "11-04 18:30",
             "topics": [{"number": 12, "title": "迁移脚本", "turns": 3, "hits": 8, "last": "11-04 18:40"},
                        {"number": None, "title": "", "turns": 1, "hits": 0, "last": "11-04 18:50"}],

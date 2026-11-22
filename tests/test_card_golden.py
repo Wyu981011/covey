@@ -327,6 +327,8 @@ def launch_cards():
         "codex_effort_open": form("codex:gpt-6-astra", expanded=True, page="effort"),
         "codex_notice": form("codex:gpt-6-astra", notice="⚠️ 提示", run_mode="original"),
         "claude_redacting": form("claude:opus", redaction="on"),
+        # 脱敏 on and a model that cannot (T647 P0-8): said above the buttons, 不脱敏开始 confirmed in the client.
+        "codex_unredacted": form("codex:gpt-6-astra", redaction="on"),
         "maso_expanded": form("maso:preset", expanded=True, work_mode="adaptive"),
         "receipt": build_receipt_card({"model_label": "Codex · GPT-6-Astra", "effort": "xhigh",
                                        "workdir": str(WORK), "topic": "T70", "run_mode": "worktree",

@@ -11,6 +11,7 @@ from support.fake_lark import FakeCardKit
 from support.world import UnifiedCase
 
 from support import requires_extension
+from support.launch_fixtures import redacting
 from covey.app import butler_model_choice, butler_topics
 from covey.app.butler_env import ButlerEnv
 from covey.core import butler_opened, butler_settings
@@ -165,9 +166,11 @@ class TopicStartTest(ButlerTopicsCase):
     def test_the_settings_defaults_fill_what_the_call_leaves_out(self):
         self.settings(topic_defaults=butler_settings.TopicDefaults(harness="codex", model="codex-model",
                                                                         effort="low", redaction=True))
-        topic = load_topic(self.ctx.state_dir, self.start()["data"]["topic_id"])
+        # Codex cannot redact: the default is not dropped quietly, the owner is asked first (RedactionAskTest).
+        self.assertFalse(self.start("asked")["ok"])
+        topic = load_topic(self.ctx.state_dir, self.start(redaction=False)["data"]["topic_id"])
         self.assertEqual((topic["harness_id"], topic["model"], topic["effort"]), ("codex", "codex-model", "low"))
-        self.assertNotIn("redaction", topic)  # Codex cannot redact: the default does not apply to it.
+        self.assertNotIn("redaction", topic)
 
     def test_with_no_defaults_a_topic_runs_as_the_chats_last_launch(self):
         from covey.app.launch import chat_defaults_path
@@ -228,6 +231,58 @@ class TopicStartTest(ButlerTopicsCase):
             answer = self.start()
         self.assertFalse(answer["ok"])
         self.app.messenger.create_and_send_card.assert_not_called()
+
+
+class RedactionAskTest(ButlerTopicsCase):
+    """敏感词脱敏 the 新话题 page turns on, on a Harness that cannot redact (T647 P0-8, the owner: 先问): topic_start opens
+    nothing and says what to ask the owner; redaction=false, once he agreed, opens it without; Claude keeps it; the call's
+    redaction=true on one that cannot is refused too."""
+
+    def setUp(self):
+        super().setUp()
+        redacting(self)
+        self.settings(topic_defaults=butler_settings.TopicDefaults(redaction=True))
+
+    def opened(self, answer):
+        self.assertTrue(answer["ok"], answer)
+        return load_topic(self.ctx.state_dir, answer["data"]["topic_id"])
+
+    def test_the_default_on_a_harness_that_cannot_redact_asks_first_and_opens_nothing(self):
+        answer = self.start("r1", harness="codex")
+        self.assertFalse(answer["ok"])
+        text = answer["text"]
+        self.assertTrue(text.startswith("没有开话题：新话题默认开着敏感词脱敏，"), text)
+        self.assertIn("不能脱敏，开了会把原文发给模型服务。先问主人", text)
+        self.assertIn("harness 填 claude", text)
+        self.assertIn("redaction=false", text)
+        self.app.messenger.create_and_send_card.assert_not_called()
+        self.assertEqual(self.app.runtime.jobs.queue.qsize(), 0)
+        self.assertFalse(butler_opened.record_path(self.ctx.state_dir, SimpleNamespace(id="r1")).exists())
+
+    def test_redaction_false_after_the_owner_agreed_opens_it_without(self):
+        topic = self.opened(self.start("r1", harness="codex", redaction=False))
+        self.assertEqual(topic["harness_id"], "codex")
+        self.assertNotIn("redaction", topic)
+
+    def test_a_harness_that_can_redact_keeps_the_default_and_false_turns_it_off(self):
+        self.assertIs(self.opened(self.start("r1", harness="claude"))["redaction"], True)
+        self.assertNotIn("redaction", self.opened(self.start("r2", harness="claude", redaction=False)))
+
+    def test_redaction_true_is_the_calls_own_and_refused_where_it_cannot_be_kept(self):
+        self.settings(topic_defaults=butler_settings.TopicDefaults())
+        refused = self.start("r1", harness="codex", redaction=True)
+        self.assertFalse(refused["ok"])
+        self.assertIn("不能脱敏。要脱敏就换能脱敏的", refused["text"])
+        self.assertNotIn("先问主人", refused["text"])
+        self.assertIs(self.opened(self.start("r2", harness="claude", redaction=True))["redaction"], True)
+        self.assertNotIn("redaction", self.opened(self.start("r3", harness="codex")))  # The default off: as before.
+
+    def test_the_tools_say_it(self):
+        from covey.core.butler_tool_specs import PROJECT_TOOLS, REDACTION_ARG, TOOLS
+        for tools, name in ((TOOLS, "topic_start"), (PROJECT_TOOLS, "project_topic_start")):
+            tool = next(tool for tool in tools if tool["name"] == name)
+            self.assertIs(tool["input_schema"]["properties"]["redaction"], REDACTION_ARG)
+            self.assertNotIn("redaction", tool["input_schema"]["required"])
 
 
 class TopicDefaultsTest(ButlerTopicsCase):

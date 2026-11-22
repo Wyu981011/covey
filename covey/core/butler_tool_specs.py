@@ -22,6 +22,11 @@ HARNESS_ARG = ("主人点名用哪个 Harness 时必须填（如“用 Claude Co
                "主人没点名就不填，用设置里的默认")
 MODEL_ARG = "主人点名用哪个模型时必须填，写模型名；主人没点名就不填，用设置里的默认"
 EFFORT_ARG = "主人点名思考预算时必须填（如“用高预算”“max”）；主人没点名就不填，用设置里的默认"
+# 敏感词脱敏 of the new topic (app/butler_topics.py plan_start): the settings' default unless given; a topic that would redact on
+# a Harness that cannot is refused with what to ask the owner (T647 P0-8).
+REDACTION_ARG = {"type": "boolean",
+                 "description": "这个话题脱不脱敏，不填用设置里新话题的默认。新话题默认脱敏、所选 Harness 又不能脱敏时，"
+                                "这次调用会被拒绝并写明原因：先问主人，主人明确同意这个话题不脱敏后，才带 false 再调一次"}
 DONE = "结论由 Bridge 发给主人，你不用等、也不用转述。"
 # 完成标准 (core/criteria.py): each turn of the topic marks them, its answer card shows those not met.
 CRITERIA = {"type": "array", "maxItems": 4, "items": {"type": "string"},
@@ -87,7 +92,8 @@ TOOLS = (
          "criteria": CRITERIA,
          "harness": {"type": "string", "description": HARNESS_ARG},
          "model": {"type": "string", "description": MODEL_ARG},
-         "effort": {"type": "string", "description": EFFORT_ARG}}}},
+         "effort": {"type": "string", "description": EFFORT_ARG},
+         "redaction": REDACTION_ARG}}},
     {"name": "topic_send",
      "description": "把主人的话追加给一个已有话题（同一件事，几天前的也算）：它正在跑就作为补充，已经停了就开它的下一轮。"
                     "text 写这次交给它的内容：主人要它补做或改的事，用主人的说法，去掉“接着放到 T 号里”“转给那个话题”这类路由的话"
@@ -238,7 +244,8 @@ PROJECT_TOOLS = (
          "criteria": CRITERIA,
          "harness": {"type": "string", "description": HARNESS_ARG},
          "model": {"type": "string", "description": MODEL_ARG},
-         "effort": {"type": "string", "description": EFFORT_ARG}}}},
+         "effort": {"type": "string", "description": EFFORT_ARG},
+         "redaction": REDACTION_ARG}}},
     {"name": "project_topic_send",
      "description": "给一个已有话题加话：它正在跑就作为补充，已经停了就开它的下一轮。text 写要它补做或改的事。"
                     "可以是这个专项的话题，也可以是主人私聊里还不在任何专项的普通话题：那样它先被收进这个专项（在跑的任务照跑，"
@@ -426,13 +433,27 @@ def project_butler_tools(tools, tidy=False) -> tuple:
     return tuple(changed) + BUTLER_PROJECT_TOOLS + ((TIDY_TOOL,) if tidy else ())
 
 
+# Only with COVEY_PROJECT_AUTOWAKE=1 (core/projects.py AUTOWAKE_ENV) does a topic's end wake the lead (app/project_loop.py
+# autowake_due); without it project_topic_start says so (T647 P0-6: it promised the next turn all the same).
+AUTOWAKE_ENV = "COVEY_PROJECT_AUTOWAKE"
+WOKEN = "话题结束后会有下一轮叫醒你。"
+NOT_WOKEN = "话题结束不会叫醒你（没开叫醒负责人）：它的回执留在收件箱，主人下次找你时再读。"
+assert any(tool["name"] == "project_topic_start" and WOKEN in tool["description"] for tool in PROJECT_TOOLS)
+
+
 def lead_tools(environ=None) -> tuple:
     """The lead's tools; the two of the question triage with COVEY_PROJECT_TRIAGE=1 in ``environ``; with COVEY_COLLAB=1 there
-    also project_checklist, and project_answer asks for its ``evidence`` (``with_evidence``)."""
+    also project_checklist, and project_answer asks for its ``evidence`` (``with_evidence``). An ``environ`` without
+    COVEY_PROJECT_AUTOWAKE=1 (the Bridge hands it on, core/butler.py mcp_config) has project_topic_start say no turn comes
+    when its topic ends (NOT_WOKEN)."""
     triage = environ is not None and str(cenv.get(TRIAGE_ENV, "", environ)).strip() == "1"
     collab = environ is not None and str(cenv.get(COLLAB_ENV, "", environ)).strip() == "1"
     asked = tuple(map(with_evidence, TRIAGE_TOOLS)) if collab else TRIAGE_TOOLS
-    return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_READ) + PROJECT_TOOLS + (CHECKLIST_TOOLS if collab else ())
+    tools = PROJECT_TOOLS
+    if environ is not None and str(cenv.get(AUTOWAKE_ENV, "", environ)).strip() != "1":
+        tools = tuple({**tool, "description": tool["description"].replace(WOKEN, NOT_WOKEN)}
+                      if tool["name"] == "project_topic_start" else tool for tool in tools)
+    return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_READ) + tools + (CHECKLIST_TOOLS if collab else ())
             + (asked if triage else ()))
 
 

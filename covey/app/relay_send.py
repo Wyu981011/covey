@@ -14,8 +14,8 @@ from pathlib import Path
 from covey.app import answer_cards
 from covey.app.relay_targets import ask_for, turn_card
 from covey.cards.answer_card import tail as answer_tail, tail_card
-from covey.cards.relay_card import (DONE as DONE_OUTCOME, STOPPED as STOPPED_OUTCOME, WAITING as WAITING_OUTCOME,
-                                    merged_card, relay_card, summary)
+from covey.cards.relay_card import (DONE as DONE_OUTCOME, HINT_ID, STOPPED as STOPPED_OUTCOME, WAITING as WAITING_OUTCOME,
+                                    merged_card, relay_card, reply_hint, summary)
 from covey.cards.review import FOLD_ID, answer_lead
 from covey.core import background, butler
 from covey.core.failure import HEADLINE_CHARS
@@ -71,7 +71,7 @@ def linked(state_dir, chat_id, built, text, profile=None, cards=None, skip=()):
     """The relay's card and text with each T number a link to its topic (app/topic_links.py): the owner taps
     "T44" to open it; ``cards``: {topic id: the card its T number opens}, the relayed turn's; ``skip``: topic ids left
     plain. The answer's fold is linked, its opening (the fold's title) too; the card's row is not (a click on it opens
-    the topic already). Unchanged when no link can be told."""
+    the topic already), nor its last grey line (HINT_ID, where a reply goes). Unchanged when no link can be told."""
     from covey.app.topic_links import linkify
     from covey.cards.ui import ROW_ID
 
@@ -79,7 +79,7 @@ def linked(state_dir, chat_id, built, text, profile=None, cards=None, skip=()):
         return linkify(words, state_dir, chat_id, profile=profile, cards=cards, skip=skip)
     def walk(elements):
         for element in elements or ():
-            if not isinstance(element, dict) or element.get("element_id") == ROW_ID:
+            if not isinstance(element, dict) or element.get("element_id") in (ROW_ID, HINT_ID):
                 continue
             if element.get("tag") == "markdown":
                 element["content"] = link(element.get("content") or "")
@@ -202,7 +202,7 @@ def _send(state_dir, taken, key, target, outcome, send, made, profile, log):
                 [*([facts["ask"]] if facts.get("ask") else []),
                  *answer_tail(facts.get("files"), facts["inputs"], facts.get("outputs") or (), link=target["label"],
                               change=facts.get("change") or facts.get("delivery"), notes=facts.get("notes") or (),
-                              buttons=facts.get("buttons") or ())],
+                              buttons=facts.get("buttons") or ()), reply_hint(target["label"])],
                 summary(target["label"], "产物与详情", ""), "上面是这一轮的回答，产物和详情在这里"), "", profile, cards=links)
             tails = []
             if send(target["chat_id"], f"{target['label']} 这一轮的产物和详情", key + "-tail", reply_to,
@@ -285,6 +285,19 @@ def others_at_work(state_dir, job, chat) -> bool:
     return False
 
 
+def file_count(state_dir, job) -> int:
+    """How many 产物 the turn ``job`` has (app/artifact_policy.py drive_paths, its 产物 panel's): what the merged card's row
+    says of them; 0 when its record cannot be read."""
+    from covey.app.artifact_policy import drive_paths
+    from covey.core.jobs import find_job_record
+
+    try:
+        record = find_job_record(Path(state_dir), str(job_field(job, "message_id"))) or {}
+        return len(drive_paths(record)) if record else 0
+    except Exception:  # noqa: BLE001 - the row without the count
+        return 0
+
+
 def send_merged(state_dir, job, path, key, target, send, profile=None, log=None, *, seconds, title="", **facts):
     """A 做完了 relay (DONE) that may go out with others of its chat (docs/butler.md 结论回到顶层): ``send_once``'s, sent at
     once as it sends it when no other task of the chat is at work (``others_at_work``) and no relay there waits; else its
@@ -299,6 +312,7 @@ def send_merged(state_dir, job, path, key, target, send, profile=None, log=None,
         return record_unsent(state_dir, path, key, job, outcome, type(exc).__name__, log, target)
     chat = target["chat_id"]
     busy = others_at_work(state_dir, job, chat)  # A read of the job records: not under the relay lock.
+    files = file_count(state_dir, job) if facts.get("files") else 0  # Its 产物, said on the merged card's row.
     with lock(state_dir):
         saved = read_object(path)
         if saved:
@@ -311,7 +325,8 @@ def send_merged(state_dir, job, path, key, target, send, profile=None, log=None,
             record.update(target=target, item={"label": target["label"], "title": title,
                                                "lead": answer_lead(facts.get("text") or "", HEADLINE_CHARS),
                                                "topic_id": target.get("topic_id") or job_field(job, "topic_id"),
-                                               "card": made[2].get(str(target.get("topic_id") or job_field(job, "topic_id")), "")})
+                                               "card": made[2].get(str(target.get("topic_id") or job_field(job, "topic_id")), ""),
+                                               **({"files": files} if files else {})})
             waiting[chat] = [*queued, key]
             write_json(Path(state_dir) / WAITING, waiting, ensure_ascii=False, indent=1)
         write_json(path, record, ensure_ascii=False, indent=1)

@@ -115,7 +115,7 @@ class CardTest(unittest.TestCase):
         reply = "先说结论。\n\n" + "细节。" * 300 + "\n\n## 逐层结果\n\n最后一段。"
         card, text = relay_card("T410", DONE, text=reply, inputs=["Claude Code"], outputs=[], url="https://x/t410")
         # The speaker's row says whose it is: the T number its badge, the state as a tag (cards/ui.py speaker_row).
-        row, fold, foot = card["body"]["elements"]
+        row, fold, foot, hint = card["body"]["elements"]
         self.assertNotIn("header", card)
         self.assertEqual("<font color='white'>**T410**</font>", badge_words(row))
         self.assertTrue(row_line(row).startswith("<text_tag color='green'>有结果</text_tag>"))
@@ -128,12 +128,39 @@ class CardTest(unittest.TestCase):
         self.assertNotIn("进话题", foot["content"])
         self.assertNotIn("全文", text)
         self.assertTrue(text.startswith("先说结论。"))
+        # Where a reply to it goes, its last line (T647 P1-A3): grey, small.
+        self.assertEqual(("relay_hint", "<font color='grey'>回复这张卡，就是接着跟 T410 说</font>", "notation"),
+                         (hint["element_id"], hint["content"], hint["text_size"]))
 
     def test_a_short_reply_is_the_card_s_body_without_a_heading_over_it(self):
         card, text = relay_card("T410", DONE, text=REPLY, inputs=["Claude Code"], outputs=[])
-        row, reply, foot = card["body"]["elements"]
+        row, reply, foot, _ = card["body"]["elements"]
         self.assertEqual("两种做法都行，先用第一种。", reply["content"])  # No "## 结论" row, no band saying it again.
         self.assertEqual(REPLY, text)
+
+    def test_what_the_owner_must_see_is_out_on_the_card_and_the_rest_in_one_fold(self):
+        # T647 P1-A2: 没满足, 提交号对不上 and 独立复核 sat folded in grey small print and went unseen.
+        from covey.cards.answer_card import criteria_element, review_element
+        from support.cards import walk_elements
+        change = {"commit": "951327a", "deployed": "", "verified": "全量过", "not_found": ["951327a"]}
+        files = {"tag": "collapsible_panel", "element_id": "answer_artifacts", "elements": [],
+                 "header": {"title": {"tag": "markdown", "content": "产物 2 个 · a.md 等"}}}
+        card, _ = relay_card("T410", DONE, text=REPLY, inputs=["Claude Code"], outputs=["用时 1分"], files=files,
+                             change=change, notes=[criteria_element([("没满足", "全量测试过")])],
+                             buttons=[review_element("t" * 64, 7)])
+        ids = [element.get("element_id") for element in card["body"]["elements"]]
+        self.assertEqual(ids[2:], ["answer_change_check", "answer_criteria", "answer_artifacts", "answer_facts",
+                                   "answer_review", "relay_hint"])
+        self.assertNotIn("relay_details", ids)  # 产物 alone left to look up: no fold around it.
+        folded = [e.get("element_id") for e in walk_elements(card["body"]["elements"]) if e.get("tag") == "collapsible_panel"]
+        self.assertNotIn("answer_criteria", folded)
+        self.assertIn("**提交号对不上**", json.dumps(card["body"]["elements"][2], ensure_ascii=False))
+        # Two parts to look up (产物, 验收说明) go into one fold; the alerts stay out, above it.
+        acceptance = {"tag": "column_set", "element_id": "answer_acceptance", "columns": []}
+        card, _ = relay_card("T410", DONE, text=REPLY, inputs=[], outputs=["用时 1分"], files=files, change=change,
+                             notes=[acceptance, criteria_element([("没满足", "全量测试过")])])
+        ids = [element.get("element_id") for element in card["body"]["elements"]]
+        self.assertEqual(ids[2:], ["answer_change_check", "answer_criteria", "relay_details", "answer_facts", "relay_hint"])
 
     def test_a_reply_too_large_for_a_card_goes_as_markdown(self):
         reply = "很长的回答。" * (CARD_TEXT_BYTES // 6)
@@ -380,9 +407,10 @@ class DeliverTest(Case):
         # REPLY is "## 结论" over one line: the line alone, no band and no heading saying it again (T638).
         self.assertEqual("两种做法都行，先用第一种。", elements[1]["content"])
         self.assertEqual(json.dumps(kwargs["card"]["body"], ensure_ascii=False).count("两种做法都行"), 1)
-        # 输入 and 输出 are two small lines, no grey box (cards/answer_card.py facts_element).
-        self.assertEqual("answer_facts", elements[-1]["element_id"])
-        self.assertNotIn("background_style", json.dumps(elements[-1]))
+        # 输入 and 输出 are two small lines, no grey box (cards/answer_card.py facts_element); then where a reply goes.
+        self.assertEqual(["answer_facts", "relay_hint"], [element["element_id"] for element in elements[-2:]])
+        self.assertNotIn("background_style", json.dumps(elements[-2]))
+        self.assertNotIn("](", elements[-1]["content"])  # Its T number is not a link: a quiet grey line.
 
     def test_a_done_turn_brings_its_longer_progress_notes_after_the_answer(self):
         """The owner, 2026-11-21 (T620): 13:51's "基线组已经补跑起来了……" stayed in 执行过程; the relay had the last words only."""

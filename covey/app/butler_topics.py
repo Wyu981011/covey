@@ -150,10 +150,35 @@ def handed(env, request, ctx):
 
 # topic_start ---------------------------------------------------------------------------------------------------
 
-def plan_start(env, args, settings):
+# 敏感词脱敏 on a Harness that cannot redact (T647 P0-8, the owner: 先问): topic_start opens nothing and says why, never a
+# topic that sends the terms out as they are without the owner's word (``redaction_refusal``).
+REDACTION_ASK = ("没有开话题：新话题默认开着敏感词脱敏，{name} 不能脱敏，开了会把原文发给模型服务。先问主人（不要替主人定）：{choice}"
+                 "（主人明确同意后，再调一次并带 redaction=false）。")
+ASK_CHOICE = "换能脱敏的 {titles}（harness 填 {names}），还是这个话题不脱敏"
+ASK_NONE = "这台机器没有能脱敏的 Harness，这个话题只能不脱敏"
+REDACTION_CANNOT = "没有开话题：{name} 不能脱敏。{way}不脱敏就去掉 redaction=true 再调一次。"
+CANNOT_WAY = "要脱敏就换能脱敏的 {titles}（harness 填 {names}）；"
+CANNOT_NONE = "这台机器也没有能脱敏的 Harness；"
+
+
+def redaction_refusal(env, name, title, asked) -> str:
+    """Why topic_start opens nothing for a topic that would redact on ``name`` (its title ``title``), which cannot: the
+    settings' default (``asked`` False: ask the owner first, REDACTION_ASK) or the call's redaction=true (REDACTION_CANNOT);
+    the Harnesses of this Bridge that can redact named as the way out."""
+    able = [(app_name, app.spec.title) for app_name, app in env.topics.apps.items()
+            if app_name != name and backend_capabilities(app.backend, app.harness.context).redaction]
+    names = {"titles": "、".join(t for _, t in able), "names": " 或 ".join(n for n, _ in able)}
+    if asked:
+        return REDACTION_CANNOT.format(name=title, way=CANNOT_WAY.format(**names) if able else CANNOT_NONE)
+    return REDACTION_ASK.format(name=title, choice=ASK_CHOICE.format(**names) if able else ASK_NONE)
+
+
+def plan_start(env, args, settings, *, ask=False):
     """What topic_start opens: the Harness, model and budget as ``resolve`` finds them; the settings' workspace
-    (a workspace there is always the one), else the call's; the settings' run mode and redaction. A str saying
-    why not."""
+    (a workspace there is always the one), else the call's; the settings' run mode and redaction, the call's
+    ``redaction`` (true or false) in place of the latter. A str saying why not. ``ask`` (topic_start's): a topic that
+    would redact on a Harness that cannot is refused (``redaction_refusal``) instead of opened without; a call that says
+    redaction=false, after the owner agreed, opens it so."""
     defaults = settings.topic_defaults
     found = resolve(env.topics, env.state_dir, env.chat(), defaults, args)
     if isinstance(found, str):
@@ -166,11 +191,16 @@ def plan_start(env, args, settings):
     if devices.is_device_value(config["workspaces"][workspace]):
         # Not built yet: the plan's workdir is resolved here, and the topic would be on a path that does not exist.
         return f"工作区「{workspace}」在设备上，管家本期还不能把话题开在设备上；请让主人在启动卡里选它。"
+    asked = args.get("redaction") if isinstance(args.get("redaction"), bool) else None
+    wanted = defaults.redaction if asked is None else asked
+    redacts = backend_capabilities(app.backend, base).redaction
+    if ask and wanted and not redacts:
+        return redaction_refusal(env, found["harness"], app.spec.title, asked is True)
     return {"harness": found["harness"], "model": found["model"], "model_key": found["model_key"],
             "effort": found["effort"], "work_mode": getattr(base, "work_mode", "") or "", "workspace": workspace,
             "workdir": str(Path(config["workspaces"][workspace]).expanduser().resolve()),
             "run_mode": defaults.run_mode if defaults.run_mode in RUN_MODES else "direct",
-            "redaction": bool(defaults.redaction and backend_capabilities(app.backend, base).redaction)}
+            "redaction": bool(wanted and redacts)}
 
 
 def config_line(env, plan):
@@ -207,7 +237,7 @@ def topic_start(env, request):
         return record["answer"]  # The same request: the same topic, nothing sent again.
     if not record.get("plan"):
         settings = butler_settings.load(env.state_dir)
-        plan = plan_start(env, args, settings)
+        plan = plan_start(env, args, settings, ask=True)
         if isinstance(plan, str):
             return reply(False, plan)
         # A worktree takes minutes to check out; the launch card creates it and survives a restart.

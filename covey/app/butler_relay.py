@@ -55,6 +55,7 @@ from covey.app.artifacts import answer_files
 from covey.app.relay_send import (QUESTION_RELAYS, SKIPPED, merge_seconds, messenger_send, record_only, record_unsent,
                                            relay_path, send_merged, send_once as _send_once)
 from covey.app.relay_targets import areas_of, awaited_target, relay_target
+from covey.cards.answer_card import alerts
 from covey.cards.relay_card import DONE, STOPPED, WAITING
 from covey.core import butler, placement, turn_source
 from covey.core.checkpoint import read_checkpoint
@@ -158,9 +159,11 @@ def relay(state_dir, job, outcome, *, send, profile=None, log=None, **facts):
         # record says so; a failure, a refusal, a timeout or an interruption still relays.
         return record_only(state_dir, relay_path(state_dir, key), key, job, outcome, SKIPPED, log, target,
                            why="owner_stop")
-    seconds = merge_seconds() if outcome == DONE else 0
+    # 做完了 relays that come close together go as one (app/relay_send.py send_merged); 等你 and 停住了 never wait, and nor
+    # does one with what the owner must see (a commit not found, the criteria not met: cards/answer_card.py alerts), whose
+    # own card says it and takes a reply to its topic (T647 P1-A2).
+    seconds = merge_seconds() if outcome == DONE and not alerts(facts.get("change"), facts.get("notes")) else 0
     if seconds:
-        # 做完了 relays that come close together go as one (app/relay_send.py send_merged); 等你 and 停住了 never wait.
         title = topic_title(Path(state_dir), str(target.get("topic_id") or job_field(job, "topic_id")))
         return send_merged(state_dir, job, relay_path(state_dir, key), key, target, send, profile=profile, log=log,
                            seconds=seconds, title=title, **facts)

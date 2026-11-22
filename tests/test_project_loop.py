@@ -550,14 +550,32 @@ class IdleTest(Loop):
 
     def test_anything_the_lead_can_move_keeps_it_open(self):
         # What only waits for the owner (a task waiting_user, a question card) folds away after the idle days all the same:
-        # test_waiting_for_the_owner_never_stalls_and_folds_away_after_the_idle_days.
+        # test_waiting_for_the_owner_never_stalls_and_folds_away_after_the_idle_days. A receipt moves it only where it wakes
+        # the lead (COVEY_PROJECT_AUTOWAKE=1): test_without_autowake_a_receipt_wakes_no_one_and_it_folds_after_the_idle_days.
         for name, setup in (("a queued task", lambda: self.thread(THREAD, "迁移", 41, status="queued")),
-                            ("a receipt nobody read", lambda: self.receipt("thread_end", "T41 做完了", at=NOW))):
+                            ("a receipt nobody read", lambda: (self.autowake(), self.receipt("thread_end", "T41 做完了", at=NOW)))):
             with self.subTest(name):
                 self.update(state=projects.ACTIVE, state_reason="")
                 setup()
                 self.loop.tick(NOW + 30 * self.DAY)
                 self.assertEqual(self.state_of(), (projects.ACTIVE, ""))
+
+    def test_without_autowake_a_receipt_wakes_no_one_and_it_folds_after_the_idle_days(self):
+        # T647 P0-6: with COVEY_PROJECT_AUTOWAKE off a member's end woke no one, and the project said 在做 and never folded.
+        self.thread(THREAD, "迁移", 41, status="done", timings={"execution_finished": NOW})
+        self.receipt("thread_end", "T41 做完了", at=NOW + self.DAY)
+        self.loop.tick(NOW + 7 * self.DAY + 60)
+        self.assertEqual(self.state_of(), (projects.ACTIVE, ""))  # The idle days run from the receipt.
+        self.loop.tick(NOW + 8 * self.DAY + 60)
+        self.assertEqual(self.state_of(), (projects.PAUSED, projects.IDLE))
+        self.assertEqual(self.queued, [])  # Nobody woken,
+        self.assertEqual([item["kind"] for item in project_loop.unread(self.state, PID)], ["thread_end"])  # read next time.
+
+    def test_without_autowake_a_member_at_work_keeps_it_open(self):
+        self.receipt("thread_end", "T41 做完了", at=NOW)
+        self.thread(THREAD, "迁移", 41, status="running")
+        self.loop.tick(NOW + 30 * self.DAY)
+        self.assertEqual(self.state_of(), (projects.ACTIVE, ""))
 
     def test_a_task_that_ended_or_a_word_from_the_owner_counts_from_then(self):
         self.thread(THREAD, "迁移", 41, status="done", timings={"execution_finished": NOW + 5 * self.DAY})

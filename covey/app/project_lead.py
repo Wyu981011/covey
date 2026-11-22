@@ -113,6 +113,12 @@ IDENTITY = (
     "写着作废的那几条不再适用。",
     "- 一轮只做这一轮该做的判断，派完就结束这一轮，不要等话题做完，不要轮询：话题有了结果，会有下一轮叫醒你。",
 )
+# Without COVEY_PROJECT_AUTOWAKE=1 a topic's end wakes the lead no more (app/project_loop.py autowake_due): IDENTITY says so
+# (T647 P0-6: it promised the next turn, and the lead told the owner it would follow up).
+WOKEN = "话题有了结果，会有下一轮叫醒你。"
+NOT_WOKEN = ("话题有了结果不会叫醒你（没开叫醒负责人）：它的回执留在收件箱，主人下次找你时一起读；"
+             "别对主人说“我会跟进”“有结果我再告诉你”。")
+assert any(WOKEN in rule for rule in IDENTITY)
 TOOL_RULES = (
     "- 工具都是 Bridge 工具（mcp__bridge__<工具名>）。开话题用 project_topic_start（写干净的任务说明：做什么、范围、约束、"
     "交付什么；不抄本机路径），给已有话题加话用 project_topic_send；同时在做的话题不设上限，一件独立的事一个话题。",
@@ -176,14 +182,16 @@ def style_rule(style) -> str:
 
 
 def lead_rules(style=None, practice=PRACTICE) -> str:
-    """The lead's rules: identity, tools, the style as the record has it, the practice layer (``practice``; none by
-    default). The language rule is the bridge rules' (app/prompts.py LANGUAGE_RULE), said there once. With 协作 on
+    """The lead's rules: identity (NOT_WOKEN for WOKEN without COVEY_PROJECT_AUTOWAKE=1), tools, the style as the record has it,
+    the practice layer (``practice``; none by default). The language rule is the bridge rules' (app/prompts.py
+    LANGUAGE_RULE), said there once. With 协作 on
     (COVEY_COLLAB=1) the lead's duty to the goal (``COLLAB_RULES``) and, with the triage, the grounds an answer names
     (``EVIDENCE_RULE``) follow the tools."""
     tools = TOOL_RULES if not triage.enabled() else (*(rule.replace(NOT_YET, "") for rule in TOOL_RULES), *TRIAGE_RULES)
     if turn_source.enabled():
         tools = (*tools, *COLLAB_RULES, *((EVIDENCE_RULE,) if triage.enabled() else ()))
-    layers = [*IDENTITY, *tools, style_rule(style_of({"style": style})) if style else style_rule(STYLE_DEFAULT)]
+    identity = IDENTITY if projects.autowake_enabled() else tuple(rule.replace(WOKEN, NOT_WOKEN) for rule in IDENTITY)
+    layers = [*identity, *tools, style_rule(style_of({"style": style})) if style else style_rule(STYLE_DEFAULT)]
     if practice:
         layers.append(practice)
     return "\n".join(layers)

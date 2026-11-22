@@ -255,7 +255,8 @@ def mcp_config(release: Path, state_dir: Path, job_key: str, python: str, lead: 
     switch on the knowledge and history tools and the butler's wording of topic_start (core/butler_tool_specs.py listed) are
     handed on when the Bridge has them. ``lead``: the id of the project whose lead's job it is (COVEY_PROJECTS on): the
     server then lists the lead's tools (project_*) instead (app/project_lead.py), with COVEY_COLLAB handed on too (its
-    project_checklist and project_answer's evidence, core/butler_tool_specs.py lead_tools)."""
+    project_checklist and project_answer's evidence, core/butler_tool_specs.py lead_tools) and COVEY_PROJECT_AUTOWAKE
+    (whether project_topic_start says a topic's end wakes it)."""
     env = {}
     handed = {STATE_ENV: str(state_dir), JOB_ENV: job_key,
               "COVEY_KNOWLEDGE": cenv.get("COVEY_KNOWLEDGE", "").strip(),  # core/butler_tool_specs.py
@@ -266,6 +267,8 @@ def mcp_config(release: Path, state_dir: Path, job_key: str, python: str, lead: 
               "COVEY_PROJECT_TIDY": cenv.get("COVEY_PROJECT_TIDY", "").strip()}  # TIDY_ENV: the butler's projects_tidy
     if lead:
         handed["COVEY_COLLAB"] = cenv.get("COVEY_COLLAB", "").strip()  # COLLAB_ENV: the lead's project_checklist, evidence
+        # AUTOWAKE_ENV: whether project_topic_start may say a topic's end wakes the lead (core/butler_tool_specs.py lead_tools).
+        handed["COVEY_PROJECT_AUTOWAKE"] = cenv.get("COVEY_PROJECT_AUTOWAKE", "").strip()
     if lead and projects.enabled():
         handed[LEAD_ENV] = lead
     for name, value in handed.items():

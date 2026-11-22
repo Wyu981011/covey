@@ -692,6 +692,11 @@ class ProjectLoop:
                 reason = hold(record, now)
                 return self.pause(record, reason, now) if reason else self.wake(record, now)
             if not due:
+                # Without COVEY_PROJECT_AUTOWAKE=1 these wake no one: the lead reads them in its next turn, which the owner
+                # starts. Nothing else moving, the project rests and folds away after the idle days as one with nothing to
+                # do (T647 P0-6: it said 在做 and never folded); the owner's next word opens it again.
+                if not projects.autowake_enabled() and resting(state, record, []):
+                    return self.rest(record, state, now)
                 return
         if resting(state, record, pending):
             # Nothing to do, or only the owner's answer awaited (the lead can move nothing): no stall, and it folds away

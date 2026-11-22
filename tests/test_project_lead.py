@@ -84,6 +84,28 @@ class RulesTest(Case):
         self.assertIn("专员做法层", project_lead.lead_rules(practice="专员做法层"))
         self.assertNotIn("专员做法层", base)
 
+    def test_without_autowake_the_rules_and_the_tool_say_no_turn_comes_when_a_topic_ends(self):
+        # T647 P0-6: they promised "会有下一轮叫醒你" with COVEY_PROJECT_AUTOWAKE off, and the lead promised the owner to follow up.
+        with mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: "1"}):
+            self.assertIn(project_lead.WOKEN, project_lead.lead_rules())
+        with mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: ""}):
+            rules = project_lead.lead_rules()
+        self.assertNotIn(project_lead.WOKEN, rules)
+        self.assertIn("话题有了结果不会叫醒你（没开叫醒负责人）：它的回执留在收件箱，主人下次找你时一起读", rules)
+
+        def start(environ):
+            return next(tool for tool in butler_tool_specs.lead_tools(environ) if tool["name"] == "project_topic_start")
+        self.assertIn(butler_tool_specs.WOKEN, start({butler_tool_specs.AUTOWAKE_ENV: "1"})["description"])
+        off = start({})["description"]
+        self.assertNotIn(butler_tool_specs.WOKEN, off)
+        self.assertIn(butler_tool_specs.NOT_WOKEN, off)
+        self.assertIn(butler_tool_specs.WOKEN, start(None)["description"])  # No environment to tell from: as before.
+        self.assertIn(butler_tool_specs.WOKEN, butler_tool_specs.PROJECT_TOOLS[0]["description"])  # Not changed in place.
+        # The Bridge hands the switch to the lead's MCP server.
+        with mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: "1"}):
+            config = butler.mcp_config(self.state, self.state, "k", "python3", lead=PID)
+        self.assertEqual(config["mcpServers"][butler.MCP_SERVER]["env"].get(projects.AUTOWAKE_ENV), "1")
+
     def test_a_comparison_the_owner_asks_for_is_two_read_only_topics_and_a_summary(self):
         # #37: the same task twice, read-only, one vendor each; the summary says what came from whom and what neither answered.
         rules = project_lead.lead_rules()

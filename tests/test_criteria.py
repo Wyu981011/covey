@@ -82,10 +82,9 @@ class CardTest(unittest.TestCase):
             job = SimpleNamespace(topic_id="t1", checkpoint_path=str(point))
             notes = answer_cards.notes(Path(directory), job)
             shown = tail(None, self.inputs, ("用时 1分",), change={"commit": "951327a"}, notes=notes)
-            # In the one fold of the parts to look up, after the 改动, above the 输入/输出 lines.
-            self.assertEqual([element.get("element_id") for element in shown], ["relay_details", "answer_facts"])
-            self.assertEqual([part.get("element_id") for part in shown[0]["elements"]], ["answer_change", CRITERIA_ID])
-            row = shown[0]["elements"][1]["columns"]
+            # Out on the card over the parts to look up (T647 P1-A2: in their fold it went unseen), the 输入/输出 lines last.
+            self.assertEqual([element.get("element_id") for element in shown], [CRITERIA_ID, "answer_change", "answer_facts"])
+            row = shown[0]["columns"]
             self.assertEqual(row[0]["elements"][0]["content"], "<font color='grey'>完成标准</font>")
             self.assertEqual(row[1]["elements"][0]["content"].split("\n"), [
                 "**没满足**<font color='grey'>：</font>合进 main 并推送",

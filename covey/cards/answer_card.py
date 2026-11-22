@@ -8,25 +8,28 @@ each part never broken inside at a phone's width or in a topic's side panel (``u
 split "脱 / 敏关", "缓存 / 命中"), so a line wraps only after a separator:
 
 - 输入: Harness ｜ 供应商 ｜ 模型 ｜ 思考 <思考预算> ｜ 脱敏开/关 ｜ 工作区 (``input_parts``, ``input_lines``);
-- 输出: 用时 ｜ token/s ｜ token (the cache included, as the task card's tile) ｜ 缓存命中 (``output_parts``,
-  ``output_lines``);
+- 输出: 用时 ｜ token/s ｜ token (the cache included, as the task card's tile) ｜ 缓存命中 ｜ 重启 (the Bridge restarts the
+  turn's own process lived through, ``restart_part``) (``output_parts``, ``output_lines``);
 
 The task card's 输入/输出 box (cards/task_figures.py io_box) is the grey box, in the topic's thread: while its turn runs, 输出 is 开始 ｜ 已运行 ｜
 token ｜ token/s ｜ 上下文 (``running_figures``, ``RUNNING_LINES``).
 
-The parts under an answer that are there to look up (产物, 验收说明, 改动, 独立复核…) go into one closed fold
-(``details``); the 输入/输出 lines stay outside it. No link ends the 输出 line: the card's head (cards/ui.py
+The parts under an answer that are there to look up (产物, 验收说明, 改动, 记下的事) go into one closed fold
+(``details``); what the owner must see (a commit not found, the completion criteria not met: ALERT_IDS) stays out of it,
+and so do the 输入/输出 lines and 独立复核 under them. No link ends the 输出 line: the card's head (cards/ui.py
 speaker_row) opens the owner's message or the topic. An answer too long for one card goes as Markdown and then
 ``tail_card``: these parts alone."""
 from __future__ import annotations
 
 import re
+import time
 
 from covey.cards.elements import card, chevron, collapsible, fold, grey, item, json_size, md, text_button
 from covey.core.checkpoint import change_summary, delivery_commits, short_commit
 from covey.cards.ui import ASK_ID, ASK_META
 from covey.cards.facts import context_text, start_text, token_total, usage_figures
 from covey.core.metrics import took_text
+from covey.core.trace import restarts
 from covey.core.text import literal, share
 
 ARTIFACTS_ID = "answer_artifacts"
@@ -67,7 +70,23 @@ def output_parts(snapshot=None, took=None):
         given, read = figures["shown"].get("input_tokens"), figures["cache_read"]
         if type(read) is int and read > 0 and type(given) is int and given >= read:
             parts.append(figure("缓存命中", share(read, given)))
+    restarted = restart_part(restarts(snapshot.get("steps")))
+    if restarted:
+        parts.append(restarted)
     return parts
+
+
+RESTART_WORD = "重启"
+
+
+def restart_part(times) -> str:
+    """输出's part for the Bridge restarts the turn went on through in its own process (core/trace.py restarts; T647 E2: it
+    was a line folded in 执行过程 alone): "重启 22:31 没打断", "重启 2 次没打断"; '' without one."""
+    if not times:
+        return ""
+    if len(times) == 1:
+        return figure(RESTART_WORD, time.strftime("%H:%M", time.localtime(times[0])) + " 没打断")
+    return figure(RESTART_WORD, f"{len(times)} 次没打断")
 
 
 def figure(label, value):
@@ -392,33 +411,46 @@ def review_element(topic_id, job_id):
 
 DETAILS_ID = "relay_details"  # The id the relay's fold had first: one id for the fold on every card.
 # What a part under the answer is called in the fold's title (``details``), by its element id.
-DETAIL_WORDS = {"answer_acceptance": "验收说明", "answer_change_check": "提交号对不上", "answer_change": "改动",
-                "answer_criteria": "完成标准", "answer_review": "独立复核", "answer_memory": "记下的事"}
+DETAIL_WORDS = {"answer_acceptance": "验收说明", "answer_change": "改动", "answer_memory": "记下的事"}
+# The parts the owner must see, never folded (T647 P1-A2: folded in grey small print, they went unseen): a commit the
+# workdir's repository does not have (``check_element``) and the completion criteria not met (``criteria_element``).
+ALERT_IDS = (CHECK_ID, CRITERIA_ID)
+
+
+def alerts(change=None, notes=()) -> bool:
+    """Whether a turn's parts hold one of ALERT_IDS: a commit of ``change`` not found (``not_found``), or among ``notes`` (the
+    elements app/answer_cards.py notes makes) the completion criteria not met. A 做完了 relay with one goes on its own card,
+    never merged into 「N 个话题做完了」 (app/butler_relay.py relay)."""
+    return bool(not_found(change)) or any(isinstance(note, dict) and note.get("element_id") == CRITERIA_ID
+                                          for note in notes or ())
 
 
 def details(parts) -> list:
-    """The parts under an answer that are there to look up (产物, 验收说明, a commit not found, 改动, 独立复核…) in one
-    closed fold whose title names them, so the answer stays what the card is for (the owner, 2026-11-22: 底下的东西占了太高);
-    one part alone stays as it is. The 输入/输出 lines stay outside, under it."""
+    """The parts under an answer that are there to look up (产物, 验收说明, 改动, 记下的事) in one closed fold whose title names
+    them, so the answer stays what the card is for (the owner, 2026-11-22: 底下的东西占了太高); one part alone stays as it is.
+    The parts the owner must see (ALERT_IDS) stay out of it, first. The 输入/输出 lines stay outside, under it."""
     parts = [part for part in parts if part]
+    shown = [part for part in parts if part.get("element_id") in ALERT_IDS]
+    parts = [part for part in parts if part.get("element_id") not in ALERT_IDS]
     if len(parts) < 2:
-        return parts
+        return [*shown, *parts]
     words = []
     for part in parts:
         title = ((part.get("header") or {}).get("title") or {}).get("content", "") if part.get("element_id") == ARTIFACTS_ID else ""
         word = title or DETAIL_WORDS.get(str(part.get("element_id") or ""), "")
         if word and word not in words:
             words.append(word)
-    return [collapsible(DETAILS_ID, " · ".join(words or ["更多"]) + "（点开看）", parts, quiet=True, spacing="6px")]
+    return [*shown, collapsible(DETAILS_ID, " · ".join(words or ["更多"]) + "（点开看）", parts, quiet=True, spacing="6px")]
 
 
 def tail(files=None, inputs=(), outputs=(), link="", change=None, notes=(), buttons=()):
     """What follows an answer: its 产物 panel (``files``, None without), its 改动 fold (``change``,
     ``change_element``: None, {} or '' without), the line marking a commit not found (``check_element``) and the
     ``notes`` (elements: what to check of a UI change, ``acceptance_element``; the completion criteria not met,
-    ``criteria_element``), in one fold when more than one (``details``), then the 输入/输出 lines, then ``buttons``
-    (elements): 独立复核 (``review_element``) goes into the fold, any other button (the reminder to come back,
-    app/revisit_hint.py) stays under the lines, where it can be clicked at once."""
+    ``criteria_element``), those to look up in one fold when more than one and those to see first, outside it
+    (``details``), then the 输入/输出 lines, then ``buttons`` (elements: 独立复核, ``review_element``, and the reminder to
+    come back, app/revisit_hint.py) under the lines, where they can be clicked at once; one of DETAIL_WORDS among them
+    goes into the fold."""
     looked_up = [element for element in buttons or () if isinstance(element, dict)
                  and element.get("element_id") in DETAIL_WORDS]
     others = [element for element in buttons or () if element not in looked_up]

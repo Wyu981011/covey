@@ -12,7 +12,7 @@ from covey.core.locks import LOCK, resource_lock, topic_lock
 from covey.core.workspaces import RUN_MODES, load_config, visible_workspaces
 
 
-from covey.cards.launch_config import PAGES, SUBMIT_PREFIX, launch_form_card
+from covey.cards.launch_config import PAGES, SUBMIT_PREFIX, launch_form_card, unredacted
 from covey.app.form_cards import LAUNCH_FORM_LOCK, publish_form, replace_form_card, save_record
 from covey.app.launch_models import available_models
 from covey.app.preselection import launch_selection
@@ -176,6 +176,8 @@ def build_launch_card(topics, ctx, *, new_topic=False, draft=None, notice=''):
         'selected_redaction': redaction,
         'form_defaults': {'workspace': selection.workspace, 'path': draft.get('path') or '', 'run_mode': run_mode},
         **({'page': page} if page else {}),
+        # The card says its 脱敏 is lost on this model and asks (cards/launch_config.py unredacted): its 不脱敏开始 may start it.
+        **({'redaction_asked': selection.model} if unredacted(selection.choices.get(selection.model, {}), redaction) else {}),
     })
     return launch_form_card(token, model=selection.model, choices=selection.choices, effort=selection.effort,
                             workspace=selection.workspace, names=selection.names, run_mode=run_mode,

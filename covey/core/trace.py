@@ -22,6 +22,10 @@ SUBTASK_ROWS = 5  # Up to this many subtasks are listed one by one; more are sum
 SUBTASK_LEVELS = 10  # Deeper levels are summed into the last one.
 STAGE_NOTE_CHARS = 300  # A 进展说明 at least this long is a report of the turn (stage_notes), not a passing line.
 STAGE_HEADING = "**这一轮中途的汇报**"
+# The note a task runner writes when a Bridge that restarted adopts it (app/detached.py adopt_runners, app/runner_ipc.py):
+# its id is this and the time of the restart in whole epoch seconds ("bridge-restart-1793790000"), its title the
+# Bridge's (cards/trace_view.py BRIDGE_NOTE). Every release writes it so.
+RESTART_NOTE = "bridge-restart-"
 
 
 def reduce_subtask_usage(data):
@@ -387,6 +391,21 @@ def stage_notes(steps) -> list:
         if len(text) >= STAGE_NOTE_CHARS:
             found.append((step.get("started") if isinstance(step.get("started"), (int, float)) else None, text))
     return found
+
+
+def restarts(steps) -> list:
+    """When the Bridge restarted while the turn's own process went on (its RESTART_NOTE steps), epoch seconds, oldest
+    first; [] for none. ``steps``: a trace's steps (ToolTrace.steps, or a snapshot's ``steps``)."""
+    found = []
+    for key, step in (steps or {}).items():
+        if not isinstance(key, str) or not key.startswith(RESTART_NOTE) or not isinstance(step, dict):
+            continue
+        try:
+            found.append(float(key[len(RESTART_NOTE):]))
+        except ValueError:
+            if isinstance(step.get("started"), (int, float)) and not isinstance(step.get("started"), bool):
+                found.append(float(step["started"]))
+    return sorted(found)
 
 
 def with_stage_notes(text, notes) -> str:

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from covey.cards.elements import fold, grey, md, panel_header, styled_panel
+from covey.cards.elements import fold, grey, md, panel_header, plain, styled_panel
 from covey.core.defaults import WORK_MODES
 from covey.core.menu_choice import (budget_options, effort_text, explicit, model_provider, model_tiers, models_of,
                                     plain_budgets, tiers, work_modes)
@@ -34,6 +34,15 @@ MODE_ACTION = 'bridge_launch_mode'
 WORK_MODE_ACTION = 'bridge_launch_work_mode'
 REDACTION_ACTION = 'bridge_launch_redaction'
 REDACTION_LABELS = {'off': '关', 'on': '开'}
+# 敏感词脱敏 on (the 新话题 page's default, or the card's choice) with a model that cannot redact (T647 P0-8, the owner: 先问):
+# the card says so above its buttons and 开始任务 becomes UNREDACTED_START, confirmed once more in the client, as
+# 换配置's 确认更换 is when it turns 脱敏 off (cards/switch_form.py OFF_TITLE). app/launch_submit.py starts such a topic only
+# from a card that asked (its record's ``redaction_asked``).
+UNREDACTED_START = '不脱敏开始'
+UNREDACTED_NOTE = '**这个话题不会脱敏**：所选模型不能脱敏，开始后原文会发给模型服务。'
+UNREDACTED_WAY = '要脱敏，换 {} 的模型。'
+UNREDACTED_TITLE = '不脱敏开始？'
+UNREDACTED_TEXT = '所选模型不能脱敏：这个话题的每一轮都会把原文发给模型服务。'
 # The last workspace-menu entry opens the workspace manager instead of choosing one.
 MANAGE_OPTION = '__bridge_manage_workspaces__'
 SUBMIT_PREFIX = 'bridge_launch_'
@@ -59,6 +68,19 @@ class Setting(NamedTuple):
     @property
     def text(self):
         return dict(self.options).get(self.current, '未选')
+
+
+def unredacted(choice, redaction) -> bool:
+    """Whether 开始任务 would start without the 脱敏 the card has on (``redaction`` 'on'): its model ``choice`` cannot redact."""
+    return redaction == 'on' and bool(choice) and not choice.get('redaction')
+
+
+def unredacted_note(choices):
+    """UNREDACTED_NOTE, with the Harnesses of ``choices`` that can redact named as the way to keep it."""
+    able = list(dict.fromkeys(entry.get('title') or entry.get('harness') or '' for entry in choices.values()
+                              if entry.get('redaction')))
+    able = [title for title in able if title]
+    return UNREDACTED_NOTE + (UNREDACTED_WAY.format('、'.join(able)) if able else '')
 
 
 def redaction_setting(key, kind, current):
@@ -250,6 +272,7 @@ def launch_form_card(token, *, model, choices, effort, workspace, names, run_mod
     devices = devices or {}
     title = '开始任务'
     choice = choices.get(model, {})
+    lost = unredacted(choice, redaction)  # 脱敏 on, a model that cannot: said, and asked once more.
     mode = work_modes(choice, work_mode)[1]
     settings = model_settings(choices, model, kinds=(HARNESS_ACTION, PROVIDER_ACTION, MODEL_ACTION, BUDGET_ACTION,
                                                      WORK_MODE_ACTION), revision=1, effort=effort, work_mode=mode) if choice else []
@@ -262,18 +285,23 @@ def launch_form_card(token, *, model, choices, effort, workspace, names, run_mod
     rows = [setting_row(setting, token=token, open_key=page) for setting in settings]
     facts = [f'思考预算 {effort_text(choice, effort)}', *(['工作模式 {}（{}）'.format(*WORK_MODES[mode])] if mode else []),
              *([f"敏感词脱敏 {REDACTION_LABELS.get(redaction, '关')}"] if choice.get('redaction') else []),
+             *(['不脱敏'] if lost else []),
              f'工作区 {workspace}' + (f' · 设备 {devices[workspace]}' if workspace in devices else ''), RUN_MODES['direct'] + '运行' if run_mode == 'direct' else RUN_MODES['worktree']]
     summary = summary_block(choice, facts) if choice else md('模型目录准备中，请稍后重新打开配置。')
     adjust = fold('launch_adjust', md(grey(ADJUST_TITLE)), rows, expanded=bool(expanded or page), background='grey-50',
                   padding='0px 12px 0px 12px', spacing='0px')
     buttons = [{'tag': 'button', 'name': prefix + token, 'form_action_type': 'submit', 'type': style, 'width': 'fill',
                 'text': {'tag': 'plain_text', 'content': label}}
-               for prefix, label, style in [(PICKER_PREFIX, '其他目录…', 'default'), (SUBMIT_PREFIX, title, 'primary_filled')]]
+               for prefix, label, style in [(PICKER_PREFIX, '其他目录…', 'default'),
+                                            (SUBMIT_PREFIX, UNREDACTED_START if lost else title, 'primary_filled')]]
+    if lost:
+        buttons[-1]['confirm'] = {'title': plain(UNREDACTED_TITLE), 'text': plain(UNREDACTED_TEXT)}
     head = panel_header('launch', title, f'话题 {topic_tag}' if topic_tag else '')
     return styled_panel(head, [
         *([md(notice)] if notice else []),
         summary,
         adjust,
+        *([md(unredacted_note(choices))] if lost else []),
         # The form holds the buttons only: each choice is recorded as made, and a directory not in the
         # list is pasted into 其他目录…'s browser (the path input went).
         {'tag': 'form', 'name': 'launch_form', 'elements': [

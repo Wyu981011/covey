@@ -42,6 +42,7 @@ from covey.core.redaction import (ALREADY, Refused, config_path, edit_terms, loa
                                   term_lines, update_config, upstream_problem)
 from covey.core.redaction_views import MAX_PREVIEW, restore_tag, stats_view
 from covey.core.redactor import Redactor
+from covey.core import butler_settings
 from covey.core.state import epoch_seconds, read_object, write_private_text
 from covey.core.text import literal, stamp
 
@@ -114,10 +115,12 @@ def index_of(config, key, wanted):
 def facts(state_dir, key, now=None) -> dict:
     """What the tab draws, no term in it: the switches and the upstream address, a row a term (newest first: its masked
     name, row key, ``anywhere`` if an older version set it, restore tag and hits), the recorded turns' figures, the
-    topics with redaction on among those they name and the latest turns; ``error`` when the list cannot be read."""
+    topics with redaction on among those they name and the latest turns; ``error`` when the list cannot be read;
+    ``default_on``, whether the 新话题 page starts new topics redacted (core/butler_settings.py TopicDefaults)."""
     stats = stats_view(state_dir, time.time() if now is None else now)
     hits = {row['term']: row for row in stats['terms']}
     data = {'error': '', 'config': {}, 'rows': [], 'count': 0, 'week': stats['week_hits'], 'updated': '',
+            'default_on': butler_settings.load(state_dir).topic_defaults.redaction,
             'topics': [{'number': t.get('number'), 'title': t.get('title', ''), 'turns': t.get('turns', 0),
                         'hits': t.get('hits', 0), 'last': stamp(t.get('last'), empty=''), 'at': t.get('last') or None}
                        for t in stats['topics']],

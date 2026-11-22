@@ -120,6 +120,29 @@ class DownNoticeTests(NoticeCase):
         self.check(notice, manifest, {"status": "running", "failures": 0, "health": ready()})
         self.assertEqual(len(self.sent()), 2)
 
+    def test_the_tasks_that_go_on_in_their_own_process_are_counted(self):
+        # T647 E2: the owner heard his bot was down and back, never that the tasks he had going went on all the while.
+        runs = self.root / "runs"
+        early, late = runs / "early", runs / "late"
+        for directory, started in ((early, self.now[0] - 50), (late, self.now[0] + 10)):
+            directory.mkdir(parents=True)
+            (directory / "runner.json").write_text(json.dumps({"pid": 1, "started_at": started}))
+        notice, manifest = self.notices(), self.manifest()
+        with mock.patch.object(down_notice, "live_dirs", return_value=[early, late]) as live:
+            self.check(notice, manifest, {"status": "backoff", "failures": 3, "returncode": 1})
+            self.assertIn("你现在发的消息没人接。在跑的 2 个任务在自己的进程里，没受影响。", self.sent()[0][1])
+            self.assertEqual(live.call_args.args, (self.state,))
+            self.now[0] += 30
+            self.check(notice, manifest, {"status": "running", "failures": 0, "health": ready()})
+            self.now[0] += down_notice.BACK_AFTER + 1
+            self.check(notice, manifest, {"status": "running", "failures": 0, "health": ready()})
+        back = self.sent()[1][1]
+        self.assertIn("恢复了", back)
+        self.assertIn("出问题前开始的 1 个任务在自己的进程里，一直没停，还在跑。", back)  # Not the one begun after.
+        self.assertEqual(down_notice.kept_words(0), "")
+        self.assertEqual(down_notice.running_tasks(self.state), 0)  # No run directory: none.
+        self.assertNotIn("个任务", down_notice.back_text(down_notice.CRASH, 120))
+
     def test_messages_cannot_reach_it_for_long(self):
         notice, manifest = self.notices(), self.manifest()
         offline = {"status": "running", "failures": 0, "health": ready(connection="disconnected")}

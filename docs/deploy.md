@@ -202,7 +202,7 @@ tail -n 200 "$STATE_DIR/bridge.log" | grep -E 'ready event_key=|adopted task run
 ```
 
 - `covey_doctor.py --runtime-only` 退出码为 0；新进程的 `bridge started pid=… generation=N release=<commit>` 之后有两行 `ready event_key=...`；`/proc/<pid>/cmdline` 里的入口路径是新 release（pid 见 `status.process.pid`）。
-- 部署前在跑的每个任务都有一行 `adopted task runner job=#N pid=…`，任务卡的执行过程里多一条“机器人 HH:MM 重启过，任务未中断。”。
+- 部署前在跑的每个任务都有一行 `adopted task runner job=#N pid=…`，任务卡的执行过程里多一条“机器人 HH:MM 重启过，任务未中断。”，这一轮结束后“输出”行写“重启 HH:MM 没打断”。
 - 在 Bridge 的实际环境里发一次真实模型请求，例如在测试话题里跑一个只读小任务。doctor 不探测模型，登录终端里能调用不代表服务环境里也能。
 
 **5. 保留旧 release。** 任务进程从头到尾用启动它的 release，`pgrep -af covey_runner.py` 的命令行里能看到路径。旧 release 要保留到用它的任务进程都结束；Manager 正在用的 release 也不能删。

@@ -5,7 +5,9 @@ message through the bot's own lark-cli profile (no other bot), and one more once
   starting for ERROR_AFTER seconds (a missing workdir or interpreter, a live unmanaged PID), or the Bridge runs but has not
   been receiving Feishu messages for OFFLINE_AFTER seconds (its health snapshot: the connection lost, or the message
   consumer not ready).
-- Back: once the owner was told, the Bridge running with a ready health snapshot for BACK_AFTER seconds.
+- Back: once the owner was told, the Bridge running with a ready health snapshot for BACK_AFTER seconds. Each task runs in its
+  own process (app/detached.py), so the ones that began before the trouble and still run are counted in it
+  (``running_tasks``, T647 E2); a down message for a Bridge that does not run counts the ones running then.
 - At most one down message every COOLDOWN seconds for a service: one that falls due sooner waits, and is sent then only
   when it is still down. A service stopped on purpose says nothing more; with the switch off the Manager does not call
   this at all (nothing read, written or sent: as before).
@@ -30,6 +32,7 @@ import threading
 import time
 
 from covey.core.process_env import env_flag
+from covey.core.run_dir import RUNNER, live_dirs
 from covey.core.state import read_json, write_durable_json
 
 SWITCH = "COVEY_DOWN_NOTICE"
@@ -90,27 +93,55 @@ def minutes(seconds) -> int:
     return max(1, round(seconds / 60))
 
 
-def down_text(kind, status, failed, lasted) -> str:
-    """The down message: what is wrong, what the owner sees, what happens next, where to look."""
+def running_tasks(state_dir, before=None) -> int:
+    """How many tasks of ``state_dir`` run now in their own task runner (core/run_dir.py live_dirs), only those that began
+    before ``before`` (their runner.json's ``started_at``) when given; 0 when it cannot be told."""
+    try:
+        count = 0
+        for directory in live_dirs(Path(state_dir)):
+            started = read_json(directory / RUNNER, {}).get("started_at") if before is not None else None
+            if before is None or (isinstance(started, (int, float)) and not isinstance(started, bool) and started < before):
+                count += 1
+        return count
+    except Exception:  # noqa: BLE001 - the message without the count
+        return 0
+
+
+def kept_words(running, back=False) -> str:
+    """The sentence about the tasks the trouble did not stop: on the down message the ones running in their own process,
+    on the back one those that began before it and run still; '' for none."""
+    if not running:
+        return ""
+    if back:
+        return f"出问题前开始的 {running} 个任务在自己的进程里，一直没停，还在跑。"
+    return f"在跑的 {running} 个任务在自己的进程里，没受影响。"
+
+
+def down_text(kind, status, failed, lasted, running=0) -> str:
+    """The down message: what is wrong, what the owner sees, what happens next, where to look; with ``running`` (a Bridge
+    that does not run: CRASH, ERROR), the tasks that go on all the same (``kept_words``)."""
     if kind == CRASH:
         code = status.get("returncode")
         return (f"⚠️ 机器人没起来：服务管理器已经连续 {int(status.get('failures') or 0)} 次启动它都失败了"
                 + (f"（最近一次退出码 {code}）" if code is not None else "") + "，你现在发的消息没人接。"
+                + kept_words(running) +
                 "它会继续自动重试，好了再告诉你。排查：在服务器上运行 covey_doctor.py，或看状态目录里的 "
                 "bridge-console.log 和 bridge.log。")
     if kind == ERROR:
         said = " ".join(str(failed).split())
         said = said if len(said) <= ERROR_CHARS else said[:ERROR_CHARS - 1] + "…"
         return (f"⚠️ 服务管理器已经 {minutes(lasted)} 分钟启动不了机器人（{said}）。要是没有别的进程在运行它，"
-                "你现在发的消息没人接。它会继续重试，好了再告诉你。排查：在服务器上运行 covey_doctor.py，"
+                "你现在发的消息没人接。" + kept_words(running) + "它会继续重试，好了再告诉你。排查：在服务器上运行 covey_doctor.py，"
                 "或看服务根里的 manager.log。")
     return (f"⚠️ 机器人已经 {minutes(lasted)} 分钟收不到飞书消息了（和飞书的连接断开或卡住），你现在发的消息可能没人接。"
             "它会自己重连，好了再告诉你。一直不好就在服务器上运行 covey_doctor.py。")
 
 
-def back_text(kind, lasted) -> str:
+def back_text(kind, lasted, running=0) -> str:
+    """The back message; ``running``: the tasks that began before the trouble and run still (``running_tasks``)."""
     what = "又收得到消息了" if kind == OFFLINE else "又在运行了"
-    return (f"✅ 机器人恢复了：{what}（前后约 {minutes(lasted)} 分钟）。这段时间发的消息要是没人回，请再发一次。")
+    return (f"✅ 机器人恢复了：{what}（前后约 {minutes(lasted)} 分钟）。{kept_words(running, back=True)}"
+            "这段时间发的消息要是没人回，请再发一次。")
 
 
 def idempotency_key(key, what, since) -> str:
@@ -216,12 +247,16 @@ class DownNotice:
             if watch.get("fine_since") is not None and now - watch["fine_since"] >= BACK_AFTER:
                 since = float(told.get("since") or now)
                 self.begin(key, manifest, state, "back", told.get("kind") or CRASH, since,
-                           back_text(told.get("kind"), watch["fine_since"] - since), now)
+                           back_text(told.get("kind"), watch["fine_since"] - since,
+                                     running_tasks(manifest["state_dir"], before=since)), now)
             return
         wait = {CRASH: 0, ERROR: ERROR_AFTER, OFFLINE: OFFLINE_AFTER}
         if kind and now - watch["since"] >= wait[kind] and now - float(state.get("last_down") or 0) >= COOLDOWN:
+            # A Bridge that does not run (CRASH, ERROR) leaves its tasks running; one cut off from Feishu (OFFLINE) may cut
+            # them off too: nothing said of them then.
             self.begin(key, manifest, state, "down", kind, watch["since"],
-                       down_text(kind, status, failed, now - watch["since"]), now)
+                       down_text(kind, status, failed, now - watch["since"],
+                                 running_tasks(manifest["state_dir"]) if kind != OFFLINE else 0), now)
 
     def owner(self, manifest) -> str:
         """The owner's open_id from the Bridge's record of its bot (app/unified.py init_target); '' before there is one."""

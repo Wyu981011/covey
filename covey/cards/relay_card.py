@@ -2,11 +2,11 @@
 结论回到顶层): ``relay_card``, pure, and what it shares with the question card's copy there
 (cards/question_cards.py mirror_card): a topic's reply as card Markdown, whole (``reply_body``, ``reply_shown``; both in
 cards/review.py, where the answer card in a topic's thread takes them too). ``merged_card``: 做完了 relays that came close together, as one card
-(app/relay_send.py send_merged)."""
+(app/relay_send.py send_merged). A 做完了 card ends with a grey line saying where a reply to it goes (``reply_hint``, T647 P1-A3):
+to its topic, and on the merged card to the butler (MERGED_HINT)."""
 from __future__ import annotations
 
-from covey.cards.answer_card import check_element, details, facts_element, words_fold
-from covey.cards.answer_card import tail as answer_tail
+from covey.cards.answer_card import change_element, check_element, details, facts_element, words_fold
 from covey.cards.elements import card, grey, json_size, md, note
 from covey.cards.review import ANSWER_CARD_BYTES, answer_lead, drop_part_heading, reply_body, reply_shown
 from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, speaker_row,
@@ -21,6 +21,16 @@ SUMMARY_CHARS = 40
 REASON_CHARS = 200  # A stop's reason and next step (core/failure.py failure_view's title), before the band splits them.
 DONE, WAITING, STOPPED = "done", "waiting", "stopped"
 NOTE_ID = "relay_note"  # A 停住了 card's last line (``stop_note``), redrawn after a click on its buttons (app/relay_stops.py).
+HINT_ID = "relay_hint"  # A 做完了 card's last line (``reply_hint``): its T number stays plain (app/relay_send.py linked).
+REPLY_HINT = "回复这张卡，就是接着跟 {} 说"
+MERGED_HINT = "回复这张卡是跟管家说；要接着跟某个话题说，点那一行进话题"
+
+
+def reply_hint(label="", words=""):
+    """The grey line that ends a 做完了 relay (HINT_ID): a reply to it goes to its topic as a message in its thread would
+    (app/relay_send.py remember_sent), "回复这张卡，就是接着跟 T12 说"; ``words`` in place of that (MERGED_HINT)."""
+    said = words or REPLY_HINT.format(label or "这个话题")
+    return md(grey(literal(said)), size="notation", element_id=HINT_ID)
 
 
 def stop_note(label, why=""):
@@ -89,9 +99,11 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         shown = drop_part_heading(body)  # Its first words say it: no "## 结论" row over them.
         reply = reply_shown(shown) if shown.strip() else []  # Whole (the owner, 2026-11-22: 不折叠，直接展示全文).
         ending = foot(inputs, outputs, change=line)
-        extra = [*answer_tail(files, (), (), change=None if line else shown_change, notes=notes),
-                 *([check_element(shown_change)] if line and check_element(shown_change) else []), *(buttons or ())]
-        tail = [*details(extra), *([ending] if ending else [])]
+        # As the topic's answer card (cards/answer_card.py tail): a commit not found and the criteria not met out on the card,
+        # the rest to look up in one fold (an older release's 改动 string among it), then the foot, 独立复核 under it, and
+        # where a reply goes (T647 P1-A2, A3).
+        parts = details([files, change_element(None if line else shown_change), check_element(shown_change), *(notes or ())])
+        tail = [*parts, *([ending] if ending else []), *(buttons or ()), reply_hint(label)]
         built = banded(card([row, *said, *reply, *tail], lead, update_multi=True, **style))
         # A long 改动 fold may take a card past its limit (as cards/review.py answer_card): the reply goes as
         # Markdown, its parts after it (app/relay_send.py send_once).
@@ -125,19 +137,26 @@ MERGED_SUBTITLE = "点一行进那个话题"
 ROW_ID = "merged_row"
 
 
+def files_words(count) -> str:
+    """What a merged card's row says of a turn's 产物 (its relay's own card had the panel): "产物 3 个"; '' for none."""
+    return f"产物 {count} 个" if isinstance(count, int) and not isinstance(count, bool) and count > 0 else ""
+
+
 def merged_card(items, avatar=""):
     """(card, text): 做完了 relays that came close together (app/relay_send.py send_merged) as one card, the Markdown when
     the card is refused. ``items``: each relay's {label (T41), title, lead (its reply's first line), url (that opens
-    its topic, when known)}, in the order they came. The speaker's row (``avatar``, a picture when given) says how many
-    (有结果 tag); one block each, the topic's T number as its badge (cards/ui.py topic_badge), its title bold and its
-    lead grey beside it, the whole block opening ``url``."""
+    its topic, when known), files (how many 产物, when any)}, in the order they came. The speaker's row (``avatar``, a
+    picture when given) says how many (有结果 tag); one block each, the topic's T number as its badge (cards/ui.py
+    topic_badge), its title bold and its lead grey beside it with its 产物 counted, the whole block opening ``url``; then
+    MERGED_HINT: a reply to this card is the butler's, as it holds several topics (a relay with something the owner must
+    see never comes here: app/butler_relay.py relay)."""
     count = len(items)
     rows = []
     for item in items:
         label, title, url = str(item.get("label") or ""), literal(item.get("title") or ""), str(item.get("url") or "")
         badge = topic_badge(label, url=url)  # Its own link too: a click on it would not reach the block's.
         head = title if badge else " ".join(part for part in (literal(label), title) if part)
-        lead = literal(item.get("lead") or "")
+        lead = " · ".join(part for part in (literal(item.get("lead") or ""), files_words(item.get("files"))) if part)
         words = "\n".join(part for part in (f"**{head}**" if head else "", grey(lead) if lead else "") if part)
         text = md(words or f"**{literal(label) or '话题'}**", size="normal_v2")
         inner = [{"tag": "column_set", "horizontal_spacing": "8px", "columns": [
@@ -147,9 +166,10 @@ def merged_card(items, avatar=""):
         rows.append(row)
     head = speaker_row({"who": f"{count} 个话题做完了", "says": MERGED_SUBTITLE}, outcome="result", avatar=avatar)
     labels = "、".join(str(item.get("label") or "话题") for item in items)
-    built = banded(card([head, *rows], summary(f"{count} 个话题", look.word("result"), labels), update_multi=True,
-                        padding=BODY_PADDING, spacing=BODY_SPACING))
+    built = banded(card([head, *rows, reply_hint(words=MERGED_HINT)], summary(f"{count} 个话题", look.word("result"), labels),
+                        update_multi=True, padding=BODY_PADDING, spacing=BODY_SPACING))
     lines = [f"**{count} 个话题做完了**"] + [
         "- " + " ".join(part for part in (str(item.get("label") or ""), str(item.get("title") or "")) if part)
-        + (f"：{item['lead']}" if item.get("lead") else "") for item in items]
+        + (f"：{item['lead']}" if item.get("lead") else "")
+        + (f"（{files_words(item.get('files'))}）" if files_words(item.get("files")) else "") for item in items] + ["", MERGED_HINT]
     return built, "\n".join(lines)

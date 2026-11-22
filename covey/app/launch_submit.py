@@ -78,6 +78,9 @@ def submit_launch_form(app, ctx, event):
     if not outcome:
         return False
     path = ctx.state_dir / 'launch-forms' / (event['action_name'][len(SUBMIT_PREFIX):] + '.json')
+    if outcome == REDACTION_ASK:
+        after_ack(functools.partial(ask_unredacted, app, ctx, path))
+        return True
     if outcome == 'worktree':
         # A checkout takes seconds to tens of seconds on the NAS. One consumer
         # handles every card click, so the click only switches this card.
@@ -93,6 +96,23 @@ def submit_launch_form(app, ctx, event):
         # waiting (it failed, or a restart came first): "请稍后重试" then means what it says.
         after_ack(functools.partial(app.submission.release_waiting, ctx, event['chat_id']))
     return True
+
+
+REDACTION_ASK = 'redaction_ask'  # _submit_launch_form's outcome for a card that never asked about its lost 脱敏.
+
+
+def ask_unredacted(app, ctx, path):
+    """After the click's acknowledgement: a ready launch card that would start without its 脱敏 and never said so (drawn
+    before T647 P0-8) drawn again with its choices, the note and 不脱敏开始 on it (cards/launch_config.py unredacted);
+    nothing starts until that is clicked."""
+    with resource_lock(LAUNCH_FORM_LOCK, path):
+        try:
+            record = read_json(path)
+        except (OSError, ValueError):
+            return
+        if record.get('status') != 'ready':
+            return
+        rebuild_launch_card(app.topics, ctx, path, record, form_draft(record), kind='launch-redaction')
 
 
 def launch_in_progress(ctx):
@@ -169,6 +189,12 @@ def _submit_launch_form(app, ctx, event):
         # model's receipt says 开 or 关, another's nothing.
         if choice.get('redaction'):
             plan['redaction'] = record.get('selected_redaction') == 'on'
+        elif record.get('selected_redaction') == 'on':
+            # 脱敏 on and a model that cannot redact (T647 P0-8): only the 不脱敏开始 of a card that said so starts it, and its
+            # receipt says 关. A card drawn before it never asked: it is drawn again with the question (``ask_unredacted``).
+            if record.get('redaction_asked') != model_key:
+                return REDACTION_ASK
+            plan['redaction'] = False
         if choice.get('work_modes'):
             plan['work_modes'] = True  # Its receipt names the mode, the default too (Focus).
         if run_mode == 'worktree':
