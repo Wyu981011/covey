@@ -8,7 +8,7 @@
 
 ### 默认已开
 
-`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`），代码本身的默认是关，所以装这个版本之前注册的服务不变（重跑 `./install` 也只保留服务清单里已有的设置，不加新默认），要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。安装器在补飞书应用之前就定好这些开关，所以它们要的菜单和权限（菜单「看板」、置顶）一次补齐。
+`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`；只有 Codex 能调通时不写专项、整理专项和四个进阶开关，它们要 Claude Code，见[安装 · 只有 Codex 时](install.md#只有-codex-时)），代码本身的默认是关，所以装这个版本之前注册的服务不变（重跑 `./install` 也只保留服务清单里已有的设置，不加新默认），要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。安装器在补飞书应用之前就定好这些开关，所以它们要的菜单和权限（菜单「看板」、置顶）一次补齐。
 
 | 功能 | 开关 | 怎么确认开着 | 怎么关 |
 | --- | --- | --- | --- |
@@ -57,7 +57,7 @@
 | 功能 | 要准备什么 | 开关 |
 | --- | --- | --- |
 | [代答](#代答) | 带发送器的扩展（核心没有发送器）、主人本人登录的 lark-cli profile | `COVEY_PROXY_PROFILE`，见[代答 · 前置条件与怎么开](proxy.md#前置条件与怎么开) |
-| 没有 Claude Code 时的小模型判断 | harnesses.json 里或扩展提供的模型网关，和你在这个网关上的密钥 | `COVEY_JUDGE_GATEWAY=<网关名>:<模型>`：整理专项、“我本来想找你的事”、同时做几件事这几个一问一答的判断改走网关；管家仍然只能是 Claude Code（见清单里这一行） |
+| 没有 Claude Code 时的小模型判断 | harnesses.json 里或扩展提供的模型网关，和你在这个网关上的密钥 | `COVEY_JUDGE_GATEWAY=<网关名>:<模型>`：整理专项、“我本来想找你的事”、同时做几件事这几个一问一答的判断改走网关（见清单里这一行）。管家不靠它：它可以跑在 Codex 或 Antigravity 上（设置卡「配置」页的管家一段），只有 Codex 能调通时 `./install` 新装就把管家设成 Codex；专项的负责人仍要 Claude Code |
 | [网页工作台](web.md) | 一个配套的网页应用和它的开放接口密钥 | `COVEY_WEB=1`、`COVEY_WEB_CONFIG` |
 | [多设备](#多设备开发中默认关)（开发中） | 能 ssh 过去的其他机器、`devices.json` | `COVEY_DEVICES=1` |
 | [节点与机器状况](#节点与机器状况默认关) | 一个设备能连进来的监听地址 | `COVEY_NODE_LISTEN` |
@@ -82,8 +82,8 @@
 | [同时做几件事](butler.md#同时做几件事开关默认关) | `COVEY_BUTLER_TRACKS=1` |
 | [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` |
 
-- **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动。已经装好的服务再跑一次 `./install --showcase` 也行：服务清单里已有的设置照旧，只打开套餐里清单没有或关着的开关，效果和下一条一样。
-- **已经装好的**：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" --preset showcase`，先加 `--dry-run` 看会改什么（见[改开关三步](#改开关三步)）。它打开套餐里服务清单还没设、或设成关闭值（空、`0`、`off`、`false`、`no`）的开关，安装器写的那些也算在内，所以装这个版本之前注册的服务一条命令就补齐；设了别的值的不动（比如你自己的汇总时间、`COVEY_PROJECT_TIDY=auto`）；同一条命令里另写的 `KEY=VALUE` 盖过套餐。
+- **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动；只有 Codex 能调通时套餐里不含专项和整理专项（`core/switches.py` 的 `NEEDS_CLAUDE`），重跑加 `--showcase` 也一样。已经装好的服务再跑一次 `./install --showcase` 也行：服务清单里已有的设置照旧，只打开套餐里清单没有或关着的开关，效果和下一条一样。
+- **已经装好的**：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" --preset showcase`，先加 `--dry-run` 看会改什么（见[改开关三步](#改开关三步)）。它打开套餐里服务清单还没设、或设成关闭值（空、`0`、`off`、`false`、`no`）的开关，安装器写的那些也算在内，所以装这个版本之前注册的服务一条命令就补齐；设了别的值的不动（比如你自己的汇总时间、`COVEY_PROJECT_TIDY=auto`）；同一条命令里另写的 `KEY=VALUE` 盖过套餐。只有 Codex 能用的机器不要用 `--preset`：它照样打开专项和整理专项（`covey_service.py` 不看哪个 Harness 能调通），用 `./install --showcase`，或安装器最后几行给的那条不含专项的命令。
 - 置顶和自动 Pin 要应用有置顶权限和“消息已读”事件，「飞书应用待补」卡会提示；汇总的两个时间也是[夜里不打扰](usage.md#早晚汇总)的时段（没设 `COVEY_QUIET_HOURS` 时）。
 - 套餐没有一键关：不要哪一项，照[改开关三步](#改开关三步)把它设成关闭值。
 
@@ -309,7 +309,7 @@
 
 - `0`：不允许。不起后台线程、不改消息路由，设置卡没有管家的标签。
 - 不设或 `1`：允许。用不用由主人在设置卡上选的模式定（`<state>/main-thread.json` 的 `mode`），改模式不用重启。新部署第一次启动写成管家，日志 `main thread mode settled mode=agent|topics`。
-- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话只能用 Claude Code。
+- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话默认用 Claude Code，设置卡「配置」页的管家一段可以换成 Codex 或 Antigravity（`harness`，见[管家 · 换 Harness](butler.md#换-harness)）；只有 Codex 能调通的新装，`./install` 在服务第一次启动前写好 `"harness": "codex"`（`core/butler_settings.py` 的 `preset_harness`，文件里已经有 Harness 的不动）。
 - `main-thread.json` 里旧的 `"desk_topics": true` 读到也按 `false` 处理，启动时记一行 warning，见[已下线的功能与旧配置](legacy.md)。
 - 开着专项（`COVEY_PROJECTS=1`）时，话题能把只有管家能办的事转给管家（检查点 `ask_butler`，记录在 `<state>/butler-asks/`），没有单独的开关，见[在话题里说开专项](projects.md#在话题里说开专项)。
 

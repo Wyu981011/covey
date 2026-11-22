@@ -170,6 +170,20 @@ def merge_topic_defaults(state_dir, **fields) -> None:
     contract.forget_mode()
 
 
+def preset_harness(state_dir, harness) -> bool:
+    """The butler's Harness written into a settings file that names none yet, the rest of the file left as it is (no mode:
+    ``settle_mode`` writes that at the Bridge's first start, 管家 for a new deployment): what ./install does for a new service
+    where only that Harness works (service/installer.py, docs/install.md 只有 Codex 时). A file that names a Harness (the
+    owner chose it on the 设置 card) stays as it is. Whether it was written."""
+    with resource_lock("main-thread-settings", str(path(state_dir))):
+        data = read_object(path(state_dir))
+        if _text(data.get("harness")):
+            return False
+        write_json(path(state_dir), {**data, "harness": harness}, ensure_ascii=False, indent=1)
+    contract.forget_mode()
+    return True
+
+
 def _fresh(state_dir) -> bool:
     """No job and no topic yet: a new deployment's first start."""
     jobs, topics = Path(state_dir) / "jobs", Path(state_dir) / "topics"

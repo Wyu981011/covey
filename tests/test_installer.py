@@ -16,7 +16,7 @@ from unittest import mock
 
 from support import REPO, exec_tempdir
 
-from covey.core import app_manifest, qr, switches, welcome
+from covey.core import app_manifest, butler_settings, qr, switches, welcome
 from covey.core import env as cenv
 from covey.service import install_probe, installer
 from covey.service.install_probe import Probe
@@ -466,9 +466,9 @@ class ExtensionHookTest(InstallerCase):
 
 
 class ServiceTest(InstallerCase):
-    def start(self, up=False, install_code=0, *argv):
+    def start(self, up=False, install_code=0, *argv, working=("claude", "codex")):
         ins = self.make(*argv)
-        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["codex"]
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", list(working)
         self.data.mkdir(exist_ok=True)
         (self.data / "tmp").mkdir(exist_ok=True)
         ran = []
@@ -997,6 +997,161 @@ class ServiceEnvTest(InstallerCase):
             env = ins.service_probe_env()
         run.assert_not_called()
         self.assertNotIn("MYGW_API_KEY", env)
+
+
+class CodexOnlyTest(InstallerCase):
+    """D3 (T647 二波): where only Codex answers, a new service gets its butler on Codex (core/butler_settings.py
+    preset_harness, before its first start) and none of what needs Claude Code (core/switches.py NEEDS_CLAUDE: 专项, 整理专项),
+    with --showcase too; a re-run changes neither the switches nor the butler's Harness the owner has; Claude Code working
+    later is enabled by a re-run, and the closing lines say what is off and how to turn it on."""
+
+    def setUp(self):
+        super().setUp()
+        self.state = self.data / "harness-cli_fake"
+
+    def registered(self, environment):
+        from covey.service.manager import register
+        self.state.mkdir(parents=True, exist_ok=True)
+        register(self.data / "bridge-services", self.state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                 workdir=self.root, environment=environment, health_timeout=90)
+
+    def start(self, *argv, working=("codex",), up=False, changed=None):
+        ins = self.make(*argv)
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", list(working)
+        (self.data / "tmp").mkdir(parents=True, exist_ok=True)
+        self.order = []
+
+        def run_logged(name, argv, **kwargs):
+            self.order.append((name, butler_settings.path(self.state).exists()))
+            return 0, ""
+        with mock.patch.object(installer.Installer, "run_logged", side_effect=run_logged), \
+                mock.patch.object(installer.Installer, "service_up", return_value=up), \
+                mock.patch.object(installer.Installer, "precompile"), \
+                mock.patch.object(installer, "change_settings", return_value={"changed": changed or {}}) as self.changed:
+            ins.start_service(self.data / "harnesses.json")
+        return ins
+
+    def switches_of(self, ins):
+        return {key: cenv.get(key, None, ins.env) for key in switches.SHOWCASE}
+
+    def test_a_new_service_with_only_codex_gets_its_butler_on_codex_and_no_projects(self):
+        ins = self.start()
+        self.assertEqual(self.switches_of(ins), {key: switches.INSTALL.get(key) if key not in switches.NEEDS_CLAUDE else None
+                                                 for key in switches.SHOWCASE})
+        self.assertEqual(json.loads(butler_settings.path(self.state).read_text()), {"harness": "codex"})  # No mode.
+        self.assertEqual(self.order, [("service-install", False), ("bootstrap", True)])  # Written before the first start.
+        self.assertIn("只有 Codex 能调通：管家用 Codex；专项和整理专项要 Claude Code，先不开", self.text())
+        self.assertEqual(butler_settings.settle_mode(self.state), "agent")  # The first start: the butler, on Codex.
+        self.assertEqual(butler_settings.load(self.state).butler_harness, "codex")
+
+    def test_with_claude_code_working_nothing_changes(self):
+        for working in (("claude", "codex"), ("claude",)):
+            with self.subTest(working=working):
+                ins = self.start(working=working)
+                self.assertEqual(self.switches_of(ins), {key: switches.INSTALL.get(key) for key in switches.SHOWCASE})
+                self.assertFalse(butler_settings.path(self.state).exists())
+                self.assertNotIn("只有 Codex", self.text())
+
+    def test_only_codex_with_showcase_turns_on_the_demo_set_but_no_projects(self):
+        ins = self.start("--showcase")
+        self.assertEqual(self.switches_of(ins), {key: switches.SHOWCASE[key] if key not in switches.NEEDS_CLAUDE else None
+                                                 for key in switches.SHOWCASE})
+        self.assertEqual(cenv.get("COVEY_COLLAB", None, ins.env), "1")
+        self.registered({"LARK_BRIDGE_REVIEW": "1", "LARK_BRIDGE_PROJECTS": "0"})
+        (self.data / "install.json").write_text("{}")
+        ins = self.start("--showcase")  # Registered, down: registers again with the demo set but no 专项.
+        self.assertEqual((cenv.get("COVEY_PROJECTS", None, ins.env), cenv.get("COVEY_PROJECT_TIDY", None, ins.env),
+                          cenv.get("COVEY_PINNED_TOPICS", None, ins.env)), ("0", None, "1"))
+        fingerprint = ins.fingerprint(self.data / "harnesses.json")
+        (self.data / "install.json").write_text(json.dumps(fingerprint))
+        self.registered({"LARK_BRIDGE_REVIEW": "1", "LARK_BRIDGE_PROJECTS": "0"})
+        ins = self.make("--showcase")
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["codex"]
+        with mock.patch.object(installer, "change_settings", return_value={"changed": {}}) as changed:
+            ins.showcase_running()  # Running unchanged: the preset in its manifest, 专项 left as they are.
+        keep = {key: ("0" if key == "COVEY_PROJECTS" else None) for key in switches.NEEDS_CLAUDE}
+        changed.assert_called_once_with(self.data / "bridge-services", self.state, keep, preset="showcase")
+        from covey.service.manager import change_settings
+        report = change_settings(self.data / "bridge-services", self.state, keep, dry_run=True, preset="showcase")
+        self.assertEqual(sorted(report["changed"]), sorted(cenv.spellings(key)[-1] for key in switches.SHOWCASE
+                                                           if key not in switches.NEEDS_CLAUDE and key != "COVEY_REVIEW"))
+
+    def test_a_rerun_keeps_the_switches_and_the_butler_s_harness_the_owner_has(self):
+        self.registered({"LARK_BRIDGE_PROJECTS": "1", "LARK_BRIDGE_MEMORY": "0"})
+        butler_settings.path(self.state).write_text(json.dumps({"mode": "agent", "harness": "claude"}))
+        (self.data / "install.json").write_text("{}")
+        ins = self.start()  # Only Codex now, registered already: registers again from what it has.
+        self.assertEqual((cenv.get("COVEY_PROJECTS", None, ins.env), cenv.get("COVEY_MEMORY", None, ins.env),
+                          cenv.get("COVEY_REVIEW", None, ins.env)), ("1", "0", None))
+        self.assertEqual(json.loads(butler_settings.path(self.state).read_text()), {"mode": "agent", "harness": "claude"})
+        self.assertNotIn("管家用 Codex", self.text())
+        self.assertTrue(butler_settings.preset_harness(self.state, "codex") is False)  # A Harness chosen stays.
+
+    def test_claude_code_working_later_is_enabled_by_a_rerun_but_one_taken_out_stays_out(self):
+        path = self.data / "harnesses.json"
+        self.data.mkdir(parents=True, exist_ok=True)
+        for last, enabled, want in ((["codex"], ["codex"], ["codex", "claude"]),
+                                    (["claude", "codex"], ["codex"], ["codex"]),
+                                    (None, ["codex"], ["codex"])):
+            with self.subTest(last=last):
+                self.lines.clear()
+                path.write_text(json.dumps({"enabled_harnesses": enabled, "spaces": {"notify_space": "oc_x"}}))
+                (self.data / "install.json").write_text(json.dumps({"harnesses": last}) if last is not None else "{}")
+                ins = self.make()
+                ins.working = ["claude", "codex"]
+                ins.write_harness_config()
+                config = json.loads(path.read_text())
+                self.assertEqual((config["enabled_harnesses"], config["spaces"]), (want, {"notify_space": "oc_x"}))
+                self.assertEqual("claude：这次能调通了，加进启用的 Harness" in self.text(), want != enabled)
+
+    def closing(self, working, environment, butler=None):
+        self.registered(environment)
+        if butler:
+            butler_settings.path(self.state).write_text(json.dumps({"mode": "agent", "harness": butler}))
+        else:
+            butler_settings.path(self.state).unlink(missing_ok=True)
+        ins = self.make()
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", list(working)
+        with mock.patch.object(Path, "cwd", return_value=installer.REPO_ROOT):
+            return "\n".join(ins.closing_lines())
+
+    def test_the_closing_lines_say_what_only_codex_means_and_how_to_turn_projects_on(self):
+        installed = {cenv.spellings(key)[-1]: value for key, value in switches.without_claude(switches.INSTALL).items()}
+        text = self.closing(("codex",), installed, butler="codex")
+        state = self.state
+        turn_on = " ".join(f"{key}={switches.INSTALL[key]}" for key in switches.NEEDS_CLAUDE)
+        for words in ("已经开着：管家（Codex）、菜单「看板」、独立复核、到点回来看、记忆、知识条目",
+                      "只有 Codex 能调通：管家用 Codex；专项和整理专项要 Claude Code（专项的负责人跑在它上面），先没开",
+                      "装好并登录 Claude Code 以后：重新运行 ./install（它会把 Claude Code 加进启用的 Harness）；想让管家用它，"
+                      "在「设置」→「配置」的管家一段换成 Claude Code",
+                      f"开专项和整理专项：python3 -B bin/covey_service.py set --state-dir {state} {turn_on}",
+                      "COVEY_COLLAB=1", "（不含专项）"):
+            self.assertIn(words, text)
+        self.assertNotIn("--preset showcase", text)  # It would turn 专项 on.
+        self.assertNotIn("专项（", text.split("只有 Codex")[0])
+        text = self.closing(("codex",), installed)  # Installed before D3: no butler until it is switched.
+        self.assertIn("管家默认用 Claude Code，现在没有管家，在飞书「设置」→「配置」的管家一段把 Harness 换成 Codex", text)
+        self.assertNotIn("已经开着：管家", text)
+        text = self.closing(("claude", "codex"), installed, butler="codex")  # Claude Code installed since.
+        self.assertIn("Claude Code 能用了：管家还在用 Codex", text)
+        self.assertIn(f"开专项和整理专项：python3 -B bin/covey_service.py set --state-dir {state} {turn_on}", text)
+        self.assertIn("--preset showcase", text)
+        both = {cenv.spellings(key)[-1]: value for key, value in switches.INSTALL.items()}
+        text = self.closing(("claude", "codex"), both, butler="codex")  # The owner's own choice with 专项 on: nothing said.
+        self.assertNotIn("Claude Code 能用了", text)
+        self.assertIn("已经开着：管家（Codex）、专项（", text)
+
+    def test_the_tables_and_the_butler_file(self):
+        self.assertEqual(set(switches.NEEDS_CLAUDE) - set(switches.INSTALL), set())
+        self.assertEqual(set(switches.without_claude(switches.SHOWCASE)) & set(switches.NEEDS_CLAUDE), set())
+        self.assertEqual(set(switches.without_claude(switches.SHOWCASE)) | set(switches.NEEDS_CLAUDE), set(switches.SHOWCASE))
+        self.state.mkdir(parents=True)
+        butler_settings.path(self.state).write_text(json.dumps({"model": "gpt-x", "topic_defaults": {"run_mode": "direct"}}))
+        self.assertTrue(butler_settings.preset_harness(self.state, "codex"))
+        self.assertEqual(json.loads(butler_settings.path(self.state).read_text()),
+                         {"model": "gpt-x", "topic_defaults": {"run_mode": "direct"}, "harness": "codex"})
+        self.assertFalse(butler_settings.preset_harness(self.state, "agy"))
+        self.assertEqual(butler_settings.load(self.state).butler_harness, "codex")
 
 
 class EntryTest(unittest.TestCase):

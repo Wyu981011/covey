@@ -313,6 +313,7 @@ Bridge 记一份主人的长期原则，所有 Harness 的话题和管家都带�
 - **压缩和快照**：只有 Claude Code 由 Bridge 压缩（capability `compaction`）。Codex、Antigravity 自己压缩，Bridge 看不到，所以每一轮都给完整快照，不只给变了的行。
 - **脱敏**：只有 Claude Code 能脱敏。开着脱敏时不能换到别的 Harness；换过去以后脱敏一行不显示。
 - **不跟着管家换的**：专项负责人仍是 Claude Code（`app/project_loop.py` 的 `HARNESS`）；多路并行的判断模型和待命进程仍用 Claude Code；子 Agent 一项只对 Claude Code 生效。
+- **新装只有 Codex 时**：`./install` 在服务第一次启动前把 `harness` 写成 `codex`（`core/butler_settings.py` 的 `preset_harness`，只写这一项，私聊模式照旧由第一次启动写成管家），专项和整理专项不开（它们要 Claude Code）。之后装好 Claude Code 也不自动换回，在这一段换；见[安装 · 只有 Codex 时](install.md#只有-codex-时)。
 - **回退旧版本**：旧版本不读 `harness`，管家回到 Claude Code，但模型还是新 Harness 的模型 id；回退前先在设置卡上把 Harness 换回 Claude Code。
 
 ### 设置卡

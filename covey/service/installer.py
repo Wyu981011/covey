@@ -6,7 +6,10 @@
                     core/welcome.py GUIDE）；重跑沿用上次注册的工作区（install.json）
   2 准备 lark-cli   没有就装（npm 全局，不行装到数据根下 tools/）；``--skills`` 才同步 Skills
   3 检查 Harness    对 claude、codex 各做一次真实调用（service/install_probe.py），分清没登录、网络不通、其他；
-                    像网络问题时问一次代理地址；通过后把代理写进服务环境；扩展的安装钩子在这里跑
+                    像网络问题时问一次代理地址；通过后把代理写进服务环境；扩展的安装钩子在这里跑；重跑时这次调通、上次注册时
+                    没调通的加进 harnesses.json。只有 Codex 调通时（docs/install.md 只有 Codex 时）新服务的管家写成 Codex
+                    （core/butler_settings.py preset_harness，第一次启动前），不写要 Claude Code 的专项开关（core/switches.py
+                    NEEDS_CLAUDE），--showcase 也一样
   4 飞书应用        一个无头浏览器扫一次码：登录、建应用、授权、开发者后台补回调/事件/菜单/权限并发布、读回核对
                     （feishu/install_browser.py）；浏览器装不上或 ``--no-browser`` 时退回手机多次扫码
   5 注册并启动服务   scripts/bootstrap_harness_bridge.sh，先 bin/covey_service_install.py --mode auto --activate（托管），再 bootstrap（注册）；
@@ -38,7 +41,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.core import app_manifest, claude_retention, extensions, qr, switches, welcome
+from covey.core import app_manifest, butler_settings, claude_retention, extensions, qr, switches, welcome
 from covey.core import env as cenv
 from covey.core.paths import REPO_ROOT, data_home
 from covey.core.process import service_key
@@ -98,6 +101,13 @@ SWITCH_WORDS = {"COVEY_PROJECTS": "专项", "COVEY_PROJECT_AUTOWAKE": "叫醒负
                 "COVEY_PINNED_TOPICS": "话题看板", "COVEY_DIGEST_TIMES": "早晚汇总", "COVEY_BUTLER_TRACKS": "管家同时做几件事",
                 "COVEY_DISPATCH_CARD": "派发卡"}
 PROJECT_PARTS = ("COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY", "COVEY_PROJECT_TRIAGE")
+HARNESS_TITLES = {"claude": "Claude Code", "codex": "Codex", "agy": "Antigravity"}
+
+
+def only_codex(working) -> bool:
+    """Whether of the Harnesses that answered (``working``) Codex did and Claude Code did not (D3, docs/install.md 只有 Codex
+    时): the butler runs on Codex and what needs Claude Code (core/switches.py NEEDS_CLAUDE: 专项, 整理专项) is not turned on."""
+    return "codex" in working and "claude" not in working
 
 
 def say_now(text):
@@ -261,6 +271,7 @@ class Installer:
         self.browser_python, self.live_open, self.prepare_browser = None, False, prepare_browser
         self.working, self.extra, self.reasons, self.leftovers = [], [], {}, []
         self.switches_settled = False  # settle_switches ran
+        self.fresh = False  # settle_switches found no service registered for this app: a new one (D3 presets its butler)
         self.app_id = ""
 
     # Output ----------------------------------------------------------------------------------
@@ -480,9 +491,20 @@ class Installer:
         if "claude" in self.working and (line := claude_retention.hint(claude_retention.check(self.env))):
             self.note("提示：" + line)
 
+    def last_harnesses(self):
+        """The Harnesses the last registration of this data root had working (install.json, the fingerprint); None
+        without one."""
+        try:
+            found = json.loads((self.data / "install.json").read_text()).get("harnesses")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return found if isinstance(found, list) else None
+
     def write_harness_config(self):
         """<data>/harnesses.json: the working Harnesses enabled, the default (the roster's first) first; what else the
-        file holds stays, and so do the enabled ones that are not probed here."""
+        file holds stays, and so do the enabled ones that are not probed here. On a re-run a probed Harness that works
+        now and did not at the last registration (Claude Code installed after an install with only Codex, D3) is added;
+        one the owner took out of the file after an install had it working stays out."""
         from covey.core.roster import NAMES
 
         path = self.data / "harnesses.json"
@@ -497,7 +519,11 @@ class Installer:
             for n in old:
                 if n in PROBED and n not in self.working:
                     self.leftovers.append(f"{n} {self.reasons.get(n, '探测没通过')}，启动卡上会显示不可用（仍保留在已启用里）")
-            enabled = [n for n in NAMES if n in old or n in self.extra]
+            last = self.last_harnesses()
+            newly = [n for n in PROBED if n in self.working and n not in old and last is not None and n not in last]
+            for n in newly:
+                self.note(f"{n}：这次能调通了，加进启用的 Harness")
+            enabled = [n for n in NAMES if n in old or n in self.extra or n in newly]
         else:
             enabled = [n for n in NAMES if n in self.working or n in self.extra]
         config["enabled_harnesses"] = enabled
@@ -753,13 +779,18 @@ class Installer:
                 "harnesses": sorted(self.working + self.extra), "proxy": proxy, "config": str(config_path),
                 "repo": str(REPO_ROOT), "settings": settings}
 
+    def codex_only(self):
+        """Whether Codex answered and Claude Code did not (``only_codex`` of the Harnesses that worked)."""
+        return only_codex(self.working)
+
     def default_switches(self):
         """The switches a new service starts with on (INSTALL_SWITCHES, core/switches.py INSTALL: 装好就开; with
-        ``--showcase`` the 演示套餐 SHOWCASE): put into this shell's environment, which the launch saves in the manifest; one
-        the environment already sets stays, under either spelling (``self.env`` holds the old one: ``COVEY_PROJECTS=0`` is
-        ``LARK_BRIDGE_PROJECTS`` there)."""
+        ``--showcase`` the 演示套餐 SHOWCASE; where only Codex works either without NEEDS_CLAUDE): put into this shell's
+        environment, which the launch saves in the manifest; one the environment already sets stays, under either
+        spelling (``self.env`` holds the old one: ``COVEY_PROJECTS=0`` is ``LARK_BRIDGE_PROJECTS`` there)."""
         showcase = getattr(getattr(self, "args", None), "showcase", False)
-        for key, value in (switches.SHOWCASE if showcase else INSTALL_SWITCHES).items():
+        table = switches.SHOWCASE if showcase else INSTALL_SWITCHES
+        for key, value in (switches.without_claude(table) if only_codex(getattr(self, "working", ())) else table).items():
             if not str(cenv.get(key, "", self.env)).strip():
                 self.env[key] = value
 
@@ -807,18 +838,21 @@ class Installer:
         app's needs in feishu_app, the registration in start_service). A new service: INSTALL_SWITCHES, with ``--showcase``
         the 演示套餐 (default_switches). A service registered for this app already: its manifest's settings this run does
         not set are kept (keep_registered) and no new default is added (a re-run is safe); ``--showcase`` turns on what
-        the 演示套餐 has that the manifest lacks or has off (core/switches.py preset_changes) unless this shell sets it."""
+        the 演示套餐 has that the manifest lacks or has off (core/switches.py preset_changes) unless this shell sets it, and
+        where only Codex works not what needs Claude Code (NEEDS_CLAUDE)."""
         if self.switches_settled:
             return
         self.switches_settled = True
         registered = self.registered_environment()
+        self.fresh = registered is None
         if registered is None:
             self.default_switches()
             return
         shell = set(self.env)
         self.keep_registered(registered)
         if getattr(self.args, "showcase", False):
-            for name, value in switches.preset_changes("showcase", registered).items():
+            preset = switches.preset_changes("showcase", registered)
+            for name, value in (switches.without_claude(preset) if self.codex_only() else preset).items():
                 spellings = cenv.spellings(name)
                 if not shell & set(spellings):
                     for spelling in spellings:
@@ -850,6 +884,8 @@ class Installer:
         hosted = code == 0
         if hosted:
             self.note(f"开机自启：{boot_words(self.log('service-install'))}")
+        if self.fresh and self.codex_only():
+            self.preset_butler()
         code, tail_boot = self.run_logged("bootstrap", [
             str(REPO_ROOT / "scripts" / "bootstrap_harness_bridge.sh"), "--workdir", str(self.workdir),
             "--profile", self.args.profile, "--app-id", self.app_id, "--harness-config", str(config_path)], timeout=300)
@@ -865,13 +901,69 @@ class Installer:
         --preset showcase` puts it (only the switches it lacks or has off, everything else as it is), never by registering
         again from this shell, which would drop what was set with `covey_service.py set`. A refusal is only said."""
         state = self.service_state()
+        registered = self.registered_environment() or {}
+        # Where only Codex works the preset leaves NEEDS_CLAUDE as they are: a switch given here wins over the preset.
+        keep = {key: cenv.get(key, None, registered) for key in switches.NEEDS_CLAUDE} if self.codex_only() else {}
         try:
-            changed = change_settings(self.data / "bridge-services", state, {}, preset="showcase")["changed"]
+            changed = change_settings(self.data / "bridge-services", state, keep, preset="showcase")["changed"]
         except (OSError, ValueError) as exc:
-            self.leftovers.append(f"演示套餐没打开（{exc}）；稍后运行 python3 -B bin/covey_service.py set --state-dir {state} "
-                                  "--preset showcase")
+            self.leftovers.append(f"演示套餐没打开（{exc}）；稍后运行 {self.showcase_command(state, registered)}")
             return
         self.note(f"服务已在运行：演示套餐打开了 {len(changed)} 个开关" if changed else "服务已在运行，演示套餐的开关都开着")
+
+    def preset_butler(self):
+        """D3: a new service where only Codex works gets its butler on Codex (core/butler_settings.py preset_harness: the
+        settings file under its state directory, written before its first start, only while it names no Harness), so the
+        private chat has a butler from the first message; the switches that need Claude Code were left out
+        (default_switches). A file that cannot be written is only said."""
+        try:
+            written = butler_settings.preset_harness(self.service_state(), "codex")
+        except OSError as exc:
+            self.note(f"没能把管家设成 Codex（{exc.strerror or type(exc).__name__}）：装好后在飞书「设置」→「配置」的管家一段换")
+            return
+        self.note(("只有 Codex 能调通：管家用 Codex" if written else "只有 Codex 能调通：管家的 Harness 选过了，照旧")
+                  + "；专项和整理专项要 Claude Code，先不开")
+
+    def butler_harness(self):
+        """The Harness the butler of this app's service runs on (core/butler_settings.py: Claude Code unless one is set)."""
+        return butler_settings.load(self.service_state()).butler_harness
+
+    def showcase_command(self, state, environment):
+        """The command that turns on the 演示套餐 for the service of ``state``, '' when ``environment`` (its manifest's) has it
+        all: `--preset showcase`; where only Codex works the preset's switches without NEEDS_CLAUDE, written out (the
+        preset would turn 专项 on)."""
+        changes = switches.preset_changes("showcase", environment)
+        head = f"{self.entry('covey_service.py')} set --state-dir {state}"
+        if not self.codex_only():
+            return f"{head} --preset showcase" if changes else ""
+        changes = switches.without_claude(changes)
+        return f"{head} " + " ".join(f"{key}={value}" for key, value in changes.items()) if changes else ""
+
+    def harness_lines(self, state, environment):
+        """D3, in the closing lines: what only Codex working means for this service and what to do once Claude Code works
+        (docs/install.md 只有 Codex 时); with Claude Code working, a line only while the service still runs as one installed
+        with Codex only (the butler on Codex, 专项 off)."""
+        set_now = dict(switches.shown(environment))
+        projects = str(set_now.get("COVEY_PROJECTS", "")).strip().lower() not in switches.OFF_VALUES
+        butler = self.butler_harness()
+        turn_on = f"{self.entry('covey_service.py')} set --state-dir {state} " + " ".join(
+            f"{key}={switches.INSTALL[key]}" for key in switches.NEEDS_CLAUDE)
+        if "claude" in self.working:
+            if butler == "codex" and not projects:
+                return ["Claude Code 能用了：管家还在用 Codex，要换在飞书「设置」→「配置」的管家一段改；开专项和整理专项：" + turn_on]
+            return []
+        if "codex" not in self.working:
+            return []
+        first = "只有 Codex 能调通：" + ("管家用 Codex" if butler == "codex" else
+                                       "管家默认用 Claude Code，现在没有管家，在飞书「设置」→「配置」的管家一段把 Harness 换成 Codex")
+        first += "；专项开着，但它的负责人要 Claude Code，装好之前用不了" if projects else \
+            "；专项和整理专项要 Claude Code（专项的负责人跑在它上面），先没开"
+        then = "装好并登录 Claude Code 以后：重新运行 ./install（它会把 Claude Code 加进启用的 Harness）"
+        if butler == "codex":
+            then += "；想让管家用它，在「设置」→「配置」的管家一段换成 Claude Code"
+        if not projects:
+            then += f"；开专项和整理专项：{turn_on}"
+        return [first, then]
 
     # The service's own environment (D4) ---------------------------------------------------------------------------
 
@@ -967,16 +1059,18 @@ class Installer:
         return [line for line in done.stdout.splitlines() if line.strip()]
 
     def feature_words(self, environment):
-        """What the service runs with, in the words of docs/install.md 装好以后: the butler (Claude Code enabled, COVEY_BUTLER
-        not off) and the switches of SWITCH_WORDS it has on (core/switches.py shown: its manifest's, either spelling)."""
+        """What the service runs with, in the words of docs/install.md 装好以后: the butler (its Harness working,
+        COVEY_BUTLER not off; one on another Harness than Claude Code says which) and the switches of SWITCH_WORDS it has on
+        (core/switches.py shown: its manifest's, either spelling)."""
         set_now = dict(switches.shown(environment))
 
         def on(key):
             return key in set_now and str(set_now[key]).strip().lower() not in switches.OFF_VALUES
 
         words = []
-        if "claude" in self.working + self.extra and str(set_now.get("COVEY_BUTLER", "1")).strip().lower() not in switches.OFF_VALUES:
-            words.append("管家")
+        butler = self.butler_harness()
+        if butler in self.working + self.extra and str(set_now.get("COVEY_BUTLER", "1")).strip().lower() not in switches.OFF_VALUES:
+            words.append("管家" if butler == "claude" else f"管家（{HARNESS_TITLES.get(butler, butler)}）")
         for key, word in SWITCH_WORDS.items():
             if key in PROJECT_PARTS or not on(key):
                 continue
@@ -1002,9 +1096,11 @@ class Installer:
         words = self.feature_words(environment)
         if words:
             lines.append("已经开着：" + "、".join(words))
+        lines += self.harness_lines(state, environment)
         lines.append("想多开：")
-        if switches.preset_changes("showcase", environment):
-            lines.append(f"    演示套餐  {service} set --state-dir {state} --preset showcase")
+        showcase = self.showcase_command(state, environment)
+        if showcase:
+            lines.append(f"    演示套餐  {showcase}" + ("（不含专项）" if self.codex_only() else ""))
         lines += [f"    单个开关  {service} set --state-dir {state} --dry-run COVEY_DIGEST_TIMES=09:30,21:30"
                   "（先看会改什么，去掉 --dry-run 才改）",
                   "    开关一览  docs/configuration.md「开关速查」",
