@@ -200,7 +200,7 @@ def retry_hint():
 
 def interrupted_notice(job_id) -> str:
     """The notice of task #``job_id`` left unfinished (a restart, its task runner gone): report_unfinished's text."""
-    return f"任务 #{job_id} 已中断。在原话题{retry_hint()} 检查已有工作后继续。"
+    return f"任务 #{job_id} 停住了：中途被打断，没有跑完。在原话题{retry_hint()} 检查已有工作后继续。"
 
 
 def ask_words(record, listed=0) -> str:

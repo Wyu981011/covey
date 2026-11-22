@@ -40,17 +40,31 @@ PACKED = GOLDEN.with_name("cards.json.xz")
 RETIRED = re.compile("主线程|线程|话题区|长活|快事|路在做|一路(?!径)|多路(?!径)|Personal Agent|由快事升级|派发活卡片|专项整理|话题摘要")
 
 # The status words docs/glossary.md 状态词 retired (要换掉的说法, core/look.py RETIRED), each as a word of its own: not inside a
-# longer one (完成标准, 发送失败, 打断). Not every module is clean of them yet (docs/glossary.md: the 执行过程 panel's 进行中,
-# the recovery card's 已完成：), so they are checked where the global cards say a state (T647 P0-1, B8): the 看板,
-# 手上的事, the 专项卡, the status card and the 派发卡, their golden samples and the code that draws them.
+# longer one (完成标准, 发送失败, 打断). They are checked where a state is said and the module is clean of them: the global
+# cards (T647 P0-1, B8: the 看板, 手上的事, the 专项卡, the status card and the 派发卡), then the conversation's cards and what
+# the butler and a turn read of a turn (B8's second batch: the task card, its 执行过程 and status line, the question and
+# recovery cards, the answer card, 换配置 and its handoff, the 设置 card's 能做什么 and 记忆), their golden samples and the code
+# that draws them. Left out: an error a command or a check gave (git diff 失败, 创建 worktree 失败, agy models 失败, 启动检查失败),
+# core/look.py's own RETIRED table, and modules a parallel change owns now (the web page's, the installer's).
 STATUS_WORDS = sorted({re.sub(r"[^一-鿿]", "", word) for words in look.RETIRED.values() for word in words} - {""},
                       key=len, reverse=True)
 STATUS_RETIRED = re.compile(r"(?<![一-鿿])(" + "|".join(STATUS_WORDS) + r")(?![一-鿿])")
 STATUS_MODULES = ("covey/cards/board.py", "covey/cards/overview.py", "covey/cards/project_card.py", "covey/cards/status_card.py",
                   "covey/cards/dispatch_card.py", "covey/app/digest.py", "covey/app/overview.py", "covey/app/pins.py",
                   "covey/app/project_facts.py", "covey/app/status_cards.py", "covey/app/dispatch_cards.py",
-                  "covey/core/board_read.py")
-STATUS_SAMPLES = ("digest.board", "overview.", "project.", "status_card.", "task.dispatch_")
+                  "covey/core/board_read.py",
+                  # B8's second batch.
+                  "covey/cards/trace_view.py", "covey/cards/streaming.py", "covey/cards/task_status.py", "covey/core/status_line.py",
+                  "covey/core/checkpoint.py", "covey/core/turn_words.py", "covey/core/progress.py", "covey/core/text.py",
+                  "covey/core/failure.py", "covey/app/job_dispatch.py", "covey/app/recovery_cards.py", "covey/cards/recovery.py",
+                  "covey/app/diag_summary.py", "covey/app/subagent_recovery.py", "covey/app/butler_search.py",
+                  "covey/core/butler_mcp.py", "covey/core/track_ledger.py", "covey/core/collab.py", "covey/backends/claude/handoff.py",
+                  "covey/cards/question_cards.py", "covey/app/question_display.py", "covey/cards/answer_card.py",
+                  "covey/cards/review.py", "covey/app/butler_reply.py", "covey/app/switch_handoff.py", "covey/app/harness_switch.py",
+                  "covey/cards/switch_form.py", "covey/app/about_panel.py", "covey/cards/about_panel.py",
+                  "covey/app/memory_panel.py", "covey/cards/memory_panel.py", "covey/app/memory_collect.py")
+STATUS_SAMPLES = ("digest.board", "overview.", "project.", "status_card.", "task.", "trace.", "main_task.", "question.",
+                  "recovery.", "switch.", "settings.about", "settings.memory")
 
 # (path, the literal as it is written, why it keeps the old word)
 ALLOWED = (
@@ -270,15 +284,17 @@ class RetiredWordsTest(unittest.TestCase):
         self.assertEqual({entry[:2] for entry in ALLOWED}, used, "an ALLOWED entry no longer matches anything: remove it")
 
     def test_the_global_cards_say_no_retired_status_word(self):
-        """B8 (T647): the 看板, 手上的事, the 专项卡, the status card and the 派发卡 say a state in core/look.py STATES' words
-        (停住了, 已停止, 做完, 等你, 在做 ...), in what they show (the golden samples) and in the code that draws them."""
+        """B8 (T647): the 看板, 手上的事, the 专项卡, the status card and the 派发卡, then the conversation's cards (the task
+        card and its 执行过程, the question, recovery and answer cards, 换配置's handoff, 能做什么 and 记忆) say a state in
+        core/look.py STATES' words (停住了, 已停止, 做完, 等你, 在做 ...), in what they show (the golden samples) and in the code
+        that draws them and what the butler reads of a turn."""
         for word in ("失败", "已完成", "执行失败", "等你回答：推哪几个？", "进行中", "已中断。", "⚠️ 失败 · 后端退出"):
             self.assertIsNotNone(STATUS_RETIRED.search(word), word)
         for word in ("完成标准", "发送失败", "停住了", "已停止", "做完", "等你", "要你定：推哪几个？", "被停止了", "重启打断"):
             self.assertIsNone(STATUS_RETIRED.search(word), word)
         text = GOLDEN.read_text(encoding="utf-8") if GOLDEN.exists() else lzma.decompress(PACKED.read_bytes()).decode("utf-8")
         samples = {name: card for name, card in json.loads(text).items() if name.startswith(STATUS_SAMPLES)}
-        self.assertGreater(len(samples), 40)
+        self.assertGreater(len(samples), 250)
         found = [f"{name}: {match.group()!r} in {text[max(0, match.start() - 20):match.end() + 20]!r}"
                  for name, card in samples.items() for text in strings(card) for match in STATUS_RETIRED.finditer(text)]
         self.assertEqual(found, [], "golden samples of the global cards with a status word docs/glossary.md retired")

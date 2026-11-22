@@ -36,7 +36,7 @@ def tool_list(environ=None) -> list[dict]:
 def content(answer) -> dict:
     """An answer {"ok", "text", "data"} as a tools/call result."""
     answer = answer if isinstance(answer, dict) else {}
-    text = str(answer.get("text") or ("完成" if answer.get("ok") else "Bridge 没有给出说明"))
+    text = str(answer.get("text") or ("做完了" if answer.get("ok") else "Bridge 没有给出说明"))
     data = answer.get("data")
     if isinstance(data, dict) and data:
         extra = json.dumps(data, ensure_ascii=False, default=str)

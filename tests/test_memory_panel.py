@@ -150,6 +150,32 @@ class MemoryTabTests(MemoryCase):
         self.assertTrue(topic_memory.memory_path(self.state, TOPIC).exists())  # A tombstone, as 不对 leaves.
         self.assertIn('话题（0）', text_of(self.card()))
 
+    def test_a_line_he_said_in_a_topic_goes_global_in_one_click(self):
+        """T647 E4: 升为全局 on a topic's line of 你说的: one of the 全局 principles then, its topic entry a tombstone; not a line
+        from a topic with redaction on (only such a topic reads it), not one of 它总结的."""
+        entry, _ = topic_memory.add(self.state, TOPIC, '回答先给结论再讲过程')
+        marked, _ = topic_memory.add(self.state, TOPIC, '项目代号用简称', redacted=True)
+        upsert_job_record(self.state, 'job-1', job_id=1, topic_id=TOPIC, chat_id='dm', status='done',
+                          memory_notes=[{'kind': 'remembered', 'text': entry['text'], 'scope': '管这个话题',
+                                         'entry_id': entry['id']}])
+        self.memory_tab()
+        offered = {v['key'] for _, v in values(self.card(), cards.PROMOTE)}
+        self.assertEqual(offered, {f'topic:{TOPIC}:{entry["id"]}'})  # Not the marked one.
+        self.assertEqual(self.click(cards.PROMOTE, 'ev-g1', key=f'topic:{TOPIC}:{entry["id"]}'), 'memory_tab')
+        self.assertEqual([p['text'] for p in principles.entries(self.state)], ['回答先给结论再讲过程'])
+        self.assertEqual([row['text'] for row in topic_memory.live(self.state, TOPIC)], ['项目代号用简称'])
+        text = text_of(self.card())
+        self.assertIn('已升为全局：回答先给结论再讲过程', text)
+        self.assertIn('全局（1）', text)
+        from covey.app.memory_panel import promote
+        with self.assertRaisesRegex(ValueError, '脱敏'):
+            promote(self.state, f'topic:{TOPIC}:{marked["id"]}')
+        lead, _ = topic_memory.add(self.state, TOPIC, '它自己归纳的一条', source='lead')
+        with self.assertRaisesRegex(ValueError, '只有你说的'):
+            promote(self.state, f'topic:{TOPIC}:{lead["id"]}')
+        self.assertIsNone(promote(self.state, f'topic:{TOPIC}:gone'))
+        self.assertEqual(len(principles.entries(self.state)), 1)
+
     def test_only_the_owner_acts(self):
         gone, _ = principles.save(self.state, principles.OWNER, '不要用表情')
         self.memory_tab()
@@ -275,15 +301,39 @@ class AboutTabTests(HubCase):
         return text_of(self.card())
 
     def test_it_says_what_is_on_and_how_to_get_what_is_not(self):
-        with mock.patch.dict(os.environ, {'COVEY_DIGEST_TIMES': '21:30,09:30', 'COVEY_MEMORY': ''}):
+        with mock.patch.dict(os.environ, {'COVEY_DIGEST_TIMES': '21:30,09:30', 'COVEY_MEMORY': '', 'COVEY_KNOWLEDGE': ''}):
             text = self.about()
-        on, off = text.index('能做的（'), text.index('还没开的（')
-        self.assertLess(on, text.index('每天 09:30、21:30 在私聊发汇总卡'))
-        self.assertLess(off, text.index('COVEY&#95;MEMORY=1'))
+        # Three groups by what the owner does with them (T647 D6), each line what it does for him first.
+        work, safe, see = (text.index(title + '（开着 ') for title in ('交给它办事', '不断、不丢', '看得全、记得住'))
+        self.assertLess(work, safe)
+        self.assertLess(safe, see)
+        self.assertLess(see, text.index('到点在私聊发一张汇总卡（每天 09:30、21:30）'))
+        self.assertLess(see, text.index('没开：设 COVEY&#95;MEMORY=1 和 COVEY&#95;KNOWLEDGE=1'))
         self.assertIn('Harness：', text)
         self.assertIn('没有启用扩展', text) if not about_panel.extensions.enabled() else None
+        self.assertIn('--state-dir ' + str(self.state).replace('_', '&#95;'), text.replace('&#45;', '-'))
         # Read only: the tab row's buttons and none of its own.
         self.assertEqual({v['kind'] for _, v in values(self.card())}, {TAB})
+
+    def test_it_lists_what_every_deployment_has_and_the_new_install_s_defaults(self):
+        """T647 D6: 重启不打断, 换配置, 回退 and 限流后自动继续 were not listed; the 看板 ./install turns on read as off (only the
+        digest's switch was read); 知识条目 was a feature of its own beside 记忆 (docs/glossary.md: one word, 记忆)."""
+        env = {'COVEY_BOARD': '1', 'COVEY_DIGEST_TIMES': '', 'COVEY_REVIEW': '1', 'COVEY_REVISIT': '1', 'COVEY_MEMORY': '1',
+               'COVEY_KNOWLEDGE': '1'}
+        with mock.patch.dict(os.environ, env):
+            rows = {row['name']: row for row in about_panel.features(about_panel.Probe(self.state, self.app.topics.apps,
+                                                                                        self.app.runtime))}
+        for name in ('重启不打断', '换配置不断上下文', '回退一步', '限流后自动继续', '撤回和编辑跟着变', '在跑时补一句', '看板',
+                     '独立复核', '到点回来看', '记忆'):
+            self.assertTrue(rows[name]['on'], name)
+        self.assertFalse(rows['早晚汇总']['on'])
+        self.assertNotIn('知识条目', rows)
+        self.assertEqual({row['group'] for row in rows.values()}, {about_panel.WORK, about_panel.SAFE, about_panel.SEE})
+        for row in rows.values():
+            self.assertTrue(row['good'], row['name'])  # What it does for him, on or off.
+        with mock.patch.dict(os.environ, {'COVEY_MEMORY': '1', 'COVEY_KNOWLEDGE': ''}):
+            half = about_panel._memory(None)
+        self.assertEqual(half[:2], (True, '“记一下”的事还没开：设 COVEY_KNOWLEDGE=1'))
 
     def test_without_claude_code_there_is_no_butler_and_it_says_how_to_get_one(self):
         apps = {name: app for name, app in self.app.topics.apps.items() if name != 'claude'}
@@ -297,9 +347,10 @@ class AboutTabTests(HubCase):
     def test_a_check_that_fails_says_so_and_the_page_stays(self):
         def broken(probe):
             raise RuntimeError('boom')
-        with mock.patch.object(about_panel, 'FEATURES', (('坏的', broken), *about_panel.FEATURES[:1])):
+        with mock.patch.object(about_panel, 'FEATURES', (('坏的', about_panel.WORK, '做点事', broken), *about_panel.FEATURES[:1])):
             rows = about_panel.features(about_panel.Probe(self.state, self.app.topics.apps, self.app.runtime))
-        self.assertEqual(rows[0], {'name': '坏的', 'on': False, 'line': '读不出来（RuntimeError）', 'switch': ''})
+        self.assertEqual(rows[0], {'name': '坏的', 'group': about_panel.WORK, 'good': '做点事', 'on': False,
+                                   'line': '读不出来（RuntimeError）', 'switch': ''})
         self.assertEqual(len(rows), 2)
 
     def test_someone_else_is_refused_on_the_card(self):

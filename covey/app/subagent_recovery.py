@@ -73,7 +73,7 @@ def _write(ctx, record, rest):
         directory = run_dir(ctx.state_dir, record["key"])
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / FILE
-        words = {"finished": "已完成", "failed": "出错", "unfinished": "没做完"}
+        words = {"finished": "做完", "failed": "出错", "unfinished": "没做完"}
         path.write_text("\n\n".join(f"## {e.get('description', '')}（{words.get(e.get('end'), '没做完')}）\n\n"
                                     f"{str(e.get('text') or '（没有文字）')[:FILE_CHARS]}" for e in rest) + "\n",
                         encoding="utf-8")

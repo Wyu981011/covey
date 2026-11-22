@@ -48,7 +48,7 @@ DOC_LINK = re.compile(r"/(?:wiki|docx|docs|doc|sheets|sheet|base|bitable|file|sl
 TOKEN = re.compile(r"[A-Za-z0-9]{16,64}")
 SKIPPED = frozenset({"bridge_preflight", "updated_at"})  # The Bridge's own checkpoint fields, not the turn's.
 OWNERS = frozenset({"saved_user_answers"})  # Checkpoint fields with the owner's words: the answers the Bridge keeps.
-CHECKPOINT_NAMES = {"phase": "阶段", "completed": "已完成", "artifacts": "产物", "external_tasks": "外部任务",
+CHECKPOINT_NAMES = {"phase": "阶段", "completed": "做完的步骤", "artifacts": "产物", "external_tasks": "外部任务",
                     "next_step": "下一步", "question": "在问", "questions": "问题", "saved_user_answers": "主人的回答"}
 FIRST, ALSO, LATER, MENTIONED = "第一次出现", "结果里也有", "后续沿用", "只是提到"
 CLASS_WEIGHT = {FIRST: 3, ALSO: 2, LATER: 1, MENTIONED: 1}

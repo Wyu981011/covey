@@ -449,12 +449,20 @@ class Runs:
             ctx, history_snapshot, getattr(job, "cancel_event", None),
             ready=lambda: ((bool(ctx.device) or Path(ctx.workdir).is_dir()) and not self._redaction_refusal(ctx)
                            and not self._limit_refusal(ctx)),
-            note=lambda text: self._bridge_note(ctx, job, "bridge-handoff", text))
+            note=lambda text: self._bridge_note(ctx, job, "bridge-handoff", text),
+            show=lambda element: self._handoff_block(ctx, job, element))
         earlier = earlier_history(history_snapshot, job.message_id, user_text)
         if proxy_topic(ctx):
             earlier = brief_history(earlier)  # Each earlier batch by its messages; its rules are this batch's.
         # After a switch each earlier message is cut short: the transcript file has them whole.
         return ctx, first_turn_message(user_text, capped(earlier) if handoff else earlier) + handoff
+
+    def _handoff_block(self, ctx: BridgeContext, job: ReplyJob, element: dict) -> None:
+        """The 交接 block (app/switch_handoff.py) on the job's task card, right above its answer; replaced in place."""
+        progress = getattr(job, "progress", None)
+        if progress is None or getattr(progress, "slim", False):
+            return  # The butler's slim card never switches; no card, no block.
+        self.cards.set_task_element(ctx, job, element, before=progress.element_id)
 
     def _bridge_note(self, ctx: BridgeContext, job: ReplyJob, key: str, text: str) -> None:
         """A line of the Bridge's own in the task card's 执行过程 (one ``key`` per turn, a later text replaces it)."""

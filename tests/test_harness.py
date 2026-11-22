@@ -754,8 +754,8 @@ class RetiredHarnessTests(unittest.TestCase):
         self.assertEqual(status['old-done'], ('done', None))
         self.assertFalse(queued_path(self.state, 'old-queued').exists())
         self.assertEqual(self.app.runtime.jobs.queue.qsize(), 0)
-        self.assertEqual(sorted(self.sent()), [('任务 #2 已中断。' + NOTICE, self.app.voice.key('retired-stale', 'old-running')),
-                                               ('任务 #3 已中断。' + NOTICE, self.app.voice.key('retired-stale', 'old-queued'))])
+        self.assertEqual(sorted(self.sent()), [('任务 #2 停住了：' + NOTICE, self.app.voice.key('retired-stale', 'old-running')),
+                                               ('任务 #3 停住了：' + NOTICE, self.app.voice.key('retired-stale', 'old-queued'))])
         self.assertIn(f'task runner not adopted: {live.name} harness=neeko not in roster', self.logs)
         self.assertIn('queued job not restored: old-queued.json harness=neeko not in roster', self.logs)
         maintain(self.state)

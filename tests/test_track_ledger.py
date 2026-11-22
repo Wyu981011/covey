@@ -104,7 +104,7 @@ class LedgerTest(Switched):
         self.assertIn("请求「查一下上周的部署记录」→ 上周共部署 3 次。", lines[1])
         self.assertTrue(lines[1].endswith("… → T12、T13"))
         self.assertLessEqual(len(lines[1].split("→ ")[1]), ledger.SHOW_CHARS + 20)
-        self.assertIn("（失败） 请求「请求 b」→ 没有送达的回答", lines[2])
+        self.assertIn("（停住了） 请求「请求 b」→ 没有送达的回答", lines[2])
         self.assertIn("（已停止）", lines[3])
         self.assertEqual(lines[4], "（更早的还有 2 条没列）")
         self.assertEqual(ledger.render([]), "")

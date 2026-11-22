@@ -48,7 +48,9 @@ def step_text(steps, times, wall):
     return words, doing is not None
 
 
-AGENT_STATES = {"completed": "已完成", "errored": "出错", "interrupted": "已中断", "cancelled": "已中断"}
+# How a sub-task ended, after its name (docs/ui.md 3: 做完, not 已完成; a sub-task the turn stopped reads as the process
+# panel says it, cards/trace_view.py TraceView.agent_element).
+AGENT_STATES = {"completed": "做完了", "errored": "出错", "interrupted": "已停止", "cancelled": "已停止"}
 
 
 def trace_progress(trace, now):

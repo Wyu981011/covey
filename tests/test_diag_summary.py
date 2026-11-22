@@ -68,7 +68,7 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("任务：#42 · claude · claude-fable-5 xhigh · failed / failed", lines)
         step = next(line for line in lines if line.startswith("最近成功的一步："))
         self.assertIn("跑了测试", step)  # The failed deploy after it is not the last good step.
-        self.assertIn("检查点：停在 部署；已完成 2 项", lines)
+        self.assertIn("检查点：停在 部署；做完 2 项", lines)
         self.assertIn("重试：自动检查并继续 1 次（本轮被重启打断）；接着任务 #41 做", lines)
         self.assertTrue(any(line.startswith("原因：这一轮没做完") for line in lines))
         self.assertIn("详情：主任务中途出错；错误码 root_failed", lines)  # Its code once, in the detail.

@@ -46,7 +46,7 @@ TOO_MANY = "一次最多请 {n} 位协助，这次点了 {m} 位：先少点几�
 OPEN, DONE, CANCELLED = "open", "done", "cancelled"
 COLLAB_TRANSITIONS = {OPEN: {DONE, CANCELLED}, DONE: set(), CANCELLED: set()}
 
-# One ask: 待校验 → 排队 → 已接手 → 已答复 → 已被汇总方读取; or 未接手, 失败, 到期, 已取消.
+# One ask: 待校验 → 排队 → 已接手 → 已答复 → 已被汇总方读取; or 未接手, 停住了 (it failed), 到期, 已取消.
 CHECKING, QUEUED, TAKEN, REPLIED, READ = "checking", "queued", "taken", "replied", "read"
 NOT_TAKEN, FAILED, EXPIRED = "not_taken", "failed", "expired"
 ASK_TRANSITIONS = {
@@ -58,7 +58,7 @@ ASK_TRANSITIONS = {
 }
 ASK_ENDED = frozenset(state for state, following in ASK_TRANSITIONS.items() if not following)
 ASK_WORDS = {CHECKING: "待校验", QUEUED: "排队", TAKEN: "已接手", REPLIED: "已答复", READ: "已被汇总方读取",
-             NOT_TAKEN: "未接手", FAILED: "失败", EXPIRED: "到期", CANCELLED: "已取消"}
+             NOT_TAKEN: "未接手", FAILED: "停住了", EXPIRED: "到期", CANCELLED: "已取消"}
 
 # The lead's receipts of a collaboration in a project (core/projects.py inbox): an answer goes into the inbox and wakes
 # nobody; a gap the integrator cannot close itself (a missing item, a conflict, a dependency) wakes the lead.

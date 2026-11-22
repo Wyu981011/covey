@@ -155,6 +155,6 @@ class JobDispatch:
                               status_message=notice)
             self.runtime.log(f"job #{record.get('job_id')} of retired harness={name} marked interrupted")
             if record.get('chat_id') and record.get('topic_id') and record.get('kind') == 'chat':
-                self.messenger.send_message(ctx.profile, record['chat_id'], f"任务 #{record.get('job_id')} 已中断。{notice}",
+                self.messenger.send_message(ctx.profile, record['chat_id'], f"任务 #{record.get('job_id')} 停住了：{notice}",
                                             self.voice.key('retired-stale', str(record['key'])),
                                             reply_to_message_id=str(record.get('reply_to_message_id') or ''), voice=self.voice)

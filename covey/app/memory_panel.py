@@ -14,7 +14,9 @@ whatever its room (core/memory.py ``fill``).
 Deleting goes through the paths that already exist: core/principles.py ``delete``, core/knowledge.py ``drop`` (with a reason
 that says it was the 设置 card), core/project_memory.py ``delete`` and core/topic_memory.py ``delete`` (tombstones, as 不对 on an
 answer card leaves). A button's ``key`` names the entry in its store: ``principle:<id>``, ``knowledge:<id>``,
-``project:<project id>:<id>``, ``topic:<topic id>:<id>``.
+``project:<project id>:<id>``, ``topic:<topic id>:<id>``. 升为全局 (``promote``, T647 E4) makes a line of 你说的 in a project's or a
+topic's memory one of the 全局 principles (core/principles.py ``save``) and the entry it was a tombstone, as it does on an answer
+card (app/memory_collect.py promote); not a line from a topic with redaction on, which only such a topic may read.
 
 The tab's record is the 设置 card's (app/settings_hub.py, app/menu_panel.py); a click (app/unified.py PANELS, the owner's) acts
 outside the record's lock, then the whole card is drawn again under it once the click is acknowledged (``notice`` says what
@@ -28,7 +30,7 @@ from covey.app.card_lanes import after_ack
 from covey.app.memory_collect import TOPIC_WORDS
 from covey.app.menu_panel import FOLDED, MenuPanel, hub_top
 from covey.app.prompts import memory_block
-from covey.cards.memory_panel import DELETE, KINDS, OPEN, PIN, WORKSPACE, WORKSPACES, memory_card
+from covey.cards.memory_panel import DELETE, KINDS, OPEN, PIN, PROMOTE, WORKSPACE, WORKSPACES, memory_card
 from covey.cards.settings_hub import MEMORY
 from covey.core import knowledge, memory, principles, project_memory, projects, topic_memory
 from covey.core.jobs import select_job_records
@@ -67,9 +69,11 @@ def room_line(title, info) -> str:
 
 
 def row_of(item, key, carried=None, where="") -> dict:
-    """An entry of the card: ``carried`` the refs the next turn carries (None: the part has no preview)."""
+    """An entry of the card: ``carried`` the refs the next turn carries (None: the part has no preview). ``promotable``: a line
+    of the owner's in a project's or a topic's memory, not marked redacted (``promote``)."""
     return {"key": key, "text": item["text"], "by": memory.OWNER_WORDS[item["by"]], "pinned": bool(item.get("pinned")),
             "pinnable": key.startswith("principle:"), "where": where,
+            "promotable": key.startswith(("project:", "topic:")) and item["by"] == memory.OWNER and not item.get("redacted"),
             "out": carried is not None and item["ref"] not in carried, "at": item["at"]}
 
 
@@ -128,7 +132,7 @@ def facts(state_dir, names, chosen) -> dict:
             rows += [row_of(item, item["ref"], where=name) for item in items]
             warnings.append(room_line(name, memory.fill(items)[memory.PROJECT]))
     parts.append({"scope": memory.PROJECT, "title": "专项", "rows": newest(rows),
-                  "empty": "没有" if projects.memory_enabled() else "专项的记忆没开（COVEY_PROJECT_MEMORY=1）"})
+                  "empty": "没有" if projects.memory_enabled() else "专项的记忆没开：设置卡「能做什么」里写着怎么打开"})
     rows = []
     for topic in memory_topics(state_dir):
         items = memory.items(topic=topic_memory.live(state_dir, topic), redacted=True)
@@ -174,6 +178,29 @@ def forget(state_dir, key):
         row = next((row for row in topic_memory.live(state_dir, topic) if row["id"] == entry), None)
         return row["text"] if row is not None and topic_memory.delete(state_dir, topic, entry) else None
     return None
+
+
+def promote(state_dir, key):
+    """The text of the entry ``key`` names (a project's or a topic's), made one of the 全局 principles and a tombstone where it
+    was; None when it is not there (any more). ValueError says why nothing changed: a line of 它总结的, one from a topic with
+    redaction on, a full group (core/principles.py save)."""
+    kind, _, rest = str(key or "").partition(":")
+    owner, _, entry = rest.partition(":")
+    if kind == "project" and projects.valid_id(owner) and ENTRY.fullmatch(entry):
+        row = next((row for row in project_memory.entries(state_dir, projects.read_record(state_dir, owner))
+                    if row["id"] == entry and not row["deleted"]), None)
+    elif kind == "topic" and projects.TOPIC_RE.fullmatch(owner) and ENTRY.fullmatch(entry):
+        row = next((row for row in topic_memory.live(state_dir, owner) if row["id"] == entry), None)
+    else:
+        return None
+    if row is None:
+        return None
+    if memory.by_source(row.get("source")) != memory.OWNER:
+        raise ValueError("只有你说的才能升为全局")
+    if row.get("redacted"):
+        raise ValueError("这条来自开着脱敏的话题，不能升为全局：全局的记忆会带进不脱敏的话题")
+    principles.save(state_dir, principles.OWNER, row["text"], source={"via": "settings_card", "from": key})
+    return forget(state_dir, key)
 
 
 def short(text, limit=24) -> str:
@@ -276,6 +303,13 @@ class MemoryPanel:
             text = forget(ctx.state_dir, key)
             self.runtime.log(f'memory entry deleted from the 记忆 tab kind={key.partition(":")[0]} found={text is not None}')
             return {'confirm': None, 'notice': f'已删掉：{short(text)}' if text is not None else '这条已经不在了，卡片按现在的记忆重画了。'}
+        if kind == PROMOTE:
+            try:
+                text = promote(ctx.state_dir, key)
+            except (ValueError, KeyError) as exc:  # KeyError: the project has no record any more.
+                return {'notice': f'⚠️ {exc}' if isinstance(exc, ValueError) else '这条已经不在了，卡片按现在的记忆重画了。'}
+            self.runtime.log(f'memory entry promoted from the 记忆 tab kind={key.partition(":")[0]} found={text is not None}')
+            return {'confirm': None, 'notice': f'已升为全局：{short(text)}' if text is not None else '这条已经不在了，卡片按现在的记忆重画了。'}
         if kind == PIN and key.startswith('principle:') and isinstance(value.get('on'), bool):
             try:
                 found = principles.pin(ctx.state_dir, key.partition(':')[2], value['on'])

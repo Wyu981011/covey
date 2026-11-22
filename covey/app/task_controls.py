@@ -337,6 +337,12 @@ class TaskControls(Redelivery):
         from covey.app import memory_collect
         return memory_collect.undo(self, ctx, event)
 
+    def memory_promote(self, ctx, event):
+        """升为全局 on a "记下了" line of an answer card (COVEY_MEMORY=1): the line becomes one of the owner's principles
+        (app/memory_collect.py promote)."""
+        from covey.app import memory_collect
+        return memory_collect.promote(self, ctx, event)
+
     def revisit_hint(self, ctx, event):
         """约 30 分钟后回来看 under an answer that put something off (app/revisit_hint.py): the topic's revisit is set."""
         from covey.app import revisit_hint

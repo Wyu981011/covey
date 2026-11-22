@@ -822,7 +822,7 @@ class ClaudeAlignmentTests(unittest.TestCase):
 
     def test_a_subagent_claude_code_runs_in_the_background_runs_until_its_notification(self):
         # S31 K6 (Claude Code 2.1.310): two Explore agents were launched in the background without
-        # run_in_background; their rows read 已完成 · 0.0 秒 at launch, before their commands ran.
+        # run_in_background; their rows read 做完 · 0.0 秒 at launch, before their commands ran.
         from covey.core.trace import task_trace
         from covey.cards.trace_view import TraceView
         launched = "Async agent launched successfully. (This tool call returned at once)"
@@ -851,7 +851,7 @@ class ClaudeAlignmentTests(unittest.TestCase):
                 adapter.accept({"type": "system", "subtype": "task_notification", "tool_use_id": "a1",
                                 "task_id": "t1", "status": "completed"})
                 self.assertEqual(adapter.agents["a1"]["status"], "completed")
-                self.assertIn(" · Count files · 已完成 · ", TraceView(trace.snapshot()).agent_element("a1")["header"]["title"]["content"])
+                self.assertIn(" · Count files · 做完 · ", TraceView(trace.snapshot()).agent_element("a1")["header"]["title"]["content"])
 
 
 class ClaudeSubagentTests(unittest.TestCase):
@@ -1192,7 +1192,7 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
     def test_the_old_model_summarizes_a_fork_of_the_old_session_which_stays_as_it_was(self):
         # The fork's file appears while it runs; it is removed after, the old one is untouched.
         (self.store / f"{OTHER}.jsonl").write_text("{}\n")
-        self.assertEqual(self.summarize(), ("目标：修好 X。下一步：跑测试。", "完成"))
+        self.assertEqual(self.summarize(), ("目标：修好 X。下一步：跑测试。", "写好了"))
         argv = self.argv()
         self.assertEqual(argv[argv.index("--resume") + 1: argv.index("--resume") + 3], [SID, "--fork-session"])
         self.assertEqual((argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]), ("claude-opus-4-8", "max"))
@@ -1204,7 +1204,7 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
         self.assertFalse((self.store / f"{OTHER}.jsonl").exists())
 
     def test_a_tool_the_model_tries_is_denied(self):
-        self.assertEqual(self.summarize("handoff-tool")[1], "完成")
+        self.assertEqual(self.summarize("handoff-tool")[1], "写好了")
         self.assertEqual(json.loads((self.root / "handoff-permission.json").read_text())["behavior"], "deny")
 
     def test_a_failure_or_a_timeout_gives_no_text(self):
@@ -1229,7 +1229,7 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
             runs.append(kwargs.get("run_id"))
             yield dataclasses.replace(ctx, options={**ctx.options, redaction.SETTINGS_ENV: settings}), env
         with mock.patch.object(redaction, "turn", relay):
-            self.assertEqual(self.summarize(redact=True, run_id="handoff-r3")[1], "完成")
+            self.assertEqual(self.summarize(redact=True, run_id="handoff-r3")[1], "写好了")
         self.assertEqual(runs, ["handoff-r3"])  # Its own row in the relay's counts.
         argv = self.argv()
         self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), {"env": settings})
@@ -1239,7 +1239,7 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
         topic.mkdir(parents=True)
         (topic / "topic.json").write_text('{"redaction": true}')
         with mock.patch.object(redaction, "turn", relay):
-            self.assertEqual(self.summarize(topic_id="t-handoff")[1], "完成")
+            self.assertEqual(self.summarize(topic_id="t-handoff")[1], "写好了")
         argv = self.argv()
         self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), {"env": settings})
         (self.root / "handoff-argv.json").unlink()

@@ -4,15 +4,14 @@ from __future__ import annotations
 import re
 
 from covey.cards.board import OPEN_KIND
-from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, grey, item,
-                                  markdown_panel, note, plain, text_button)
+from covey.cards.elements import (BUTTON_SPACING, button_look, button_row, callback, card, grey, item, markdown_panel, note,
+                                  plain, text_button, topic_button)
 from covey.cards.review import compact_text, opening
 from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, peek, receipt, speaker_row,
                             split_ask)
 from covey.core import look, triage, turn_words
 from covey.core.stale import STALE_NOTE
 from covey.core.text import literal
-from covey.core.turn_words import ask_words
 
 SKIP_VALUE = "skip"
 SKIP_LABEL = "不回答此题"
@@ -53,6 +52,8 @@ GENERIC_HEADER = re.compile(r"(补充信息|补充|信息|问题|说明|确认|�
 # Where an answered question went: its follow-up task (continuation_job_id) in this state.
 FOLLOW_UP = turn_words.FOLLOW_UP
 ASK_HEADLINE = 36  # Characters of the question the band's 要你定 shows; the whole question is in the form under it.
+ASK_PART = 16  # Characters of each question the band names when there are several (``ask_headline``).
+RESUME_LABEL = "核查已保存回答并继续"
 CONTEXT_CHARS = 120  # Characters of a question's background line (``question_context``).
 # The superseded_reason of a question folded once a newer question card of its topic was shown
 # (app/questions.py fold_older_questions); without it, an older duplicate retired once a later
@@ -60,7 +61,7 @@ CONTEXT_CHARS = 120  # Characters of a question's background line (``question_co
 FOLDED = "newer_question"
 
 
-HELD_NOTE = "已交负责人：它能依据专项记忆答的就替你答，答不了或 3 分钟没处理，会转给你。"
+HELD_NOTE = "已交负责人：它能按记忆答的就替你答，答不了或 3 分钟没处理，会转给你。"  # 记忆, one word (docs/glossary.md).
 ESCALATED_NOTE = "负责人没有答，转给你了，见话题里的问题卡。"
 
 
@@ -87,6 +88,33 @@ def question_header(q):
     return "" if not header or GENERIC_HEADER.fullmatch(header) else header
 
 
+_ASK_ENDS = "？?。.！!：:；;，, "
+
+
+def ask_headline(record, limit=ASK_HEADLINE) -> str:
+    """What the band's 要你定 names (T647 A6: "要你定：2 件事" said nothing of what waits): one question's own header
+    (``question_header``), else the question itself; several, each one's header or the start of its words (ASK_PART),
+    joined with "；" while they fit ``limit``, then "等 N 件". "N 件事" only when no question has a word to show."""
+    questions = [q for q in record.get("questions") or () if isinstance(q, dict)]
+    if len(questions) == 1:
+        own = question_header(questions[0]) or compact_text(questions[0].get("question") or "", limit)
+        return own or "1 件事"
+    parts = []
+    for q in questions:
+        part = question_header(q) or compact_text(q.get("question") or "", ASK_PART)
+        parts.append(part if part.endswith("…") else part.rstrip(_ASK_ENDS))
+    parts = [part for part in parts if part]
+    if not parts:
+        return f"{len(questions)} 件事"
+    shown, used = [], 0
+    for part in parts:
+        if shown and used + len(part) + 1 > limit:
+            break
+        shown.append(part)
+        used += len(part) + 1
+    return "；".join(shown) + (f" 等 {len(questions)} 件" if len(shown) < len(questions) else "")
+
+
 def question_lead(i, count, q):
     """Question ``i``'s bold first line: ``**1/3 · 借鉴美临**``; one question shows only its header."""
     header = question_header(q)
@@ -103,23 +131,29 @@ def question_element(record, tags="", *, headed=False):
         return {"tag": "markdown", "element_id": "q_" + token,
                 "content": f"相同问题已在后续卡片回答 · 后续任务 #{record['continuation_job_id']}。无需重复提交。"}
     if folded(record):
-        return _settled_panel(record, token)
+        return settled_element(record)
     if triage.held(record):
         return triage_element(record)
     if record.get("display_pending") or (record.get("body_delivery_required") and not record.get("body_delivery_confirmed")):
         return {"tag": "markdown", "element_id": "q_" + token,
                 "content": "完整结果或问题控件尚未送达，请使用本话题任务卡的重试按钮，重新投递后再回答。"}
     if record.get("status") in {"cancelled", "uncertain", "submitting", "answered", SET_ASIDE}:
-        return _settled_panel(record, token)
+        return settled_element(record)
     return _question_form(record, token, tags, headed)
 
 
+CANCEL_REASONS = {"switched": "话题已换配置，直接在话题里回复新模型即可", "rewound": "这一轮已回退，问题作废",
+                  "stale": STALE_NOTE, "lead_stop": "负责人按你的意思停了这个话题",
+                  "web_stop": "你在网页上停了这个话题"}  # stale: closed by daily maintenance.
+
+
 def settled_title(record):
-    """The folded question's first line: whose question it is and where it went, e.g.
-    ``❓ #17 的提问 · 已回答 → #21 ✅ 已完成``, ``❓ #16 的 2 道题 · 你提了反馈 → #25 又提了问题``
-    (not only 回答已送达 · 后续任务已完成, which says nothing of what it was)."""
+    """What came of a settled question in one line, whose question it is and where it went: ``#17 的提问 · 已回答 → #21
+    有结果``, ``#16 的 2 道题 · 你提了反馈 → #25 又提了问题`` (not only 回答已送达 · 后续任务已完成, which says nothing of
+    what it was). The chat list's preview of its card and the grey line inside its fold (``settled_peek``); the ❓ it
+    led with went with the old folded panel (T647 A4)."""
     count = len(record["questions"])
-    title = f"❓ #{record['job_id']} 的" + ("提问" if count == 1 else f" {count} 道题")
+    title = f"#{record['job_id']} 的" + ("提问" if count == 1 else f" {count} 道题")
     status, delivery = record["status"], record.get("delivery_state", "delivered")
     if folded(record):
         return title + f" · 已收起 → #{record.get('superseded_by_job')} 又提了问题"
@@ -129,9 +163,7 @@ def settled_title(record):
         taken = record.get("continuation_job_id")
         return title + " · 你选了不处理" + (f" → 随 #{taken} 告诉了模型" if taken else "")
     if status == "cancelled":
-        reason = {"switched": "话题已换配置，直接在话题里回复新模型即可", "rewound": "这一轮已回退，问题作废",
-                  "stale": STALE_NOTE, "lead_stop": "负责人按你的意思停了这个话题",
-                  "web_stop": "你在网页上停了这个话题"}.get(record.get("cancel_reason"), "")  # stale: closed by daily maintenance.
+        reason = CANCEL_REASONS.get(record.get("cancel_reason"), "")
         return title + " · 已取消" + (" · " + reason if reason else "")
     answer = "反馈" if record.get("response_kind") == "feedback" else "回答"
     if status == "submitting":
@@ -169,25 +201,35 @@ def settled_summary(record):
     return summary + ("\n\n补充说明：\n" + record["supplement"] if record.get("supplement") else "")
 
 
-def _settled_panel(record, token):
-    """The collapsed panel of a question whose answer is saved, being sent, unconfirmed or cancelled, or that the owner
-    set aside (open then, with 撤销). 查看提交状态 only while the delivery is unconfirmed: once the follow-up runs, the
-    title says it."""
-    title = settled_title(record)
-    # Set aside it is open: 撤销 is in it, at hand while it still can be undone.
-    panel = markdown_panel("q_" + token, title, settled_summary(record)[:10000] or title,
-                           **({"expanded": True} if record["status"] == SET_ASIDE else {}))
-    if record["status"] in {"submitting", "uncertain"} or (record["status"] == "answered"
-                                                           and record.get("delivery_state") == "awaiting_ack"):
-        panel["elements"].append(callback_button(STATUS_LABEL, {"kind": "bridge_question_status",
-                                                                "topic_id": record["topic_id"], "token": token}))
-    if record.get('status') == 'uncertain' and record.get('answers'):
-        panel['elements'].append({'tag':'button','text':{'tag':'plain_text','content':'核查已保存回答并继续'},
-            'behaviors':[{'type':'callback','value':{'kind':'bridge_question_resume','topic_id':record['topic_id'],'token':token}}]})
-    if record["status"] == SET_ASIDE:  # 不处理 taken back while the topic's next turn has not taken it.
-        panel["elements"].append(callback_button(RESTORE_LABEL, {"kind": RESTORE_KIND, "topic_id": record["topic_id"],
-                                                                 "token": token}))
-    return panel
+def settled_buttons(record):
+    """The buttons a settled question keeps, in view under it (T647 A4: they were in a closed fold): 查看提交状态 while
+    its answer's delivery is unconfirmed, 核查已保存回答并继续 for an uncertain one with answers, 撤销 for one set aside
+    (until the topic's next turn takes it). [] for the others."""
+    status = record["status"]
+    value = {"topic_id": record["topic_id"], "token": record["token"]}
+    labels = []
+    if status in {"submitting", "uncertain"} or (status == "answered" and record.get("delivery_state") == "awaiting_ack"):
+        labels.append((STATUS_LABEL, "bridge_question_status"))
+    if status == "uncertain" and record.get("answers"):
+        labels.append((RESUME_LABEL, "bridge_question_resume"))
+    if status == SET_ASIDE:  # 不处理 taken back while the topic's next turn has not taken it.
+        labels.append((RESTORE_LABEL, RESTORE_KIND))
+    return [topic_button(label, behaviors=callback({"kind": kind, **value})) for label, kind in labels]
+
+
+def settled_element(record):
+    """A settled question (answered, being sent or unconfirmed, cancelled, set aside, folded under a newer one) as its
+    top-level copy shows it, in its topic's thread and on a task card too (docs/ui.md 5.2 问题卡; T647 A4: the thread
+    kept the old fold "❓ #431 的 2 道题 · 已回答"): its first lines in view, the rest folded with the answers
+    (``settled_peek``), what came of it in a grey line under them (``settled_line``) and the buttons it keeps
+    (``settled_buttons``). One element by the question's ID (q_<token>), so a task card's question is replaced in
+    place as before."""
+    parts = [settled_peek(record), *[line for line in (settled_line(record),) if line]]
+    buttons = settled_buttons(record)
+    if buttons:
+        parts.append(button_row(buttons))
+    return {"tag": "column_set", "element_id": "q_" + record["token"], "columns": [
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_spacing": "4px", "elements": parts}]}
 
 
 def single_choice(questions):
@@ -447,21 +489,19 @@ def question_card(record, topic="", title="", *, rowed=False):
     form = pending and not record.get("display_pending") and not (
         record.get("body_delivery_required") and not record.get("body_delivery_confirmed"))
     # The open form leads with its conclusion band (docs/ui.md 5.2 问题卡: "等你 · T12 #431", 要你定：…), which took
-    # the orange title bar's place.
-    asked = ask_words(record)
-    asked = asked if len(asked) <= ASK_HEADLINE else asked[:ASK_HEADLINE - 1] + "…"
-    # The band names what is asked without saying a question twice on the card: one question's own header
-    # (question_header), else how many there are; the questions themselves are in the form under it.
-    own = question_header(record['questions'][0]) if count == 1 else ""
+    # the orange title bar's place. It names what is asked (``ask_headline``: the questions' headers or words, not
+    # "2 件事"); the questions themselves are in the form under it.
+    asked = ask_headline(record)
     headed = bool(title) and bool(topic) and not record.get(TOP_COPY)
     band = conclusion_band(band_label("waiting", "" if headed or rowed else topic, number),
-                           literal("要你定：" + (own or f"{count} 件事")), waiting_state(record)) if form else None
+                           literal("要你定：" + asked), waiting_state(record)) if form else None
     element = question_element(record, tags, headed=bool(band))
-    # The topic list's preview while the card is the topic's latest message: what the open form's band says.
+    # The topic list's preview while the card is the topic's latest message: what the open form's band says, else what
+    # came of the question (``settled_title``).
     summary = (f"{tags + ' ' if tags else ''}{look.word('waiting')} · 要你定：{asked}" if band
                else f"{look.word('waiting')} · {count} 题" if pending else "相同问题已回答 · 无需重复提交"
                if record.get('status') == 'superseded' and not folded(record)
-               else element.get('header', {}).get('title', {}).get('content', '回答已保存'))
+               else settled_title(record))
     row = [speaker_row({"who": f"{topic} {title}", "doing": "waiting"}, outcome="waiting",
                        tag=SETTLED_TAGS.get(record.get("status")), url="")] if headed else []
     elements = [*row, *([band] if band else []), element, *others_row(record)]
@@ -477,37 +517,50 @@ ANSWER_LINE_CHARS = 80
 
 
 def settled_line(record):
-    """The line a settled question's copy keeps under its question (``settled_peek``): "→ 你选了「…」", and where the
-    answer went once a task took it, "· #21 在做"; one Markdown element, None for one that is still open or has no
-    answer to say (folded under a newer one). Feedback and 不处理 say that."""
+    """The line a settled question keeps in view under its question (``settled_element``): what was answered and where it
+    went, "→ 你选了「…」 · #21 在做"; an answer being sent or not confirmed yet says that ("· 已保存，送达未确认…"), a
+    question folded under a newer one where to answer now, a cancelled one why, feedback and 不处理 that. One Markdown
+    element; None for one still open, or answered on a later card (superseded, not folded)."""
     count = len(record.get("questions") or ())
     status = record.get("status")
-    if not count or status in (None, "pending", "superseded", "submitting", "uncertain"):
+    if not count or status in (None, "pending") or (status == "superseded" and not folded(record)):
         return None
-    if status == "cancelled":
-        answer = "已取消"
-    elif record.get("response_kind") == "feedback":
-        answer = "你提了反馈，原问题没有回答"
-    elif status == SET_ASIDE or record.get("response_kind") == SET_ASIDE:
-        answer = "你选了不处理"
-    else:
-        given = [" ".join("；".join((record.get("answers", {}).get(q["id"]) or {}).get("answers", [])).split())
-                 for q in record["questions"]]
-        words = " / ".join(part for part in given if part)
-        answer = f"你选了「{compact_text(words, ANSWER_LINE_CHARS)}」" if words else "已回答"
     delivery, taken = record.get("delivery_state"), record.get("continuation_job_id")
-    if status == "answered" and taken and delivery in FOLLOW_UP:
-        answer += f" · #{taken} {FOLLOW_UP[delivery]}"
+    feedback = record.get("response_kind") == "feedback"
+    if folded(record):
+        answer = f"已收起：#{record.get('superseded_by_job')} 又提了问题，在新卡上回答"
+    elif status == "cancelled":
+        reason = CANCEL_REASONS.get(record.get("cancel_reason"), "")
+        answer = "已取消" + (" · " + reason if reason else "")
+    elif status == SET_ASIDE:
+        answer = "你选了不处理 · 话题下一轮开始前可以撤销"
+    elif record.get("response_kind") == SET_ASIDE:
+        answer = "你选了不处理" + (f" · 随 #{taken} 告诉了模型" if taken else "")
+    else:
+        if feedback:
+            answer = "你提了反馈，原问题没有回答"
+        else:
+            given = [" ".join("；".join((record.get("answers", {}).get(q["id"]) or {}).get("answers", [])).split())
+                     for q in record["questions"]]
+            words = " / ".join(part for part in given if part)
+            answer = f"你选了「{compact_text(words, ANSWER_LINE_CHARS)}」" if words else "已回答"
+        if status == "submitting":
+            answer += " · 已保存，正在发送"
+        elif status == "uncertain":
+            answer += " · 已保存，送达未确认：先点“查看提交状态”核查，不会自动重复发送"
+        elif taken and delivery in FOLLOW_UP:
+            answer += f" · #{taken} {FOLLOW_UP[delivery]}"
+        elif delivery in ("awaiting_ack", "queued"):
+            answer += {"awaiting_ack": " · 等模型确认收到", "queued": " · 等待继续执行"}[delivery]
     return {"tag": "markdown", "content": grey("→ " + literal(answer)), "text_size": "notation"}
 
 
 def settled_peek(record):
-    """A settled question on its top-level copy as 犹抱琵琶半遮面 (cards/ui.py peek): the question's first lines in view
-    (its own header bold before them), one click away the rest of it, what was answered and where it went
-    (``settled_title``), with the buttons its fold has (``_settled_panel``: 查看提交状态, 撤销 open). Several questions
-    say how many before the first one's opening and open on all of them."""
+    """A settled question as 犹抱琵琶半遮面 (cards/ui.py peek), the head of ``settled_element``: the question's first lines in
+    view (its own header bold before them), one click away the rest of it, what was answered and where it went
+    (``settled_title``, grey). Several questions say how many before the first one's opening and open on all of them. Its
+    buttons are not in it (``settled_buttons``: a closed fold hid them, T647 A4)."""
     token, questions = record["token"], record["questions"]
-    panel = _settled_panel(record, token)
     count, first = len(questions), questions[0]
     header = question_header(first) if count == 1 else f"{count} 道题"
     lead = f"**{literal(header)}** " if header else ""
@@ -521,15 +574,14 @@ def settled_peek(record):
         body = "\n".join(part for part in (rest, "答：" + answer if answer else "") if part)
         body += ("\n\n补充说明：\n" + record["supplement"]) if record.get("supplement") else ""
     body = body.strip() or settled_summary(record)
-    status = settled_title(record).removeprefix("❓ ")
-    elements = [{"tag": "markdown", "content": body[:10000]}, {"tag": "markdown", "content": grey(literal(status)),
-                                                              "text_size": "notation"}, *panel["elements"][1:]]
-    built = peek("q_" + token, lead + head, elements)
-    built["expanded"] = bool(panel.get("expanded"))
-    return built
+    elements = [{"tag": "markdown", "content": body[:10000]},
+                {"tag": "markdown", "content": grey(literal(settled_title(record))), "text_size": "notation"}]
+    # Inside the question's element (q_<token>, ``settled_element``): an ID of its own, at most 20 characters.
+    return peek(PEEK_PREFIX + token[:20 - len(PEEK_PREFIX)], lead + head, elements)
 
 
 OUTPUT_ID = "mirror_output"
+PEEK_PREFIX = "qp_"  # A settled question's peek, inside its element q_<token>.
 QUESTION_WIDTH = 120  # A settled question's opening, in its fold's title: about two lines.
 OUTPUT_LABEL = "这一轮输出"
 
@@ -541,8 +593,8 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
     ``output``, what the turn wrote before it asked, comes first, whole (cards/review.py reply_shown), then the question
     and its options, then ``files``,
     the asking turn's 产物 panel as its answer card in the topic has it (app/artifacts.py answer_files). Settled, the
-    question shows its first lines and folds the rest with the answer (``settled_peek``), and a line under it says
-    what he answered (``settled_line``); the output stays."""
+    question is ``settled_element`` as on its card in the thread (its first lines, the rest folded with the answer, a line
+    under it of what he answered); the output stays, and the row says what it was about, not 要你定."""
     from covey.cards.review import reply_body, reply_shown
 
     meta, _ = split_ask([ask] if ask else [])
@@ -552,13 +604,6 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
     elements = list(built["body"]["elements"])
     # The turn's output first (the owner, 2026-11-22: without it the questions cannot be understood), then the question.
     said = reply_shown(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL) if output else []
-    line = settled_line(record)
-    if line:  # The question's fold (q_<token>) becomes its peek, the answer's line under it.
-        at = next((n for n, element in enumerate(elements) if element.get("element_id") == "q_" + record["token"]), None)
-        if at is None:
-            elements = [line, *elements]
-        else:
-            elements[at:at + 1] = [settled_peek(record), line]
     from covey.cards.answer_card import words_fold
 
     words = [part for part in (words_fold(meta),) if part] if meta else []  # What he said, one line that opens.
@@ -571,7 +616,10 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
         if settled and meta:  # It no longer asks: "关于你 20:33 的问题", not "要你定".
             from covey.cards.answer_card import says
 
-            meta = {**meta, "doing": "about", "says": says(meta.get("verb") or "你问", "about", meta.get("at") or "").strip()}
+            # A project's topic doing its lead's work says that still, "办负责人派的事" (cards/answer_card.py SAYS), not
+            # "关于你的问题" of words it never quoted; a copy sent before keeps its "member" too.
+            doing = "member_settled" if meta.get("doing") == "member" else "about"
+            meta = {**meta, "doing": doing, "says": says(meta.get("verb") or "你问", doing, meta.get("at") or "").strip()}
         built["body"]["elements"] = [speaker_row(meta, outcome="waiting", label=topic or "话题", tag=settled), *elements]
         built["body"].update(padding=BODY_PADDING, vertical_spacing=BODY_SPACING)
     return banded(built)  # The topic's badge has its colour in the card's config.

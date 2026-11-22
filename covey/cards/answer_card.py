@@ -286,13 +286,18 @@ def box(element_id, inputs, outputs, outputs_id=""):
 
 MEMORY_ID = "answer_memory"
 MEMORY_WRONG_KIND = "bridge_memory_wrong"
+MEMORY_PROMOTE_KIND = "bridge_memory_promote"
 MEMORY_LINES = {"remembered": "记下了", "voided": "作废了", "undone": "已撤销"}
+PROMOTE_LABEL = "升为全局"
+PROMOTABLE = ("管这个专项", "管这个话题")  # app/memory_collect.py PROJECT_WORDS, TOPIC_WORDS: what 升为全局 takes.
 
 
 def memory_element(notes, topic_id="", job_id=""):
     """The grey lines at the bottom of a turn's answer card (COVEY_MEMORY=1, app/memory_collect.py): one per note of the job
-    record's ``memory_notes`` ({kind, text, scope, entry_id}), "记下了：<text> · 管这个专项" and a 不对 button that takes it back
-    (``MEMORY_WRONG_KIND``), "作废了：<text>", "已撤销：<text>" once taken back. None without a note."""
+    record's ``memory_notes`` ({kind, text, scope, entry_id, redacted?}), "记下了：<text> · 管这个专项" and a 不对 button that takes it
+    back (``MEMORY_WRONG_KIND``), before it 升为全局 (``MEMORY_PROMOTE_KIND``, T647 E4) for a line of 管这个专项 or 管这个话题 not from a
+    topic with redaction on, which makes it one for every topic ("· 管全局" then); "作废了：<text>", "已撤销：<text>" once taken
+    back. None without a note."""
     rows = []
     for note in notes or ():
         kind = note.get("kind")
@@ -302,8 +307,11 @@ def memory_element(notes, topic_id="", job_id=""):
         words = f"{MEMORY_LINES[kind]}：{text}" + (f" · {note.get('scope')}" if kind == "remembered" and note.get("scope") else "")
         line = md(grey(words), size="notation")
         if kind == "remembered":
-            rows.append(item(line, text_button("不对", {"kind": MEMORY_WRONG_KIND, "topic_id": topic_id, "job_id": job_id,
-                                                        "entry_id": str(note.get("entry_id") or "")})))
+            value = {"topic_id": topic_id, "job_id": job_id, "entry_id": str(note.get("entry_id") or "")}
+            buttons = [text_button("不对", {"kind": MEMORY_WRONG_KIND, **value})]
+            if note.get("scope") in PROMOTABLE and not note.get("redacted"):
+                buttons.insert(0, text_button(PROMOTE_LABEL, {"kind": MEMORY_PROMOTE_KIND, **value}))
+            rows.append(item(line, *buttons))
         else:
             rows.append(line)
     if not rows:
@@ -461,8 +469,10 @@ SAYS = {
     ("你问", "stopped"): "办你{at}交代的事时停了", ("你答", "stopped"): "按你{at}的回答接着办时停了",
     ("你问", "about"): "关于你{at}的问题", ("你答", "about"): "关于你{at}的回答",
     ("你问", "running"): "在办你{at}交代的事", ("你答", "running"): "按你{at}的回答在办",
-    # A project's topic: the lead handed it the work, so no words of the owner's are quoted (app/question_display.py).
+    # A project's topic: the lead handed it the work, so no words of the owner's are quoted (app/question_display.py);
+    # once its question is settled, what it does (cards/question_cards.py mirror_card), not "关于你的问题".
     ("你问", "member"): "办负责人派的事，要你定", ("你答", "member"): "办负责人派的事，要你定",
+    ("你问", "member_settled"): "办负责人派的事", ("你答", "member_settled"): "办负责人派的事",
 }
 ALONE = "主动来汇报{at}"  # A speaker that answers no message of the owner's (a lead woken by the Bridge).
 
@@ -482,7 +492,7 @@ def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", met
     lines, "你问 · 12:31 ›" and the message's words (two lines at most); the whole block opens ``url`` (the
     message's thread, app/answer_cards.py ask_link). Style "A" of four samples. ``who``: its speaker (docs/ui.md 5.3,
     cards/ui.py ``speaker``) and what it did with that message in one sentence (``says``, by ``doing``: answer, done,
-    waiting, stopped, about, running, member, report), "**管家** 答复你 12:31 的问题 ›" over 「his words」; with no words, that line
+    waiting, stopped, about, running, member, member_settled, report), "**管家** 答复你 12:31 的问题 ›" over 「his words」; with no words, that line
     alone (a lead's wake-up turn: "主动来汇报 · 09:40"). None without words or a speaker.
     ``meta``: the block also carries what a title bar says (cards/ui.py ``ASK_META``: who, what it did, when, the
     words, the link), for the card that takes the block into its header (``split_ask``) and is never sent; a card

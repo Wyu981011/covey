@@ -1,13 +1,15 @@
 """The 设置 card's 能做什么 tab (app/about_panel.py): what this deployment can do and what it lacks, read only.
 
-One layer under the tab row: 这台机器 (the Harnesses this Bridge enables, those unavailable now), 能做的 (each feature on,
-one line of what it does and, grey, the switch it reads), 还没开的 (each feature off, one line of how to get it: 管家用的
-Harness 没启用 → 没有管家), 扩展 (the enabled packages), and a grey line on where the switches live. No button: a tap on the
-tab draws it again from the deployment as it is then. ``view`` (app/about_panel.py ``facts``):
+One layer under the tab row: 这台机器 (the Harnesses this Bridge enables, those unavailable now), then the features in three
+groups by what the owner does with them (T647 D6: 交给它办事, 不断、不丢, 看得全、记得住), each line what it does for him first:
+on, its name bold and, grey, a detail and the switch it reads; off, the whole line grey with how to get it (管家用的 Harness 没启用
+→ 没有管家). Then 扩展 (the enabled packages) and a grey line with the command that changes a switch. No button: a tap on the tab
+draws it again from the deployment as it is then. ``view`` (app/about_panel.py ``facts``):
 
 - ``host``: the machine's name; ``harnesses``: the titles enabled; ``down``: [title, why] of those unavailable now;
-- ``features``: [{name, on, line, switch}] in the order of app/about_panel.py FEATURES;
-- ``extensions``: the enabled extension packages' names;
+- ``groups``: [key, title] in order; ``features``: [{name, group, good, on, line, switch}] in the order of app/about_panel.py
+  FEATURES (a row without a group goes in the last);
+- ``extensions``: the enabled extension packages' names; ``state_dir``: the service's, for the command;
 - ``notice``: one line on top (a refusal).
 """
 from __future__ import annotations
@@ -18,7 +20,15 @@ from covey.core.text import literal
 
 TITLE = "能做什么"
 ICON = "setting_outlined"
-SWITCHES = "开关写在服务清单里：照 docs/configuration.md 的「改开关三步」改完重新注册服务，再点这一页看。这一页只读。"
+STATE = "<状态目录>"  # The command's --state-dir when the view has none.
+ICONS = {"work": "yes_outlined", "safe": "safe_outlined", "see": "insert-chart_outlined"}
+
+
+def switches_note(state_dir="") -> str:
+    """Where the switches live and the command that changes one, with the service's state directory."""
+    state = state_dir or STATE
+    return (f"开关写在服务清单里。改一个：在服务的代码目录里运行 python3 -B bin/covey_service.py set --state-dir {state} 开关=值"
+            "（先加 --dry-run 看会改什么），再点这一页看；想一次打开演示用的一组，加 --preset showcase。这一页只读。")
 
 
 def machine_lines(view) -> str:
@@ -34,28 +44,38 @@ def machine_lines(view) -> str:
 
 
 def feature_line(row) -> str:
-    """``- 名字：一句话`` and, for one on, its switch in grey."""
-    text = f"- **{literal(row['name'])}**：{literal(row['line'])}"
-    return text + (" " + grey(literal(row["switch"])) if row.get("on") and row.get("switch") else "")
+    """On: ``- **名字**：好处`` and, grey, its detail and switch. Off: the whole line grey, ``名字：好处 · 没开：怎么开``."""
+    good = literal(row.get("good") or "")
+    if row.get("on"):
+        extra = "（" + literal(row["line"]) + "）" if row.get("line") else ""
+        text = f"- **{literal(row['name'])}**：{good}{extra}"
+        return text + (" " + grey(literal(row["switch"])) if row.get("switch") else "")
+    how = " · 没开：" + literal(row["line"]) if row.get("line") else " · 没开"
+    return "- " + grey(f"{literal(row['name'])}：{good}{how}")
 
 
 def about_card(token, view, *, top=()):
     """The tab for ``view`` (the module's docstring); ``top``: the tab row."""
     del token  # No button carries it: the tab row has its own.
     features = view.get("features") or []
-    on = [row for row in features if row.get("on")]
-    off = [row for row in features if not row.get("on")]
+    groups = [tuple(group) for group in view.get("groups") or ()] or [("", "能做的")]
+    keys = [key for key, _ in groups]
     elements = [*top]
     if view.get("notice"):
         elements.append(ui.receipt(view["notice"]))
     elements += [section("这台机器", "computer_outlined"), md(machine_lines(view))]
-    if on:
-        elements += [section(f"能做的（{len(on)}）", "yes_outlined"), md("\n".join(map(feature_line, on)))]
-    if off:
-        elements += [section(f"还没开的（{len(off)}）", "time_outlined"), md("\n".join(map(feature_line, off)))]
+    for key, title in groups:
+        rows = [row for row in features if (row.get("group") if row.get("group") in keys else keys[-1]) == key]
+        if not rows:
+            continue
+        rows = [*[row for row in rows if row.get("on")], *[row for row in rows if not row.get("on")]]
+        count = sum(1 for row in rows if row.get("on"))
+        elements += [section(f"{title}（开着 {count}/{len(rows)}）", ICONS.get(key, "yes_outlined")),
+                     md("\n".join(map(feature_line, rows)))]
     names = view.get("extensions") or []
     elements += [section("扩展"), md("、".join(literal(name) for name in names) if names else "没有启用扩展")]
-    elements.append(note(SWITCHES))
+    elements.append(note(literal(switches_note(view.get("state_dir") or ""))))
+    on = sum(1 for row in features if row.get("on"))
     subtitle = f"装在 {view['host']}" if view.get("host") else ""
-    summary = f"{TITLE} · 开着 {len(on)} 项，没开 {len(off)} 项"
+    summary = f"{TITLE} · 开着 {on} 项，没开 {len(features) - on} 项"
     return styled_panel(panel_header(ICON, TITLE, subtitle), elements, summary)

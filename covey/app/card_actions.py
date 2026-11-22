@@ -65,6 +65,8 @@ ACTIONS = {
     "bridge_review_open": CardAction("独立复核", bot_only=True),
     # 不对 on the memory lines of an answer card (cards/answer_card.py memory_element, COVEY_MEMORY=1): takes a line back, starts no task.
     "bridge_memory_wrong": CardAction("撤销刚记下的记忆", handler="controls.memory_wrong"),  # COVEY_MEMORY=1: starts no task.
+    # 升为全局 beside it (T647 E4): the line becomes one of the owner's principles; starts no task.
+    "bridge_memory_promote": CardAction("把记忆升为全局", handler="controls.memory_promote"),
     # 约 30 分钟后回来看 under an ordinary topic's answer that put something off (cards/answer_card.py revisit_hint_element, COVEY_REVISIT=1):
     # the owner's; sets that topic's revisit (app/revisit_hint.py), starts no task.
     "bridge_revisit_hint": CardAction("约 30 分钟后回来看", handler="controls.revisit_hint"),
@@ -74,7 +76,7 @@ ACTIONS = {
     "bridge_project_steer": CardAction("补充专项", handler="steering.project_steer"),
     "bridge_project_stop": CardAction("停止专项", handler="controls.project_stop"),
     "bridge_project_downgrade": CardAction("不要专项", handler="controls.project_downgrade"),
-    "bridge_project_mem_del": CardAction("删专项记忆", handler="controls.project_mem_del"),
+    "bridge_project_mem_del": CardAction("删记忆", handler="controls.project_mem_del"),
     "bridge_project_lib_del": CardAction("删专项资料", handler="controls.project_lib_del"),
     "bridge_project_triage_wrong": CardAction("纠正分流", handler="controls.project_triage_wrong"),  # COVEY_PROJECT_TRIAGE=1
     "bridge_project_triage_fix": CardAction("提交纠正", bot_only=True, handler="controls.project_triage_fix"),  # Queues a message in the member topic.
@@ -196,6 +198,7 @@ ACTIONS = {
     "bridge_memory_open": CardAction("展开记忆"),
     "bridge_memory_delete": CardAction("删除记忆"),
     "bridge_memory_pin": CardAction("标记常驻记忆"),
+    "bridge_memory_to_global": CardAction("把记忆升为全局"),  # T647 E4.
     # 手上的事's line of old questions (cards/overview.py DISMISS): only the board's record changes.
     "bridge_overview_dismiss": CardAction("撤下看板"),
     # 撤销 on the line 不管了 leaves (cards/overview.py UNDO): the board's record changes back (app/overview.py Overview.undo).

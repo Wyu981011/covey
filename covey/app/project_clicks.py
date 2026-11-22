@@ -269,7 +269,7 @@ def delete_memory(host, ctx, event) -> bool:
     raw, record = click(ctx, event)
     if not project_memory.delete(ctx.state_dir, record["id"], str(raw.get("entry") or "")):
         return say(host, ctx, event, "这条记忆已经不在了。", "project-mem-gone")
-    return say(host, ctx, event, "已删掉这条专项记忆。", "project-mem-del")
+    return say(host, ctx, event, "已删掉这条记忆。", "project-mem-del")
 
 
 def delete_library(host, ctx, event) -> bool:

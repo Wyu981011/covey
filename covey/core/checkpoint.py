@@ -359,14 +359,15 @@ def current_step(steps):
 
 
 def step_words(steps) -> str:
-    """Where ``steps`` are, in one short phrase: "第 3/5 步：<title>", "已完成 2/5 步", "5/5 步已完成"; '' without."""
+    """Where ``steps`` are, in one short phrase: "第 3/5 步：<title>", "做完 2/5 步", "5/5 步都做完了" (docs/ui.md 3: 做完, not
+    已完成); '' without."""
     if not steps:
         return ""
     total, doing = len(steps), current_step(steps)
     if doing is not None:
         return f"第 {doing[0]}/{total} 步：{doing[1]['title']}"
     done = sum(1 for step in steps if step["state"] == "done")
-    return f"{total}/{total} 步已完成" if done == total else f"已完成 {done}/{total} 步"
+    return f"{total}/{total} 步都做完了" if done == total else f"做完 {done}/{total} 步"
 
 
 def checkpoint_note(checkpoint: Path, previous: dict | None = None, *, shown: str = "") -> str:
@@ -388,7 +389,7 @@ def checkpoint_note(checkpoint: Path, previous: dict | None = None, *, shown: st
     ) + subagents_note(delivered)
 
 
-END_WORDS = {"finished": "已完成", "failed": "出错", "unfinished": "没做完"}
+END_WORDS = {"finished": "做完", "failed": "出错", "unfinished": "没做完"}
 
 
 def subagents_note(delivered) -> str:

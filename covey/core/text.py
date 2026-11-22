@@ -250,4 +250,4 @@ def step_event(step):
     kind, purpose = step_action(step)
     if step.get("status") == "running":
         return "正在" + kind + purpose
-    return kind + ("失败" if step.get("status") == "failed" else "结束") + purpose
+    return kind + ("出错" if step.get("status") == "failed" else "结束") + purpose

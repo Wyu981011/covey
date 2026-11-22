@@ -11,9 +11,11 @@ record is settled (app/detached.py finish_detached, app/job_dispatch.py for a ru
   source ``owner``), else the topic (core/topic_memory.py). A topic with redaction on (or whose setting cannot be read) marks it.
 - A ``memory_void`` id must be a number the turn carried (the record's ``memory_ids``) of a line of 它总结的 of the project; it becomes a
   tombstone (core/project_memory.py delete: the text stays, nothing is lost). A line of 你说的 is never voided this way.
-- The record gets ``memory_notes`` [{kind: remembered|voided|undone, text, scope, entry_id}] and the turn's answer cards a line each
-  (cards/answer_card.py memory_element); the 不对 on a "记下了" line takes that line back (``undo``): the entry becomes a tombstone,
-  the note's kind ``undone``.
+- The record gets ``memory_notes`` [{kind: remembered|voided|undone, text, scope, entry_id, redacted?}] and the turn's answer cards
+  a line each (cards/answer_card.py memory_element); the 不对 on a "记下了" line takes that line back (``undo``): the entry becomes
+  a tombstone, the note's kind ``undone``. 升为全局 beside it (``promote``, T647 E4: what he said in one topic held only there)
+  makes the line one of the owner's principles for every topic (core/principles.py, 通用) and the entry a tombstone; the note
+  says 管全局 then, its entry the principle, and 不对 takes the principle back.
 
 It writes only when the turn ended well, was the owner's own in an ordinary topic (not the butler's, not a 代答 topic, not one the
 butler handed on) whose words hold a trigger word, and not twice for one job. Never raises: a failure is a log line and the turn's
@@ -26,7 +28,7 @@ from covey.app import answer_cards, memory_turn
 from covey.app.card_actions import action_value
 from covey.app.card_lanes import after_ack
 from covey.cards.answer_card import memory_element
-from covey.core import memory, project_memory, projects, topic_memory, turn_source
+from covey.core import memory, principles, project_memory, projects, topic_memory, turn_source
 from covey.core.butler import is_butler_topic
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record, upsert_job_record
@@ -35,6 +37,8 @@ from covey.core.topics import proxy_topic
 PER_TURN = 3
 ENDED_WELL = ("done", "waiting_user")
 PROJECT_WORDS, TOPIC_WORDS = "管这个专项", "管这个话题"
+GLOBAL_WORDS = "管全局"  # A line 升为全局 (``promote``): one of the owner's principles now.
+REDACTED_REFUSAL = "这条来自开着脱敏的话题，不能升为全局：全局的记忆会带进不脱敏的话题。"
 
 
 def _squash(text) -> str:
@@ -98,7 +102,8 @@ def _take(ctx, record, text, marked, quote=""):
         scope = TOPIC_WORDS
     else:
         return None  # A lead's own topic: the butler's tools are its way.
-    return {"kind": "remembered", "text": entry["text"], "scope": scope, "entry_id": entry["id"]} if new else None
+    return ({"kind": "remembered", "text": entry["text"], "scope": scope, "entry_id": entry["id"],
+             **({"redacted": True} if marked else {})} if new else None)
 
 
 def _void(ctx, record, item):
@@ -170,7 +175,7 @@ def undo(host, ctx, event) -> bool:
     note = next((note for note in notes if note.get("kind") == "remembered" and note.get("entry_id") == entry_id), None)
     if note is None:
         return True  # Taken back already (a second click), or not this turn's.
-    _forget(ctx.state_dir, ctx.topic_id, entry_id)
+    _forget(ctx.state_dir, ctx.topic_id, entry_id, note.get("scope"))
     note["kind"] = "undone"
     notes = [note if old.get("entry_id") == entry_id and old.get("kind") == "remembered" else old for old in notes]
     upsert_job_record(ctx.state_dir, str(record["key"]), memory_notes=notes)
@@ -178,12 +183,56 @@ def undo(host, ctx, event) -> bool:
     return True
 
 
-def _forget(state, topic_id, entry_id) -> None:
-    """The entry ``entry_id`` a turn of ``topic_id`` wrote, a tombstone in its project's memory or the topic's."""
+def _forget(state, topic_id, entry_id, scope="") -> None:
+    """The entry ``entry_id`` a turn of ``topic_id`` wrote, a tombstone in its project's memory or the topic's; a line that
+    went 升为全局 (``scope`` GLOBAL_WORDS), the principle it became, removed."""
+    if scope == GLOBAL_WORDS:
+        principles.delete(state, entry_id)
+        return
     found = projects.topic_project(state, topic_id) if projects.memory_enabled() else None
     if found is not None:
         project_memory.delete(state, found.id, entry_id)
     topic_memory.delete(state, topic_id, entry_id)
+
+
+def _entry(state, topic_id, entry_id):
+    """The live entry ``entry_id`` a turn of ``topic_id`` wrote, in its project's memory or the topic's; None when it is gone."""
+    found = projects.topic_project(state, topic_id) if projects.memory_enabled() else None
+    rows = [row for row in (project_memory.stored(state, found.id) if found is not None else []) if not row.get("deleted")]
+    rows = [*rows, *topic_memory.live(state, topic_id)]
+    return next((row for row in rows if isinstance(row, dict) and row.get("id") == entry_id), None)
+
+
+def promote(host, ctx, event) -> bool:
+    """升为全局 on a "记下了" line of 管这个专项 or 管这个话题 (``host``: the TaskControls, COVEY_MEMORY=1): the line becomes one of the
+    owner's principles (core/principles.py save, 通用: every topic reads it on his own turns), the entry it was a tombstone, the
+    note 管全局 with the principle as its entry, the lines redrawn. ValueError says why nothing changed (a line from a topic with
+    redaction on, a full group); a second click does nothing."""
+    raw = action_value(event)
+    if not ctx.topic_id or raw.get("topic_id") != ctx.topic_id:
+        return True
+    record = find_job_record(ctx.state_dir, str(raw.get("job_id") or ""))
+    entry_id = str(raw.get("entry_id") or "")
+    if not record or record.get("topic_id") != ctx.topic_id or not entry_id:
+        raise ValueError("找不到这条记忆所在的任务")
+    notes = [dict(note) for note in record.get("memory_notes") or ()]
+    note = next((note for note in notes if note.get("kind") == "remembered" and note.get("entry_id") == entry_id
+                 and note.get("scope") in (PROJECT_WORDS, TOPIC_WORDS)), None)
+    if note is None:
+        return True  # Promoted or taken back already (a second click), or not this turn's.
+    entry = _entry(ctx.state_dir, ctx.topic_id, entry_id)
+    if entry is None:
+        raise ValueError("这条记忆已经不在了（在设置卡「记忆」里删掉过）")
+    if note.get("redacted") or entry.get("redacted"):  # core/memory.py: only a topic with redaction on reads it.
+        raise ValueError(REDACTED_REFUSAL)
+    found, _ = principles.save(ctx.state_dir, principles.OWNER, note["text"], source={
+        "job_key": str(record.get("key") or ""), "job_id": record.get("job_id"), "from": note.get("scope")})
+    _forget(ctx.state_dir, ctx.topic_id, entry_id, note.get("scope"))
+    note.update(scope=GLOBAL_WORDS, entry_id=found["id"])
+    upsert_job_record(ctx.state_dir, str(record["key"]), memory_notes=notes)
+    host.runtime.log(f"memory line promoted to a principle job=#{record.get('job_id')}")
+    after_ack(lambda: show(ctx, host.messenger, record, notes, host.runtime.log))
+    return True
 
 
 def void_turn(runtime, messenger, ctx, record) -> int:
@@ -193,7 +242,7 @@ def void_turn(runtime, messenger, ctx, record) -> int:
     topic, taken = str(record.get("topic_id") or ""), 0
     for note in notes:
         if note.get("kind") == "remembered" and note.get("entry_id"):
-            _forget(ctx.state_dir, topic, str(note["entry_id"]))
+            _forget(ctx.state_dir, topic, str(note["entry_id"]), note.get("scope"))
             note["kind"], taken = "undone", taken + 1
     if taken:
         upsert_job_record(ctx.state_dir, str(record["key"]), memory_notes=notes)

@@ -67,7 +67,7 @@ def incremental_actions(previous, panel):
         return [update(panel)]
     if frame(old_details) != frame(new_details):
         # Only a replacement of the collapsible changes its title, and it carries `expanded`, which would undo the
-        # user's own open or closed: live updates never change the title (进行中 while the task runs), so they leave
+        # user's own open or closed: live updates never change the title (在做 while the task runs), so they leave
         # it; the end of a task (N 步 then) replaces it once, folded. Running panels are drawn folded too (the status
         # line says 现在：…); one drawn open (an old card's page redraw, or a release before) is not folded by them.
         return [update(new) for old, new in ((old_metrics, new_metrics), (old_details, new_details)) if old != new]

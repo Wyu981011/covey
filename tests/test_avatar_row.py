@@ -17,7 +17,7 @@ from unittest import mock
 
 from covey.cards.answer_card import ask_block, facts_element, figure, input_parts, tail, tail_card
 from covey.cards.owner_send import BARS, owner_send_card, top_card
-from covey.cards.question_cards import mirror_card, settled_line, settled_peek
+from covey.cards.question_cards import mirror_card, settled_element, settled_line, settled_peek
 from covey.cards.relay_card import DONE, STOPPED, WAITING, foot, merged_card, relay_card
 from covey.cards.review import answer_card
 from covey.cards.ui import ASK_META, speaker_row, split_ask
@@ -351,9 +351,11 @@ class QuestionCopyTest(unittest.TestCase):
         self.assertEqual(("已回答", "grey"), tag(first(built)))
         self.assertIn("关于你 09:12 的问题", text_of(first(built)))  # No longer "要你定".
         elements = built["body"]["elements"]
-        # The question's fold is its peek (its first lines in view, folded), the answer's line right under it.
+        # The question's element (q_<token>) is its peek (its first lines in view, folded), the answer's line right under it,
+        # as on its card in the thread (T647 A4).
         at = next(n for n, element in enumerate(elements) if str(element.get("element_id")).startswith("q_"))
-        peek, under = elements[at], elements[at + 1]
+        self.assertEqual(settled_element(answered), elements[at])
+        peek, under = elements[at]["columns"][0]["elements"]
         self.assertEqual(settled_peek(answered), peek)
         self.assertEqual(line, under)
         self.assertFalse(peek["expanded"])

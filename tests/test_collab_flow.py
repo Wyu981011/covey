@@ -369,7 +369,7 @@ class AnswerTest(Case):
         record = self.record()
         self.assertEqual(record["asks"][0]["state"], collab.FAILED)
         [reply] = self.queued()
-        self.assertIn("失败", reply.user_text)
+        self.assertIn("停住了", reply.user_text)
 
     def test_the_owner_stopping_it_stops_its_queued_ask_and_nothing_else_of_the_helper(self):
         job = self.asked()

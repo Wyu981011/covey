@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import copy
 import functools
+from html import unescape
 import json
 import os
+import re
 import tempfile
 import threading
 import time
@@ -35,7 +37,7 @@ from covey.app.answers import (NOTE_EMPTY, AnswerIncomplete, SKIPPED, TITLE_CHAR
                                         picked_fields)
 from covey.app.questions import scoped_question
 from covey.app.task_card import StreamingCard
-from covey.cards.question_cards import (PICK, SKIP_ALL_KIND, SKIP_LABEL, STATUS_LABEL, TOP_COPY,
+from covey.cards.question_cards import (ASK_HEADLINE, PICK, SKIP_ALL_KIND, SKIP_LABEL, STATUS_LABEL, TOP_COPY,
                                                  question_card,
                                                  question_element)
 from covey.cards.review import question_preview, recent_user_questions
@@ -87,7 +89,7 @@ class QuestionTest(QuestionFixture, unittest.TestCase):
             "scope": {"answers": [SKIPPED]}, "order": {"answers": [SKIPPED, UNANSWERED_NOTE + "涉及个人信息"]}})
         record = json.loads(self.path.read_text())
         self.assertEqual(record["supplement"], "涉及个人信息")
-        summary = question_element(record)["elements"][0]["content"]
+        summary = settled_parts(question_element(record))[0]["elements"][0]["content"]
         self.assertTrue(summary.endswith("补充说明：\n涉及个人信息"))  # The card shows it plainly; the model's text says more.
 
     def test_a_written_answer_wins_over_what_was_picked(self):
@@ -603,6 +605,13 @@ class QuestionCardSendTest(QuestionFixture, unittest.TestCase):
         self.assertEqual(painted, ["cancelled"])
 
 
+def settled_parts(element):
+    """(peek, the line under it, the rest) of a settled question's element (cards/question_cards.py settled_element)."""
+    parts = element["columns"][0]["elements"]
+    line = parts[1] if len(parts) > 1 and parts[1].get("tag") == "markdown" else None
+    return parts[0], line, parts[2 if line else 1:]
+
+
 def two_questions(**fields):
     """T191 #1084's shape: two questions with headers, options with descriptions, one generic header."""
     return {"token": "b" * 16, "job_id": 1084, "topic_id": "t" * 64, "chat_id": "oc_chat", "status": "pending",
@@ -623,26 +632,69 @@ class QuestionCardLookTest(unittest.TestCase):
                                answers={"ws": {"answers": ["维持排除"]}, "more": {"answers": ["没有"]}})
         single = {**record, "questions": record["questions"][:1]}
         self.assertEqual(question_card(single, "T182")["config"]["summary"]["content"],
-                         "❓ #1084 的提问 · 已回答 → #1111 有结果")
+                         "#1084 的提问 · 已回答 → #1111 有结果")
+        # (what came of it, inside the fold; the line in view under it): the copy's look (T647 A4), no ❓ fold.
         cases = {
-            "❓ #1084 的 2 道题 · 你提了反馈 → #1125 又提了问题": {"response_kind": "feedback", "feedback": "意思不大",
-                                                     "delivery_state": "waiting_user", "continuation_job_id": 1125},
-            "❓ #1084 的 2 道题 · 已回答 → #1111 停住了": {"delivery_state": "failed"},
-            "❓ #1084 的 2 道题 · 回答已保存，送达未确认，请先核查，不会自动重复发送": {"status": "uncertain"},
-            "❓ #1084 的 2 道题 · 已取消 · 话题已换配置，直接在话题里回复新模型即可": {"status": "cancelled",
-                                                                 "cancel_reason": "switched"},
+            "#1084 的 2 道题 · 你提了反馈 → #1125 又提了问题": ({"response_kind": "feedback", "feedback": "意思不大",
+                                                    "delivery_state": "waiting_user", "continuation_job_id": 1125},
+                                                   "→ 你提了反馈，原问题没有回答 · #1125 又提了问题"),
+            "#1084 的 2 道题 · 已回答 → #1111 停住了": ({"delivery_state": "failed"}, "→ 你选了「维持排除 / 没有」 · #1111 停住了"),
+            "#1084 的 2 道题 · 回答已保存，送达未确认，请先核查，不会自动重复发送": (
+                {"status": "uncertain"}, "→ 你选了「维持排除 / 没有」 · 已保存，送达未确认：先点“查看提交状态”核查，不会自动重复发送"),
+            "#1084 的 2 道题 · 已取消 · 话题已换配置，直接在话题里回复新模型即可": (
+                {"status": "cancelled", "cancel_reason": "switched"}, "→ 已取消 · 话题已换配置，直接在话题里回复新模型即可"),
         }
-        for title, fields in cases.items():
+        for title, (fields, said) in cases.items():
             with self.subTest(title):
                 element = question_element({**record, **fields})
-                self.assertEqual(element["header"]["title"]["content"], title)
-        # The panel: each question with its number and header, and its answer; feedback keeps the questions.
-        panel = question_element(record)["elements"][0]["content"]
+                self.assertEqual(element["element_id"], "q_" + "b" * 16)  # Replaced in place on a task card, as before.
+                panel, line, _ = settled_parts(element)
+                self.assertEqual(panel["header"]["title"]["content"], "**2 道题** 按什么口径建 workspace？")
+                self.assertIn(title, unescape(json.dumps(panel["elements"], ensure_ascii=False)))
+                self.assertNotIn("❓", json.dumps(element, ensure_ascii=False))
+                self.assertEqual(unescape(re.sub(r"<[^>]+>", "", line["content"])), said)
+        # The fold: each question with its number and header, and its answer; feedback keeps the questions.
+        panel = settled_parts(question_element(record))[0]["elements"][0]["content"]
         self.assertIn("**1/2 · /workspace 口径**\n按什么口径建 workspace？\n答：维持排除", panel)
         self.assertIn("**2/2**\n还有什么要说明的？\n答：没有", panel)  # A header that names nothing is left out.
-        feedback = question_element({**record, **cases["❓ #1084 的 2 道题 · 你提了反馈 → #1125 又提了问题"]})
+        feedback = question_element({**record, **cases["#1084 的 2 道题 · 你提了反馈 → #1125 又提了问题"][0]})
         self.assertIn("原问题：\n- 按什么口径建 workspace？\n- 还有什么要说明的？\n\n你的反馈：\n意思不大",
-                      feedback["elements"][0]["content"])
+                      settled_parts(feedback)[0]["elements"][0]["content"])
+
+    def test_the_band_names_what_waits_not_how_many(self):
+        """T647 A6: "要你定：2 件事" said nothing of what waited; one question with a header that names nothing showed
+        "1 件事"."""
+        from covey.cards.question_cards import ask_headline
+        one = {"questions": [{"id": "a", "header": "补充信息", "question": "要不要先部署到测试环境？"}]}
+        self.assertEqual(ask_headline(one), "要不要先部署到测试环境？")  # The question itself, its mark kept.
+        self.assertEqual(ask_headline({"questions": [{"id": "a", "header": "部署时间", "question": "什么时候部署？"}]}), "部署时间")
+        self.assertEqual(ask_headline(two_questions()), "/workspace 口径；还有什么要说明的")
+        many = {"questions": [{"id": str(n), "question": f"第 {n} 个要定的长长的选择：用哪一种做法比较好呢？"} for n in range(4)]}
+        headline = ask_headline(many)
+        self.assertTrue(headline.endswith(" 等 4 件"), headline)
+        self.assertLessEqual(len(headline), ASK_HEADLINE + len(" 等 4 件"))
+        self.assertEqual(ask_headline({"questions": [{"id": "a", "question": ""}, {"id": "b", "question": " "}]}), "2 件事")
+        long = {"questions": [{"id": "a", "question": "很长" * 40}]}
+        self.assertEqual(len(ask_headline(long)), ASK_HEADLINE)
+        # The topic list's preview says it too.
+        card = question_card({**two_questions(), "questions": one["questions"]}, "T191")
+        self.assertIn("要你定：要不要先部署到测试环境？", card["config"]["summary"]["content"])
+
+    def test_a_settled_question_keeps_its_buttons_in_view(self):
+        """T647 A4: an answer whose delivery was not confirmed hid 查看提交状态 and 核查已保存回答并继续 in a closed fold."""
+        record = two_questions(status="uncertain", answers={"ws": {"answers": ["维持排除"]}})
+        panel, line, rest = settled_parts(question_element(record))
+        self.assertEqual(panel["tag"], "collapsible_panel")
+        self.assertNotIn("button", json.dumps(panel, ensure_ascii=False))
+        labels = [button["text"]["content"] for row in rest for button in walk_dicts(row) if button.get("tag") == "button"]
+        self.assertEqual(labels, [STATUS_LABEL, "核查已保存回答并继续"])
+        self.assertIn("送达未确认", line["content"])
+        aside = settled_parts(question_element(two_questions(status="set_aside", response_kind="set_aside")))
+        self.assertEqual([b["text"]["content"] for row in aside[2] for b in walk_dicts(row) if b.get("tag") == "button"], ["撤销"])
+        self.assertFalse(aside[0]["expanded"])  # 撤销 is in view: the fold need not open for it.
+        done = settled_parts(question_element(two_questions(status="answered", delivery_state="done", continuation_job_id=1111,
+                                                            answers={"ws": {"answers": ["维持排除"]}})))
+        self.assertEqual(done[2], [])  # Nothing left to press once its follow-up took it.
 
     def test_an_answered_card_offers_only_what_is_still_useful(self):
         record = two_questions(status="answered", delivery_state="done", continuation_job_id=1111, answers={})
@@ -660,7 +712,8 @@ class QuestionCardLookTest(unittest.TestCase):
         # No title bar: a conclusion band names the topic and the task, what the owner decides and what the turn waits for.
         self.assertNotIn("header", card)
         band = json.dumps(card["body"]["elements"][0], ensure_ascii=False)
-        for words in ("等你 · T191 &#35;1084", "要你定：2 件事", "等你回答后继续"):
+        # 要你定 names the questions (T647 A6: "2 件事" said nothing): a header that names something, else its words.
+        for words in ("等你 · T191 &#35;1084", "要你定：/workspace 口径；还有什么要说明的", "等你回答后继续"):
             self.assertIn(words, band)
         form = card["body"]["elements"][1]
         texts = [e.get("content", "") for e in form["elements"] if e.get("tag") == "markdown"]
@@ -995,7 +1048,7 @@ class QuestionCardLifecycleTest(TopicFixture, unittest.TestCase):
         card = calls[1].card
         self.assertNotIn('提交回答', json.dumps(card, ensure_ascii=False))
         self.assertIn('已回答 → 后续任务 有结果', json.dumps(card, ensure_ascii=False))
-        self.assertIn('英文\nUTF-8', card['body']['elements'][0]['elements'][0]['content'])
+        self.assertIn('英文\nUTF-8', settled_parts(card['body']['elements'][0])[0]['elements'][0]['content'])
 
     def test_a_question_left_a_week_is_closed_once_with_a_note_on_its_card(self):
         from covey.app.stale import close_stale_records
@@ -1377,10 +1430,14 @@ class FoldOlderQuestionTest(TopicFixture, unittest.TestCase):
         self.app.cards.update_record_panel.assert_not_called()
         self.assertTrue(self.app.runtime.jobs.queue.empty())
         card = question_card(folded, 'T182')
-        self.assertEqual(card['config']['summary']['content'], '❓ #1105 的提问 · 已收起 → #1106 又提了问题')
-        [panel] = card['body']['elements']  # No form, no buttons, no 🔁 换配置.
+        self.assertEqual(card['config']['summary']['content'], '#1105 的提问 · 已收起 → #1106 又提了问题')
+        [element] = card['body']['elements']  # No form, no buttons, no 🔁 换配置.
+        panel, line, rest = settled_parts(element)
+        # The copy's look (T647 A4): the question's opening in view, what came of it in a grey line under it.
         self.assertEqual((panel['tag'], panel['expanded'], panel['header']['title']['content']),
-                         ('collapsible_panel', False, '❓ #1105 的提问 · 已收起 → #1106 又提了问题'))
+                         ('collapsible_panel', False, '**顺序** 先做哪部分？'))
+        self.assertIn('已收起：#1106 又提了问题，在新卡上回答', unescape(line['content']))
+        self.assertEqual(rest, [])
         self.assertEqual(panel['elements'][0]['content'],
                          '**顺序**\n先做哪部分？\n\n这组问题没有回答。要补充的，写在 #1106 的问题卡上。')
         self.assertNotIn('behaviors', json.dumps(card))

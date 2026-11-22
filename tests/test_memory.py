@@ -434,6 +434,63 @@ class VoidTest(CollectCase):
             memory_collect.undo(host, self.ctx, {"action_value": {**value, "job_id": "99999"}})
 
 
+class PromoteTest(CollectCase):
+    """升为全局 (T647 E4): what the owner said in one topic held only there; one click on its "记下了" line makes it one of his
+    principles for every topic, the topic's entry a tombstone, and 不对 takes the principle back."""
+
+    def setUp(self):
+        super().setUp()
+        self.host = mock.Mock(messenger=self.messenger, runtime=self.runtime)
+
+    def remembered(self, **record):
+        job = self.turn(memory_lines=[self.LINE], **record)
+        answer_cards.register(self.state, job.message_id, "answer", "om_card", {"body": {"elements": []}})
+        return job, self.collect(job)
+
+    def click(self, kind, record, entry):
+        value = {"kind": kind, "topic_id": "t1", "job_id": record["job_id"], "entry_id": entry}
+        return {"action_value": value}
+
+    def test_a_topic_s_line_becomes_a_principle_for_every_topic_and_not_twice(self):
+        job, record = self.remembered()
+        entry = record["memory_notes"][0]["entry_id"]
+        self.assertTrue(memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, entry)))
+        [principle] = principles.load(self.state)["owner"]
+        self.assertEqual(principle["text"], self.LINE["text"])
+        self.assertEqual(principle["source"]["from"], "管这个话题")
+        self.assertEqual(topic_memory.live(self.state, "t1"), [])  # Carried once, from 全局.
+        [note] = find_job_record(self.state, job.message_id)["memory_notes"]
+        self.assertEqual((note["kind"], note["scope"], note["entry_id"]), ("remembered", "管全局", principle["id"]))
+        card = json.dumps(self.messenger.patch_card.call_args.args[2], ensure_ascii=False)
+        self.assertIn("记下了：选型类的事不用先问侧重点，直接开工 · 管全局", card)
+        self.assertNotIn(cards.MEMORY_PROMOTE_KIND, card)  # Only 不对 is left on it.
+        self.assertTrue(memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, entry)))
+        self.assertEqual(len(principles.load(self.state)["owner"]), 1)  # A second click does nothing more.
+        # 不对 now takes the principle back.
+        self.assertTrue(memory_collect.undo(self.host, self.ctx, self.click(cards.MEMORY_WRONG_KIND, record, principle["id"])))
+        self.assertEqual(principles.load(self.state)["owner"], [])
+        self.assertEqual(find_job_record(self.state, job.message_id)["memory_notes"][0]["kind"], "undone")
+
+    def test_a_line_from_a_topic_with_redaction_on_stays_there(self):
+        with mock.patch.object(memory_collect, "_topic_marked", return_value=True):
+            _, record = self.remembered()
+        note = record["memory_notes"][0]
+        self.assertTrue(note["redacted"])
+        self.assertNotIn(cards.MEMORY_PROMOTE_KIND, json.dumps(cards.memory_element([note], "t1", 5), ensure_ascii=False))
+        with self.assertRaisesRegex(ValueError, "脱敏"):
+            memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, note["entry_id"]))
+        self.assertEqual(principles.load(self.state)["owner"], [])
+        self.assertEqual(len(topic_memory.live(self.state, "t1")), 1)
+
+    def test_a_line_deleted_since_is_not_promoted(self):
+        _, record = self.remembered()
+        entry = record["memory_notes"][0]["entry_id"]
+        topic_memory.delete(self.state, "t1", entry)
+        with self.assertRaisesRegex(ValueError, "不在了"):
+            memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, entry))
+        self.assertEqual(principles.load(self.state)["owner"], [])
+
+
 class CardTest(Case):
     def test_the_lines_and_the_button(self):
         notes = [{"kind": "remembered", "text": "不用 Redis", "scope": "管这个专项", "entry_id": "ab12"},
@@ -444,13 +501,19 @@ class CardTest(Case):
         for words in ("记下了：不用 Redis · 管这个专项", "作废了：先问侧重点", "已撤销：旧的"):
             self.assertIn(words, text)
         self.assertEqual(text.count('"不对"'), 1)
+        self.assertEqual(text.count('"升为全局"'), 1)  # Beside 不对 on a project's or a topic's line (T647 E4).
         self.assertIn('"entry_id": "ab12"', text)
+        for scope, redacted in (("管全局", False), ("管这个话题", True)):
+            line = cards.memory_element([{**notes[0], "scope": scope, **({"redacted": True} if redacted else {})}], "t1", 7)
+            self.assertNotIn("升为全局", json.dumps(line, ensure_ascii=False), scope)
         self.assertIsNone(cards.memory_element([]))
         self.assertIsNone(cards.memory_element([{"kind": "other", "text": "x"}]))
 
     def test_the_button_is_in_the_table_without_bot_only(self):
         action = ACTIONS[cards.MEMORY_WRONG_KIND]
         self.assertEqual((action.handler, action.bot_only), ("controls.memory_wrong", False))
+        action = ACTIONS[cards.MEMORY_PROMOTE_KIND]
+        self.assertEqual((action.handler, action.bot_only), ("controls.memory_promote", False))
 
 
 if __name__ == "__main__":

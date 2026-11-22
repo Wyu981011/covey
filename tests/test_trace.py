@@ -139,7 +139,7 @@ class TraceTest(unittest.TestCase):
         codex.child('turn/completed', {'threadId': 'child', 'turn': {'status': 'completed'}}, 1002)
         trace.finish()
         nested = next(e for e in trace_panel(trace, False)['elements'] if e['tag']=='collapsible_panel')
-        self.assertIn('已完成', nested['header']['title']['content'])
+        self.assertIn('做完', nested['header']['title']['content'])
         self.assertFalse(nested['expanded'])
 
     def test_web_search_with_null_action_starts_then_completes(self):
@@ -239,7 +239,7 @@ class CompactionStepTest(unittest.TestCase):
             trace.accept("tool", {"id": f"b{i}", "name": "bash", "status": "done", "started_at": now, "ended_at": now,
                                   "detail": "ls"})
         text = json.dumps(trace_panel(trace, False), ensure_ascii=False)
-        self.assertIn("压缩上下文 · 已完成 · 用时 48 秒\\n按任务卡上的安排 · 压缩前 62.3 万 token → 摘要 9,800 token", text)
+        self.assertIn("压缩上下文 · 做完 · 用时 48 秒\\n按任务卡上的安排 · 压缩前 62.3 万 token → 摘要 9,800 token", text)
         self.assertEqual(text.count("**执行命令**"), 2)  # The two commands after it, in full, where they ran.
         self.assertNotIn("最后几项操作", text)  # No block of its own since 2026-11-04 15:07.
 
@@ -394,19 +394,19 @@ class AgentStateTest(unittest.TestCase):
         self.assertEqual(agents["child"]["summary"], "verified")
 
     def test_a_resumed_subtask_runs_again(self):
-        # Codex resumeAgent: the subtask's row read 已完成 while it ran again.
+        # Codex resumeAgent: the subtask's row read 做完 while it ran again.
         trace = ToolTrace()
         adapter = CodexEventAdapter(lambda kind, data: trace.accept(kind, data))
         collab = {"type": "collabAgentToolCall", "receiverThreadIds": ["a"]}
         adapter.agents({**collab, "tool": "spawnAgent", "agentPath": "/root/a",
                         "agentsStates": {"a": {"status": "running"}}}, 100)
         adapter.child("turn/completed", {"threadId": "a", "turn": {"status": "completed"}}, 102)
-        self.assertIn("/root/a · 已完成", str(trace_panel(trace, True)))
+        self.assertIn("/root/a · 做完", str(trace_panel(trace, True)))
         adapter.agents({**collab, "tool": "resumeAgent", "agentsStates": {"a": {"status": "running"}}}, 105)
         self.assertIn("/root/a · 执行中", str(trace_panel(trace, True)))
         self.assertEqual(trace.steps["agent-a"]["started"], 105)
         adapter.child("turn/completed", {"threadId": "a", "turn": {"status": "completed"}}, 107)
-        self.assertIn("/root/a · 已完成 · 2.0 秒", str(trace_panel(trace, True)))
+        self.assertIn("/root/a · 做完 · 2.0 秒", str(trace_panel(trace, True)))
 
 
 class SubtaskLoopTest(unittest.TestCase):
@@ -713,7 +713,7 @@ class OperationGroupsTest(unittest.TestCase):
         fold = elements[1]
         self.assertEqual((fold["tag"], fold["expanded"]), ("collapsible_panel", False))
         self.assertTrue(fold["element_id"].startswith("ops_"))
-        self.assertEqual(fold["header"]["title"]["content"], "<font color='grey'>收起了更早的 6 项操作：执行命令 6，1 项失败</font>")
+        self.assertEqual(fold["header"]["title"]["content"], "<font color='grey'>收起了更早的 6 项操作：执行命令 6，1 项出错</font>")
         inside = "".join(e["content"] for e in fold["elements"])
         self.assertEqual([inside.count(f"echo c{n}") for n in range(9)], [1] * 6 + [0] * 3)
         self.assertEqual([elements[2]["content"].count(f"echo c{n}") for n in range(9)], [0] * 6 + [1] * 3)
@@ -774,7 +774,7 @@ class OperationGroupsTest(unittest.TestCase):
 
     def test_the_panel_is_one_boxed_collapsible_whose_count_is_inside_while_running(self):
         # The A 仪表盘 sample (2026-11-04): 执行过程 · N 步 on a grey block. A sent collapsible's title changes only
-        # with the whole collapsible, which would undo the user's open or closed: running, it says 进行中.
+        # with the whole collapsible, which would undo the user's open or closed: running, it says 在做.
         trace = ToolTrace()
         trace.accept("tool", {"id": "ls", "name": "bash", "status": "done", "detail": "ls -l", "started_at": 1000,
                               "ended_at": 1001.2})
@@ -784,7 +784,7 @@ class OperationGroupsTest(unittest.TestCase):
         (details,) = live["columns"][0]["elements"]
         self.assertEqual((details["element_id"], "background_color" in details, details["border"]),
                          ("trace_details", False, {"color": "grey", "corner_radius": "8px"}))
-        self.assertEqual(details["header"]["title"]["content"], "**执行过程**　<font color='grey'>进行中</font>")
+        self.assertEqual(details["header"]["title"]["content"], "**执行过程**　<font color='grey'>在做</font>")
         self.assertEqual(details["elements"][0]["element_id"], "trace_metrics")
         self.assertEqual(details["elements"][0]["content"], "<font color='grey'>2 步</font>")  # No token line.
         text = json.dumps(details, ensure_ascii=False)
@@ -1395,7 +1395,7 @@ class PanelModelTest(unittest.TestCase):
         model = TraceView(trace.snapshot()).panel_model(True)
         self.assertEqual((model.state, model.live, model.expanded, model.rows), ("等待进展", True, False, 0))
         details = panel_json(model)["columns"][0]["elements"][0]
-        self.assertEqual(details["header"]["title"]["content"], "**执行过程**　" + grey("进行中"))
+        self.assertEqual(details["header"]["title"]["content"], "**执行过程**　" + grey("在做"))
         self.assertEqual(details["elements"][0], {"tag": "markdown", "element_id": "trace_metrics",
                                                   "text_size": "notation", "content": grey("等待进展")})
         trace.note("n", "先读目录")

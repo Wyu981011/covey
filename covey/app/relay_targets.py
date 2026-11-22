@@ -43,6 +43,12 @@ def _origin_job(state_dir, job):
     return message_id, job_id
 
 
+def origin_message(state_dir, job) -> str:
+    """The message id the turn ``job`` came from: its own, or the one its automatic retry chain started from
+    (``_origin_job``)."""
+    return _origin_job(state_dir, job)[0]
+
+
 def butler_job_owner_message(state_dir, butler_job_key) -> str:
     """The owner's top-level message the butler job ``butler_job_key`` answers (the one its card quotes); ''
     when its record is gone or names no Feishu message."""

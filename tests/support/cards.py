@@ -141,13 +141,13 @@ def sample_job(**fields):
 def panel_title(panel):
     """A process panel's title as it read before 2026-11-04 ("执行过程 · 3 步" and its figures under it), from
     the grey collapsible's title and its figures line (TraceView.panel ``metrics``): a running panel's
-    title says 进行中 and the line has the count first."""
+    title says 在做 (进行中 before) and the line has the count first."""
     import re
 
     plain = re.sub(r"</?font[^>]*>|\*\*", "", panel["header"]["title"]["content"])
     name, _, state = plain.partition("\u3000")
     lines = [line for line in str(panel.get("metrics", "")).split("\n") if line]
-    if state == "进行中" and lines:
+    if state in ("在做", "进行中") and lines:
         state, lines = lines[0], lines[1:]
     return "\n".join([name + (f" · {state}" if state else "")] + lines)
 

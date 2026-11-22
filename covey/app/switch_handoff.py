@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 
 from covey.app.binding import latest_switch_revision
+from covey.cards.switch_form import handoff_block
 from covey.cards.topic_actions import switch_panel, topic_panel
 from covey.core import devices
 from covey.core.defaults import work_mode_tag
@@ -51,6 +52,13 @@ REFUSED = {"policy refusal": "原会话被安全拒绝停过，" + _RAW,
            "policy fallback": "原会话因官方模型降级停过，" + _RAW,
            "policy retry": "原会话是安全拒绝后换旧模型的重试，" + _RAW,
            "session blocked": f"原会话已禁止续接，没有写交接摘要，改为把最近 {HANDOFF_ROUNDS} 轮原文交给新模型。"}
+# Why no summary was written, as the 交接 block on the first task card says it (cards/switch_form.py handoff_block), by
+# the reason the log line names; a backend's own outcome (超过 180 秒, 出错（…）, 回答为空) is said as it is.
+WHY_WORDS = {"no session": "原来的配置还没有会话", "not supported": "原来的 Harness 不会写交接摘要",
+             "policy refusal": "原会话被安全拒绝停过", "policy fallback": "原会话因官方模型降级停过",
+             "policy retry": "原会话是安全拒绝后的重试", "session blocked": "原会话已禁止续接",
+             "rewind pending": "更换时还有一步回退没做完", "no redaction record": "这次更换早于交接摘要功能",
+             "device": "原会话在设备上", "workdir missing": "原来的工作目录不在了", "redaction unknown": "读不出脱敏设置"}
 SUMMARY_PROMPT = (
     "[Bridge 交接请求] 本话题马上换到另一个模型接着做，它看不到这段会话。请为它写一份简短的交接摘要："
     "不要调用任何工具，不要继续做任务，只回复摘要本身。用本话题对话所用的语言写，不超过 1500 字，分这几块："
@@ -130,6 +138,16 @@ def _say(note, text):
     try:
         note(text)
     except Exception:  # noqa: BLE001 - only the card line failed
+        pass
+
+
+def _show(show, element):
+    """``show(element)`` when given (the 交接 block on the task card); a card write that fails does not stop the turn."""
+    if show is None:
+        return
+    try:
+        show(element)
+    except Exception:  # noqa: BLE001 - only the block failed
         pass
 
 
@@ -260,12 +278,15 @@ class SwitchHandoff:
         job.switch_controls_attached = bool(self.cards.set_task_element(ctx, job, switch_panel(
             ctx.topic_id, job.job_id, ctx.options["harness_id"], ctx.options.get("binding_revision", 1)), at_bottom=True))
 
-    def switch_handoff(self, ctx, history_snapshot, cancel=None, ready=None, note=None):
+    def switch_handoff(self, ctx, history_snapshot, cancel=None, ready=None, note=None, show=None):
         """The first run(s) after a switch, until one has finished with a session (``settled``): the old model's
         summary, recent rounds in plain text (cut with ``capped`` after the turn's own message is taken out) and the
         transcript note. ``ready()``: whether the
         turn will start (app/runs.py); a turn about to be refused does not wait for a summary first.
-        ``note(text)``: a line on the task card while the summary is asked for, and its outcome."""
+        ``note(text)``: a line in the task card's 执行过程 while the summary is asked for, and its outcome.
+        ``show(element)``: the 交接 block above the task card's answer (cards/switch_form.py handoff_block, T647 E1:
+        换引擎不断上下文 seen at a glance), while the summary is written and once handed over; none for a turn that
+        will not start."""
         try:
             topic = read_topic(ctx)
         except (OSError, ValueError, KeyError):
@@ -280,13 +301,28 @@ class SwitchHandoff:
         except OSError as exc:
             self.runtime.log(f"switch transcript unavailable: {type(exc).__name__}")
             return history_snapshot, ""
-        summary, summary_path = self.summary(ctx, topic, cancel, ready, note)
+        switch = topic["switches"][-1]
+        before, after = _binding_label(switch["from"]), _binding_label(switch["to"])
+        starts = ready is None or bool(ready())  # Asked once: the summary and the block go by the same answer.
+        summary, summary_path, why = self._summarize(
+            ctx, topic, cancel, lambda: starts, note,
+            waiting=lambda: _show(show, handoff_block(before, after, state="waiting")))
+        kept = min(rounds, SUMMARY_ROUNDS if summary else HANDOFF_ROUNDS)
         rows = recent_rounds(ctx.history_path, SUMMARY_ROUNDS if summary else HANDOFF_ROUNDS) or history_snapshot
+        if starts:  # A refused turn never starts: nothing was handed to anyone.
+            stopped = why == "stopped" or (cancel is not None and cancel.is_set())
+            _show(show, handoff_block(before, after, summary=summary, rounds=rounds, kept=kept,
+                                      state="stopped" if stopped else "done", why=WHY_WORDS.get(why, why)))
         return rows, handoff_note(topic, path, rounds, summary, summary_path)
 
     def summary(self, ctx, topic, cancel=None, ready=None, note=None):
         """(text, file) of the old binding's handoff summary, made once per switch; ("", None) without one.
         Never raises, and never waits past the backend's own limit (backends/claude/handoff.py SUMMARY_SECONDS)."""
+        return self._summarize(ctx, topic, cancel, ready, note)[:2]
+
+    def _summarize(self, ctx, topic, cancel=None, ready=None, note=None, waiting=None):
+        """``summary`` and why there is none: (text, file, why), ``why`` '' with one, else the reason the log line names
+        (WHY_WORDS), "stopped", or the backend's outcome. ``waiting()``: called once the old model is asked."""
         switch = topic["switches"][-1]
         old, revision = switch.get("from") or {}, topic.get("binding_revision", 1)
         path = ctx.history_path.parent / "handoff" / f"summary-r{revision}.md"
@@ -295,7 +331,7 @@ class SwitchHandoff:
         except (OSError, ValueError):  # Not UTF-8 either: made again.
             kept = ""
         if kept:
-            return kept, path  # An earlier attempt at this first run made it.
+            return kept, path, ""  # An earlier attempt at this first run made it.
         app = self.topics.apps.get(old.get("harness_id")) if self.topics is not None else None
         summarize = getattr(app.backend, "handoff_summary", None) if app is not None else None
         workdir = Path(str(old.get("workdir") or ctx.workdir))
@@ -333,7 +369,7 @@ class SwitchHandoff:
             self.runtime.log(f"switch summary skipped topic={ctx.topic_id[:12]} from={old.get('harness_id')} {why}")
             if why in REFUSED:
                 _say(note, REFUSED[why])
-            return "", None
+            return "", None, why
         base = app.harness.context
         target = dataclasses.replace(
             base, topic_id=ctx.topic_id, workspace_name=old.get("workspace") or ctx.workspace_name, workdir=workdir,
@@ -342,6 +378,8 @@ class SwitchHandoff:
             options={**base.options, "harness_id": old.get("harness_id")})
         started = time.monotonic()
         _say(note, WAITING)
+        if waiting is not None:
+            waiting()
         try:
             text, outcome = summarize(target, old["session_id"], SUMMARY_PROMPT, redact=redact,
                                       cancel=cancel, run_id=f"handoff-r{revision}")
@@ -361,4 +399,6 @@ class SwitchHandoff:
                 path = None
         self.runtime.log(f"switch summary topic={ctx.topic_id[:12]} from={old.get('harness_id')}:{target.model} "
                          f"{outcome} chars={len(text)} {time.monotonic() - started:.1f}s")
-        return (text, path) if text else ("", None)
+        if text:
+            return text, path, ""
+        return "", None, "stopped" if outcome == "已停止" or (cancel is not None and cancel.is_set()) else str(outcome or "")

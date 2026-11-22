@@ -142,7 +142,7 @@ class NoteTest(unittest.TestCase):
     def test_the_block_names_each_end_and_the_file(self):
         delivered = {"items": [agent(1), agent(2, "unfinished", ""), agent(3, "failed")], "more": 2, "files": ["/r/subagents.md"]}
         note = checkpoint_note(Path("/c.json"), {"previous_status": "failed", "subagents": delivered})
-        self.assertIn("任务1（已完成）：结论1", note)
+        self.assertIn("任务1（做完）：结论1", note)
         self.assertIn("任务2（没做完）：（没有文字）", note)
         self.assertIn("任务3（出错）", note)
         self.assertIn("不要重做", note)

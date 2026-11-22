@@ -16,6 +16,7 @@ from covey.core.protocol import COMPACT_STEP
 from covey.core.text import COMMAND_TITLES, safe_text, shown_command
 from covey.core.trace import CHECKPOINT_STEP, has_subtasks, turn_usage
 from covey.core.ttft import SOURCES
+from covey.core.turn_words import RUNNING
 from covey.core.usage import number
 from covey.cards.trace import cut_escaped, literal_code
 
@@ -48,7 +49,7 @@ def clock(stamp, *, seconds=False, day_of=None):
 
 def compaction_line(step):
     """A context compaction's line in 执行过程: seen at a glance, not folded among operations."""
-    states = {"running": "执行中", "done": "已完成", "failed": "未成功", "unconfirmed": "结束状态未确认", "stopped": "已停止"}
+    states = {"running": "执行中", "done": "做完", "failed": "未成功", "unconfirmed": "结束状态未确认", "stopped": "已停止"}
     took = f" · 用时 {clock_text(step['elapsed'])}" if "elapsed" in step else ""
     return (f"📦 {clock(step['started'])} · {COMPACT_STEP} · {states.get(step['status'], '状态未知')}{took}"
             + (f"\n{step['detail']}" if step.get("detail") else ""))
@@ -117,7 +118,7 @@ def run_counts(rows, lead=""):
         kinds += f"（子任务 {sum(1 for row in rows if row['owner'])} 项）"
     statuses = [row["step"]["status"] for row in rows]
     labels = [f"{statuses.count(status)} 项{label}" for status, label in
-              (("failed", "失败"), ("unconfirmed", "状态未确认"), ("stopped", "已停止")) if status in statuses]
+              (("failed", "出错"), ("unconfirmed", "状态未确认"), ("stopped", "已停止")) if status in statuses]
     return f"{who}{lead}{len(rows)} 项操作：{kinds}" + ("，" + "，".join(labels) if labels else "")
 
 
@@ -516,7 +517,7 @@ def line_entry(view, step_id, s, owner, owner_id, last_note):
 class PanelModel(NamedTuple):
     """The process panel 执行过程 (TraceView.panel_model), drawn by cards/trace_updates.py ``panel_json``."""
     state: str  # "12 步", "等待进展" or "无执行记录", with " · 用时 …" on an ended timed one.
-    live: bool  # The turn runs: the title says 进行中 and the first line inside has ``state``.
+    live: bool  # The turn runs: the title says 在做 and the first line inside has ``state``.
     # Drawn open: only a redraw the owner asked for by opening it (an old card's page controls, app/interaction.py
     # show_trace_page). A running panel starts folded too: the status line says 现在：… (docs/ui.md 5.2).
     expanded: bool
@@ -533,8 +534,8 @@ class PanelModel(NamedTuple):
 def process_title(model):
     """The collapsible's title. The count changes with every step, and a sent collapsible's title changes only
     with the whole collapsible, which would undo the user's open or closed (cards/trace_updates.py): a running
-    panel's title says 进行中 and its first line inside has the count, by its own ID."""
-    return "**执行过程**　" + grey("进行中" if model.live else model.state)
+    panel's title says 在做 (docs/ui.md 3) and its first line inside has the count, by its own ID."""
+    return "**执行过程**　" + grey(RUNNING if model.live else model.state)
 
 
 def panel_metrics(model):
@@ -565,7 +566,7 @@ class TraceView:
 
     def agent_element(self, sid):
         agent = self.agents[sid]
-        labels = {"running":"执行中", "pendingInit":"等待启动", "completed":"已完成", "errored":"失败", "interrupted":"已停止", "shutdown":"已关闭"}
+        labels = {"running":"执行中", "pendingInit":"等待启动", "completed":"做完", "errored":"出错", "interrupted":"已停止", "shutdown":"已关闭"}
         status = labels.get(agent["status"], "状态未知")
         if self.ended_at and agent["status"] in {"running", "pendingInit"}:
             status = "已停止" if self.stopped else "结束状态未确认"

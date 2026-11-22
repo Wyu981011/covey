@@ -19,7 +19,7 @@ from covey.app.artifacts import answer_files, artifact_key
 from covey.cards.answer_card import ARTIFACTS_ID, tail
 from covey.cards.review import answer_card
 from covey.app.question_display import standalone_card
-from covey.cards.question_cards import settled_peek
+from covey.cards.question_cards import settled_element, settled_peek
 from covey.app.prompts import BUTLER_RULES_TEXT, butler_message
 from covey.core import butler, butler_opened, butler_settings
 from covey.core.jobs import job_key, upsert_job_record
@@ -416,6 +416,121 @@ class MirrorTest(MirrorCase):
 
 
 
+class MemberCopyTest(MirrorCase):
+    """A project topic's question copy at the top level (T658, the owner comparing a project topic's copy with an ordinary
+    topic's): its row opens the topic's thread at the question whoever started the turn; a turn the owner started in the
+    topic himself (his message there, his answer to its question, an automatic retry of either) quotes him as an ordinary
+    topic's copy does, 你问 / 你答 with the line that opens; one the lead handed it quotes nothing and, settled, still says
+    办负责人派的事 rather than 关于你的问题."""
+
+    URL = "https://applink.feishu.cn/client/chat/open?openChatId=oc_x&openThreadId=omt_538"
+
+    def setUp(self):
+        super().setUp()
+        from covey.core import projects
+        from covey.core.topics import topic_file
+
+        self.member = "e" * 64
+        write_json(topic_file(self.ctx.state_dir, self.member), {
+            "topic_id": self.member, "chat_id": CHAT, "topic_number": 538, "harness_id": "claude",
+            "project": {"id": "1a5e5c7675eb", "role": projects.MEMBER}})
+        self.question = {**self.record, "token": "q-member", "topic_id": self.member, "question_message_id": "om_qcard"}
+        write_json(self.ctx.state_dir / "questions" / "q-member.json", self.question)
+        on = mock.patch.dict("os.environ", {projects.ENV: "1"})
+        on.start()
+        self.addCleanup(on.stop)
+        self.links = []
+        link = mock.patch("covey.app.topic_links.topic_thread_link", side_effect=lambda state, topic, **kwargs: (
+            self.links.append((topic, list(kwargs.get("at") or ()))) or (self.URL, "thread_at")))
+        link.start()
+        self.addCleanup(link.stop)
+
+    def turn(self, message_id, text, **fields):
+        return make_job(job_id=self.job.job_id, chat_id=CHAT, message_id=message_id, topic_id=self.member, user_text=text,
+                        card_message_id="om_task", timings={"received": 1_800_000_000.0}, **fields)
+
+    def copy(self, turn):
+        sends = self.app.messenger.create_and_send_card
+        sends.reset_mock()
+        self.assertTrue(self.app_.questions.display.mirror(self.tctx, self.question, "三张样卡", job=turn))
+        return sends.call_args.args[2], read_object(self.ctx.state_dir / "questions" / "q-member.json")
+
+    def settled(self, saved):
+        from covey.cards.question_cards import mirror_card
+        answered = {**saved, "status": "answered", "answers": {"q1": {"answers": ["A"]}}}
+        return mirror_card(answered, "T538", "", ask=saved.get("mirror_ask"))
+
+    @staticmethod
+    def row(built):
+        return built["body"]["elements"][0]
+
+    def test_a_turn_the_lead_handed_on_names_no_words_and_its_row_opens_the_topic(self):
+        built, saved = self.copy(self.turn("main-lead-tok", "[Bridge 说明] 负责人派的活"))
+        row = self.row(built)
+        self.assertEqual(row["behaviors"], [{"type": "open_url", "default_url": self.URL}])  # The row is a link now.
+        self.assertIn((self.member, ["om_qcard", "om_task"]), self.links)  # At the question, else its turn's card.
+        text = json.dumps(built, ensure_ascii=False)
+        self.assertIn("办负责人派的事，要你定", text)
+        self.assertNotIn("负责人派的活", text)  # The lead's words are never quoted as the owner's.
+        self.assertNotIn("answer_words", text)  # No line of the owner's words: he said nothing here.
+        head = json.dumps(self.row(self.settled(saved)), ensure_ascii=False)
+        self.assertIn("办负责人派的事", head)
+        self.assertNotIn("要你定", head)
+        self.assertNotIn("关于你", head)
+        self.assertIn(self.URL, head)
+
+    def test_a_copy_sent_before_keeps_saying_what_the_topic_does_once_settled(self):
+        from covey.cards.answer_card import ask_block
+        saved = {**self.question, "mirror_ask": ask_block("", who="T538 改看板", doing="member")}  # No link then.
+        head = json.dumps(self.row(self.settled(saved)), ensure_ascii=False)
+        self.assertIn("办负责人派的事", head)
+        self.assertNotIn("关于你的问题", head)
+
+    def test_a_turn_the_owner_started_in_the_topic_quotes_him_like_an_ordinary_topic(self):
+        built, saved = self.copy(self.turn("om_owner_m", "把 B 方案再细化一下"))
+        self.assertEqual(saved["mirror_ask"]["_ask"]["verb"], "你问")
+        self.assertEqual(saved["mirror_ask"]["_ask"]["url"], self.URL)
+        text = json.dumps(built, ensure_ascii=False)
+        self.assertIn("answer_words", text)  # The line of his words that opens.
+        self.assertIn("把 B 方案再细化一下", text)
+        self.assertIn("办你", json.dumps(self.row(built), ensure_ascii=False))  # 办你 HH:MM 交代的事，要你定.
+        self.assertNotIn("负责人派的事", text)
+        self.assertIn("关于你", json.dumps(self.row(self.settled(saved)), ensure_ascii=False))
+
+    def test_his_answer_to_its_question_is_his_and_the_lead_s_is_not(self):
+        previous = {**self.question, "token": "qprev", "status": "answered", "answers": {"q1": {"answers": ["A"]}}}
+        write_json(self.ctx.state_dir / "questions" / "qprev.json", previous)
+        built, saved = self.copy(self.turn("answer-qprev", "用户补充回答：\n用哪个做法？\nA"))
+        self.assertEqual(saved["mirror_ask"]["_ask"]["verb"], "你答")
+        self.assertIn("answer_words", json.dumps(built, ensure_ascii=False))
+        # The same question answered by the lead for him (app/triage.py): the lead's turn, nothing of his quoted.
+        from covey.core import triage
+        write_json(self.ctx.state_dir / "questions" / "qprev.json",
+                   {**previous, "triage": {"state": triage.ANSWERED, "by": "lead"}})
+        write_json(self.ctx.state_dir / "questions" / "q-member.json", self.question)
+        built, saved = self.copy(self.turn("answer-qprev", "用户补充回答：\n用哪个做法？\nA"))
+        self.assertEqual(saved["mirror_ask"]["_ask"]["doing"], "member")
+        self.assertNotIn("answer_words", json.dumps(built, ensure_ascii=False))
+
+    def test_an_automatic_retry_is_followed_back_to_the_message_that_started_it(self):
+        from covey.app.question_display import owner_started
+
+        state = self.ctx.state_dir
+        upsert_job_record(state, job_key("om_owner_m", 41), message_id="om_owner_m", job_id=41, topic_id=self.member,
+                          auto_retry_state="queued")
+        upsert_job_record(state, job_key("retry-7", 42), message_id="retry-7", job_id=42, topic_id=self.member,
+                          retry_of=job_key("om_owner_m", 41))
+        retry = make_job(job_id=42, chat_id=CHAT, message_id="retry-7", topic_id=self.member)
+        self.assertTrue(owner_started(state, retry))
+        upsert_job_record(state, job_key("main-lead", 43), message_id="main-lead", job_id=43, topic_id=self.member,
+                          auto_retry_state="queued")
+        upsert_job_record(state, job_key("retry-8", 44), message_id="retry-8", job_id=44, topic_id=self.member,
+                          retry_of=job_key("main-lead", 43))
+        self.assertFalse(owner_started(state, make_job(job_id=44, chat_id=CHAT, message_id="retry-8", topic_id=self.member)))
+        for message in ("main-lead", "lead-1a5e5c7675eb-3", "answer-", "answer-../x", "answer-gone"):
+            self.assertFalse(owner_started(state, make_job(job_id=45, chat_id=CHAT, message_id=message)), message)
+
+
 class MirrorFilesTest(MirrorCase):
     """The copy shows the asking turn's 产物 as its answer card in the topic does (the owner, 2026-11-09 14:57: 选哪张图
     at the top level had no pictures), brought up to date by the upload's end and a 重新上传 through CardKit."""
@@ -505,11 +620,13 @@ class MirrorFilesTest(MirrorCase):
         self.assertNotIn('"pick"', text)  # Answered: folded as the card in the topic.
         panel = "q_" + answered["token"]
         again = lambda built: next(e for e in built["body"]["elements"] if e.get("element_id") == panel)  # noqa: E731
-        # The copy's question is folded too, its first lines in view (cards/question_cards.py settled_peek); the card in
-        # the topic keeps its fold.
-        self.assertEqual(json.dumps(again(painted)), json.dumps(settled_peek(answered)))
-        self.assertFalse(again(painted)["expanded"])
-        self.assertFalse(again(standalone_card(self.tctx, answered))["expanded"])
+        # The copy's question is folded too, its first lines in view (cards/question_cards.py settled_element); the card
+        # in the topic has the same look now (T647 A4), its fold closed as well.
+        self.assertEqual(json.dumps(again(painted)), json.dumps(settled_element(answered)))
+        peek = lambda element: element["columns"][0]["elements"][0]  # noqa: E731
+        self.assertEqual(json.dumps(peek(again(painted))), json.dumps(settled_peek(answered)))
+        self.assertFalse(peek(again(painted))["expanded"])
+        self.assertFalse(peek(again(standalone_card(self.tctx, answered)))["expanded"])
         self.assertEqual([c.args[1] for c in self.app.messenger.patch_card.call_args_list], ["om_answer"])
         self.assertEqual(answer_cards.copies(self.ctx.state_dir, self.key, "done"), [])
         self.app_.artifacts.refresh_answer_cards(self.tctx, self.jrecord)

@@ -145,7 +145,7 @@ class WordsTest(unittest.TestCase):
         cases = [({"title": "执行命令", "detail": "python3 -m pytest -q", "status": "running"}, "在跑测试"),
                  ({"title": "执行命令", "detail": "git commit -m x", "status": "done"}, "提交了代码"),
                  ({"title": "执行命令", "detail": "装依赖 · pip install x", "status": "done"}, "跑了命令：装依赖"),
-                 ({"title": "执行命令", "detail": "make build", "status": "failed"}, "跑命令失败"),
+                 ({"title": "执行命令", "detail": "make build", "status": "failed"}, "跑命令出错"),
                  ({"title": "读取文件", "detail": "/a/b/covey/app/runs.py", "status": "running"}, "在读 app/runs.py"),
                  ({"title": "修改文件", "detail": "/a/cards/streaming.py, /a/x.py", "status": "done"}, "改了 cards/streaming.py"),
                  ({"title": "搜索网页", "status": "running"}, "在查网页"),

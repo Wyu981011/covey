@@ -87,7 +87,7 @@ class LinesTest(Base):
         self.assertTrue(facts.endswith(" · 第 2/3 步：改卡片"), facts)
         self.assertNotIn("阶段", facts)
         write_json(point, {"phase": "收尾", "steps": [{"title": "读代码", "state": "done"}, {"title": "改卡片", "state": "todo"}]})
-        self.assertTrue(lines(self.state, "oc_dm", self.row("running", running), NOW)[2].endswith(" · 已完成 1/2 步"))
+        self.assertTrue(lines(self.state, "oc_dm", self.row("running", running), NOW)[2].endswith(" · 做完 1/2 步"))
         write_json(point, {"phase": "收尾", "steps": "not a list"})  # A malformed field: the phase as before.
         self.assertTrue(lines(self.state, "oc_dm", self.row("running", running), NOW)[2].endswith(" · 阶段：收尾"))
 

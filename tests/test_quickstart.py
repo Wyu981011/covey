@@ -21,6 +21,14 @@ class QuickstartTest(unittest.TestCase):
         self.assertIn("docs/quickstart.md", (REPO / "README.md").read_text(encoding="utf-8"))
         self.assertIn("(quickstart.md)", (REPO / "docs" / "usage.md").read_text(encoding="utf-8"))
 
+    def test_it_says_what_is_special_by_kind_without_naming_other_products(self):
+        """T647 E5: the butler read this page for 能做什么 and it said nothing of projects, 换配置's handoff or restarts."""
+        text = QUICKSTART.read_text(encoding="utf-8")
+        part = text[text.index("## 它特别在哪"):text.index("## 日常怎么用")]
+        for words in ("管家", "专项", "负责人", "换引擎不断上下文", "交接摘要", "重启不断任务", "升为全局", "回退", "独立复核"):
+            self.assertIn(words, part)
+        self.assertIn("能做什么", prompts.USAGE_RULE)
+
     def test_the_butler_reads_it_first_where_it_runs(self):
         self.assertEqual(prompts.QUICKSTART, QUICKSTART)
         self.assertTrue(prompts.QUICKSTART.is_absolute() and prompts.QUICKSTART.is_file())

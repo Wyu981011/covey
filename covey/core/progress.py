@@ -136,7 +136,7 @@ def activity_words(step) -> str:
     if status == "running":
         words = f"在{verb}{thing}"
     elif status == "failed":
-        words = f"{verb}{thing}失败"
+        words = f"{verb}{thing}出错"
     else:
         words = f"{verb}了{thing}"
     if purpose:

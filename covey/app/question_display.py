@@ -27,7 +27,7 @@ from covey.cards.question_cards import (OTHERS, SET_ASIDE, answer_notice_card, m
                                         triage_element)
 from covey.core import app_manifest, butler, placement, triage
 from covey.core.jobs import find_job_record
-from covey.core.state import write_private_text
+from covey.core.state import read_object, write_private_text
 from covey.core.store import update_question
 from covey.core.topics import route_message, topic_label, topic_title
 
@@ -49,6 +49,27 @@ def top_card(ctx, record, files=None):
     turn's 产物 panel (QuestionDisplay.copy_files)."""
     return mirror_card(record, topic_label(ctx.state_dir, record["topic_id"]), record.get("mirror_output") or "",
                        ask=record.get("mirror_ask"), files=files)
+
+
+def owner_started(state_dir, job) -> bool:
+    """Whether the turn ``job`` of a project's topic is the owner's own, not work its lead handed it: started by his message
+    in the topic ("om_…") or by his answer to its question ("answer-<token>", one the lead did not answer for him,
+    app/triage.py), an automatic retry followed back to where its chain began (app/relay_targets.py origin_message). A
+    turn the lead handed on (project_topic_start, project_topic_send: "main-…"), a wake-up or anything else the Bridge
+    made up is not. Never raises."""
+    from covey.app.relay_targets import origin_message
+
+    try:
+        message = origin_message(state_dir, job)
+    except Exception:  # noqa: BLE001 - as the lead's: nothing of the owner's is quoted
+        return False
+    if message.startswith("om_"):
+        return True
+    token = message.removeprefix("answer-") if message.startswith("answer-") else ""
+    if not token or "/" in token or token.startswith("."):
+        return False
+    question = read_object(Path(state_dir) / "questions" / (token + ".json"))
+    return bool(question) and triage.state(question) != triage.ANSWERED
 
 
 def question_card_lock(path):
@@ -159,17 +180,42 @@ class QuestionDisplay:
         except Exception:  # noqa: BLE001 - the block as for a turn the owner started
             return target
 
-    def member_speaker(self, ctx, record):
-        """The speaker line atop a project topic's question copy at the top level: the topic asks, for work its lead
-        handed it (cards/answer_card.py ask_block, ``doing`` member); None when the topic cannot be named."""
-        from covey.app.answer_cards import avatar, speaker
+    def member_speaker(self, ctx, record, job=None):
+        """The speaker line atop a project topic's question copy at the top level for work its lead handed it: the topic
+        asks (cards/answer_card.py ask_block, ``doing`` member) and quotes nothing, the words would be the lead's. The
+        line opens the topic's thread at the question (its card, else the asking turn's card, app/answer_cards.py
+        ask_url), as an ordinary topic's copy does; None when the topic cannot be named."""
+        from covey.app.answer_cards import ask_url, avatar, speaker
         from covey.cards.answer_card import ask_block
 
-        who = speaker(ctx.state_dir, str(record.get("topic_id") or ""), str(record.get("chat_id") or ""),
-                      self.runtime.log)
-        picture = avatar(ctx.state_dir, str(record.get("topic_id") or ""), str(record.get("chat_id") or ""),
-                         getattr(ctx, "profile", None), self.runtime.log) if who else ""
-        return ask_block("", who=who, doing="member", avatar=picture) if who else None
+        topic, chat = str(record.get("topic_id") or ""), str(record.get("chat_id") or "")
+        who = speaker(ctx.state_dir, topic, chat, self.runtime.log)
+        if not who:
+            return None
+        picture = avatar(ctx.state_dir, topic, chat, getattr(ctx, "profile", None), self.runtime.log)
+        turn = job if job is not None else {"chat_id": chat, "topic_id": topic, "job_id": record.get("job_id")}
+        try:
+            url = ask_url(ctx.state_dir, turn, topic_id=topic, at=[m for m in (str(record.get("question_message_id") or ""),) if m],
+                          profile=getattr(ctx, "profile", None), log=self.runtime.log)
+        except Exception as exc:  # noqa: BLE001 - the line without its link, said
+            self.runtime.log(f"question copy link failed token={str(record.get('token') or '')[:10]}: {type(exc).__name__}")
+            url = ""
+        return ask_block("", who=who, doing="member", avatar=picture, url=url)
+
+    def member_ask(self, ctx, record, job=None):
+        """The row atop a project topic's question copy (T658: it could not be clicked, and a turn the owner started there
+        lost his words): a turn of the owner's own in that topic (``owner_started``: his message there or his answer to its
+        question) quotes him as an ordinary topic's copy does (relay_targets.ask_for: 你问 / 你答, the line that opens, the
+        link into the thread at the question); a turn the lead handed it says so (``member_speaker``)."""
+        from covey.app.relay_targets import ask_for
+
+        topic = str(record.get("topic_id") or "")
+        if job is not None and owner_started(ctx.state_dir, job):
+            ask = ask_for(ctx.state_dir, job, {"kind": "follow", "topic_id": topic}, ctx.profile,
+                          at=str(record.get("question_message_id") or ""), log=self.runtime.log, doing="waiting")
+            if ask:
+                return ask
+        return self.member_speaker(ctx, record, job)
 
     # The top-level copy of a 话题区's question.
     def mirror(self, ctx, record, output="", job=None):
@@ -193,10 +239,11 @@ class QuestionDisplay:
             target = {"chat_id": chat, "reply_to": "", "label": "", "kind": "member", "topic_id": record["topic_id"]}
         if not target:
             return ""
-        # A member's turn was asked for by the lead, not by the owner: no words of his are quoted (they would be the
-        # lead's), only who asks, "T46 标题 办负责人派的事，要你定" (cards/answer_card.py says, docs/ui.md 5.3).
+        # A member's turn the lead asked for quotes no words of the owner's (they would be the lead's), only who asks,
+        # "T46 标题 办负责人派的事，要你定" (cards/answer_card.py says, docs/ui.md 5.3); one the owner started in the topic
+        # quotes him (``member_ask``). Either row opens the topic's thread.
         if target["kind"] == "member":
-            ask = self.member_speaker(ctx, record)
+            ask = self.member_ask(ctx, record, job)
         else:
             ask = (ask_for(ctx.state_dir, job, self._asked_target(ctx, job, target) if place.traits.relays else target,
                            ctx.profile, at=str(record.get("question_message_id") or ""), log=self.runtime.log,

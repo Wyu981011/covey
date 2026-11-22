@@ -85,7 +85,7 @@ def render(rows, more=0) -> str:
              f" {SHOW_CHARS} 字，要细节用 topics_search、topic_read）"]
     for record in rows:
         ended = stamp(record.get("ended_at"), "%H:%M", "--:--", lenient=True)
-        status = {"done": "", "failed": "（失败）", "cancelled": "（已停止）"}.get(record.get("status"), f"（{record.get('status')}）")
+        status = {"done": "", "failed": "（停住了）", "cancelled": "（已停止）"}.get(record.get("status"), f"（{record.get('status')}）")
         answer = cut(record.get("answer"), SHOW_CHARS, strip=True) or "没有送达的回答"
         opened = "、".join(str(t) for t in record.get("opened") or ())
         lines.append(f"- {ended}{status} 请求「{cut(record.get('request'), REQUEST_CHARS, strip=True)}」→ {answer}"

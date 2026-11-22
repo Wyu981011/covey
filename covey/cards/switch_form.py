@@ -11,11 +11,12 @@ and bold. A row's options open under it, as on the launch card (no select).
 """
 from __future__ import annotations
 
-from covey.cards.elements import callback_button, md, note, panel_header, plain, row, styled_panel
+from covey.cards.elements import callback_button, fold, grey, md, note, panel_header, plain, row, styled_panel
 from covey.cards.launch_config import (model_settings, redaction_setting, run_mode_setting, setting_row, settings_block,
                                                 workspace_setting)
 from covey.core.menu_choice import harness_of
 from covey.core.defaults import work_mode_tag
+from covey.core.text import literal, redact
 from covey.core.workspaces import RUN_MODES
 
 HARNESS = "bridge_switch_harness"
@@ -31,8 +32,10 @@ CANCEL = "bridge_switch_cancel"
 PAGE = "bridge_switch_page"  # A row's tap on a card sent with options pages (84caa8a): that row drawn open.
 # What a switch does, as its card says it: the handoff's details (the transcript file, HANDOFF_ROUNDS
 # rounds in plain text, app/switch_handoff.py) are the model's to know, not the card's.
-SWITCH_NOTE = ("换 Harness、模型、预算、工作区或运行方式会开新会话：新会话拿到交接摘要和最近的问答，完整记录放在文件里，需要时自己去读；"
-               "旧会话没答的问题会取消。只改敏感词脱敏时会话不变。")
+SWITCH_NOTE = ("换 Harness、模型、预算、工作区或运行方式会开新会话，上下文不断：新会话拿到交接摘要和最近的问答，完整记录放在文件里，"
+               "需要时自己去读；交接了什么写在下一张任务卡上。旧会话没答的问题会取消。只改敏感词脱敏时会话不变。")
+HANDOFF_ID = "switch_handoff"  # The 交接 block of the first task card after a switch (``handoff_block``).
+HANDOFF_SUMMARY_CHARS = 6000  # Of the old model's summary the block opens on; its file keeps it whole.
 UNCHANGED = "先改一项再点确认更换"
 # A model that cannot redact, chosen on a redacting topic, turns 脱敏 off on the card (else
 # only Claude is listed, and the reason sits in small print at the bottom).
@@ -140,3 +143,28 @@ def build_switch_card(form):
     elements.append(row((confirm, 1), (callback_button("取消", {"kind": CANCEL, "token": token}, style="default",
                                                        width="fill"), 1)))
     return styled_panel(panel_header("switch", "换配置", subtitle), elements, "换配置 · Harness、模型、工作区、脱敏")
+
+
+def handoff_block(before, after, *, summary="", rounds=0, kept=0, state="done", why=""):
+    """What the first task card after a switch says the new model was handed (T647 E1: a line in the folded 执行过程 was all
+    there was), right above the answer: "**交接** Claude Code · opus（high） → Codex · gpt-5（high）" and a grey line under it.
+    ``state``: "waiting" while the old model writes its summary (nothing has started yet), "stopped" when the turn was
+    stopped then, else handed over. With the old model's ``summary`` the block is a fold that opens on it, its line "原模型写了
+    交接摘要（1,234 字，点开看），和最近 1 轮原文、完整记录（共 12 轮）一起交给了新模型"; without one, ``why`` there is none
+    and that the rounds went instead. ``rounds``: the transcript's, ``kept``: those in plain text. One element by
+    HANDOFF_ID, replaced in place as the handoff goes on."""
+    head = f"**交接** {literal(before)} → {literal(after)}"
+    if state == "waiting":
+        return md(head + "\n" + grey("正在请原模型写交接摘要（最多 3 分钟），写好后开始这一轮"), element_id=HANDOFF_ID)
+    if state == "stopped":
+        return md(head + "\n" + grey("已停止，没有写交接摘要"), element_id=HANDOFF_ID)
+    record = f"完整记录（共 {rounds} 轮）" if rounds else "完整记录"
+    if not summary:
+        reason = f"没有交接摘要（{literal(why)}）" if why else "没有交接摘要"
+        recent = f"最近 {kept} 轮原文和" if kept else ""
+        return md(head + "\n" + grey(f"{reason}：{recent}{record}交给了新模型"), element_id=HANDOFF_ID)
+    recent = f"最近 {kept} 轮原文、" if kept else ""
+    text = redact(summary).strip()
+    shown = text if len(text) <= HANDOFF_SUMMARY_CHARS else text[:HANDOFF_SUMMARY_CHARS] + "\n\n…（完整摘要在话题的交接文件里）"
+    line = grey(f"原模型写了交接摘要（{len(text):,} 字，点开看），和{recent}{record}一起交给了新模型")
+    return fold(HANDOFF_ID, md(head + "\n" + line), [md(shown)], spacing="6px")

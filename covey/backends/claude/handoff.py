@@ -58,7 +58,7 @@ def summarize(backend, ctx, session_id, prompt, env, *, cancel=None, seconds=SUM
             text = row.get("result") if isinstance(row.get("result"), str) else ""
             if row.get("is_error") or row.get("subtype") != "success":
                 return "", "Claude Code 报告失败"
-            return (text.strip(), "完成") if text.strip() else ("", "回答为空")
+            return (text.strip(), "写好了") if text.strip() else ("", "回答为空")
     except JobCancelled:
         return "", "已停止"
     except subprocess.TimeoutExpired:

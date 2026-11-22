@@ -9,8 +9,9 @@ One layer under the tab row:
   memory_block, cut to PREVIEW characters).
 - 全局, 工作区 <name>, 专项, 话题: a section each with its entries, the newest first, each one line (你说的 or 它总结的, 常驻,
   where it came from, 这次带不上 for one the next turn leaves out) with 删除 (two steps: 删除, then 确认删除 or 取消) and, for one
-  that can be (a principle), 常驻 or 取消常驻. A section shows SHOWN entries and 展开 (共 N 条); the one ``open`` shows a
-  page of PAGE with 上一页 / 下一页 / 收起, the others only their heading then.
+  that can be (a principle), 常驻 or 取消常驻; a line of 你说的 in a project's or a topic's memory (not from a topic with redaction
+  on) 升为全局 (T647 E4), one of the 全局 principles then. A section shows SHOWN entries and 展开 (共 N 条); the one ``open``
+  shows a page of PAGE with 上一页 / 下一页 / 收起, the others only their heading then.
 
 Each button's value carries its kind, the card's token and the revision drawn. ``view``: revision, notice, workspace, open,
 page, confirm (the key of the entry asking 确认删除); ``data``: app/memory_panel.py ``facts``. The lines are cut (TEXT,
@@ -31,7 +32,9 @@ WORKSPACE = "bridge_memory_workspace"  # The 工作区 row's option: the workspa
 OPEN = "bridge_memory_open"  # 展开 / 上一页 / 下一页 / 收起: ``scope`` ('' closes) and ``page``.
 DELETE = "bridge_memory_delete"  # 删除: ``key`` of the entry, ``op`` ask, confirm or cancel.
 PIN = "bridge_memory_pin"  # 常驻 / 取消常驻: ``key`` of a principle, ``on``.
-KINDS = frozenset({WORKSPACE, OPEN, DELETE, PIN})
+PROMOTE = "bridge_memory_to_global"  # 升为全局: ``key`` of a project's or a topic's entry.
+KINDS = frozenset({WORKSPACE, OPEN, DELETE, PIN, PROMOTE})
+PROMOTE_LABEL = "升为全局"
 SHOWN = 2  # Entries a closed section shows.
 PAGE = 8  # Entries a page of the open section shows.
 PREVIEW = 1800  # Characters of the block 看原文 shows (a card holds 30000 bytes of JSON).
@@ -40,8 +43,8 @@ NAME = 24  # Characters of a workspace's name on the 工作区 row.
 WORKSPACES = 8  # Workspaces the 工作区 row offers, the chosen one first (each option carries its whole name).
 WHERE = 20  # Characters of where an entry came from (专项「…」, T12).
 OTHERS = 120  # Characters of the line of the other workspaces.
-FOOT = ("删掉的下一轮就不带了。标「常驻」的不会因为放不下被挤掉（每组最多 8 条）。全局的只在你自己的一轮带；"
-        "工作区的谁在这个工作区开话题都带；代答话题什么都不带。")
+FOOT = ("删掉的下一轮就不带了。标「常驻」的不会因为放不下被挤掉（每组最多 8 条）。专项、话题里你说的点「升为全局」，以后每个话题都带。"
+        "全局的只在你自己的一轮带；工作区的谁在这个工作区开话题都带；代答话题什么都不带。")
 EMPTY = "还没有记忆：你在话题里说“以后…”“别再…”这类长期要求，那一轮结束后会记下。"
 
 
@@ -67,6 +70,8 @@ def entry_row(row, view, value):
         if row.get("pinnable"):
             buttons.insert(0, text_button("取消常驻" if row.get("pinned") else "常驻",
                                           value(PIN, key=key, on=not row.get("pinned"))))
+        if row.get("promotable"):
+            buttons.insert(0, text_button(PROMOTE_LABEL, value(PROMOTE, key=key)))
     return item(md(entry_line(row)), *buttons)
 
 

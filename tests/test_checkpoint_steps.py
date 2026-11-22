@@ -136,8 +136,8 @@ class ParseTest(unittest.TestCase):
     def test_words(self):
         self.assertEqual(step_words([]), "")
         self.assertEqual(step_words(steps("done", "done", "doing", "todo", "todo")), "第 3/5 步：第3项")
-        self.assertEqual(step_words(steps("done", "todo")), "已完成 1/2 步")
-        self.assertEqual(step_words(steps("done", "done")), "2/2 步已完成")
+        self.assertEqual(step_words(steps("done", "todo")), "做完 1/2 步")
+        self.assertEqual(step_words(steps("done", "done")), "2/2 步都做完了")
         self.assertEqual(change_summary({}), "")
         self.assertEqual(change_summary({"commit": "951327a0c1d2e3f4", "deployed": "第 331 代（10:11 切换）",
                                          "verified": "群里点开看过"}), "951327a · 第 331 代 · 已自检")
@@ -221,7 +221,7 @@ class StatusLineTest(unittest.TestCase):
             first = updates[-1].split("\n")[0]
             # 读代码 was done when the plan was first seen (an earlier turn's): one step of this turn's own and no history
             # of the topic, so no estimate (core/progress.py pace).
-            self.assertTrue(first.endswith(" · 阶段：收尾 · 已完成 2/3 步"), first)
+            self.assertTrue(first.endswith(" · 阶段：收尾 · 做完 2/3 步"), first)
             self.assertEqual(records[-1]["step_times"]["改卡片"], {"started": self.T0, "ended": self.T0 + 2460})
             self.assertEqual(records[-1]["delivery"]["commit"], "a6bc148")  # Kept once seen.
             point.write_text(json.dumps({"phase": "收尾"}, ensure_ascii=False))
@@ -244,7 +244,7 @@ class StatusLineTest(unittest.TestCase):
         self.assertEqual(step_text(steps("doing"), {"第1项": {"started": 970}}, 1000), ("第 1/1 步：第1项 · 本步 不到 1 分钟", True))
         self.assertEqual(step_text(steps("doing"), {"第1项": {"started": "x"}}, 1000), ("第 1/1 步：第1项", True))
         self.assertEqual(step_text(steps("doing"), [], 1000), ("第 1/1 步：第1项", True))
-        self.assertEqual(step_text(steps("done", "todo"), {}, 1000), ("已完成 1/2 步", False))
+        self.assertEqual(step_text(steps("done", "todo"), {}, 1000), ("做完 1/2 步", False))
         facts = Facts(elapsed=65, quiet=3, alive=True, finished=False, phase="改", last_event="尚无阶段进展",
                       checked="01-02 03:04:05", question="", waiting=False, native_question_active=False,
                       activity=None, traced=False, wall=1000.0, stirred=False, retry={}, epoch=1000.0,
@@ -464,7 +464,7 @@ class TopicReadTest(unittest.TestCase):
             # The checkpoint gone (an older turn's), the record's copy.
             kept = butler_tools.checkpoint_lines({"steps": [{"title": "读代码", "state": "done"}], "status": "done",
                                                 "delivery": {"commit": "a6bc148"}})
-            self.assertEqual(kept, ["  检查点步骤（1/1 步已完成）：", "    1. [做完] 读代码",
+            self.assertEqual(kept, ["  检查点步骤（1/1 步都做完了）：", "    1. [做完] 读代码",
                                     "  检查点改动：提交 a6bc148；部署 未部署；自检 未自检"])
 
 

@@ -169,7 +169,7 @@ def summary(state_dir, record, *, bridge_release, generation="-") -> str:
     if point.get("phase") or point.get("completed"):
         done = point.get("completed") if isinstance(point.get("completed"), list) else []
         lines.append("检查点：" + "；".join(part for part in (
-            f"停在 {masked(point['phase'], 80)}" if point.get("phase") else "", f"已完成 {len(done)} 项" if done else "")
+            f"停在 {masked(point['phase'], 80)}" if point.get("phase") else "", f"做完 {len(done)} 项" if done else "")
             if part))
     said = retries(state_dir, record)
     lines.append("重试：" + (said or "没有"))

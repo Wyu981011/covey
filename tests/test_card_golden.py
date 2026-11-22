@@ -142,7 +142,7 @@ def task_cards():
         "io_box_ended": io_box(sample_job(), output_lines(output_parts(snapshot, 100))),
         "io_box_unknown": io_box(sample_job(input_parts=None, model_label="", workspace_label="")),
         "answer_card": answer_card("# 结论\n\n第一段 **加粗**\n\n### 小标题\n\n- 一\n- 二\n\n```py\nprint(1)\n```\n",
-                                   "✅ T70 · #431 · 已完成"),
+                                   "T70 有结果 · 第一段 加粗"),
         "status_text": render_stream_status(sample_job(), "排队中", ["⚠️ 提示", "前面还有 1 个任务"], queue_depth=2),
         **answer_tail_cards(),
         **queued_cards(run),
@@ -169,7 +169,7 @@ def task_cards():
         "outcome_line": {status: outcome_line(status) for status in ("done", "failed", "cancelled", "waiting_user")},
         "running_summary": [running_summary("T70", "任务"), running_summary("T70", "任务", phase="改代码" * 20),
                             running_summary("T70", "任务", asking=True)],
-        "task_card_summary": [task_card_summary("T70", "done", "✅ 已完成 · 用时 3 分 39 秒"),
+        "task_card_summary": [task_card_summary("T70", "done", "有结果 · 用时 3 分 39 秒"),
                               task_card_summary("T70", "failed")],
         "stopped_sentence": stopped_sentence(431),
         "history": render_history([{"role": "user", "content": "第一问"}, {"role": "assistant", "content": "第一答"},
@@ -658,7 +658,7 @@ def turn_export_panels():
 
 def switch_cards():
     from covey.cards.elements import notice_card
-    from covey.cards.switch_form import build_switch_card
+    from covey.cards.switch_form import build_switch_card, handoff_block
     from covey.cards.topic_actions import switch_panel
 
     old = {"token": "b" * 24, "topic": "T70", "workspace": "project",
@@ -683,6 +683,13 @@ def switch_cards():
         "card_refused": build_switch_card({**form, "notice": "**⚠️ 还没有换（20:08）**：本话题还有任务在排队或执行"}),
         "closed": notice_card("**🔁 已换配置**", "已换配置"),
         "panel_on_task_card": switch_panel(TOPIC, 431, "codex", 2),
+        # T647 E1: the 交接 block above the first task card's answer after a switch (app/switch_handoff.py).
+        "handoff_waiting": handoff_block("Claude Code · claude-opus（high）", "Codex · gpt-6-astra（xhigh）", state="waiting"),
+        "handoff_summary": handoff_block("Claude Code · claude-opus（high）", "Codex · gpt-6-astra（xhigh）",
+                                         summary="## 目标\n把看板改成彩色块。\n\n## 当前状态\n浅色做完，深色没做。", rounds=12, kept=1),
+        "handoff_none": handoff_block("Codex · gpt-6-astra（xhigh）", "Claude Code · claude-opus（high）", rounds=2, kept=2,
+                                      why="原来的 Harness 不会写交接摘要"),
+        "handoff_stopped": handoff_block("Claude Code · claude-opus（high）", "Codex · gpt-6-astra（xhigh）", state="stopped"),
     }
 
 
@@ -907,6 +914,11 @@ def answer_tail_cards():
                 {"kind": "remembered", "text": "选型类的事不用先问侧重点", "scope": "管这个专项", "entry_id": "a1b2c3"},
                 {"kind": "voided", "text": "选型前先问侧重点", "scope": "管这个专项", "entry_id": "d4e5f6"},
                 {"kind": "undone", "text": "产物放 out/", "scope": "管这个话题", "entry_id": "0a1b2c"}], "tf0001", 439)]),
+            # T647 E4: a line 升为全局 says 管全局 and keeps only 不对; one from a topic with redaction on is not offered it.
+            "answer_card_memory_global": answer_card(text, "✅ T439 · 结论", [*tail(files, inputs, outputs), memory_element([
+                {"kind": "remembered", "text": "回答先给结论", "scope": "管全局", "entry_id": "p1a2b3c"},
+                {"kind": "remembered", "text": "项目代号用简称", "scope": "管这个话题", "entry_id": "0a1b2d", "redacted": True}],
+                "tf0001", 439)]),
             # An ordinary topic's reply that put something off with nothing to come back (app/revisit_hint.py): the line, and
             # with COVEY_REVISIT=1 its 约 30 分钟后回来看 button.
             "answer_card_unwatched": answer_card(text, "✅ T439 · 结论", tail(files, inputs, outputs, buttons=[
@@ -954,6 +966,14 @@ def answer_tail_cards():
             # A project's topic asks at the top level: who asks, no words of the owner's (the lead handed it the work).
             "question_copy_member": mirror_card(question_record(), "T546", "设置卡已按你选的改法改完。",
                                                 ask=ask_block("", who="T546 设置的使用逻辑梳理", doing="member")),
+            # T658: its row opens the topic's thread at the question; settled, it says what the topic does (not 关于你的问题).
+            "question_copy_member_linked": mirror_card(question_record(), "T546", "设置卡已按你选的改法改完。", ask=ask_block(
+                "", who="T546 设置的使用逻辑梳理", doing="member",
+                url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&openThreadId=omt_546")),
+            "question_copy_member_settled": mirror_card(
+                question_record("answered", continuation_job_id=432, delivery_state="running"), "T546", "设置卡已按你选的改法改完。",
+                ask=ask_block("", who="T546 设置的使用逻辑梳理", doing="member",
+                              url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&openThreadId=omt_546")),
             "answer_card_answered": answer_card(text, "✅ 结论", tail(files, inputs, outputs), [answered]),
             "answer_relay_answered": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
                                                 ask=answered)[0],
@@ -1092,13 +1112,13 @@ def main_task_cards():
             "held": build_stream_card(render_stream_status(job(), butler.HOLD_STATUS), "任务", run, job=job(),
                                       include_stop_action=True),
             "running_status": status_elements("执行中 · 已运行 6 秒 · 阶段：读日志\n当前：Read bridge.log", False, True),
-            "done": ended(render_stream_final(bare, "昨晚失败是**磁盘满**。", bare=True), "✅ 已完成 · 用时 13 秒"),
+            "done": ended(render_stream_final(bare, "昨晚失败是**磁盘满**。", bare=True), "有结果 · 用时 13 秒"),
             "routed": ended(render_stream_final(bare, routed_body(lines), bare=True),
-                            "✅ 已完成 · 用时 13 秒", inside=[reply_fold("开了 T410，转给 T388。")]),
+                            "有结果 · 用时 13 秒", inside=[reply_fold("开了 T410，转给 T388。")]),
             "stopped": ended("已保存的结果和记录保留在私聊里。", "⏹ 已停止 · 用时 13 秒",
                              under=[md("**这一轮停了，期间你发的 1 条补充也一起停了**，不会自动重发；要的话改一改再发：\n"
                                        "- 14:36 · 看看这两个样本", element_id=DROPPED)]),
-            "failed": ended("任务 #431 处理出错（RuntimeError），未满足结果发布条件。", "⚠️ 执行失败 · 用时 13 秒",
+            "failed": ended("任务 #431 处理出错（RuntimeError），未满足结果发布条件。", "停住了 · 用时 13 秒",
                             under=[result_actions(butler.butler_topic_id("chat"), 431, "检查并继续")]),
         }
 
@@ -1363,25 +1383,30 @@ def memory_tab_cards():
 
 
 def about_tab_cards():
-    """The 设置 card's 能做什么 tab (cards/about_panel.py; T604 #62), read only: what this deployment has on and how to get
-    the rest; without Claude Code there is no butler and it says how to get one."""
+    """The 设置 card's 能做什么 tab (cards/about_panel.py; T604 #62, T647 D6), read only: three groups by what the owner does
+    with them, each line what it does for him first, on with its switch, off grey with how to get it; without Claude Code
+    there is no butler and it says how to get one."""
+    from covey.app.about_panel import FEATURES, GROUPS
     from covey.cards.about_panel import about_card
     from covey.cards.settings_hub import folded_hub, tab_row
     from covey.cards.welcome import BUTLER_WORDS, NO_CLAUDE
 
-    features = [
-        {"name": "管家", "on": True, "line": "私聊顶层的话先交给管家，能答的直接答，要做的开话题", "switch": "COVEY_BUTLER"},
-        {"name": "早晚汇总和看板", "on": True, "line": "每天 09:30、21:30 在私聊发汇总卡；菜单有「看板」", "switch": "COVEY_DIGEST_TIMES"},
-        {"name": "专项", "on": True, "line": "要分几个话题、跨几天做的事开成专项，有负责人跟进", "switch": "COVEY_PROJECTS"},
-        {"name": "记忆", "on": False, "line": "设 COVEY_MEMORY=1", "switch": "COVEY_MEMORY"},
-        {"name": "新话题带上最近话题的要点", "on": False, "line": "设 COVEY_WORKSPACE_GISTS=3（话题要点要整理专项开着才会写）",
-         "switch": "COVEY_WORKSPACE_GISTS"},
-        {"name": "代答", "on": False, "line": "要一个带代答发送器的扩展（核心没有），再设 COVEY_PROXY_PROFILE",
-         "switch": "COVEY_PROXY_PROFILE"}]
-    view = {"host": "devbox", "harnesses": ["Claude Code", "Codex"], "down": [["Codex", "没登录"]], "features": features,
-            "extensions": []}
+    off = {"早晚汇总": "设 COVEY_DIGEST_TIMES=09:30,21:30（按北京时间）", "手上的事": "设 COVEY_PINNED_OVERVIEW=1",
+           "同时做几件事": "设 COVEY_BUTLER_TRACKS=1（要有管家）", "派发卡": "设 COVEY_DISPATCH_CARD=1",
+           "代答": "要一个带代答发送器的扩展（核心没有），再设 COVEY_PROXY_PROFILE",
+           "新话题带上最近话题的要点": "设 COVEY_WORKSPACE_GISTS=3（话题要点要整理专项开着才会写）",
+           "网页工作台": "要一个配套的网页应用，再设 COVEY_WEB=1 和 COVEY_WEB_CONFIG", "历史搜索": "设 COVEY_HISTORY_CMD=搜索命令的绝对路径",
+           "设备与机器状况": "设 COVEY_NODE_LISTEN=设备能连进来的监听地址", "我本来想找你的事": "设 COVEY_PATROL=shadow（只记不打扰）"}
+    details = {"敏感词脱敏": ("词表在「脱敏」，话题开了才替换", ""), "管家": ("", "COVEY_BUTLER"), "专项": ("", "COVEY_PROJECTS"),
+               "看板": ("", "COVEY_BOARD"), "记忆": ("", "COVEY_MEMORY、COVEY_KNOWLEDGE"),
+               "负责人自己往下推": ("", "COVEY_PROJECT_AUTOWAKE 等四个"), "限流后自动继续": ("", "COVEY_AUTO_RETRY_LONG")}
+    features = [{"name": name, "group": group, "good": good, "on": name not in off,
+                 "line": off.get(name) or details.get(name, ("", ""))[0], "switch": details.get(name, ("", ""))[1]}
+                for name, group, good, _ in FEATURES]
+    view = {"host": "devbox", "harnesses": ["Claude Code", "Codex"], "down": [["Codex", "没登录"]],
+            "groups": [list(group) for group in GROUPS], "features": features, "extensions": [], "state_dir": "/absolute/state"}
     why, how = BUTLER_WORDS[NO_CLAUDE]
-    no_butler = [{**features[0], "on": False, "line": f"{why}；{how}"}, *features[1:]]
+    no_butler = [{**row, "on": False, "line": f"{why}；{how}"} if row["name"] in ("管家", "回退一步") else row for row in features]
     return {"about": about_card("c" * 24, view, top=[tab_row("about", "c" * 24, FULL_TABS)]),
             "about_no_butler": about_card("c" * 24, {**view, "harnesses": ["Codex"], "down": [], "features": no_butler,
                                                      "extensions": ["covey_internal"], "notice": "⚠️ 仅机器人主人可以看这一页。"},

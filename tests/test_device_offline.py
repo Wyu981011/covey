@@ -461,7 +461,7 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(self.entries()["dev-job-1-ab12"]["reason"], "restart")
         notices = {call.args[1]["key"]: call.args[2] for call in fake.controls.report_unfinished.call_args_list}
         self.assertTrue(notices[self.key].startswith("上一轮的任务进程中断过（机器人重启或任务进程退出），gpu1"))
-        self.assertIn("已中断", notices[local["key"]])
+        self.assertIn("停住了", notices[local["key"]])
         # Registering twice leaves one entry with the first reason.
         BridgeApp.notify_stale_jobs(fake, SimpleNamespace(state_dir=self.state))
         self.assertEqual(len(self.entries()), 1)

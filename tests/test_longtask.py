@@ -410,7 +410,7 @@ class SubtaskProgressTest(unittest.TestCase):
         restored = ToolTrace.restore(trace.snapshot())
         for each in (trace, restored):
             self.assertEqual(trace_progress(each, self.T0 + 100),
-                             (THINKING, self.T0 + 10, "子任务「核对配置」已完成"))
+                             (THINKING, self.T0 + 10, "子任务「核对配置」做完了"))
         nested = self.subtask_trace()
         nested.accept("tool", {"id": "a2", "name": "agent", "detail": "Agent", "status": "running", "child_id": "a1",
                                "started_at": self.T0 + 5})

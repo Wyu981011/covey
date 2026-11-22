@@ -91,7 +91,8 @@ def done_text(record, choice, effort, mode, place, redaction, was, switched):
             lines.append(f"工作区沿用：{switch_form.place(current.get('workspace') or record.get('workspace') or '', current.get('run_mode') or 'direct')}")
     if redaction != was:
         lines.append("敏感词脱敏：关 → 开（之前各轮已经原样发出过）" if redaction else "敏感词脱敏：开 → 关")
-    lines.append(("下一条消息由新会话接手：它拿到交接摘要和最近的问答，完整记录放在文件里，需要时自己去读。"
+    lines.append(("下一条消息由新会话接手，上下文不断：它拿到交接摘要和最近的问答，完整记录放在文件里，需要时自己去读；"
+                  "交接了什么写在下一张任务卡上。"
                   "更换前的任务卡只能查看，不能再重试、回退或换配置。") if switched
                  else "会话不变，下一条消息起生效。")
     return "\n".join(lines)

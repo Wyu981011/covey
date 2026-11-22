@@ -18,7 +18,7 @@
 | [菜单「看板」](usage.md#看板) | `COVEY_BOARD=1`（`./install` 写） | 菜单里有「看板」，随时点开看现在等你、停住、在做的事；不用开早晚汇总（应用里还没有这一项时，「飞书应用待补」卡会补上） | `COVEY_BOARD=0`（开了早晚汇总时「看板」照旧跟着它） |
 | [独立复核](usage.md#答案在哪里) | `COVEY_REVIEW=1`（`./install` 写） | 改了代码的答案卡下面多「独立复核」：点了才开一个只读话题，换一家的模型只看你的原话、完成标准和这一轮的改动 | `COVEY_REVIEW=0` |
 | [到点回来看](usage.md#到点回来看) | `COVEY_REVISIT=1`（`./install` 写；看和取消在菜单「看板」） | 话题要等训练、CI 这类外部的事时，这一轮说好几点回来看就结束，到点自己再起一轮；菜单「看板」里有“到点回来看”一组 | `COVEY_REVISIT=0` |
-| [记忆](#记忆) | `COVEY_MEMORY=1`（`./install` 写） | 你在话题里说的长期要求一轮结束后记下，答案卡底部露一行和“不对”按钮；设置卡多「记忆」标签 | `COVEY_MEMORY=0` |
+| [记忆](#记忆) | `COVEY_MEMORY=1`（`./install` 写） | 你在话题里说的长期要求一轮结束后记下，答案卡底部露一行和“升为全局”“不对”按钮；设置卡多「记忆」标签 | `COVEY_MEMORY=0` |
 | [知识条目](#知识条目与历史搜索) | `COVEY_KNOWLEDGE=1`（`./install` 写） | 说“记一下”的事记成条目，那一轮结束时卡上说记下了；话题首轮带上，汇总多一节 | `COVEY_KNOWLEDGE=0` |
 | [专项的进阶](projects.md#使用者概览) | `COVEY_PROJECT_AUTOWAKE=1`、`COVEY_PROJECT_ASK=1`、`COVEY_PROJECT_MEMORY=1`、`COVEY_PROJECT_TRIAGE=1`（`./install` 写，都要 `COVEY_PROJECTS=1`） | 依次是：话题一轮结束就叫醒负责人（负责人多跑几轮，多花些 token）；专项停住时发卡问你继续、收尾还是停；专项有自己的记忆和资料库；话题的选择题先给负责人分流 | 各设成 `0` |
 | 撤回与编辑 | `COVEY_SOURCE_WATCH`（默认开） | 撤回一条已变成任务的消息，任务跟着停；编辑后任务收到改后的内容 | `COVEY_SOURCE_WATCH=0` |
@@ -279,7 +279,8 @@
 
 - `COVEY_MEMORY=1`（只认 `1`）：打开“记忆”（[管家 · 记忆](butler.md#记忆开关默认关)）。不依赖别的开关：原则一直有，`COVEY_KNOWLEDGE=1` 时知识条目也进来，`COVEY_PROJECTS=1` 且 `COVEY_PROJECT_MEMORY=1` 时专项记忆也进来；话题自己的记忆放在 `<state>/topics/<话题>/memory.json`，打开后才会有。
 - 关着（代码的默认；`./install` 新装的服务写 `COVEY_MEMORY=1`，见[默认已开](#默认已开)）：规则、续接提醒、答案卡和任务记录都和没有这个功能时一样，不读不写话题的 `memory.json`，设置卡没有「记忆」标签。
-- 开着时设置卡多一个「记忆」标签（`app/memory_panel.py`）：按范围列出每一条、能删、能把原则标成常驻（`principles.json` 里那一条多 `"pinned": true`，每组最多 8 条，放不下时也照带），并显示选中工作区下一轮会带上的那一块和每个范围的余量。
+- 开着时设置卡多一个「记忆」标签（`app/memory_panel.py`）：按范围列出每一条、能删、能把原则标成常驻（`principles.json` 里那一条多 `"pinned": true`，每组最多 8 条，放不下时也照带），专项和话题里你说的那条能“升为全局”，并显示选中工作区下一轮会带上的那一块和每个范围的余量。
+- 升为全局：答案卡上“记下了”那一行（管这个专项、管这个话题的）和设置卡「记忆」里都有这个按钮。点了把这一条记成一条通用的原则（`principles.json` 的 `owner`，以后你自己的每一轮都带），专项或话题里原来那条留墓碑；答案卡那一行改成“管全局”，再点“不对”删掉的是这条原则。来自开着脱敏的话题的那条不给升（它只给开着脱敏的话题读），它总结的也不给升。日志：`memory line promoted to a principle job=#…`。
 - 开着且设了[早晚汇总](#早晚汇总)时，每天的晚间汇总多一节“你反复说的”（`app/memory_candidates.py`）：从那之前 24 小时里结束的普通话题（不读开了脱敏的话题、管家话题、代答话题，只读主人自己那一轮的原话里带纠正字眼的句子）找主人在两个以上话题里重复说的纠正，最多 3 条，每天看一次。分组用 Claude Code 的小模型（Haiku，和[同时做几件事](butler.md#同时做几件事开关默认关)的判断同一套做法，最多 30 秒）；没有 Claude Code 或调用失败时只按“几乎一样的话”分组。点「记下」才记成一条原则（来源话题都在一个工作区就记到那个工作区，否则通用），点「不用」以后不再提同一句；记录在 `<state>/memory-candidates.json`。日志：`memory candidates found=N via=model|rules sentences=N`、`memory candidates none: …`、`memory candidates judge failed reason=…`，不写原话。
 - 关掉：按[改开关三步](#改开关三步)设成 `0`；已经写下的记忆留着，标了常驻的原则在原则块里照样不被挤掉。
 - 日志：`memory lines written=N of M job=#…`、`memory lines ignored reason=… job=#…`、`memory lines failed job=#…`。

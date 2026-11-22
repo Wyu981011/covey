@@ -144,7 +144,7 @@ def recovery_text(record, state, label, cp, *, continued, state_dir):
         # Why is the band's (recovery_card): a turn on a device's words, else core/failure.py's.
         text += f"停在：{cp.get('phase') or '尚无检查点'}\n"
         completed = cp.get("completed", [])
-        text += "已完成：" + (
+        text += "做完的：" + (
             "；".join(map(str, completed)) if isinstance(completed, list) and completed else "尚无记录"
         )
         text += f"\n下一步：{cp.get('next_step') or '检查已有产物和外部任务状态后继续'}"

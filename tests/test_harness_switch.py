@@ -1127,6 +1127,66 @@ class HarnessSwitchTests(UnifiedCase):
         self.assertEqual(notes, [])
         self.assertIn('摘要文字', note)
 
+    def test_the_first_task_card_shows_what_the_new_model_was_handed(self):
+        """T647 E1: 换引擎不断上下文 was a line in the folded 执行过程; the first task card after a switch shows the 交接
+        block right above its answer: from what to what, the old model's summary one click away, or why there is none."""
+        from covey.cards.switch_form import HANDOFF_ID
+        self.leave_claude()
+        app, ctx = self.route('src')
+        for answer, words in ((('## 目标\n修好 X', '完成'), ('原模型写了交接摘要（', '点开看', '最近 1 轮原文、完整记录（共 ')),
+                              (('', '超过 180 秒'), ('没有交接摘要（超过 180 秒）：最近 3 轮原文和完整记录（共 ',))):
+            for kept in (self.source.history_path.parent / 'handoff').glob('summary-*'):
+                kept.unlink()
+            shown = []
+            with mock.patch.object(self.app.apps['claude'].backend, 'handoff_summary', return_value=answer, create=True):
+                app.switch.switch_handoff(ctx, [], show=shown.append)
+            waiting, done = shown
+            self.assertEqual((waiting['element_id'], done['element_id']), (HANDOFF_ID, HANDOFF_ID))  # One block, in place.
+            self.assertIn('正在请原模型写交接摘要', waiting['content'])
+            text = json.dumps(done, ensure_ascii=False)
+            self.assertIn('**交接** ', text)
+            self.assertIn(' → ', text)
+            for word in words:
+                self.assertIn(word, text)
+            if answer[0]:
+                self.assertEqual(done['tag'], 'collapsible_panel')  # The summary itself one click away.
+                self.assertFalse(done['expanded'])
+                self.assertEqual(done['elements'][0]['content'], '## 目标\n修好 X')
+        # No session to summarize: the block says why, at once (nothing to wait for).
+        shown = []
+        topic = self.topic()
+        topic['switches'][-1]['from'].pop('session_id', None)
+        from covey.core.state import write_json
+        write_json(self.source.history_path.parent / 'topic.json', topic)
+        for kept in (self.source.history_path.parent / 'handoff').glob('summary-*'):
+            kept.unlink()
+        app.switch.switch_handoff(ctx, [], show=shown.append)
+        [done] = shown
+        self.assertIn('没有交接摘要（原来的配置还没有会话）', done['content'])
+        # A turn about to be refused hands nothing over: no block.
+        shown = []
+        app.switch.switch_handoff(ctx, [], ready=lambda: False, show=shown.append)
+        self.assertEqual(shown, [])
+
+    def test_the_block_goes_right_above_the_task_card_s_answer(self):
+        app, ctx = self.route('src')
+        block = {'tag': 'markdown', 'element_id': 'switch_handoff', 'content': '**交接** A → B'}
+        job = SimpleNamespace(progress=SimpleNamespace(element_id='answer', slim=False))
+        with mock.patch.object(app.cards, 'set_task_element') as put:
+            app.runs._handoff_block(ctx, job, block)
+            put.assert_called_once_with(ctx, job, block, before='answer')
+            put.reset_mock()
+            app.runs._handoff_block(ctx, SimpleNamespace(progress=SimpleNamespace(element_id='answer', slim=True)), block)
+            app.runs._handoff_block(ctx, SimpleNamespace(progress=None), block)
+            put.assert_not_called()  # The butler's slim card never switches; no card, no block.
+
+    def test_the_block_says_a_stop_while_the_summary_was_written(self):
+        from covey.cards.switch_form import handoff_block
+        self.assertIn('已停止，没有写交接摘要', handoff_block('Claude Code · a', 'Codex · b', state='stopped')['content'])
+        long = handoff_block('A', 'B', summary='字' * 7000, rounds=12, kept=1)
+        self.assertLess(len(long['elements'][0]['content']), 6100)  # The file keeps it whole.
+        self.assertIn('7,000 字', long['header']['title']['content'])
+
     def test_the_turn_shows_the_summary_line_in_its_trace(self):
         self.leave_claude()
         app, ctx = self.route('src')

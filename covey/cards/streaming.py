@@ -172,7 +172,7 @@ def progress_lines(found) -> list[str]:
         return []
     lines = [f"阶段：{safe_text(found['phase'], 120)}"] if found.get("phase") else []
     if found.get("plan_total"):
-        lines.append(f"步骤：已完成 {found.get('plan_done') or 0}/{found['plan_total']}")
+        lines.append(f"步骤：做完 {found.get('plan_done') or 0}/{found['plan_total']}")
     at = found.get("last_activity_at")
     if at is not None:
         lines.append(f"最近动静：{clock(at)} {safe_text(found.get('last_activity') or '有动静', 60)}")

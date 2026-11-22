@@ -98,7 +98,7 @@
 
 `cards/trace_view.py` 的 `TraceView` 只从快照生成元素：
 
-- 面板是带框的折叠面板 `trace_details`，第一行 `trace_metrics`（运行中写“N 步”），然后是 `trace_body`。运行中也收起（`PanelModel.expanded` 只有老卡翻页重画时为真）：状态行已经写着“现在：…”。标题运行中固定写“执行过程 · 进行中”，结束后写“执行过程 · N 步”：标题只能随整个折叠面板一起换，换了会把用户的展开状态翻回去，所以运行中只按 ID 换里面的元素，结束时标题变了才整块换一次（`incremental_actions` 比的是折叠面板除内容和 `expanded` 以外的部分，`frame`）。`TraceView.panel_model` 返回 `PanelModel`，`panel_json` 由它画出标题和第一行。中断卡 `panel_model(timed=True)` 在步数后加用时。
+- 面板是带框的折叠面板 `trace_details`，第一行 `trace_metrics`（运行中写“N 步”），然后是 `trace_body`。运行中也收起（`PanelModel.expanded` 只有老卡翻页重画时为真）：状态行已经写着“现在：…”。标题运行中固定写“执行过程 · 在做”，结束后写“执行过程 · N 步”：标题只能随整个折叠面板一起换，换了会把用户的展开状态翻回去，所以运行中只按 ID 换里面的元素，结束时标题变了才整块换一次（`incremental_actions` 比的是折叠面板除内容和 `expanded` 以外的部分，`frame`）。`TraceView.panel_model` 返回 `PanelModel`，`panel_json` 由它画出标题和第一行。中断卡 `panel_model(timed=True)` 在步数后加用时。
 - 主任务和子任务的条目按开始时间排在一起，分成进展说明、子任务和机器人的行、两条之间的一段操作（`trace_items`）。
 - 一段操作（`run_elements`）不超过 `SHOW_OPERATIONS`（8）项全列，更长的只列最后 `KEEP_OPERATIONS`（3）项，前面的收进 `ops_<哈希>` 折叠；运行中的始终列出。步骤一行：✓ ● ✕、种类、耗时或状态、开始时间、非 0 退出码，下一行灰字摘要。
 - 进展说明是 `note_element`（蓝底）。代码在画的时候还原（`literal_code`，快照里是转义过的文字）；`text_chunks` 优先切在换行、句末、空格，不切开实体；子任务最后一条说明超过 `FOLD_CHARS` 时其余放进折叠；同一子任务连续的条目只在第一条写名字（`assemble`）。

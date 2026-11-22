@@ -586,7 +586,7 @@ def project_rules() -> tuple[str, ...]:
 # The owner asking how to use Covey itself: the butler reads the running release's own one-page guide first (a release
 # is the core's git archive, docs/ and all) instead of guessing or reading the code.
 QUICKSTART = Path(__file__).resolve().parents[2] / "docs" / "quickstart.md"
-USAGE_RULE = f"- 主人问 Covey 本身怎么用（看板在哪、怎么开记忆这类），先读 {QUICKSTART} 再答，不要凭印象说。"
+USAGE_RULE = f"- 主人问 Covey 本身怎么用、能做什么（看板在哪、怎么开记忆、有什么特别的这类），先读 {QUICKSTART} 再答，不要凭印象说。"
 
 
 def butler_rules() -> str:
