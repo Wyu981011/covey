@@ -538,6 +538,58 @@ class SlimCardTest(Case):
         self.assertNotIn("header", card)
         self.assertEqual(card["body"]["elements"][0]["element_id"], "task_head")
 
+    def test_the_speakers_row_leads_once_the_card_knows_who_speaks(self):
+        # The owner, 2026-11-22: every slim card opens with its speaker's row (docs/ui.md 5.3), the picture and the
+        # name bold, no link and no grey words: the card is in the thread of his message, his words right above it.
+        from covey.cards.streaming import build_stream_card
+        from covey.cards.ui import BODY_PADDING, BODY_SPACING, ROW_ID
+        from support.cards import sample_job, stream_runtime
+        job = sample_job(topic_id=BUTLER, chat_id=CHAT, topic_label="", card_speaker={"who": "管家", "avatar": "img_v3_b"})
+        card = build_stream_card("**执行进度**\n📌 阶段：已入队", "任务", stream_runtime(), job=job, include_stop_action=True)
+        head, answer, activity, details = card["body"]["elements"]
+        self.assertEqual((head["element_id"], head["tag"]), (ROW_ID, "column_set"))  # No interactive_container: no link.
+        picture, words = head["columns"]
+        self.assertEqual(picture["elements"][0]["img_key"], "img_v3_b")
+        self.assertEqual(words["elements"][0]["content"], "**管家**")
+        self.assertEqual([answer["element_id"], activity["element_id"], activity["content"]], ["answer", "activity", "⏳ 已入队"])
+        self.assertEqual(details["element_id"], "slim_details")
+        self.assertEqual((card["body"]["padding"], card["body"]["vertical_spacing"]), (BODY_PADDING, BODY_SPACING))
+        job.card_speaker = {"who": "专项「迁移账单」· 负责人", "avatar": ""}  # No picture: the name alone.
+        head = build_stream_card(" ", "任务", stream_runtime(), job=job)["body"]["elements"][0]
+        self.assertEqual((head["element_id"], head["content"]), (ROW_ID, "**迁移账单 · 负责人**"))
+        # No speaker known (a card sent before had no row): as before; a topic's card keeps its title row.
+        job.card_speaker = None
+        self.assertEqual(build_stream_card(" ", "任务", stream_runtime(), job=job)["body"]["padding"], "6px 14px 12px 14px")
+        topic = sample_job(topic_id="a" * 32, chat_id=CHAT, card_speaker={"who": "管家", "avatar": ""})
+        self.assertEqual(build_stream_card(" ", "任务", stream_runtime(), job=topic)["body"]["elements"][0]["element_id"],
+                         "task_head")
+
+    def test_the_card_learns_who_speaks_when_it_is_made_and_a_replacement_keeps_it(self):
+        from covey.app.cards import Cards
+        from covey.app.task_card import StreamingCard, StreamingReply, card_look
+        cards = Cards.__new__(Cards)
+        cards.runtime = mock.Mock()
+        cards.stream = SimpleNamespace(look=card_look)
+        job = make_job(job_id=7, topic_id=BUTLER, chat_id=CHAT, message_id="om_1")
+        with mock.patch("covey.app.answer_cards.avatar", return_value="img_v3_b") as avatar:
+            cards.speaker_facts(self.ctx, job)
+            topic = make_job(job_id=8, topic_id="a" * 32, chat_id=CHAT)
+            cards.speaker_facts(self.ctx, topic)
+        self.assertEqual(job.card_speaker, {"who": "管家", "avatar": "img_v3_b"})
+        self.assertEqual(avatar.call_args.args[1:3], (BUTLER, CHAT))
+        self.assertIsNone(getattr(topic, "card_speaker", None))  # A topic's card has its title row.
+        failed = make_job(job_id=9, topic_id=BUTLER, chat_id=CHAT)
+        with mock.patch("covey.core.board_read.speaker_of", side_effect=OSError("gone")):
+            cards.speaker_facts(self.ctx, failed)  # Never raises: the card without the row.
+        self.assertIsNone(getattr(failed, "card_speaker", None))
+        built = []
+        messenger = SimpleNamespace(create_card=lambda profile, card: built.append(card) or {"data": {"card_id": "card_2"}})
+        stream = StreamingCard("t", "t", "answer", lambda **kw: StreamingReply(**kw), lambda _: None, lambda s: s,
+                               lambda *a, **k: True, lambda s, n: s[:n], messenger, lambda *a, **k: ("om_card2", False))
+        job.progress = None
+        self.assertTrue(stream.replace_card(None, job, "正文", "写卡失败", "t"))
+        self.assertEqual(built[-1]["body"]["elements"][0]["element_id"], "speaker_row")  # The replacement keeps its row.
+
     def test_the_status_line(self):
         from covey.cards.task_status import slim_status_markdown, status_elements
         from covey.cards.ui import state_pill

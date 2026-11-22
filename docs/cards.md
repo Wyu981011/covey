@@ -72,7 +72,7 @@
 - “输出”运行中写 开始 ｜ 已运行 ｜ token ｜ token/s ｜ 上下文（`running_figures`、`with_ran`，顺序 `RUNNING_LINES`），结束后写 用时 ｜ token/s ｜ token ｜ 缓存命中（`output_parts`、`output_lines`），还没有数字时是“—”。没开始处理就结束的（排队中取消）照结束写，也是“—”。
 - 段间是灰色的“｜”（`SEPARATOR`），段内不断行（`unbroken`），窄屏只在“｜”后折行。
 - 话题里各卡的按钮都用 `cards/elements.py` 的 `button_look`（带边框、`small`、宽度跟着文字）；菜单面板用 `text_button`。停止按钮不带 `confirm`（见[卡片的客户端限制](#卡片的客户端限制)）。
-- 管家的分档卡（`Traits.slim_card`，`StreamingReply.slim`）：没有标题栏；正文、一行状态（`slim_status_markdown`）、默认收起的“详情”（`SLIM_DETAILS_ID`），输入/输出、本轮请求和按钮行在“详情”里，ID 照旧；重试行、补充和问题紧跟正文（`under_body`）。详见[管家](butler.md)的“分档卡”。
+- 管家的分档卡（`Traits.slim_card`，`StreamingReply.slim`）：没有标题栏；第一行是说话人的头像行（`speaker_head`，元素 ID `speaker_row`：头像和“**管家**”，不是链接、不写灰字，固定不变，状态在下面的状态行；正文间距、内边距和别的头像行卡一样），然后是正文、一行状态（`slim_status_markdown`）、默认收起的“详情”（`SLIM_DETAILS_ID`），输入/输出、本轮请求和按钮行在“详情”里，ID 照旧；重试行、补充和问题紧跟正文（`under_body`）。说话人取不到时没有头像行，间距照旧。专项负责人也是分档卡，但话题区里它从不发任务卡（[放置表](butler-internals.md#放置表)的 `task_card`）。详见[管家](butler.md)的“分档卡”。
 
 ### 状态行
 

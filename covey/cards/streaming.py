@@ -18,7 +18,7 @@ from covey.core.topics import shown_title
 from covey.cards.elements import button_row, find_element, fold, grey, markdown_panel, md, topic_button
 from covey.cards.review import question_preview, queued_summary, running_summary
 from covey.cards.topic_actions import switch_button
-from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, topic_badge
+from covey.cards.ui import BODY_PADDING, BODY_SPACING, ROW_ID, banded, speaker_row, topic_badge
 from covey.core.text import literal
 from covey.cards.card_cost import card_cost, truncate_card_content
 from covey.cards.task_figures import FIGURES_ELEMENT_ID, IO_BOX_ID, STATUS_BLOCK_ID, io_box
@@ -94,6 +94,24 @@ def task_head(job: Any, heading: str, status: str) -> dict[str, Any]:
         {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [title]},
         {"tag": "column", "width": "auto", "vertical_align": "center", "elements": [activity_element(status)]}]
     return {"tag": "column_set", "element_id": HEAD_ID, "horizontal_spacing": "8px", "columns": columns}
+
+
+def speaker_head(job: Any) -> dict[str, Any] | None:
+    """A slim card's first row (docs/ui.md 5.3 说话人; the owner, 2026-11-22: 所有 slim_card 补齐 speaker_row 卡头): who
+    speaks, the picture and the name bold (cards/ui.py speaker_row: **管家**, **<专项名> · 负责人**), as
+    ``job.card_speaker`` says it (app/cards.py speaker_facts). No link and no grey words, as every card in a thread has
+    it: the card is in the thread of the owner's message, his words right above it. Static: the state is the status
+    line's, under the body. None without a speaker (a card sent before had no row, and one with no speaker still has
+    none)."""
+    found = getattr(job, "card_speaker", None)
+    if not isinstance(found, dict) or not str(found.get("who") or "").strip():
+        return None
+    return speaker_row({"who": str(found["who"])}, avatar=str(found.get("avatar") or ""), url="")
+
+
+def headed(elements: list[dict[str, Any]]) -> bool:
+    """Whether ``elements``, a card's, open with a speaker's row (cards/ui.py ROW_ID)."""
+    return bool(elements) and elements[0].get("element_id") == ROW_ID
 
 
 def build_collapsible_markdown_panel(element_id: str, title: str, content: str, content_id: str = "") -> dict[str, Any]:
@@ -260,10 +278,10 @@ def build_stream_card(
     empty (a queued card's says where its message goes, app/submission.py queued_line).
 
     The butler's card is slim (core/butler.py Traits.slim_card): no title
-    bar (the quoted message says it, and a sent one never changes), the body first (a queued card's stage goes in
-    the status line instead, ``slim_start``), the status line as one line (``slim_status_markdown``), then 详情
-    folded (``slim_details``): the 输入/输出 box (its 输出 without 已运行, which the status line says), 本轮请求,
-    任务详情 and the running buttons, every one by its old ID."""
+    bar (the quoted message says it, and a sent one never changes), its speaker's row (``speaker_head``: the picture and
+    **管家**), the body (a queued card's stage goes in the status line instead, ``slim_start``), the status line as
+    one line (``slim_status_markdown``), then 详情 folded (``slim_details``): the 输入/输出 box (its 输出 without
+    已运行, which the status line says), 本轮请求, 任务详情 and the running buttons, every one by its old ID."""
     answer = answer_element(runtime.element_id, "")
     elements: list[dict[str, Any]] = [answer]
     look = runtime.look(job) if job is not None else CardLook()
@@ -276,8 +294,8 @@ def build_stream_card(
                                          label=steer_label(job, slim)) if include_stop_action else [])
         if slim:
             line, content = slim_start(content)  # The slim card's line comes from its body, not ``status``.
-            elements = [answer, slim_activity_element(line),
-                        slim_details([e for e in (io_box(job), request, *buttons) if e])]
+            elements = [e for e in (speaker_head(job), answer, slim_activity_element(line),
+                                    slim_details([e for e in (io_box(job), request, *buttons) if e])) if e]
         else:
             # The answer card's look: its row (T number, title, the state as a tag), the 输入/输出 lines, the body, then
             # 本轮请求 and 执行过程 folded; no 任务详情 (task_details_panel) and no 下载请求与结果 (app/turn_export.py).
@@ -295,8 +313,9 @@ def build_stream_card(
             },
         },
         "body": {
-            "padding": "6px 14px 12px 14px" if slim or job is None else BODY_PADDING,
-            "vertical_spacing": "8px" if slim or job is None else BODY_SPACING,
+            # A slim card with its speaker's row is spaced as every card that opens with one (docs/ui.md 5.3).
+            "padding": "6px 14px 12px 14px" if (slim and not headed(elements)) or job is None else BODY_PADDING,
+            "vertical_spacing": "8px" if (slim and not headed(elements)) or job is None else BODY_SPACING,
             "elements": elements
         },
     }

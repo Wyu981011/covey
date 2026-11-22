@@ -873,6 +873,13 @@ class ToolTest(UpCase):
         reply_to = queued.get("reply_to_message_id") if isinstance(queued, dict) else queued.reply_to_message_id
         # Not a reply to the Bridge's own alias: accept7 saw Feishu refuse it twice before the card went to the top level.
         self.assertEqual(reply_to, "")
+        # And no task card at the top level at all (the owner, 2026-11-22: 负责人不吐过程卡): held for good, as every lead turn's.
+        if isinstance(queued, dict):
+            self.assertTrue(queued.get("card_deferred"))
+            self.assertFalse(queued.get("card_message_id"))
+        else:
+            self.assertTrue(queued.card_deferred)
+            self.assertIsNone(queued.progress)
         again = self.call("project_send", "send3", pid=name, text="那就继续")
         self.assertEqual(again, answer)  # Once a request.
 

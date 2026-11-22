@@ -583,8 +583,9 @@ class TaskControls(Redelivery):
         queued = moved or (auto_retry.queued_line(kind, automatic) if automatic else "重试已入队")
         # A quiet butler turn's (core/placement.py Row.quiet, D1): no card of its own yet (one at the top level
         # is its recovery card), its card held back as the first turn's was, its reactions on the owner's message.
-        quiet = ((not record.get("card_message_id") or bool(record.get(TOP_CARD)))
-                 and placement.quiet(ctx.state_dir, record))
+        # A lead's never has a card (Row.task_card), whatever an older release sent for the turn it retries.
+        quiet = ((not record.get("card_message_id") or bool(record.get(TOP_CARD))
+                  or placement.cardless(ctx.state_dir, record)) and placement.quiet(ctx.state_dir, record))
         if quiet:
             job.reaction_message = placement.owner_message(record)
             job.card_deferred = True

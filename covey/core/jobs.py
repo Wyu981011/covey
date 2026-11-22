@@ -119,8 +119,8 @@ class BridgeReplyJob:
     # per line: its "你问" block shows them, not the forward or link that started it (app/answer_cards.py asked).
     asked_text: str = _state("")
     # A butler turn of the 话题区 layout whose card is held back until it has run butler.CARD_AFTER seconds
-    # (core/placement.py Row.quiet; app/cards.py Cards.reveal); False once it has one, or for any other job. Saved: the
-    # task runner sends the card.
+    # (core/placement.py Row.quiet; app/cards.py Cards.reveal), a project's lead's for good (Row.task_card); False once
+    # it has one, or for any other job. Saved: the task runner sends the card.
     card_deferred: bool = _state(False)
     # A topic's follow-up whose card is held back as well (app/submission.py quick_hold, docs/cards.md 追问只发答案卡):
     # until it has run this many seconds, made its first step or asks (app/cards.py Cards.reveal); one that answers
@@ -184,6 +184,8 @@ class BridgeReplyJob:
     # The task card and its process view.
     topic_label: str = _state("")
     model_label: str = _state("")  # The model as the model selects name it (Claude · Sonnet 5.5); "" when not listed.
+    # Who speaks on a slim task card, its first row (app/cards.py speaker_facts): {"who", "avatar"}; None for any other.
+    card_speaker: dict | None = _state()
     card_updates: Any = _state()
     progress_body_cleared: bool = _state(False)
     body_clear_pending: bool = _state(False)  # The first status line write clears the body too (Cards).

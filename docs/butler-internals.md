@@ -47,23 +47,23 @@
 
 ## 提问不开串的细节
 
-`placement.quiet` 除了格子的 `Row.quiet`，还要求消息是主人自己的（`om_` 开头）或回答问题后的续接一轮（`CONTINUATION`）。
+`placement.quiet` 除了格子的 `Row.quiet`，还要求消息是主人自己的（飞书消息 `om_` 开头、网页上说的 `web-`）、回答问题后的续接一轮（`CONTINUATION`）或负责人的唤醒轮（`lead-`）；`task_card` 是 NONE 的格子（`area` × `lead`）不看消息 id，每一轮都算（管家 `project_send` 转来的 `main-`、重新排队的补充、重试都在内）。管家自己话题里由它的工具排的轮（`main-`）不算。
 
 - **入队**：`app/submission.py` 设 `job.card_deferred`，不发卡；主人那条消息加表情 OnIt（`app/butler_reactions.py`，`Messenger.react`）。
-- **卡什么时候出**：跑过 `CARD_AFTER`（90 秒）还没结束，任务进程发卡（`Cards.reveal`），进主人那句话的话题串。只试一次。
+- **卡什么时候出**：跑过 `CARD_AFTER`（90 秒）还没结束，任务进程发卡（`Cards.reveal`），进主人那句话的话题串，第一行是管家的头像行（`cards/streaming.py` 的 `speaker_head`）。只试一次。负责人的轮从不发（`task_card` 是 NONE，`placement.cardless`）。
 - **结束表情**（`butler_reply.react_end`）：DONE（自己答的）、Get（交给话题）、CrossMark（失败、被拒）；停止和等回答只去掉 OnIt。失败只记日志。
 - **说话人**：聊天区每条顶层的答案、结论、问题卡副本和通知，“你问”块的第一行用一句话写谁对你哪句话做了什么（`core/board_read.py` 的 `speaker_of`，词表 `core/look.py` 的 `SPEAKERS`，句子 `cards/answer_card.py` 的 `SAYS`）：“**管家** 答复你 12:31 的问题 ›”，话题回带按结果写“**T12 标题** 做完了你 09:12 交代的事”“……要你定”“……时停了”，下一行是「你的原话」；负责人自己醒来的一轮写“**专项「名」· 负责人** 主动来汇报 · 09:40”。派发卡按任务状态写“在办你…交代的事”“做完了…”“…要你定”“…时停了”；专项话题的问题卡副本不引原话，只写“**T15 标题** 办负责人派的事，要你定”。
 - **回复交给谁**：引用话题的回带交给那个话题，引用负责人的回答或专项卡交给负责人，引用管家的回答交给管家；引用手上的事或早晚汇总卡（Bridge 自己发的）也交给管家，不在它上面开新话题（`Butler.app_for`）。
 - **答案**：聊天区新消息，带“你问”块。只做了交接的一轮（`handed_quietly`）不发答案，Get 就是回执；转给了已有话题（topic_send）的，再在主人那条消息下回一个小卡（`cards/answer_card.py` 的 `hook_card`）：每个话题一行“→ T12「标题」 ›”，点了打开那个话题串、定位到转入的那条。它是引用主人消息的顶层回复，不开串；只挂一个话题时，引用这张小卡说话进那个话题。新开或分叉的话题串本来就挂在主人那条消息下面，不列。
 - **没卡时的失败**：发一条带“你问”的短消息（`app/quiet_delivery.py` 的 `top_notice`），被拒或停止时列出收下的补充；答案没发出去时另发一条带按钮的（`undelivered_notice`）。
 - **问题卡**：还没有卡时，问题卡本身作为聊天区新消息发出（`QuestionDisplay.ask_block_for`）。要主人定的事，`AREA_OPENING` 的第三条要求管家写进检查点的 `requires_user`、`question` 和 `questions`，不只在回复末尾问一句。管家和负责人的问题也进“等你”：手上的事、看板和早晚汇总另读 `core/board_read.py` 的 `top_questions`，这一行写说话人（“管家”、“专项「名」· 负责人”），不写 T 号。
-- **重试、续跑、续接**：原来没卡的同样延后发卡，表情落在主人原来的消息上（`placement.owner_message`）；回答问题后的续接一轮不加表情（`placement.marked` 只认 `om_`）。
+- **重试、续跑、续接**：原来没卡的同样延后发卡，表情落在主人原来的消息上（`placement.owner_message`）；回答问题后的续接一轮不加表情（`placement.marked` 只认 `om_`）。负责人的轮即使旧版本给它发过卡，重试也不再出卡（`TaskControls.requeue` 看 `placement.cardless`），旧卡换成恢复卡写“已重新入队”。
 
 ## 一次请求一张卡的细节
 
 - **状态行**（`outcome_words`，`Cards.say_outcome`）：“✅ 已答：开头”“↪ 开了 T14「标题」”“↪ 交给 T12 接着做”“↪ 补充给 T14（它正在跑）”“↪ 分叉出 T15「标题」”“↪ 拆成 2 件”。
 - **停止和被拒**：卡上列出收下的补充，说明不会自动重发；官方拒绝时写在 `app/policy_guard.py` 重画的恢复卡上。
-- **分档卡**（`slim_card`）：没有标题栏，正文、一行状态（`cards/task_status.py` 的 `slim_status_markdown`），其余折进默认收起的“详情”；样子见[卡片](cards.md)。
+- **分档卡**（`slim_card`）：没有标题栏，第一行是说话人的头像行（`cards/streaming.py` 的 `speaker_head`：头像和“管家”，不是链接、不写灰字，卡在主人那句话的话题串里；说话人和头像在卡建出来时由 `Cards.speaker_facts` 取，记在任务的 `card_speaker`，替换卡照用），然后是正文、一行状态（`cards/task_status.py` 的 `slim_status_markdown`），其余折进默认收起的“详情”；样子见[卡片](cards.md)。之前发出的卡没有头像行，照旧。
 
 ## 会话的细节
 
@@ -84,15 +84,15 @@
 - **位置**：`TOP` 聊天区新消息、不引用任何卡；`THREAD` 上下文的回复目标（话题串）；`NONE` 不发。
 - `plan(state_dir, of)` 返回 `Placement`（`traits`、`layout`、`role`、`row`）。
 
-| 格子 | `reply_top_level` | `answer` | `answer_on_card` | `conclusion` / `stop` | `question_copy` | `ask_block` | `status_card` | `answer_head` | `quiet` |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `area` × `butler` | 否 | TOP | `ROUTES` | NONE | TOP | 是 | 否 | 否 | 是 |
-| `area` × `topic` | 按 `Traits` | THREAD | 无 | TOP | TOP | 是 | 否 | 是 | 否 |
-| `area` × `lead`（专项） | 否 | TOP | 无 | NONE | NONE | 是 | 否 | 否 | 是 |
-| `area` × `project_member`（专项） | 按 `Traits` | THREAD | 无 | NONE | TOP | 是 | 否 | 是 | 否 |
-| `topics` × 任意 | 否 | THREAD | 无 | NONE | NONE | 否 | 是 | 否 | 否 |
+| 格子 | `reply_top_level` | `answer` | `answer_on_card` | `conclusion` / `stop` | `question_copy` | `ask_block` | `status_card` | `answer_head` | `quiet` | `task_card` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `area` × `butler` | 否 | TOP | `ROUTES` | NONE | TOP | 是 | 否 | 否 | 是 | THREAD |
+| `area` × `topic` | 按 `Traits` | THREAD | 无 | TOP | TOP | 是 | 否 | 是 | 否 | THREAD |
+| `area` × `lead`（专项） | 否 | TOP | 无 | NONE | NONE | 是 | 否 | 否 | 是 | NONE |
+| `area` × `project_member`（专项） | 按 `Traits` | THREAD | 无 | NONE | TOP | 是 | 否 | 是 | 否 | THREAD |
+| `topics` × 任意 | 否 | THREAD | 无 | NONE | NONE | 否 | 是 | 否 | 否 | THREAD |
 
-专项负责人的**唤醒轮**（消息 id 以 `lead-` 开头，`core/projects.py` 的 `is_wake`）也算安静轮：不显示任务卡、没有表情；它的已授权回复默认不发（`TurnDelivery.silent`），除非负责人在这一轮里记了一条按风格该报的 `report` 进展，或这一轮派了活、停了话题、替主人答了或转交了问题（专项记录的 `acted`）。负责人的回答从不写在它的任务卡上：主人发起、跑得久已经亮出任务卡的那一轮，结论也是顶层一条新消息，带说话人“专项「名」· 负责人”。
+专项负责人的**每一轮都不出任务卡**（`area` × `lead` 的 `task_card` 是 NONE，主人定的）：唤醒轮（消息 id 以 `lead-` 开头，`core/projects.py` 的 `is_wake`）、主人引用专项卡或负责人的回答说的（`om_`）、网页上对负责人说的（`web-`）、管家 `project_send` 转来的（`main-`）、回答问题后的续接和它们的重试，都算安静轮，跑多久都不发卡（`Cards.reveal` 不发），负责人在做什么看专项卡的“负责人”一行。只有主人自己的飞书消息有表情（`marked` 只认 `om_`）。唤醒轮的已授权回复默认不发（`TurnDelivery.silent`），除非负责人在这一轮里记了一条按风格该报的 `report` 进展，或这一轮派了活、停了话题、替主人答了或转交了问题（专项记录的 `acted`）；其余的轮，结论是顶层一条新消息，带说话人“专项「名」· 负责人”。没做完（失败、被拒、回答没发出去）的轮在顶层说一句（`app/quiet_delivery.py` 的 `top_notice`、`undelivered_notice`）。管家关着（`topics` 布局）时负责人剩下的部分照旧在话题串里出卡。
 
 | 字段 | 含义 | 读者 |
 | --- | --- | --- |
@@ -105,6 +105,7 @@
 | `status_card` | 看板 Pin 状态卡，否则 Pin 这一轮自己的卡 | `app/pins.py` 的 `status_pinned`、`aimed` |
 | `answer_head` | 话题串里的答案卡顶上带状态行，任务卡不写“结论”；只在主人私聊 | `AnswerParts.answer_head`、`headed` |
 | `quiet` | 这一轮不开串 | `placement.quiet`、`marked` |
+| `task_card` | 任务卡（过程卡）发到哪：THREAD 上下文的回复目标（安静轮跑过 `CARD_AFTER` 才发）；NONE 不发，这一格每一轮都算安静轮 | `Cards.reveal`、`placement.quiet`、`placement.cardless`（`TaskControls.requeue`） |
 
 ## “你问”与“你答”块
 

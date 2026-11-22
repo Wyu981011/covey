@@ -61,6 +61,11 @@ class Row:
     # level (an answer's continuation, ``quiet``, too: no thread under the question card, no reaction), and
     # its "你问" links open the owner's message in the chat, not a thread (app/answer_cards.py ask_link chat_place).
     quiet: bool = False
+    # Its task card (the process card): THREAD in the turn's context's reply target (a quiet turn's once it has run
+    # butler.CARD_AFTER seconds, app/cards.py Cards.reveal); NONE never, whatever started the turn, and every turn of
+    # such a row is quiet (``quiet``): what reaches the owner is the answer, a report or a turn that did not end
+    # well, each a message of its own (``answer``, app/quiet_delivery.py).
+    task_card: str = THREAD
 
 
 _TOPICS = Row(reply_top_level=False, answer=THREAD, answer_on_card=NONE, conclusion=NONE, stop=NONE,
@@ -73,9 +78,11 @@ TABLE = {
     # A project's lead (docs/architecture.md 专项): hidden, no thread of its own, quiet like the butler; its words
     # go to the top level only in a turn the owner started (a wake-up turn's are dropped unless it reported, phase 2's
     # app/project_lead.py), nothing relayed, no question card copy (what the owner must answer comes by the question
-    # card of the thread's turn).
+    # card of the thread's turn), and no task card in any turn, the butler's project_send and the owner's own
+    # message too (the owner, 2026-11-22: 负责人一律不往私聊顶层吐过程卡): its 专项卡 says what it does.
     (AREA, LEAD_ROLE): Row(reply_top_level=False, answer=TOP, answer_on_card=NONE, conclusion=NONE,
-                           stop=NONE, question_copy=NONE, ask_block=True, status_card=False, quiet=True),
+                           stop=NONE, question_copy=NONE, ask_block=True, status_card=False, quiet=True,
+                           task_card=NONE),
     # A project's thread: a topic whose answer stays in its thread; its conclusion and stop do not go back to the top
     # level (they go to the lead's inbox, phase 2), and only a question that reaches the owner is copied there.
     (AREA, MEMBER_ROLE): Row(reply_top_level=None, answer=THREAD, answer_on_card=NONE, conclusion=NONE,
@@ -143,13 +150,28 @@ def owner_message(job) -> str:
 
 
 def quiet(state_dir, job) -> bool:
-    """Whether ``job`` (a job, or its record) is a butler turn of the 话题区 layout (``Row.quiet``), and one
-    of the owner's own messages (a Feishu message id, ``owner_message``) or an answer's continuation (``CONTINUATION``: answering the
-    question card at the top level opens no thread under it either); a butler tool's turn is not. Never raises:
-    False when it cannot be told."""
+    """Whether ``job`` (a job, or its record) is a quiet turn of the 话题区 layout (``Row.quiet``): every turn of a
+    row whose task card never goes out (``Row.task_card`` NONE: a project's lead, whatever started it, a wake-up, the
+    owner's message, his words on the web page, the butler's project_send "main-…", an answer's continuation or a
+    retry of one), and the butler's on one of the owner's own messages (a Feishu message id, ``owner_message``), his
+    words on the web page or an answer's continuation (``CONTINUATION``: answering the question card at the top level
+    opens no thread under it either); a turn the butler's tools started in its topic is not. Never raises: False when
+    it cannot be told."""
     try:
-        return owner_message(job).startswith(("om_", CONTINUATION, projects.WAKE_PREFIX, web_sync.PREFIX)) and plan(state_dir, job).row.quiet
+        row = plan(state_dir, job).row
+        return row.quiet and (row.task_card == NONE or owner_message(job).startswith(
+            ("om_", CONTINUATION, projects.WAKE_PREFIX, web_sync.PREFIX)))
     except Exception:  # noqa: BLE001 - as before: the card at once
+        return False
+
+
+def cardless(state_dir, job) -> bool:
+    """Whether ``job`` (a job, or its record) never shows a task card (``Row.task_card`` NONE: a project's lead in the
+    话题区 layout), whatever its record says it had (a card an older release sent). Never raises: False when it
+    cannot be told."""
+    try:
+        return plan(state_dir, job).row.task_card == NONE
+    except Exception:  # noqa: BLE001 - as before: its card
         return False
 
 

@@ -4,6 +4,7 @@ and when the owner speaks in a thread, the tokens counted once, the wake-up turn
 COVEY_PROJECTS off none of it changes anything."""
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import time
@@ -848,22 +849,107 @@ class SilentTest(DeliverCase):
         row = {"id": "n1", "at": NOW, "text": "第一批迁完", "report": True, "kind": "milestone", "job": key, **fields}
         projects.update(self.state, PID, lambda record: record.update(notes=[row]))
 
-    def test_a_wake_up_turn_is_quiet_and_never_shows_a_card(self):
-        job = self.lead()
-        self.assertTrue(placement.quiet(self.state, job))
-        self.assertFalse(placement.marked(self.state, job))
-        self.assertFalse(placement.quiet(self.state, self.job(topic=self.lead_topic, message="main-tool-1")))
+    def cards(self):
         cards = Cards.__new__(Cards)
         cards.runtime = mock.Mock()
         cards.create_streaming_reply = mock.Mock(return_value=SimpleNamespace(card_id="c9", message_id="om_card"))
-        job = self.lead()
-        job.card_deferred = True
-        job.timings["backend_requested"] = time.time() - 600
-        self.assertFalse(cards.reveal(self.ctx, job, "x"))
+        return cards
+
+    def test_every_turn_of_the_lead_is_quiet_and_never_shows_a_card(self):
+        # The owner, 2026-11-22 (负责人一律不往私聊顶层吐过程卡): no task card of the lead's at the private chat's top level, whatever started
+        # the turn: a wake-up, his message quoting the 专项卡 or his words on the web page, the butler's project_send, an
+        # answer's continuation, a supplement queued again as a turn of its own (core/placement.py Row.task_card).
+        cards = self.cards()
+        for message in (f"lead-{PID}-1", "om_1", "web-op-1", "main-send1", "answer-tok", "requeue-tok"):
+            job = self.job(topic=self.lead_topic, message=message, card_deferred=True)
+            self.assertTrue(placement.quiet(self.state, job), message)
+            self.assertTrue(placement.cardless(self.state, job), message)
+            self.assertEqual(placement.marked(self.state, job), message == "om_1", message)  # Reactions on his own only.
+            job.timings["backend_requested"] = time.time() - 600
+            self.assertFalse(cards.reveal(self.ctx, job, "x"), message)
         cards.create_streaming_reply.assert_not_called()
-        job = self.job(topic=self.lead_topic, message="om_1", card_deferred=True)
-        job.timings["backend_requested"] = time.time() - 600
-        self.assertTrue(cards.reveal(self.ctx, job, "x"))  # An owner's turn in the lead is Cards.reveal's as ever.
+
+    def test_the_butlers_turns_and_the_topics_layout_are_as_before(self):
+        cards = self.cards()
+        butler_turn = self.job(message="om_1", card_deferred=True)  # The butler's own: its card after CARD_AFTER.
+        self.assertFalse(placement.cardless(self.state, butler_turn))
+        butler_turn.timings["backend_requested"] = time.time() - 600
+        self.assertTrue(cards.reveal(self.ctx, butler_turn, "x"))
+        self.assertFalse(placement.quiet(self.state, self.job(message="main-tool-1")))  # A turn its tools started.
+        with mock.patch.dict(os.environ, {butler.ENV: "0"}):  # The butler off: what is left of a lead, in its thread.
+            for message in ("om_1", "main-send1"):
+                job = self.job(topic=self.lead_topic, message=message)
+                self.assertFalse(placement.quiet(self.state, job), message)
+                self.assertFalse(placement.cardless(self.state, job), message)
+
+    def test_a_turn_the_butler_handed_on_says_its_answer_and_its_failure_at_the_top_level_with_no_card(self):
+        # project_send's turn ("main-…") is the owner's, not a wake-up: its answer goes out, a new top-level message.
+        delivery = self.deliver(self.job(topic=self.lead_topic, message="main-send1"), reply="收到，开了 T12 去迁。")
+        self.assertFalse(delivery.silent)
+        self.send_text.assert_called_once()
+        self.assertEqual(self.send_text.call_args.args[0].reply_to_message_id, "")
+        self.assertEqual(self.emojis(), [])  # No message of the owner's to react on.
+        self.deliver(self.job(topic=self.lead_topic, message="main-send2"), status="failed", verified=False,
+                     reply="任务 #7 处理出错（X），未满足结果发布条件。")
+        call = self.send_text.call_args
+        self.assertEqual(call.args[0].reply_to_message_id, "")  # The few words a quiet turn's failure gets (bare).
+        self.assertIn("card", call.kwargs)
+
+    def test_the_you_asked_of_a_turn_the_butler_handed_on_opens_the_owners_message(self):
+        # project_send's turn ("main-<token>") has no message of the owner's and the lead no thread: its answer's 你问 (and
+        # the row's click) opens the message the butler took, from that request's record (core/butler_opened.py).
+        from covey.app import answer_cards
+        from covey.core.jobs import upsert_job_record
+        butler_key = job_key("om_owner", 3)
+        upsert_job_record(self.state, butler_key, message_id="om_owner", job_id=3, chat_id=BUTLER_CHAT,
+                          topic_id=butler.butler_topic_id(BUTLER_CHAT))
+        write_json(self.state / "main-thread" / "opened" / "tok1.json",
+                   {"job_key": butler_key, "chat_id": BUTLER_CHAT, "lead_topic_id": self.lead_topic, "project_id": PID})
+        job = self.job(topic=self.lead_topic, message="main-tok1", user_text="迁移接着做")
+        self.assertEqual(answer_cards.owner_message(self.state, job), "om_owner")
+        with mock.patch.object(answer_cards, "ask_link", return_value="https://applink.feishu.cn/x") as link:
+            self.assertEqual(answer_cards.ask_url(self.state, job), "https://applink.feishu.cn/x")
+        self.assertEqual(link.call_args.args[3], "om_owner")
+        # A butler's turn that was itself an answer: the message its question was asked from.
+        write_json(self.state / "questions" / "q1.json", {"token": "q1", "job_key": butler_key})
+        answer_key = job_key("answer-q1", 4)
+        upsert_job_record(self.state, answer_key, message_id="answer-q1", job_id=4, chat_id=BUTLER_CHAT,
+                          topic_id=butler.butler_topic_id(BUTLER_CHAT))
+        write_json(self.state / "main-thread" / "opened" / "tok2.json", {"job_key": answer_key})
+        self.assertEqual(answer_cards.owner_message(self.state, self.job(topic=self.lead_topic, message="main-tok2")),
+                         "om_owner")
+        # No record of the request, or no token: no message (the block keeps its words, without a link), as before.
+        for message in ("main-gone", "main-", "main-../opened/tok1"):
+            self.assertEqual(answer_cards.owner_message(self.state, self.job(topic=self.lead_topic, message=message)), "",
+                             message)
+
+    def test_a_retry_of_a_leads_turn_an_older_release_showed_a_card_for_gets_none(self):
+        from covey.app.task_controls import TaskControls
+        controls = TaskControls.__new__(TaskControls)
+        controls.harness = SimpleNamespace(name="claude", spec=SimpleNamespace(name="claude", native_default_model=True))
+        controls.voice = SimpleNamespace(key=lambda *parts: "-".join(map(str, parts)))
+        controls.runtime = mock.Mock()
+        controls.runtime.jobs.next_id.return_value = 8
+        controls.messenger = mock.Mock()
+        controls.cards = mock.Mock()
+        controls.cards.replace_record_card.return_value = True
+        controls.models = mock.Mock()
+        controls.models.effort_preset.side_effect = lambda ctx, model, effort: (model, effort)
+        controls.record_job_state = mock.Mock()
+        record = {"key": job_key("main-send1", 7), "job_id": 7, "message_id": "main-send1", "chat_id": BUTLER_CHAT,
+                  "topic_id": self.lead_topic, "reply_to_message_id": "", "user_text": "接着迁", "status": "failed",
+                  "card_message_id": "om_old_card"}
+        with mock.patch("covey.app.task_controls.strict_recorded_model_settings", return_value=("m", "")), \
+                mock.patch("covey.app.task_controls.recovery_card", return_value={"body": {"elements": []}}):
+            controls.requeue(dataclasses.replace(self.ctx, topic_id=self.lead_topic, reply_to_message_id=""), BUTLER_CHAT,
+                             "auto-retry-7-1", record, automatic=1)
+        job = controls.runtime.enqueue_reply_job.call_args.args[0]
+        controls.cards.create_streaming_reply.assert_not_called()
+        self.assertIsNone(job.progress)
+        self.assertTrue(job.card_deferred)
+        self.assertEqual(placement.owner_message(job), "main-send1")
+        self.assertTrue(placement.quiet(self.state, job))
+        controls.messenger.react.assert_not_called()  # No message of the owner's to react on.
 
     def test_the_reply_is_not_sent_and_counts_as_delivered(self):
         delivery = self.deliver(self.lead(), reply="收到，等线程。")

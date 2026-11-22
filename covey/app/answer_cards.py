@@ -197,15 +197,27 @@ def turn_messages(record) -> list:
 def owner_message(state_dir, record) -> str:
     """The owner's message ``record``'s turn answers: the one it reacts on or started from; for an answer's turn
     ("answer-<token>", no message of its own) the message of the turn that asked, else the question card's
-    top-level copy or the card itself. '' when there is none."""
+    top-level copy or the card itself; for a turn the butler handed on ("main-<token>", core/butler_opened.py
+    HANDED: project_send's to a project's lead, which has no thread for its "你问" to open) the message of the
+    butler's turn that handed it on, read from that request's record. '' when there is none."""
+    from covey.core import butler_opened
+    from covey.core.jobs import find_job_record
+
     mid = str(_get(record, "reaction_message") or _get(record, "message_id") or "")
     if mid.startswith("om_"):
         return mid
+    if butler_opened.handed_on(mid):
+        token = mid.removeprefix(butler_opened.HANDED)
+        if not token or "/" in token or token.startswith("."):
+            return ""
+        handed_by = str(butler_opened.by_token(state_dir, token).get("job_key") or "")
+        butler_job = find_job_record(Path(state_dir), handed_by) if handed_by else None
+        if not butler_job or butler_opened.handed_on(butler_job.get("reaction_message") or butler_job.get("message_id")):
+            return ""
+        return owner_message(state_dir, butler_job)  # Its own message, or the one its answer's turn asked from.
     token = mid.removeprefix("answer-") if mid.startswith("answer-") else ""
     if not token or "/" in token or token.startswith("."):
         return ""
-    from covey.core.jobs import find_job_record
-
     question = read_object(Path(state_dir) / "questions" / (token + ".json"))
     asking = find_job_record(Path(state_dir), str(question.get("job_key") or "")) if question.get("job_key") else None
     for found in (str((asking or {}).get("reaction_message") or (asking or {}).get("message_id") or ""),

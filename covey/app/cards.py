@@ -33,7 +33,7 @@ from covey.cards.review import (compact_text, outcome_line, render_stream_final,
                                          running_summary, task_card_summary)
 from covey.cards.elements import grey
 from covey.cards.task_status import ACTIVITY_ELEMENT_ID, LOOK_ID, STATUS_MORE_ID, look_element
-from covey.core import butler, projects, turn_source
+from covey.core import butler, placement, turn_source
 from covey.cards.streaming import (ACTION_ROW_ELEMENT_ID, SIDE_CHAT_ELEMENT_ID, STEER_ELEMENT_ID, answer_element,
                                    card_title_for_question, steer_button)
 from covey.cards.card_cost import exceeds_stream_card_limit
@@ -121,6 +121,7 @@ class Cards:
         if not self.streaming:
             return None
         self.card_facts(ctx, job)
+        self.speaker_facts(ctx, job)
         progress = self.stream.create(ctx.profile, job, initial_content, **({"status": status} if status else {}))
         job.card_missing = progress is None  # Sent again while the task runs (resend_missing).
         if progress:
@@ -149,6 +150,25 @@ class Cards:
         except Exception as exc:  # noqa: BLE001 - the box from the job's own fields (task_figures.job_inputs)
             self.runtime.log(f"task card 输入 unavailable: {type(exc).__name__}")
         self.runtime.jobs.register(job)
+
+    def speaker_facts(self, ctx: BridgeContext, job: ReplyJob) -> None:
+        """Who speaks on a task card of the slim look (core/butler.py Traits.slim_card: the butler's), its first row
+        (cards/streaming.py speaker_head, docs/ui.md 5.3): ``job.card_speaker``, {"who": core/board_read.py speaker_of,
+        "avatar": its picture's image key (app/answer_cards.py avatar; '' when it cannot be had, the row then the name
+        alone)}. Only when such a card is created, not with ``card_facts``: the picture may cost a call (uploaded the first
+        time), never made at a held card's submission. Never raises: the card without the row."""
+        if getattr(job, "card_speaker", None) or not self.stream.look(job).slim:
+            return
+        try:
+            from covey.core.board_read import speaker_of
+
+            who = speaker_of(ctx.state_dir, job.topic_id, job.chat_id)
+        except Exception as exc:  # noqa: BLE001 - the card without its row
+            self.runtime.log(f"task card speaker unavailable job=#{job.job_id}: {type(exc).__name__}")
+            return
+        if who:
+            job.card_speaker = {"who": who, "avatar": answer_cards.avatar(ctx.state_dir, job.topic_id, job.chat_id,
+                                                                          ctx.profile, self.runtime.log)}
 
     def model_label(self, ctx: BridgeContext, model: str) -> str:
         """``model`` as the model selects name it (Claude · Sonnet 5.5), read from the cached catalogs
@@ -299,15 +319,15 @@ class Cards:
         (``held_due``): a butler turn's (core/placement.py Row.quiet) once the turn has run butler.CARD_AFTER seconds,
         a topic's follow-up's (``job.card_after``, app/submission.py quick_hold) once it has run that long or made its
         first step; the job record gets its address (stop clicks, recovery and the board find it there). Tried once;
-        not for a turn stopping or delivering."""
+        not for a turn stopping or delivering, never for a project's lead's (Row.task_card)."""
         if not getattr(job, "card_deferred", False) or job.cancel_requested_at or job.answer_finalized:
             return False
-        if projects.is_wake(job.message_id):
-            return False  # A lead's wake-up turn (app/project_loop.py): the project's card says what it does.
         if not turn_source.behavior(job).own_delivery:
             return False  # A 协作 ask's turn (app/collab_flow.py): nothing of it is in the chat.
         if not held_due(job):
             return False
+        if placement.cardless(ctx.state_dir, job):
+            return False  # A lead's turn, whoever started it (core/placement.py Row.task_card): its 专项卡 says what it does.
         return self._send_held(ctx, job, content)
 
     def reveal_held(self, ctx: BridgeContext, job: ReplyJob, why: str) -> bool:

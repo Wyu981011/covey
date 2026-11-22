@@ -1115,7 +1115,7 @@ def main_task_cards():
     from covey.cards.elements import md
     from covey.cards.recovery import result_actions
     from covey.cards.review import render_stream_final, render_stream_status
-    from covey.cards.streaming import ACTION_ROW_ELEMENT_ID, build_stream_card
+    from covey.cards.streaming import ACTION_ROW_ELEMENT_ID, SLIM_DETAILS_ID, build_stream_card
     from covey.cards.task_figures import IO_BOX_ID
     from covey.cards.task_status import status_elements
     from covey.core import butler
@@ -1125,19 +1125,22 @@ def main_task_cards():
                 "measured_output_tokens": 800, "generation_seconds": 10.0, "steps": {}}
 
     def job():
+        # Who speaks, as app/cards.py speaker_facts gives it when the card is made: its first row (T667).
         return sample_job(topic_id=butler.butler_topic_id("chat"), topic_label="", harness_id="claude",
-                          user_text="帮我看看昨晚的失败日志", title="")
+                          user_text="帮我看看昨晚的失败日志", title="",
+                          card_speaker={"who": "管家", "avatar": "img_v3_fake_butler"})
 
     def ended(body, status, *, under=(), inside=()):
         card = build_stream_card(" ", "任务", run, job=job(), include_stop_action=True)
         elements = card["body"]["elements"]
-        elements[0]["content"] = body
-        elements[1] = status_elements(status, False, True)[0]
-        details = elements[2]["elements"]
+        at = {element.get("element_id"): index for index, element in enumerate(elements)}
+        elements[at["answer"]]["content"] = body
+        elements[at["activity"]] = status_elements(status, False, True)[0]
+        details = elements[at[SLIM_DETAILS_ID]]["elements"]
         details[:] = [ended_box(job(), snapshot, 13) if e.get("element_id") == IO_BOX_ID else e
                       for e in details if e.get("element_id") != ACTION_ROW_ELEMENT_ID]
         details[1:1] = list(inside)  # After the 输入/输出 box (task_card.body_anchor).
-        elements[1:1] = list(under)  # Right under the body (task_card.under_body).
+        elements[at["answer"] + 1:at["answer"] + 1] = list(under)  # Right under the body (task_card.under_body).
         return card
 
     with mock.patch.dict(os.environ, {butler.ENV: "1"}):
