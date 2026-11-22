@@ -621,11 +621,13 @@ class DeviceTurn:
         self.assertEqual(self.spec(self.watched[0])["files"], [{"path": mirror["path"]}])  # The shim stores no seed text.
         self.assertTrue(Path(mirror["path"]).is_file(), "the device has the seed where the prompt says")
 
+    @mock.patch.dict(os.environ, {"COVEY_TURN_EXPORT": "1"})  # 下载请求与结果 drawn at all (off unset).
     def test_the_buttons_that_need_the_hubs_files_are_not_on_the_card(self):
         self.ran_on_the_device(self.play(self.job(self.ctx)))
         self.assertFalse(self.element_ids() & {"rewind_action", "export_action"}, self.element_ids())
         self.assertIn("switch_action", self.element_ids())  # What a device topic keeps: 换配置.
 
+    @mock.patch.dict(os.environ, {"COVEY_TURN_EXPORT": "1"})
     def test_the_local_twin_has_the_buttons_so_the_check_can_fail(self):
         (self.root / "work").mkdir()
         local = dataclasses.replace(self.local, workdir=self.root / "work")

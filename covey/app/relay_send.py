@@ -13,9 +13,9 @@ from pathlib import Path
 from covey.app import answer_cards
 from covey.app.relay_targets import ask_for, turn_card
 from covey.cards.answer_card import tail as answer_tail, tail_card
-from covey.cards.relay_card import (DONE as DONE_OUTCOME, FOLD_ID, WAITING as WAITING_OUTCOME, merged_card, relay_card,
+from covey.cards.relay_card import (DONE as DONE_OUTCOME, WAITING as WAITING_OUTCOME, merged_card, relay_card,
                                     summary)
-from covey.cards.review import answer_lead
+from covey.cards.review import FOLD_ID, answer_lead
 from covey.core import background, butler
 from covey.core.failure import HEADLINE_CHARS
 from covey.core.jobs import job_field
@@ -61,25 +61,37 @@ def remember_sent(state_dir, chat_id, topic_id, messages, *, skip_errors=False) 
                 raise
 
 
-def linked(state_dir, chat_id, built, text, profile=None, cards=None):
+# The folds whose words are the answer's or the owner's (a long answer's opening is its title): their T numbers link.
+# Not 产物's (file names) and not the details' fold.
+LINKED_FOLDS = (FOLD_ID, "answer_reply", "mirror_output", "answer_words")
+
+
+def linked(state_dir, chat_id, built, text, profile=None, cards=None, skip=()):
     """The relay's card and text with each T number a link to its topic (app/topic_links.py): the owner taps
-    "T44" to open it; ``cards``: {topic id: the card its T number opens}, the relayed turn's.
-    Unchanged when no link can be told."""
+    "T44" to open it; ``cards``: {topic id: the card its T number opens}, the relayed turn's; ``skip``: topic ids left
+    plain. The answer's fold is linked, its opening (the fold's title) too; the card's row is not (a click on it opens
+    the topic already). Unchanged when no link can be told."""
     from covey.app.topic_links import linkify
+    from covey.cards.ui import ROW_ID
 
     def link(words):
-        return linkify(words, state_dir, chat_id, profile=profile, cards=cards)
+        return linkify(words, state_dir, chat_id, profile=profile, cards=cards, skip=skip)
     def walk(elements):
         for element in elements or ():
-            if not isinstance(element, dict):
+            if not isinstance(element, dict) or element.get("element_id") == ROW_ID:
                 continue
             if element.get("tag") == "markdown":
                 element["content"] = link(element.get("content") or "")
             elif element.get("tag") == "column_set":  # The 输入/输出 box (cards/answer_card.py), not 产物's names.
                 for column in element.get("columns") or ():
                     walk(column.get("elements") if isinstance(column, dict) else ())
-            elif element.get("tag") == "column" or element.get("element_id") == FOLD_ID:
-                walk(element.get("elements"))  # The reply's fold (cards/relay_card.py reply_fold) too, not 产物's.
+            elif element.get("tag") == "column":
+                walk(element.get("elements"))
+            elif element.get("tag") == "collapsible_panel" and element.get("element_id") in LINKED_FOLDS:
+                title = (element.get("header") or {}).get("title")
+                if isinstance(title, dict) and title.get("tag") == "markdown":
+                    title["content"] = link(title.get("content") or "")
+                walk(element.get("elements"))
     if isinstance(built, dict):
         walk((built.get("body") or {}).get("elements"))
     return built, link(text)
@@ -159,10 +171,7 @@ def _made(state_dir, job, target, outcome, profile, log, facts):
     facts = {**facts, "ask": ask_for(state_dir, job, target, profile, at=card, log=log, doing=outcome)}
     topic = str(target.get("topic_id") or job_field(job, "topic_id"))
     picture = answer_cards.avatar(state_dir, topic, str(target.get("chat_id") or ""), profile, log)  # Its call, outside the lock.
-    from covey.feishu.avatars import image_key
-    expand = image_key(state_dir, profile, "expand", log)  # The fold's badge (cards/ui.py read_more); '' falls back.
     built, text = relay_card(target["label"], outcome, url=topic_url(state_dir, topic, card, profile), avatar=picture,
-                             expand_icon=expand,
                              **facts)
     links = {topic: card}
     built, text = linked(state_dir, target["chat_id"], built, text, profile, cards=links)

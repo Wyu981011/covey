@@ -27,19 +27,16 @@ from pathlib import Path
 from covey.app import answer_cards, review, revisit_hint
 from covey.app.access import Access
 from covey.app.artifacts import answer_files
-from covey.cards.answer_card import head_element, tail as answer_tail
+from covey.cards.answer_card import tail as answer_tail, topic_head
 from covey.cards.answer_card import tail_card as answer_tail_card
-from covey.cards.review import answer_band, answer_lead
 from covey.cards.ui import banded
 from covey.core import placement
-from covey.core.failure import HEADLINE_CHARS as HEADLINE
 from covey.core.jobs import job_key
 from covey.core.locks import resource_lock
 from covey.core.saved_results import FILE_BYTES
 from covey.core.state import read_object, write_json
 from covey.core.topics import topic_label, topic_title
 from covey.core.trace_store import load_trace
-from covey.core.turn_words import answer_head
 
 OUTGOING = "outgoing"  # The answer-cards record's field ``keep`` writes.
 TAIL_LEAD = "上面是这一轮的回答，产物和详情在这里"
@@ -74,18 +71,36 @@ def label_of(ctx, job_id) -> str:
     return topic_label(ctx.state_dir, ctx.topic_id) or f"#{job_id}"
 
 
-def plan(ctx, job_id, status, reply, text, *, key, file, top, tail, head, bare, files, upload_status, said="") -> Outgoing:
+def plan(ctx, job_id, status, reply, text, *, key, file, top, tail, head, bare, files, upload_status, chat_id="",
+         log=None) -> Outgoing:
     """The Outgoing of the saved ``reply`` (``text`` as it is delivered) of task #job_id ended ``status``: a message
     with its answer card (cards/review.py answer_card via app/answer_cards.py saved_answer_card, ``tail`` under the
     answer and ``head`` atop it), or a file with a small card after it carrying ``head`` and ``tail`` when there is a
-    ``tail``. ``said``: the lead ``head``'s conclusion band shows (``band_lead``), '' without a band."""
+    ``tail``. The card's T numbers of the topics of ``chat_id`` are links to them (``linked``); the text is as it was
+    authorized."""
     head, tail = list(head), list(tail)
     if file:
         small = (banded(answer_tail_card([*head, *tail], f"{label_of(ctx, job_id)} · 产物与详情",
                                          TOP_FILE_LEAD if top else TAIL_LEAD)) if tail else None)
         return signed(Outgoing(key, top, True, None, small, files, upload_status), text)
-    built = answer_cards.saved_answer_card(ctx, job_id, status, reply, text, tail, head, bare=bare, said=said)
+    built = answer_cards.saved_answer_card(ctx, job_id, status, reply, text, tail, head, bare=bare)
+    built = linked(ctx, chat_id, built)
     return signed(Outgoing(key, top, False, built, None, files, upload_status), text)
+
+
+def linked(ctx, chat_id, built):
+    """``built`` with each T number in its Markdown a link to that topic (app/relay_send.py linked, app/topic_links.py:
+    the owner taps "T44" to open it), its own topic's left plain; as it was when no link can be told (the owner,
+    2026-11-22: 说话提到 T638 的时候能直接点进去). Never raises; it reads messages, never under a record's lock."""
+    if not isinstance(built, dict) or not chat_id:
+        return built
+    try:
+        from covey.app.relay_send import linked as link_card
+
+        own = str(getattr(ctx, "topic_id", "") or "")
+        return link_card(ctx.state_dir, chat_id, built, "", profile=getattr(ctx, "profile", None), skip=(own,) if own else ())[0]
+    except Exception:  # noqa: BLE001 - the card as it is
+        return built
 
 
 def keep(state_dir, key, outgoing, log) -> None:
@@ -184,20 +199,11 @@ def owner_headed(row, runtime, chat_id) -> bool:
     return bool(agent) or isinstance(chat, str) and bool(chat) and chat == chat_id
 
 
-def status_head(state_dir, topic_id, status, lead=""):
-    """What leads an answer card in its thread: its conclusion band (docs/ui.md 5.2 聊天结果卡, cards/ui.py
-    conclusion_band), "有结果 · T43 改看板" over the reply's ``lead`` (cards/review.py answer_lead); without a lead the
-    status line it had before (cards/answer_card.py head_element)."""
-    label, title = topic_label(state_dir, topic_id), topic_title(state_dir, topic_id)
-    if not lead:
-        return head_element(answer_head(status), label, title)
-    return answer_band("failed" if status == "interrupted" else status, label, title, lead)
-
-
-def band_lead(top, headed, head, reply) -> str:
-    """The lead the conclusion band of ``head`` shows (``status_head``), for the answer under it to start after it
-    (cards/review.py after_lead): '' at the top level, in a thread that is not headed, and when no head was made."""
-    return answer_lead(reply.text, HEADLINE) if head and headed and not top else ""
+def status_head(state_dir, topic_id, status):
+    """What leads an answer card in its thread: the topic's row, as its relay has it (docs/ui.md 5.2 聊天结果卡,
+    cards/answer_card.py topic_head: "[T43] **改看板** [有结果]"), no conclusion band over the answer any more (it said the
+    reply's first line again, large: the owner, 2026-11-22: 话题里的卡片和私聊区对齐)."""
+    return topic_head(topic_label(state_dir, topic_id), topic_title(state_dir, topic_id), status)
 
 
 def heads(top, headed, ask, status):
@@ -258,15 +264,15 @@ def rebuilt(ctx, record, saved_job, reply, text, *, key, file, bare, harness, ca
 
     def status_line():
         try:
-            return status_head(state_dir, ctx.topic_id, record.get("execution_status"), answer_lead(reply.text, HEADLINE))
+            return status_head(state_dir, ctx.topic_id, record.get("execution_status"))
         except Exception as exc:  # noqa: BLE001 - the answer goes without it
             log(f"answer card status line unavailable: {type(exc).__name__}")
             return None
     headed = not top and owner_headed(row, runtime, record.get("chat_id"))
     head = heads(top, headed, ask, status_line)
     return plan(ctx, record["job_id"], record.get("execution_status"), reply, text, key=key, file=file, top=top,
-                tail=tail, head=head, bare=bare, files=files, upload_status=status,
-                said=band_lead(top, headed, head, reply))
+                tail=tail, head=head, bare=bare, files=files, upload_status=status, chat_id=str(record.get("chat_id") or ""),
+                log=log)
 
 
 def send_paused(ctx, where, job, text, key, *, send, artifacts):

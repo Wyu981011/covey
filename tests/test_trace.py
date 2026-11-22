@@ -24,7 +24,7 @@ from support.world import QuestionFixture, build_claude_app
 from covey.app.recovery_cards import recovery_card
 from covey.backends.codex.appserver import dispatch_structured_event
 from covey.backends.codex.events import CodexEventAdapter, apply_agent_event
-from covey.cards.streaming import task_details_panel, task_details_text
+from covey.cards.streaming import task_details_text
 from covey.cards.task_figures import figure_cells
 from covey.cards.trace import cut_escaped
 from covey.cards.trace_updates import incremental_actions, panel_json
@@ -647,8 +647,8 @@ class OperationGroupsTest(unittest.TestCase):
         self.assertEqual(panel_title(trace_panel(trace, False)).split("\n"), ["执行过程 · 1 步"])
         # Since 2026-11-09 (the owner: 和上面重复了，只保留上面的) the counts, 模型生成 and token/s are the 输入/输出
         # box's alone: 任务详情 keeps the TTFT, which the box lacks.
-        details = task_details_panel(SimpleNamespace(job_id=1, model="m", timeout=0), trace.snapshot())
-        self.assertEqual(details["elements"][0]["content"], "TTFT 1.50 秒")
+        details = task_details_text(SimpleNamespace(job_id=1, model="m", timeout=0), trace.snapshot())
+        self.assertEqual(details, "TTFT 1.50 秒")  # 任务详情 is on no card since 2026-11-22; its words are kept.
         # With subtasks the figures are the main task's, and say so; an older snapshot still renders.
         trace.accept("subtask_usage", {"agents": {"a": {"name": "子", "level": 1, "input_tokens": 1,
                                                         "output_tokens": 1}}, "unreported": 0, "pending": 0})
@@ -656,7 +656,7 @@ class OperationGroupsTest(unittest.TestCase):
         old = trace.snapshot()
         for key in ("subtask_usage", "generation_seconds", "measured_output_tokens", "ttft_seconds"):
             old.pop(key, None)
-        self.assertIsNone(task_details_panel(SimpleNamespace(job_id=1, model="m", timeout=0), old))
+        self.assertEqual("", task_details_text(SimpleNamespace(job_id=1, model="m", timeout=0), old))
         self.assertEqual(task_details_text(SimpleNamespace(job_id=1, model="m", timeout=0), trace.snapshot()).split("\n")[-1],
                          "主任务 TTFT 1.50 秒")
 
@@ -942,7 +942,7 @@ class ReadableRecordTest(unittest.TestCase):
         self.assertEqual(panel_title(trace_panel(trace, False, timed=True)).split("\n")[0], "执行过程 · 无执行记录 · 用时 1小时47分")
         self.assertEqual(second, ("token", "1.4亿", ""))  # 1.41 亿 in and 33.0 万 out, rounded in the tile.
         # No 总耗时 (the 用时 tile, 2026-11-04 15:07), nor the exact counts (the 输入/输出 box's, 2026-11-09).
-        self.assertIsNone(task_details_panel(SimpleNamespace(job_id=1111, model="m", timeout=0), trace.snapshot()))
+        self.assertEqual("", task_details_text(SimpleNamespace(job_id=1111, model="m", timeout=0), trace.snapshot()))
         self.assertEqual([short_count(n) for n in (9999, 10000, 26204, 4146596, 99994999, 99995000)],
                          ["9,999", "1.00 万", "2.62 万", "415 万", "9999 万", "1.00 亿"])
 

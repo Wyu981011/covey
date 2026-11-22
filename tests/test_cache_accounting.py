@@ -10,7 +10,7 @@ from support.cards import panel_title, trace_panel
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.backends.claude.usage import ClaudeTurnUsage
 from covey.core.trace import ToolTrace, task_trace
-from covey.cards.streaming import task_details_panel, task_details_text, usage_lines
+from covey.cards.streaming import build_collapsible_markdown_panel, task_details_panel, task_details_text, usage_lines
 from covey.cards.task_figures import figure_cells
 from covey.core.trace import turn_usage
 
@@ -47,9 +47,8 @@ class CacheAccountingTests(unittest.TestCase):
   t.accept('token_usage',base);self.assertIsNone(t.cache_read_tokens)
  def test_cost_detail_is_collapsed_and_does_not_repeat_the_box(self):
   # The owner, 2026-11-09 13:48: the token counts and their cache split repeated the 输入/输出 box (只保留上面的).
-  panel=task_details_panel(NS(job_id=3,model='test',timeout=0,work_mode='focus'),{'cache_read_tokens':1000,'cache_write_tokens':None})
-  self.assertFalse(panel['expanded'])
-  self.assertEqual(panel['elements'][0]['content'],'工作模式：focus')
+  text=task_details_text(NS(job_id=3,model='test',timeout=0,work_mode='focus'),{'cache_read_tokens':1000,'cache_write_tokens':None})
+  self.assertEqual(text,'工作模式：focus')
  def test_details_without_anything_to_say_are_not_shown(self):
   # S28: "缓存命中：0 token · 缓存写入：未提供" plus a two-sentence disclaimer, for nothing; since 2026-11-09 the
   # cache figures are the box's, and 任务详情 with nothing else to say is not on the card (no 暂无统计).
@@ -57,7 +56,8 @@ class CacheAccountingTests(unittest.TestCase):
   for usage in (None,{'cache_read_tokens':0,'cache_write_tokens':None},{},{'cache_read_tokens':True,'cache_write_tokens':-1},
                 {'cache_read_tokens':1200,'cache_write_tokens':300},{'input_tokens':5,'output_tokens':2}):
    self.assertIsNone(task_details_panel(job,usage),usage)
-  self.assertEqual(task_details_panel(NS(job_id=3,model='test',timeout=600),None)['elements'][0]['content'],'超时：600s')
+  self.assertEqual(task_details_text(NS(job_id=3,model='test',timeout=600),None),'超时：600s')
+  self.assertIsNone(task_details_panel(NS(job_id=3,model='test',timeout=600),None))  # On no card (2026-11-22).
  def test_a_redacted_turn_says_how_many_replacements_without_the_terms(self):
   import json
   from covey.app.interaction import Interaction
@@ -93,7 +93,8 @@ class CacheAccountingTests(unittest.TestCase):
   app=build_claude_app()
   progress=NS(card_id='card',element_id='answer',sequence=1,update_failures=0)
   job=make_job(job_id=3,model='test',timeout=0,message_id='message',progress=progress)
-  panel=task_details_panel(job,{'redaction':{'terms':3,'hits':1,'requests':1}})
+  panel=build_collapsible_markdown_panel('task_details','任务详情',task_details_text(job,{'redaction':{'terms':3,'hits':1,'requests':1}}),
+                                         'task_details_text')  # A card sent before 2026-11-22 has one.
   with FakeCardKit({}) as lark:
    self.assertTrue(app.cards.set_task_element(NS(profile='test'),job,panel))
    self.assertEqual((lark.last.method,lark.last.path),('PUT','/open-apis/cardkit/v1/cards/card/elements/task_details'))

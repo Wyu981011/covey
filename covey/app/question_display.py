@@ -29,7 +29,7 @@ from covey.core import app_manifest, butler, placement, triage
 from covey.core.jobs import find_job_record
 from covey.core.state import write_private_text
 from covey.core.store import update_question
-from covey.core.topics import route_message, topic_label
+from covey.core.topics import route_message, topic_label, topic_title
 
 MIRROR_OUTPUT_BYTES = 12000  # A longer output goes as its own message before the top-level question card.
 
@@ -39,16 +39,16 @@ def standalone_card(ctx, record):
     is at the top level itself (``at_top``)."""
     if record.get("at_top"):
         return top_card(ctx, record)
-    return question_card(record, topic_label(ctx.state_dir, record["topic_id"]))
+    # In its topic's thread it opens with the topic's row, as the topic's other cards do (docs/ui.md 5.2 问题卡).
+    return question_card(record, topic_label(ctx.state_dir, record["topic_id"]),
+                         topic_title(ctx.state_dir, record["topic_id"]))
 
 
 def top_card(ctx, record, files=None):
     """The top-level copy of ``record``'s card (``mirror``), its "你问" block as it was sent; ``files``: the asking
     turn's 产物 panel (QuestionDisplay.copy_files)."""
-    from covey.feishu.avatars import image_key
     return mirror_card(record, topic_label(ctx.state_dir, record["topic_id"]), record.get("mirror_output") or "",
-                       ask=record.get("mirror_ask"), files=files,
-                       expand_icon=image_key(ctx.state_dir, getattr(ctx, "profile", None), "expand"))
+                       ask=record.get("mirror_ask"), files=files)
 
 
 def question_card_lock(path):

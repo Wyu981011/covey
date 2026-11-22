@@ -125,8 +125,9 @@ BUTTON_TYPES = {"": "default", "primary": "primary", "danger": "danger"}
 
 
 def button_look(tone=""):
-    """A topic card button's type and size: ``tone`` "primary" (blue border), "danger" (red) or plain (grey)."""
-    return {"type": BUTTON_TYPES[tone], "size": "medium"}
+    """A topic card button's type and size: ``tone`` "primary" (blue border), "danger" (red) or plain (grey); small
+    (the owner, 2026-11-22: 换配置和回退窄一点小一点), the size of the answer card's look."""
+    return {"type": BUTTON_TYPES[tone], "size": "small"}
 
 
 def text_button(label, value, *, tone="", disabled=None):
@@ -342,7 +343,7 @@ def replace_element(built, element_id, element) -> bool:
 # The topic cards' buttons (``button_look``) and the row they sit in, each with the key order its cards were sent
 # with: a card's JSON is compared as a string before a write (app/cards.py), so a reordered key writes again.
 def topic_button(label, *, element_id="", tone="", value=None, behaviors=None):
-    """A bordered medium button (``button_look``): ``label``, ``element_id`` when given, and what a click carries:
+    """A bordered small button (``button_look``): ``label``, ``element_id`` when given, and what a click carries:
     ``value`` (the task card's 补充 and 停止 always did) or ``behaviors`` (a callback, an open_url)."""
     button = {"tag": "button", **({"element_id": element_id} if element_id else {}),
               "text": {"tag": "plain_text", "content": label}, **button_look(tone)}

@@ -21,12 +21,19 @@ from covey.app.card_actions import action_value
 from covey.cards.turn_export import export_panel
 from covey.core.harness import backend_capabilities
 from covey.core.jobs import find_job_record, upsert_job_record
+from covey.core.process_env import env_flag
 from covey.core.state import private_folder
 from covey.core.topics import topic_label
 from covey.feishu.drive import drive_upload
 
+ENV = "COVEY_TURN_EXPORT"
 PRESET = 6  # xz's 8 MiB window holds a request or two: the next one's repeated messages fold into it.
 CHUNK = 1 << 20
+
+
+def enabled() -> bool:
+    """Whether an ended task card offers 下载请求与结果 (COVEY_TURN_EXPORT=1; off unset)."""
+    return env_flag(ENV, False)
 
 
 def write_xz(data, path):
@@ -79,7 +86,9 @@ class TurnExport:
         return backend_capabilities(self.harness.backend, ctx).turn_export
 
     def attach_export_controls(self, ctx, job):
-        if (not job.progress or job.export_controls_attached or not ctx.topic_id or not job.session_id
+        """下载请求与结果 at the bottom of ``job``'s ended task card, only with COVEY_TURN_EXPORT=1 (``enabled``; the owner,
+        2026-11-22: 没必要, off unset). A button on a card sent before still works (``export_action``)."""
+        if (not enabled() or not job.progress or job.export_controls_attached or not ctx.topic_id or not job.session_id
                 or not self.supported(ctx)):
             return
         job.export_controls_attached = bool(self.cards.set_task_element(

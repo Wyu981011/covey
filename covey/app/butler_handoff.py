@@ -278,6 +278,28 @@ def note(kind, *, label, title, owner: Asked, source="") -> str:
             f"{settled}{done}")
 
 
+QUOTE_HEADS = ("主人原话", "主人随后补充")
+
+
+def quoted_words(text) -> str:
+    """The owner's words a handoff (``handoff_prompt``: a text that starts with NOTE) quotes, each quote's lines
+    without their "> ", the quotes apart by a blank line; '' for any other text (the owner's own message in the
+    thread) or one that quotes nothing."""
+    text = str(text or "")
+    if not text.startswith(NOTE):
+        return ""
+    quotes, inside = [], False
+    for line in text.split("\n"):
+        if line.startswith(QUOTE_HEADS):
+            quotes.append([])
+            inside = True
+        elif inside and line.startswith(">"):
+            quotes[-1].append(line[1:].removeprefix(" "))
+        else:
+            inside = False
+    return "\n\n".join("\n".join(lines).strip() for lines in quotes if "".join(lines).strip())
+
+
 def handoff_prompt(kind, *, label, title, task, owner: Asked, items=(), extra="", source="", read_only=False) -> str:
     """What the topic's model gets: the Bridge's ``note``, the butler's task (its ``extra`` line after it, then
     LOOK_NOTE for a turn started at once because it was judged read-only, ``read_only``), the owner's words quoted,

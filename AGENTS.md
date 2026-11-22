@@ -305,7 +305,7 @@
 | `cards/status_card.py` | The topic's status card |
 | `cards/steer_form.py` | The 补充 form, what stands in for it once it can send nothing, and the task card's 最新补充 line |
 | `cards/steer_receipts.py` | The receipt card of a supplement sent into a running task |
-| `cards/streaming.py` | The streaming task card: the whole card built from a job (build_stream_card), its buttons, body and 任务详情 |
+| `cards/streaming.py` | The streaming task card: the whole card built from a job (build_stream_card), its title row, buttons and body |
 | `cards/switch_form.py` | The 🔁 换配置 card |
 | `cards/task_figures.py` | The task card's figures: the tiles (开始 or 用时, token, 速度, 上下文 |
 | `cards/task_status.py` | The task card's status line |

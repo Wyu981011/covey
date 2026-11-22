@@ -10,7 +10,7 @@ from covey.cards.elements import button_row, callback, topic_button
 from covey.cards.rewind import rewind_button
 
 SWITCH_OPEN = "bridge_switch_open"
-# The task card's buttons are the topic cards' bordered medium ones (cards/elements.py topic_button) in rows that
+# The task card's buttons are the topic cards' bordered small ones (cards/elements.py topic_button) in rows that
 # wrap (button_row); a card sent before keeps its own until redrawn.
 # The panel's element id, from when it held 🔀 分叉 and 💬 侧聊: cards sent since keep the same.
 PANEL_ID = "fork_actions"

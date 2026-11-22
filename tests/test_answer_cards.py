@@ -20,7 +20,7 @@ from covey.app.turn_delivery import TurnDelivery
 from covey.cards.answer_card import (ARTIFACTS_ID, FACTS_ID, figure, facts_element, input_lines, input_parts,
                                               output_parts, tail)
 from covey.cards.elements import replace_element
-from covey.cards.review import ANSWER_CARD_BYTES, after_lead, answer_card, answer_lead
+from covey.cards.review import ANSWER_CARD_BYTES, answer_card
 from covey.core.jobs import job_key, upsert_job_record
 from covey.core.state import read_object, write_json
 from covey.feishu.transport import Failure, last_failure, set_failure
@@ -377,46 +377,19 @@ class AnswerFoldTest(unittest.TestCase):
 
 
 class SaidOnceTest(unittest.TestCase):
-    """A conclusion band says the answer's first line; the answer under it starts after that line (cards/review.py
-    after_lead). The card said it twice, the band's and the first line of the reply under it."""
+    """The answer is said once: no conclusion band says its first line again over it, in a topic's thread or at the top
+    level (the owner, 2026-11-22: 话题里的卡片和私聊区对齐)."""
 
-    def rest(self, text, limit=40):
-        return after_lead(text, answer_lead(text, limit))
+    def test_the_answer_card_in_its_thread_and_the_relay_card_say_it_once(self):
+        from covey.cards.answer_card import topic_head
 
-    def test_a_first_line_that_is_the_lead_goes_and_nothing_else_does(self):
-        self.assertEqual(self.rest("登录页加好了，构建和测试都通过。\n\n- 新增 `/login`\n- 补了测试"), "- 新增 `/login`\n- 补了测试")
-        self.assertEqual(self.rest("**结论**：登录页加好了。\n- 细节"), "- 细节")
-        self.assertEqual(self.rest("## 结论\n\n登录页加好了。\n\n细节：x"), "细节：x")
-        self.assertEqual(self.rest("好的，已停。"), "")
-        # The band was given the lead without the answer's own "结论：" before it.
-        self.assertEqual(after_lead("**结论**：登录页加好了。\n细节", "登录页加好了"), "细节")
-
-    def test_what_the_band_does_not_say_whole_stays(self):
-        for text in ("根因是 gateway 超时。另外还有一处。\n细节",  # More in the line than its first sentence.
-                     "已合并 [PR](https://x.example/1)。\n细节",  # A link the band shows as words only.
-                     "跑了 `pytest`，全过。\n细节", "- 第一条\n- 第二条", "> 引用的话。\n后文", "1. 第一步\n2. 第二步",
-                     "```\ncode\n```\n结果在此。\n后文", "| a | b |\n| - | - |\n后文。", "# 改看板\n正文。", ""):
-            self.assertEqual(self.rest(text), text, text)
-        long = "这一句" + "很" * 60 + "长。\n后文"
-        self.assertTrue(answer_lead(long, 40).endswith("…"))
-        self.assertEqual(self.rest(long), long)  # A cut lead: the whole sentence is only in the answer.
-        self.assertEqual(after_lead("登录页加好了。\n细节", ""), "登录页加好了。\n细节")
-        self.assertEqual(after_lead("登录页加好了。\n细节", "别的话"), "登录页加好了。\n细节")
-
-    def test_the_answer_card_under_a_band_and_the_relay_card_say_it_once(self):
         text = "登录页加好了，构建和测试都通过。\n\n- 补了 3 个组件测试"
-        band = {"tag": "markdown", "content": "band"}
         plain = json.dumps(answer_card(text, "s"), ensure_ascii=False)
-        self.assertEqual(plain.count("登录页加好了"), 1)  # No band: the answer whole.
-        headed = answer_card(text, "s", head=[band], said=answer_lead(text, 40))
-        self.assertNotIn("登录页加好了", json.dumps(headed["body"], ensure_ascii=False))
+        self.assertEqual(plain.count("登录页加好了"), 1)
+        headed = answer_card(text, "s", head=[topic_head("T7", "登录页", "done")])
+        self.assertEqual(json.dumps(headed["body"], ensure_ascii=False).count("登录页加好了"), 1)
+        self.assertEqual("speaker_row", headed["body"]["elements"][0]["element_id"])  # The topic's row, no band.
         self.assertIn("补了 3 个组件测试", json.dumps(headed, ensure_ascii=False))
-        # Without a head there is nothing above the answer that says it: ``said`` alone changes nothing.
-        self.assertIn("登录页加好了", json.dumps(answer_card(text, "s", said=answer_lead(text, 40))["body"], ensure_ascii=False))
-        # One sentence that the band says whole: no empty Markdown block under it.
-        alone = answer_card("好的，已停。", "s", head=[band], said="好的，已停")
-        self.assertEqual([e for e in alone["body"]["elements"] if e.get("content") == ""], [])
-        self.assertNotIn("好的，已停", json.dumps(alone["body"], ensure_ascii=False))
         relayed, body = relay_card("T7", DONE, text=text)
         self.assertEqual(body, text)  # What goes as Markdown when the card cannot is the reply whole.
         self.assertEqual(json.dumps(relayed["body"], ensure_ascii=False).count("登录页加好了，构建和测试都通过"), 1)
@@ -473,23 +446,24 @@ class CardTest(unittest.TestCase):
     def test_the_answer_card_and_the_relay_are_the_same_but_for_the_link(self):
         parts = tail(self.files, ["Claude Code"], ["**1**"])
         built = answer_card("## 结论\n好了", "T439 有结果 · 结论", parts)
-        self.assertEqual(ids(built), [None, ARTIFACTS_ID, FACTS_ID])
+        self.assertEqual(ids(built), ["answer_reply", ARTIFACTS_ID, FACTS_ID])
         self.assertTrue(built["config"]["update_multi"])  # Its 产物 are written in later.
         took = figure("用时", "1分")
         relay, _ = relay_card("T439", DONE, text="## 结论\n好了。\n\n细节在下面", inputs=["Claude Code"],
                               outputs=[took], files=self.files, url="https://x/t439")
-        # The speaker's row, then the reply as it is (no band since T638); 输入 and 输出 are the same two lines as the
-        # answer card's, with 进话题 ›.
+        # The speaker's row (a link into the topic), then the reply as it is (no band since T638); 输入 and 输出 are the
+        # same two lines as the answer card's, no 进话题 › after them.
         self.assertEqual(ids(relay), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID])
         self.assertEqual("好了。\n\n细节在下面", relay["body"]["elements"][1]["content"])  # Without its "## 结论".
         whole, _ = relay_card("T439", DONE, text="## 结论\n好了", inputs=["Claude Code"], outputs=[took],
                               files=self.files)
         self.assertEqual(ids(whole), ["speaker_row", "relay_reply", ARTIFACTS_ID, FACTS_ID])
-        self.assertIn("[进话题 ›](https://x/t439)", json.dumps(relay, ensure_ascii=False))
+        self.assertEqual("https://x/t439", relay["body"]["elements"][0]["behaviors"][0]["default_url"])
         self.assertIn("用时", relay["body"]["elements"][-1]["content"].replace("\u2060", ""))
+        self.assertNotIn("进话题", json.dumps(relay, ensure_ascii=False))
         self.assertNotIn("进话题", json.dumps(built, ensure_ascii=False))
         # Without artifacts: the box alone; a plain answer card without a tail as before.
-        self.assertEqual(ids(answer_card("好了", "s", tail(None, ["Claude Code"], []))), [None, FACTS_ID])
+        self.assertEqual(ids(answer_card("好了", "s", tail(None, ["Claude Code"], []))), ["answer_reply", FACTS_ID])
         self.assertNotIn("update_multi", answer_card("好了", "s").get("config", {}))
 
     def test_a_reply_too_long_for_a_card_goes_as_markdown_and_a_relay_held_before_is_an_answer_card(self):
@@ -660,7 +634,7 @@ class DeliveryTest(Case):
         send_text = self.deliver("## 结论\n好了")
         send_text.assert_called_once()
         built = send_text.call_args.kwargs["card"]
-        self.assertEqual(ids(built), [None, ARTIFACTS_ID, FACTS_ID])
+        self.assertEqual(ids(built), ["answer_reply", ARTIFACTS_ID, FACTS_ID])
         box = json.dumps(built["body"]["elements"][2], ensure_ascii=False).replace("\u2060", "").replace("\u00a0", " ")
         self.assertIn("Claude Code", box)
         self.assertIn("token/s", box)
@@ -683,12 +657,15 @@ class DeliveryTest(Case):
         Path(self.record["checkpoint_path"]).write_text(json.dumps({"artifacts": [str(self.root / "REPORT.md")], "delivery": {
             "commit": "951327a0c1d2e3f4", "deployed": "第 331 代", "verified": "全量测试"}}, ensure_ascii=False))
         built = self.deliver("## 结论\n好了").call_args.kwargs["card"]
-        self.assertEqual(ids(built), [None, ARTIFACTS_ID, "answer_change", FACTS_ID])
+        # 产物 and 改动 in one fold that names them (cards/answer_card.py details), as the relay has them.
+        self.assertEqual(ids(built), ["answer_reply", "relay_details", FACTS_ID])
+        fold = built["body"]["elements"][1]
+        self.assertEqual([ARTIFACTS_ID, "answer_change"], [element.get("element_id") for element in fold["elements"]])
         self.assertIn("改动 · 951327a · 第 331 代 · 已自检", json.dumps(built, ensure_ascii=False))
         # A Q&A turn's checkpoint with a delivery but no commit, and no files changed: none.
         Path(self.record["checkpoint_path"]).write_text(json.dumps({"artifacts": [str(self.root / "REPORT.md")], "delivery": {"verified": "答了"}},
                                                                 ensure_ascii=False))
-        self.assertEqual(ids(self.deliver("好了").call_args.kwargs["card"]), [None, ARTIFACTS_ID, FACTS_ID])
+        self.assertEqual(ids(self.deliver("好了").call_args.kwargs["card"]), ["answer_reply", ARTIFACTS_ID, FACTS_ID])
 
     def test_an_answer_the_audit_refuses_even_masked_goes_as_a_file_with_one_line_why(self):
         # #24: only the saved text, never the model again (rule 5); the card keeps none of its words.
@@ -736,17 +713,21 @@ class DeliveryTest(Case):
         with mock.patch.object(placement, "layout", return_value=placement.AREA):
             send_text = self.deliver("## 结论\n好了。\n\n细节在下面")
         built = send_text.call_args.kwargs["card"]
-        self.assertEqual(ids(built), [None, None, ARTIFACTS_ID, FACTS_ID])  # A reply with a lead: the conclusion band.
-        # The band says the lead; the reply under it starts after it (cards/review.py after_lead).
+        # The topic's row (its T number's badge, its title, 有结果), as its relay has it: no conclusion band (the owner,
+        # 2026-11-22: 话题里的卡片和私聊区对齐), the answer under it whole, its "## 结论" left out.
+        self.assertEqual(ids(built), ["speaker_row", "answer_reply", ARTIFACTS_ID, FACTS_ID])
         self.assertEqual(json.dumps(built["body"], ensure_ascii=False).count("好了"), 1)
         self.assertIn("细节在下面", built["body"]["elements"][1]["content"])
-        head = json.dumps(built["body"]["elements"][0], ensure_ascii=False)
-        self.assertIn("有结果 · T443 改看板", re.sub(r"<[^>]*>|\*\*", "", head).replace("&#35;", "#"))
+        self.assertNotIn("结论", built["body"]["elements"][1]["content"])
+        head = re.sub(r"<[^>]*>|\*\*", "", json.dumps(built["body"]["elements"][0], ensure_ascii=False))
+        for words in ("T443", "改看板", "有结果"):
+            self.assertIn(words, head)
+        self.assertNotIn("behaviors", built["body"]["elements"][0])  # In its own thread: no link.
         self.assertEqual(self.receipts()[-1], " ")
-        for where in (placement.TOPICS,):  # The other layout as before: no line, the lead.
+        for where in (placement.TOPICS,):  # The other layout as before: no row, the lead.
             with self.subTest(where), mock.patch.object(placement, "layout", return_value=where):
                 send_text = self.deliver("## 结论\n好了")
-                self.assertEqual(ids(send_text.call_args.kwargs["card"]), [None, ARTIFACTS_ID, FACTS_ID])
+                self.assertEqual(ids(send_text.call_args.kwargs["card"]), ["answer_reply", ARTIFACTS_ID, FACTS_ID])
                 self.assertIn("好了", self.receipts()[-1])
 
     def test_a_group_s_topic_in_the_topic_area_layout_keeps_its_cards_as_before(self):
@@ -758,7 +739,7 @@ class DeliveryTest(Case):
         with mock.patch.object(placement, "layout", return_value=placement.AREA):
             self.assertTrue(placement.plan(self.state, make_job(topic_id="t1", chat_id="oc_group")).row.answer_head)
             send_text = self.deliver("## 结论\n好了", chat="oc_group")
-            self.assertEqual(ids(send_text.call_args.kwargs["card"]), [None, ARTIFACTS_ID, FACTS_ID])
+            self.assertEqual(ids(send_text.call_args.kwargs["card"]), ["answer_reply", ARTIFACTS_ID, FACTS_ID])
             self.assertIn("好了", self.receipts()[-1])
         runtime = mock.Mock()  # The private chat not known yet, or not readable: as before too.
         runtime.access.owner_chat.return_value = ""
@@ -769,13 +750,19 @@ class DeliveryTest(Case):
         runtime.access.owner_chat.side_effect = OSError("gone")
         self.assertFalse(delivery.headed(placement.TABLE[(placement.AREA, placement.TOPIC_ROLE)]))
 
-    def test_the_status_line_says_how_the_turn_ended(self):
-        from covey.cards.answer_card import head_element
+    def test_the_row_says_how_the_turn_ended(self):
+        from covey.cards.answer_card import topic_head
+        from covey.cards.ui import ASK_META, speaker_row
         from covey.core.turn_words import answer_head
         self.assertEqual([answer_head(status) for status in ("done", "failed", "cancelled", "interrupted", "waiting_user")],
                          ["有结果", "停住了", "已停止", "停住了", "等你"])
-        self.assertEqual(head_element("有结果")["content"], "**有结果**")
-        self.assertNotIn("**改**", head_element("有结果", "T1", "**改** <b>看板</b>")["content"])  # Shown as written.
+        rows = {status: speaker_row(topic_head("T1", "**改** <b>看板</b>", status)[ASK_META])
+                for status in ("done", "failed", "cancelled", "interrupted")}
+        words = {status: json.dumps(row, ensure_ascii=False) for status, row in rows.items()}
+        for status, word in (("done", "有结果"), ("failed", "停住了"), ("cancelled", "已停止"), ("interrupted", "停住了")):
+            self.assertIn(f">{word}</text_tag>", words[status], status)
+        self.assertNotIn("**改**", words["done"])  # Shown as written.
+        self.assertIsNone(topic_head("", "", "done"))
 
     def test_a_reply_sent_as_a_file_gets_a_small_card_after_it(self):
         send_text = self.deliver("字" * (ANSWER_CARD_BYTES // 2))  # Over 20,000 bytes: a Markdown file.
@@ -863,7 +850,7 @@ class RedeliveryTest(Case):
 
     def test_the_card_with_its_files_and_facts_goes_again_as_it_first_went(self):
         first = self.first()
-        self.assertEqual(ids(first[2]), [None, ARTIFACTS_ID, FACTS_ID])
+        self.assertEqual(ids(first[2]), ["answer_reply", ARTIFACTS_ID, FACTS_ID])
         again = self.again()
         self.same(first, again)
         self.assertEqual(self.upsert.call_args.kwargs["answer_message_id"], "om_answer")

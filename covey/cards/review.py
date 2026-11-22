@@ -7,11 +7,10 @@ import json
 import re
 from typing import Any
 
-from covey.cards.elements import card
-from covey.cards.answer_card import put_back
-from covey.cards.ui import BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, speaker_row, split_ask
+from covey.cards.elements import card, md
+from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, labelled, role_of, speaker_row, split_ask
 from covey.core import turn_words
-from covey.core.text import literal, redact
+from covey.core.text import redact
 
 STREAM_PROGRESS_STATUS_MAX_CHARS = 22000
 
@@ -74,38 +73,6 @@ def answer_lead(value: Any, limit: int = LEAD_CHARS) -> str:
 LEAD_ENDS = "。.!！?？:：;；,，、 "
 GENERIC_LABEL = re.compile(r"^(?:%s)[:：]\s*" % "|".join(sorted(map(re.escape, GENERIC_HEADINGS), key=len, reverse=True)),
                            re.IGNORECASE)
-# A line whose marks a conclusion band cannot show (code, a link, an image, a tag) or that is part of a list, a
-# table or a quote: it stays in the answer.
-KEPT_LINE = re.compile(r"#{1,6}\s|[|>]|```|~~~|[-*+]\s|\d{1,3}[.)]\s")
-
-
-def after_lead(text: Any, lead: str) -> str:
-    """A Markdown answer without its opening line when the conclusion band above it already says that line whole:
-    ``lead`` is ``answer_lead`` of the same answer as the band shows it. A card said its conclusion twice, the
-    band's and the answer's first line under it (docs/media/screenshots/03-answer-card.png). Only a first line of
-    plain words that is the lead and nothing more goes (a "## 结论" over it too); a lead that was cut ("…"), a line
-    with more sentences, code, a link or a list mark, and any other answer stay as they are."""
-    text = str(text or "").replace("\r\n", "\n")
-    lead = str(lead or "").strip()
-    if not lead or lead.endswith("…"):
-        return text
-    lines = text.split("\n")
-    filled = [i for i, line in enumerate(lines) if line.strip()]
-    if not filled:
-        return text
-    at = filled[0]
-    heading = re.match(r"#{1,6}\s", lines[at].strip()) or re.fullmatch(r"\*\*[^*].*\*\*[:：]?", lines[at].strip())
-    if heading and compact_text(lines[at], len(lines[at]) + 1).rstrip(LEAD_ENDS).lower() in GENERIC_HEADINGS:
-        if len(filled) < 2:
-            return text
-        at = filled[1]
-    first = lines[at].strip()
-    if KEPT_LINE.match(first) or any(mark in first for mark in ("`", "](", "://", "<")):
-        return text
-    said = compact_text(first, len(first) + 1).rstrip(LEAD_ENDS)
-    if GENERIC_LABEL.sub("", said) != GENERIC_LABEL.sub("", lead.rstrip(LEAD_ENDS)):
-        return text
-    return "\n".join(lines[at + 1:]).lstrip("\n")
 
 
 # 露一截 (cards/ui.py peek): how much of a long text's opening stays in view.
@@ -154,13 +121,6 @@ def _cut(line, room):
     if pause and pause[1] >= room * PEEK_CUT:
         return line[:pause[0]], line[pause[0]:].lstrip()  # No "…": the fold's title stays as it is once open.
     return (line[:at].rstrip(), line[at:].lstrip()) if at else ("", line)
-
-
-def fits(text, width=PEEK_WIDTH) -> bool:
-    """Whether a Markdown text is short enough to show whole where its opening would be shown (cards/ui.py read_more):
-    no wider than ``width`` and no more than twice PEEK_LINES lines, a small table included."""
-    lines = [line for line in str(text or "").split("\n") if line.strip()]
-    return _width(plain_markdown(text)) <= width and len(lines) <= 2 * PEEK_LINES
 
 
 def drop_part_heading(text) -> str:
@@ -457,28 +417,57 @@ def inline_one_line_code(text: str) -> str:
     return "\n".join(out)
 
 
-def answer_band(status: str, label: str, title: str, lead: str) -> dict:
-    """The conclusion band atop a turn's answer card in its thread (docs/ui.md 5.2 聊天结果卡): its outcome's word, its
-    T number ``label`` and its topic's ``title``, "有结果 · T43 改看板", over the reply's ``lead``."""
-    return conclusion_band(band_label(turn_words.TONES.get(outcome_line(status), "result"), label, title), literal(lead))
+FOLD_ID = "relay_reply"
+TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
 
 
-def answer_card(text: str, summary: str, tail: list | tuple = (), head: list | tuple = (), said: str = "") -> dict | None:
-    """A turn's answer sent on its own, as a card of one Markdown block (``bold_minor_headings``,
-    ``inline_one_line_code``): the chat list previews ``summary`` where a Markdown message showed its first
-    characters ("#### 先确认…"). ``tail``: what follows the answer (cards/answer_card.py tail: 产物 and the
-    输入/输出 box), a card that can be updated then (its 产物 once uploaded); ``head``: what goes above it (the
-    "你问" block of an answer at the private chat's top level). ``said``: the lead a conclusion band in ``head``
-    shows; the answer then goes without the line that only repeats it (``after_lead``), and without a Markdown block
-    when that line was all of it. None when it would not fit one card message; it then goes as Markdown."""
+def reply_body(text) -> str:
+    """A turn's reply as a card shows it: its line ends as \\n, one-line code inline, its small headings bold."""
+    return bold_minor_headings(inline_one_line_code(str(text or "").replace("\r\n", "\n").strip()))
+
+
+def reply_size(text):
+    """(lines, characters, tables) of a reply's Markdown: its non-blank lines, its characters without spaces, and its
+    tables (a line of dashes under a header row)."""
+    body = str(text or "")
+    lines = [line for line in body.splitlines() if line.strip()]
+    tables = sum(1 for line in lines if "|" in line and "-" in line and TABLE_RULE.match(line))
+    return len(lines), len("".join(body.split())), tables
+
+
+def reply_shown(text, element_id=FOLD_ID, *, label="") -> list:
+    """A reply (Markdown) whole on its card, ``label`` grey before it ("这一轮输出"): the owner, 2026-11-22, after the
+    folds he tried (露一截 with a line under it, then the answer itself opening with a round arrow): 不折叠，直接展示全文.
+    A reply too large for a card goes as Markdown before it (the callers' CARD_TEXT_BYTES and ANSWER_CARD_BYTES). One
+    element in a list."""
+    return [md(labelled(text, label), element_id=element_id)]
+
+
+ANSWER_ID = "answer_reply"  # The answer on its card, as the relay's is FOLD_ID.
+
+
+def answer_card(text: str, summary: str, tail: list | tuple = (), head: list | tuple = ()) -> dict | None:
+    """A turn's answer sent on its own, as card Markdown (``bold_minor_headings``, ``inline_one_line_code``), in the
+    look the relay has (docs/ui.md 5.2 聊天结果卡): the chat list previews ``summary`` where a Markdown message showed
+    its first characters ("#### 先确认…"). ``head``: what goes above it, a block that becomes the card's row
+    (cards/ui.py speaker_row: the "你问" block at the private chat's top level, the topic's row in its own thread,
+    cards/answer_card.py topic_head), a click on it opening what the block links to; a speaker whose row does not
+    quote the owner (a topic, a lead) has his words under it as one line that opens (cards/answer_card.py
+    ``words_fold``). The answer whole (``reply_shown``), a leading "## 结论" left out. ``tail``: what follows the answer (cards/answer_card.py tail: 产物 and the 输入/输出 lines), a card
+    that can be updated then (its 产物 once uploaded). None when it would not fit one card message; it then goes as
+    Markdown."""
+    from covey.cards.answer_card import words_fold
+
     headed = bool(head)
     meta, head = split_ask(head)  # The "你问" block goes into the speaker's row (cards/ui.py speaker_row).
-    body = after_lead(text, said) if said and head else text
-    answer = [{"tag": "markdown", "content": bold_minor_headings(inline_one_line_code(body)),
-               "text_size": "normal_v2"}] if body.strip() or not headed else []
+    body = drop_part_heading(reply_body(text))
+    answer = reply_shown(body, ANSWER_ID) if body.strip() else (
+        [] if headed else [{"tag": "markdown", "content": "", "text_size": "normal_v2"}])
     elements = [*head, *answer, *tail]
     if meta:
-        built = banded(card([speaker_row(meta), *put_back(elements, meta)], summary, update_multi=bool(tail),
+        quoted = role_of(meta.get("who")) == "butler"  # The butler's row quotes his words itself.
+        words = [] if quoted else [part for part in (words_fold(meta),) if part]
+        built = banded(card([speaker_row(meta), *words, *elements], summary, update_multi=bool(tail),
                             padding=BODY_PADDING, spacing=BODY_SPACING))
     else:
         built = banded(card(elements, summary, update_multi=bool(tail)))

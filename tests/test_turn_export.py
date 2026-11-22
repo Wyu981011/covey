@@ -138,6 +138,19 @@ class TurnExportTests(UnifiedCase):
         self.assertIn('打包没有完成：找不到本轮的 Claude Code 会话记录', text(puts[-1]))
         self.assertEqual(self.uploads, [])
 
+    def test_the_button_is_off_unless_the_switch_says_so(self):
+        # The owner, 2026-11-22: 下载请求与结果没必要: no button unless COVEY_TURN_EXPORT=1; a click on one sent
+        # before still packs (the tests above).
+        import os
+        job = SimpleNamespace(progress=object(), export_controls_attached=False, session_id=SID, job_id=1)
+        with mock.patch.object(type(self.app_.cards), 'set_task_element', return_value=True) as put, \
+                mock.patch.dict('os.environ', {'COVEY_TURN_EXPORT': '0'}):
+            self.app_.turn_export.attach_export_controls(self.source, job)
+            os.environ.pop('COVEY_TURN_EXPORT')  # Unset: off too.
+            self.app_.turn_export.attach_export_controls(self.source, job)
+            put.assert_not_called()
+
+    @mock.patch.dict('os.environ', {'COVEY_TURN_EXPORT': '1'})
     def test_only_a_turn_with_a_session_on_a_harness_that_exports_gets_the_button(self):
         job = SimpleNamespace(progress=object(), export_controls_attached=False, session_id=SID, job_id=1)
         with mock.patch.object(type(self.app_.cards), 'set_task_element', return_value=True) as put:

@@ -1,4 +1,4 @@
-"""The streaming task card: the whole card built from a job (build_stream_card), its buttons, body and 任务详情.
+"""The streaming task card: the whole card built from a job (build_stream_card), its title row, buttons and body.
 Its status line is cards/task_status.py, its tiles and 输入/输出 box cards/task_figures.py, what it costs CardKit
 cards/card_cost.py.
 
@@ -15,10 +15,11 @@ from covey.core.defaults import work_mode_tag
 from covey.core.jobs import job_stop_action_value
 from covey.core.text import safe_text
 from covey.core.topics import shown_title
-from covey.cards.elements import (button_row, find_element, fold, grey, markdown_panel, md, panel_header,
-                                           topic_button)
+from covey.cards.elements import button_row, find_element, fold, grey, markdown_panel, md, topic_button
 from covey.cards.review import question_preview, queued_summary, running_summary
 from covey.cards.topic_actions import switch_button
+from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, topic_badge
+from covey.core.text import literal
 from covey.cards.card_cost import card_cost, truncate_card_content
 from covey.cards.task_figures import FIGURES_ELEMENT_ID, IO_BOX_ID, STATUS_BLOCK_ID, io_box
 from covey.cards.task_status import (activity_element, more_element, slim_activity_element,
@@ -76,10 +77,23 @@ def card_title_for_question(question: str, runtime: CardRuntime) -> str:
     return shown_title(runtime.compact_text(RECOMMENDED.sub("", question), 24)) or runtime.default_title
 
 
-def card_heading(job: Any, title: str) -> str:
-    """Topic and task number lead the title, so a card can be named and found: T12 · #196 · …"""
-    tags = [str(getattr(job, "topic_label", "") or ""), f"#{job.job_id}" if getattr(job, "job_id", None) else ""]
-    return " · ".join([tag for tag in tags if tag] + [title])
+HEAD_ID = "task_head"
+
+
+def task_head(job: Any, heading: str, status: str) -> dict[str, Any]:
+    """The task card's first row, as the answer card's (cards/ui.py speaker_row; the owner, 2026-11-22: 整体按答案卡片弄):
+    the topic's T number as its badge, the turn's title bold with its task number grey, and the status line
+    (ACTIVITY_ELEMENT_ID, cards/task_status.py status_markdown: the state a coloured tag, 14:41 结束 grey) at its
+    right, written by its own ID as before. It took the white title bar's place: a sent card's title bar never
+    changes, this row's state does. Without a T number the title alone leads."""
+    label = str(getattr(job, "topic_label", "") or "")
+    badge = topic_badge(label) if label else None
+    number = f"#{job.job_id}" if getattr(job, "job_id", None) else ""
+    title = md(f"**{literal(heading)}**" + (" " + grey(number) if number else ""), size="normal_v2")
+    columns = ([{"tag": "column", "width": "auto", "vertical_align": "center", "elements": [badge]}] if badge else []) + [
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [title]},
+        {"tag": "column", "width": "auto", "vertical_align": "center", "elements": [activity_element(status)]}]
+    return {"tag": "column_set", "element_id": HEAD_ID, "horizontal_spacing": "8px", "columns": columns}
 
 
 def build_collapsible_markdown_panel(element_id: str, title: str, content: str, content_id: str = "") -> dict[str, Any]:
@@ -175,10 +189,10 @@ def progress_lines(found) -> list[str]:
 
 
 def task_details_panel(job, usage=None):
-    """The 任务详情 panel (``task_details_text``), its text by TASK_DETAILS_TEXT_ID; None when it says nothing:
-    no card shows an empty 任务详情, and app/cards.py puts it on a card once it has words."""
-    text = task_details_text(job, usage)
-    return build_collapsible_markdown_panel("task_details", "任务详情", text, TASK_DETAILS_TEXT_ID) if text else None
+    """The 任务详情 panel: None, always (the owner, 2026-11-22: 任务详情就没必要了, the card keeps 本轮请求 and 执行过程).
+    What it said (``task_details_text``) is on no card: app/task_details.py writes nothing for a None panel, so a new
+    card never gets one and a card sent before keeps the words it shows."""
+    return None
 
 
 def answer_element(element_id: str, content: str) -> dict[str, Any]:
@@ -254,6 +268,7 @@ def build_stream_card(
     elements: list[dict[str, Any]] = [answer]
     look = runtime.look(job) if job is not None else CardLook()
     slim = look.slim
+    heading = card_title_for_question(title, runtime)
     if job is not None:
         request = build_collapsible_markdown_panel("current_question", "本轮请求",
                                                    question_preview(job.user_text, max_lines=40, max_chars=4000))
@@ -262,11 +277,12 @@ def build_stream_card(
         if slim:
             line, content = slim_start(content)  # The slim card's line comes from its body, not ``status``.
             elements = [answer, slim_activity_element(line),
-                        slim_details([e for e in (io_box(job), request, task_details_panel(job), *buttons) if e])]
+                        slim_details([e for e in (io_box(job), request, *buttons) if e])]
         else:
-            elements = [e for e in (activity_element(status or "等待处理"), more_element(), io_box(job), answer, request,
-                                    task_details_panel(job), *buttons) if e]
-    heading = card_title_for_question(title, runtime)
+            # The answer card's look: its row (T number, title, the state as a tag), the 输入/输出 lines, the body, then
+            # 本轮请求 and 执行过程 folded; no 任务详情 (task_details_panel) and no 下载请求与结果 (app/turn_export.py).
+            elements = [e for e in (task_head(job, heading, status or "等待处理"), more_element(), io_box(job), answer,
+                                    request, *buttons) if e]
     card = {
         "schema": "2.0",
         "config": {
@@ -279,18 +295,14 @@ def build_stream_card(
             },
         },
         "body": {
-            "padding": "6px 14px 12px 14px",
-            "vertical_spacing": "8px",
+            "padding": "6px 14px 12px 14px" if slim or job is None else BODY_PADDING,
+            "vertical_spacing": "8px" if slim or job is None else BODY_SPACING,
             "elements": elements
         },
     }
-    if not slim:
-        # The panel style's title bar (cards/elements.py panel_header): white, a blue line icon. Its color
-        # cannot follow the outcome: a sent card's header does not change in place. A slim card has none: the
-        # owner's message it quotes says the same, and it could never change.
-        # Its T number, task and title alone since the 输入/输出 box: a subtitle and a tag were cut in a
-        # topic's side panel ("Claude Code · Opus 5.5 · 思…"); what the task runs with is the box's 输入.
-        card["header"] = panel_header("robot_outlined", card_heading(job, heading))
+    # No title bar (2026-11-22): the row (``task_head``) says the T number, task and title, and its state, which a
+    # title bar could not (a sent card's header does not change in place). A slim card never had one.
+    card = banded(card)  # The badge's colour in the card's config.
     label = getattr(job, "topic_label", "") or (f"#{job.job_id}" if getattr(job, "job_id", None) else "")
     if label:
         # The topic list's preview of the topic while this card is its latest message (cards/review.py

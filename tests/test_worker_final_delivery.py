@@ -12,10 +12,10 @@ from support.fake_lark import FakeCardKit
 from support.final_delivery import FinalDeliveryHarness, make_reply_job
 from support.git import commit_all, init_git_repo
 from covey.core.harness import RunResult
-from covey.cards.ui import state_word
+from covey.cards.ui import state_pill, state_word
 from covey.cards.review import render_stream_final, render_stream_progress_lines
 from covey.app.task_card import StreamingCard
-from covey.cards.streaming import STOP_ACTION_ELEMENT_ID, build_stream_card, task_details_panel
+from covey.cards.streaming import STOP_ACTION_ELEMENT_ID, build_stream_card, task_details_panel, task_details_text
 from covey.app.worker import format_received_progress_event
 
 
@@ -135,7 +135,8 @@ class ChatFinalDeliveryTest(unittest.TestCase):
         elements = card["body"]["elements"]
         # The status line at the top, the 输入/输出 box under it with 输出 by the tiles' old ID (the "E" sample,
         # 2026-11-08), the buttons at the bottom (the A 仪表盘 sample, 2026-11-04), in a row that wraps.
-        self.assertEqual([e["element_id"] for e in elements[:3]], ["activity", "activity_more", "task_io"])
+        self.assertEqual([e["element_id"] for e in elements[:3]], ["task_head", "activity_more", "task_io"])
+        self.assertEqual("activity", elements[0]["columns"][-1]["elements"][0]["element_id"])  # In the title row.
         self.assertEqual(elements[2]["columns"][0]["elements"][1]["columns"][1]["elements"][0]["element_id"],
                          "task_figures")
         row = elements[-1]
@@ -145,16 +146,17 @@ class ChatFinalDeliveryTest(unittest.TestCase):
         button = row["columns"][-1]["elements"][0]  # Ending the task is the last, separate action.
         self.assertEqual(button["element_id"], STOP_ACTION_ELEMENT_ID)
         self.assertEqual(button["text"]["content"], "停止")
-        # Bordered in red and medium (the owner, 2026-11-04 14:05: A 中号线框). No confirm: on a running card,
-        # redrawn every few seconds, the client dropped 确定 (gen 257's real 停止 never reached the Bridge).
-        self.assertEqual((button["type"], button["size"]), ("danger", "medium"))
+        # Bordered in red and small (the owner, 2026-11-22: 窄一点小一点). No confirm: on a running card, redrawn every
+        # few seconds, the client dropped 确定 (gen 257's real 停止 never reached the Bridge).
+        self.assertEqual((button["type"], button["size"]), ("danger", "small"))
         self.assertNotIn("confirm", button)
         self.assertEqual(row["horizontal_spacing"], "8px")
         self.assertEqual(button["value"]["kind"], "bridge_job_stop")
         self.assertEqual(button["value"]["job_id"], "7")
 
-    def test_the_other_cards_of_a_topic_have_the_task_card_s_bordered_medium_buttons(self) -> None:
-        # The owner, 2026-11-04 14:05 (A 中号线框): the topic's cards share one button look, the menu panels keep theirs.
+    def test_the_other_cards_of_a_topic_have_the_task_card_s_bordered_small_buttons(self) -> None:
+        # The owner, 2026-11-04 14:05 (A 线框): the topic's cards share one button look, the menu panels keep theirs;
+        # small since 2026-11-22 (换配置和回退窄一点小一点).
         from support.cards import walk_dicts
         from covey.cards.held_note import note_card
         from covey.cards.recovery import result_actions
@@ -171,7 +173,7 @@ class ChatFinalDeliveryTest(unittest.TestCase):
             with self.subTest(name):
                 buttons = [e for e in walk_dicts(element) if e.get("tag") == "button"]
                 self.assertTrue(buttons)
-                self.assertEqual({b["size"] for b in buttons}, {"medium"})
+                self.assertEqual({b["size"] for b in buttons}, {"small"})
                 self.assertTrue({b["type"] for b in buttons} <= {"default", "primary"})
         rows = [e for e in walk_dicts(cards["receipt"]) if e.get("tag") == "column_set" and e.get("columns")]
         self.assertEqual((rows[-1]["flex_mode"], rows[-1]["horizontal_spacing"]), ("flow", "8px"))
@@ -192,8 +194,9 @@ class ChatFinalDeliveryTest(unittest.TestCase):
         job = make_job(job_id=7, model="opus", effort="max")
         job.redaction = False
         card = build_stream_card("", "统计行数", runtime, job=job)
-        # Since the 输入/输出 box (the "E" sample, 2026-11-08) its 输入 says it, not a tag the side panel cut.
-        self.assertNotIn("text_tag_list", card["header"])
+        # Since the 输入/输出 box (the "E" sample, 2026-11-08) its 输入 says it, not a tag the side panel cut; no title
+        # bar since the title row (2026-11-22).
+        self.assertNotIn("header", card)
         box = next(e for e in card["body"]["elements"] if e.get("element_id") == "task_io")
         self.assertIn("脱敏关", box["columns"][0]["elements"][0]["columns"][1]["elements"][0]["content"].replace("\u2060", ""))
 
@@ -211,49 +214,57 @@ class ChatFinalDeliveryTest(unittest.TestCase):
                               workspace_label="demo-app", harness_id="claude", binding_revision=2,
                               harness_capabilities=SimpleNamespace(steering=True))
         card = build_stream_card("", "统计行数", runtime, job=job, include_stop_action=True)
-        header = card["header"]
-        self.assertEqual((header["template"], header["icon"]["token"], header["icon"]["color"]), ("default", "robot_outlined", "blue"))
-        self.assertEqual(header["title"]["content"], "T372 · #7 · 统计行数")
-        # The title bar is the T number, task and title alone (the "E" sample, 2026-11-08: a subtitle was cut in a
-        # topic's side panel); what the task runs with is the box's 输入.
-        self.assertEqual(set(header), {"title", "template", "icon", "padding"})
+        # No title bar (the owner, 2026-11-22: 整体按答案卡片弄): its title row is the topic's badge, the turn's title with
+        # its task number grey, and the status line at its right, by its old ID, written in place as before.
+        self.assertNotIn("header", card)
+        head = card["body"]["elements"][0]
+        self.assertEqual("task_head", head["element_id"])
+        badge, title, status = (column["elements"][0] for column in head["columns"])
+        self.assertEqual(("<font color='white'>**T372**</font>", "auto"), (badge["elements"][0]["content"], badge["width"]))
+        self.assertEqual("**统计行数** <font color='grey'>#7</font>", title["content"])
+        self.assertEqual(("activity", "等待处理"), (status["element_id"], status["content"]))
+        self.assertIn(badge["background_style"], card["config"]["style"]["color"])  # The badge's colour is the card's.
+        self.assertEqual(("10px 12px 10px 12px", "6px"), (card["body"]["padding"], card["body"]["vertical_spacing"]))
         ids = [e.get("element_id") for e in card["body"]["elements"]]
-        # No 任务详情 while it has nothing to say (2026-11-09): the box has the figures.
-        self.assertEqual(ids, ["activity", "activity_more", "task_io", "answer", "current_question", "action_row"])
-        # The status line, the rest of it under it (empty till there is some), then the grey box: 输入 in three
-        # lines (its hyphens no-break ones), 输出 by the tiles' old ID ("—" till the run has figures).
-        self.assertEqual(card["body"]["elements"][0]["content"], "## 等待处理")
+        # No 任务详情 (the owner, 2026-11-22: 没必要) and no 下载请求与结果: 本轮请求 and 执行过程 folded.
+        self.assertEqual(ids, ["task_head", "activity_more", "task_io", "answer", "current_question", "action_row"])
+        # The rest of the status line under the row (empty till there is some), then 输入 and 输出 as the answer
+        # card's lines: no grey box, the labels grey, the parts in the body's colour; 输出 by the tiles' old ID ("—" till
+        # the run has figures).
         self.assertEqual((card["body"]["elements"][1]["content"], card["body"]["elements"][1]["text_size"]), ("", "normal_v2"))
         box = card["body"]["elements"][2]["columns"][0]
-        self.assertEqual(box["background_style"], "grey-50")
+        self.assertNotIn("background_style", box)
         texts = [row["columns"][1]["elements"][0] for row in box["elements"]]
         self.assertEqual([row["columns"][0]["elements"][0]["content"] for row in box["elements"]],
                          ["<font color='grey'>输入</font>", "<font color='grey'>输出</font>"])
         shown = texts[0]["content"].replace("\u2060", "").replace("\u00a0", " ")
         # One line, its parts apart by a grey bar (the owner, 2026-11-09 13:48).
-        self.assertTrue(shown.startswith("<font color='grey'>") and "\n" not in shown, shown)
+        self.assertFalse(shown.startswith("<font color='grey'>"), shown)
+        self.assertNotIn("\n", shown)
         self.assertEqual(re.sub(r"<[^>]*>", "", shown), "— ｜ — ｜ Opus 5 ｜ 思考 max ｜ 脱敏关 ｜ algo\u2011agent\u2011devskills")
         self.assertEqual((texts[1]["element_id"], texts[1]["content"]), ("task_figures", "<font color='grey'>—</font>"))
         for panel in card["body"]["elements"][4:5]:  # White, in a thin grey border (the "E 白底细边框" pick).
             self.assertNotIn("background_color", panel)
             self.assertEqual(panel["border"], {"color": "grey", "corner_radius": "8px"})
+            self.assertFalse(panel["expanded"])  # Folded till opened.
         row = card["body"]["elements"][-1]
         buttons = [column["elements"][0] for column in row["columns"]]
         # 💬 侧聊 sat between 补充 and 换配置 until 2026-11-08.
         self.assertEqual([b["element_id"] for b in buttons], ["steer_action", "running_switch", "job_stop_action"])
         self.assertEqual([(b["type"], b["size"]) for b in buttons],
-                         [("primary", "medium"), ("default", "medium"), ("danger", "medium")])
+                         [("primary", "small"), ("default", "small"), ("danger", "small")])
         self.assertFalse([b for b in buttons if "confirm" in b])
         self.assertEqual(buttons[0]["value"], {"kind": "bridge_steer", "topic_id": "t1", "job_id": 7})
         self.assertEqual(buttons[-1]["value"]["kind"], "bridge_job_stop")
         self.assertEqual((row["flex_mode"], {c["width"] for c in row["columns"]}), ("flow", {"auto"}))
         essential = build_stream_card("", "统计行数", runtime, job=job, include_stop_action=True, essential=True)
         self.assertEqual([c["elements"][0]["element_id"] for c in essential["body"]["elements"][-1]["columns"]], ["job_stop_action"])
-        # The status line: its status a heading, the details and what runs now small and grey under it (beside the
-        # heading they were drawn large and wrapped in the side panel, 2026-11-04).
+        # The status line: its state a coloured tag, its time grey beside it, what runs now grey under it (the owner,
+        # 2026-11-22: "有结果"占的视觉太高，用一个带底色的标签).
         self.assertEqual(status_markdown("在做 · 已运行 48 秒\n现在：执行命令"),
-                         f"## {state_word('running')}\n<font color='grey'>已运行 48 秒</font>\n<font color='grey'>现在：执行命令</font>")
-        self.assertEqual(status_markdown(status_markdown("有结果")), f"## {state_word('result')}")
+                         f"{state_pill('running')} <font color='grey'>已运行 48 秒</font>\n<font color='grey'>现在：执行命令</font>")
+        self.assertEqual(status_markdown("有结果"), state_pill("result"))
+        self.assertEqual(status_markdown(f"## {state_word('result')}"), f"## {state_word('result')}")  # An older card's.
         self.assertEqual(status_markdown(""), " ")
 
     def test_a_status_line_splits_into_the_status_beside_the_tiles_and_the_rest_under_them(self) -> None:
@@ -271,7 +282,7 @@ class ChatFinalDeliveryTest(unittest.TestCase):
             self.assertEqual(status_rows(whole), (whole, ""))
         top, more = status_elements("在做 · 已运行 5 秒 · 阶段：读代码\n现在：执行命令", True)
         self.assertEqual((top["element_id"], top["content"]),
-                         ("activity", f"## {state_word('running')}\n<font color='grey'>已运行 5 秒</font>"))
+                         ("activity", f"{state_pill('running')} <font color='grey'>已运行 5 秒</font>"))
         self.assertEqual((more["element_id"], more["content"]), ("activity_more", "阶段：读代码\n<font color='grey'>现在：执行命令</font>"))
         self.assertEqual(status_elements("有结果 · 20:01 结束", True)[1]["content"], "")
         # A card sent before: the whole line in its one element, as it always was.
@@ -281,9 +292,10 @@ class ChatFinalDeliveryTest(unittest.TestCase):
         # 任务详情 said 模型 and 思考预算 the card says elsewhere (2026-11-04 15:07: 冗余的文字有点多).
         job = make_job(job_id=7, model="gpt56_sol_reasoning_xhigh", effort="")
         job.model_label, job.effort = "Codex · GPT-6-Astra", "max"
-        self.assertIsNone(task_details_panel(job))  # Nothing to say (2026-11-09): none of 模型, 思考预算, 任务编号, 超时.
+        self.assertEqual("", task_details_text(job))  # Nothing to say (2026-11-09): none of 模型, 思考预算, 任务编号, 超时.
         job.timeout = 600
-        self.assertIn("超时：600s", task_details_panel(job)["elements"][0]["content"])  # Only when one is set.
+        self.assertIn("超时：600s", task_details_text(job))  # Only when one is set.
+        self.assertIsNone(task_details_panel(job))  # On no card since 2026-11-22 (the owner: 任务详情没必要).
 
     def test_job_buttons_are_removed_once(self) -> None:
         from support.world import build_claude_app

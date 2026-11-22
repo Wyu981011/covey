@@ -9,12 +9,13 @@ no card here is sent by itself, the cards that move to this look use these parts
 - ``speaker_row``: the first element of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3):
   the speaker's picture, its name bold and what it did with the owner's words grey, a topic's state as a coloured tag.
   It takes what the "你问" block (cards/answer_card.py ask_block, ``ASK_META``) carried, so the card does not have the
-  block as well (``split_ask``); the block's link back to the owner's message goes on the card's 输出 line
-  (``put_back``), else a line of its own, ``ask_footnote``. The picture is an image key the caller made
+  block as well (``split_ask``); the block's link (back to the owner's message, or into a topic's thread) is the row
+  itself: a click anywhere on it opens it, and no "看你那句 ›" or "进话题 ›" ends the card. The picture is an image key the caller made
   (app/answer_cards.py ``avatar``): cards make no network calls. A topic has no picture: its T number is its
   badge (``topic_badge``), white on the topic's own colour, and its title follows alone.
-- ``peek``: 犹抱琵琶半遮面, a long text's opening in view and the rest one click away, a fold whose title is that
-  opening (cards/review.py ``opening`` cuts it) and whose body goes on from there.
+- ``peek``: a settled question's opening in view and the rest one click away, a fold whose title is that opening
+  (cards/review.py ``opening`` cuts it) and whose body goes on from there. Answers and a turn's output are not folded:
+  they are shown whole (the owner, 2026-11-22).
 - ``topic_row``: a state's dot and word, ``T31 title ›``, a line in words, grey figures; buttons at the right; the
   whole opens ``url``.
 
@@ -23,7 +24,6 @@ Colours a card defines itself (``config.style.color``: the band's, a badge's) ar
 """
 from __future__ import annotations
 
-import json
 import re
 
 from covey.cards.elements import chevron, grey, md
@@ -198,7 +198,7 @@ def badge_colors(node) -> dict:
             for each in value:
                 walk(each)
     walk(node)
-    colors = {BODY_INK: BODY_INK_COLOR} if f"color='{BODY_INK}'" in json.dumps(node, ensure_ascii=False) else {}
+    colors = {}
     for place in sorted(found):
         if place < len(look.TOPIC_COLORS):
             rgba = _hex_rgba(look.TOPIC_COLORS[place])
@@ -221,24 +221,7 @@ def split_number(who):
     return (found.group(1), found.group(2) or "") if found else ("", str(who or ""))
 
 
-# 露一截 (docs/ui.md 4 ``read_more``): a long text's first few hundred characters in view, the rest one click away.
-def read_more(element_id, head, rest, *, hint="", label="", spacing="2px", icon_key="") -> list:
-    """犹抱琵琶半遮面 for a long text (the owner chose it on his phone, 2026-11-22): the answer itself is the fold. Its
-    title is ``head`` (Markdown, the opening as cards/review.py opening cut it at a sentence's end, no "…"), every line
-    in the body's colour (BODY_INK: a fold's title is grey otherwise), ``label`` grey before it; a tap on it opens ``rest``
-    right under it, one text, and nothing on it says more after it opened. The sign it opens is a round arrow badge
-    at its top right (``icon_key``, the expand picture's image key, core/avatars.py EXPAND; Feishu's grey chevron
-    without one), turned over once open. ``hint`` is kept for the callers of the framed bar it replaced. One element."""
-    lines = [f"<font color='{BODY_INK}'>{line}</font>" if line.strip() else "" for line in str(head).split("\n")]
-    title = labelled("\n".join(lines), label, head)
-    icon = {"tag": "custom_icon", "img_key": icon_key, "size": "24px 24px"} if icon_key else chevron()
-    return [{"tag": "collapsible_panel", "element_id": element_id, "expanded": False,
-             "header": {"title": {"tag": "markdown", "content": title}, "vertical_align": "top", "icon": icon,
-                        "icon_position": "right", "icon_expanded_angle": -180},
-             "padding": "0px 0px 0px 0px", "vertical_spacing": spacing,
-             "elements": [md(rest)] if isinstance(rest, str) else list(rest)}]
-
-
+# A text with a grey label before it ("这一轮输出"): answers and outputs are shown whole (docs/ui.md 5.2).
 def labelled(text, label, raw=None) -> str:
     """``text`` with ``label`` grey before it, on a line of its own when ``raw`` (``text`` as written) starts a block."""
     if not label:
@@ -246,8 +229,6 @@ def labelled(text, label, raw=None) -> str:
     return grey(label) + ("\n" if _BLOCK_START.match(str(text if raw is None else raw)) else " ") + text
 
 
-BODY_INK = "ink"  # The body's colour as a card colour: a fold's title is drawn grey without it.
-BODY_INK_COLOR = {"light_mode": "rgba(31,35,41,1)", "dark_mode": "rgba(235,235,235,1)"}
 _BLOCK_START = re.compile(r" {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|#{1,6}\s|\|)")
 
 
@@ -333,7 +314,6 @@ def receipt(text) -> dict:
 ASK_META = "_ask"  # The key of the "你问" block (cards/answer_card.py ask_block) that holds what a title bar says; never sent.
 ASK_ID = "answer_ask"
 SUBTITLE_WORDS = 18  # Characters of the owner's words a butler card's subtitle quotes.
-BACK_LABEL = "看你那句 ›"
 # What the topic did with the owner's words (cards/answer_card.py SAYS ``doing``) -> the look.STATES key of its tag.
 TOPIC_TAGS = {"done": "result", "waiting": "waiting", "member": "waiting", "stopped": "stopped", "running": "running"}
 
@@ -366,18 +346,25 @@ AVATAR_SIZE = "28px 28px"
 ROW_ID = "speaker_row"
 
 
-def speaker_row(meta, *, outcome="", label="", tag=None, avatar="") -> dict:
+def speaker_row(meta, *, outcome="", label="", tag=None, avatar="", url=None) -> dict:
     """The first element of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3): the speaker's
     picture (``avatar``, its image key, else the ``avatar`` of ``meta``; none: the line alone) and one line, the name
     bold and what it did with the owner's words grey, "**管家** 回你 20:41「原话前 18 字…」"; a lead "**<专项名> ·
     负责人** 汇报你 …", a topic "[T439] **标题** [有结果] 做完了你 12:31 交代的事": a topic's T number is its badge
     (``topic_badge``) in the picture's place, whatever picture was given, and its title alone is the name. A topic's
-    state is a tag (``outcome``: a look.STATES key a relay knows itself); a state that asks for the owner (等你, 停住了)
-    is the tag of the other two as well. Without a block (``meta`` None) the name is ``label`` (the T number) and
-    nothing follows it. ``tag``: (text, colour) in place of the state's, for a card that is settled."""
+    state is a tag (``outcome``: a look.STATES key a relay knows itself, else the ``outcome`` of ``meta``); a state
+    that asks for the owner (等你, 停住了) is the tag of the other two as well. Without a block (``meta`` None) the name
+    is ``label`` (the T number) and nothing follows it. ``tag``: (text, colour) in place of the state's, for a card
+    that is settled.
+
+    ``url`` (else the ``url`` of ``meta``: the owner's message for the butler and a lead, the topic's thread for a
+    topic): what a click anywhere on the row opens (the owner, 2026-11-22: 点卡头就能进话题、跳回原话), the line ending
+    with a grey ›; a card with such a row has no "看你那句 ›" or "进话题 ›" at its end. ``url=""``: no link whatever the
+    block says (a topic's card in its own thread)."""
     meta = meta or {"who": label}
+    link = str(meta.get("url") or "") if url is None else str(url or "")
     who, doing = str(meta.get("who") or ""), str(meta.get("doing") or "")
-    role, key = role_of(who), outcome or TOPIC_TAGS.get(doing, "")
+    role, key = role_of(who), outcome or str(meta.get("outcome") or "") or TOPIC_TAGS.get(doing, "")
     says, words = str(meta.get("says") or ""), " ".join(str(meta.get("words") or "").split())
     at = str(meta.get("at") or "")
     if role != "topic" and doing == "answer" and meta.get("verb", "你问") == "你问" and (at or words):
@@ -392,36 +379,29 @@ def speaker_row(meta, *, outcome="", label="", tag=None, avatar="") -> dict:
     if role == "lead":
         name = name.removeprefix("专项「").replace("」· 负责人", " · 负责人")
     number, title = split_number(name) if role == "topic" else ("", name)
-    badge = topic_badge(number) if number else None
+    badge = topic_badge(number, url=link) if number else None  # Its own link too: a click on it stops there.
     if badge:
         name = title
     line = " ".join(part for part in (f"**{literal(name)}**" if name else "", *tags,
-                                      grey(literal(says)) if says else "") if part)
+                                      grey(literal(says)) if says else "", grey("›") if link else "") if part)
     text = md(line, size="normal_v2")
     picture = avatar or str(meta.get("avatar") or "")
     if badge:
         first = badge
     elif picture:
+        # No preview: a click on the picture opens what the row opens, not the picture.
         first = {"tag": "img", "img_key": picture, "size": AVATAR_SIZE, "scale_type": "crop_center",
-                 "alt": {"tag": "plain_text", "content": ""}}
+                 "alt": {"tag": "plain_text", "content": ""}, **({"preview": False} if link else {})}
     else:
-        return {**text, "element_id": ROW_ID}
-    return {"tag": "column_set", "element_id": ROW_ID, "horizontal_spacing": "8px", "columns": [
+        first = None
+    row = {"tag": "column_set", "horizontal_spacing": "8px", "columns": [
         {"tag": "column", "width": "auto", "vertical_align": "center", "elements": [first]},
-        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [text]}]}
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [text]}]} if first else text
+    if not link:
+        return {**row, "element_id": ROW_ID}
+    return {"tag": "interactive_container", "element_id": ROW_ID, "width": "fill", "padding": "0px",
+            "corner_radius": "6px", "has_border": False, "elements": [row],
+            "behaviors": [{"type": "open_url", "default_url": link}]}
 
 
 BODY_SPACING, BODY_PADDING = "6px", "10px 12px 10px 12px"  # The body of a card that opens with a speaker's row.
-
-
-def back_link(meta) -> str:
-    """The link back to the owner's message the block opened, "[看你那句 ›](url)"; '' without a place to open."""
-    url = str((meta or {}).get("url") or "")
-    return f"[{BACK_LABEL}]({url})" if url else ""
-
-
-def ask_footnote(meta):
-    """The line that keeps the block's way back to the owner's message once the title bar says the rest: one small
-    Markdown element; None without a link."""
-    link = back_link(meta)
-    return md(link, size="notation", element_id=ASK_ID) if link else None

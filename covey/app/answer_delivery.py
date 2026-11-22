@@ -7,9 +7,7 @@ from __future__ import annotations
 import dataclasses
 
 from covey.app import answer_cards, revisit_hint, saved_send
-from covey.cards.review import answer_lead
 from covey.core import placement
-from covey.core.failure import HEADLINE_CHARS
 from covey.app.switch_handoff import topic_controls
 from covey.core.jobs import find_job_record, job_key, quick_held
 from covey.core.saved_results import saved_delivery_key, saved_delivery_kind
@@ -42,13 +40,12 @@ class AnswerParts:
         top = row.answer == placement.TOP
         # In a 话题区's thread it leads with the turn's status, T number and title instead.
         headed = not top and self.headed(row)
-        head = saved_send.heads(top, headed, self.ask_block,
-                                lambda: self.answer_head(answer_lead(turn.verified_delivery.text, HEADLINE_CHARS)))
+        head = saved_send.heads(top, headed, self.ask_block, self.answer_head)
         outgoing = saved_send.plan(
             ctx, job.job_id, turn.status, turn.verified_delivery, delivery_text, key=key,
             file=saved_delivery_kind(turn.verified_delivery, turn.verified_outcome) == "file", top=top, tail=tail,
-            head=head, bare=self.bare(), files=files, upload_status=status,
-            said=saved_send.band_lead(top, headed, head, turn.verified_delivery))
+            head=head, bare=self.bare(), files=files, upload_status=status, chat_id=str(job.chat_id or ""),
+            log=self.runtime.log)
         saved_send.keep(ctx.state_dir, job_key(job.message_id, job.job_id), outgoing, self.runtime.log)
         sent.delivered, self.answer_message = saved_send.send_saved(
             ctx, job, delivery_text, outgoing, send=self.send_text, artifacts=self.artifacts, log=self.runtime.log)
@@ -129,11 +126,11 @@ class AnswerParts:
         the private chat cannot be told."""
         return saved_send.owner_headed(row, self.runtime, self.job.chat_id)
 
-    def answer_head(self, lead=""):
-        """What leads this turn's answer card in its thread, its conclusion band over the reply's ``lead`` (app/saved_send.py
-        status_head); None when it cannot be told."""
+    def answer_head(self):
+        """What leads this turn's answer card in its thread, the topic's row (app/saved_send.py status_head); None when it
+        cannot be told."""
         try:
-            return saved_send.status_head(self.ctx.state_dir, self.ctx.topic_id, self.turn.status, lead)
+            return saved_send.status_head(self.ctx.state_dir, self.ctx.topic_id, self.turn.status)
         except Exception as exc:  # noqa: BLE001 - the answer goes without it
             self.runtime.log(f"answer card status line unavailable: {type(exc).__name__}")
             return None

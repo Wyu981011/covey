@@ -15,7 +15,7 @@ from covey.app.task_card import StreamingReply
 from covey.app.recovery_cards import recovery_card
 from covey.cards.review import stopped_sentence
 from covey.cards.task_status import status_markdown
-from covey.cards.ui import state_word
+from covey.cards.ui import state_pill
 from covey.core.harness import RunResult
 from covey.core.jobs import find_job_record, upsert_job_record
 from covey.core.history_storage import append_history
@@ -291,7 +291,7 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
         end = lark.calls[drawn]
         status = json.loads(json.loads(end.data["actions"])[0]["params"]["element"])
         # The end time under the outcome; its time is the 用时 tile's, its speed 任务详情's (2026-11-04 15:07).
-        self.assertRegex(status["content"], "^## " + re.escape(state_word("result")) + r"\n<font color='grey'>\d\d:\d\d 结束</font>$")
+        self.assertRegex(status["content"], "^" + re.escape(state_pill("result")) + r" <font color='grey'>\d\d:\d\d 结束</font>$")
         self.assertEqual(self.tiles(end)[0], ("用时", "1分48秒"))  # Without spaces: a side panel wrapped "1 分 20 秒".
         # The speed in its own tile, as large as the others (the owner, 2026-11-04 20:21: token/s的数字也比较小).
         self.assertEqual(self.tiles(end)[1:], [("token", "4.2万"), ("速度 · token/s", "84"), ("上下文", "4%")])
@@ -324,10 +324,10 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
         self.assertTrue(both.path.endswith("/batch_update"))
         written = {a["params"]["element_id"]: json.loads(a["params"]["element"])["content"]
                    for a in json.loads(both.data["actions"])}
-        self.assertEqual(written, {"activity": f"## {state_word('running')}\n<font color='grey'>已运行 5 秒</font>",
+        self.assertEqual(written, {"activity": f"{state_pill('running')} <font color='grey'>已运行 5 秒</font>",
                                    "activity_more": "阶段：读代码\n<font color='grey'>现在：执行命令</font>"})
         self.assertTrue(tick.path.endswith("/elements/activity"))
-        self.assertEqual(json.loads(tick.data["partial_element"])["content"], f"## {state_word('running')}\n<font color='grey'>已运行 6 秒</font>")
+        self.assertEqual(json.loads(tick.data["partial_element"])["content"], f"{state_pill('running')} <font color='grey'>已运行 6 秒</font>")
         self.assertTrue(changed.path.endswith("/batch_update"))
         self.assertEqual(job.progress.more_text, "阶段：读代码\n现在：模型思考")
         # Stopping: 正在停止… beside the tiles and why under them, with the buttons' removal in the same batch.
@@ -367,7 +367,7 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
         self.assertTrue(first.path.endswith("/batch_update"))
         written = {a["params"]["element_id"]: json.loads(a["params"]["element"])["content"]
                    for a in json.loads(first.data["actions"])}
-        self.assertEqual(written["activity"], f"## {state_word('running')}")  # Without 已运行: it is in 输出.
+        self.assertEqual(written["activity"], state_pill("running"))  # Without 已运行: it is in 输出.
         self.assertEqual(written["activity_more"], "阶段：读代码\n<font color='grey'>现在：执行命令</font>")
         self.assertEqual(self.outputs(first), "开始 14:14 ｜ 已运行 5秒 ｜ token 58万")  # One line (2026-11-09).
         self.assertTrue(tick.path.endswith("/elements/task_figures"))
@@ -400,7 +400,7 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
             self.assertTrue(job.trace_card_updates.close())
         end = lark.calls[drawn]
         status = json.loads(json.loads(end.data["actions"])[0]["params"]["element"])
-        self.assertRegex(status["content"], "^## " + re.escape(state_word("result")) + r"\n<font color='grey'>\d\d:\d\d 结束</font>$")
+        self.assertRegex(status["content"], "^" + re.escape(state_pill("result")) + r" <font color='grey'>\d\d:\d\d 结束</font>$")
         # As its answer card's: 用时 ｜ token/s ｜ token ｜ 缓存命中, one line.
         self.assertRegex(self.outputs(end), r"^用时 4\d秒 ｜ 84 token/s ｜ token 4.2万 ｜ 缓存命中 76%$")
 
@@ -439,7 +439,7 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
             self.assertTrue(job.trace_card_updates.close())
         actions = json.loads(lark.calls[drawn].data["actions"])
         status, more = (json.loads(a["params"]["element"]) for a in actions[:2])
-        self.assertRegex(status["content"], "^## " + re.escape(state_word("result")) + r"\n<font color='grey'>\d\d:\d\d 结束</font>$")
+        self.assertRegex(status["content"], "^" + re.escape(state_pill("result")) + r" <font color='grey'>\d\d:\d\d 结束</font>$")
         self.assertEqual((more["element_id"], more["content"]), ("activity_more", ""))
         self.assertEqual(actions[2], {"action": "delete_elements", "params": {"element_ids": ["action_row"]}})
         self.assertEqual(job.progress.more_text, "")
@@ -458,8 +458,9 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
         self.assertEqual((insert.data["type"], insert.data["target_element_id"]), ("insert_after", "task_details"))
         buttons = [e for e in walk_dicts(json.loads(insert.data["elements"])) if e.get("tag") == "button"]
         self.assertTrue(buttons)
-        # Bordered and medium, 8 px apart (the owner, 2026-11-04 14:05: A 中号线框; small text ones were hard to hit).
-        self.assertTrue(all(b["type"] == "default" and b["size"] == "medium" for b in buttons))
+        # Bordered and small, 8 px apart (the owner, 2026-11-04 14:05: A 线框, text ones were hard to hit; 2026-11-22:
+        # 换配置和回退窄一点小一点).
+        self.assertTrue(all(b["type"] == "default" and b["size"] == "small" for b in buttons))
         rows = [e for e in walk_dicts(json.loads(insert.data["elements"])) if e.get("flex_mode") == "flow"]
         self.assertTrue(rows)
         self.assertEqual({r["horizontal_spacing"] for r in rows}, {"8px"})
@@ -571,118 +572,36 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
     USAGE = {"input_tokens": 1_234_567, "output_tokens": 23_456, "cache_read_tokens": 1_100_000,
              "cache_write_tokens": 100_000, "measured_output_tokens": 23_456, "generation_seconds": 200.0}
 
-    def live_trace(self, effect=None):
-        """A running job with a timeout, on a card this release sends (任务详情's text by its own ID) with tokens
-        counted and terms redacted, its process panel drawn; ``effect``: CardKit's answers, call by call."""
-        from covey.cards.streaming import task_details_panel
-        from covey.core.trace import task_trace
-        job, ctx = self.running_with_card()
-        job.timeout = 600
-        job.progress.live_details = True
-        job.progress.details_text = task_details_panel(job)["elements"][0]["content"]
-        job.tool_trace = task_trace()
-        job.tool_trace.accept("token_usage", self.USAGE)
-        job.tool_trace.accept("redaction", {"terms": 3, "hits": 5, "requests": 1})
-        lark = FakeCardKit(side_effect=effect).start(self)
-        self.flush(ctx, job)
-        return job, ctx, lark
-
     def flush(self, ctx, job):
         """The process panel's next write, waited for."""
         self.app.cards.queue_trace(ctx, job, urgent=True)
         self.assertTrue(job.trace_card_updates.close())
         job.trace_card_updates = None
 
-    @staticmethod
-    def details_written(call):
-        """任务详情's text a batch write put on the card alone, or None."""
-        for action in json.loads(call.data.get("actions") or "[]"):
-            if action["params"].get("element_id") == "task_details_text":
-                return json.loads(action["params"]["element"])["content"]
-        return None
-
-    def test_a_running_turns_figures_reach_task_details_with_its_panel(self):
-        # T314 #2428: 0a26e8e took the model's figures off the running panel's title for 任务详情, which
-        # got them only when the turn ended: a running card showed them nowhere.
-        job, ctx, lark = self.live_trace()
-        panel, details = lark.calls  # The first draw puts the panel whole, then 任务详情's text alone.
-        self.assertEqual((panel.method, panel.path.rsplit("/", 1)[-1]), ("POST", "elements"))
-        text = self.details_written(details)
-        self.assertEqual(text, "超时：600s\n敏感词脱敏：本轮替换 5 处（词表 3 个词）")
-        # No token counts, 模型生成 or token/s since 2026-11-09 (the owner: 和上面重复了，只保留上面的: the
-        # 输入/输出 box has them), no 总耗时 (the status line has 已运行).
-        # New counts: 任务详情 is not written alone for them, nor with the panel.
-        job.tool_trace.accept("token_usage", {**self.USAGE, "output_tokens": 23_460, "measured_output_tokens": 23_460})
-        self.flush(ctx, job)
-        self.assertEqual(len(lark.calls), 2)
-        # A step changes the panel: 任务详情 goes in its batch, with the counts it missed.
-        job.tool_trace.accept("redaction", {"terms": 3, "hits": 7, "requests": 2})
-        job.tool_trace.accept("tool", {"id": "a", "name": "bash", "status": "running", "detail": "ls", "started_at": 100.0})
-        self.flush(ctx, job)
-        step = lark.calls[2]
-        self.assertEqual(step.path.rsplit("/", 1)[-1], "batch_update")
-        self.assertIn("ls", step.data["actions"])
-        self.assertIn("本轮替换 7 处", self.details_written(step))
-        self.assertEqual(len(lark.calls), 3)
-        # The end: 任务详情's text alone when it changed (no 总耗时 since 2026-11-04 15:07: the 用时 tile has it),
-        # never the whole panel (that would fold it).
-        self.assertTrue(self.app.cards.show_outcome(ctx, job, "有结果"))
-        ended = len(lark.calls)
-        self.assertTrue(self.app.cards.finalize_trace(ctx, job))
-        end = lark.calls[ended:]
-        self.assertLessEqual(len(end), 1)
-        self.assertFalse([c for c in end if "总耗时" in json.dumps(c.data, ensure_ascii=False)])
-        self.assertFalse([c for c in lark.calls if c.path.endswith("/elements/task_details")])
-        sequences = [c.data["sequence"] for c in lark.calls]
-        self.assertEqual(sequences, sorted(set(sequences)))
-
-    def test_task_details_a_card_refuses_alone_wait_for_the_whole_panel_at_the_end(self):
-        job, ctx, lark = self.live_trace(effect=[{"code": 0}, None] + [{"code": 0}] * 10)
-        self.assertFalse(job.progress.live_details)  # Not tried again with every event.
-        job.tool_trace.accept("tool", {"id": "a", "name": "bash", "status": "running", "detail": "ls", "started_at": 100.0})
-        self.flush(ctx, job)
-        self.assertIsNone(self.details_written(lark.calls[-1]))
-        self.assertTrue(self.app.cards.show_outcome(ctx, job, "有结果"))
-        self.assertTrue(self.app.cards.finalize_trace(ctx, job))
-        whole = lark.calls[-1]
-        self.assertEqual((whole.method, whole.path.rsplit("/", 1)[-1]), ("PUT", "task_details"))
-        self.assertIn("本轮替换 5 处", whole.data["element"])
-        self.assertNotIn("模型生成", whole.data["element"])
-
-    def test_task_details_go_in_once_they_have_words_and_never_empty(self):
-        # The owner, 2026-11-09: 任务详情 repeated the box; a card is sent without it while it has nothing to say.
+    def test_task_details_never_go_on_a_card_and_one_sent_before_keeps_its_words(self):
+        # The owner, 2026-11-22: 任务详情就没必要了 (the card keeps 本轮请求 and 执行过程). A turn with words for it (a
+        # timeout, redacted terms, its figures) writes none, running or ended, and a card that had one (sent before)
+        # keeps what it shows: no write of 任务详情, none refused.
         from covey.core.trace import task_trace
-        job, ctx = self.running_with_card()
-        job.progress.details_panel = job.progress.dashboard = False
-        job.tool_trace = task_trace()
-        job.tool_trace.accept("token_usage", self.USAGE)
-        with FakeCardKit() as lark:
-            self.flush(ctx, job)  # Nothing to say: the process panel alone.
-            self.assertFalse([c for c in lark.calls if "task_details" in json.dumps(c.data)])
-            job.tool_trace.accept("redaction", {"terms": 3, "hits": 5, "requests": 1})
-            job.tool_trace.accept("tool", {"id": "a", "name": "bash", "status": "running", "detail": "ls", "started_at": 100.0})
-            self.flush(ctx, job)
-            put = [c for c in lark.calls if "task_details" in json.dumps(c.data)]
-            self.assertEqual(len(put), 1)  # Put in whole, under 本轮请求, once.
-            self.assertEqual((put[0].method, put[0].path.rsplit("/", 1)[-1]), ("POST", "elements"))
-            self.assertIn('"target_element_id": "current_question"', put[0].data["type"] + json.dumps(put[0].data))
-            self.assertTrue(job.progress.details_panel and job.progress.live_details)
-            job.tool_trace.accept("redaction", {"terms": 3, "hits": 9, "requests": 2})
-            job.tool_trace.accept("tool", {"id": "b", "name": "bash", "status": "running", "detail": "pwd", "started_at": 101.0})
-            self.flush(ctx, job)
-            self.assertIn("本轮替换 9 处", self.details_written(lark.calls[-1]))  # Its text alone from then on.
-        # A card that had 任务详情 (one sent before 2026-11-09) and has nothing to say now keeps its words: no write
-        # of 任务详情, none refused.
-        job, ctx = self.running_with_card()
-        job.progress.live_details, job.progress.details_text = True, "token 用量：输入 1 · 输出 1 token"
-        job.tool_trace = task_trace()
-        job.tool_trace.accept("token_usage", self.USAGE)
-        with FakeCardKit() as lark:
-            self.flush(ctx, job)
-            self.assertTrue(self.app.cards.show_outcome(ctx, job, "有结果"))
-            self.assertTrue(self.app.cards.finalize_trace(ctx, job))
-        self.assertFalse([c for c in lark.calls if "task_details" in json.dumps(c.data)])
-        self.assertEqual(job.progress.update_failures, 0)
+        for live in (False, True):
+            with self.subTest(live=live):
+                job, ctx = self.running_with_card()
+                job.timeout = 600
+                job.progress.details_panel = live
+                job.progress.live_details, job.progress.details_text = live, "token 用量：输入 1 · 输出 1 token" if live else ""
+                job.tool_trace = task_trace()
+                job.tool_trace.accept("token_usage", self.USAGE)
+                job.tool_trace.accept("redaction", {"terms": 3, "hits": 5, "requests": 1})
+                with FakeCardKit() as lark:
+                    self.flush(ctx, job)
+                    job.tool_trace.accept("tool", {"id": "a", "name": "bash", "status": "running", "detail": "ls",
+                                                   "started_at": 100.0})
+                    self.flush(ctx, job)
+                    self.assertTrue(self.app.cards.show_outcome(ctx, job, "有结果"))
+                    self.assertTrue(self.app.cards.finalize_trace(ctx, job))
+                self.assertTrue(lark.calls)  # The process panel and the outcome went.
+                self.assertFalse([c for c in lark.calls if "task_details" in json.dumps(c.data)])
+                self.assertEqual(job.progress.update_failures, 0)
 
     def test_a_running_card_previews_its_phase_and_question_and_its_close_the_outcome(self):
         # T314 2026-11-02: the topic list shows a topic's latest message's preview; a running task card's was its

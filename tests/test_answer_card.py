@@ -21,8 +21,8 @@ CARD = answer_card("#### 先确认数据集\n正文", "T304 有结果 · 先确�
 class AnswerCardTests(unittest.TestCase):
     def test_the_card_is_the_answer_with_its_preview(self):
         self.assertEqual(CARD, {"schema": "2.0", "config": {"summary": {"content": "T304 有结果 · 先确认数据集"}},
-                                "body": {"elements": [{"tag": "markdown", "content": "#### **先确认数据集**\n正文",
-                                                       "text_size": "normal_v2"}]}})
+                                "body": {"elements": [{"tag": "markdown", "element_id": "answer_reply",
+                                                       "content": "#### **先确认数据集**\n正文"}]}})
 
     def test_small_headings_are_bold_as_a_card_shows_only_h1_and_h2_so(self):
         # The 2026-11-02 probe: in a card, ### to ###### looked like the body text; "#### **x**" was bold.

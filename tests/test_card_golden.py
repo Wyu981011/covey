@@ -343,6 +343,11 @@ def question_cards():
     cards = {f"card_{status}": question_card(question_record(status, continuation_job_id=432), "T70")
              for status in ("pending", "answered", "cancelled", "superseded", "expired", "submitting", "uncertain")}
     cards["card_answered_running"] = question_card(question_record("answered", delivery_state="running"))
+    # In its topic's thread (app/question_display.py standalone_card): the topic's row on top, as every card of a topic
+    # has it (the owner, 2026-11-22), the band without the T number again; answered, the row's tag says so.
+    cards["card_in_thread"] = question_card(question_record(), "T70", "改看板的 Pin 目标")
+    cards["card_in_thread_answered"] = question_card(question_record("answered", continuation_job_id=432), "T70",
+                                                     "改看板的 Pin 目标")
     # 还有 N 件等你 under a card the owner settled (``others_waiting``, never saved): with 去看板, and without it.
     cards["card_answered_others"] = question_card(question_record(
         "answered", continuation_job_id=432, others_waiting={"n": 3, "board": True}), "T70")
@@ -813,7 +818,7 @@ def answer_tail_cards():
     from covey.cards.answer_card import (ARTIFACTS_ID, acceptance_element, criteria_element, input_parts, memory_element,
                                          output_parts, review_element, revisit_hint_element, tail, tail_card)
     from covey.cards.elements import markdown_panel
-    from covey.cards.review import answer_band, answer_card
+    from covey.cards.review import answer_card
     from covey.cards.topic_actions import topic_panel
 
     files = markdown_panel(ARTIFACTS_ID, "产物 2 个 · REPORT.md 等", "- [REPORT.md](https://example.invalid/a) · 12 KB\n"
@@ -836,8 +841,8 @@ def answer_tail_cards():
                              ("question", "S3（先读后答）按 S3-PLAN.md 的草稿执行到哪一步？"), ("answer", "全流程（推荐）"),
                              ("heading", "补充说明"), ("note", "做完后发我截图\n两张就够")],
                             "7 种风格里选哪一种 → 我重新给你一张图；S3 → 全流程（推荐）", at="14:43")
-    from covey.cards.answer_card import head_element
-    head = head_element("✅ 做完", "T443", "改看板的 Pin 目标")  # Atop a 话题区's answer card in its thread (D3).
+    from covey.cards.answer_card import topic_head
+    head = topic_head("T443", "改看板的 Pin 目标", "done")  # Atop a 话题区's answer card in its thread (D3): the topic's row.
     # A turn that changed code (app/answer_cards.py change): its checkpoint's delivery as written.
     handed = {"commit": "a6bc148d38ce8c230e96e", "deployed": "第 322 代（10:11 切换，旧进程已退出）",
               "verified": "全量测试通过；在「Covey 验收测试」点开折叠看过"}
@@ -893,19 +898,25 @@ def answer_tail_cards():
                 revisit_hint_element("tf0001", 439, button=True)])),
             "answer_card_thread": answer_card(text, "✅ T443 · 结论", tail(files, inputs, outputs), [head]),
             "answer_card_thread_stopped": answer_card(text, "⏹ T443 · 结论", tail(None, inputs, outputs),
-                                                      [head_element("⏹ 已停止", "T443", "改看板的 Pin 目标")]),
-            # Atop a 话题区's answer card in its thread since docs/ui.md 5.2: the conclusion band (app/saved_send.py
-            # status_head).
-            "answer_card_thread_band": answer_card(text, "T443 有结果 · 结论", tail(files, inputs, outputs),
-                                                   [answer_band("done", "T443", "改看板的 Pin 目标", "结论：一和二都做完了")]),
-            "answer_card_thread_band_stopped": answer_card(
-                text, "T443 已停止 · 结论", tail(None, inputs, outputs),
-                [answer_band("cancelled", "T443", "改看板的 Pin 目标", "停在了第二步")]),
+                                                      [topic_head("T443", "改看板的 Pin 目标", "cancelled")]),
+            # A long answer in its thread (the owner, 2026-11-22: 话题里的卡片和私聊区对齐; 不折叠，直接展示全文): the topic's
+            # row, the answer whole, the parts to look up in one fold, the lines.
+            "answer_card_thread_long": answer_card(
+                "看板的颜色换好了：浅色那套和深色那套都换了。" + "原因是深色模式下旧颜色的对比度不够。" * 40,
+                "T443 有结果 · 结论", tail(files, inputs, outputs, change=handed, notes=[acceptance_element(
+                    {"what": "看板的按钮改成蓝色", "where": "", "how": "打开看板，点任一按钮"})],
+                    buttons=[review_element(TOPIC, 443)]), [head]),
             # 追问只发答案卡 (docs/cards.md): a follow-up that only answered sent no task card; its 换配置 and 回退 go
             # under its answer (app/answer_delivery.py topic_controls).
             "answer_card_quick": answer_card(
                 text, "T443 有结果 · 结论", [*tail(None, inputs, outputs), topic_panel(TOPIC, 443, ("claude", 2), rewind=True)],
-                [answer_band("done", "T443", "改看板的 Pin 目标", "按钮已经改好")]),
+                [head]),
+            # The relay with what the owner answered as one line that opens, the row a link into the topic (the owner,
+            # 2026-11-22: 回带卡对应上我的问题；进话题做到卡头上).
+            "answer_relay_said": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, ask=ask_block(
+                "格式 → 表格", verb="你答", at="14:22", url="https://applink.feishu.cn/client/thread/open?open_chat_id=oc_x"
+                "&open_thread_id=omt_x", who="T439 改看板的 Pin 目标", doing="done",
+                parts=[("question", "用哪种格式输出？"), ("answer", "表格")]))[0],
             "relay_waiting": relay_card("T439", WAITING, question="用哪种格式输出？表格还是列表，表格方便对比、列表方便手机上看")[0],
             # 做完了 relays that came close together, as one (app/relay_send.py send_merged).
             "relay_merged": merged_card([{"label": "T439", "title": "改看板的 Pin 目标", "lead": "按钮已经改好",

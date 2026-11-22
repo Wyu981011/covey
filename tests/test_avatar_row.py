@@ -15,12 +15,12 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from covey.cards.answer_card import ask_block, facts_element, figure, input_parts, put_back, tail, tail_card
+from covey.cards.answer_card import ask_block, facts_element, figure, input_parts, tail, tail_card
 from covey.cards.owner_send import BARS, owner_send_card, top_card
 from covey.cards.question_cards import mirror_card, settled_line, settled_peek
-from covey.cards.relay_card import DONE, STOPPED, WAITING, fold_title, foot, long_reply, merged_card, relay_card, size_words
+from covey.cards.relay_card import DONE, STOPPED, WAITING, foot, merged_card, relay_card
 from covey.cards.review import answer_card
-from covey.cards.ui import ASK_META, back_link, speaker_row, split_ask
+from covey.cards.ui import ASK_META, speaker_row, split_ask
 from covey.core import avatars
 from covey.feishu import avatars as uploads
 from test_card_golden import question_record
@@ -43,8 +43,19 @@ def holders(node, found=None):
     return found
 
 
+def unwrap(row):
+    """A speaker's row without the block that makes it a link (cards/ui.py speaker_row with a link)."""
+    return row["elements"][0] if row["tag"] == "interactive_container" and row.get("element_id") == "speaker_row" else row
+
+
+def link_of(row):
+    """What a click on the row opens; '' when it opens nothing."""
+    return (row.get("behaviors") or [{}])[0].get("default_url", "") if row["tag"] == "interactive_container" else ""
+
+
 def text_of(row):
     """The line of a speaker's row: the markdown of its second column, or the row itself without a picture."""
+    row = unwrap(row)
     return row["columns"][1]["elements"][0]["content"] if row["tag"] == "column_set" else row["content"]
 
 
@@ -60,8 +71,14 @@ def first(built):
     return built["body"]["elements"][0]
 
 
+def badge_of_link(row):
+    """What a click on the row's badge opens: the badge stops a click, so it carries the row's link."""
+    return (unwrap(row)["columns"][0]["elements"][0].get("behaviors") or [{}])[0].get("default_url", "")
+
+
 def badge_of(row):
     """The badge in a topic's row (cards/ui.py topic_badge): (its words, its colour's name); None without one."""
+    row = unwrap(row)
     found = row["columns"][0]["elements"][0] if row["tag"] == "column_set" else None
     if not found or found["tag"] != "interactive_container":
         return None
@@ -74,8 +91,9 @@ class RowTest(unittest.TestCase):
 
     def test_the_butler_s_row_is_its_picture_its_name_and_the_first_words_of_the_message(self):
         row = speaker_row(self.meta("管家", "answer", avatar="img_butler"))
-        self.assertEqual("column_set", row["tag"])
-        picture, line = row["columns"]
+        self.assertEqual(URL, link_of(row))  # A click anywhere on it goes back to his message (the owner, 2026-11-22).
+        self.assertEqual("column_set", unwrap(row)["tag"])
+        picture, line = unwrap(row)["columns"]
         self.assertEqual(("auto", "img", "img_butler", "28px 28px", "crop_center"),
                          (picture["width"], picture["elements"][0]["tag"], picture["elements"][0]["img_key"],
                           picture["elements"][0]["size"], picture["elements"][0]["scale_type"]))
@@ -83,7 +101,8 @@ class RowTest(unittest.TestCase):
         self.assertTrue(content.startswith("**管家** <font color='grey'>回你 20:41「"))
         self.assertIn("「看板改成彩色块，字大一点", content)
         self.assertNotIn("图例", content)  # Only the first 18 characters, then "…".
-        self.assertTrue(content.endswith("…」</font>"))
+        self.assertTrue(content.endswith("…」</font> <font color='grey'>›</font>"))  # What it opens: one grey ›.
+        self.assertFalse(picture["elements"][0]["preview"])  # A click on the picture opens the row's link.
         self.assertIsNone(tag(row))  # The butler's answer has no state to tag.
 
     def test_a_lead_s_row_names_its_project_and_asks_with_an_orange_tag(self):
@@ -101,7 +120,9 @@ class RowTest(unittest.TestCase):
             # The badge in the picture's place, a picture given or not; the title alone after it.
             self.assertEqual(("<font color='white'>**T623**</font>", "topic-7"), badge_of(row))  # 623 × 5 % 12.
             self.assertTrue(text_of(row).startswith("**工作台私聊密度** <text_tag"))
-        self.assertTrue(text_of(speaker_row(self.meta("T623 x", "done"))).endswith("做完了你 20:41 交代的事</font>"))
+        self.assertTrue(text_of(speaker_row(self.meta("T623 x", "done"))).endswith("做完了你 20:41 交代的事</font> <font color='grey'>›</font>"))
+        self.assertEqual(URL, badge_of_link(speaker_row(self.meta("T623 x", "done"))))  # The badge opens it too.
+        self.assertEqual("", link_of(speaker_row(self.meta("T623 x", "done"), url="")))  # In its own thread: no link.
 
     def test_the_badge_is_as_wide_as_its_number_and_its_colour_is_the_card_s_own(self):
         from covey.cards.elements import card
@@ -125,8 +146,8 @@ class RowTest(unittest.TestCase):
 
     def test_without_a_picture_the_row_is_its_line_alone_and_a_given_one_wins_over_the_block_s(self):
         row = speaker_row(self.meta("管家", "answer"))
-        self.assertEqual("markdown", row["tag"])
-        self.assertEqual("img_b", speaker_row(self.meta("管家", "answer", avatar="img_a"), avatar="img_b")["columns"][0]
+        self.assertEqual("markdown", unwrap(row)["tag"])
+        self.assertEqual("img_b", unwrap(speaker_row(self.meta("管家", "answer", avatar="img_a"), avatar="img_b"))["columns"][0]
                          ["elements"][0]["img_key"])
         label = speaker_row(None, outcome="stopped", label="T623")  # No block: the T number's badge and the state.
         self.assertEqual((("停住了", "red")), tag(label))
@@ -151,10 +172,9 @@ class RowTest(unittest.TestCase):
         self.assertEqual((URL, [{"tag": "hr"}]), (meta["url"], rest))
         legacy = {key: value for key, value in block.items() if key != ASK_META}  # A block sent before the row.
         self.assertEqual((None, [legacy]), split_ask([legacy]))
-        self.assertEqual(f"[看你那句 ›]({URL})", back_link(meta))
-        self.assertEqual("", back_link({}))
+        self.assertEqual(URL, link_of(speaker_row(meta)))  # The row is the way back.
 
-    def test_an_answer_card_takes_the_block_into_its_row_and_puts_the_way_back_on_the_output_line(self):
+    def test_an_answer_card_takes_the_block_into_its_row_which_is_the_way_back(self):
         block = ask_block("看板改成彩色块", at="20:41", url=URL, who="管家", doing="answer", avatar="img_b")
         facts = facts_element(input_parts("Claude Code", "Claude 自带", "Opus 5.5", "xhigh", False, "covey"),
                               [figure("用时", "12分40秒")], link="T9")
@@ -162,24 +182,32 @@ class RowTest(unittest.TestCase):
         self.assertNotIn("header", built)
         self.assertEqual(("6px", "10px 12px 10px 12px"), (built["body"]["vertical_spacing"], built["body"]["padding"]))
         body = built["body"]["elements"]
-        self.assertEqual(["column_set", "markdown", "markdown"], [element["tag"] for element in body])  # No grey block.
-        out = [line for line in body[-1]["content"].split("\n") if "输出" in line][0]
-        self.assertTrue(out.endswith(f"[看你那句 ›]({URL})"))
+        # The row (a link back to his message), the answer, the lines: no grey block, no 看你那句 › at the end, and no
+        # line of his words (the butler's row quotes them itself).
+        self.assertEqual(["interactive_container", "markdown", "markdown"], [element["tag"] for element in body])
+        self.assertEqual(URL, link_of(body[0]))
+        self.assertNotIn("看你那句", json.dumps(built, ensure_ascii=False))
         self.assertEqual([], holders(built))
         quiet = answer_card("好了", "s", head=[ask_block("看板改成彩色块", who="管家")])  # No link: nothing to link back.
         self.assertEqual(2, len(quiet["body"]["elements"]))
         self.assertEqual("markdown", quiet["body"]["elements"][0]["tag"])  # The row without a picture.
 
-    def test_a_card_without_facts_keeps_the_way_back_as_a_line_of_its_own(self):
-        meta = self.meta("管家", "answer")
-        rest = put_back([{"tag": "markdown", "content": "好了"}], meta)
-        self.assertEqual(f"[看你那句 ›]({URL})", rest[-1]["content"])
-        self.assertEqual([{"tag": "markdown", "content": "好了"}], put_back([{"tag": "markdown", "content": "好了"}], {}))
+    def test_a_topic_s_or_a_lead_s_row_has_his_words_one_line_under_it(self):
+        block = ask_block("把话题里的卡片和私聊区对齐，任务详情不要了，下载按钮也不要了，换配置做小", at="14:43", url=URL,
+                          who="专项「发布」· 负责人", doing="done", full="把话题里的卡片和私聊区对齐，\n任务详情不要了，下载按钮也不要了，换配置做小")
+        built = answer_card("好了", "s", head=[block])
+        words = built["body"]["elements"][1]
+        self.assertEqual(("collapsible_panel", "answer_words", False), (words["tag"], words["element_id"], words["expanded"]))
+        title = words["header"]["title"]["content"]
+        self.assertTrue(title.startswith("<font color='grey'>你问 14:43 · 把话题里的卡片"))
+        self.assertTrue(title.endswith("…</font>"))  # One line: its opening, the fold has all of it.
+        self.assertIn("下载按钮也不要了", words["elements"][0]["content"])
 
     def test_a_tail_card_after_a_long_answer_has_the_row_too(self):
         block = ask_block("看板改成彩色块", at="20:41", url=URL, who="管家", avatar="img_b")
         built = tail_card([block, *tail(None, ["Claude Code"], [figure("用时", "1分")])], "s", "上面是回答")
-        self.assertEqual("column_set", first(built)["tag"])
+        self.assertEqual("column_set", unwrap(first(built))["tag"])
+        self.assertEqual(URL, link_of(first(built)))
         self.assertNotIn("header", built)
 
 
@@ -201,15 +229,15 @@ class FactsTest(unittest.TestCase):
             self.assertIn(words, plain)
         self.assertNotIn("background", json.dumps(element))
 
-    def test_the_change_is_a_third_line_and_the_links_end_the_output_line(self):
+    def test_the_change_is_a_third_line_and_no_link_ends_the_output_line(self):
         element = facts_element(self.parts, self.out, change={"commit": "a6bc148d38ce", "deployed": "第 322 代",
-                                                              "verified": "全量通过"}, links=("[进话题 ›](u)", "[看你那句 ›](v)"))
+                                                              "verified": "全量通过"})
         lines = element["content"].split("\n")
         self.assertEqual(3, len(lines))
         plain = lines[2].replace(" ", " ").replace("⁠", "")
         for words in ("改动", "a6bc148", "第 322 代", "已自检"):
             self.assertIn(words, plain)
-        self.assertTrue(lines[1].endswith("[进话题 ›](u)" + " <font color='grey'>｜</font> [看你那句 ›](v)"))
+        self.assertNotIn("›", lines[1])  # The card's row opens the topic or the message (the owner, 2026-11-22).
 
     def test_nothing_to_say_is_no_element(self):
         self.assertIsNone(facts_element())
@@ -221,34 +249,17 @@ class RelayTest(unittest.TestCase):
                                                         avatar="img_topic"))
 
     def test_a_short_reply_stays_open_and_a_long_one_or_a_table_shows_its_opening_and_folds_the_rest(self):
-        self.assertFalse(long_reply("一行\n两行\n" * 3))
-        self.assertTrue(long_reply("行\n" * 7))
-        self.assertTrue(long_reply("字" * 181))
-        self.assertTrue(long_reply("| a | b |\n| --- | --- |\n| 1 | 2 |"))
         short, _ = relay_card("T623", DONE, text="## 结论\n好了\n\n细节：改了两处。", ask=self.asked())
-        # The row, the reply as it is (its "## 结论" left off: no large row over it), the line with the way back; no
-        # band, no fold (T638).
-        self.assertEqual(["column_set", "markdown", "markdown"], [element["tag"] for element in short["body"]["elements"]])
-        self.assertEqual("好了\n\n细节：改了两处。", short["body"]["elements"][1]["content"])
+        # The row (a link into the topic), his words one line under it, the reply as it is (its "## 结论" left off: no
+        # large row over it); no band, no fold, no 进话题 › line at the end (T638).
+        self.assertEqual(["interactive_container", "collapsible_panel", "markdown"],
+                         [element["tag"] for element in short["body"]["elements"]])
+        self.assertEqual("好了\n\n细节：改了两处。", short["body"]["elements"][2]["content"])
         long, _ = relay_card("T623", DONE, text="## 结论\n好了。\n\n" + "细节很多。" * 160, ask=self.asked())
-        _, fold, _ = long["body"]["elements"]
-        self.assertEqual(("collapsible_panel", False, "relay_reply"), (fold["tag"], fold["expanded"], fold["element_id"]))
-        # The answer itself is the fold (the owner's pick, 2026-11-22): its opening in the body's colour, line by line.
-        head = fold["header"]["title"]["content"]
-        self.assertTrue(head.startswith("<font color='ink'>好了。</font>\n\n<font color='ink'>细节很多。"))
-        self.assertNotIn("…", head)  # Nothing on it that would look out of place once it opened.
-        self.assertEqual(("right", "ink"), (fold["header"]["icon_position"], next(iter(long["config"]["style"]["color"].keys() - {"topic-7"}))))
-        self.assertNotIn("结论", head)
-        body = fold["elements"][0]["content"]
-        self.assertNotIn("好了", body)  # Going on from where the opening stopped, nothing said twice.
-        self.assertEqual(160, head.count("细节很多。") + body.count("细节很多。"))
-        self.assertNotIn("border", fold)  # No frame: the answer as it is.
-
-    def test_the_fold_says_how_much_is_in_it(self):
-        table = "| 项 | 结果 |\n| --- | --- |\n| 单测 | 通过 |"
-        self.assertEqual("完整回答 · 约 270 字（点开看）", fold_title("字" * 268))
-        self.assertEqual("约 1800 字 · 含 1 张表", size_words("字" * 1783 + "\n" + table))  # 1783 and the table's own.
-        self.assertIn("含 2 张表", size_words(table + "\n\n" + table))
+        _, _, reply = long["body"]["elements"]
+        # Whole, as card text (the owner, 2026-11-22: 不折叠，直接展示全文): no fold, no arrow, nothing cut.
+        self.assertEqual(("markdown", "relay_reply"), (reply["tag"], reply["element_id"]))
+        self.assertEqual("好了。\n\n" + "细节很多。" * 160, reply["content"])
 
     def test_the_foot_has_the_whole_input_and_output_the_change_line_and_the_links(self):
         change = {"commit": "a6bc148d38ce", "deployed": "第 322 代", "verified": "全量通过", "not_found": ["a6bc148d38ce"]}
@@ -259,34 +270,34 @@ class RelayTest(unittest.TestCase):
         ids = [element.get("element_id") for element in built["body"]["elements"]]
         self.assertNotIn("answer_change", ids)  # No fold: the change is a line.
         self.assertIn("answer_change_check", ids)  # A commit the repository does not have stays in view.
-        self.assertNotIn("a6bc148d38ce", json.dumps(built["body"]["elements"][1], ensure_ascii=False))  # Not in the reply's fold.
+        self.assertNotIn("a6bc148d38ce", json.dumps(built["body"]["elements"][2], ensure_ascii=False))  # Not in the reply's fold.
         facts = built["body"]["elements"][-1]
         self.assertEqual("answer_facts", facts["element_id"])
         plain = facts["content"].replace(" ", " ").replace("⁠", "")
         for words in ("输入", "Claude Code", "Claude 自带", "Opus 5.5", "思考 xhigh", "脱敏关", "covey", "输出", "用时", "token",
-                      "缓存命中", "改动", "a6bc148", f"[进话题 ›]({TOPIC_URL})"):
+                      "缓存命中", "改动", "a6bc148"):
             self.assertIn(words, plain)
-        # One way in (T636, 2026-11-22): 看你那句 › opened the topic's thread at this turn's card too, as 进话题 › does.
-        self.assertNotIn("看你那句", plain)
-        self.assertEqual(1, plain.count("›"))
+        # One way in, the row (the owner, 2026-11-22: 进话题做到卡头 T 号和标题上): no 进话题 › or 看你那句 › at the end.
+        self.assertNotIn("›", plain)
+        self.assertEqual(TOPIC_URL, link_of(first(built)))
 
-    def test_without_the_topics_link_the_one_link_is_the_ask_blocks(self):
+    def test_without_the_topics_link_the_row_opens_the_ask_blocks(self):
         built, _ = relay_card("T623", DONE, text="好了", outputs=[figure("用时", "1分")], ask=self.asked())
-        content = built["body"]["elements"][-1]["content"]
-        self.assertIn(f"[进话题 ›]({URL})", content)
-        self.assertNotIn("看你那句", content)
+        self.assertEqual(URL, link_of(first(built)))
+        self.assertNotIn("›", built["body"]["elements"][-1]["content"])
         bare, _ = relay_card("T623", DONE, text="好了", outputs=[figure("用时", "1分")])
-        self.assertNotIn("›", json.dumps(bare["body"]["elements"][-1], ensure_ascii=False))
+        self.assertEqual("", link_of(first(bare)))  # Nowhere to go: the row opens nothing.
+        self.assertNotIn("›", json.dumps(bare["body"], ensure_ascii=False))
 
-    def test_a_relay_without_figures_keeps_its_links_on_a_small_line(self):
+    def test_a_relay_without_figures_ends_with_no_line(self):
         self.assertIsNone(foot(None, ()))
-        self.assertEqual("relay_foot", foot(None, (), links=("[进话题 ›](u)",))["element_id"])
 
     def test_a_waiting_and_a_stopped_relay_have_the_row_too(self):
         built, _ = relay_card("T623", WAITING, question="选 A 还是 B？", ask=self.asked("waiting"))
         self.assertEqual(("等你", "orange"), tag(first(built)))
         self.assertNotIn("header", built)
-        self.assertEqual(f"[进话题 ›]({URL})", built["body"]["elements"][-1]["content"])
+        self.assertEqual(URL, link_of(first(built)))
+        self.assertNotIn("进话题", json.dumps(built["body"], ensure_ascii=False))
         stopped, _ = relay_card("T623", STOPPED, reason="到了时间上限", avatar="img_topic")
         self.assertEqual(("停住了", "red"), tag(first(stopped)))
         self.assertTrue(text_of(first(stopped)).startswith("<text_tag"))
@@ -313,19 +324,22 @@ class QuestionCopyTest(unittest.TestCase):
     def test_the_output_comes_first_then_the_question(self):
         built = mirror_card(question_record(), "T439", "上一轮写了很长很长的输出。" * 60, ask=self.ask())
         ids = [element.get("element_id") for element in built["body"]["elements"]]
-        # The row, the turn's output (its opening, then the fold), then the band and the form (the owner, 2026-11-22).
-        self.assertEqual(["speaker_row", "mirror_output"], ids[:2])
-        self.assertTrue(ids[3].startswith("q_"))
-        fold = built["body"]["elements"][1]
-        head = fold["header"]["title"]["content"]
-        self.assertTrue(head.startswith("<font color='grey'>这一轮输出</font> <font color='ink'>上一轮写了很长很长的输出。"))
-        self.assertEqual(60, head.count("输出。") + fold["elements"][0]["content"].count("输出。"))
-        short = mirror_card(question_record(), "T439", "只有一句", ask=self.ask())["body"]["elements"][1]
+        # The row, his words one line, the turn's output (its opening, then the fold), then the band and the form (the
+        # owner, 2026-11-22).
+        self.assertEqual(["speaker_row", "answer_words", "mirror_output"], ids[:3])
+        self.assertTrue(ids[4].startswith("q_"))
+        output = built["body"]["elements"][2]
+        # Whole (the owner, 2026-11-22: 不折叠，直接展示全文), "这一轮输出" grey before it.
+        self.assertEqual("markdown", output["tag"])
+        self.assertTrue(output["content"].startswith("<font color='grey'>这一轮输出</font> 上一轮写了很长很长的输出。"))
+        self.assertEqual(60, output["content"].count("输出。"))
+        short = mirror_card(question_record(), "T439", "只有一句", ask=self.ask())["body"]["elements"][2]
         self.assertEqual(("markdown", "<font color='grey'>这一轮输出</font> 只有一句"), (short["tag"], short["content"]))
         self.assertEqual(("等你", "orange"), tag(first(built)))
         self.assertNotIn("header", built)
-        self.assertIn(f"[看你那句 ›]({URL})", built["body"]["elements"][-1]["content"])
-        self.assertNotIn("answer_ask", ids[:-1])
+        self.assertEqual(URL, link_of(first(built)))  # The row opens the topic: no 看你那句 › at the end.
+        self.assertNotIn("看你那句", json.dumps(built, ensure_ascii=False))
+        self.assertNotIn("answer_ask", ids)
 
     def test_an_answered_copy_shows_the_question_s_opening_and_what_he_chose_under_it(self):
         answered = question_record("answered", continuation_job_id=5, delivery_state="running")

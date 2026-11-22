@@ -529,20 +529,24 @@ class SlimCardTest(Case):
         self.assertRegex(SLIM_DETAILS_ID, r"^[A-Za-z][A-Za-z0-9_]{0,19}$")
 
     def test_a_topics_card_and_the_butlers_with_the_switch_off_are_as_before(self):
-        self.assertIn("header", self.build(topic="a" * 32))
+        # A topic's card: its title row (no title bar since 2026-11-22) with the status line in it.
+        topic = self.build(topic="a" * 32)
+        self.assertNotIn("header", topic)
+        self.assertEqual(topic["body"]["elements"][0]["element_id"], "task_head")
         with mock.patch.dict(os.environ, {butler.ENV: "0"}):
             card = self.build()
-        self.assertIn("header", card)
-        self.assertEqual(card["body"]["elements"][0]["element_id"], "activity")
+        self.assertNotIn("header", card)
+        self.assertEqual(card["body"]["elements"][0]["element_id"], "task_head")
 
     def test_the_status_line(self):
         from covey.cards.task_status import slim_status_markdown, status_elements
-        from covey.cards.ui import state_word
+        from covey.cards.ui import state_pill
+        # The state a coloured tag, as on a topic's card (2026-11-22).
         self.assertEqual(slim_status_markdown("在做 · 已运行 6 秒 · 阶段：读日志\n现在：Read"),
-                         state_word("running") + " · 已运行 6 秒 · <font color='grey'>阶段：读日志 · 现在：Read</font>")
-        self.assertEqual(slim_status_markdown("有结果 · 用时 13 秒"), state_word("result") + " · 用时 13 秒")
+                         state_pill("running") + " · 已运行 6 秒 · <font color='grey'>阶段：读日志 · 现在：Read</font>")
+        self.assertEqual(slim_status_markdown("有结果 · 用时 13 秒"), state_pill("result") + " · 用时 13 秒")
         self.assertEqual(status_elements("已停止 · 用时 2 秒", False, True)[0]["content"],
-                         state_word("cancelled") + " · 用时 2 秒")
+                         state_pill("cancelled") + " · 用时 2 秒")
 
     def test_the_progress_knows_it_and_anchors_in_the_details(self):
         from covey.app.task_card import StreamingCard, StreamingReply, body_anchor, bottom_anchor, under_body
@@ -607,7 +611,7 @@ class SlimCardTest(Case):
         RecordCards.set_record_activity(fake, self.ctx, {"topic_id": BUTLER, "chat_id": CHAT}, "↪ 已回答 → #8")
         self.assertEqual(json.loads(fake._record_part.call_args.args[5]["partial_element"])["content"], "↪ 已回答 → #8")
         RecordCards.set_record_activity(fake, self.ctx, {"topic_id": "a" * 32, "chat_id": CHAT}, "↪ 已回答 → #8")
-        self.assertEqual(json.loads(fake._record_part.call_args.args[5]["partial_element"])["content"], "## ↪ 已回答 → #8")
+        self.assertEqual(json.loads(fake._record_part.call_args.args[5]["partial_element"])["content"], "↪ 已回答 → #8")
 
 
 class PolicyWordingTest(Case):

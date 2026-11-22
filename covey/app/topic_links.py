@@ -33,7 +33,9 @@ FETCHES = 12  # At most this many messages are read for one text; the rest of it
 BUDGET = 5.0  # Seconds one text may spend reading messages (in parallel).
 # A T number on its own: not inside a word or a link, nor one continued by a dot or dash and a letter or digit
 # ("T44·330", "T44.md", "T12-3": "T44·330 验收结束" is no link to T44); "T44 · 01:27" still is.
-_NUMBER = re.compile(r"(?<![\w\[/#])(\*\*)?T(\d{2,6})(\*\*)?(?![\w\]])(?!\**[·・.\-][0-9A-Za-z])")
+# A T number with a Chinese character right before or after it ("在T638里") links too: only an ASCII letter, digit or
+# underscore beside it makes it part of another word.
+_NUMBER = re.compile(r"(?<![A-Za-z0-9_\[/#])(\*\*)?T(\d{2,6})(\*\*)?(?![A-Za-z0-9_\]])(?!\**[·・.\-][0-9A-Za-z])")
 _CODE = re.compile(r"```.*?```|`[^`\n]*`|\[[^\]\n]*\]\([^)\n]*\)", re.S)
 _index_cache: dict = {}
 

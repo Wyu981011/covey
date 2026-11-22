@@ -262,7 +262,10 @@ class AnswerCardTest(unittest.TestCase):
               "verified": "10:12 在群里点开看过，" + "验" * 300 + " *客户端*"}
 
     def fold(self, elements):
-        return next(element for element in elements if element.get("element_id") == CHANGE_ID)
+        """The 改动 fold among ``elements``, inside the fold of the parts to look up when there is one."""
+        inner = [part for element in elements for part in (element.get("elements") or [])
+                 if element.get("element_id") == "relay_details"]
+        return next(element for element in [*elements, *inner] if element.get("element_id") == CHANGE_ID)
 
     def test_the_change_is_a_fold_only_with_one(self):
         plain = tail(None, self.inputs, self.outputs)
@@ -274,9 +277,10 @@ class AnswerCardTest(unittest.TestCase):
         self.assertNotIn("交付", json.dumps(plain, ensure_ascii=False))
         files = {"tag": "collapsible_panel", "element_id": "answer_artifacts"}
         shown = tail(files, self.inputs, self.outputs, change=self.change)
-        # Under 产物, above the 输入/输出 box.
-        self.assertEqual([element.get("element_id") for element in shown], ["answer_artifacts", CHANGE_ID, "answer_facts"])
-        fold = shown[1]
+        # Under 产物, in the one fold of the parts to look up (cards/answer_card.py details), above the 输入/输出 lines.
+        self.assertEqual([element.get("element_id") for element in shown], ["relay_details", "answer_facts"])
+        self.assertEqual([part.get("element_id") for part in shown[0]["elements"]], ["answer_artifacts", CHANGE_ID])
+        fold = self.fold(shown)
         self.assertEqual(fold["tag"], "collapsible_panel")
         self.assertFalse(fold["expanded"])
         title = fold["header"]["title"]
@@ -355,9 +359,11 @@ class AnswerCardTest(unittest.TestCase):
             changed = answer_cards.change(job)
             self.assertEqual(changed["not_found"], ["a6bc148d38"])
             shown = tail(None, self.inputs, self.outputs, change=changed)
-            self.assertEqual([element.get("element_id") for element in shown], [CHANGE_ID, CHECK_ID, "answer_facts"])
-            self.assertEqual(shown[1]["content"], "**提交号对不上**"
-                                                  "<font color='grey'>：工作区的仓库里没有 a6bc148</font>")
+            self.assertEqual([element.get("element_id") for element in shown], ["relay_details", "answer_facts"])
+            self.assertEqual([part.get("element_id") for part in shown[0]["elements"]], [CHANGE_ID, CHECK_ID])
+            self.assertIn("提交号对不上", shown[0]["header"]["title"]["content"])  # The fold's title names it.
+            self.assertEqual(shown[0]["elements"][1]["content"], "**提交号对不上**"
+                                                                "<font color='grey'>：工作区的仓库里没有 a6bc148</font>")
             rows = self.fold(shown)["elements"]
             self.assertEqual(rows[0]["columns"][1]["elements"][0]["content"].split("\n"),
                              [head, "a6bc148d38 <font color='grey'>（工作区的仓库里没有）</font>"])

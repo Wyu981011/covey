@@ -7,8 +7,8 @@ from covey.cards.board import OPEN_KIND
 from covey.cards.elements import (BUTTON_SPACING, button_look, callback, callback_button, card, grey, item,
                                   markdown_panel, note, plain, text_button)
 from covey.cards.review import compact_text, opening
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, ask_footnote, band_label, banded, conclusion_band, peek, receipt,
-                            speaker_row, split_ask, styled)
+from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, peek, receipt, speaker_row,
+                            split_ask)
 from covey.core import look, triage, turn_words
 from covey.core.stale import STALE_NOTE
 from covey.core.text import literal
@@ -428,10 +428,14 @@ def others_row(record):
     return [item(line, text_button("去看板", {"kind": OPEN_KIND}))] if others.get("board") else [line]
 
 
-def question_card(record, topic=""):
+def question_card(record, topic="", title="", *, rowed=False):
     """The standalone question card; ``topic``: its topic's label, with the task's number before
     the form. No 🔁 换配置: the task card above it has one.
-    ``refusal`` (not saved: app/interaction.py adds it) says under it why a click on its form sent nothing."""
+    ``refusal`` (not saved: app/interaction.py adds it) says under it why a click on its form sent nothing.
+    ``title``: the topic's title, for the card in its thread: it then opens with the topic's row as every card of a
+    topic does (cards/ui.py speaker_row: its T number's badge, its title, 等你 or how it was settled; no link, the card
+    is in the thread). ``rowed``: a row goes above it either way (the top-level copy's, ``mirror_card``), so the band
+    does not say the T number again."""
     pending = record.get('status') == 'pending'
     # A quiet butler turn's own card at the top level (app/question_display.py ask_block_for) has no task
     # number: the owner saw no card with it (B4 review).
@@ -449,19 +453,22 @@ def question_card(record, topic=""):
     # The band names what is asked without saying a question twice on the card: one question's own header
     # (question_header), else how many there are; the questions themselves are in the form under it.
     own = question_header(record['questions'][0]) if count == 1 else ""
-    band = conclusion_band(band_label("waiting", topic, number), literal("要你定：" + (own or f"{count} 件事")),
-                           waiting_state(record)) if form else None
+    headed = bool(title) and bool(topic) and not record.get(TOP_COPY)
+    band = conclusion_band(band_label("waiting", "" if headed or rowed else topic, number),
+                           literal("要你定：" + (own or f"{count} 件事")), waiting_state(record)) if form else None
     element = question_element(record, tags, headed=bool(band))
     # The topic list's preview while the card is the topic's latest message: what the open form's band says.
     summary = (f"{tags + ' ' if tags else ''}{look.word('waiting')} · 要你定：{asked}" if band
                else f"{look.word('waiting')} · {count} 题" if pending else "相同问题已回答 · 无需重复提交"
                if record.get('status') == 'superseded' and not folded(record)
                else element.get('header', {}).get('title', {}).get('content', '回答已保存'))
-    elements = ([band] if band else []) + [element, *others_row(record)]
+    row = [speaker_row({"who": f"{topic} {title}", "doing": "waiting"}, outcome="waiting",
+                       tag=SETTLED_TAGS.get(record.get("status")), url="")] if headed else []
+    elements = [*row, *([band] if band else []), element, *others_row(record)]
     if record.get('refusal'):
         elements.append({"tag": "markdown", "content": "⚠️ " + record['refusal']})
-    built = card(elements, summary, default_width=True)
-    return styled(built) if band else built
+    look_of = dict(padding=BODY_PADDING, spacing=BODY_SPACING) if headed else {}
+    return banded(card(elements, summary, default_width=True, **look_of))  # The band's colours and the badge's.
 
 
 SETTLED_TAGS = {"answered": ("已回答", "grey"), SET_ASIDE: ("不处理", "grey"), "cancelled": ("已取消", "grey"),
@@ -527,23 +534,24 @@ QUESTION_WIDTH = 120  # A settled question's opening, in its fold's title: about
 OUTPUT_LABEL = "这一轮输出"
 
 
-def mirror_card(record, topic="", output="", ask=None, files=None, expand_icon=""):
+def mirror_card(record, topic="", output="", ask=None, files=None):
     """The question card again at the private chat's top level (app/question_display.py mirror): the same form, under
-    the speaker's row that says whose it is (cards/ui.py speaker_row: ``ask``, the "你问" block, becomes the row, its way
-    back a line at the end). ``output``, what the turn wrote before it asked, comes first, its first few hundred
-    characters in view and the rest folded (cards/relay_card.py reply_peek), then the question and its options, then ``files``,
+    the speaker's row that says whose it is (cards/ui.py speaker_row: ``ask``, the "你问" block, becomes the row, a click
+    on it opening the topic's thread; the owner's words one line under it that opens, cards/answer_card.py words_fold).
+    ``output``, what the turn wrote before it asked, comes first, whole (cards/review.py reply_shown), then the question
+    and its options, then ``files``,
     the asking turn's 产物 panel as its answer card in the topic has it (app/artifacts.py answer_files). Settled, the
     question shows its first lines and folds the rest with the answer (``settled_peek``), and a line under it says
     what he answered (``settled_line``); the output stays."""
-    from covey.cards.relay_card import reply_body, reply_peek
+    from covey.cards.review import reply_body, reply_shown
 
-    built = question_card({**record, TOP_COPY: True}, topic)  # Options as buttons (``top_level_card``).
     meta, _ = split_ask([ask] if ask else [])
+    built = question_card({**record, TOP_COPY: True}, topic, rowed=meta is not None)  # Options as buttons (``top_level_card``).
     settled = SETTLED_TAGS.get(record.get("status"))
     legacy = [ask] if ask and meta is None else []  # A block sent before the title bar: kept as it was, at the top.
     elements = list(built["body"]["elements"])
     # The turn's output first (the owner, 2026-11-22: without it the questions cannot be understood), then the question.
-    said = reply_peek(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL, icon_key=expand_icon) if output else []
+    said = reply_shown(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL) if output else []
     line = settled_line(record)
     if line:  # The question's fold (q_<token>) becomes its peek, the answer's line under it.
         at = next((n for n, element in enumerate(elements) if element.get("element_id") == "q_" + record["token"]), None)
@@ -551,12 +559,12 @@ def mirror_card(record, topic="", output="", ask=None, files=None, expand_icon="
             elements = [line, *elements]
         else:
             elements[at:at + 1] = [settled_peek(record), line]
-    elements = [*said, *elements]
+    from covey.cards.answer_card import words_fold
+
+    words = [part for part in (words_fold(meta),) if part] if meta else []  # What he said, one line that opens.
+    elements = [*words, *said, *elements]
     if files:
         elements.append(files)
-    back = ask_footnote(meta)
-    if back:
-        elements.append(back)
     if legacy:
         built["body"]["elements"] = [*legacy, *elements]
     else:

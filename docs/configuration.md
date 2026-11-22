@@ -384,6 +384,7 @@
 
 - `COVEY_APP_CHECK=0`：不检查飞书应用、不发「飞书应用待补」卡。检查和补齐见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用)。
 - `COVEY_REVIEW=1`：改了代码的一轮（`core/diff.py` 记到改了文件，或检查点的 `delivery` 写了提交号），答案卡和回带卡的灰框下面多一个「独立复核」（`app/review.py`）。只在主人点了才开话题，从不自己开；用什么模型在设置卡「配置」页的“独立复核”一段选（存 `main-thread.json` 的 `review`，不选是自动挑），开关打开时这一段才出现；不设就没有这个按钮，已发出的卡上的按钮点了照样开（开关只管画不画）。设备上的话题不给。
+- `COVEY_TURN_EXPORT=1`：结束的任务卡底部多一个「下载请求与结果」（`app/turn_export.py`），点了把这一轮发给模型的请求和模型的回答打包成文件传到云空间；只有 Claude Code 和 Codex 有。不设就没有这个按钮（任务卡只留本轮请求和执行过程），已发出的卡上的按钮点了照样打包。
 - `--health-timeout`：`launch` 的参数，默认 120 秒，0 关闭。Bridge 本地健康接口连续这么久没有响应就替换进程。bootstrap 不传它，所以经 bootstrap 注册的都是 120。
 - `COVEY_PRIVACY_DENYLIST`（只给 `scripts/privacy_check.py` 读，Bridge 本身不读）：指向仓库外的文本文件，每行一个公司域名或内部名词，隐私检查按它查；不设就只查通用规则，扩展里放有一份，见[隐私检查](testing.md#隐私检查)。
 
@@ -398,6 +399,7 @@
 | `COVEY_DATA_HOME` | `core/paths.py`、`core/devices.py`（找 `devices.json`）、`core/extensions.py`（找本部署启用、停用的扩展 `extensions/enabled`） | 按 [数据目录](operations.md#数据目录) 推算 | 否 |
 | `COVEY_SERVICE_ROOT` | `core/paths.py` | `<数据根>/bridge-services` | 否 |
 | `COVEY_REVIEW` | `app/review.py`（`enabled`，`buttons` 据此画按钮） | 关；`1`：改了代码的答案卡和回带卡多「独立复核」 | 否 |
+| `COVEY_TURN_EXPORT` | `app/turn_export.py`（`enabled`，`attach_export_controls` 据此加按钮） | 关；`1`：结束的任务卡多「下载请求与结果」 | 否 |
 | `COVEY_STATE_DIR`；`LARK_CLAUDE_BRIDGE_STATE_DIR`、`LARK_DSH_BRIDGE_STATE_DIR`、`LARK_PI_BRIDGE_STATE_DIR`、`COVEY_AGY_STATE_DIR` | `app/harnesses.py`（只有默认 Harness 读，其余总用 Bridge 的 `--state-dir`） | `<数据根>/<Harness 的目录名>` | 否 |
 | `COVEY_PROFILE` | `backends/codex/bridge.py`、`backends/dsh/bridge.py`、`backends/pi/bridge.py`、`backends/agy/bridge.py`（Bridge 的 `--profile`） | 空：lark-cli 的默认 profile | 否 |
 | `COVEY_MESSAGE_FORMAT`、`LARK_CLAUDE_BRIDGE_MESSAGE_FORMAT`、`LARK_DSH_BRIDGE_MESSAGE_FORMAT`、`LARK_PI_BRIDGE_MESSAGE_FORMAT`、`COVEY_AGY_MESSAGE_FORMAT` | `feishu/messenger.py`（各 Harness 发消息时读） | `markdown` | 否 |

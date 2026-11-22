@@ -14,14 +14,15 @@ split "脱 / 敏关", "缓存 / 命中"), so a line wraps only after a separator
 The task card's 输入/输出 box (cards/task_figures.py io_box) is the grey box, in the topic's thread: while its turn runs, 输出 is 开始 ｜ 已运行 ｜
 token ｜ token/s ｜ 上下文 (``running_figures``, ``RUNNING_LINES``).
 
-The relay's 输出 line ends with its T number ("T43 ›"), which app/relay_send.py linked makes a link to the turn's
-card, and with 看你那句 › (``put_back``). An answer too long for one
-card goes as Markdown and then ``tail_card``: these parts alone."""
+The parts under an answer that are there to look up (产物, 验收说明, 改动, 独立复核…) go into one closed fold
+(``details``); the 输入/输出 lines stay outside it. No link ends the 输出 line: the card's head (cards/ui.py
+speaker_row) opens the owner's message or the topic. An answer too long for one card goes as Markdown and then
+``tail_card``: these parts alone."""
 from __future__ import annotations
 
 import re
 
-from covey.cards.elements import card, chevron, collapsible, grey, item, json_size, md, text_button
+from covey.cards.elements import card, chevron, collapsible, fold, grey, item, json_size, md, text_button
 from covey.core.checkpoint import change_summary, delivery_commits, short_commit
 from covey.cards.ui import ASK_ID, ASK_META
 from covey.cards.facts import context_text, start_text, token_total, usage_figures
@@ -189,15 +190,15 @@ def glued(text):
     return out
 
 
-def facts_element(inputs=(), outputs=(), link="", change=None, links=()):
+def facts_element(inputs=(), outputs=(), link="", change=None):
     """The 输入 and 输出 under an answer (FACTS_ID): one small element, a line each with its label grey, no box
     (``input_lines``, ``output_lines``), the line of 改动 after them when ``change`` (a dict, ``change_line``) says
-    one; ``link``, the relay's T number, and ``links`` (Markdown: 看你那句 › on an answer, 进话题 › on a relay) end
-    输出's last line. None with none of them."""
+    one; ``link``, a T number an older relay ended 输出 with. No "看你那句 ›" or "进话题 ›": the card's row opens
+    them (cards/ui.py speaker_row). None with none of them."""
     rows = []
     if inputs:
         rows.append(grey("输入") + " " + "".join(input_lines(inputs)))
-    parts = [*output_lines(outputs), *(part for part in (f"{link} ›" if link else "", *(links or ())) if part)]
+    parts = [*output_lines(outputs), *([f"{link} ›"] if link else [])]
     if parts:
         rows.append(grey("输出") + " " + SEPARATOR.join(parts))
     line = change_line(change)
@@ -213,27 +214,6 @@ def change_line(change) -> str:
         return ""
     parts = [part for part in change_summary(change).split(" · ") if part]
     return grey(CHANGE_WORD) + " " + SEPARATOR.join(unbroken(literal_text(part)) for part in parts) if parts else ""
-
-
-def put_back(elements, meta):
-    """``elements`` with the way back to the owner's message (cards/ui.py ``back_link`` of ``meta``) at the end of the
-    facts' 输出 line (FACTS_ID); a card without facts has the line ``ask_footnote`` at its end instead. A list again."""
-    from covey.cards.ui import ask_footnote, back_link
-
-    link = back_link(meta)
-    if not link:
-        return list(elements)
-    done, rest = False, []
-    for element in elements:
-        if not done and isinstance(element, dict) and element.get("element_id") == FACTS_ID \
-                and element.get("tag") == "markdown":
-            rows = str(element.get("content") or "").split("\n")
-            at = next((i for i in range(len(rows) - 1, -1, -1) if rows[i].startswith(grey("输出"))), -1)
-            if at >= 0:
-                rows[at] += SEPARATOR + link
-                element, done = {**element, "content": "\n".join(rows)}, True
-        rest.append(element)
-    return rest if done else [*rest, ask_footnote(meta)]
 
 
 CHANGE_WORD = "改动"
@@ -290,18 +270,18 @@ def check_element(change):
 
 
 def box(element_id, inputs, outputs, outputs_id=""):
-    """A grey box of 输入 (the lines ``inputs``, grey) and 输出 (``outputs``, its text's own ``outputs_id`` when
-    given, then always there: "—" without lines); None with none."""
+    """The task card's 输入 (the lines ``inputs``) and 输出 (``outputs``, its text's own ``outputs_id`` when given, then
+    always there: "—" without lines), a row each with its label grey, as the answer card's lines (``facts_element``;
+    the owner, 2026-11-22: 输入输出的 UI 风格参考答案卡片): no grey box any more; None with none."""
     rows = []
     if inputs:
-        rows.append(labelled("输入", "\n".join(grey(line) for line in inputs)))
+        rows.append(labelled("输入", "\n".join(inputs)))
     if outputs or outputs_id:
         rows.append(labelled("输出", "\n".join(outputs) or grey("—"), outputs_id))
     if not rows:
         return None
     return {"tag": "column_set", "element_id": element_id, "columns": [
-        {"tag": "column", "width": "weighted", "weight": 1, "background_style": "grey-50",
-         "padding": "6px 10px 6px 10px", "vertical_spacing": "2px", "elements": rows}]}
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_spacing": "2px", "elements": rows}]}
 
 
 MEMORY_ID = "answer_memory"
@@ -402,14 +382,40 @@ def review_element(topic_id, job_id):
         {"kind": REVIEW_KIND, "topic_id": str(topic_id or ""), "job_id": job_id}))], REVIEW_ID)
 
 
+DETAILS_ID = "relay_details"  # The id the relay's fold had first: one id for the fold on every card.
+# What a part under the answer is called in the fold's title (``details``), by its element id.
+DETAIL_WORDS = {"answer_acceptance": "验收说明", "answer_change_check": "提交号对不上", "answer_change": "改动",
+                "answer_criteria": "完成标准", "answer_review": "独立复核", "answer_memory": "记下的事"}
+
+
+def details(parts) -> list:
+    """The parts under an answer that are there to look up (产物, 验收说明, a commit not found, 改动, 独立复核…) in one
+    closed fold whose title names them, so the answer stays what the card is for (the owner, 2026-11-22: 底下的东西占了太高);
+    one part alone stays as it is. The 输入/输出 lines stay outside, under it."""
+    parts = [part for part in parts if part]
+    if len(parts) < 2:
+        return parts
+    words = []
+    for part in parts:
+        title = ((part.get("header") or {}).get("title") or {}).get("content", "") if part.get("element_id") == ARTIFACTS_ID else ""
+        word = title or DETAIL_WORDS.get(str(part.get("element_id") or ""), "")
+        if word and word not in words:
+            words.append(word)
+    return [collapsible(DETAILS_ID, " · ".join(words or ["更多"]) + "（点开看）", parts, quiet=True, spacing="6px")]
+
+
 def tail(files=None, inputs=(), outputs=(), link="", change=None, notes=(), buttons=()):
     """What follows an answer: its 产物 panel (``files``, None without), its 改动 fold (``change``,
-    ``change_element``: None, {} or '' without) and the line marking a commit not found (``check_element``), the
+    ``change_element``: None, {} or '' without), the line marking a commit not found (``check_element``) and the
     ``notes`` (elements: what to check of a UI change, ``acceptance_element``; the completion criteria not met,
-    ``criteria_element``), the facts box, then ``buttons``
-    (elements: 独立复核, ``review_element``)."""
-    return [element for element in (files, change_element(change), check_element(change), *(notes or ()),
-                                    facts_element(inputs, outputs, link), *(buttons or ())) if element]
+    ``criteria_element``), in one fold when more than one (``details``), then the 输入/输出 lines, then ``buttons``
+    (elements): 独立复核 (``review_element``) goes into the fold, any other button (the reminder to come back,
+    app/revisit_hint.py) stays under the lines, where it can be clicked at once."""
+    looked_up = [element for element in buttons or () if isinstance(element, dict)
+                 and element.get("element_id") in DETAIL_WORDS]
+    others = [element for element in buttons or () if element not in looked_up]
+    parts = details([files, change_element(change), check_element(change), *(notes or ()), *looked_up])
+    return [element for element in (*parts, facts_element(inputs, outputs, link), *others) if element]
 
 
 def tail_card(elements, summary, lead=""):
@@ -420,21 +426,27 @@ def tail_card(elements, summary, lead=""):
     meta, rest = split_ask(elements)
     head = [md(grey(lead), size="notation")] if lead else []
     if not meta:
-        return card([*head, *rest], summary, update_multi=True)
-    return banded(card([speaker_row(meta), *head, *put_back(rest, meta)], summary, update_multi=True,
+        return banded(card([*head, *rest], summary, update_multi=True))
+    return banded(card([speaker_row(meta), *head, *rest], summary, update_multi=True,
                        padding=BODY_PADDING, spacing=BODY_SPACING))  # A topic's badge has its colour in the config.
 
 
-HEAD_ID = "answer_head"
+# What a turn's status is as the state tag of its topic's row (core/look.py STATES keys).
+STATUS_TAGS = {"done": "result", "failed": "stopped", "interrupted": "stopped", "cancelled": "cancelled",
+               "waiting_user": "waiting"}
 
 
-def head_element(head, label="", title=""):
-    """The line atop a 话题区's answer card in its thread (core/placement.py Row.answer_head): the turn's status
-    ``head`` (core/turn_words.py answer_head) bold, then its T number ``label`` and its topic's ``title`` grey,
-    "✅ 做完 · T43 · 改看板", as the board's Pin shows a card's top alone."""
-    rest = " · ".join(part for part in (str(label or "").strip(), " ".join(str(title or "").split())) if part)
-    text = f"**{head}**" + (" " + grey("· " + literal_text(rest)) if rest else "")
-    return md(text, element_id=HEAD_ID, size="normal_v2")
+def topic_head(label, title, status):
+    """What atop a 话题区's answer card in its own thread says whose it is (core/placement.py Row.answer_head): the
+    topic's row as the relay has it (cards/ui.py speaker_row: its T number's badge, its title, the turn's state as a
+    tag, "[T43] **改看板** [有结果]"), with no link (the card is in the thread) and nothing quoted (the owner's message
+    is right above it). A block that only carries the row (``ASK_META``, cards/ui.py split_ask takes it), never sent;
+    None without a T number or title."""
+    who = " ".join(part for part in (str(label or "").strip(), " ".join(str(title or "").split())) if part)
+    if not who:
+        return None
+    return {"tag": "markdown", "content": "", ASK_META: {
+        "who": who, "doing": "", "outcome": STATUS_TAGS.get(str(status or ""), "result"), "url": ""}}
 
 
 ASK_CHARS = 70
@@ -464,7 +476,7 @@ def says(verb, doing, at) -> str:
     return template.format(at=f" {at} " if at else "")
 
 
-def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", meta=True, avatar=""):
+def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", meta=True, avatar="", full="", parts=()):
     """The block above an answer, a conclusion or a question's copy at the private chat's top level saying which
     message of the owner's it answers: grey, two
     lines, "你问 · 12:31 ›" and the message's words (two lines at most); the whole block opens ``url`` (the
@@ -475,7 +487,8 @@ def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", met
     ``meta``: the block also carries what a title bar says (cards/ui.py ``ASK_META``: who, what it did, when, the
     words, the link), for the card that takes the block into its header (``split_ask``) and is never sent; a card
     that keeps the block as an element (the dispatch card) asks for none. ``avatar``: the speaker's picture, an image key
-    (app/answer_cards.py ``avatar``), carried with it."""
+    (app/answer_cards.py ``avatar``), carried with it. ``full``: the owner's words whole, ``parts``: an answer's turn's
+    questions and answers (app/answers.py answer_parts), carried for the fold that shows them (``words_fold``)."""
     from covey.cards.ui import speaker
 
     words = " ".join(str(text or "").split())
@@ -496,9 +509,40 @@ def ask_block(text, *, verb="你问", at="", url="", who="", doing="answer", met
     if url:
         box["behaviors"] = [{"type": "open_url", "default_url": url}]
     if meta and who:
+        whole = " ".join(str(full or "").split()) and str(full).strip()[:ANSWER_FULL_CHARS]
         box[ASK_META] = {"who": who, "doing": doing, "verb": verb, "at": at, "says": sentence.strip(), "words": words,
-                         "url": url, **({"avatar": avatar} if avatar else {})}
+                         "url": url, **({"avatar": avatar} if avatar else {}), **({"full": whole} if whole else {}),
+                         **({"parts": [[str(kind), str(said)] for kind, said in parts]} if parts else {})}
     return box
+
+
+WORDS_ID = "answer_words"
+WORDS_LINE = 24  # Characters of the owner's words the one line shows (one line on a phone too); the fold has them all.
+
+
+def words_fold(meta):
+    """What the owner said that this card answers, as one grey line that opens (the owner, 2026-11-22: 回带卡没有对应上我的
+    问题，收折起来只留一行): "你问 14:22 · 把话题里的卡片…" or "你答 14:22 · 要不要部署？→ 现在部署", folded; opened, his
+    words whole (``full``) or each question small and grey with his answer under it (``parts``, as ``answer_block``).
+    For a card whose row does not quote him (cards/ui.py speaker_row: a topic's or a lead's, not the butler's). None
+    without words."""
+    meta = meta or {}
+    words = " ".join(str(meta.get("words") or "").split())
+    if not words:
+        return None
+    shown = words if len(words) <= WORDS_LINE else words[:WORDS_LINE - 1] + "…"
+    label = " ".join(part for part in (str(meta.get("verb") or "你问"), str(meta.get("at") or "")) if part)
+    title = grey(literal_text(f"{label} · {shown}"))
+    parts = [(kind, text) for kind, text in meta.get("parts") or () if str(text or "").strip()]
+    if parts:
+        elements = [md(_answer_lines(str(text).strip(), kind in ("question", "heading")),
+                       size="notation" if kind in ("question", "heading") else "normal_v2")
+                    for kind, text in parts[:ANSWER_FULL_PARTS]]
+    else:
+        whole = str(meta.get("full") or "").strip() or words
+        elements = [md(literal_text(whole), size="normal_v2")]
+    return fold(WORDS_ID, md(title, size="notation"), elements, title_padding="0px 0px 0px 0px",
+                icon_position="follow_text", spacing="4px")
 
 
 HANDOFF_ID = "handoff_back"

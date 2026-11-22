@@ -273,12 +273,29 @@ def asked(state_dir, record, *, topic_id="", at=(), profile=None, fetch=None, lo
     text = str(get("user_text") or "")
     answer = text.lstrip().startswith(ANSWER_HEADING)
     words = " ".join(str(get("asked_text") or "").split())
+    full = str(get("asked_text") or "").strip()
+    parts = []
+    if answer:
+        from covey.app.answers import answer_parts
+
+        try:  # The questions and his answers, for the fold that shows them whole (cards/answer_card.py words_fold).
+            parts = answer_parts(text, asked_questions(state_dir, str(get("message_id") or "")))
+        except Exception as exc:  # noqa: BLE001 - the line without its fold's parts
+            if log is not None:
+                log(f"answer parts unavailable job=#{get('job_id') or '?'}: {type(exc).__name__}")
     if answer and not words:
         # What was asked and answered, as its task card's title (app/answers.py answer_title, the job's ``title``):
         # the first line is the question's (ACCEPT-330 read "你答 / 验收：确认结束吗？" without its 确认).
         from covey.app.answers import shown_answer_title
 
         words = " ".join(str(get("title") or "").split()) or shown_answer_title(text)
+    if not words and not answer:
+        # A turn the butler handed over: the owner's words it quotes, not the Bridge's note before them.
+        from covey.app.butler_handoff import quoted_words
+        from covey.core.attachments import message_words
+
+        full = quoted_words(text) or message_words(text)
+        words = request_line(full)
     words = words or request_line(text)
     when = time_of_day()
     try:
@@ -287,14 +304,14 @@ def asked(state_dir, record, *, topic_id="", at=(), profile=None, fetch=None, lo
         if log is not None:
             log(f"ask link failed job=#{get('job_id') or '?'}: {type(exc).__name__}")
         url = ""
-    if answer and not url:  # Nowhere to open: the block folds out the whole answer (answer_block).
-        from covey.app.answers import answer_parts
+    added = str(get("asked_text") or "").strip()
+    parts = [*parts, *([("heading", "另外说的"), ("note", added)] if added and answer else [])]
+    if answer and not url and not who:  # Nowhere to open and no row to carry it: the block folds out the answer.
         from covey.cards.answer_card import answer_block
 
-        parts = answer_parts(text, asked_questions(state_dir, str(get("message_id") or "")))
-        added = str(get("asked_text") or "").strip()
-        return answer_block([*parts, *([("heading", "另外说的"), ("note", added)] if added else [])], words, at=when)
-    return ask_block(words, verb="你答" if answer else "你问", at=when, url=url, who=who, doing=doing, avatar=picture)
+        return answer_block(parts, words, at=when)
+    return ask_block(words, verb="你答" if answer else "你问", at=when, url=url, who=who, doing=doing, avatar=picture,
+                     full=full, parts=parts)
 
 
 def speaker(state_dir, topic_id, chat_id, log=None) -> str:
@@ -463,16 +480,14 @@ def clicked(state_dir, key, message_id) -> bool:
     return any(entry.get("message_id") == message_id for entry in read_object(record_path(state_dir, key)).get("cards") or ())
 
 
-def saved_answer_card(ctx, job_id, status, reply, text, tail=(), head=(), bare=False, said=""):
+def saved_answer_card(ctx, job_id, status, reply, text, tail=(), head=(), bare=False):
     """The card a saved reply goes out as (Messenger.send_message's ``card``): ``text``, the reply as it is
     delivered, in lark-cli's Markdown style but with its headings' levels kept (``answer_card`` bolds the
     small ones), and the chat list's preview "✅ T34 · lead" (``answer_summary``; the task card's names the time). Made
     of the saved reply, the topic and the turn's status alone, so each retry sends the same card under the
     same key. ``bare``: a butler turn that sent no card (app/quiet_delivery.py QuietDelivery.bare), previewed without its task number
-    (cards/review.py bare_answer_summary). ``said``: the lead ``head``'s conclusion band shows (cards/review.py
-    answer_card)."""
+    (cards/review.py bare_answer_summary)."""
     lead = answer_lead(reply.text)
     label = topic_label(ctx.state_dir, ctx.topic_id) or f"#{job_id}"
     return answer_card(optimize_markdown(text, step_headings=False),
-                       bare_answer_summary(status, lead) if bare else answer_summary(label, status, lead), tail, head,
-                       said=said)
+                       bare_answer_summary(status, lead) if bare else answer_summary(label, status, lead), tail, head)

@@ -14,19 +14,19 @@
 | `core/longtask.py`、`core/status_line.py` | 盯一轮的后台线程 `TaskMonitor`；状态行纯函数 `status_text` |
 | `core/updates.py` | 合并写卡的 `CoalescedUpdates` |
 | `core/checkpoint.py` | 检查点，含可选的 `steps`、`delivery` |
-| `cards/streaming.py` | 整张任务卡 `build_stream_card`、按钮行、任务详情 |
+| `cards/streaming.py` | 整张任务卡 `build_stream_card`、标题行 `task_head`、按钮行 |
 | `cards/task_status.py` | 任务卡状态行 |
-| `cards/task_figures.py` | 数字格和输入/输出灰框 |
+| `cards/task_figures.py` | 数字格和输入/输出两行 |
 | `cards/card_cost.py` | CardKit 卡片大小估算和正文截断 |
 | `cards/trace_view.py` | 从快照画执行过程 `TraceView` |
 | `cards/trace_updates.py` | 实时更新的面板形状 `panel_json` |
 | `cards/trace.py` | 画执行过程的文本小工具 |
-| `cards/answer_card.py` | 答案卡和任务卡共用的灰框 `box`、改动折叠 |
+| `cards/answer_card.py` | 答案卡的输入/输出两行 `facts_element`、任务卡的输入/输出 `box`、改动折叠、回答下面的折叠 `details` |
 | `cards/review.py` | 结局行、单独发出的答案卡、卡片摘要 |
 | `cards/cardkit_actions.py` | CardKit 写请求的 JSON |
 | `app/task_card.py` | 任务卡在 CardKit 上的建、写、关、替换：`StreamingCard`、`StreamingReply` |
 | `app/cards.py` | 任务卡唯一写入方 `Cards` |
-| `app/task_details.py` | 运行中的任务详情、执行过程面板和数字（`TaskDetails`，`Cards.details`） |
+| `app/task_details.py` | 运行中的执行过程面板和数字（`TaskDetails`，`Cards.details`；任务详情不再上卡，旧卡上的照旧不动） |
 | `app/record_cards.py` | 写入方结束后按任务记录写卡、按保存地址重画浏览卡（`RecordCards`） |
 | `app/interaction.py` | 事件入口 `Interaction.structured_harness_event` |
 | `app/card_routing.py` | 消息、菜单、卡片点击的路由（`UnifiedBridgeApp` 的 mixin） |
@@ -60,24 +60,23 @@
 
 | 元素 ID | 内容 |
 |---|---|
-| 标题栏 | 面板样式（`panel_header`），只有 `card_heading`：T 号 · #任务号 · 标题 |
-| `activity` | 状态行第一行 |
+| `task_head` | 标题行（没有标题栏）：T 号头像、标题加灰色“#任务号”，右边一栏是 `activity` |
+| `activity` | 状态行第一行：状态标签和时间（`status_markdown`），在标题行右边 |
 | `activity_more` | 状态行其余部分（阶段、当前、停止原因），没有时为空串 |
-| `task_io` | 输入/输出灰框（`io_box`），和答案卡同一个 `cards/answer_card.py` 的 `box`；“输出”那一栏的 ID 是 `task_figures` |
+| `task_io` | 输入/输出两行（`io_box`，`cards/answer_card.py` 的 `box`，没有灰底）；“输出”那一栏的 ID 是 `task_figures` |
 | `answer` | 正文 |
 | `current_question` | 卡上的问题 |
-| `task_details` | 任务详情，带框折叠面板，正文 ID `task_details_text` |
 | `action_row` | 按钮行：补充（`primary`，`steer_action`；排队卡上写“现在补给 #N”，任务开始后改回“补充”）、停止（`danger`） |
 
-- 灰框“输入”六段：Harness ｜ 供应商 ｜ 模型 ｜ 思考 ｜ 脱敏 ｜ 工作区（`input_lines`），来自建卡时存的 `job.input_parts`（`answer_cards.inputs`，同答案卡；`CARD_FACTS` 带它，替换卡不丢）。
+- “输入”六段：Harness ｜ 供应商 ｜ 模型 ｜ 思考 ｜ 脱敏 ｜ 工作区（`input_lines`），来自建卡时存的 `job.input_parts`（`answer_cards.inputs`，同答案卡；`CARD_FACTS` 带它，替换卡不丢）。
 - “输出”运行中写 开始 ｜ 已运行 ｜ token ｜ token/s ｜ 上下文（`running_figures`、`with_ran`，顺序 `RUNNING_LINES`），结束后写 用时 ｜ token/s ｜ token ｜ 缓存命中（`output_parts`、`output_lines`），还没有数字时是“—”。没开始处理就结束的（排队中取消）照结束写，也是“—”。
 - 段间是灰色的“｜”（`SEPARATOR`），段内不断行（`unbroken`），窄屏只在“｜”后折行。
-- 话题里各卡的按钮都用 `cards/elements.py` 的 `button_look`（带边框、`medium`、宽度跟着文字）；菜单面板用 `text_button`。停止按钮不带 `confirm`（见[卡片的客户端限制](#卡片的客户端限制)）。
-- 管家的分档卡（`Traits.slim_card`，`StreamingReply.slim`）：没有标题栏；正文、一行状态（`slim_status_markdown`）、默认收起的“详情”（`SLIM_DETAILS_ID`），灰框、本轮请求、任务详情和按钮行在“详情”里，ID 照旧；重试行、补充和问题紧跟正文（`under_body`）。详见[管家](butler.md)的“分档卡”。
+- 话题里各卡的按钮都用 `cards/elements.py` 的 `button_look`（带边框、`small`、宽度跟着文字）；菜单面板用 `text_button`。停止按钮不带 `confirm`（见[卡片的客户端限制](#卡片的客户端限制)）。
+- 管家的分档卡（`Traits.slim_card`，`StreamingReply.slim`）：没有标题栏；正文、一行状态（`slim_status_markdown`）、默认收起的“详情”（`SLIM_DETAILS_ID`），输入/输出、本轮请求和按钮行在“详情”里，ID 照旧；重试行、补充和问题紧跟正文（`under_body`）。详见[管家](butler.md)的“分档卡”。
 
 ### 状态行
 
-- 文字由产生方写成纯文本（`TaskMonitor`、`outcome_line`、`STOPPING`，记录里存的也是它），写卡时经 `status_markdown` 排版：第一行成 `##` 标题，下面几行小灰字；执行中前面加 ⏳。`status_rows` 把文字切成 `activity` 和 `activity_more` 两部分。
+- 文字由产生方写成纯文本（`TaskMonitor`、`outcome_line`、`STOPPING`，记录里存的也是它），写卡时经 `status_markdown` 排版：第一行的状态词成带底色的标签（`tagged`，`state_pill`），后面的时间灰字，下面几行小灰字；以 `##` 开头的（旧卡的样子）原样不动。`status_rows` 把文字切成 `activity` 和 `activity_more` 两部分。
 - `core/longtask.py` 的 `TaskMonitor.tick` 把这一刻的检查点、进程、执行记录和重试收进 `Facts`，`core/status_line.py` 的 `status_text`（卡上的一行）、`status_summary`（记录里的 `long_task_summary`）算出文字；持久化、`state` 回调和限频写卡留在 `tick`。
 - 每一轮一开始就有执行记录（五个后端都报告结构化事件），状态行从第一次刷新起写“执行中 · 已运行 …”。有灰框的卡“已运行”不在状态行（`status_rows(io=True)`），在“输出”里；过了 3 分钟只写到分钟（`ran_of`、`ran_shown`），内容没变不写。
 - `StreamingCard.update_activity` 只写变了的部分：平时只 PATCH `task_figures`。
@@ -110,7 +109,7 @@
 
 - 每个任务两个 `CoalescedUpdates`（`core/updates.py`）：`card_updates` 放答案、问题、重试状态，`trace_card_updates` 只放执行过程；同键只留最新，紧急的立即执行；任务结束时两个都关，不论最后一次写卡成败。
 - 执行过程刷新由 `app/task_details.py` 的 `TaskDetails`（`queue_trace`、`trace_updates`）做：面板、任务详情的文字（`StreamingReply.live_details`）和“输出”的数字（`card_figures`，存进 `StreamingReply.figures_parts`）放进同一次 `batch_update`，没变的不写。所以运行中 token、速度、上下文只在执行过程有变化时更新，一直在走的是“已运行”。
-- 任务详情没有可写的内容时卡上没有这个面板（`task_details_panel` 返回 None，`StreamingReply.details_panel` 为假，“底部”改锚“本轮请求”，`details_anchor`）。运行中第一次有内容（子任务、脱敏替换数、TTFT）时整块插到“本轮请求”后面（`Cards.set_task_element`，被拒只试一次，`details_refused`，结束时再试），之后只换文字。灰框里有的数字（token、缓存、token/s）不在任务详情里重复（`usage_lines`）。
+- 任务详情不上卡（`task_details_panel` 总是 None）：新卡没有这个面板，`StreamingReply.details_panel` 为假，“底部”锚“本轮请求”（`details_anchor`）；之前发出的卡上有的，留着原来的字，不再写。
 
 ### 检查点步骤与改动
 
@@ -155,11 +154,10 @@
 
 | 卡的形状 | 识别 | 怎么写 |
 |---|---|---|
-| 有灰框（当前） | `io_box` 为真 | 如上 |
+| 有输入/输出（当前，标题行） | `io_box` 为真 | 如上 |
 | 状态块加数字格 | `dashboard` 为真、没有 `task_io` | 写数字格 `task_figures`（`figures_element`，`status_block` 里嵌套的格子由 `find_element` 按 ID 找）；状态行照旧带“已运行” |
 | 状态行分两部分 | `status_rows` 为真 | `activity` 和 `activity_more` 分开写 |
 | 一行状态 | `status_rows` 为假 | `activity` 写整行；`set_record_activity` 只写 `activity` |
-| 没有 `task_details_text` | `live_details` 为假 | 任务详情只在结束时整块写（`TaskDetails.set_task_details`） |
 | 正文在上方 | `dashboard` 为假 | 回答单独发出时 `Cards.lead_first` 把正文移到 `current_question` 前，“正文后”的元素改插在 `task_details` 之后（`body_anchor`） |
 | 带页码框的执行过程 | 面板形状不同 | `incremental_actions` 整块换 `process_panel`；页码框仍能点（`interaction.py` 的 `show_trace_page`），画唯一的一页 |
 

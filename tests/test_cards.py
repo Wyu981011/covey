@@ -350,19 +350,14 @@ class TaskCardFallbackTests(unittest.TestCase):
         self.assertEqual(running["config"]["summary"]["content"], f"T70 在做 · {title}")
         self.assertTrue(running["config"]["streaming_mode"])
 
-    def test_a_new_card_takes_its_task_details_text_alone(self):
-        # T314 #2428: a running turn's figures replace 任务详情's text in place (app/cards.py queue_trace).
-        # Without anything to say a card has no 任务详情 (2026-11-09: the 输入/输出 box has the figures; no 暂无统计).
-        progress, cards, _ = self.create(["card_full"])
-        self.assertFalse(progress["live_details"] or progress["details_panel"])
-        self.assertIsNone(card_details_text(cards[0]))
-        progress, cards, _ = self.create(["card_full"], job=sample_job(timeout=600))
-        self.assertTrue(progress["live_details"] and progress["details_panel"])
-        self.assertEqual(progress["details_text"], "超时：600s")  # No 任务编号: the title has it (2026-11-04 15:07).
-        self.assertEqual(card_details_text(cards[0]), progress["details_text"])
-        old = json.loads(json.dumps(cards[0]))  # A card sent before: its text has no ID of its own.
-        next(e for e in old["body"]["elements"] if e.get("element_id") == "task_details")["elements"][0].pop("element_id")
-        self.assertIsNone(card_details_text(old))
+    def test_a_new_card_has_no_task_details(self):
+        # The owner, 2026-11-22: 任务详情就没必要了. Not even with something to say (a timeout): a card has 本轮请求 and
+        # 执行过程, and its progress knows it has no 任务详情 to write.
+        for job in (sample_job(), sample_job(timeout=600)):
+            progress, cards, _ = self.create(["card_full"], job=job)
+            self.assertFalse(progress["live_details"] or progress["details_panel"])
+            self.assertIsNone(card_details_text(cards[0]))
+            self.assertNotIn("task_details", json.dumps(cards[0]))
 
 
 TOO_BIG = Failure("api_rejected", code="200860", detail="ErrMsg: card over max size;")

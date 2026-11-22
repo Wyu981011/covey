@@ -25,14 +25,20 @@ OWNER = "om_owner"
 REPLY = "## 结论\n两种做法都行，先用第一种。"
 
 
+def unwrap(row):
+    """A speaker's row without the block that makes it a link (cards/ui.py speaker_row with a link)."""
+    return row["elements"][0] if row["tag"] == "interactive_container" else row
+
+
 def row_line(row):
     """The words of a speaker's row (cards/ui.py speaker_row): its text column's, or the row itself alone."""
+    row = unwrap(row)
     return row["columns"][1]["elements"][0]["content"] if row["tag"] == "column_set" else row["content"]
 
 
 def badge_words(row):
     """What a topic's badge in a speaker's row says (cards/ui.py topic_badge)."""
-    return row["columns"][0]["elements"][0]["elements"][0]["content"]
+    return unwrap(row)["columns"][0]["elements"][0]["elements"][0]["content"]
 
 
 class Case(ButlerCase):
@@ -105,7 +111,7 @@ class TargetTest(Case):
 
 
 class CardTest(unittest.TestCase):
-    def test_a_long_reply_shows_its_first_lines_and_folds_the_rest(self):
+    def test_a_long_reply_is_shown_whole(self):
         reply = "先说结论。\n\n" + "细节。" * 300 + "\n\n## 逐层结果\n\n最后一段。"
         card, text = relay_card("T410", DONE, text=reply, inputs=["Claude Code"], outputs=[], url="https://x/t410")
         # The speaker's row says whose it is: the T number its badge, the state as a tag (cards/ui.py speaker_row).
@@ -114,17 +120,12 @@ class CardTest(unittest.TestCase):
         self.assertEqual("<font color='white'>**T410**</font>", badge_words(row))
         self.assertTrue(row_line(row).startswith("<text_tag color='green'>有结果</text_tag>"))
         self.assertEqual("T410 · 有结果：先说结论", card["config"]["summary"]["content"])
-        # No conclusion band (T638, 犹抱琵琶半遮面): the reply's first few hundred characters as card text, then a fold
-        # that says how much in all and goes on from where they stop (cards/review.py opening, cards/ui.py read_more).
-        self.assertEqual(("relay_reply", False), (fold["element_id"], fold["expanded"]))
-        head = fold["header"]["title"]["content"]  # The answer itself is the fold, its opening its title.
-        self.assertTrue(head.startswith("<font color='ink'>先说结论。</font>\n\n<font color='ink'>细节。"))
-        content = fold["elements"][0]["content"]
-        self.assertTrue(content.startswith("细节。"))
-        self.assertNotIn("先说结论", content)
-        self.assertTrue(content.endswith("最后一段。"))  # Not cut: no "…", no 全文在 T410.
-        self.assertEqual(300, head.count("细节。") + content.count("细节。"))  # Nothing said twice, nothing left out.
-        self.assertIn("[进话题 ›](https://x/t410)", foot["content"])  # On the 输出 line, under 输入.
+        # No conclusion band (T638) and no fold (the owner, 2026-11-22: 不折叠，直接展示全文): the reply whole, nothing cut.
+        self.assertEqual(("relay_reply", "markdown"), (fold["element_id"], fold["tag"]))
+        self.assertEqual(reply, fold["content"])
+        self.assertEqual(300, fold["content"].count("细节。"))
+        self.assertEqual("https://x/t410", row["behaviors"][0]["default_url"])  # The row is the way in, no 进话题 ›.
+        self.assertNotIn("进话题", foot["content"])
         self.assertNotIn("全文", text)
         self.assertTrue(text.startswith("先说结论。"))
 
@@ -441,7 +442,7 @@ class DeliverTest(Case):
             with mock.patch.object(answer_cards, name, side_effect=AttributeError("x")):
                 send = self.deliver(self.job(progress=SimpleNamespace()))
             send.assert_called_once()
-            self.assertIn("两种做法都行", str(send.call_args.kwargs["card"]["body"]["elements"][1]))
+            self.assertIn("两种做法都行", json.dumps(send.call_args.kwargs["card"]["body"], ensure_ascii=False))
             saved = read_object(relay_send.relay_path(self.state, job_key("main-t1", 9)))
             self.assertEqual("sent", saved["state"])
 
@@ -561,7 +562,7 @@ class AwaitedDeliverTest(AwaitedCase):
         self.lead_turn("main-lead1")
         send = self.deliver(self.job(progress=SimpleNamespace()))
         send.assert_called_once()
-        self.assertIn("两种做法都行", str(send.call_args.kwargs["card"]["body"]["elements"][1]))
+        self.assertIn("两种做法都行", json.dumps(send.call_args.kwargs["card"]["body"], ensure_ascii=False))
 
     def test_one_a_wake_up_turn_handed_on_sends_nothing(self):
         self.lead_turn("lead-a1b2c3d4e5f6-3")

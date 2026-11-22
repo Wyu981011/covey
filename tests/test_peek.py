@@ -1,12 +1,13 @@
-"""露一截 (T638, docs/ui.md 4 ``peek``): a long text on a private-chat card shows its opening, the rest a click away and
-going on from there (cards/review.py opening, cards/ui.py peek); a topic's badge carries its T number on the topic's own
-colour (cards/ui.py topic_badge, core/look.py topic_color)."""
+"""露一截 (T638, docs/ui.md 4 ``peek``): a settled question on a private-chat card shows its opening, the rest a click
+away and going on from there (cards/review.py opening, cards/ui.py peek); answers and a turn's output are shown whole
+(``reply_shown``); a topic's badge carries its T number on the topic's own colour (cards/ui.py topic_badge, core/look.py
+topic_color)."""
 from __future__ import annotations
 
 import unittest
 
-from covey.cards.review import PEEK_LINES, PEEK_WIDTH, drop_part_heading, fits, opening
-from covey.cards.ui import badge_colors, peek, read_more, split_number, topic_badge
+from covey.cards.review import PEEK_LINES, PEEK_WIDTH, drop_part_heading, opening, reply_shown
+from covey.cards.ui import badge_colors, peek, split_number, topic_badge
 from covey.core import look
 
 
@@ -83,19 +84,15 @@ class PeekTest(unittest.TestCase):
         self.assertEqual([{"tag": "hr"}], peek("x", "头", [{"tag": "hr"}])["elements"])  # Elements as they are.
 
 
-class ReadMoreTest(unittest.TestCase):
-    def test_the_opening_is_card_text_and_the_fold_under_it_goes_on(self):
-        fold, = read_more("relay_reply", "- 第一项\n- 第二项", "后面的内容", label="这一轮输出", icon_key="img_x")
-        self.assertEqual(("collapsible_panel", "relay_reply", False), (fold["tag"], fold["element_id"], fold["expanded"]))
-        self.assertEqual("<font color='grey'>这一轮输出</font>\n<font color='ink'>- 第一项</font>\n<font color='ink'>- 第二项</font>",
-                         fold["header"]["title"]["content"])  # The answer itself, in the body's colour line by line.
-        self.assertEqual(({"tag": "custom_icon", "img_key": "img_x", "size": "24px 24px"}, "right"),
-                         (fold["header"]["icon"], fold["header"]["icon_position"]))  # The round arrow badge.
-        self.assertEqual("standard_icon", read_more("r", "a", "b")[0]["header"]["icon"]["tag"])  # No key: the chevron.
-        self.assertEqual([{"tag": "markdown", "content": "后面的内容"}], fold["elements"])
-        self.assertNotIn("border", fold)
-        self.assertTrue(fits("短短一句。\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"))  # A short reply with a table: whole.
-        self.assertFalse(fits("字" * (PEEK_WIDTH // 2 + 1)))
+class ShownTest(unittest.TestCase):
+    def test_an_answer_and_an_output_are_shown_whole_with_their_label(self):
+        # The owner, 2026-11-22, after the folds he tried: 不折叠，直接展示全文.
+        long = "第一句。" + "细节很多。" * 400
+        self.assertEqual([{"tag": "markdown", "element_id": "relay_reply", "content": long}], reply_shown(long))
+        self.assertEqual("<font color='grey'>这一轮输出</font>\n- 一\n- 二",
+                         reply_shown("- 一\n- 二", "mirror_output", label="这一轮输出")[0]["content"])
+        self.assertEqual("<font color='grey'>这一轮输出</font> 只有一句",
+                         reply_shown("只有一句", "mirror_output", label="这一轮输出")[0]["content"])
 
 
 class BadgeTest(unittest.TestCase):

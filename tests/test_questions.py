@@ -783,7 +783,7 @@ class SkipAllTest(QuestionFixture, unittest.TestCase):
                 self.click({"option_0": "0", "supplement": supplement}, "om_qcard")
                 _, chat, _, source, card = self.app.cards.repaint_browse_card.call_args.args
                 self.assertEqual((chat, source), ("oc_chat", "om_qcard"))
-                self.assertEqual(card["body"]["elements"][2]["content"], "⚠️ " + NOTE_EMPTY)
+                self.assertEqual(card["body"]["elements"][-1]["content"], "⚠️ " + NOTE_EMPTY)  # Under the form.
                 self.assertIn('"tag": "form"', json.dumps(card))  # Still open: written and sent again.
         self.rpc.answer.assert_not_called()
         self.assertEqual(json.loads(self.path.read_text())["status"], "pending")
@@ -959,7 +959,8 @@ class QuestionLayoutTest(unittest.TestCase):
         self.assertIn("当前第二行", panels[0]["elements"][0]["content"])
         answer = next(e for e in elements if e["element_id"] == "answer")
         self.assertEqual(answer["content"], "处理中")
-        self.assertEqual(elements[0]["element_id"], "activity")  # The status line, the 输入/输出 box under it.
+        self.assertEqual(elements[0]["element_id"], "task_head")  # The title row with the status line in it.
+        self.assertEqual(elements[0]["columns"][-1]["elements"][0]["element_id"], "activity")
 
 
 class QuestionCardLifecycleTest(TopicFixture, unittest.TestCase):
