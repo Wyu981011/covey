@@ -4,11 +4,10 @@ from __future__ import annotations
 import re
 
 from covey.cards.board import OPEN_KIND
-from covey.cards.elements import (BUTTON_SPACING, button_look, button_row, callback, card, grey, item, markdown_panel, note,
-                                  plain, text_button, topic_button)
+from covey.cards.elements import (BUTTON_SPACING, button_look, button_row, callback, card, fold, grey, item, md, note, plain,
+                                  text_button, topic_button)
 from covey.cards.review import compact_text, opening
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, peek, receipt, speaker_row,
-                            split_ask)
+from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, peek, receipt, speaker_row, split_ask
 from covey.core import look, triage, turn_words
 from covey.core.stale import STALE_NOTE
 from covey.core.text import literal
@@ -51,8 +50,8 @@ PICK = "pick"
 GENERIC_HEADER = re.compile(r"(补充信息|补充|信息|问题|说明|确认|选择|其他|第[一二三四五六七八九十\d]+题)")
 # Where an answered question went: its follow-up task (continuation_job_id) in this state.
 FOLLOW_UP = turn_words.FOLLOW_UP
-ASK_HEADLINE = 36  # Characters of the question the band's 要你定 shows; the whole question is in the form under it.
-ASK_PART = 16  # Characters of each question the band names when there are several (``ask_headline``).
+ASK_HEADLINE = 36  # Characters of the question the chat list's 要你定 shows (``ask_headline``); the card has it whole.
+ASK_PART = 16  # Characters of each question 要你定 names when there are several (``ask_headline``).
 RESUME_LABEL = "核查已保存回答并继续"
 CONTEXT_CHARS = 120  # Characters of a question's background line (``question_context``).
 # The superseded_reason of a question folded once a newer question card of its topic was shown
@@ -92,9 +91,10 @@ _ASK_ENDS = "？?。.！!：:；;，, "
 
 
 def ask_headline(record, limit=ASK_HEADLINE) -> str:
-    """What the band's 要你定 names (T647 A6: "要你定：2 件事" said nothing of what waits): one question's own header
-    (``question_header``), else the question itself; several, each one's header or the start of its words (ASK_PART),
-    joined with "；" while they fit ``limit``, then "等 N 件". "N 件事" only when no question has a word to show."""
+    """What the chat list's preview of an open question card names after 要你定 (T647 A6: "要你定：2 件事" said nothing
+    of what waits): one question's own header (``question_header``), else the question itself; several, each one's
+    header or the start of its words (ASK_PART), joined with "；" while they fit ``limit``, then "等 N 件". "N 件事" only
+    when no question has a word to show."""
     questions = [q for q in record.get("questions") or () if isinstance(q, dict)]
     if len(questions) == 1:
         own = question_header(questions[0]) or compact_text(questions[0].get("question") or "", limit)
@@ -115,17 +115,6 @@ def ask_headline(record, limit=ASK_HEADLINE) -> str:
     return "；".join(shown) + (f" 等 {len(questions)} 件" if len(shown) < len(questions) else "")
 
 
-def band_says_all(record) -> bool:
-    """Whether the band's 要你定 is the one question itself, whole (``ask_headline``: no header that names it, one short
-    line): its form then does not say it again, as a relay's band says a short question alone (a card says a question
-    once)."""
-    questions = [q for q in record.get("questions") or () if isinstance(q, dict)]
-    if len(questions) != 1 or question_header(questions[0]):
-        return False
-    text = str(questions[0].get("question") or "").strip()
-    return 0 < len(" ".join(text.split())) <= ASK_HEADLINE and "\n" not in text
-
-
 def question_lead(i, count, q):
     """Question ``i``'s bold first line: ``**1/3 · 借鉴美临**``; one question shows only its header."""
     header = question_header(q)
@@ -135,8 +124,9 @@ def question_lead(i, count, q):
 
 def question_element(record, tags="", *, headed=False):
     """A question's element: its open form, or once settled the folded panel that says what came of it.
-    ``tags``: ``T12 · #196``, which lead the form's first line on the standalone card; ``headed``: the
-    card's title bar says them and 需要你回答, so the form starts with its state."""
+    ``tags``: ``T12 · #196``, which lead the form's first line when nothing above it says whose it is (a task card's
+    form, a top-level copy sent before the speaker's row); ``headed``: the card's row (cards/ui.py speaker_row) says
+    whose it is and 等你, so the form starts with its first question."""
     token = record["token"]
     if record.get("status") == "superseded" and not folded(record):
         return {"tag": "markdown", "element_id": "q_" + token,
@@ -276,21 +266,47 @@ def picks(record):
     return single_choice(record["questions"])
 
 
+HELP_ID = "qh_"  # 怎么回答, the form's last line (``answer_help``), by the question's token.
+
+
+def answer_hint(record):
+    """The grey line under the form's buttons, 怎么回答 and what to do in a few words, which opens on its rules
+    (``how_to_answer``): a click on an option sends it, several questions go with 提交回答, and where else an answer may
+    be written. Not between the card's row and the first question: there it pushed the questions off the first screen
+    (the owner, 2026-11-23)."""
+    questions = record["questions"]
+    if len(questions) > 1:
+        return f"怎么回答：逐题选择或填写，最后点“{SUBMIT_LABEL}”"
+    if picks(record):
+        return f"怎么回答：点选项就提交，也可以{_reply_where(record)}"
+    done = "选好或写好" if questions and questions[0].get("options") else "写好"
+    return f"怎么回答：{done}后点“{SUBMIT_LABEL}”，也可以{_reply_where(record)}"
+
+
+def answer_help(record):
+    """The form's last element: ``answer_hint`` as one small grey line, folded on the rules (``how_to_answer``), the
+    chevron after its words as on the line with the owner's words (cards/answer_card.py words_fold)."""
+    return fold(HELP_ID + record["token"], md(grey(answer_hint(record)), size="notation"),
+                [md(how_to_answer(record), size="notation")], title_padding="0px 0px 0px 0px",
+                icon_position="follow_text", spacing="4px")
+
+
 def how_to_answer(record):
-    """The rules of answering, in the form's folded 怎么回答 panel: one line above it says what to do."""
+    """The rules of answering, folded under the form's last line (``answer_help``)."""
     if picks(record):
         return "\n".join("- " + rule for rule in [
             f"点一个选项就提交它；不想回答点“{SKIP_LABEL}”。",
             f"选项都不合适时写在回答框，再点“{SUBMIT_LABEL}”。",
-            f"其他想说的写在最下面的“补充说明”，点选项或“{SUBMIT_LABEL}”时一起带上。",
+            f"其他想说的写在“补充说明”，点选项或“{SUBMIT_LABEL}”时一起带上。",
             f"不想答这道题（问题不合适、想改要求或有疑问）：只写“补充说明”，点“{SUBMIT_LABEL}”。这道题记为{SKIP_LABEL}，"
             "不表示同意；模型按补充说明重新评估。",
             *aside_rules(record),
             f"也可以{_reply_where(record)}，当作这道题的回答。"])
     multiple = len(record["questions"]) > 1
-    rules = [f"不想回答的题选“{SKIP_LABEL}”（没有选项的题勾选它）。",
-             "选项都不合适时写在回答框；写了回答就以你写的为准，下拉框里选的不算。",
-             "其他想说的（不回答的原因、问题不合适、新要求或疑问）写在最下面的“补充说明”。写了补充说明，没答的题记为"
+    listed = any(q.get("options") for q in record["questions"])  # A dropdown on the card: its rules.
+    rules = [f"不想回答的题选“{SKIP_LABEL}”（没有选项的题勾选它）。" if listed else f"不想回答就勾选“{SKIP_LABEL}”。",
+             *(["选项都不合适时写在回答框；写了回答就以你写的为准，下拉框里选的不算。"] if listed else []),
+             "其他想说的（不回答的原因、问题不合适、新要求或疑问）写在“补充说明”。写了补充说明，没答的题记为"
              f"{SKIP_LABEL}，不表示同意；模型按补充说明重新评估。", *aside_rules(record)]
     if multiple:
         rules += ["没写补充说明时，每题都处理后才能提交" + ("，提交了任务才继续。" if record["blocking"] else "。"),
@@ -322,33 +338,31 @@ def waiting_state(record):
 
 
 def _question_form(record, token, tags="", headed=False):
-    """The open form: whose questions they are, one line on how to answer and the rest folded, each
-    question's fields, 补充说明 and the buttons. Not questions after ten lines of
-    rules, without numbers or headers, their options in the same type as the questions."""
-    state = waiting_state(record)
+    """The open form: its first question right under the card's row (``headed``) or under one bold line that says whose
+    it is, each question's fields, 补充说明, the buttons, then how to answer as one grey line that opens
+    (``answer_help``). Above the first question only what the owner needs to decide: a turn that does not wait for the
+    answer says so in grey, a question its project's lead handed on says why (``lead_notes``). Not questions after ten
+    lines of rules, without numbers or headers, their options in the same type as the questions; nor, before them, a
+    band that said the card's row and the first question's header again (the owner, 2026-11-23)."""
     count = len(record["questions"])
     buttons = picks(record)
-    line = (f"共 {count} 道题：逐题选择或填写，最后点“提交回答”。" if count > 1
-            else f"点选项就提交；都不合适时写在回答框再点“提交回答”，也可以{_reply_where(record)}。" if buttons
-            else f"在卡里选择或填写后点“提交回答”，也可以{_reply_where(record)}。")
-    if headed:  # The band above says whose question it is and the state.
-        elements = [{"tag": "markdown", "content": line}]
+    if headed:  # The row says whose it is and 等你; "等你回答后继续" said nothing more.
+        elements = [] if record["blocking"] else [note(waiting_state(record))]
     else:
-        elements = [{"tag": "markdown", "content": f"**{tags + ' · ' if tags else ''}{look.word('waiting')} · {state}**"},
-                    {"tag": "markdown", "content": line}]
+        elements = [{"tag": "markdown",
+                     "content": f"**{tags + ' · ' if tags else ''}{look.word('waiting')} · {waiting_state(record)}**"}]
     if triage.state(record) == triage.ESCALATED and triage.of(record).get("why"):
-        elements[1:1] = lead_notes(record)
-    elements.append(markdown_panel("qh_" + token, "怎么回答", how_to_answer(record), size="notation", quiet=True))
+        elements.extend(lead_notes(record))
     draft = record.get(DRAFT) if isinstance(record.get(DRAFT), dict) else {}
-    said = headed and band_says_all(record)  # The band above says the question whole: not again here.
     for i, q in enumerate(record["questions"]):
-        elements.extend(_question_fields(i, q, count, record if buttons else None, draft, said=said))
+        elements.extend(_question_fields(i, q, count, record if buttons else None, draft))
     # One place for anything beyond the answers, so no answer box doubles as a note.
     elements.append({"tag": "markdown", "content": "**补充说明**（可选）"})
     elements.append({"tag": "input", "name": SUPPLEMENT, "input_type": "multiline_text", "rows": 2,
                      "auto_resize": True, "max_rows": 5, "width": "fill", "max_length": 1000,
                      "placeholder": {"tag": "plain_text", "content": SUPPLEMENT_HINT}, **_typed(draft, SUPPLEMENT)})
     elements.append(_send_row(record, token))
+    elements.append(answer_help(record))
     return {"tag": "form", "element_id": "q_" + token, "name": "question_form_" + token, "elements": elements}
 
 
@@ -421,16 +435,25 @@ def _chosen(draft, name, options, multiple):
     return {"initial_option": str(value)} if isinstance(value, (str, int)) and str(value) in valid else {}
 
 
-def _question_fields(i, q, count=1, record=None, draft=None, *, said=False):
-    """Question ``i`` of ``count``: its number and header in bold, its text (not when the card's band ``said`` it whole,
-    ``band_says_all``), its background (``question_context``) in small grey print under it, its options as a list, the
-    dropdown (with ``record``, a picks() card's: a button per option), the answer box and, without options, a skip box;
-    each filled as ``draft`` (DRAFT) had it."""
+def short_question(q) -> bool:
+    """Whether question ``q``'s words are one short line (at most ASK_HEADLINE characters) with no Markdown emphasis or
+    code in them: the form shows such a question alone in bold, as its first line (``_question_fields``)."""
+    text = str(q.get("question") or "").strip()
+    return (0 < len(" ".join(text.split())) <= ASK_HEADLINE and "\n" not in text
+            and not any(mark in text for mark in "*_`~"))
+
+
+def _question_fields(i, q, count=1, record=None, draft=None):
+    """Question ``i`` of ``count``: its number and header in bold, its text whole (one short question with neither in
+    bold itself, ``short_question``: the band that said it is gone), its background (``question_context``) in small grey
+    print under it, its options as a list, the dropdown (with ``record``, a picks() card's: a button per option), the
+    answer box and, without options, a skip box; each filled as ``draft`` (DRAFT) had it."""
     draft = draft or {}
     elements = []
     lead = question_lead(i, count, q)
-    for start in range(0, 0 if said else len(q["question"]), 6000):
-        chunk = q["question"][start : start + 6000]
+    text = f"**{q['question'].strip()}**" if not lead and short_question(q) else q["question"]
+    for start in range(0, len(text), 6000):
+        chunk = text[start : start + 6000]
         elements.append({"tag": "markdown", "content": lead + "\n" + chunk if lead and not start else chunk})
     background = question_context(q)
     if background:  # Read on a phone, a question alone did not say what it would change (T604 #14).
@@ -484,44 +507,40 @@ def others_row(record):
 
 
 def question_card(record, topic="", title="", *, rowed=False):
-    """The standalone question card; ``topic``: its topic's label, with the task's number before
-    the form. No 🔁 换配置: the task card above it has one.
+    """The standalone question card; ``topic``: its topic's label. No 🔁 换配置: the task card above it has one.
     ``refusal`` (not saved: app/interaction.py adds it) says under it why a click on its form sent nothing.
-    ``title``: the topic's title, for the card in its thread: it then opens with the topic's row as every card of a
-    topic does (cards/ui.py speaker_row: its T number's badge, its title, 等你 or how it was settled; no link, the card
-    is in the thread). ``rowed``: a row goes above it either way (the top-level copy's, ``mirror_card``), so the band
-    does not say the T number again."""
+    In its thread (``topic`` or ``title``, the topic's title) it opens with the topic's row as every card of a topic does
+    (cards/ui.py speaker_row: its T number's badge, its title, 等你 or how it was settled; no link, the card is in the
+    thread), and the first question follows it (docs/ui.md 5.2 问题卡). ``rowed``: a row goes above it either way (the
+    top-level copy's, ``mirror_card``). With no row the form's first line says whose it is (``question_element``)."""
     pending = record.get('status') == 'pending'
     # A quiet butler turn's own card at the top level (app/question_display.py ask_block_for) has no task
     # number: the owner saw no card with it (B4 review).
     number = "" if record.get("mirror_state") == "at_top" else f"#{record.get('job_id', '')}"
     tags = " · ".join(filter(None, [topic, number]))
-    # An open form gets an orange title bar: in a topic it read like any notice. A settled
-    # card is repainted whole (QuestionDisplay.paint_standalone), so the bar goes with the form.
     count = len(record['questions'])
     form = pending and not record.get("display_pending") and not (
         record.get("body_delivery_required") and not record.get("body_delivery_confirmed"))
-    # The open form leads with its conclusion band (docs/ui.md 5.2 问题卡: "等你 · T12 #431", 要你定：…), which took
-    # the orange title bar's place. It names what is asked (``ask_headline``: the questions' headers or words, not
-    # "2 件事"); the questions themselves are in the form under it.
-    asked = ask_headline(record)
-    headed = bool(title) and bool(topic) and not record.get(TOP_COPY)
-    band = conclusion_band(band_label("waiting", "" if headed or rowed else topic, number),
-                           literal("要你定：" + asked), waiting_state(record)) if form else None
-    element = question_element(record, tags, headed=bool(band))
-    # The topic list's preview while the card is the topic's latest message: what the open form's band says, else what
-    # came of the question (``settled_title``).
-    summary = (f"{tags + ' ' if tags else ''}{look.word('waiting')} · 要你定：{asked}" if band
+    # The open form had a conclusion band ("等你 · #431", 要你定：…, 等你回答后继续) between the row and the questions: it
+    # said the row's 等你 and the first question's header again and pushed the questions off the first screen (the owner,
+    # 2026-11-23). The row says whose it is and that it waits; what is asked is the chat list's preview alone
+    # (``ask_headline``: the questions' headers or words, not "2 件事"), with no task number in it.
+    who = " ".join(part for part in (topic, " ".join(str(title or "").split())) if part)
+    own_row = bool(who) and not record.get(TOP_COPY)
+    element = question_element(record, tags, headed=own_row or rowed)
+    # The topic list's preview while the card is the topic's latest message: what is asked of the owner, else what came
+    # of the question (``settled_title``).
+    summary = (f"{topic + ' ' if topic else ''}{look.word('waiting')} · 要你定：{ask_headline(record)}" if form
                else f"{look.word('waiting')} · {count} 题" if pending else "相同问题已回答 · 无需重复提交"
                if record.get('status') == 'superseded' and not folded(record)
                else settled_title(record))
-    row = [speaker_row({"who": f"{topic} {title}", "doing": "waiting"}, outcome="waiting",
-                       tag=SETTLED_TAGS.get(record.get("status")), url="")] if headed else []
-    elements = [*row, *([band] if band else []), element, *others_row(record)]
+    row = [speaker_row({"who": who, "doing": "waiting"}, outcome="waiting",
+                       tag=SETTLED_TAGS.get(record.get("status")), url="")] if own_row else []
+    elements = [*row, element, *others_row(record)]
     if record.get('refusal'):
         elements.append({"tag": "markdown", "content": "⚠️ " + record['refusal']})
-    look_of = dict(padding=BODY_PADDING, spacing=BODY_SPACING) if headed else {}
-    return banded(card(elements, summary, default_width=True, **look_of))  # The band's colours and the badge's.
+    look_of = dict(padding=BODY_PADDING, spacing=BODY_SPACING) if own_row else {}
+    return banded(card(elements, summary, default_width=True, **look_of))  # The badge's colours.
 
 
 SETTLED_TAGS = {"answered": ("已回答", "grey"), SET_ASIDE: ("不处理", "grey"), "cancelled": ("已取消", "grey"),
@@ -603,20 +622,23 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
     """The question card again at the private chat's top level (app/question_display.py mirror): the same form, under
     the speaker's row that says whose it is (cards/ui.py speaker_row: ``ask``, the "你问" block, becomes the row, a click
     on it opening the topic's thread; the owner's words one line under it that opens, cards/answer_card.py words_fold).
-    ``output``, what the turn wrote before it asked, comes first, whole (cards/review.py reply_shown), then the question
-    and its options, then ``files``,
+    ``output``, what the turn wrote before it asked, comes first, whole (cards/review.py reply_shown), then a thin rule
+    and the question and its options (nothing between them: the band that was there said the row again, the owner
+    2026-11-23), then ``files``,
     the asking turn's 产物 panel as its answer card in the topic has it (app/artifacts.py answer_files). Settled, the
     question is ``settled_element`` as on its card in the thread (its first lines, the rest folded with the answer, a line
     under it of what he answered); the output stays, and the row says what it was about, not 要你定."""
     from covey.cards.review import reply_body, reply_shown
 
     meta, _ = split_ask([ask] if ask else [])
-    built = question_card({**record, TOP_COPY: True}, topic, rowed=meta is not None)  # Options as buttons (``top_level_card``).
-    settled = SETTLED_TAGS.get(record.get("status"))
     legacy = [ask] if ask and meta is None else []  # A block sent before the title bar: kept as it was, at the top.
+    # Options as buttons (``top_level_card``); the row this card opens with says whose it is, but not over a legacy block.
+    built = question_card({**record, TOP_COPY: True}, topic, rowed=not legacy)
+    settled = SETTLED_TAGS.get(record.get("status"))
     elements = list(built["body"]["elements"])
     # The turn's output first (the owner, 2026-11-22: without it the questions cannot be understood), then the question.
-    said = reply_shown(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL) if output else []
+    # A thin rule between them (as cards/proxy_panel.py RULE), a dict of its own on each card.
+    said = [*reply_shown(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL), {"tag": "hr"}] if output else []
     from covey.cards.answer_card import words_fold
 
     words = [part for part in (words_fold(meta),) if part] if meta else []  # What he said, one line that opens.

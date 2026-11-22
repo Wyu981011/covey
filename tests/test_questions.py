@@ -400,7 +400,8 @@ class QuestionTest(QuestionFixture, unittest.TestCase):
             with self.subTest(blocking=blocking):
                 card = question_element({**self.record, "blocking": blocking})
                 text = json.dumps(card, ensure_ascii=False)
-                self.assertIn("共 2 道题：逐题选择或填写，最后点“提交回答”。", text)
+                self.assertIn("怎么回答：逐题选择或填写，最后点“提交回答”", text)
+                self.assertEqual(card["elements"][-1]["element_id"], "qh_" + self.record["token"])  # Last, under the buttons.
                 self.assertIn("直接在话题里回复会先保存为补充", text)
                 self.assertNotIn("问题不合适 / 修改要求", text)  # Folded into a 补充说明 alone (2026-11-04 18:27, T631).
                 self.assertIn("写了补充说明，没答的题记为不回答此题", text)
@@ -661,7 +662,7 @@ class QuestionCardLookTest(unittest.TestCase):
         self.assertIn("原问题：\n- 按什么口径建 workspace？\n- 还有什么要说明的？\n\n你的反馈：\n意思不大",
                       settled_parts(feedback)[0]["elements"][0]["content"])
 
-    def test_the_band_names_what_waits_not_how_many(self):
+    def test_the_preview_names_what_waits_not_how_many(self):
         """T647 A6: "要你定：2 件事" said nothing of what waited; one question with a header that names nothing showed
         "1 件事"."""
         from covey.cards.question_cards import ask_headline
@@ -676,14 +677,18 @@ class QuestionCardLookTest(unittest.TestCase):
         self.assertEqual(ask_headline({"questions": [{"id": "a", "question": ""}, {"id": "b", "question": " "}]}), "2 件事")
         long = {"questions": [{"id": "a", "question": "很长" * 40}]}
         self.assertEqual(len(ask_headline(long)), ASK_HEADLINE)
-        # The topic list's preview says it too, and the card says the question once: the band has it whole, the form not
-        # again (as a relay's band); a header in the band, or a question cut there, leaves it in the form.
+        # The topic list's preview says it, with no task number (T666); the card says the question once, in its form under
+        # the topic's row: a short one with no header in bold (the band that said it is gone), else under its header.
         card = question_card({**two_questions(), "questions": one["questions"]}, "T191")
-        self.assertIn("要你定：要不要先部署到测试环境？", card["config"]["summary"]["content"])
+        self.assertEqual(card["config"]["summary"]["content"], "T191 等你 · 要你定：要不要先部署到测试环境？")
         self.assertEqual(text_of(card["body"]["elements"]).count("要不要先部署到测试环境？"), 1)
+        form = card["body"]["elements"][1]
+        self.assertEqual(form["elements"][0]["content"], "**要不要先部署到测试环境？**")
         for question in ({"id": "a", "header": "部署时间", "question": "什么时候部署？"}, long["questions"][0]):
             shown = question_card({**two_questions(), "questions": [question]}, "T191")
             self.assertIn(question["question"], text_of(shown["body"]["elements"][1]), question["question"][:10])
+        self.assertEqual(question_card({**two_questions(), "questions": long["questions"]}, "T191")["body"]["elements"][1]
+                         ["elements"][0]["content"], long["questions"][0]["question"])  # Long: as it is, not in bold.
 
     def test_a_settled_question_keeps_its_buttons_in_view(self):
         """T647 A4: an answer whose delivery was not confirmed hid 查看提交状态 and 核查已保存回答并继续 in a closed fold."""
@@ -714,23 +719,29 @@ class QuestionCardLookTest(unittest.TestCase):
     def test_an_open_form_numbers_its_questions_and_folds_its_rules(self):
         # T191 #1084: ten lines of rules before the first question, no numbers, options in the questions' type.
         card = question_card(two_questions(), "T191")
-        # No title bar: a conclusion band names the topic and the task, what the owner decides and what the turn waits for.
+        # No title bar and no band (T666: "等你 · #1084", 要你定 and 等你回答后继续 said the row and the first header
+        # again): the topic's row, then the questions.
         self.assertNotIn("header", card)
-        band = json.dumps(card["body"]["elements"][0], ensure_ascii=False)
-        # 要你定 names the questions (T647 A6: "2 件事" said nothing): a header that names something, else its words.
-        for words in ("等你 · T191 &#35;1084", "要你定：/workspace 口径；还有什么要说明的", "等你回答后继续"):
-            self.assertIn(words, band)
-        form = card["body"]["elements"][1]
+        self.assertNotIn("band-line", json.dumps(card))
+        row, form = card["body"]["elements"]
+        self.assertEqual(row["element_id"], "speaker_row")
+        self.assertIn("等你", json.dumps(row, ensure_ascii=False))
         texts = [e.get("content", "") for e in form["elements"] if e.get("tag") == "markdown"]
-        self.assertEqual(texts[0], "共 2 道题：逐题选择或填写，最后点“提交回答”。")  # The band says what it waits for.
-        self.assertEqual(texts[1], "**1/2 · /workspace 口径**\n按什么口径建 workspace？")
-        self.assertEqual(texts[2], "- **按会话单独建（推荐）**：每个会话自成一个\n- **维持排除**：暂不放开")
-        self.assertEqual(texts[3], "**2/2**\n还有什么要说明的？")
-        # On the task card the form says whose it is itself; once settled the card has no bar.
+        self.assertEqual(texts[0], "**1/2 · /workspace 口径**\n按什么口径建 workspace？")  # The first question first.
+        self.assertEqual(texts[1], "- **按会话单独建（推荐）**：每个会话自成一个\n- **维持排除**：暂不放开")
+        self.assertEqual(texts[2], "**2/2**\n还有什么要说明的？")
+        for gone in ("等你回答后继续", "&#35;1084", "#1084", "要你定"):
+            self.assertNotIn(gone, text_of(card["body"]["elements"]))
+        # On the task card (no row above it) the form says it waits itself; once settled the card has no bar.
         self.assertEqual(question_element(two_questions())["elements"][0]["content"], "**等你 · 等你回答后继续**")
         self.assertNotIn("header", question_card({**two_questions(), "status": "answered"}, "T191"))
-        help_panel = next(e for e in form["elements"] if e.get("tag") == "collapsible_panel")
-        self.assertEqual(help_panel["header"]["title"]["content"], "怎么回答")
+        # How to answer: the form's last line, under the buttons, small and grey, its rules folded under it.
+        help_panel = form["elements"][-1]
+        self.assertEqual(help_panel["tag"], "collapsible_panel")
+        self.assertFalse(help_panel["expanded"])
+        self.assertEqual(help_panel["header"]["title"]["content"], "<font color='grey'>怎么回答：逐题选择或填写，最后点“提交回答”</font>")
+        self.assertEqual(help_panel["header"]["title"]["text_size"], "notation")
+        self.assertEqual([e.get("tag") for e in form["elements"]].index("collapsible_panel"), len(form["elements"]) - 1)
         rules = help_panel["elements"][0]["content"]
         for rule in (SKIP_LABEL, "写了回答就以你写的为准", "补充说明", "问题不合适", "没答的题记为不回答此题"):
             self.assertIn(rule, rules)
@@ -741,6 +752,111 @@ class QuestionCardLookTest(unittest.TestCase):
         self.assertEqual(set(fields), {"option_0", "answer_0", "answer_1", "skip_1", "supplement", "submit", "set_aside"})
         self.assertEqual([o["value"] for o in fields["option_0"]["options"]], ["0", "1", "skip"])
         self.assertEqual(question_element(two_questions())["elements"][0]["content"], "**等你 · 等你回答后继续**")
+
+
+class QuestionTransitionTest(unittest.TestCase):
+    """T666 (the owner, 2026-11-23, a screenshot of a top-level copy: 问答卡这一部分是不是也可以优化一下): between the turn's
+    output and the question stood a three-row band ("等你 · #5976", 要你定：选方向, 等你回答后继续) that said the row's 等你
+    and the question's header again, then a line of how to answer and a framed 怎么回答, which pushed the question and its
+    options off the first screen. Now the question follows the row, or the output under a thin rule, and how to answer is
+    one grey line under the buttons that opens on the rules."""
+
+    PICK = {"id": "way", "header": "先改哪处", "question": "接下来先做哪一个？",
+            "options": [{"label": "A 先改卡片（推荐）", "description": "改动小"}, {"label": "B 先改看板"}]}
+
+    def record(self, *questions, **fields):
+        return two_questions(**{"answers": {}, **({"questions": list(questions)} if questions else {}), **fields})
+
+    def assert_no_band(self, card):
+        body = json.dumps(card["body"], ensure_ascii=False)
+        self.assertNotIn("band-line", body)
+        for gone in ("等你回答后继续", "#1084", "&#35;1084"):
+            self.assertNotIn(gone, body)
+        form = next(e for e in card["body"]["elements"] if e.get("tag") == "form")
+        self.assertNotIn("要你定", json.dumps(form, ensure_ascii=False))  # The row may say it: "办你 00:20 交代的事，要你定".
+
+    def assert_help_last(self, form, words):
+        """How to answer: the form's last element, under the buttons, one small grey line, folded."""
+        last = form["elements"][-1]
+        self.assertEqual((last["tag"], last["element_id"], last["expanded"]), ("collapsible_panel", "qh_" + "b" * 16, False))
+        title = last["header"]["title"]
+        self.assertEqual((title["text_size"], title["content"]), ("notation", f"<font color='grey'>{words}</font>"))
+        self.assertEqual(last["header"]["icon_position"], "follow_text")
+        self.assertIn("submit", json.dumps(form["elements"][-2]))  # The buttons right above it.
+        self.assertEqual(sum(e.get("tag") == "collapsible_panel" for e in form["elements"]), 1)
+
+    def test_the_top_level_copy_goes_from_the_output_to_the_question(self):
+        from covey.cards.answer_card import ask_block
+        from covey.cards.question_cards import mirror_card
+        ask = ask_block("问答卡这一部分是不是也可以优化一下", at="00:20", who="T436 精简问题卡", doing="waiting",
+                        url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&openThreadId=omt_436")
+        card = mirror_card(self.record(self.PICK), "T436", "## 两种做法\n\n- A：改卡片\n- B：改看板", ask=ask)
+        row, words, output, rule, form = card["body"]["elements"]
+        self.assertEqual(row["element_id"], "speaker_row")
+        self.assertIn("等你", json.dumps(row, ensure_ascii=False))  # The row says it waits, once.
+        self.assertEqual(words["element_id"], "answer_words")
+        self.assertIn("两种做法", output["content"])
+        self.assertEqual(rule, {"tag": "hr"})
+        self.assertEqual(form["tag"], "form")
+        self.assertEqual(form["elements"][0]["content"], "**先改哪处**\n接下来先做哪一个？")  # Nothing before it.
+        self.assert_no_band(card)
+        self.assert_help_last(form, "怎么回答：点选项就提交，也可以引用这张卡直接回复")
+        self.assertEqual(card["config"]["summary"]["content"], "T436 等你 · 要你定：先改哪处")  # The chat list's preview.
+        # Without an output no rule; settled, the output stays over its rule.
+        self.assertNotIn('"hr"', json.dumps(mirror_card(self.record(self.PICK), "T436", ask=ask)))
+        settled = mirror_card(self.record(self.PICK, status="answered", answers={"way": {"answers": ["A 先改卡片（推荐）"]}}),
+                              "T436", "先说结论", ask=ask)["body"]["elements"]
+        self.assertEqual(settled[3], {"tag": "hr"})
+        self.assertEqual(settled[4]["element_id"], "q_" + "b" * 16)
+
+    def test_a_card_in_its_thread_starts_with_its_first_question(self):
+        card = question_card(self.record(), "T191", "改看板的 Pin 目标")
+        row, form = card["body"]["elements"]
+        self.assertEqual(row["element_id"], "speaker_row")
+        self.assertEqual(form["elements"][0]["content"], "**1/2 · /workspace 口径**\n按什么口径建 workspace？")
+        self.assert_no_band(card)
+        self.assert_help_last(form, "怎么回答：逐题选择或填写，最后点“提交回答”")
+        # A topic with no title has its T number's row all the same; a short question with no header that names it is
+        # its own bold first line, said once (the band that said it, T658's, is gone); one in Markdown or long, as it is.
+        short = question_card(self.record({"id": "a", "header": "补充信息", "question": "要不要先部署到测试环境？"}), "T191")
+        self.assertEqual(short["body"]["elements"][0]["element_id"], "speaker_row")
+        self.assertEqual(short["body"]["elements"][1]["elements"][0]["content"], "**要不要先部署到测试环境？**")
+        self.assertEqual(text_of(short["body"]["elements"]).count("要不要先部署到测试环境？"), 1)
+        for words in ("要不要改 `pins.py`？", "很长" * 40, "第一行\n第二行"):
+            form = question_card(self.record({"id": "a", "question": words}), "T191")["body"]["elements"][1]
+            self.assertEqual(form["elements"][0]["content"], words)
+        self.assert_help_last(form, "怎么回答：写好后点“提交回答”，也可以直接在话题里回复")
+
+    def test_only_what_the_owner_must_know_goes_above_the_question(self):
+        question = {"id": "a", "header": "部署时间", "question": "什么时候部署？"}
+        for fields, line in (({"blocking": False, "task_finished": True}, "本轮已结束，可继续补充"),
+                             ({"blocking": False}, "其他工作继续")):
+            with self.subTest(line):
+                form = question_card(self.record(question, **fields), "T191", "改看板")["body"]["elements"][1]
+                self.assertEqual(form["elements"][0], {"tag": "markdown", "content": f"<font color='grey'>{line}</font>",
+                                                       "text_size": "notation"})
+                self.assertEqual(form["elements"][1]["content"], "**部署时间**\n什么时候部署？")
+        # A question the project's lead handed on: its why, background and recommendation, then the question.
+        escalated = self.record(question, triage={"state": "escalated", "why": "要停服务得你定", "by": "lead",
+                                                   "recommend": "今晚 23 点", "if_not": "白天会挡住下单"})
+        form = question_card(escalated, "T191", "改看板")["body"]["elements"][1]
+        texts = [e.get("content", "") for e in form["elements"]]
+        self.assertEqual(texts[0], "负责人转给你的理由：要停服务得你定")
+        self.assertTrue(texts[1].startswith("**负责人推荐：今晚 23 点**"))
+        self.assertEqual(texts[2], "**部署时间**\n什么时候部署？")
+        # On a task card (no row over it) one bold line says it waits, and nothing else comes before the question.
+        plain = question_element(self.record(question))
+        self.assertEqual([e.get("content") for e in plain["elements"][:2]],
+                         ["**等你 · 等你回答后继续**", "**部署时间**\n什么时候部署？"])
+        self.assertEqual(plain["elements"][-1]["element_id"], "qh_" + "b" * 16)
+
+    def test_a_copy_sent_before_the_row_keeps_a_line_that_says_it_waits(self):
+        from covey.cards.question_cards import mirror_card
+        legacy = {"tag": "markdown", "content": "<font color='grey'>你问 · 12:31</font>"}  # No row in it (split_ask).
+        elements = mirror_card(self.record(), "T436", "先说结论", ask=legacy)["body"]["elements"]
+        self.assertEqual(elements[0], legacy)
+        self.assertNotIn("speaker_row", json.dumps(elements))
+        self.assertEqual(elements[-1]["elements"][0]["content"], "**T436 · #1084 · 等你 · 等你回答后继续**")
 
 
 class QuestionContextTest(unittest.TestCase):
@@ -807,7 +923,7 @@ class SkipAllTest(QuestionFixture, unittest.TestCase):
                 form = question_element({**self.record, "questions": questions})
                 # Two buttons on one row, 提交回答 first and blue (the owner, 2026-11-04 18:27), then 不处理 (T631: five
                 # buttons read as too many; test_question_submit, test_set_aside).
-                row = form["elements"][-1]
+                row = form["elements"][-2]  # Under it only how to answer (``answer_help``).
                 buttons = [c["elements"][0] for c in row["columns"]]
                 self.assertEqual([b["text"]["content"] for b in buttons], ["提交回答", "不处理"])
                 self.assertEqual([b["type"] for b in buttons], ["primary_filled", "default"])
@@ -886,7 +1002,8 @@ class TopLevelPickTest(QuestionFixture, unittest.TestCase):
         self.assertEqual(buttons[1]["behaviors"][0]["value"], {"kind": "bridge_question", "topic_id": self.record["topic_id"],
                                                                "token": self.token, PICK: 1})
         self.assertIn("- **全部**：处理全部数据", text_of(form))  # The options' notes stay above the buttons.
-        self.assertIn("点选项就提交；都不合适时写在回答框再点“提交回答”，也可以引用这张卡直接回复。", text_of(form))
+        self.assertIn("怎么回答：点选项就提交，也可以引用这张卡直接回复", text_of(form))
+        self.assertIn("也可以引用这张卡直接回复，当作这道题的回答。", text_of(form))
         form_button(form, "submit")  # 提交回答 stays, with the answer box.
         self.assertTrue([e for e in walk_dicts(form) if e.get("name") == "answer_0"])
 
@@ -895,7 +1012,7 @@ class TopLevelPickTest(QuestionFixture, unittest.TestCase):
         self.assertFalse([e for e in walk_dicts(form) if str(e.get("tag")).endswith("select_static")])
         row = next(e for e in walk_dicts(form) if e.get("tag") == "column_set" and e.get("flex_mode") == "flow")
         self.assertEqual([c["elements"][0]["name"] for c in row["columns"]], ["pick_0", "pick_1", "pick_skip"])
-        self.assertIn("点选项就提交；都不合适时写在回答框再点“提交回答”，也可以直接在话题里回复。", text_of(form))
+        self.assertIn("怎么回答：点选项就提交，也可以直接在话题里回复", text_of(form))
         self.assertIn("也可以直接在话题里回复，当作这道题的回答。", text_of(form))
         form_button(form, "submit")
 
@@ -1053,7 +1170,7 @@ class QuestionCardLifecycleTest(TopicFixture, unittest.TestCase):
         card = calls[1].card
         self.assertNotIn('提交回答', json.dumps(card, ensure_ascii=False))
         self.assertIn('已回答 → 后续任务 有结果', json.dumps(card, ensure_ascii=False))
-        self.assertIn('英文\nUTF-8', settled_parts(card['body']['elements'][0])[0]['elements'][0]['content'])
+        self.assertIn('英文\nUTF-8', settled_parts(card['body']['elements'][1])[0]['elements'][0]['content'])  # Under the row.
 
     def test_a_question_left_a_week_is_closed_once_with_a_note_on_its_card(self):
         from covey.app.stale import close_stale_records
@@ -1436,7 +1553,8 @@ class FoldOlderQuestionTest(TopicFixture, unittest.TestCase):
         self.assertTrue(self.app.runtime.jobs.queue.empty())
         card = question_card(folded, 'T182')
         self.assertEqual(card['config']['summary']['content'], '#1105 的提问 · 已收起 → #1106 又提了问题')
-        [element] = card['body']['elements']  # No form, no buttons, no 🔁 换配置.
+        row, element = card['body']['elements']  # The topic's row; no form, no buttons, no 🔁 换配置.
+        self.assertIn('已收起', json.dumps(row, ensure_ascii=False))
         panel, line, rest = settled_parts(element)
         # The copy's look (T647 A4): the question's opening in view, what came of it in a grey line under it.
         self.assertEqual((panel['tag'], panel['expanded'], panel['header']['title']['content']),

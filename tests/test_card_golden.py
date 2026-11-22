@@ -346,7 +346,7 @@ def question_cards():
              for status in ("pending", "answered", "cancelled", "superseded", "expired", "submitting", "uncertain")}
     cards["card_answered_running"] = question_card(question_record("answered", delivery_state="running"))
     # In its topic's thread (app/question_display.py standalone_card): the topic's row on top, as every card of a topic
-    # has it (the owner, 2026-11-22), the band without the T number again; answered, the row's tag says so.
+    # has it (the owner, 2026-11-22), the first question right under it (T666); answered, the row's tag says so.
     cards["card_in_thread"] = question_card(question_record(), "T70", "改看板的 Pin 目标")
     cards["card_in_thread_answered"] = question_card(question_record("answered", continuation_job_id=432), "T70",
                                                      "改看板的 Pin 目标")
@@ -361,6 +361,15 @@ def question_cards():
         questions=[{"id": "q", "header": "选择", "question": "选哪个？", "multiSelect": True,
                     "options": [{"label": "甲（推荐）"}, {"label": "乙"}]}], answers={}))
     cards["element_on_task_card"] = question_element(question_record(), "tag", headed=True)
+    # On a task card as the Bridge puts it there (app/cards.py set_task_element): no row above it, its first line says it.
+    cards["element_on_task_card_plain"] = question_element(question_record(answers={}))
+    # One short question without a header in its thread: in bold where the band that said it was, never left out (T666).
+    cards["card_in_thread_one"] = question_card(question_record(questions=[{"id": "go", "question": "现在部署吗？"}],
+                                                                answers={}), "T70", "改看板的 Pin 目标")
+    # A question its turn did not wait for, the turn over: that grey line over it, the only line above the question.
+    cards["card_in_thread_not_waiting"] = question_card(question_record(
+        blocking=False, task_finished=True, answers={},
+        questions=[{"id": "note", "header": "补充", "question": "还有别的要求吗？"}]), "T70", "改看板的 Pin 目标")
     # A question with one line of background (core/checkpoint.py CHECKPOINT_RULES ``context``, T604 #14): grey under it.
     cards["card_context"] = question_card(question_record(questions=[
         {"id": "port", "header": "端口", "question": "新服务用哪个端口？", "context": "看板要从外网打开，8080 已被网关占用",
@@ -400,6 +409,16 @@ def question_cards():
     cards["mirror_with_files"] = mirror_card(question_record(), "T436", output, files=files)
     cards["mirror_files_no_output"] = mirror_card(question_record("answered", continuation_job_id=432), "T436",
                                                   files=files)
+    # The owner's case (2026-11-23, T666): one question with a header and options at the top level, under his words and
+    # the turn's output: a rule, then the question and a button per option, 补充说明, 提交回答, how to answer folded last;
+    # no band saying the row's 等你 and the header again, no rules between the output and the question.
+    from covey.cards.answer_card import ask_block
+    pick = question_record(answers={}, questions=[{"id": "way", "header": "先改哪处", "question": "接下来先做哪一个？",
+                                                   "options": [{"label": "A 先改卡片（推荐）", "description": "改动小，今晚能验"},
+                                                               {"label": "B 先改看板", "description": "要动排序"}]}])
+    cards["mirror_pick_asked"] = mirror_card(pick, "T436", output, ask=ask_block(
+        "问答卡这一部分是不是也可以优化一下", at="00:20", who="T436 精简问题卡", doing="waiting",
+        url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&openThreadId=omt_436"))
     cards["feedback"] = question_feedback_card(question_record())
     cards["answer_notice"] = answer_notice_card("已提交回答")
     cards["folded_refusal"] = folded_refusal(question_record("superseded", superseded_by_job=432))

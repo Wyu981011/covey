@@ -165,7 +165,7 @@
 
 ### 顶层问题卡副本的记录
 
-- **表单上面是这一轮的输出**（露开头几百字，`cards/relay_card.py` 的 `reply_peek`）：原生问题是到这时的进展说明和回答；检查点问题是任务卡正文。超过 `MIRROR_OUTPUT_BYTES`，或带上它副本会超过一张卡（`cards/pages.py` 的 `fits`，CardKit 再加渲染预算）的，先在副本前单独发（`output_apart`、`cards/question_cards.py` 的 `output_pages`）：每张都是副本的头像行（等你、进话题，“1/2”），你那句话收在第一张，最后一张末尾一行“这一轮的输出，问题在下一条”；每张都记成这个话题的消息，引用它追问进话题。
+- **表单上面是这一轮的输出**（整段显示，`cards/review.py` 的 `reply_shown`；和题目之间一条细分割线，没有结论带）：原生问题是到这时的进展说明和回答；检查点问题是任务卡正文。超过 `MIRROR_OUTPUT_BYTES`，或带上它副本会超过一张卡（`cards/pages.py` 的 `fits`，CardKit 再加渲染预算）的，先在副本前单独发（`output_apart`、`cards/question_cards.py` 的 `output_pages`）：每张都是副本的头像行（等你、进话题，“1/2”），你那句话收在第一张，最后一张末尾一行“这一轮的输出，问题在下一条”；每张都记成这个话题的消息，引用它追问进话题。
 - 只有一道有选项的单选题时，每个选项一个按钮，点了就提交（`app/answers.py` 的 `picked_fields`）；话题里的卡也一样（`cards/question_cards.py` 的 `picks`）。
 - **记录**：问题记录多 `mirror_state`（`creating` → `sent`/`uncertain`，锁内写、锁外发，规则 1）、`mirror_message_id`、`mirror_card_id`；别名记成话题的并带 `routes_to`。
 - **一起收起**：`QuestionDisplay.paint` 也重画副本（`paint_mirror`，sequence 从映射 `reserve`，规则 3）。

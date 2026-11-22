@@ -16,7 +16,8 @@ _spec.loader.exec_module(sketches)
 class DemoPageTest(unittest.TestCase):
     def test_three_steps_of_real_cards_an_answer_for_each_option_and_nothing_from_elsewhere(self):
         page = sketches.demo_page()
-        for words in (*sketches.STEPS, sketches.DEMO_NOTE, "要你定：登录后", "有结果", "产物 2 个", "login-page.diff"):
+        for words in (*sketches.STEPS, sketches.DEMO_NOTE, "登录成功以后跳到哪里？", "怎么回答：点选项就提交", "有结果", "产物 2 个",
+                      "login-page.diff"):
             self.assertIn(words, page)
         self.assertEqual(re.findall(r'id="step-(\d)"', page), ["1", "2", "3"])
         self.assertEqual(sorted(re.findall(r'data-answer="([^"]+)"', page)),

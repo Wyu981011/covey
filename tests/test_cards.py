@@ -271,8 +271,8 @@ class CardIdTests(unittest.TestCase):
     def test_open_question_and_supplement_cards_preview_the_topics_state(self):
         # T314 2026-11-02: the topic list shows a topic's latest message's preview.
         card = question_card(question_record(), "T191")
-        self.assertNotIn("header", card)  # The band leads (cards/question_cards.py), the preview says it too.
-        self.assertRegex(card["config"]["summary"]["content"], r"^T191 · #\d+ 等你 · 要你定：")
+        self.assertNotIn("header", card)  # The topic's row leads (cards/question_cards.py); the preview says what is asked.
+        self.assertRegex(card["config"]["summary"]["content"], r"^T191 等你 · 要你定：")  # No task number (T666).
         from covey.cards.steer_form import steer_form
         form = steer_form(2431, "T314 · #2431", {"kind": "bridge_steer_submit"})
         self.assertEqual(form["config"]["summary"]["content"], "T314 · #2431 在做 · 补充表单")

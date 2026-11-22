@@ -196,14 +196,14 @@ OPTIONS = ({"label": "首页（推荐）", "description": "和现在注册成功
 
 
 def question(picked=""):
-    """The demo topic's question card: one choice, the recommended option first (cards/question_cards.py
-    question_card); answered with ``picked`` when it is given."""
+    """The demo topic's question card in its thread, under the topic's row: one choice, the recommended option first
+    (cards/question_cards.py question_card); answered with ``picked`` when it is given."""
     from covey.cards.question_cards import question_card
     record = {"token": "q" * 24, "status": "answered" if picked else "pending", "topic_id": "t" * 64,
               "chat_id": "oc_demo", "job_id": 12, "blocking": True, "harness_id": "claude", "binding_revision": 1,
               "created_at": FROZEN - 120, "answers": {"after": {"answers": [picked]}} if picked else {},
               "questions": [{"id": "after", "header": "登录后", "question": "登录成功以后跳到哪里？", "options": list(OPTIONS)}]}
-    return question_card(record, LABEL)
+    return question_card(record, LABEL, TITLE)
 
 
 def opened(card, element_id=""):
