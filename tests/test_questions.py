@@ -676,9 +676,14 @@ class QuestionCardLookTest(unittest.TestCase):
         self.assertEqual(ask_headline({"questions": [{"id": "a", "question": ""}, {"id": "b", "question": " "}]}), "2 件事")
         long = {"questions": [{"id": "a", "question": "很长" * 40}]}
         self.assertEqual(len(ask_headline(long)), ASK_HEADLINE)
-        # The topic list's preview says it too.
+        # The topic list's preview says it too, and the card says the question once: the band has it whole, the form not
+        # again (as a relay's band); a header in the band, or a question cut there, leaves it in the form.
         card = question_card({**two_questions(), "questions": one["questions"]}, "T191")
         self.assertIn("要你定：要不要先部署到测试环境？", card["config"]["summary"]["content"])
+        self.assertEqual(text_of(card["body"]["elements"]).count("要不要先部署到测试环境？"), 1)
+        for question in ({"id": "a", "header": "部署时间", "question": "什么时候部署？"}, long["questions"][0]):
+            shown = question_card({**two_questions(), "questions": [question]}, "T191")
+            self.assertIn(question["question"], text_of(shown["body"]["elements"][1]), question["question"][:10])
 
     def test_a_settled_question_keeps_its_buttons_in_view(self):
         """T647 A4: an answer whose delivery was not confirmed hid 查看提交状态 and 核查已保存回答并继续 in a closed fold."""

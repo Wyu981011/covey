@@ -43,16 +43,17 @@ class SetAsideCardTest(unittest.TestCase):
         aside = checkpoint_question(status=SET_ASIDE, response_kind=SET_ASIDE,
                                     answers={"fmt": {"answers": [SKIPPED]}, "note": {"answers": [SKIPPED]}})
         card = question_card(aside, "T70")
-        self.assertEqual(card["config"]["summary"]["content"], "❓ #5 的 2 道题 · 你选了不处理 · 话题下一轮开始前可以撤销")
+        self.assertEqual(card["config"]["summary"]["content"], "#5 的 2 道题 · 你选了不处理 · 话题下一轮开始前可以撤销")
         self.assertNotIn('"tag": "form"', json.dumps(card))
         undo = next(e for e in walk_dicts(card) if e.get("tag") == "button")
         self.assertEqual((undo["text"]["content"], undo["behaviors"][0]["value"]),
                          (RESTORE_LABEL, {"kind": RESTORE_KIND, "topic_id": "t" * 64, "token": "c" * 16}))
         self.assertIn("你选了不处理：每题记为不回答（不表示同意或授权）。从“等你”里撤下了", text_of(card))
         panels = lambda drawn: [e["expanded"] for e in walk_dicts(drawn) if e.get("tag") == "collapsible_panel"]  # noqa: E731
-        self.assertEqual(panels(card), [True])  # Open: 撤销 at hand.
+        self.assertEqual(panels(card), [False])  # 撤销 is in view beside its line (T647 A4): the fold stays closed.
+        self.assertIn("→ 你选了不处理 · 话题下一轮开始前可以撤销", text_of(card))
         taken = question_card({**aside, "status": "answered", "delivery_state": "delivered", "continuation_job_id": 9}, "T70")
-        self.assertEqual(taken["config"]["summary"]["content"], "❓ #5 的 2 道题 · 你选了不处理 → 随 #9 告诉了模型")
+        self.assertEqual(taken["config"]["summary"]["content"], "#5 的 2 道题 · 你选了不处理 → 随 #9 告诉了模型")
         self.assertFalse([e for e in walk_dicts(taken) if e.get("tag") == "button"])
         self.assertEqual(panels(taken), [False])
         self.assertIn("已随话题的下一轮告诉模型", text_of(taken))

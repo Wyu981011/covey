@@ -177,7 +177,7 @@ class SourceWatchTest(TopicFixture, unittest.TestCase):
         upsert_job_record(state, record["key"], memory_notes=[{"kind": "remembered", "text": "x", "entry_id": "m1"}])
         with mock.patch("covey.app.memory_collect._forget") as forget, mock.patch("covey.app.memory_collect.show"):
             self.round(detail("om_a", deleted=True))
-        forget.assert_called_once_with(state, record["topic_id"], "m1")
+        forget.assert_called_once_with(state, record["topic_id"], "m1", None)  # Its note's scope: a line not 升为全局.
         self.assertEqual(find_job_record(state, "om_a")["memory_notes"][0]["kind"], "undone")
         self.assertEqual(knowledge.entries(state), [])
         self.assertEqual(knowledge.find(state, entry["id"])["state"], knowledge.DROPPED)

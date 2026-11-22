@@ -115,6 +115,17 @@ def ask_headline(record, limit=ASK_HEADLINE) -> str:
     return "；".join(shown) + (f" 等 {len(questions)} 件" if len(shown) < len(questions) else "")
 
 
+def band_says_all(record) -> bool:
+    """Whether the band's 要你定 is the one question itself, whole (``ask_headline``: no header that names it, one short
+    line): its form then does not say it again, as a relay's band says a short question alone (a card says a question
+    once)."""
+    questions = [q for q in record.get("questions") or () if isinstance(q, dict)]
+    if len(questions) != 1 or question_header(questions[0]):
+        return False
+    text = str(questions[0].get("question") or "").strip()
+    return 0 < len(" ".join(text.split())) <= ASK_HEADLINE and "\n" not in text
+
+
 def question_lead(i, count, q):
     """Question ``i``'s bold first line: ``**1/3 · 借鉴美临**``; one question shows only its header."""
     header = question_header(q)
@@ -329,8 +340,9 @@ def _question_form(record, token, tags="", headed=False):
         elements[1:1] = lead_notes(record)
     elements.append(markdown_panel("qh_" + token, "怎么回答", how_to_answer(record), size="notation", quiet=True))
     draft = record.get(DRAFT) if isinstance(record.get(DRAFT), dict) else {}
+    said = headed and band_says_all(record)  # The band above says the question whole: not again here.
     for i, q in enumerate(record["questions"]):
-        elements.extend(_question_fields(i, q, count, record if buttons else None, draft))
+        elements.extend(_question_fields(i, q, count, record if buttons else None, draft, said=said))
     # One place for anything beyond the answers, so no answer box doubles as a note.
     elements.append({"tag": "markdown", "content": "**补充说明**（可选）"})
     elements.append({"tag": "input", "name": SUPPLEMENT, "input_type": "multiline_text", "rows": 2,
@@ -409,14 +421,15 @@ def _chosen(draft, name, options, multiple):
     return {"initial_option": str(value)} if isinstance(value, (str, int)) and str(value) in valid else {}
 
 
-def _question_fields(i, q, count=1, record=None, draft=None):
-    """Question ``i`` of ``count``: its number and header in bold, its text, its background (``question_context``) in
-    small grey print under it, its options as a list, the dropdown (with ``record``, a picks() card's: a button per
-    option), the answer box and, without options, a skip box; each filled as ``draft`` (DRAFT) had it."""
+def _question_fields(i, q, count=1, record=None, draft=None, *, said=False):
+    """Question ``i`` of ``count``: its number and header in bold, its text (not when the card's band ``said`` it whole,
+    ``band_says_all``), its background (``question_context``) in small grey print under it, its options as a list, the
+    dropdown (with ``record``, a picks() card's: a button per option), the answer box and, without options, a skip box;
+    each filled as ``draft`` (DRAFT) had it."""
     draft = draft or {}
     elements = []
     lead = question_lead(i, count, q)
-    for start in range(0, len(q["question"]), 6000):
+    for start in range(0, 0 if said else len(q["question"]), 6000):
         chunk = q["question"][start : start + 6000]
         elements.append({"tag": "markdown", "content": lead + "\n" + chunk if lead and not start else chunk})
     background = question_context(q)
