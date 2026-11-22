@@ -403,7 +403,7 @@ AVATAR_SIZE = "28px 28px"
 ROW_ID = "speaker_row"
 
 
-def speaker_row(meta, *, outcome="", label="", tag=None, avatar="", url=None) -> dict:
+def speaker_row(meta, *, outcome="", label="", tag=None, avatar="", url=None, page="") -> dict:
     """The first element of a card at the private chat's top level, which says who speaks (docs/ui.md 5.3): the speaker's
     picture (``avatar``, its image key, else the ``avatar`` of ``meta``; none: the line alone) and one line, the name
     bold and what it did with the owner's words grey, "**管家** 回你 20:41「原话前 18 字…」"; a lead "**<专项名> ·
@@ -417,7 +417,10 @@ def speaker_row(meta, *, outcome="", label="", tag=None, avatar="", url=None) ->
     ``url`` (else the ``url`` of ``meta``: the owner's message for the butler and a lead, the topic's thread for a
     topic): what a click anywhere on the row opens (the owner, 2026-11-22: 点卡头就能进话题、跳回原话), the line ending
     with a grey ›; a card with such a row has no "看你那句 ›" or "进话题 ›" at its end. ``url=""``: no link whatever the
-    block says (a topic's card in its own thread)."""
+    block says (a topic's card in its own thread).
+
+    ``page``: which of the cards a text too long for one went out on this one is, "2/3" (cards/pages.py), grey after
+    the words, so each of them says whose it is and where it stands."""
     meta = meta or {"who": label}
     link = str(meta.get("url") or "") if url is None else str(url or "")
     who, doing = str(meta.get("who") or ""), str(meta.get("doing") or "")
@@ -439,8 +442,9 @@ def speaker_row(meta, *, outcome="", label="", tag=None, avatar="", url=None) ->
     badge = topic_badge(number, url=link) if number else None  # Its own link too: a click on it stops there.
     if badge:
         name = title
+    said = " · ".join(part for part in (says, str(page or "")) if part)
     line = " ".join(part for part in (f"**{literal(name)}**" if name else "", *tags,
-                                      grey(literal(says)) if says else "", grey("›") if link else "") if part)
+                                      grey(literal(said)) if said else "", grey("›") if link else "") if part)
     text = md(line, size="normal_v2")
     picture = avatar or str(meta.get("avatar") or "")
     if badge:

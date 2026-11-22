@@ -18,7 +18,7 @@ from covey.core.saved_results import (authorized_delivery, display_saved_reply,
                                                paused_question_delivery, paused_question_delivery_key,
                                                saved_delivery_key, saved_delivery_kind)
 from covey.core.turn_words import retry_hint
-from covey.feishu.delivery import card_tried
+from covey.feishu.delivery import card_tried, markdown_tried
 from covey.feishu.transport import Failure, last_failure, set_failure
 
 
@@ -63,20 +63,24 @@ class Redelivery:
         (the same key never goes with other content), when its digest is that of ``text``, the reply authorized now
         (rule 5); drawn from the record as the first send draws it when none was kept (app/saved_send.py). None when
         a card was already tried under the key: one drawn again is other content, which may follow one that landed
-        (rules 1 and 5: not sent; the transport would refuse it as ``idempotency_conflict``)."""
+        (rules 1 and 5: not sent; the transport would refuse it as ``idempotency_conflict``). A reply already tried as
+        Markdown under the key (a release before an answer too large for one card went on several, cards/pages.py)
+        goes so again, whole, under the same keys, never as cards (``paged`` False): its 产物 and 输入/输出 on the
+        small card after it."""
         key = saved_delivery_key(self.harness.spec.idempotency_prefix, record["key"], reply)
         outgoing = saved_send.kept(ctx.state_dir, record["key"], key, text)
         if outgoing is not None:
             return outgoing
         file = saved_delivery_kind(reply, outcome) == "file"
-        if not file and self.voice.message_format() == "markdown" and card_tried(
-                text=text, idempotency_key=key, chunk_limit=self.voice.chunk_limit(),
-                fallback_key_prefix=self.voice.key_prefix):
+        cards = not file and self.voice.message_format() == "markdown"
+        route = dict(text=text, idempotency_key=key, chunk_limit=self.voice.chunk_limit(),
+                     fallback_key_prefix=self.voice.key_prefix) if cards else {}
+        if cards and card_tried(**route):
             return None
         return saved_send.rebuilt(ctx, record, saved_job, reply, text, key=key, file=file,
                                   bare=not record.get("card_message_id") and placement.quiet(ctx.state_dir, record),
                                   harness=self.harness, cards=getattr(self, "cards", None), runtime=self.runtime,
-                                  voice=self.voice)
+                                  voice=self.voice, paged=not cards or not markdown_tried(**route))
 
     def redeliver_verified_result(self, ctx, chat_id, record):
         set_failure(None)

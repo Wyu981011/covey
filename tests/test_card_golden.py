@@ -1895,13 +1895,54 @@ def node_cards_samples():
     }
 
 
+def paged_cards():
+    """A text too large for one card over several (cards/pages.py, T663), each opening with its card's row, "1/2" in it:
+    an answer in its topic's thread and at the top level, a relay, a question copy's output, and the small card after an
+    answer sent as a file. Drawn with a card's room made small, so each sample is a few cards of a few KB; the cards
+    are cut the same way at the real room."""
+    from covey.cards import pages
+    from covey.cards.answer_card import ask_block, figure, input_parts, output_parts, tail, tail_card, topic_head
+    from covey.cards.question_cards import output_pages
+    from covey.cards.relay_card import relay_pages
+
+    text = "## 结论\n看板改好了，颜色换成暖色。\n\n" + "\n\n".join(
+        f"### 第 {n} 步\n" + "改了看板的配色和图例的位置，跑了全量测试。" * 18 for n in range(1, 4)) + (
+        "\n\n```py\n" + "".join(f"print({n})\n" for n in range(40)) + "```")
+    files = {"tag": "collapsible_panel", "element_id": "answer_artifacts", "expanded": False,
+             "header": {"title": {"tag": "markdown", "content": "产物 1 个 · REPORT.md"}}, "elements": []}
+    inputs = input_parts("Claude Code", "Claude 自带", "Opus 5.5", "xhigh", None, "covey")
+    outputs = output_parts({"usage": {"input_tokens": 120000, "cache_read_input_tokens": 90000, "output_tokens": 3000}}, 100)
+    block = ask_block("看板改成彩色块，字大一点", at="12:31", url="https://applink.feishu.cn/t/439", who="T439 改看板的颜色",
+                      doing="done")
+    asked = ask_block("看板要不要改成暖色？", at="12:31", url="https://applink.feishu.cn/t/439", who="T439 改看板的颜色",
+                      doing="waiting")
+    small = {"ANSWER_CARD_BYTES": 4200, "SENT_BYTES": 5000, "MIN_ROOM": 800}
+    with mock.patch.multiple(pages, **small):
+        def cards(cut):
+            return {"cards": [page.card for page in cut.pages], "texts": [page.text for page in cut.pages],
+                    "alone": cut.alone}
+        return {
+            "answer_in_thread": cards(pages.answer_pages(text, "T439 有结果 · 看板改好了", tail(files, inputs, outputs),
+                                                         [topic_head("T439", "改看板的颜色", "done")])),
+            "answer_at_top": cards(pages.answer_pages(text, "T439 有结果 · 看板改好了", tail(files, inputs, outputs),
+                                                      [block])),
+            "answer_no_row": cards(pages.answer_pages(text, "#431 有结果 · 看板改好了", tail(None, inputs, outputs))),
+            "relay": cards(relay_pages("T439", text=text, ask=block, url="https://applink.feishu.cn/t/439/card",
+                                       inputs=inputs, outputs=[figure("用时", "1分40秒")], files=files)),
+            "question_output": cards(output_pages(text, "T439", asked)),
+            "tail_after_file": tail_card([block, *tail(files, inputs, outputs)], "T439 · 产物与详情",
+                                         "回答较长，作为文件发在上面；产物和详情在这里", words=True),
+        }
+
+
 GROUPS = {"task": task_cards, "trace": trace_panels, "launch": launch_cards, "question": question_cards,
           "proxy": proxy_cards, "steer": steer_cards, "recovery": recovery_cards, "rewind": rewind_cards,
           "turn_export": turn_export_panels, "switch": switch_cards, "topic": topic_panels,
           "weekly_usage": usage_cards, "menu": menu_panels, "main_topic": main_topic_cards, "main_task": main_task_cards, "status_card": status_cards_samples,
           "main_thread": butler_panels, "settings": settings_cards,
           "overview": overview_cards, "digest": digest_cards, "app_setup": app_setup_cards, "welcome": welcome_cards,
-          "project": project_cards, "tidy": tidy_cards, "nodes": node_cards_samples, "group_ask": group_ask_cards}
+          "project": project_cards, "tidy": tidy_cards, "nodes": node_cards_samples, "group_ask": group_ask_cards,
+          "pages": paged_cards}
 
 
 def render():

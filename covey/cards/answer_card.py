@@ -17,8 +17,9 @@ token ｜ token/s ｜ 上下文 (｜ 重启) (``running_figures``, ``RUNNING_LIN
 The parts under an answer that are there to look up (产物, 验收说明, 改动, 记下的事) go into one closed fold
 (``details``); what the owner must see (a commit not found, the completion criteria not met: ALERT_IDS) stays out of it,
 and so do the 输入/输出 lines and 独立复核 under them. No link ends the 输出 line: the card's head (cards/ui.py
-speaker_row) opens the owner's message or the topic. An answer too long for one card goes as Markdown and then
-``tail_card``: these parts alone."""
+speaker_row) opens the owner's message or the topic. An answer too long for one card goes on several (cards/pages.py),
+these parts under the last, or after them on ``tail_card`` when it cannot hold them too; a file is followed by
+``tail_card`` as well."""
 from __future__ import annotations
 
 import re
@@ -462,16 +463,20 @@ def tail(files=None, inputs=(), outputs=(), link="", change=None, notes=(), butt
     return [element for element in (*parts, facts_element(inputs, outputs, link), *others) if element]
 
 
-def tail_card(elements, summary, lead=""):
-    """The card after an answer sent as Markdown or a file: ``lead`` (one small grey line), then ``elements``; a "你问"
-    block among them (``ask_block``) becomes the speaker's row, its way back goes on the 输出 line (cards/ui.py)."""
-    from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, speaker_row, split_ask
+def tail_card(elements, summary, lead="", *, words=False, **row):
+    """The card after an answer sent as a file or on cards of its own (cards/pages.py: they could not hold it too):
+    ``lead`` (one small grey line), then ``elements``; a "你问" block among them (``ask_block``) becomes the speaker's
+    row (cards/ui.py speaker_row, ``row`` its other arguments: ``outcome``, ``label``, ``avatar``, ``url``), the same as
+    the answer's card has. ``words``: nothing above it carried the owner's words (a file): the line of them that opens
+    (``words_fold``) under a row that does not quote him (a topic's, a lead's)."""
+    from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, role_of, speaker_row, split_ask
 
     meta, rest = split_ask(elements)
     head = [md(grey(lead), size="notation")] if lead else []
     if not meta:
         return banded(card([*head, *rest], summary, update_multi=True))
-    return banded(card([speaker_row(meta), *head, *rest], summary, update_multi=True,
+    said = [part for part in (words_fold(meta),) if part] if words and role_of(meta.get("who")) != "butler" else []
+    return banded(card([speaker_row(meta, **row), *said, *head, *rest], summary, update_multi=True,
                        padding=BODY_PADDING, spacing=BODY_SPACING))  # A topic's badge has its colour in the config.
 
 

@@ -636,7 +636,8 @@ class DeliveryTest(Case):
                 set_failure(Failure("audit_rejected"))
                 return False
             if card is not None and on_card is not None:
-                on_card("om_answer" if not key.endswith("-tail") else "om_tail")
+                page = re.search(r"-p\d+$", key)  # The n-th card of an answer on several (app/saved_send.py send_pages).
+                on_card("om_tail" if key.endswith("-tail") else "om_answer" + (page.group(0) if page else ""))
             return True
         send_text = mock.Mock(side_effect=send)
         runtime = mock.Mock()
@@ -796,6 +797,74 @@ class DeliveryTest(Case):
         saved = read_object(answer_cards.record_path(self.state, self.key))
         self.assertEqual([entry["where"] for entry in saved["cards"]], ["tail"])
 
+    def test_an_answer_too_large_for_one_card_goes_on_several_with_its_row_and_its_parts_under_the_last(self):
+        # T663: under FILE_BYTES, yet its card past ANSWER_CARD_BYTES (quotes and line breaks escape longer): it went
+        # as Markdown with no row and its 产物 and 输入/输出 were dropped.
+        from covey.app import saved_send
+        from covey.cards.pages import fits
+        from covey.core import placement
+        from covey.core.saved_results import FILE_BYTES
+        from covey.core.topics import topic_file
+        write_json(topic_file(self.state, "t1"), {"topic_number": 443, "origin": {"title": "改看板"}})
+        reply = '"name": "value",\n' * 1150
+        self.assertLess(len(reply.encode("utf-8")), FILE_BYTES)
+        with mock.patch.object(placement, "layout", return_value=placement.AREA):
+            send_text = self.deliver(reply)
+        calls = send_text.call_args_list
+        key = calls[0].args[3]
+        self.assertEqual([call.args[3] for call in calls], [key] + [f"{key}-p{n}" for n in range(2, len(calls) + 1)])
+        self.assertGreater(len(calls), 1)
+        for n, call in enumerate(calls, 1):
+            built = call.kwargs["card"]
+            self.assertTrue(fits(built))
+            head = re.sub(r"<[^>]*>|\*\*", "", json.dumps(built["body"]["elements"][0], ensure_ascii=False))
+            for words in ("T443", "改看板", "有结果", f"{n}/{len(calls)}"):
+                self.assertIn(words, head)
+            self.assertEqual(call.args[2], built["body"]["elements"][1]["content"])  # Its Markdown is its part.
+        self.assertEqual(ids(calls[-1].kwargs["card"])[-2:], [ARTIFACTS_ID, FACTS_ID])  # Never dropped.
+        self.assertEqual("\n".join(call.args[2] for call in calls), reply.strip())
+        last = self.delivery.record_job_state.call_args_list[-1]
+        self.assertEqual((last.args[2], last.kwargs["answer_message_id"]), ("done", "om_answer"))  # The first's.
+        saved = read_object(answer_cards.record_path(self.state, self.key))
+        self.assertEqual([(entry["where"], entry["message_id"]) for entry in saved["cards"]],
+                         [("answer", f"om_answer-p{len(calls)}")])  # The card with its 产物, for the upload.
+        kept = saved_send.kept(self.state, self.key, key, reply)
+        self.assertEqual(len(kept.pages), len(calls))
+        self.assertEqual(kept.answer, calls[0].kwargs["card"])
+
+    def test_an_answer_whose_parts_do_not_fit_its_card_has_them_on_the_small_card_after_it(self):
+        # One card holds the answer, not its 产物 and 输入/输出 too: they follow on the small card, with the row.
+        from covey.app import answer_cards as cards_of
+        from covey.core.saved_results import FILE_BYTES
+        reply = "好了。" + "字" * 6400
+        self.assertLess(len(reply.encode("utf-8")), FILE_BYTES)  # Not a file.
+        with mock.patch.object(cards_of, "inputs", return_value=["Claude Code " + "很长" * 1200]):
+            send_text = self.deliver(reply)
+        calls = send_text.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn(FACTS_ID, ids(calls[0].kwargs["card"]))
+        self.assertEqual(calls[0].args[2], reply)  # One card: the whole reply its Markdown, as before.
+        self.assertTrue(calls[1].args[3].endswith("-tail"))
+        self.assertEqual(ids(calls[1].kwargs["card"])[-2:], [ARTIFACTS_ID, FACTS_ID])
+        saved = read_object(answer_cards.record_path(self.state, self.key))
+        self.assertEqual([entry["where"] for entry in saved["cards"]], ["tail"])  # Its 产物 and memory lines go there.
+
+    def test_an_answer_the_audit_refuses_keeps_its_row_on_the_small_card_after_the_file(self):
+        # T663: the small card after the file had no row at all; the row carries nothing of the refused reply.
+        from covey.core import placement
+        from covey.core.topics import topic_file
+        write_json(topic_file(self.state, "t1"), {"topic_number": 443, "origin": {"title": "改看板"}})
+        with mock.patch.object(placement, "layout", return_value=placement.AREA):
+            send_text = self.deliver("## 结论\n被拦的回答", refuse_card=True)
+        small = send_text.call_args_list[-2]
+        self.assertTrue(small.args[3].endswith("-audit-file-tail"))
+        built = small.kwargs["card"]
+        self.assertEqual(ids(built)[0], "speaker_row")
+        head = re.sub(r"<[^>]*>|\*\*", "", json.dumps(built["body"]["elements"][0], ensure_ascii=False))
+        for words in ("T443", "改看板"):
+            self.assertIn(words, head)
+        self.assertNotIn("被拦的回答", json.dumps(built, ensure_ascii=False))
+
 
 
 class RedeliveryTest(Case):
@@ -862,8 +931,9 @@ class RedeliveryTest(Case):
                 mock.patch("covey.app.redelivery.needs_question", return_value=False):
             self.assertIn(said, controls.redeliver_verified_result(self.ctx, "oc_1", record))
         self.upsert = upsert
+        self.replies = controls.messenger.reply.call_args_list
         call = controls.messenger.reply.call_args
-        return (call.args[3], call.args[0], call.kwargs["card"]) if call else None
+        return (call.args[3], call.args[0], call.kwargs.get("card")) if call else None
 
     def same(self, first, again):
         self.assertEqual(again[0], first[0])  # The same key ...
@@ -982,6 +1052,54 @@ class RedeliveryTest(Case):
             self.assertIsNone(self.again(said="可能已经送达"))
         self.assertEqual(attempt.call_args.args[2].category, "reconciliation_required")
         self.upsert.assert_not_called()
+
+    def test_an_answer_on_several_cards_goes_again_card_for_card_under_the_same_keys(self):
+        reply = '"name": "value",\n' * 1150
+        first = self.first(reply)
+        self.assertIsNotNone(self.again())
+        keys = [call.args[3] for call in self.replies]
+        self.assertGreater(len(keys), 1)
+        self.assertEqual(keys, [first[0]] + [f"{first[0]}-p{n}" for n in range(2, len(keys) + 1)])
+        self.assertEqual(self.replies[0].kwargs["card"], first[2])  # The kept cards, byte for byte.
+        self.assertEqual(self.upsert.call_args.kwargs["answer_message_id"], "om_answer")
+
+    def test_a_kept_answer_on_several_cards_goes_again_only_as_its_digest_says(self):
+        # Rule 5: the digest covers each card and its Markdown; one changed since, or not a card, is not sent as kept.
+        from covey.app import saved_send
+        reply = '"name": "value",\n' * 1150
+        first = self.first(reply)
+        self.assertGreater(len(saved_send.kept(self.state, self.key, first[0], reply).pages), 1)
+        self.outgoing(lambda outgoing: outgoing["pages"][-1].update(text="改过的正文"))
+        self.assertIsNone(saved_send.kept(self.state, self.key, first[0], reply))
+        self.outgoing(lambda outgoing: outgoing.update(pages=[{"card": "not a card", "text": ""}]))
+        self.assertIsNone(saved_send.kept(self.state, self.key, first[0], reply))
+
+    def test_a_reply_an_older_release_sent_as_markdown_goes_so_again_with_its_parts_after_it(self):
+        # Rule 6: a key the Markdown route was tried under never goes as cards (another content); what follows the
+        # answer, which that release dropped, goes on the small card after it.
+        from covey.app import saved_send
+        from covey.feishu import transport
+        from covey.feishu.delivery import first_chunk_key, safe_idempotency_key, split_text
+        reply = '"name": "value",\n' * 1150
+        first = self.first(reply)
+        path = answer_cards.record_path(self.state, self.key)
+        saved = read_object(path)
+        del saved[saved_send.OUTGOING]
+        write_json(path, saved)
+        previous = transport.configure_receipts(self.state)
+        self.addCleanup(transport.configure_receipts, previous)
+        chunk = first_chunk_key(first[0], len(split_text(reply, VOICE.chunk_limit())))
+        receipt = transport._receipt_path(safe_idempotency_key(chunk, fallback=VOICE.key_prefix))
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        write_json(receipt, {"fingerprint": "the old release's Markdown", "uncertain_since": 1.0})
+        from covey.core.trace_store import save_trace
+        save_trace(self.state, self.key, SNAPSHOT)
+        self.again()
+        markdown, small = self.replies
+        self.assertEqual((markdown.args[2], markdown.args[3]), (reply, first[0]))  # Whole, under its key ...
+        self.assertNotIn("card", markdown.kwargs)  # ... as Markdown again.
+        self.assertTrue(small.args[3].endswith("-tail"))
+        self.assertEqual(ids(small.kwargs["card"])[-2:], [ARTIFACTS_ID, FACTS_ID])
 
     def test_the_original_text_goes_back_on_the_card_else_as_a_message_else_as_a_file(self):
         # One way for the first send (which paints its task card first) and a redelivery (no card to paint).

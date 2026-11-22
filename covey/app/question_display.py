@@ -5,7 +5,8 @@ continuation's state on the card. ``question_card_lock`` orders one question's p
 A 话题区's question (a topic the butler opened, with COVEY_BUTLER=1; a project's topic too, once the question is the
 owner's: one held for the lead is copied when the lead hands it on, app/triage.py show) is also shown at the private
 chat's top level (``mirror``): the same form, quoting the butler's card, with
-what the turn wrote before it asked above it; one longer than MIRROR_OUTPUT_BYTES goes as its own message first.
+what the turn wrote before it asked above it; one longer than MIRROR_OUTPUT_BYTES, or that would take the copy past
+a card's room (cards/pages.py fits), goes on cards of its own first, each with the copy's row (``output_apart``).
 Its record keeps mirror_message_id, mirror_card_id and mirror_output; every repaint of the question repaints it
 too, so answering either folds both. Sent once (mirror_state creating, then sent or uncertain: rule 1). When the
 asking turn's answer card in the topic shows 产物 (app/answer_cards.py holds_files), the copy shows the same panel
@@ -22,16 +23,16 @@ from pathlib import Path
 from covey.app.card_lanes import clicked_message
 from covey.core.card_sequence import file_card, reserve
 from covey.core.locks import resource_lock
-from covey.cards.elements import card, md, note
-from covey.cards.question_cards import (OTHERS, SET_ASIDE, answer_notice_card, mirror_card, question_card, question_element,
-                                        triage_element)
+from covey.cards.pages import fits
+from covey.cards.question_cards import (OTHERS, SET_ASIDE, answer_notice_card, mirror_card, output_pages, question_card,
+                                        question_element, triage_element)
 from covey.core import app_manifest, butler, placement, triage
 from covey.core.jobs import find_job_record
 from covey.core.state import read_object, write_private_text
 from covey.core.store import update_question
 from covey.core.topics import route_message, topic_label, topic_title
 
-MIRROR_OUTPUT_BYTES = 12000  # A longer output goes as its own message before the top-level question card.
+MIRROR_OUTPUT_BYTES = 12000  # A longer output goes on cards of its own before the top-level question card.
 
 
 def standalone_card(ctx, record):
@@ -254,19 +255,20 @@ class QuestionDisplay:
         text = str(output or "").strip()
         apart = len(text.encode("utf-8")) > MIRROR_OUTPUT_BYTES
         with question_card_lock(path):
+            files, drawn = self.copy_files(ctx, record)
+            if text and not apart:
+                # The copy with the output on it past a card's room (the owner's words, many long questions, 产物):
+                # the output goes apart too, so the copy itself is never refused.
+                whole = {**record, "mirror_output": text, **({"mirror_ask": ask} if ask else {})}
+                apart = not fits(top_card(ctx, whole, files), cardkit=True)
             current = update_question(path, lambda r: None if r.get("mirror_state") else
                                       {**r, "mirror_state": "creating", "mirror_output": "" if apart else text,
                                        **({"mirror_ask": ask} if ask else {})})
             if current is None:
                 return ""
-            files, drawn = self.copy_files(ctx, current)
             top = dataclasses.replace(ctx, reply_to_message_id=reply_to)
-            label = target.get("label") or topic_label(ctx.state_dir, record["topic_id"])
             if apart:
-                self.messenger.send_message(ctx.profile, chat, text, self.voice.key("question-top-output", token),
-                                            reply_to_message_id=reply_to, voice=self.voice,
-                                            card=card([md(text), note(f"{label} 这一轮的输出，问题在下一条")],
-                                                      f"{label} · 这一轮的输出"))
+                self.output_apart(ctx, current, text, ask, reply_to)
             sent = []
 
             def remember(mid):
@@ -290,6 +292,32 @@ class QuestionDisplay:
         self.runtime.log(f"main relay state={'sent' if sent else 'uncertain'} outcome=question job=#{record.get('job_id')}"
                          f" kind={target.get('kind')} token={token[:10]} message={(sent[0] if sent else '')[-8:]}")
         return sent[0] if sent else ""
+
+    def output_apart(self, ctx, record, text, ask, reply_to):
+        """What the turn wrote before it asked (``text``), above the top-level copy of the question ``record`` when the
+        copy cannot hold it too (``mirror``): on cards of its own sent before it (cards/question_cards.py output_pages:
+        the copy's row on each, "1/2" in it, the owner's words that open under the first), its T numbers links
+        (app/relay_send.py linked; the topic's own plain, the row opens it), each card the topic's message, a quote of it
+        going to the topic as a quote of the copy does (app/relay_send.py remember_sent). Sent once, with the copy (its
+        mirror_state); never raises: the copy goes all the same."""
+        from covey.app.relay_send import linked, remember_sent
+        from covey.feishu.message_request import optimize_markdown
+
+        chat, token, topic = str(record.get("chat_id") or ""), str(record.get("token") or ""), str(record.get("topic_id") or "")
+        skip, sent = (topic,), []
+        try:
+            cut = output_pages(optimize_markdown(text, step_headings=False), topic_label(ctx.state_dir, topic), ask,
+                               link=lambda words: linked(ctx.state_dir, chat, None, words, ctx.profile, skip=skip)[1],
+                               finish=lambda built: linked(ctx.state_dir, chat, built, "", ctx.profile, skip=skip)[0])
+            for n, page in enumerate(cut.pages, 1):
+                key = self.voice.key("question-top-output", token if n == 1 else f"{token}-p{n}")
+                if not self.messenger.send_message(ctx.profile, chat, page.text, key, reply_to_message_id=reply_to,
+                                                   voice=self.voice, card=page.card, on_sent=sent.append):
+                    self.runtime.log(f"question top-level output not confirmed token={token[:10]} card={n}/{len(cut.pages)}")
+                    break
+        except Exception as exc:  # noqa: BLE001 - the copy goes all the same
+            self.runtime.log(f"question top-level output failed token={token[:10]}: {type(exc).__name__}")
+        remember_sent(ctx.state_dir, chat, topic, sent, skip_errors=True)
 
     def paint_mirror(self, ctx, record):
         """Repaint the top-level copy of ``record``'s card as the card in the topic is: answering either folds both.

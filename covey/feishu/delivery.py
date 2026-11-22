@@ -121,12 +121,19 @@ def first_chunk_key(idempotency_key: str, total: int) -> str:
     return idempotency_key if total == 1 else f"{idempotency_key}-1-of-{total}"
 
 
+def markdown_tried(*, text: str, idempotency_key: str, chunk_limit: int, fallback_key_prefix: str) -> bool:
+    """Whether ``text`` already went, or was tried, as Markdown under ``idempotency_key`` (send_message_with_fallback:
+    its first chunk's key has a receipt): sent again, it must go so, whole, under the same keys."""
+    first = first_chunk_key(idempotency_key, len(split_text(text, chunk_limit)))
+    return tried(safe_idempotency_key(first, fallback=fallback_key_prefix))
+
+
 def card_tried(*, text: str, idempotency_key: str, chunk_limit: int, fallback_key_prefix: str) -> bool:
     """Whether ``text`` with a card under ``idempotency_key`` (send_card_first) would go as a card under a key a
     write was already tried with (its receipt holds that try's content, so another card under it is refused as
     ``idempotency_conflict``); False when the Markdown route was tried for it instead (the same text again)."""
-    first = first_chunk_key(idempotency_key, len(split_text(text, chunk_limit)))
-    if tried(safe_idempotency_key(first, fallback=fallback_key_prefix)):
+    if markdown_tried(text=text, idempotency_key=idempotency_key, chunk_limit=chunk_limit,
+                      fallback_key_prefix=fallback_key_prefix):
         return False
     return tried(safe_idempotency_key(f"{idempotency_key}-card", fallback=fallback_key_prefix))
 

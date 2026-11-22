@@ -5,6 +5,7 @@ desk_topics, retired on 2026-11-09, opens no front-desk topic."""
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -334,6 +335,54 @@ class MirrorTest(MirrorCase):
         self.assertEqual(read_object(self.path)["mirror_output"], "")
         other = {**self.record, "token": "q2", "topic_id": "f" * 64}
         self.assertEqual(display.mirror(self.tctx, other, "x"), "")
+
+    def test_a_long_output_goes_on_cards_with_the_copy_s_row_each_the_topic_s(self):
+        # T663 (the owner, 2026-11-22): it went as one bare card, no T badge, title, 等你 or way into the topic, past
+        # 30 KB when longer still.
+        from covey.cards.pages import fits
+        from covey.cards.question_cards import OUTPUT_NEXT
+        display = self.app_.questions.display
+        output = "\n\n".join(f"第{n}段。" + "很长的输出，" * 200 for n in range(1, 16))
+        sent = []
+
+        def send(profile, chat, text, key, **kwargs):
+            sent.append((key, text, kwargs["card"]))
+            kwargs["on_sent"](f"om_out{len(sent)}")
+            return True
+        with mock.patch.object(self.app.messenger, "send_message", side_effect=send):
+            mid = display.mirror(self.tctx, self.record, output)
+        self.assertTrue(mid)
+        self.assertGreater(len(sent), 1)
+        key = self.app_.voice.key("question-top-output", "qtok")
+        self.assertEqual([each[0] for each in sent], [key] + [f"{key}-p{n}" for n in range(2, len(sent) + 1)])
+        for n, (_, text, card) in enumerate(sent, 1):
+            self.assertTrue(fits(card))
+            row = re.sub(r"<[^>]*>|\*\*", "", json.dumps(card["body"]["elements"][0], ensure_ascii=False))
+            self.assertIn("等你", row)
+            self.assertIn(f"{n}/{len(sent)}", row)
+            self.assertIn("topic-", json.dumps(card["config"], ensure_ascii=False))  # Its T number's badge.
+            self.assertEqual(self.topic, routed_topic(self.ctx.state_dir, CHAT, f"om_out{n}"))  # Quoting it answers there.
+        self.assertIn("这一轮输出", sent[0][2]["body"]["elements"][1]["content"])
+        self.assertIn(OUTPUT_NEXT, json.dumps(sent[-1][2]["body"]["elements"][-1], ensure_ascii=False))
+        self.assertEqual("".join(each[1] for each in sent).count("很长的输出，"), 15 * 200)
+        self.assertEqual(read_object(self.path)["mirror_output"], "")  # The copy has none of it.
+
+    def test_a_copy_too_large_with_its_output_sends_the_output_first(self):
+        # Under MIRROR_OUTPUT_BYTES, yet the copy with it past a card's room (many long questions): apart, so the copy
+        # itself is never refused.
+        from covey.app.question_display import MIRROR_OUTPUT_BYTES
+        display = self.app_.questions.display
+        questions = [{"id": f"q{n}", "question": f"第{n}题：" + "要你定的事说得很长，" * 120,
+                      "options": [{"label": "A"}, {"label": "B"}]} for n in range(1, 7)]
+        record = {**self.record, "questions": questions}
+        write_json(self.path, record)
+        output = "输出。" * 1300
+        self.assertLess(len(output.encode("utf-8")), MIRROR_OUTPUT_BYTES)
+        with mock.patch.object(self.app.messenger, "send_message", return_value=True) as send:
+            self.assertTrue(display.mirror(self.tctx, record, output))
+        self.assertEqual(send.call_count, 1)
+        self.assertIn("这一轮输出", json.dumps(send.call_args.kwargs["card"], ensure_ascii=False))
+        self.assertEqual(read_object(self.path)["mirror_output"], "")
 
     def test_a_project_topic_s_question_goes_up_though_no_request_of_the_butler_opened_it(self):
         """The owner, 2026-11-19: a question the lead handed on to him (T538's, 09:59) went to the topic's thread alone,

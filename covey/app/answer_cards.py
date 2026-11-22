@@ -442,7 +442,9 @@ def put_memory(state_dir, profile, messenger, key, element, log, answer_message_
 
     An answer card that shows no 产物 is not listed (see above): ``answer_message_id`` (the job record's) is then written
     from the card as it went out (the record's ``outgoing``, app/saved_send.py keep), each time from that card, so a
-    redraw (不对) gives the same card with the new lines."""
+    redraw (不对) gives the same card with the new lines. An answer that went on several cards, or whose 产物 and
+    输入/输出 followed it on a small card (the outgoing's ``pages``, ``tail``), has the card carrying them listed
+    (app/saved_send.py send_saved): the lines go there alone."""
     path = record_path(state_dir, key)
     written = 0
     try:
@@ -450,7 +452,7 @@ def put_memory(state_dir, profile, messenger, key, element, log, answer_message_
             saved = read_object(path)
             entries = [dict(entry) for entry in saved.get("cards") or []]
             sent = saved.get("outgoing") if isinstance(saved.get("outgoing"), dict) else {}
-            if (answer_message_id and isinstance(sent.get("answer"), dict)
+            if (answer_message_id and isinstance(sent.get("answer"), dict) and not sent.get("pages") and not sent.get("tail")
                     and not any(entry.get("message_id") == answer_message_id for entry in entries)):
                 entries.append({"where": "answer", "message_id": answer_message_id, "card": copy.deepcopy(sent["answer"])})
         for entry in entries:
@@ -481,6 +483,18 @@ def clicked(state_dir, key, message_id) -> bool:
     """Whether ``message_id`` is one of the job ``key``'s answer cards or a question's top-level copy showing its
     产物 (a 重新上传 there redraws them, not the task card)."""
     return any(entry.get("message_id") == message_id for entry in read_object(record_path(state_dir, key)).get("cards") or ())
+
+
+def saved_answer_pages(ctx, job_id, status, reply, text, tail=(), head=(), bare=False, *, link=None, finish=None):
+    """``saved_answer_card``'s card over as many cards as it takes (cards/pages.py answer_pages), for a reply too large
+    for one: the same preview on each, with which of them it is; ``link`` and ``finish`` as answer_pages takes them."""
+    from covey.cards.pages import answer_pages
+
+    lead = answer_lead(reply.text)
+    label = topic_label(ctx.state_dir, ctx.topic_id) or f"#{job_id}"
+    return answer_pages(optimize_markdown(text, step_headings=False),
+                        bare_answer_summary(status, lead) if bare else answer_summary(label, status, lead), tail, head,
+                        link=link, finish=finish)
 
 
 def saved_answer_card(ctx, job_id, status, reply, text, tail=(), head=(), bare=False):

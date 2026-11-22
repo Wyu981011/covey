@@ -293,6 +293,7 @@
 | `cards/node_panel.py` | The 设置 card's 设备 tab: every node with its state now, adding a device, removing one |
 | `cards/overview.py` | The 手上的事 card, pinned in the owner's private chat with the bot and redrawn whole as its tasks change, in the … |
 | `cards/owner_send.py` | The 代发草稿 card: a message a topic drafted for the owner to send as themselves |
+| `cards/pages.py` | A card's text too large for one card message, over as many cards as it takes, each in the look of the card it … |
 | `cards/project_card.py` | The 专项卡 (app/project_cards.py |
 | `cards/project_proposal.py` | 整理专项's cards: the proposal card (建个专项？), its rename form, the 整理专项 card of a scheduled or asked-for 整理, and … |
 | `cards/proxy_panel.py` | The 代答 card, the bot menu's 代答 panel: on or off and the group in its title bar |

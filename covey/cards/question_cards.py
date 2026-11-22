@@ -638,6 +638,35 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
     return banded(built)  # The topic's badge has its colour in the card's config.
 
 
+OUTPUT_NEXT = "这一轮的输出，问题在下一条"
+
+
+def output_pages(output, topic="", ask=None, *, link=None, finish=None):
+    """What the turn wrote before it asked, when it is too long to go on the question's copy at the top level
+    (app/question_display.py mirror): on cards of its own before the copy (cards/pages.py Paged), each opening with the
+    copy's row (cards/ui.py speaker_row: the topic's T number as its badge, its title, 等你, the way into the topic;
+    "1/2" in it), the owner's words that open under the first one's (cards/answer_card.py words_fold), the output from
+    这一轮输出 on, cut where it fits, and under the last one grey line: the question comes next (OUTPUT_NEXT).
+    ``output``: card Markdown; ``link`` (text -> text): its T numbers as links, once, before it is cut; ``finish`` (card
+    -> card): the owner's words', once (cards/pages.py finished). A block sent before the title bar (no speaker) stands
+    atop the first, as on the copy, which then has no row either."""
+    from covey.cards.answer_card import words_fold
+    from covey.cards.pages import drawer, finished, paged
+    from covey.cards.review import reply_body
+
+    meta, _ = split_ask([ask] if ask else [])
+    legacy = [ask] if ask and meta is None else []
+    words, _ = finished(finish, [*legacy, *([part for part in (words_fold(meta),) if part] if meta else [])], ())
+    label = topic or "话题"
+
+    def row(page):
+        return speaker_row(meta, outcome="waiting", label=label, page=page)
+    body = reply_body(output)
+    body = link(body) if link else body
+    return paged(body, drawer(f"{label} · 这一轮的输出", row=None if legacy else row, words=words, label=OUTPUT_LABEL,
+                              element_id=OUTPUT_ID, tail=[note(OUTPUT_NEXT)]), reserve=True)
+
+
 def answer_notice_card(text):
     return card([{"tag": "markdown", "content": text}], "回答状态", update_multi=True)
 

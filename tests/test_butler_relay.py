@@ -234,6 +234,38 @@ class SendTest(Case):
                                    r"message= error=TimeoutError$")
         self.assertFalse(butler_relay.relayed(self.state, {"key": job_key("main-t1", 9)}))
 
+    def test_a_reply_too_large_for_one_card_goes_on_several_each_with_its_row(self):
+        # T663 (the owner, 2026-11-22): it went as Markdown with no row (no T badge, title, 有结果, way into the topic),
+        # its 产物 and 输入/输出 on a small card after it.
+        from covey.cards.answer_card import FACTS_ID
+        from covey.cards.pages import fits
+        reply = "## 结论\n先说结论。\n\n" + "\n\n".join(f"### 第{n}节\n" + "细节很长，" * 300 for n in range(1, 12))
+        sent, ids = [], iter(f"om_page{n}" for n in range(1, 20))
+
+        def one(chat, text, key, reply_to, card, on_sent):
+            sent.append((key, text, card))
+            on_sent(next(ids))
+            return True
+        self.assertEqual("sent", relay(self.state, self.job(), DONE, send=mock.Mock(side_effect=one), text=reply,
+                                       inputs=["Claude Code"], outputs=[]))
+        key = job_key("main-t1", 9)
+        self.assertGreater(len(sent), 1)
+        self.assertEqual([each[0] for each in sent], [key] + [f"{key}-p{n}" for n in range(2, len(sent) + 1)])
+        for n, (_, text, card) in enumerate(sent, 1):
+            row = card["body"]["elements"][0]
+            self.assertEqual("<font color='white'>**T410**</font>", badge_words(row))
+            self.assertIn("<text_tag color='green'>有结果</text_tag>", row_line(row))
+            self.assertIn(f"{n}/{len(sent)}", row_line(row))
+            self.assertTrue(fits(card))
+            self.assertIn(text.split("\n")[0], json.dumps(card, ensure_ascii=False))  # Its Markdown is its part.
+        last = [element.get("element_id") for element in sent[-1][2]["body"]["elements"]]
+        self.assertEqual(last[-2:], [FACTS_ID, "relay_hint"])  # No small card after them; where a reply goes, last.
+        self.assertEqual("".join(each[1] for each in sent).count("细节很长，"), 11 * 300)
+        saved = read_object(relay_send.relay_path(self.state, key))
+        self.assertEqual(("sent", "om_page1"), (saved["state"], saved["message_id"]))
+        for n in range(1, len(sent) + 1):
+            self.assertEqual(TOPIC, message_topic(self.state, CHAT, f"om_page{n}"))  # Each the topic's.
+
     def test_a_sent_relay_is_a_log_line(self):
         log = mock.Mock()
         self.assertEqual("sent", relay(self.state, self.job(), DONE, send=self.send(), log=log, text=REPLY))

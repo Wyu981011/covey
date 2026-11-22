@@ -14,8 +14,9 @@ from pathlib import Path
 from covey.app import answer_cards
 from covey.app.relay_targets import ask_for, turn_card
 from covey.cards.answer_card import tail as answer_tail, tail_card
+from covey.cards.pages import Paged, fits
 from covey.cards.relay_card import (DONE as DONE_OUTCOME, HINT_ID, STOPPED as STOPPED_OUTCOME, WAITING as WAITING_OUTCOME,
-                                    merged_card, relay_card, reply_hint, summary)
+                                    merged_card, relay_card, relay_pages, reply_hint, summary)
 from covey.cards.review import FOLD_ID, answer_lead
 from covey.core import background, butler
 from covey.core.failure import HEADLINE_CHARS
@@ -165,18 +166,36 @@ def send_once(state_dir, job, path, key, target, outcome, send, profile=None, lo
 
 
 def _made(state_dir, job, target, outcome, profile, log, facts):
-    """(card, text, links, facts) of ``job``'s relay: its card (None: the Markdown ``text`` alone) with its T numbers as
-    links (``links``: {topic: the card each opens}), and ``facts`` with the "你问" block."""
+    """(card, text, links, facts) of ``job``'s relay: its card with its T numbers as links (``links``: {topic: the card
+    each opens}), or, a 做完了 reply too large for one card once linked, its cards (cards/pages.py Paged,
+    cards/relay_card.py relay_pages; ``send_pages``), and ``facts`` with the "你问" block."""
     card = turn_card(state_dir, job, outcome)
     # What the topic did with the owner's words, in the speaker's sentence (cards/answer_card.py says).
     facts = {**facts, "ask": ask_for(state_dir, job, target, profile, at=card, log=log, doing=outcome)}
     topic = str(target.get("topic_id") or job_field(job, "topic_id"))
     picture = answer_cards.avatar(state_dir, topic, str(target.get("chat_id") or ""), profile, log)  # Its call, outside the lock.
-    built, text = relay_card(target["label"], outcome, url=topic_url(state_dir, topic, card, profile), avatar=picture,
-                             **facts)
-    links = {topic: card}
-    built, text = linked(state_dir, target["chat_id"], built, text, profile, cards=links)
+    url = topic_url(state_dir, topic, card, profile)
+    built, text = relay_card(target["label"], outcome, url=url, avatar=picture, **facts)
+    links, chat = {topic: card}, target["chat_id"]
+    built, text = linked(state_dir, chat, built, text, profile, cards=links)
+    if outcome == DONE_OUTCOME and not fits(built):
+        # Too large for one card, or grown past it by its links: on several, each with the relay's row (never Markdown
+        # with no row, the owner 2026-11-22); each card's room measured with its links in.
+        built = relay_pages(target["label"], url=url, avatar=picture,
+                            link=lambda words: linked(state_dir, chat, None, words, profile, cards=links)[1],
+                            finish=lambda page: linked(state_dir, chat, page, "", profile, cards=links)[0], **facts)
     return built, text, links, facts
+
+
+def send_pages(chat, key, reply_to, send, paged, sent):
+    """The cards of a relay too large for one (``_made``, cards/pages.py Paged) in order, each a message of its own: the
+    first under ``key`` (as one card would go), the n-th under ``key``-p<n>, each its part of the reply as Markdown when
+    its card is refused (feishu/delivery.py); ``sent`` gets their message ids. (whether every one was confirmed, the card
+    that carries what follows the reply: the last, None when it goes on a card of its own, ``alone``.)"""
+    for n, page in enumerate(paged.pages, 1):
+        if not send(chat, page.text, key if n == 1 else f"{key}-p{n}", reply_to, page.card, sent.append):
+            return False, None
+    return True, None if paged.alone else paged.pages[-1].card
 
 
 def _record(job, key, target, outcome, state):
@@ -194,10 +213,13 @@ def _send(state_dir, taken, key, target, outcome, send, made, profile, log):
     reply_to = ""  # A message of its own at the top level, quoting no card.
     sent = []
     try:
-        ok = send(target["chat_id"], text, key, reply_to, built, sent.append)
+        if isinstance(built, Paged):  # A reply too large for one card, on several (``send_pages``).
+            ok, built = send_pages(target["chat_id"], key, reply_to, send, built, sent)
+        else:
+            ok = send(target["chat_id"], text, key, reply_to, built, sent.append)
         error = "" if ok else "not confirmed"
         if ok and built is None and facts.get("inputs") is not None:
-            # A reply too long for one card went as Markdown: its 产物 and 输入/输出 follow on a small card.
+            # Cards that could not hold its 产物 and 输入/输出 too: they follow on a small card, with the same row.
             tail_built, _ = linked(state_dir, target["chat_id"], tail_card(
                 [*([facts["ask"]] if facts.get("ask") else []),
                  *answer_tail(facts.get("files"), facts["inputs"], facts.get("outputs") or (), link=target["label"],

@@ -51,18 +51,19 @@ class AnswerParts:
             ctx, job, delivery_text, outgoing, send=self.send_text, artifacts=self.artifacts, log=self.runtime.log)
         refused = last_failure()
         if not sent.delivered and not outgoing.file and refused is not None and refused.category == "audit_rejected":
-            sent.delivered = self.refused_as_file(outgoing, delivery_text, tail, files, status)
+            sent.delivered = self.refused_as_file(outgoing, delivery_text, tail, files, status, head)
 
-    def refused_as_file(self, outgoing, delivery_text, tail, files, status) -> bool:
+    def refused_as_file(self, outgoing, delivery_text, tail, files, status, head=()) -> bool:
         """Feishu's audit refused the saved reply even masked (feishu/delivery.py): the same saved text as a file where
         the answer would have gone, its 产物, 改动 and 输入/输出 on the small card after it as a long answer's go (``tail``,
-        app/saved_send.py; under a key of its own, without the head, whose band quotes the reply), then one line why
+        app/saved_send.py; under a key of its own), that card opening with the answer's row (``head``: who speaks and the
+        owner's words, or the topic's row in its thread; nothing of the refused reply), then one line why
         (AUDIT_FILE_NOTE), #24. Only the saved text is sent, the model is not run again (rule 5). Whether the file went;
         when it did not, the audit's refusal stays the turn's failure."""
         job, ctx, turn = self.job, self.ctx, self.turn
         refused = last_failure()
         fallback = saved_send.plan(ctx, job.job_id, turn.status, turn.verified_delivery, delivery_text,
-                                   key=f"{outgoing.key}-audit-file", file=True, top=outgoing.top, tail=tail, head=(),
+                                   key=f"{outgoing.key}-audit-file", file=True, top=outgoing.top, tail=tail, head=head,
                                    bare=self.bare(), files=files, upload_status=status)
         delivered, _ = saved_send.send_saved(ctx, job, delivery_text, fallback, send=self.send_text,
                                              artifacts=self.artifacts, log=self.runtime.log)

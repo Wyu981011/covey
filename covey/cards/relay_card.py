@@ -3,19 +3,20 @@
 (cards/question_cards.py mirror_card): a topic's reply as card Markdown, whole (``reply_body``, ``reply_shown``; both in
 cards/review.py, where the answer card in a topic's thread takes them too). ``merged_card``: 做完了 relays that came close together, as one card
 (app/relay_send.py send_merged). A 做完了 card ends with a grey line saying where a reply to it goes (``reply_hint``, T647 P1-A3):
-to its topic, and on the merged card to the butler (MERGED_HINT)."""
+to its topic, and on the merged card to the butler (MERGED_HINT). ``relay_pages``: a 做完了 reply too large for one card,
+over several (cards/pages.py)."""
 from __future__ import annotations
 
 from covey.cards.answer_card import change_element, check_element, details, facts_element, words_fold
 from covey.cards.elements import card, grey, json_size, md, note
-from covey.cards.review import ANSWER_CARD_BYTES, answer_lead, drop_part_heading, reply_body, reply_shown
+from covey.cards.review import ANSWER_CARD_BYTES, FOLD_ID, answer_lead, drop_part_heading, reply_body, reply_shown
 from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, speaker_row,
                             split_ask, styled, topic_badge)
 from covey.core import look
 from covey.core.failure import HEADLINE_CHARS, split_title
 from covey.core.text import literal, redact
 
-CARD_TEXT_BYTES = 24000  # A card is at most 30 KB (CardKit); a longer reply goes as Markdown messages.
+CARD_TEXT_BYTES = 24000  # A card is at most 30 KB (CardKit); a longer reply goes on several (``relay_pages``).
 QUESTION_CHARS = 300
 SUMMARY_CHARS = 40
 REASON_CHARS = 200  # A stop's reason and next step (core/failure.py failure_view's title), before the band splits them.
@@ -62,8 +63,8 @@ def summary(label, words, text):
 def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, outputs=(), files=None,
                files_status=None, ask=None, at=None, took=None, artifacts=0, change=None, delivery="", notes=(),
                buttons=(), url="", avatar=""):
-    """(card, text): the relay's card (None for a reply over CARD_TEXT_BYTES: the Markdown alone), and
-    the same as Markdown when the card is refused. Its first element says whose it is (cards/ui.py speaker_row: the
+    """(card, text): the relay's card (None for a reply over CARD_TEXT_BYTES: it goes on several, ``relay_pages``),
+    and the same as Markdown when the card is refused. Its first element says whose it is (cards/ui.py speaker_row: the
     topic's T number as its badge, its title, its state as a tag, what it did with the owner's words after it), so the
     card has no "你问" block. ``avatar``: the speaker's picture (an image key) when ``ask`` has none and no T number
     makes a badge.
@@ -105,8 +106,8 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         parts = details([files, change_element(None if line else shown_change), check_element(shown_change), *(notes or ())])
         tail = [*parts, *([ending] if ending else []), *(buttons or ()), reply_hint(label)]
         built = banded(card([row, *said, *reply, *tail], lead, update_multi=True, **style))
-        # A long 改动 fold may take a card past its limit (as cards/review.py answer_card): the reply goes as
-        # Markdown, its parts after it (app/relay_send.py send_once).
+        # A long 改动 fold may take a card past its limit (as cards/review.py answer_card): the reply goes on
+        # several cards, its parts under the last or after them (``relay_pages``, app/relay_send.py send_once).
         return (built if json_size(built) <= ANSWER_CARD_BYTES else None), body
     elif outcome == WAITING:
         words = " ".join(str(question or "").split())
@@ -173,3 +174,30 @@ def merged_card(items, avatar=""):
         + (f"：{item['lead']}" if item.get("lead") else "")
         + (f"（{files_words(item.get('files'))}）" if files_words(item.get("files")) else "") for item in items] + ["", MERGED_HINT]
     return built, "\n".join(lines)
+
+
+def relay_pages(label, *, text="", ask=None, url="", avatar="", link=None, finish=None, **facts):
+    """A 做完了 relay too large for one card (``relay_card`` gave none, or its card grew past a card's room once its T
+    numbers became links, app/relay_send.py) over as many cards as it takes (cards/pages.py Paged): each opens with the
+    relay's row (its T number's badge, its title, 有结果, the way into the topic) with "1/3" in it, the owner's words
+    that open under the first, the reply cut where it fits, and under the last what ``relay_card`` puts under a reply
+    (产物, 改动, 输入/输出…), else, when the last cannot hold it too, ``alone``: the caller sends it on a card of its own.
+    ``link`` (text -> text): the reply's T numbers as links, once, before it is cut; ``finish`` (card -> card): the other
+    parts', once (cards/pages.py finished). ``facts`` as ``relay_card`` takes them."""
+    from covey.cards.answer_card import WORDS_ID
+    from covey.cards.pages import Paged, drawer, finished, paged
+
+    meta, _ = split_ask([ask] if ask else [])
+    # What goes under a reply, drawn by relay_card itself: the same parts as on one card, from one place.
+    bare, _ = relay_card(label, DONE, text="", ask=ask, url=url, avatar=avatar, **facts)
+    parts = list(((bare or {}).get("body") or {}).get("elements") or [])[1:]  # Its row is drawn again with the page.
+    said, tail = finished(finish, [part for part in parts if isinstance(part, dict) and part.get("element_id") == WORDS_ID],
+                          [part for part in parts if not (isinstance(part, dict) and part.get("element_id") == WORDS_ID)])
+    body = drop_part_heading(reply_body(text))
+    body = link(body) if link else body
+
+    def row(page):
+        return speaker_row(meta, outcome="result", label=label, avatar=avatar, url=into(url, meta), page=page)
+    lead = summary(label, look.word("result"), answer_lead(text, SUMMARY_CHARS))
+    result = paged(body, drawer(lead, row=row, words=said, element_id=FOLD_ID, tail=tail, update_multi=True))
+    return result if bare is not None else Paged(result.pages, True)  # Its parts alone past a card: on their own.
