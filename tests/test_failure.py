@@ -100,6 +100,27 @@ class ViewTest(unittest.TestCase):
         view = failure.failure_view(retried)
         self.assertEqual((view["actions"], view["title"].endswith("将换 Opus 4.8 自动重试一次")), ([], True))
 
+    def test_a_task_whose_runner_never_started_says_so_with_the_exception_in_the_detail(self):
+        """T650 (A1): the recovery card said "任务进程启动失败（BlockingIOError: …）" in its first words; the web page and the board
+        said only "这一轮没有成功"."""
+        for status in ("failed", "interrupted"):
+            with self.subTest(status):
+                record = failed(status=status, runner_start_failed=True, status_message="task runner could not be started",
+                                runner_start_error="BlockingIOError: Resource temporarily unavailable")
+                view = failure.failure_view(record)
+                self.assertEqual(view["title"], "任务进程没能启动，这一轮没有开始；可以接着做，或先看原因")
+                self.assertEqual(view["actions"], ["continue", "diagnose"])
+                self.assertIn("启动出错 BlockingIOError: Resource temporarily unavailable", view["detail"])
+        self.assertIsNone(failure.failure_view(failed(runner_start_failed=True, cancel_requested_by="card")))
+
+    def test_each_button_is_named_as_the_card_names_it(self):
+        self.assertEqual(failure.label(failed(failure_code="timeout"), failure.CONTINUE), "检查并继续")
+        undelivered = failed(execution_status="done", delivery_ok=False, final_text="回答")
+        self.assertEqual(failure.label(undelivered, failure.CONTINUE), "重新投递结果")
+        self.assertEqual([failure.label(failed(), name) for name in (failure.RETRY, failure.DIAGNOSE, failure.SPLIT,
+                                                                     failure.SWITCH_MODEL)],
+                         ["现在重试", "看原因", "拆小再试", "换个模型"])
+
     def test_the_follow_ups_say_what_the_owner_asked_for(self):
         record = failed(failure_code="timeout")
         view = failure.failure_view(record)
@@ -204,10 +225,14 @@ class CardTest(unittest.TestCase):
         submission = SimpleNamespace(
             runtime=SimpleNamespace(jobs=SimpleNamespace(topic_jobs=lambda topic, chat: [])),
             harness=SimpleNamespace(topic_records=lambda ctx, chat: [record]),
-            enqueue_chat_job=lambda ctx, content, chat, mid, **kw: queued.append((content, kw["prompt_content"])))
+            enqueue_chat_job=lambda ctx, content, chat, mid, **kw: queued.append((content, kw["prompt_content"]))
+            or SimpleNamespace(job_id=8))
+        submission.follow_up_job = lambda *args: Submission.follow_up_job(submission, *args)
         ctx = SimpleNamespace(topic_id="topic")
         self.assertEqual(Submission.queue_follow_up(submission, ctx, "chat", "ev1", 7, failure.SPLIT), "")
         self.assertEqual(queued[0][0], "拆小再试：任务 #7")
+        self.assertEqual(Submission.follow_up_job(submission, ctx, "chat", "ev1b", 7, failure.SPLIT), ("", 8))  # Its task's number.
+        del queued[1:]
         self.assertEqual(Submission.queue_follow_up(submission, ctx, "chat", "ev2", 7, failure.DIAGNOSE),
                          "这个任务现在没有这一步可做。")  # A timeout offers 拆小再试, not 看原因.
         submission.runtime.jobs.topic_jobs = lambda topic, chat: [object()]

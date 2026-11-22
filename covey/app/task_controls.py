@@ -28,7 +28,7 @@ from covey.cards.review import recent_user_questions
 from covey.core.saved_results import has_saved_reply, load_authorized_reply
 from covey.core.locks import LOCK, topic_lock
 from covey.core.store import directory_store
-from covey.app import auto_retry, subagent_recovery
+from covey.app import auto_retry, relay_stops, subagent_recovery
 from covey.app.recovery_cards import paint_answered, recovery_card
 from covey.app.task_card import card_failure_notice
 from covey.app.redelivery import Redelivery
@@ -197,7 +197,8 @@ class TaskControls(Redelivery):
                                         reply_to_message_id=str(record.get("reply_to_message_id") or ""), voice=self.voice)
 
     def task_action(self, ctx, event):
-        """检查并继续 and 停止自动重试 on a task's card."""
+        """检查并继续 and 停止自动重试 on a task's card; 检查并继续 on a stopped relay at the top level (app/relay_stops.py RELAY) is
+        the same retry, its relay's card then redrawn in place instead of a reply in the topic's thread."""
         raw = action_value(event)
         if not ctx.topic_id or raw.get("topic_id") != ctx.topic_id:
             return True
@@ -213,6 +214,10 @@ class TaskControls(Redelivery):
         if raw["kind"] == auto_retry.CANCEL_KIND:
             text = self.stop_auto_retry(ctx, chat_id, job_id)
             after_ack(lambda: reply(text))
+        elif raw.get(relay_stops.RELAY):
+            # Its card says what came of it from the records (the retry's task number, or why none): no task number here.
+            after_ack(lambda: relay_stops.clicked(self, ctx, event, raw, lambda: (
+                self.retry_topic(ctx, chat_id, event_id, job_id=job_id), None)))
         else:
             # The new task's card, the old card's update and the reply took 3.5 s in the click, over
             # Feishu's 3 s: all after the acknowledgement. A repeated click's follow-up

@@ -30,7 +30,7 @@ BODY_BYTES = 64 * 1024
 CUT_NOTE = "\n\n（内容太长，已截断）"
 LEDGER_KEPT = 2000
 KINDS = ("say", "answer", "stop", "reopen", "seen", "forget", "tidy", "settings", "dismiss", "tidy_decide", "launch", "switch",
-         "memory_fix")
+         "memory_fix", "recover")
 TYPES = ("project", "topic", "turn", "question", "settings", "collab")
 SETTINGS_KEY = "settings"  # The one ``settings`` item's key (app/web_settings.py).
 USAGE_KEY = "usage"  # The ``settings`` item of 本周用量 as the bot menu's card counts it (app/web_settings.py usage).

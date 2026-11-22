@@ -21,7 +21,7 @@ from covey.core.history_storage import recent_history
 from covey.core.topics import bind_topic, proxy_topic, read_topic, workspace_locked
 from covey.core.locks import LOCK, topic_lock
 from covey.core.workspaces import load_config, resolve_selection, topic_context, touch_workspace
-from covey.app import butler_reactions
+from covey.app import butler_reactions, relay_stops
 from covey.app.card_actions import action_value
 from covey.app.card_lanes import after_ack
 from covey.app.runtime import job_stage
@@ -200,22 +200,32 @@ class Submission:
             text = self.queue_follow_up(ctx, chat_id, event_id, job_id, name)
             if text:
                 self.messenger.reply(ctx, chat_id, text, self.voice.key("follow-up", event_id), voice=self.voice)
-        after_ack(run)
+        if raw.get(relay_stops.RELAY):
+            # On a stopped relay at the top level: the same follow-up, then its card redrawn in place (app/relay_stops.py).
+            after_ack(lambda: relay_stops.clicked(self, ctx, event, raw,
+                                                  lambda: self.follow_up_job(ctx, chat_id, event_id, job_id, name)))
+        else:
+            after_ack(run)
         return True
 
     def queue_follow_up(self, ctx, chat_id, message_id, job_id, name):
         """Queue the follow-up ``name`` of task #``job_id``; what to tell the owner when it was not queued, else ""."""
+        return self.follow_up_job(ctx, chat_id, message_id, job_id, name)[0]
+
+    def follow_up_job(self, ctx, chat_id, message_id, job_id, name):
+        """``queue_follow_up``'s words, and the job id of the follow-up it queued (None when it queued none: refused, or the
+        submission said why in the topic itself)."""
         if self.runtime.jobs.topic_jobs(ctx.topic_id, chat_id):
-            return "本话题还有运行或排队的任务，完成或停止后再点。"
+            return "本话题还有运行或排队的任务，完成或停止后再点。", None
         record = next((r for r in self.harness.topic_records(ctx, chat_id) if r.get("job_id") == job_id), None)
         view = failure.failure_view(record) if record else None
         if view is None or name not in view["actions"]:
-            return "这个任务现在没有这一步可做。"
+            return "这个任务现在没有这一步可做。", None
         content, prompt = failure.follow_up(name, record, view)
         # Still the task of whoever sent its message (app/tool_limits.py READ), whoever clicked.
-        self.enqueue_chat_job(ctx, content, chat_id, message_id, prompt_content=prompt,
-                              sender_id=str(record.get("sender_id") or ""))
-        return ""
+        job = self.enqueue_chat_job(ctx, content, chat_id, message_id, prompt_content=prompt,
+                                    sender_id=str(record.get("sender_id") or ""))
+        return "", (getattr(job, "job_id", None) if job is not None else None)
 
     def submit_topic_job(self, ctx, job, *, steer=False):
         """Decide and register under LOCK; the cards and notices after it, in this topic's order. ``steer``: a

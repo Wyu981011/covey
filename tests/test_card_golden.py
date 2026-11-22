@@ -587,6 +587,10 @@ def recovery_cards():
     return {
         "interrupted": recovery_card(record),
         "interrupted_continued": recovery_card(record, continued=True),
+        # T650: a task runner that never started, its exception in 技术详情 (core/failure.py start_failed).
+        "start_failed": recovery_card({**record, "status": "failed", "runner_start_failed": True,
+                                       "runner_start_error": "BlockingIOError: Resource temporarily unavailable",
+                                       "status_message": "task runner could not be started; the job did not run"}),
         "saved_answer": recovery_card({**record, "result_retry_policy": "saved_delivery_only",
                                        "verified_reply_authorized": True, "verified_reply_state": "authorized"}),
         "stopped": stopped_card("任务 #431 已停止。", retry=("检查并继续", TOPIC, 431),
@@ -818,6 +822,16 @@ def answer_tail_cards():
     """The answer card with its 产物 and 输入/输出 (cards/answer_card.py, 2026-11-08), its relay at the top level and
     the small card after an answer sent as a file."""
     from covey.cards.relay_card import DONE, STOPPED, WAITING, merged_card, relay_card
+    from covey.app import relay_stops
+    from covey.cards.elements import replace_element
+    from covey.core.failure import failure_view
+
+    def stopped_relay(**fields):
+        """停住了 at the top level as app/relay_stops.py facts draws it: core/failure.py's words of the record, its buttons."""
+        record = {"job_id": 439, "topic_id": TOPIC, "status": "failed", "execution_status": "failed", **fields}
+        view = failure_view(record)
+        area = relay_stops.buttons(record, view)
+        return relay_card("T439", STOPPED, reason=view["title"], buttons=[area] if area else [])[0]
     from covey.cards.answer_card import (ARTIFACTS_ID, acceptance_element, criteria_element, input_parts, memory_element,
                                          output_parts, review_element, revisit_hint_element, tail, tail_card)
     from covey.cards.elements import markdown_panel
@@ -925,7 +939,14 @@ def answer_tail_cards():
             "relay_merged": merged_card([{"label": "T439", "title": "改看板的 Pin 目标", "lead": "按钮已经改好",
                                           "url": thread_url},
                                          {"label": "T441", "title": "查一下昨晚的日志", "lead": "没有异常"}])[0],
-            "relay_stopped": relay_card("T439", STOPPED, reason="到了任务的时间上限，这一轮停在这里；可以接着做，或拆小再试")[0],
+            # T650: the record's words through core/failure.py (they were the status line, and no next step), the task card's
+            # 检查并继续 and its follow-up under them; once clicked, the line of what it started in their place.
+            "relay_stopped": stopped_relay(failure_code="timeout", status_message="本轮任务已超时。任务执行时间已到。"),
+            "relay_stopped_unfinished": stopped_relay(failure_code="root_failed", status_message="任务异常（RuntimeError）"),
+            "relay_stopped_limit": stopped_relay(failure_code="rate_limited"),
+            "relay_stopped_quota": stopped_relay(failure_code="quota_exhausted"),
+            "relay_stopped_started": (lambda built: replace_element(built, relay_stops.AREA_ID, relay_stops.line(
+                "↪ 已接着做 · 任务 #440")) and built)(stopped_relay(failure_code="timeout")),
             "answer_card_asked": answer_card(text, "✅ 结论", tail(files, inputs, outputs), [ask]),
             "answer_relay_asked": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
                                              ask=ask)[0],

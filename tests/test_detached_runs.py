@@ -13,6 +13,7 @@ from unittest import mock
 
 from support import REPO
 from support.cards import text_of
+from covey.cards.elements import find_element
 from support.fake_backends import SID, RecordingBackend
 from support.processes import leftover_check
 from support.world import UnifiedCase
@@ -659,10 +660,14 @@ class BridgeSideTests(UnifiedCase):
         self.assertIsNone(app.runtime.jobs.find(7))
         self.assertFalse(detached.queued_path(ctx.state_dir, "task-7").exists())
         recovery.assert_called_once()
-        text = json.dumps(recovery_card(record), ensure_ascii=False)
+        card = recovery_card(record)
+        text = json.dumps(card, ensure_ascii=False)
         self.assertIn("停住了 · &#35;7", text)
         self.assertIn("任务进程没能启动", text)
-        self.assertIn("任务进程启动失败（BlockingIOError: Resource temporarily unavailable）", text)
+        # The exception's kind is in 技术详情, folded (T650: no exception name in the words the owner reads first).
+        self.assertNotIn("BlockingIOError", json.dumps(card["body"]["elements"][:2], ensure_ascii=False))
+        self.assertIn("启动出错 BlockingIOError: Resource temporarily unavailable",
+                      json.dumps(find_element(card, "failure_details"), ensure_ascii=False))
         self.assertIn('"content": "检查并继续"', text)
         # Its stop button now finds it ended; nothing is left to hold a deploy.
         self.click(kind="bridge_job_stop", job_id=7)

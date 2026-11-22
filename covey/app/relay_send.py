@@ -1,7 +1,8 @@
 """Sending what goes back to the butler's top level (app/butler_relay.py): each relay once (``send_once``, rule 6:
 its card made first, then main-thread/relays/<job key>.json says ``submitting`` under a file lock no Feishu call is
 made under, rules 1 and 2, then ``sent`` with the message id, or ``uncertain``; a job with a record is never sent
-again), ``unsent`` for one that failed before any Feishu call (``record_unsent``: kept and logged, never sent later),
+again; a 停住了 one keeps its card as sent, ``card``, for its buttons' clicks to redraw, app/relay_stops.py),
+``unsent`` for one that failed before any Feishu call (``record_unsent``: kept and logged, never sent later),
 the one way a relay goes out through the Messenger (``messenger_send``), its T numbers as links (``linked``), and
 what each message sent says about whose it is (``remember_sent``). ``send_merged``: a 做完了 relay that may wait
 COVEY_RELAY_MERGE_SECONDS for others of its chat (PENDING, listed in WAITING) and go out with them as one card."""
@@ -13,8 +14,8 @@ from pathlib import Path
 from covey.app import answer_cards
 from covey.app.relay_targets import ask_for, turn_card
 from covey.cards.answer_card import tail as answer_tail, tail_card
-from covey.cards.relay_card import (DONE as DONE_OUTCOME, WAITING as WAITING_OUTCOME, merged_card, relay_card,
-                                    summary)
+from covey.cards.relay_card import (DONE as DONE_OUTCOME, STOPPED as STOPPED_OUTCOME, WAITING as WAITING_OUTCOME,
+                                    merged_card, relay_card, summary)
 from covey.cards.review import FOLD_ID, answer_lead
 from covey.core import background, butler
 from covey.core.failure import HEADLINE_CHARS
@@ -219,6 +220,8 @@ def _send(state_dir, taken, key, target, outcome, send, made, profile, log):
                       sent_at=time.time())
         if merged:
             record["merged"] = keys  # The relays that went out as this one message.
+        if ok and sent and outcome == STOPPED_OUTCOME and isinstance(built, dict):
+            record["card"] = built  # A click on its buttons redraws it in place (app/relay_stops.py settle).
     with lock(state_dir):
         for path, record in taken:
             write_json(path, record, ensure_ascii=False, indent=1)

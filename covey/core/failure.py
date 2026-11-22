@@ -1,11 +1,13 @@
 """Why a turn did not succeed and what can be done next, in plain words: ``failure_view`` of its job record, one pure
 function for the task card's body and buttons (app/worker.py, app/auto_retry.py failed_controls), the recovery card
-(app/recovery_cards.py) and the web page's turn (app/web_sync.py, turn.data ``failure``).
+(app/recovery_cards.py), the 停住了 relay at the private chat's top level (app/relay_stops.py) and the web page's turn
+(app/web_turns.py failure_of, turn.data ``failure``).
 
 ``title`` is one sentence: the reason and what happens or can be done next. ``detail`` keeps the internal words (the
-record's status line, the error code, the subagent's id) the title leaves out. ``actions`` are the next steps, in
-order: continue (检查并继续), retry (现在重试, the same click), diagnose (看原因, a read-only turn that looks into it),
-split (拆小再试), switch_model (换配置). The card offers the ones its record allows (core/recovery.py classify).
+record's status line, the error code, the subagent's id, why its task runner did not start) the title leaves out.
+``actions`` are the next steps, in order: continue (检查并继续), retry (现在重试, the same click), diagnose (看原因, a
+read-only turn that looks into it), split (拆小再试), switch_model (换配置). The card offers the ones its record allows
+(core/recovery.py classify); ``label`` names each as the card's button does.
 
 The record says why through ``failure_code`` (the turn's ExecutionOutcome error code, app/worker.py) and
 ``failure_detail`` (a route's own words: who was refused doing what); a record written before them is read from its
@@ -47,8 +49,10 @@ UNFINISHED = {
     "child_unknown": "有子任务的结局没法确认",
     "incomplete": "",  # A record from before failure_code: its status line says no more.
 }
-# Not error codes: what failure_code says of a record that names none.
-PSEUDO = frozenset({"policy", "restart", "interrupted", "incomplete", "failed", "undelivered"})
+# Not error codes: what failure_code says of a record that names none. start_failed: its task runner never started
+# (app/detached.py not_started, or one that ended before its job began), so nothing of the turn ran.
+START_FAILED = "start_failed"
+PSEUDO = frozenset({"policy", "restart", "interrupted", "incomplete", "failed", "undelivered", START_FAILED})
 # Out of a limit of the run: continue, or the same in smaller steps.
 LIMITS = {
     "timeout": "到了任务的时间上限",
@@ -69,6 +73,7 @@ OWN = {
     "redaction_failed": ("本话题开着敏感词脱敏，这一轮没法脱敏，没有发给模型；问题解决后可以重试", (RETRY,)),
     "read_only_refused": ("这个群的群成员只读，这个模型做不到只读，这一轮没有开始；可以换个模型（Claude 或 Codex）",
                           (SWITCH_MODEL,)),
+    START_FAILED: ("任务进程没能启动，这一轮没有开始；可以接着做，或先看原因", (CONTINUE, DIAGNOSE)),
 }
 
 
@@ -87,6 +92,9 @@ def failure_code(record):
         return "policy"
     if saved_delivery(record):  # A reply was saved: only it is sent, never the task run again (core/recovery.py).
         return "" if record.get("delivery_ok") is True or not authorized(record) else "undelivered"
+    if (status in ("failed", "interrupted") and record.get("runner_start_failed") is True
+            and not record.get("cancel_requested_by")):
+        return START_FAILED  # Its card is the recovery card's START_FAILED (core/recovery.py), whatever ended it.
     if status == "interrupted":
         return "restart" if record.get("interrupted_by") in ("restart", "sigterm") else "interrupted"
     code = record.get("failure_code")
@@ -147,6 +155,8 @@ def _detail(record, code):
     parts = [str(record.get("status_message") or "").strip()]
     if code and code not in PSEUDO:
         parts.append(f"错误码 {code}")
+    if code == START_FAILED and record.get("runner_start_error"):
+        parts.append(f"启动出错 {record['runner_start_error']}")  # The exception's kind (app/detached.py start_error).
     event = record.get("policy_stop")
     if isinstance(event, dict):
         parts.append(" · ".join(filter(None, [
@@ -201,6 +211,14 @@ def failure_view(record, now=None):
         if not (bool(label) if code == "undelivered" else label == RETRY_LABEL):
             actions = tuple(a for a in actions if a not in (CONTINUE, RETRY))
     return {"title": title, "detail": _detail(record, code), "actions": list(actions)}
+
+
+def label(record, action) -> str:
+    """What ``action``'s button says for ``record``, as its card says it: continue is the record's own 检查并继续
+    (重新投递结果 for a result that did not go out, core/recovery.py classify), the others are LABELS'."""
+    if action == CONTINUE:
+        return classify(record).label or LABELS[CONTINUE]
+    return LABELS.get(action, "")
 
 
 HEADLINE_CHARS = 40  # docs/ui.md 第 7 节: a sentence over 40 characters is split, its second part on the next line.

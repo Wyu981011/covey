@@ -55,6 +55,8 @@ KINDS) as the owner's own and says (state, message) for the ack.
   stay; off it is ``failed``, never a plain stop of the integrator's task.
 - ``memory_fix``: ``entry_id`` of a project's memory corrected as the owner (core/project_memory.py ``fix`` through app/project_context.py
   ``fix_memory``): ``what`` ``scope`` (``applies``), ``once`` or ``confirm``; a topic's own memory is not corrected from the page yet.
+- ``recover`` (data contract v33): a button of a turn that did not succeed, ``job_id`` its task, done as the task card's button does it
+  (``recover``): 检查并继续 redelivers a saved result or question when the record says so, never running the model again for it.
 The topic or project has to be the owner's private chat's, known and not over; anything else is ``failed`` with the reason.
 
 Rules (AGENTS.md): nothing is sent from under a record's lock; a write to a task is not replayed (the ledger, core/web_sync.py, keeps an
@@ -67,16 +69,18 @@ import re
 import time
 from pathlib import Path
 
-from covey.app import project_loop
+from covey.app import auto_retry, project_loop
 from covey.app.answers import AnswerIncomplete, answer_fields, skip_all_fields, submitted_answer
+from covey.app.binding import stale_job_card
 from covey.app.runtime import job_stage, supplement_target_of
 from covey.app import web_files
 from covey.app.web_settings import WebSettings
-from covey.core import board_read, collab, collab_records, project_memory, projects, triage, turn_source, web_sync
+from covey.app.web_turns import STOP_AUTO_RETRY
+from covey.core import board_read, collab, collab_records, failure, project_memory, projects, triage, turn_source, web_sync
 from covey.core.attachments import message_words
 from covey.core.butler import is_butler_root
 from covey.core.history_storage import append_history
-from covey.core.jobs import JOB_STOP_ACTION_KIND, topic_job_records
+from covey.core.jobs import JOB_STOP_ACTION_KIND, find_job_record, topic_job_records
 from covey.core.state import read_object
 from covey.core.steer import SteerRefused, SteerUncertain
 from covey.core.topics import remember_topic_message, topic_file
@@ -89,6 +93,13 @@ WEB_STOP_NOTE = "你在网页上停了这个话题"
 PREFIX = web_sync.PREFIX  # The message id of the owner's words from the page: ``web-<op_id>``.
 TOPIC_ID = re.compile(r"[0-9a-f]{16,128}")
 TOKEN = re.compile(r"[0-9A-Za-z_-]{6,128}")
+# ``recover``'s actions (data contract v33): core/failure.py's continue, retry, diagnose and split, and 停止自动重试.
+RECOVER_ACTIONS = (failure.CONTINUE, failure.RETRY, failure.DIAGNOSE, failure.SPLIT, STOP_AUTO_RETRY)
+# The message id of the turn a ``recover`` starts: ``recover-<op_id>``, as a card click's is its event id. Not ``web-``: those are the
+# owner's own words (app/project_lead.py OWNER_PREFIXES, app/butler_asks.py, app/collab_flow.py), and a retry or a 看原因 says none.
+RECOVER_PREFIX = "recover-"
+RECOVER_DONE = {failure.DIAGNOSE: "已开一轮只读排查：看看这一轮为什么没成功，不改文件、不重跑",
+                failure.SPLIT: "已开始拆小再试：把这件事拆成更小的几步重新做"}
 
 
 class Ops:
@@ -113,7 +124,7 @@ class Ops:
             handler = {"say": self.say, "answer": self.answer, "stop": self.stop, "reopen": self.reopen, "seen": self.seen,
                        "forget": self.forget, "tidy": self.tidy, "settings": self.settings,
                        "dismiss": self.dismiss, "tidy_decide": self.tidy_decide, "launch": self.launch,
-                       "switch": self.switch, "memory_fix": self.memory_fix}.get(kind)
+                       "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -578,6 +589,73 @@ class Ops:
         gateway.stop(self.collab_ctx(state, chat, str((record.get("integrator") or {}).get("key") or "")), collab_id, by="web")
         parts = [f"{len(live)} 次咨询" if live else "", "汇总方的续接轮" if reply else ""]
         return "已停止这次协作" + (f"（停了 {'、'.join(part for part in parts if part)}）" if live or reply else "") + "：各话题手上别的工作没有动"
+
+    # -- recover -----------------------------------------------------------------------------------------------------------
+
+    def recover(self, state, chat, row, payload) -> str:
+        """检查并继续 (``action`` continue, and retry: 现在重试), 看原因 (diagnose), 拆小再试 (split) and 停止自动重试 (stop_auto_retry) of
+        the task ``job_id`` of the row's topic, as the buttons of its task card do (data contract v33): the same calls
+        (app/task_controls.py retry_topic, which redelivers a saved result or question instead of running the model again when the
+        record says so; app/submission.py queue_follow_up; app/task_controls.py stop_auto_retry), in the context an automatic retry
+        runs in (app/auto_retry.py retry_context: a topic's, the butler's or a lead's). Only what the record allows now
+        (core/failure.py failure_view's actions; continue and retry also while an automatic retry is pending: it runs at once and
+        the scheduled one is dropped, never both), and continue not on a task from before the topic's latest 换配置 (a card's
+        click is refused the same way, app/card_routing.py job_route). Done when something was started or sent, else failed with
+        why not, nothing done: the topic has a task at work, the task went on already, a second click (the op ledger keeps an
+        op_id from running twice, and a task once retried is not retried again)."""
+        topic, action = str(row.get("topic_key") or ""), str(payload.get("action") or "")
+        if action not in RECOVER_ACTIONS:
+            raise ValueError(f"不认识的恢复操作：{action[:20]}")
+        job_id = str(payload.get("job_id") or "").strip()
+        if not job_id.isdigit():
+            raise ValueError("没有任务编号")
+        if not TOPIC_ID.fullmatch(topic):
+            raise ValueError("没有话题编号")
+        data = read_object(topic_file(state, topic))
+        if not data or data.get("chat_id") != chat or data.get("retired"):
+            raise ValueError("这个话题不认识，或不在你的私聊里，或已经结束")
+        record = next((each for each in topic_job_records(state, topic, chat_id=chat) if str(each.get("job_id")) == job_id), None)
+        if record is None:
+            raise ValueError(f"这个话题里没有任务 #{job_id}")
+        app = getattr(self.env.topics, "apps", {}).get(record.get("backend"))
+        if app is None:
+            raise ValueError("这个任务的 Harness 现在不可用")
+        try:
+            ctx = auto_retry.retry_context(app, record, auto_retry.record_topic(app, record))
+        except (OSError, ValueError, KeyError, TypeError):
+            raise ValueError("这个话题现在读不到，没有执行") from None
+        if ctx.topic_id != topic:
+            raise ValueError("这个话题现在读不到，没有执行")
+        message, pending = RECOVER_PREFIX + str(row.get("op_id")), auto_retry.pending(record)
+        if action == STOP_AUTO_RETRY:
+            if not pending:
+                raise ValueError(f"任务 #{job_id} 没有待执行的自动重试")
+            app.controls.stop_auto_retry(ctx, chat, int(job_id))
+            if (find_job_record(state, record["key"]) or {}).get("auto_retry_state") != "cancelled":
+                raise ValueError("自动重试已经开始，没有停下；要停在跑的那一轮，点它的停止")
+            return "已停止自动重试；要接着做时点「检查并继续」"
+        offered = (failure.failure_view(record) or {}).get("actions") or []
+        if action in (failure.CONTINUE, failure.RETRY):
+            if record.get("retried_by"):  # 检查并继续 on its card, an automatic retry or another click went first.
+                moved = find_job_record(state, str(record["retried_by"])) or {}
+                raise ValueError(f"这一轮已经接着做了（任务 #{moved.get('job_id') or '?'}），没有再开一次")
+            if not pending and not {failure.CONTINUE, failure.RETRY} & set(offered):
+                raise ValueError("这一轮现在不能接着做" + ("：结果已经发出" if record.get("delivery_ok") else ""))
+            if stale_job_card(data, record):
+                raise ValueError("话题之后换过配置，这一轮不能再接着做；在话题里说一句，就按新配置开下一轮")
+            said = app.controls.retry_topic(ctx, chat, message, job_id=int(job_id))
+            after = find_job_record(state, record["key"]) or {}
+            moved = after.get("retried_by") and after.get("retried_by") != record.get("retried_by")
+            sent = any(after.get(name) is True and record.get(name) is not True for name in ("delivery_ok", "question_delivery_ok"))
+            if moved or sent:
+                return said
+            raise ValueError(said)
+        if action not in offered:
+            raise ValueError("这一轮现在没有这一步可做")
+        said, started = app.submission.follow_up_job(ctx, chat, message, int(job_id), action)
+        if said or started is None:
+            raise ValueError(said or "这一步没有排上，话题里有说明")
+        return f"{RECOVER_DONE[action]}（任务 #{started}）"
 
     # -- tidy --------------------------------------------------------------------------------------------------------------
 

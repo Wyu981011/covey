@@ -2220,6 +2220,187 @@ class RanWithTest(WebCase):
         self.assertNotIn("ran_with", turns[f"{TOPIC}:1"])
 
 
+class FailureOfTest(unittest.TestCase):
+    """What a turn that did not succeed tells the page beside failure_view (app/web_turns.py failure_of, data contract v33): each
+    button's words as the card says them, how the page does each, and a pending automatic retry (T650)."""
+
+    def failed(self, **fields):
+        return {"job_id": 7, "topic_id": TOPIC, "chat_id": CHAT, "status": "failed", "execution_status": "failed", **fields}
+
+    def test_each_action_has_the_cards_words_and_the_way_the_page_does_it(self):
+        view = web_turns.failure_of(self.failed(failure_code="root_failed"))
+        self.assertEqual((view["actions"], view["labels"], view["how"]),
+                         (["continue", "diagnose"], {"continue": "检查并继续", "diagnose": "看原因"},
+                          {"continue": "recover", "diagnose": "recover"}))
+        self.assertNotIn("auto_retry", view)
+        # A result that did not go out: 检查并继续 is 重新投递结果 there, and redelivers it (never the model again).
+        undelivered = web_turns.failure_of(self.failed(execution_status="done", delivery_ok=False, final_text="回答"))
+        self.assertEqual(undelivered["labels"], {"continue": "重新投递结果"})
+        # 换个模型 is the page's own 换配置 for a topic; the butler's configuration is changed in Feishu only.
+        self.assertEqual(web_turns.failure_of(self.failed(failure_code="quota_exhausted"))["how"], {"switch_model": "switch"})
+        butler = web_turns.failure_of(self.failed(failure_code="quota_exhausted", topic_id=BUTLER))
+        self.assertEqual(butler["how"], {"switch_model": "feishu"})
+        self.assertIsNone(web_turns.failure_of({"status": "done", "topic_id": TOPIC}))
+
+    def test_a_pending_automatic_retry_says_when_what_runs_it_now_and_what_stops_it(self):
+        at = time.time() + 170
+        view = web_turns.failure_of(self.failed(failure_code="server_fault", auto_retry_state="pending", auto_retry_at=at,
+                                                auto_retry_attempt=1, auto_retry_kind="server_fault"))
+        self.assertEqual(view["auto_retry"], {"state": "pending", "at": round(at), "attempt": 1, "total": 3, "kind": "server_fault",
+                                              "now": "retry"})
+        self.assertEqual((view["labels"]["retry"], view["labels"]["stop_auto_retry"], view["how"]["stop_auto_retry"]),
+                         ("现在重试", "停止自动重试", "recover"))
+        self.assertIn("会自动重试（第 1/3 次）", view["title"])
+        # A restart's: nothing to click in its actions, but 检查并继续 runs it now, as its card's button does.
+        restart = web_turns.failure_of({"job_id": 7, "topic_id": TOPIC, "status": "interrupted", "interrupted_by": "restart",
+                                        "auto_retry_state": "pending", "auto_retry_at": at, "auto_retry_attempt": 1,
+                                        "auto_retry_kind": "restarted"})
+        self.assertEqual((restart["actions"], restart["auto_retry"]["now"], restart["labels"]["continue"]), ([], "continue", "检查并继续"))
+        # A rate limit's ladder starts over after progress: no total to count against.
+        limit = web_turns.failure_of(self.failed(failure_code="rate_limited", auto_retry_state="pending", auto_retry_at=at,
+                                                 auto_retry_attempt=2, auto_retry_kind="rate_limited"))
+        self.assertIsNone(limit["auto_retry"]["total"])
+
+
+class RecoverTest(WebCase):
+    """``recover`` (data contract v33): a button of a turn that did not succeed, done as its task card's button does it (T650)."""
+
+    def setUp(self):
+        super().setUp()
+        self.topic()
+        self.env.topics.apps = {"claude": self.app}
+        self.retries, self.follow_ups, self.stops = [], [], []
+        self.app.controls.retry_topic = self.retry_topic
+        self.app.controls.stop_auto_retry = self.stop_auto_retry
+        self.app.submission.follow_up_job = self.follow_up_job
+        for name in ("retry_context", "record_topic"):
+            patch = mock.patch.object(web_ops.auto_retry, name, side_effect=lambda *args: Ctx(TOPIC, self.state))
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def failed(self, job_id=21, **fields):
+        fields = {"status": "failed", "execution_status": "failed", **fields}
+        return write_job(self.state, f"k-{job_id}", job_id=job_id, topic_id=TOPIC, chat_id=CHAT, backend="claude",
+                         message_id=f"om_{job_id}", **fields)
+
+    def retry_topic(self, ctx, chat, message, *, job_id=None):
+        """TaskControls.retry_topic as the card's click runs it: a failed task queued again, once."""
+        self.retries.append((ctx.topic_id, chat, message, job_id))
+        record = read_object(job_file(self.state, f"k-{job_id}"))
+        if record.get("retried_by") or self.jobs.get(TOPIC):
+            return "本话题还有运行或排队的任务，请完成或停止后再重试。"
+        write_job(self.state, f"k-{job_id}", retried_by=message)
+        write_job(self.state, message, job_id=22, topic_id=TOPIC, chat_id=CHAT, message_id=message, status="queued")
+        return "本话题任务已重新入队，任务 #22。"
+
+    def follow_up_job(self, ctx, chat, message, job_id, name):
+        self.follow_ups.append((message, job_id, name))
+        return "", 23
+
+    def stop_auto_retry(self, ctx, chat, job_id):
+        self.stops.append(job_id)
+        write_job(self.state, f"k-{job_id}", auto_retry_state="cancelled")
+        return "已停止"
+
+    def recover(self, op_id, **payload):
+        self.web.op("recover", len(self.web.outbox) + 1, op_id, TOPIC, **payload)
+        self.sync.inbox_once()
+        return self.web.acks[-1]
+
+    def test_continue_is_the_cards_check_and_continue_once(self):
+        self.failed(failure_code="root_failed")
+        ack = self.recover("op-1", action="continue", job_id="21")
+        self.assertEqual((ack["state"], ack["message"]), ("done", "本话题任务已重新入队，任务 #22。"))
+        # Its message id says no words of the owner's (not web-): as a card click's event id.
+        self.assertEqual(self.retries, [(TOPIC, CHAT, "recover-op-1", 21)])
+        self.assertEqual(self.app.queued, [])  # Not a say: the page's words never stood in for the button.
+        again = self.recover("op-2", action="continue", job_id="21")  # The page clicked twice.
+        self.assertEqual((again["state"], again["message"]), ("failed", "这一轮已经接着做了（任务 #22），没有再开一次"))
+        self.assertEqual(len(self.retries), 1)
+
+    def test_a_refused_retry_is_failed_with_the_cards_words(self):
+        self.failed(failure_code="root_failed")
+        self.jobs[TOPIC] = [SimpleNamespace(job_id=30)]
+        ack = self.recover("op-1", action="retry", job_id="21")
+        self.assertEqual((ack["state"], ack["message"]), ("failed", "本话题还有运行或排队的任务，请完成或停止后再重试。"))
+
+    def test_continue_runs_a_pending_automatic_retry_now(self):
+        self.failed(status="interrupted", interrupted_by="restart", auto_retry_state="pending", auto_retry_at=time.time() + 60,
+                    auto_retry_attempt=1, auto_retry_kind="restarted")
+        self.assertEqual(self.recover("op-1", action="continue", job_id="21")["state"], "done")
+
+    def test_what_the_record_does_not_allow_is_failed(self):
+        self.failed(failure_code="timeout")  # 检查并继续 and 拆小再试; no 看原因.
+        self.failed(job_id=24, failure_code="quota_exhausted")  # 换个模型 alone.
+        self.failed(job_id=25, failure_code="root_failed", binding_revision=1)
+        write_topic(self.state, topic_id=TOPIC, chat_id=CHAT, harness_id="claude", topic_number=7, origin={"title": "整理账单"},
+                    switches=[{"revision": 2}])
+        cases = [("op-1", {"action": "diagnose", "job_id": "21"}, "这一轮现在没有这一步可做"),
+                 ("op-2", {"action": "continue", "job_id": "24"}, "这一轮现在不能接着做"),
+                 ("op-3", {"action": "continue", "job_id": "25"}, "话题之后换过配置"),
+                 ("op-4", {"action": "stop_auto_retry", "job_id": "21"}, "没有待执行的自动重试"),
+                 ("op-5", {"action": "rerun", "job_id": "21"}, "不认识的恢复操作"),
+                 ("op-6", {"action": "continue", "job_id": "99"}, "这个话题里没有任务 #99"),
+                 ("op-7", {"action": "continue"}, "没有任务编号")]
+        for op_id, payload, words in cases:
+            with self.subTest(op_id):
+                ack = self.recover(op_id, **payload)
+                self.assertEqual(ack["state"], "failed")
+                self.assertIn(words, ack["message"])
+        self.assertEqual((self.retries, self.follow_ups), ([], []))
+
+    def test_diagnose_and_split_queue_the_cards_follow_up(self):
+        self.failed(failure_code="root_failed")
+        ack = self.recover("op-1", action="diagnose", job_id="21")
+        self.assertEqual(ack["state"], "done")
+        self.assertIn("已开一轮只读排查", ack["message"])
+        self.assertIn("任务 #23", ack["message"])
+        self.assertEqual(self.follow_ups, [("recover-op-1", 21, "diagnose")])
+
+    def test_stop_auto_retry_cancels_the_pending_one(self):
+        self.failed(failure_code="server_fault", auto_retry_state="pending", auto_retry_at=time.time() + 60, auto_retry_attempt=1,
+                    auto_retry_kind="server_fault")
+        ack = self.recover("op-1", action="stop_auto_retry", job_id="21")
+        self.assertEqual((ack["state"], self.stops), ("done", [21]))
+
+    def test_another_chats_topic_is_refused(self):
+        write_topic(self.state, topic_id=OTHER, chat_id="oc_someone_else", harness_id="claude")
+        self.web.op("recover", 1, "op-1", OTHER, action="continue", job_id="21")
+        self.sync.inbox_once()
+        self.assertEqual(self.web.acks[-1]["state"], "failed")
+
+
+class RecoverRedeliveryTest(unittest.TestCase):
+    """``recover`` on a turn whose result did not go out, through the real task controls (T650, P0-5): the saved result is sent
+    again, the model does not run again; the page's ``say`` of 继续 ran a new turn for it before."""
+
+    def test_continue_redelivers_the_saved_result(self):
+        import tempfile
+        from pathlib import Path
+        from support import make_context
+        from support.world import build_claude_app
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        app = build_claude_app()
+        self.addCleanup(app.runtime.shutdown.set)
+        ctx = make_context(Path(tmp.name), topic_id=TOPIC)
+        state = ctx.state_dir
+        write_topic(state, topic_id=TOPIC, chat_id=CHAT, harness_id="claude", root_id="om_root")
+        write_job(state, "job-k", job_id=5, chat_id=CHAT, topic_id=TOPIC, backend="claude", harness_id="claude", kind="chat",
+                  status="failed", execution_status="done", final_text="回答全文", delivery_ok=False,
+                  delivery_error="network_timeout", message_id="job-k")
+        env = SimpleNamespace(state_dir=state, runtime=app.runtime, topics=SimpleNamespace(apps={"claude": app}))
+        ops = web_ops.Ops(env)
+        with mock.patch.object(web_ops.auto_retry, "retry_context", return_value=ctx), \
+                mock.patch.object(web_ops.auto_retry, "record_topic", return_value={}), \
+                mock.patch.object(app.controls.messenger, "reply", return_value=True) as reply:
+            said = ops.recover(state, CHAT, {"op_id": "op-1", "topic_key": TOPIC}, {"action": "continue", "job_id": "5"})
+        self.assertIn("重新投递", said)
+        self.assertEqual(reply.call_args.args[2], "回答全文")
+        self.assertIs(read_object(job_file(state, "job-k"))["delivery_ok"], True)
+        self.assertEqual(app.runtime.jobs.topic_jobs(TOPIC, CHAT), [])  # Nothing queued: the model did not run again.
+
+
 class OffTest(WebCase):
     def test_forget_is_one_of_the_kinds_and_the_off_switch_still_means_no_request(self):
         self.assertIn("forget", web_sync.KINDS)

@@ -26,7 +26,7 @@
 | 卡片按钮与点击 | `app/card_actions.py`、`app/card_routing.py`、`app/card_lanes.py` | [卡片点击的数据流](docs/architecture.md#卡片点击的数据流)、[cards.md](docs/cards.md) |
 | 谁被服务、群聊、别人私聊时回一句（`COVEY_STRANGER_REPLY`，默认开） | `app/access.py`、`core/groups.py`、`app/group_manager.py`、`app/strangers.py` | [谁被服务](docs/architecture.md#谁被服务) |
 | 管家（私聊模式） | `app/butler.py`、`core/butler.py`、`core/placement.py`、`app/butler_tools.py` | [butler.md](docs/butler.md) |
-| 话题与回带 | `app/butler_topics.py`（新话题的 Harness、模型、预算在 `app/butler_model_choice.py`；请求幂等账本 `core/butler_opened.py`）、`app/butler_relay.py`、`app/relay_targets.py`、`app/relay_send.py` | [butler.md](docs/butler.md) |
+| 话题与回带 | `app/butler_topics.py`（新话题的 Harness、模型、预算在 `app/butler_model_choice.py`；请求幂等账本 `core/butler_opened.py`）、`app/butler_relay.py`、`app/relay_targets.py`、`app/relay_send.py`；停住卡的原因、按钮和点击 `app/relay_stops.py` | [butler.md](docs/butler.md) |
 | 看板、Pin、手上的事 | `app/pins.py`、`app/status_cards.py`、`app/overview.py`、`core/board_read.py` | [手上的事](docs/usage.md#手上的事)、[配置](docs/configuration.md#手上的事与话题看板) |
 | 整理专项与话题要点（`COVEY_PROJECT_TIDY`） | `app/project_tidy.py`（`ProjectTidy` 协调器：`__init__` 里组装下面各部件，自己管线程和话题要点收集；部件不继承、只调更下面的）、`app/tidy_facts.py`（记录读写的纯函数，最底层）、`app/tidy_state.py`（共享状态 `busy`/`progress`/`counted`/`handed`）、`app/tidy_words.py`（话题在卡上的字样与链接）、`app/tidy_apply.py`（照办：建、归进、移出、合并、拆、收起）、`app/tidy_proposals.py`（提议新专项、提议卡与跟着归并更新）、`app/tidy_realtime.py`（实时归并、新专项扫一遍）、`app/tidy_run.py`（定时/手动整理与整理卡）、`app/tidy_clicks.py`（卡片点击，`claim` 是入口）、`app/tidy_web.py`（网页面板）、`app/project_sorter.py`（小模型读什么、补要点）、`core/topic_gist.py`（话题要点）、`core/project_proposals.py`（提议与主人的决定）、`cards/project_proposal.py`、`app/projects.py` 的 `gather`、`app/project_members.py` 的 `join_topic`/`leave_topic` | [projects.md](docs/projects.md#整理专项)、[配置](docs/configuration.md#整理专项) |
 | 专项（`COVEY_PROJECTS=1`）：负责人、专项卡、问题分流、停住后问主人、满额腾位置、话题转给管家 | `core/projects.py`、`app/project_lead.py`、`app/project_tools.py`、`app/project_loop.py`（`make_room`）、`app/butler_asks.py`、`app/project_cards.py`、`cards/project_card.py`、`app/triage.py`、`core/project_memory.py`、`core/project_library.py` | [projects.md](docs/projects.md)、[架构 · 专项](docs/architecture.md#专项第-2-期开发中默认关) |
@@ -43,7 +43,7 @@
 | 换配置 | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py` | [话题中途换配置](docs/architecture.md#话题中途换配置) |
 | 回退一步（Claude） | `app/rewind.py`、`backends/claude/rewind.py` | [回退一步](docs/architecture.md#回退一步) |
 | 结果、投递与重投 | `app/turn_settle.py`、`app/worker.py`、`app/turn_delivery.py`、`app/redelivery.py`、`app/outbox.py` | [结果授权与投递](docs/architecture.md#结果授权与投递) |
-| 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
+| 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
 | 设置卡与机器人菜单 | `app/bot_menu.py`、`app/menu_panel.py`、`app/settings_hub.py`（标签「记忆」`app/memory_panel.py`、「能做什么」`app/about_panel.py`、「诊断」`app/doctor_panel.py`）、`feishu/events.py` | [机器人菜单](docs/usage.md#机器人菜单) |
 | 欢迎卡（新部署只发一次，`COVEY_WELCOME`）和 `./install` 等第一句回答 | `app/welcome.py`、`cards/welcome.py`、`core/welcome.py`（记录、`first_answer`）、`service/installer.py` 的 `wait_answer` | [第一次使用](docs/usage.md#第一次使用)、[第一个回答](docs/install.md#第一个回答) |
 | 代答 | `app/proxy.py`（批次）、`app/proxy_intake.py`（收消息）、`app/proxy_topics.py`（联系人话题）、`app/proxy_commands.py`（查找、群成员）、`app/proxy_send.py`（读回和发送器接口；发送器 `extensions/covey_internal/proxy_sender.py`、`extensions/covey_internal/proxy_login.py`）、`core/proxy.py` | [proxy.md](docs/proxy.md)、[代答](docs/architecture.md#代答) |
@@ -190,6 +190,7 @@
 | `app/redaction_panel.py` | The 设置 card's 脱敏 tab |
 | `app/redelivery.py` | Sending a recorded task's saved result or question again, without running the model (检查并继续 on a task whose … |
 | `app/relay_send.py` | Sending what goes back to the butler's top level |
+| `app/relay_stops.py` | 停住了 at the private chat's top level (app/butler_relay.py relays a topic turn the butler started or handed on … |
 | `app/relay_targets.py` | Where a topic turn's outcome goes back to at the butler's top level |
 | `app/repo_peers.py` | A topic hears that another topic works in the same git repository |
 | `app/review.py` | 独立复核: a read-only topic that reviews one finished turn's changes, opened only when the owner clicks the … |

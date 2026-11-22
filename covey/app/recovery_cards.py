@@ -64,16 +64,21 @@ def paint_answered(cards, log, ctx, chat, job_id, previous, *, answered=True):
 
 
 # What became of the task, by its recovery state (core/recovery.py classify): the state's word (docs/ui.md 第 3 节) and
-# the band's headline; an interrupted or refused one says why (core/failure.py failure_view).
+# the band's headline. One that did not succeed says why and what next in core/failure.py failure_view's words, the task
+# card's, the 停住了 relay's and the web page's (an interrupted, refused, undelivered or never started one); these stand
+# where it says none.
 RECOVERY_WORDS = {recovery.SAVED_FAILED: ("stopped", "这一轮没有能发出的结果"),
                   recovery.SAVED_DELIVERED: ("result", "结果已经发出"),
                   recovery.SAVED_PENDING: ("stopped", "结果已保存，还没发出去"),
                   recovery.START_FAILED: ("stopped", "任务进程没能启动"),
                   recovery.POLICY_STOP: ("stopped", "被官方安全策略拦下"),
                   recovery.INTERRUPTED: ("stopped", "这一轮被打断了")}
-SAVED_TEXT = {recovery.SAVED_FAILED: '本轮未取得获准发布的结果，不支持重新投递。',
-              recovery.SAVED_DELIVERED: '执行结果见本话题已发送的正文或文件。',
-              recovery.SAVED_PENDING: '已保存的结果尚未送达；不会重新执行模型任务。'}
+SAVED_TEXT = {recovery.SAVED_FAILED: "这一轮的回复没通过发出前的核对，不能重新投递；在本话题再说一下要做什么。",
+              recovery.SAVED_DELIVERED: "结果已经发到本话题（正文或文件）。",
+              recovery.SAVED_PENDING: "结果已保存，还没发出去；重新投递只发这份结果，不会重新跑模型。"}
+UNRECONCILED = "投递状态要先核对，这里不能重新投递；在本话题再说一下要做什么。"
+NEW_SESSION = "这一轮的会话不能续接，下一轮会从新会话开始。"
+NOT_STARTED = "没有执行任何操作，也没有提交外部任务。"  # After the band's 任务进程没能启动，这一轮没有开始.
 
 
 
@@ -87,7 +92,7 @@ def recovery_card(record, *, continued=False, state_dir=None, moved_to=None, aut
     cp = read_checkpoint(Path(record["checkpoint_path"])) if record.get("checkpoint_path") else {}
     key, headline = ("running", "收到回答，接着做") if continued else RECOVERY_WORDS[state]
     line = ""
-    view = None if continued or state not in (recovery.POLICY_STOP, recovery.INTERRUPTED) else failure.failure_view(record)
+    view = None if continued else failure.failure_view(record)  # None for one it has no reason for (delivered, ...).
     lead = "" if continued or state != recovery.INTERRUPTED else turn_words.device_interrupted(record)
     if lead:  # A turn on a device: where its Agent is, and what continuing does.
         headline, line = failure.split_title(lead.rstrip("。"))
@@ -110,7 +115,8 @@ def recovery_card(record, *, continued=False, state_dir=None, moved_to=None, aut
         actions = ((result_actions(record["topic_id"], record["job_id"], "", follow_ups=follow,
                                    route=switch_route(record)),) if follow else ())
     return recovery_view(record, text, word=key, headline=headline, line=line, topic=topic, label=label, continued=continued, moved_to=moved_to,
-                         how=how, retry=retry, actions=actions, snapshot=snapshot)
+                         how=how, retry=retry, actions=actions, snapshot=snapshot,
+                         detail=(view or {}).get("detail", "") if moved_to is None else "")
 
 
 def recovery_text(record, state, label, cp, *, continued, state_dir):
@@ -124,13 +130,12 @@ def recovery_text(record, state, label, cp, *, continued, state_dir):
         text += str(record.get("final_text") or "")
     elif state in SAVED_TEXT:
         text += SAVED_TEXT[state]
-        if not label and not record.get('delivery_ok') and not refused:
-            text += '\n当前结果未通过发布条件，或投递状态需要核对。请在本话题继续说明需求。'
+        if state == recovery.SAVED_PENDING and not label and not record.get('delivery_ok') and not refused:
+            text += "\n" + UNRECONCILED
         if record.get('native_resume_allowed') is False:
-            text += '\n本轮原生会话不可续接。'
+            text += "\n" + NEW_SESSION
     elif state == recovery.START_FAILED:
-        reason = record.get("runner_start_error")
-        text += f"任务进程启动失败{f'（{reason}）' if reason else ''}，本轮没有执行任何操作，也没有提交外部任务。"
+        text += NOT_STARTED  # Why it did not start (the exception's kind) is in 技术详情 (core/failure.py detail).
         if label:
             text += "\n" + RETRY_NOTE
     elif state == recovery.POLICY_STOP:

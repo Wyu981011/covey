@@ -16,6 +16,9 @@ the checkpoint's plan, the token figures, the time it took and the notes of the 
 - ``ran_with`` (data contract v27): the Harness, provider, model, budget, workspace and 敏感词脱敏 the turn ran with (``ran_with``).
 - ``artifacts`` (data contract v32): the turn's 产物 as its answer card lists them, each by its file name only, with its cloud-space link
   and size once uploaded, why it could not be, or that it is going up (``artifacts_of``).
+- ``failure`` (data contracts v4, v10, v33): why the turn did not succeed and what next (core/failure.py failure_view), with what the
+  page needs to act as the task card's buttons do (``failure_of``): each button's words, how the page carries it out, and a pending
+  automatic retry.
 
 A field is left out when nothing is known; the page draws what it gets. Nothing here reads more than the trace file and the checkpoint of
 one turn, and never raises."""
@@ -26,7 +29,10 @@ import re
 import time
 from pathlib import Path
 
+from covey.app import auto_retry
 from covey.cards import facts
+from covey.core import failure
+from covey.core.butler import traits_of
 from covey.core.checkpoint import artifact_key, artifact_paths, checkpoint_steps, read_checkpoint, upload_ledger
 from covey.core.look import WAITS
 from covey.core.metrics import run_seconds, timings_of
@@ -235,6 +241,44 @@ def ended_figures(state, record) -> dict:
         return figures(record, snapshot, False, time.time())
     except (OSError, ValueError, KeyError, TypeError):
         return {}
+
+
+# How the page carries out each next step (data contract v33): RECOVER is its ``recover`` operation (app/web_ops.py: the task card's
+# own click), SWITCH its own 换配置 (the ``switch`` operation over the topic's ``config``), FEISHU what only Feishu does (换个模型 of the
+# butler and a project's lead, whose configuration is not changed on the page).
+RECOVER, SWITCH, FEISHU = "recover", "switch", "feishu"
+STOP_AUTO_RETRY = "stop_auto_retry"  # 停止自动重试, the ``recover`` action that cancels a pending automatic retry.
+
+
+def failure_of(record) -> dict | None:
+    """The ``failure`` of the turn the job ``record`` made (core/failure.py failure_view: ``title``, ``detail``, ``actions``), or None
+    when it succeeded, waits, runs or the owner stopped it; with ``labels`` (each action's button as the task card says it: continue is
+    检查并继续 or 重新投递结果, retry 现在重试), ``how`` (``RECOVER``, ``SWITCH`` or ``FEISHU`` for each action) and, while an automatic
+    retry is scheduled, ``auto_retry`` {state, at, attempt, total, kind, now}: ``now`` is the action that runs it at once as the card's
+    button does (the scheduled one is then dropped, never both), ``total`` None for a ladder that starts over after progress. No ``now``
+    argument: what is pushed does not change by the minute (the page counts down from ``at``)."""
+    view = failure.failure_view(record)
+    if view is None:
+        return None
+    actions = list(view["actions"])
+    switch = SWITCH if traits_of(record).switch_config else FEISHU
+    how = {name: switch if name == failure.SWITCH_MODEL else RECOVER for name in actions}
+    labels = {name: failure.label(record, name) for name in actions}
+    out = {**view, "labels": labels, "how": how}
+    if auto_retry.pending(record):
+        kind = auto_retry.kind_of(record)
+        now = failure.RETRY if failure.RETRY in actions else failure.CONTINUE
+        counted = auto_retry.KINDS[kind].counted or not auto_retry.long_ladder()
+        at, attempt = record.get("auto_retry_at"), record.get("auto_retry_attempt")
+        out["auto_retry"] = {"state": "pending",
+                             "at": round(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None,
+                             "attempt": attempt if isinstance(attempt, int) and not isinstance(attempt, bool) else None,
+                             "total": len(auto_retry.delays_of(kind)) if counted else None, "kind": kind, "now": now}
+        labels.setdefault(now, failure.LABELS[failure.RETRY] if now == failure.RETRY else failure.label(record, now))
+        labels[STOP_AUTO_RETRY] = "停止自动重试"
+        how.setdefault(now, RECOVER)
+        how[STOP_AUTO_RETRY] = RECOVER
+    return out
 
 
 def notes_of(record) -> list:

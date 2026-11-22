@@ -14,7 +14,8 @@ core/placement.py's row says (``after_turn``: question_copy, conclusion, stop):
   产物 and box on a small card after them;
 - waiting for an answer: the turn's questions as answerable cards (app/question_display.py mirror) with what the
   turn wrote above them, its longer 进展说明 too; only when no copy could be shown "**T10 需要你回答**", the question, and where to answer;
-- stopped or failed with no automatic retry planned: "**T10 停了**：the status line".
+- stopped or failed with no automatic retry planned: 停住了 with why and what next in core/failure.py's words, and the task card's
+  检查并继续 and 看原因 under them, redrawn in place once clicked (app/relay_stops.py).
 
 Every turn of a 话题区 relays, the ones his answers or his messages in
 its thread started too (``area_target``: the latest request that opened or handed on to it); a topic the butler
@@ -49,7 +50,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from covey.app import answer_cards, review
+from covey.app import answer_cards, relay_stops, review
 from covey.app.artifacts import answer_files
 from covey.app.relay_send import (QUESTION_RELAYS, SKIPPED, merge_seconds, messenger_send, record_only, record_unsent,
                                            relay_path, send_merged, send_once as _send_once)
@@ -133,7 +134,8 @@ def _facts(state_dir, job, turn, outcome):
         return {"text": with_stage_notes(turn.verified_delivery.text, _stages(job))}  # after_turn adds the answer card's parts.
     if outcome == WAITING:
         return {"question": _question(state_dir, job)}
-    return {"reason": turn.status_message}
+    # Why and what next as the task card says them, never the status line (技术详情 there), and its buttons.
+    return relay_stops.facts(state_dir, job)
 
 
 def relay(state_dir, job, outcome, *, send, profile=None, log=None, **facts):

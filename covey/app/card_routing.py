@@ -11,7 +11,7 @@ from operator import attrgetter
 import time
 from typing import Any
 
-from covey.app import butler_tracks, dispatch_cards, runner_ipc, strangers
+from covey.app import butler_tracks, dispatch_cards, relay_stops, runner_ipc, strangers
 from covey.app.binding import JOB_STARTING, STALE_CARD, stale_job_card
 from covey.app.card_actions import action_value, card_object, click_kind, moved_card_text, ACTIONS
 from covey.cards.launch_config import SUBMIT_PREFIX
@@ -285,8 +285,12 @@ class CardRouting:
             return app, target
         topic = read_topic(target)
         if raw.get('kind') in JOB_STARTING and stale_job_card(topic, record):
-            app.messenger.reply(target, event['chat_id'], STALE_CARD,
-                                app.key('stale-job', event.get('event_id') or event['message_id']), voice=app.voice)
+            # A stopped relay's 检查并继续 at the top level says so on its own card, redrawn (app/relay_stops.py); a task card's
+            # click gets the reply in the topic's thread.
+            if not (raw.get(relay_stops.RELAY) and record.get('key')
+                    and relay_stops.settle(target.state_dir, app.messenger, target.profile, record['key'], record)):
+                app.messenger.reply(target, event['chat_id'], STALE_CARD,
+                                    app.key('stale-job', event.get('event_id') or event['message_id']), voice=app.voice)
             return None
         owner = self.apps.get(record.get('backend'))
         if owner is None or owner is app:

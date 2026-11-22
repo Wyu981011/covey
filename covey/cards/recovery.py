@@ -114,17 +114,18 @@ def result_note(content):
 
 
 def recovery_view(record, text, *, word, headline, line="", topic, label, continued, moved_to, how, retry, actions,
-                  snapshot):
+                  snapshot, detail=""):
     """The recovery card of ``record``'s task from what app/recovery_cards.py read and worded: its conclusion band
     (docs/ui.md 5.2 停住的卡: ``word``, the state's key in core/look.py STATES, with its topic's label ``topic`` or "" and its number; ``headline``,
     what became of it or why; ``line``, what can be done next), then ``text``; ``how``, how an automatic retry moved
-    it to ``moved_to``; ``retry`` and ``actions`` as ``stopped_card`` takes them; ``snapshot``, its trace for the
+    it to ``moved_to``; ``retry`` and ``actions`` as ``stopped_card`` takes them; ``detail``, the internal words (the record's
+    status line, an error code or exception, core/failure.py failure_view) in 技术详情, folded; ``snapshot``, its trace for the
     执行过程 panel; then the 换配置 panel of a task with a binding. No title bar: the band is the card's centre (it
     replaced the coloured bar)."""
     if moved_to is not None:
         headline, line = f"已转到任务 #{moved_to} 继续{how}", ""
     band = conclusion_band(band_label(word, topic, f"#{record['job_id']}"), literal(headline), literal(line))
-    panels = []
+    panels = [failure_details(literal(detail))] if detail else []
     if snapshot:
         trace = finish_record_trace(ToolTrace.restore(snapshot), record)
         panels.append(panel_json(TraceView(trace.snapshot()).panel_model(False, timed=True)))

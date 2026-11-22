@@ -18,7 +18,17 @@ from covey.core.text import literal, redact
 CARD_TEXT_BYTES = 24000  # A card is at most 30 KB (CardKit); a longer reply goes as Markdown messages.
 QUESTION_CHARS = 300
 SUMMARY_CHARS = 40
+REASON_CHARS = 200  # A stop's reason and next step (core/failure.py failure_view's title), before the band splits them.
 DONE, WAITING, STOPPED = "done", "waiting", "stopped"
+NOTE_ID = "relay_note"  # A 停住了 card's last line (``stop_note``), redrawn after a click on its buttons (app/relay_stops.py).
+
+
+def stop_note(label, why=""):
+    """The last line of a 停住了 relay (NOTE_ID): "详情在 T439"; after a click that started nothing (the topic had a task at work,
+    a result still could not be sent), why, its buttons kept: "没有开始：… · 详情在 T439"."""
+    words = f"详情在 {label}"
+    why = " ".join(str(why or "").split()).rstrip("。")
+    return md(grey(literal(f"没有开始：{why} · {words}" if why else words)), element_id=NOTE_ID, size="notation")
 
 
 def foot(inputs, outputs, *, change=None):
@@ -52,7 +62,9 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
     cards/answer_card.py; ``delivery``, the 交付
     line an older release kept as a string, ``change`` of those, its fold; ``notes`` and ``buttons``, its other parts, as
     the answer card's tail takes them), WAITING (``question``) or STOPPED (``reason``, one line). A DONE reply is the
-    card's body as it is, whole, no conclusion band over it (its first words are its conclusion).
+    card's body as it is, whole, no conclusion band over it (its first words are its conclusion). A STOPPED ``reason`` is
+    core/failure.py failure_view's title: the band says the reason and, on its second line, the next step; its ``buttons``
+    go under it (app/relay_stops.py area: 检查并继续 and 看原因, redrawn in place once clicked: a shared card, ``update_multi``).
     ``ask``: the "你问" block (cards/answer_card.py ask_block; a relay at the top level quoting no card, threaded):
     who and what it did go to the speaker's row, the owner's words to one line under it that opens (``words_fold``).
     The row is the way into the topic (``into``: ``url``, which opens it at this turn's card, else the block's own
@@ -94,17 +106,19 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         tail = f"在 {label} 的问题卡里答，或在这里回「{label} …」"
         lead = summary(label, look.word(key), words[:SUMMARY_CHARS])
     else:
-        why = " ".join(str(reason or "").split())[:80]
+        why = " ".join(str(reason or "").split())[:REASON_CHARS]
         short = False
         key, body, tail = "stopped", "", f"详情在 {label}"
         headline, line = split_title(why) if why else ("没有说原因", "")
         first = f"**{label} {look.word(key)}**" + (f"：{why}" if why else "")
-        lead = summary(label, look.word(key), why[:SUMMARY_CHARS])
+        lead = summary(label, look.word(key), headline[:SUMMARY_CHARS])
     band = conclusion_band(band_label(key), literal(headline), literal(line))
     shown = body and not (key == "waiting" and short)
-    elements = [row, *said, band] + ([md(body)] if shown else []) + [note(tail)]
+    acts = list(buttons or ()) if outcome == STOPPED else []  # Its next steps, under the reason (app/relay_stops.py).
+    elements = [row, *said, band] + ([md(body)] if shown else []) + acts + [
+        stop_note(label) if outcome == STOPPED else note(tail)]
     markdown = "\n\n".join(part for part in (first, body, tail) if part)
-    return styled(card(elements, lead, **style)), markdown
+    return styled(card(elements, lead, update_multi=outcome == STOPPED, **style)), markdown
 
 
 MERGED_SUBTITLE = "点一行进那个话题"

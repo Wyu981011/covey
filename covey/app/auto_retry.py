@@ -433,21 +433,29 @@ def settle(gateway, ctx, record, records, now):
 def checked_target(gateway, owner, record, records, *, due=True):
     """(why ``record``'s retry must not run or '', the topic's context to run it in when ``due`` and it may run, else
     None). Also for a retry after a safety refusal (app/policy_retry.py)."""
-    base, target = owner.harness.context, None
+    target = None
     try:
-        topic = read_topic(dataclasses.replace(base, history_path=Path(record["history_path"])))
+        topic = record_topic(owner, record)
         reason = blocker(gateway, record, records, topic)
         if not reason and due:
-            # The topic's context, as a click on its card builds it.
-            # The butler's topic has no root: the job's own message routes to it.
-            event = {"chat_id": record["chat_id"], "message_id": topic["root_id"] or record["message_id"],
-                     "root_id": topic["root_id"]}
-            target = owner.models.configured_context(context_for_topic(base, event, owner.store.sessions_dir))
+            target = retry_context(owner, record, topic)
             if target.topic_id != record["topic_id"]:
                 reason = "unavailable"
     except (OSError, ValueError, KeyError, TypeError):
         reason = "unavailable"
     return reason, (None if reason else target)
+
+
+def record_topic(owner, record) -> dict:
+    """The topic.json of ``record``'s topic, read through ``owner``'s context (its history path's)."""
+    return read_topic(dataclasses.replace(owner.harness.context, history_path=Path(record["history_path"])))
+
+
+def retry_context(owner, record, topic):
+    """The context ``record``'s task runs again in, as a click on its card builds it: its topic's root message, else (the
+    butler's topic has none) the job's own message, which routes to it; also the web page's ``recover`` (app/web_ops.py)."""
+    event = {"chat_id": record["chat_id"], "message_id": topic["root_id"] or record["message_id"], "root_id": topic["root_id"]}
+    return owner.models.configured_context(context_for_topic(owner.harness.context, event, owner.store.sessions_dir))
 
 
 def blocker(gateway, record, records, topic):

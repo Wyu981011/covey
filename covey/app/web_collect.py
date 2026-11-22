@@ -10,7 +10,7 @@ import time
 from pathlib import Path
 
 from covey.app import pins, project_lead, project_loop, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
-from covey.core import board_read, collab, collab_records, failure, look, project_library, project_memory, projects, turn_source, web_sync
+from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, turn_source, web_sync
 from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
 from covey.core.history_storage import history_lines
@@ -548,10 +548,10 @@ class Collector:
                 else:
                     turn.pop("notes", None)
             if job is not None:
-                # Why it did not succeed and what next (core/failure.py). Not of a task still running: its answer line is written
-                # once its result has gone out and before its record says so (app/worker.py deliver), and a look in between
-                # read it as 没发出去.
-                fail = failure.failure_view(job) if job.get("status") not in RUNNING else None
+                # Why it did not succeed and what next, with what the page's buttons do (web_turns.failure_of). Not of a task
+                # still running: its answer line is written once its result has gone out and before its record says so
+                # (app/worker.py deliver), and a look in between read it as 没发出去.
+                fail = web_turns.failure_of(job) if job.get("status") not in RUNNING else None
                 if fail:
                     turn["failure"] = fail
                     if turn.get("role") == "agent":
@@ -580,7 +580,7 @@ class Collector:
             ended = {"topic_key": topic, "seq": total + 1, "role": "agent", "body": web_sync.clip(latest.get("status_message") or ""),
                      "status": "stopped" if latest.get("status") == "cancelled" else "failed", "job_id": str(latest.get("job_id") or ""),
                      "started_at": board_read.started_at(latest), "ended_at": at, "artifacts": []}
-            fail = failure.failure_view(latest)
+            fail = web_turns.failure_of(latest)
             if fail:  # A stop the owner did not make (官方拒绝, a guard) did not succeed either (data contract v10).
                 ended["failure"], ended["status"] = fail, "failed"
             self.mark_collab(ended, latest.get("message_id"))

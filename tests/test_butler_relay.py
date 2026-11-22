@@ -11,12 +11,12 @@ from unittest import mock
 
 from support import make_job
 from support.butler import CHAT, BUTLER, ButlerCase
-from covey.app import auto_retry, butler_relay, pins, relay_send, relay_targets
+from covey.app import auto_retry, butler_relay, pins, relay_send, relay_stops, relay_targets
 from covey.app.butler_relay import relay
 from covey.app.relay_targets import relay_target
 from covey.cards.relay_card import CARD_TEXT_BYTES, DONE, STOPPED, WAITING, relay_card
 from covey.app.turn_delivery import TurnDelivery
-from covey.core.jobs import job_key, upsert_job_record
+from covey.core.jobs import find_job_record, job_file, job_key, topic_job_records, upsert_job_record
 from covey.core.state import read_object, write_json
 from covey.core.topics import message_topic
 
@@ -424,7 +424,24 @@ class DeliverTest(Case):
         card = send.call_args.kwargs["card"]
         self.assertIn("<text_tag color='red'>停住了</text_tag>", row_line(card["body"]["elements"][0]))
         self.assertEqual("<font color='white'>**T410**</font>", badge_words(card["body"]["elements"][0]))
-        self.assertIn("用户停止了任务", str(card["body"]["elements"][1]))
+        # A stop no one named has no reason in core/failure.py: plain words, never the status line, and nothing to click.
+        self.assertIn("这一轮停了", str(card["body"]["elements"][1]))
+        self.assertNotIn("用户停止了任务", json.dumps(card, ensure_ascii=False))
+        self.assertNotIn("relay_actions", json.dumps(card))
+
+    def test_a_failed_turn_says_why_in_the_task_cards_words_with_its_buttons(self):
+        """T650 (P0-4): the relay said the record's status line ("本轮执行未全部完成，原生会话不可续接", "任务异常（RuntimeError）")
+        with no next step; it reads the record the turn's delivery wrote, as the task card does."""
+        upsert_job_record(self.state, job_key("main-t1", 9), job_id=9, message_id="main-t1", chat_id=CHAT, topic_id=TOPIC,
+                          status="failed", execution_status="failed", failure_code="root_failed",
+                          status_message="任务异常（RuntimeError）")
+        send = self.deliver(self.job(progress=SimpleNamespace()), status="failed")
+        card = send.call_args.kwargs["card"]
+        body = json.dumps(card, ensure_ascii=False)
+        self.assertIn("这一轮没做完（主任务中途出错）", body)
+        self.assertIn("可以在新会话里接着做，或先看原因", body)
+        self.assertNotIn("RuntimeError", body)
+        self.assertEqual([label for label, _, _ in labels_of(area_of(card))], ["检查并继续", "看原因"])
 
     def test_an_undelivered_result_sends_nothing(self):
         send = self.deliver(self.job(progress=SimpleNamespace()), sent=False)
@@ -567,3 +584,227 @@ class AwaitedDeliverTest(AwaitedCase):
     def test_one_a_wake_up_turn_handed_on_sends_nothing(self):
         self.lead_turn("lead-a1b2c3d4e5f6-3")
         self.deliver(self.job(progress=SimpleNamespace())).assert_not_called()
+
+
+def area_of(card):
+    """The element under a stopped relay's reason (app/relay_stops.py AREA_ID), None without one."""
+    from covey.cards.elements import find_element
+    return find_element(card, relay_stops.AREA_ID)
+
+
+def labels_of(element):
+    """The labels and values of the buttons in ``element``."""
+    found = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            if value.get("tag") == "button":
+                found.append((value["text"]["content"], value.get("type"), value.get("value")))
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+    walk(element)
+    return found
+
+
+class StopButtonsTest(Case):
+    """停住了 at the top level (app/relay_stops.py, T650): why and what next in core/failure.py's words, never the status line;
+    the task card's 检查并继续 and 看原因 under them, each its own kind marked as the relay's; a click redraws the card in place
+    from the records, so a second click, a topic that moved on or a stale card starts nothing."""
+
+    KEY = job_key("main-t1", 9)
+
+    def setUp(self):
+        super().setUp()
+        self.opened("t1", plan={"start": True}, topic_id=TOPIC)
+
+    def record(self, job_id=9, message_id="main-t1", **fields):
+        fields = {"status": "failed", "execution_status": "failed", **fields}
+        return upsert_job_record(self.state, job_key(message_id, job_id), job_id=job_id, message_id=message_id,
+                                 chat_id=CHAT, topic_id=TOPIC, **fields)
+
+    def relayed(self, **fields):
+        """The stop relayed for a record with ``fields`` alone (any record and relay of the job before are gone): (its card, its
+        relay record)."""
+        job_file(self.state, self.KEY).unlink(missing_ok=True)
+        relay_send.relay_path(self.state, self.KEY).unlink(missing_ok=True)
+        self.record(**fields)
+        send = self.send()
+        self.assertEqual("sent", relay(self.state, self.job(), STOPPED, send=send,
+                                       **relay_stops.facts(self.state, self.job())))
+        return send.call_args.args[4], read_object(relay_send.relay_path(self.state, self.KEY))
+
+    def part(self, patched=True):
+        """The TaskControls or Submission that took the click: the topic's records, a messenger whose card writes ``patched``."""
+        messenger = mock.Mock()
+        messenger.patch_card.return_value = patched
+        return SimpleNamespace(harness=SimpleNamespace(topic_records=lambda ctx, chat: topic_job_records(self.state, TOPIC, chat_id=chat)),
+                               messenger=messenger, voice=SimpleNamespace(key=lambda tag, mid: f"bot-{tag}-{mid}"),
+                               runtime=SimpleNamespace(log=self.fail))
+
+    def click(self, part, kind, run):
+        event = {"chat_id": CHAT, "event_id": "ev-1", "message_id": "om_relay"}
+        raw = {"kind": kind, "topic_id": TOPIC, "job_id": 9, relay_stops.RELAY: True}
+        relay_stops.clicked(part, self.ctx, event, raw, run)
+        return area_of(part.messenger.patch_card.call_args.args[2]) if part.messenger.patch_card.called else None
+
+    def test_the_card_says_why_and_what_next_with_the_task_cards_buttons(self):
+        card, saved = self.relayed(failure_code="root_failed", status_message="本轮执行未全部完成，原生会话不可续接")
+        body = json.dumps(card, ensure_ascii=False)
+        self.assertIn("这一轮没做完（主任务中途出错），已做的部分保留着", str(card["body"]["elements"][1]))
+        self.assertIn("可以在新会话里接着做，或先看原因", str(card["body"]["elements"][1]))  # The next step, the band's second line.
+        self.assertNotIn("原生会话", body)
+        self.assertNotIn("错误码", body)
+        self.assertEqual(labels_of(area_of(card)), [
+            ("检查并继续", "primary", {"kind": "bridge_job_retry", "topic_id": TOPIC, "job_id": 9, "relay": True}),
+            ("看原因", "default", {"kind": "bridge_job_diagnose", "topic_id": TOPIC, "job_id": 9, "relay": True})])
+        self.assertTrue(card["config"]["update_multi"])  # Redrawn in place once clicked.
+        self.assertEqual(saved["card"], card)  # Kept for that.
+
+    def test_each_stop_offers_what_its_task_card_offers_but_another_model(self):
+        cases = {
+            "timeout": ({"failure_code": "timeout"}, ["检查并继续", "拆小再试"]),
+            "limit": ({"failure_code": "rate_limited"}, ["现在重试"]),
+            "quota": ({"failure_code": "quota_exhausted"}, []),  # Only 换个模型: its card opens in the topic's thread.
+            "auth": ({"failure_code": "authentication_error"}, ["看原因"]),
+            # A refusal whose retry on an older model is scheduled: nothing to click beside it.
+            "policy_retry": ({"status": "cancelled", "policy_stop": {"kind": "refusal", "category": "cyber", "scope": "main"},
+                              "policy_retry_state": "pending", "policy_retry_model": "claude-opus-4-8"}, []),
+        }
+        for name, (fields, labels) in cases.items():
+            with self.subTest(name):
+                card, _ = self.relayed(**fields)
+                self.assertEqual([label for label, _, _ in labels_of(area_of(card))], labels)
+                if labels:
+                    self.assertEqual(labels_of(area_of(card))[0][1], "primary")  # One a block (docs/ui.md 第 6 节).
+                else:
+                    self.assertIsNone(area_of(card))
+        # Without a button its band's line says the next step: 换个模型 is in the topic (the card's row goes there).
+        card, _ = self.relayed(failure_code="quota_exhausted")
+        self.assertIn("可以换个模型接着做", json.dumps(card["body"]["elements"][1], ensure_ascii=False))
+
+    def test_a_retry_click_redraws_the_card_with_the_task_that_went_on_and_never_retries_twice(self):
+        self.relayed(failure_code="root_failed")
+        part, runs = self.part(), []
+
+        def retry():
+            runs.append(1)
+            upsert_job_record(self.state, self.KEY, retried_by="ev-1")
+            self.record(job_id=10, message_id="ev-1", status="queued", retry_of=self.KEY)
+            return "本话题任务已重新入队，任务 #10。", None
+        area = self.click(part, "bridge_job_retry", retry)
+        self.assertEqual(area["content"], "<font color='grey'>↪ 已接着做 · 任务 #10</font>")
+        self.assertEqual(part.messenger.patch_card.call_args.args[:2], ("unit", "om_relay"))
+        part.messenger.reply.assert_not_called()  # Its card says it; nothing under the topic's thread.
+        self.assertEqual(self.click(part, "bridge_job_retry", retry)["content"], area["content"])  # A second click.
+        self.assertEqual(runs, [1])
+        saved = read_object(relay_send.relay_path(self.state, self.KEY))
+        self.assertEqual(area_of(saved["card"]), area)
+
+    def test_a_follow_up_click_says_which_task_looks_into_it_and_a_second_one_starts_none(self):
+        self.relayed(failure_code="root_failed")
+        part, runs = self.part(), []
+
+        def diagnose():
+            runs.append(1)
+            self.record(job_id=11, message_id="ev-2", status="queued")
+            return "", 11
+        area = self.click(part, "bridge_job_diagnose", diagnose)
+        self.assertEqual(area["content"], "<font color='grey'>↪ 已开一轮只读排查 · 任务 #11</font>")
+        self.assertEqual(read_object(relay_send.relay_path(self.state, self.KEY))["clicked"]["job_id"], 11)
+        self.assertEqual(self.click(part, "bridge_job_diagnose", diagnose)["content"], area["content"])
+        self.assertEqual(runs, [1])
+
+    def test_a_click_refused_for_now_keeps_the_buttons_and_says_why_on_the_card(self):
+        from covey.cards.elements import find_element
+        from covey.cards.relay_card import NOTE_ID
+        self.relayed(failure_code="root_failed")
+        part = self.part()
+        area = self.click(part, "bridge_job_retry", lambda: ("本话题还有运行或排队的任务，请完成或停止后再重试。", None))
+        self.assertEqual([label for label, _, _ in labels_of(area)], ["检查并继续", "看原因"])  # Its task ends: click again.
+        note = find_element(part.messenger.patch_card.call_args.args[2], NOTE_ID)["content"]
+        self.assertEqual(note, "<font color='grey'>没有开始：本话题还有运行或排队的任务，请完成或停止后再重试 · 详情在 T410</font>")
+        part.messenger.reply.assert_not_called()
+
+        def retry():
+            upsert_job_record(self.state, self.KEY, retried_by="ev-2")
+            self.record(job_id=10, message_id="ev-2", status="queued", retry_of=self.KEY)
+            return "本话题任务已重新入队，任务 #10。", None
+        self.assertEqual(self.click(part, "bridge_job_retry", retry)["content"], "<font color='grey'>↪ 已接着做 · 任务 #10</font>")
+        self.assertEqual(find_element(part.messenger.patch_card.call_args.args[2], NOTE_ID)["content"],
+                         "<font color='grey'>详情在 T410</font>")
+
+    def test_a_click_on_a_task_whose_record_is_gone_is_told_in_the_thread(self):
+        self.relayed(failure_code="root_failed")
+        part = self.part()
+        part.harness.topic_records = lambda ctx, chat: []  # Archived by the daily maintenance.
+        self.click(part, "bridge_job_retry", lambda: ("本话题没有可重试的失败任务。", None))
+        self.assertEqual(part.messenger.reply.call_args.args[2], "本话题没有可重试的失败任务。")
+        part.messenger.patch_card.assert_not_called()
+
+    def test_a_topic_that_moved_on_runs_nothing_from_an_old_relay(self):
+        self.relayed(failure_code="root_failed")
+        self.record(job_id=12, message_id="om_next", status="done")  # The owner's next message in the topic.
+        part, runs = self.part(), []
+        area = self.click(part, "bridge_job_retry", lambda: runs.append(1) or ("x", None))
+        self.assertEqual((runs, area["content"]), ([], f"<font color='grey'>{relay_stops.MOVED_ON}</font>"))
+
+    def test_a_task_from_before_a_switch_offers_nothing_more(self):
+        self.relayed(failure_code="root_failed", binding_revision=1)
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, binding_revision=2,
+                   switches=[{"revision": 2, "at": 1.0}])
+        record = find_job_record(self.state, self.KEY)
+        self.assertTrue(relay_stops.stale(self.state, record))
+        part = self.part()
+        self.assertTrue(relay_stops.settle(self.state, part.messenger, "unit", self.KEY, record))
+        self.assertEqual(area_of(part.messenger.patch_card.call_args.args[2])["content"],
+                         f"<font color='grey'>{relay_stops.STALE}</font>")
+
+    def test_a_retry_from_before_a_switch_is_refused_on_its_own_card(self):
+        """app/card_routing.py job_route refuses 检查并继续 on a task from before the topic's latest 换配置: a stopped relay's
+        click says so on the relay card, redrawn; a task card's still gets the reply in the topic's thread."""
+        import dataclasses
+        from covey.app.card_routing import CardRouting
+        self.relayed(failure_code="root_failed", binding_revision=1)
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, binding_revision=2, switches=[{"revision": 2, "at": 1.0}])
+        target = dataclasses.replace(self.ctx, topic_id=TOPIC, history_path=self.state / "topics" / TOPIC / "history.jsonl")
+        for relayed, patched, replied in ((True, 1, 0), (False, 0, 1)):
+            with self.subTest(relayed=relayed):
+                app = SimpleNamespace(messenger=mock.Mock(), voice=None, key=lambda *parts: "-".join(parts))
+                app.messenger.patch_card.return_value = True
+                raw = {"kind": "bridge_job_retry", "topic_id": TOPIC, "job_id": 9, **({"relay": True} if relayed else {})}
+                event = {"chat_id": CHAT, "event_id": "ev-1", "message_id": "om_relay", "action_value": raw}
+                self.assertIsNone(CardRouting.job_route(SimpleNamespace(apps={}), app, target, event, raw))
+                self.assertEqual((app.messenger.patch_card.call_count, app.messenger.reply.call_count), (patched, replied))
+                if relayed:
+                    self.assertEqual(area_of(app.messenger.patch_card.call_args.args[2])["content"],
+                                     f"<font color='grey'>{relay_stops.STALE}</font>")
+
+    def test_a_card_that_cannot_be_written_says_it_in_the_thread(self):
+        self.relayed(failure_code="root_failed")
+        part = self.part(patched=False)
+        self.click(part, "bridge_job_retry", lambda: ("本话题还有运行或排队的任务，请完成或停止后再重试。", None))
+        part.messenger.reply.assert_called_once()
+        self.assertIn("本话题还有运行或排队的任务", part.messenger.reply.call_args.args[2])
+
+    def test_the_task_cards_clicks_hand_a_relays_to_it(self):
+        from covey.app.submission import Submission
+        from covey.app.task_controls import TaskControls
+        event = {"chat_id": CHAT, "event_id": "ev-9", "message_id": "om_relay",
+                 "action_value": {"kind": "bridge_job_retry", "topic_id": TOPIC, "job_id": 9, "relay": True}}
+        ctx = SimpleNamespace(topic_id=TOPIC)
+        controls = SimpleNamespace(retry_topic=mock.Mock(return_value="已重新入队"), messenger=mock.Mock())
+        with mock.patch("covey.app.task_controls.after_ack", lambda run: run()), \
+                mock.patch.object(relay_stops, "clicked") as clicked:
+            TaskControls.task_action(controls, ctx, event)
+            self.assertEqual(clicked.call_args.args[4](), ("已重新入队", None))
+            controls.messenger.reply.assert_not_called()
+        submission = SimpleNamespace(follow_up_job=mock.Mock(return_value=("", 13)), messenger=mock.Mock())
+        event["action_value"] = {**event["action_value"], "kind": "bridge_job_diagnose"}
+        with mock.patch("covey.app.submission.after_ack", lambda run: run()), \
+                mock.patch.object(relay_stops, "clicked") as clicked:
+            Submission.follow_up(submission, ctx, event)
+            self.assertEqual(clicked.call_args.args[4](), ("", 13))
+        submission.follow_up_job.assert_called_once_with(ctx, CHAT, "ev-9", 9, "diagnose")
