@@ -1,0 +1,240 @@
+import React, { useEffect, useId, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import type { SnapshotProject } from '@shared/api.interface';
+import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
+import { newOpId, TIDY_KEY, useSnapshot, useTidy } from '@client/src/hooks/use-workbench';
+import { errorText } from '@client/src/lib/workbench-format';
+import { pref, setPref } from './lib';
+import {
+  choice, dismissible, isOpen, look, outcome, panelWords, remember, shown,
+  TIDY_SHOW_ALL, TIDY_WORD, type TidyChoice, type TidyLook, type TidyProposal, type TidyTopic,
+} from './tidyData';
+import './tidy.css';
+
+/** 点「知道了」时全部建议的样子（tidyData.ts remember）；点收起时要你定的是哪几条（tidyData.ts startOpen） */
+const GONE_PREF = 'tidy.gone';
+const FOLD_PREF = 'tidy.fold';
+
+function readGone(): string[] {
+  try {
+    const v: unknown = JSON.parse(pref(GONE_PREF, '[]'));
+    return Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+const sleep = (ms: number): Promise<void> => new Promise<void>((r) => window.setTimeout(r, ms));
+
+/** 话题列表：不多于 4 个全列；多于 4 个先列前 3 个，其余折成“还有 N 个话题”，点开展开。T 号是链接 */
+const TopicList: React.FC<{ topics: TidyTopic[] }> = ({ topics }) => {
+  const [open, setOpen] = useState<boolean>(false);
+  const fold: boolean = topics.length > TIDY_SHOW_ALL && !open;
+  const list: TidyTopic[] = fold ? topics.slice(0, 3) : topics;
+  return (
+    <ul className="td-topics">
+      {list.map((t: TidyTopic) => (
+        <li key={t.key}>
+          <Link to={`/topics/${encodeURIComponent(t.key)}`} className="nb-tno">{t.label}</Link>
+          <span className="td-tt">{t.title}</span>
+        </li>
+      ))}
+      {fold ? (
+        <li>
+          <button type="button" className="td-more" aria-expanded={false} onClick={() => setOpen(true)}>还有 {topics.length - 3} 个话题<ChevronDown /></button>
+        </li>
+      ) : null}
+    </ul>
+  );
+};
+
+/** 来源、原因、目标、话题：要你定的一块里直接摆出来，定好的一行点开才有 */
+const Facts: React.FC<{ p: TidyProposal }> = ({ p }) => (
+  <>
+    {p.from ? <p className="td-from">{p.from}</p> : null}
+    {p.why ? <p className="td-why">原因：{p.why}</p> : null}
+    {p.goal ? <p className="td-goal">目标：{p.goal}</p> : null}
+    {p.topics.length ? <TopicList topics={p.topics} /> : null}
+  </>
+);
+
+type Phase = { phase: 'saving' | 'done' | 'failed'; message: string };
+
+/** 要你定的一条：一块，点按钮发 tidy_decide，等 Covey 回结果，结果原地显示在这一块底部；新快照到了它就变成定好的一行 */
+const OpenCard: React.FC<{ p: TidyProposal; onDecided: (id: string) => void }> = ({ p, onDecided }) => {
+  const qc = useQueryClient();
+  const [ph, setPh] = useState<Phase | null>(null);
+  const alive = useRef<boolean>(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  const decide = async (choice: 'ok' | 'decline'): Promise<void> => {
+    const put = (x: Phase): void => { if (alive.current) setPh(x); };
+    const refetch = (): void => void qc.invalidateQueries({ queryKey: TIDY_KEY });
+    onDecided(p.id);
+    put({ phase: 'saving', message: choice === 'ok' ? `正在${p.verb}…` : '正在告诉 Covey…' });
+    const opId: string = newOpId();
+    try {
+      await postOutbox({ op_id: opId, kind: 'tidy_decide', payload: { proposal: p.id, choice } });
+    } catch (e) {
+      put({ phase: 'failed', message: `没发出去：${errorText(e)}` });
+      return;
+    }
+    for (let i = 0; i < 40; i += 1) {
+      await sleep(i < 3 ? 700 : 1500);
+      try {
+        const r = await fetchOutboxStatus(opId);
+        if (r.state === 'done' || r.state === 'failed') {
+          put({ phase: r.state, message: r.message || (r.state === 'done' ? (TIDY_WORD[choice === 'ok' ? 'done' : 'declined']) : '没做成') });
+          window.setTimeout(refetch, 1500);
+          window.setTimeout(refetch, 4000);
+          return;
+        }
+      } catch { /* 下一轮再问 */ }
+    }
+    put({ phase: 'failed', message: 'Covey 还没回，稍后刷新看结果' });
+  };
+  const busy: boolean = ph?.phase === 'saving';
+  return (
+    <article className="td-a">
+      <div className="td-head">
+        <span className="td-tag">{p.tag}</span>
+        <b className="td-title">{p.headline}</b>
+      </div>
+      <Facts p={p} />
+      {ph?.phase !== 'done' ? (
+        <div className="td-btns">
+          <button type="button" className="btn sm pri" disabled={busy} onClick={() => void decide('ok')}>{p.verb}</button>
+          <button type="button" className="btn sm txt" disabled={busy} onClick={() => void decide('decline')}>不用</button>
+        </div>
+      ) : null}
+      {ph ? <p className={`td-settled${ph.phase === 'failed' ? ' st-failed' : ''}`} role={ph.phase === 'failed' ? 'alert' : 'status'}>{ph.message}</p> : null}
+    </article>
+  );
+};
+
+/** 定好的一条：一行（标签、标题、几个话题、结果词，照办了的带「去专项」），点开看来源、原因、目标、话题和 Covey 写的结果。
+    said：刚在这里定的，结果那句直接写在行下面 */
+const SettledRow: React.FC<{ p: TidyProposal; project: string; said: boolean }> = ({ p, project, said }) => {
+  const [open, setOpen] = useState<boolean>(false);
+  const id: string = `td-${useId().replace(/:/gu, '')}`;
+  const o = outcome(p);
+  const note: string = p.note || TIDY_WORD[p.state] || '';
+  const bad: boolean = o.tone === 'bad';
+  return (
+    <div className={`td-row${open ? ' open' : ''}`}>
+      <button type="button" className="td-rt" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)} title={note}>
+        <span className="td-tag">{p.tag}</span>
+        <span className="td-rh">{p.headline}</span>
+        {p.topics.length > 1 ? <span className="td-rn">{p.topics.length} 个话题</span> : null}
+        <span className={`td-out ${o.tone}`}>{o.word}</span>
+        <ChevronDown className="td-chev" />
+      </button>
+      <span className="td-go-slot">
+        {project ? <Link className="td-go" to={`/projects/${encodeURIComponent(project)}`}>去专项 ›</Link> : null}
+      </span>
+      {said && !open && note ? <p className={`td-said${bad ? ' st-failed' : ''}`}>{note}</p> : null}
+      {open ? (
+        <div className="td-detail" id={id}>
+          <Facts p={p} />
+          {note ? <p className={`td-settled${bad ? ' st-failed' : ''}`}>{note}</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+/** 整理专项给你的建议，看板“要你处理”下面：
+    - 有要你定的：展开，一条一块，能直接定；标题栏「收起」收成一行（记在这一批名下，来了新的再展开）；
+    - 都定好了：收成一行，「展开」看一行一条，点一行看原因和话题，照办了的「去专项」；「知道了」收走，有新建议或结果变了再出来；
+    - 有要你定的时，定好了的收进底下“已定 N 条”；刚在这里定的留在原处成一行。没推过、或一条都没有就不显示 */
+export const TidyPanel: React.FC = () => {
+  const q = useTidy();
+  const { data: snap } = useSnapshot();
+  const [gone, setGone] = useState<string[]>(readGone);
+  const [picked, setPicked] = useState<TidyChoice | null>(null);
+  const [mine, setMine] = useState<string[]>([]);
+  const [rest, setRest] = useState<boolean>(false);
+  const d = q.data;
+  if (!d) return null;
+  const l: TidyLook = look(d);
+  if (!shown(l, gone)) return null;
+  const w = panelWords(l);
+  const open: boolean = isOpen(l, picked, pref(FOLD_PREF, ''));
+  const canGo: boolean = dismissible(l);
+  const fold = (): void => {
+    setPicked(choice(l, false));
+    if (l.open.length) setPref(FOLD_PREF, l.batch);
+  };
+  const unfold = (): void => {
+    setPicked(choice(l, true));
+    setPref(FOLD_PREF, '');
+  };
+  const dismiss = (): void => {
+    const g: string[] = remember(l, gone);
+    setPref(GONE_PREF, JSON.stringify(g));
+    setGone(g);
+    setPicked(null);
+    setMine([]);
+  };
+  const projects = new Set<string>((snap?.projects ?? []).map((x: SnapshotProject) => x.key));
+  const row = (p: TidyProposal): React.ReactNode => (
+    <SettledRow key={p.id} p={p} project={p.project && projects.has(p.project) ? p.project : ''} said={mine.includes(p.id)} />
+  );
+  if (!open) {
+    return (
+      <div className={`td-line${l.open.length ? ' asking' : ''}`}>
+        <button type="button" className="td-lm" onClick={unfold} aria-expanded={false}>
+          <span className="td-tag">整理专项</span>
+          {w.state ? <span className="td-state">{w.state}</span> : null}
+          {w.count ? <span className="td-cnt td-mn">{w.count}</span> : null}
+          {w.head ? <b>{w.head}</b> : null}
+          {w.more ? <span className="td-cnt td-lmore">{w.more}</span> : null}
+          {w.run ? <span className="td-cnt">{w.run}</span> : null}
+          {w.failed ? <span className="td-cnt st-failed">{w.failed}</span> : null}
+          <span className="td-open"><span className="td-ot">展开</span><ChevronDown /></span>
+        </button>
+        {canGo ? <button type="button" className="td-x" onClick={dismiss} title="从看板收走；有新建议或结果变了会再出来">知道了</button> : null}
+      </div>
+    );
+  }
+  const here: TidyProposal[] = l.settled.filter((p: TidyProposal) => mine.includes(p.id));
+  const others: TidyProposal[] = l.settled.filter((p: TidyProposal) => !mine.includes(p.id));
+  const tuck: boolean = l.open.length > 0 && others.length > 0;
+  return (
+    <section className="nb-panel td-panel" aria-label="整理专项">
+      <h3 className="nb-ph">整理专项
+        {w.state ? <em className={l.open.length ? 'asking' : undefined}>· {w.state}</em> : null}
+        {w.run && w.run !== w.state ? <span className="td-run">{w.run}</span> : null}
+        {w.failed ? <span className="td-run st-failed">{w.failed}</span> : null}
+        <span className="td-acts">
+          {canGo ? <button type="button" className="td-act" onClick={dismiss} title="从看板收走；有新建议或结果变了会再出来">知道了</button> : null}
+          <button type="button" className="td-act" onClick={fold} aria-expanded>收起<ChevronUp /></button>
+        </span>
+      </h3>
+      {l.open.length ? (
+        <div className="td-list">
+          {l.open.map((p: TidyProposal) => (
+            <OpenCard key={p.id} p={p} onDecided={(id: string) => { setPicked(choice(l, true)); setMine((m: string[]) => (m.includes(id) ? m : [...m, id])); }} />
+          ))}
+        </div>
+      ) : null}
+      {here.length || (others.length && !tuck) ? (
+        <div className="td-rows">
+          {here.map(row)}
+          {tuck ? null : others.map(row)}
+        </div>
+      ) : null}
+      {tuck ? (
+        <>
+          <button type="button" className={`td-tuck${rest ? ' open' : ''}`} aria-expanded={rest} onClick={() => setRest(!rest)}>已定 {others.length} 条<ChevronDown /></button>
+          {rest ? <div className="td-rows">{others.map(row)}</div> : null}
+        </>
+      ) : null}
+    </section>
+  );
+};
+export default TidyPanel;

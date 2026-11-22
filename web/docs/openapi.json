@@ -1,0 +1,263 @@
+{
+  "paths": {
+    "/openapi/sync/upsert": {
+      "post": {
+        "operationId": "upsert",
+        "summary": "Covey 批量推送专项、话题、轮、问题（按 type+key 幂等，rev 相同跳过）",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "project",
+                            "topic",
+                            "turn",
+                            "question"
+                          ]
+                        },
+                        "key": {
+                          "type": "string"
+                        },
+                        "rev": {
+                          "type": "string"
+                        },
+                        "data": {
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "key",
+                        "data"
+                      ]
+                    }
+                  },
+                  "deleted": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "project",
+                            "topic",
+                            "turn",
+                            "question"
+                          ]
+                        },
+                        "key": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "key"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "upserted": {
+                      "type": "number"
+                    },
+                    "skipped": {
+                      "type": "number"
+                    },
+                    "deleted": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "upserted",
+                    "skipped",
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi/sync/inbox": {
+      "get": {
+        "operationId": "inbox",
+        "summary": "Covey 取网页发来的操作（state=new，按 seq 升序）",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "上次取到的 seq",
+            "example": "0"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "条数上限，最多 500",
+            "example": "100"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "number"
+                          },
+                          "op_id": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "topic_key": {
+                            "type": "string"
+                          },
+                          "project_key": {
+                            "type": "string"
+                          },
+                          "payload": {
+                            "type": "object"
+                          },
+                          "created_at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "seq",
+                          "op_id",
+                          "kind",
+                          "payload",
+                          "created_at"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi/sync/ack": {
+      "post": {
+        "operationId": "ack",
+        "summary": "Covey 回执：把发件箱的某条标成 done 或 failed",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "results": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "seq": {
+                          "type": "number"
+                        },
+                        "op_id": {
+                          "type": "string"
+                        },
+                        "state": {
+                          "type": "string",
+                          "enum": [
+                            "done",
+                            "failed"
+                          ]
+                        },
+                        "message": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "op_id",
+                        "state"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "results"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "updated": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "updated"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

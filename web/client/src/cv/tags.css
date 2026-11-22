@@ -1,0 +1,21 @@
+/* 短标签（covey docs/ui.md 4.1）：状态胶囊、徽标（推荐、你说的）、序号、T 号、计数、时间、头像字。
+   规则只有一条：不折行、不被 flex 压缩。旁边的长文字再长，被挤的也只能是长文字自己。
+   新写的短标签加 class="short"，或者用下面列着的类；scripts/short-tags.test.mjs 核对这张表和这条规则。
+   :where() 不加权重，各处原来的颜色、尺寸照旧。 */
+.cv :where(
+  .short,
+  .tag, .pill, .kbd, .avc, .logo, .a-tbadge,
+  .opt > .n, .sh > .n, .gn .n,
+  .a-tn, .a-tno, .nb-tno, .a-cnt, .a-badge, .a-secn, .a-byo, .a-tm, .a-mat, .a-step,
+  .nb-frac, .nb-pc, .nb-eta, .td-tag, .td-more, .td-open, .td-state, .td-cnt, .td-rn, .td-out, .td-go, .td-act, .td-x,
+  .rt, .elb, .rpt-flag, .rtl-ok, .lbx-n,
+  .st-tag, .st-cnt, .st-when, .lx-tag, .rm-tno
+){white-space:nowrap;flex-shrink:0}
+
+/* 问题卡的选项：序号一列、文字一列、徽标一列。徽标在自己的列里，有没有它，序号和文字的左边都不动 */
+.cv .opt{display:grid;grid-template-columns:18px minmax(0,1fr) auto;column-gap:10px;align-items:start}
+.cv .opt > .n{margin-top:1px}
+.cv .opt > .tag{grid-column:3;margin-top:1px}
+
+/* 分段标签（专项页的 对话/全图/报告/记忆与文件）：各占一份宽，字不折行 */
+.cv .mseg a,.cv .tabs a{white-space:nowrap}

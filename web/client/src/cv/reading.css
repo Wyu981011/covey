@@ -1,0 +1,118 @@
+/* 读的排版（covey docs/ui.md 2.4 正文排版）：话题页的回答、大厅和专项页的负责人对话。一轮分三层：回答正文直接铺在底上是主角
+   （夜航 v2 起不套面板），回答表格和过程行退成灰色的上下文。数值改这里，同时改规范。 */
+.cv{
+/* 正文 14/1.7，段距 8，铺满对话列（T623：主人嫌字大、不够密；回答和你说的话右边对齐） */
+.mdans{max-width:none;margin:0}
+.mdans .prose{font-size:14px;line-height:1.7}
+.mdans p{margin:0 0 8px;line-height:1.7}
+.mdans .prose>:first-child{margin-top:0}
+.mdans .prose>:last-child{margin-bottom:0}
+/* 标题比正文大，上空大、下空小，跟着它的那段 */
+.mdans h1,.mdans h2{font-size:16px;font-weight:600;line-height:1.45;margin:18px 0 6px}
+.mdans h3{font-size:15px;font-weight:600;line-height:1.5;margin:14px 0 6px}
+.mdans h4,.mdans h5,.mdans h6{font-size:14px;font-weight:600;line-height:1.55;margin:12px 0 4px}
+.mdans ul,.mdans ol{margin:2px 0 10px;padding-left:20px}
+.mdans li{margin:3px 0;line-height:1.65}
+.mdans li>p{margin:0}
+.mdans li>ul,.mdans li>ol{margin:4px 0}
+.mdans code{font-size:12.5px}
+.mdans pre{font-size:12.5px;line-height:1.55;margin:4px 0 10px;padding:8px 10px}
+/* 表格见 table.css（横向滚动框、放大弹层） */
+.mdans blockquote{margin:4px 0 10px}
+
+/* 话题页的一轮：轮次行 → 回答表格（灰，左边一条线）→ 正文（不套框）→ 过程行 */
+.a-tbody{gap:10px;margin:6px 0 16px 18px}
+.a-trow{padding:8px 8px 8px 0}
+.a-turn.open>.a-trow{background:transparent;border-radius:0}
+.a-blk{background:transparent;border:0;border-left:2px solid var(--line2);border-radius:0;padding:2px 0 2px 12px}
+.a-blk .a-qa{font-size:13px}
+.a-blk .a-qa td{padding:5px 8px;line-height:1.55}
+.a-blk .a-qa td.q{color:var(--t3)}
+.a-blk .a-qa td.a{color:var(--t2)}
+.a-procw{border-top:0;padding-top:0}
+
+/* 跳到某一轮：从这一轮开头露出来；滚动区和上面的概览卡之间留白，顶边淡出，切到一半的行不像被盖住 */
+[data-seq]{scroll-margin-top:12px}
+.a-ovwrap{padding-bottom:6px}
+.feed{padding-top:16px;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 18px);mask-image:linear-gradient(to bottom,transparent 0,#000 18px)}
+}
+@media (max-width:767px){
+  .cv .mdans .prose{font-size:15px}
+}
+
+/* 对话区跟随到底（T603）：滚动区套一层定位用的壳；离开底部时「回到最新」浮在滚动区底边居中 */
+.cv .feedwrap{flex:1;min-height:0;position:relative;display:flex;flex-direction:column}
+.cv .to-latest{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);z-index:2;height:30px;padding:0 12px;border-radius:15px;background:var(--s3);border:1px solid var(--line2);color:var(--t1);box-shadow:var(--hi),0 6px 20px -6px rgba(0,0,0,.45)}
+.cv .to-latest:hover{border-color:var(--a1)}
+@media (max-width:767px){.cv .to-latest{height:40px;padding:0 16px;border-radius:20px;font-size:13px}}
+
+/* ---------- 你说的话（T621）：靠右、品牌色底，和 Covey 的回答一眼分开 ---------- */
+/* 大厅的气泡和话题页展开一轮里的“你说”用同一种底色、边线和字号（T623） */
+.cv{--said-bg:color-mix(in srgb,var(--a1) 10%,var(--s1));--said-line:color-mix(in srgb,var(--a1) 30%,transparent)}
+.cv .feed .um{width:fit-content;max-width:min(86%,640px);min-width:min(200px,86%);margin:40px 0 12px auto;padding:7px 12px;
+  background:var(--said-bg);border:1px solid var(--said-line);
+  border-radius:12px 12px 4px 12px;box-shadow:none;color:var(--t1);font-size:14px}
+.cv .feed .um .tm{align-self:flex-end;font-size:11.5px;line-height:1.6}
+.cv .feed .um .a-who{color:var(--accent-t)}
+/* 话题页展开一轮里“你说”的那段：左边一道品牌色，底色、边线、字号和大厅的气泡一样 */
+.cv .a-said{border:1px solid var(--said-line);border-left:3px solid var(--a1);background:var(--said-bg);border-radius:0 10px 10px 0;padding:6px 12px 7px}
+.cv .a-said .a-saytx{color:var(--t1);font-size:14px}
+.cv .a-said>.a-bl{color:var(--accent-t);font-weight:600;font-size:11.5px;margin:0 0 2px}
+.cv .a-said>.a-bl .a-tm{font-weight:400}
+@media (max-width:767px){.cv .feed .um{max-width:92%;min-width:0}}
+
+/* ---------- 一轮在大厅和话题页同一种画法（T623，chatTurn.tsx） ---------- */
+/* 话题页点开的一轮：气泡、谁和几点、工具、正文，块间距交给 .a-tbody 的 gap */
+.cv .a-tbody .um{margin:2px 0 0 auto}
+.cv .a-tbody .msg{margin:2px 0 0}
+/* 答题的那句在气泡里画成“问题 → 选择”的表 */
+.cv .feed .um.has-qa{width:min(86%,640px)}
+.cv .um .a-blk{border:0;padding:0;background:none;margin:2px 0 0}
+.cv .um .a-qa th{padding-left:0}
+.cv .um .a-qa td{border-top-color:var(--said-line)}
+.cv .um .a-qa td:first-child{padding-left:0}
+.cv .um .a-qa td.q{color:var(--t2)}
+.cv .um .um-raw{margin-left:8px;font-weight:400}
+/* 工具那颗：token 跟在后面，灰一档；过程面板底下一行 token、速度、上下文 */
+.cv .fold .fold-tok{color:var(--t3);margin-left:4px}
+.cv .wfc .a-figs{margin-top:8px}
+.cv .msg .who .hxi{flex:none}
+
+/* ---------- T623 21:44：分界线、问答之间、回答底栏 ---------- */
+/* Markdown 分界线：排版插件默认上下各 3em，太空；收成一条发丝线、上下 14px */
+.cv .mdans hr{margin:14px 0;border:0;border-top:1px solid var(--line)}
+/* 你说的话开始新的一问：和上面那条回答隔开 40px（T645：28px 还是密）；连着说的几句之间不隔这么远 */
+.cv .feed .um + .um{margin-top:6px}
+/* 一条回答：离上面你那句 12px；后面再跟一条回答、一行结论或问题时隔 24px（外边距会合并，取两边大的那个） */
+.cv .feed .msg{margin:12px 0 24px}
+/* 回答下面两行（像 Codex，和飞书答案卡一样）：输入（用的什么配置）、输出（用时、速度、token、缓存命中），
+   “输入”“输出”两个字在左边对齐，窄了各自在字后面折行；复制在最后一行的末尾（T645） */
+.cv .afoot{display:flex;flex-direction:column;align-items:flex-start;gap:2px;margin:8px 0 0;font-size:12px;line-height:20px;color:var(--t3)}
+.cv .afoot-row{display:flex;align-items:flex-start;gap:0 8px;min-width:0;max-width:100%}
+.cv .afoot-row>b{flex:none;font-weight:500;color:var(--t2)}
+.cv .afoot-bits{display:inline-flex;flex-wrap:wrap;align-items:center;gap:0 21px;min-width:0;overflow:hidden}
+/* 每项前一道细竖线，画在前面的空里；折到下一行的那项，竖线落在框外被裁掉，行首不会多出一道 */
+.cv .afoot-bits>span{position:relative}
+.cv .afoot-bits>span::before{content:"";position:absolute;left:-11px;top:50%;width:1px;height:11px;margin-top:-5px;background:var(--line2)}
+.cv .afoot-copy{flex:none;display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 6px;margin-left:-8px;border:0;border-radius:6px;background:none;color:var(--t3);cursor:pointer;font-size:12px}
+.cv .afoot-copy:focus-visible{outline:2px solid var(--accent-t);outline-offset:-2px}
+.cv .afoot-row>.afoot-copy:first-child{margin-left:-6px}
+.cv .afoot-copy:hover{background:var(--hover);color:var(--t1)}
+.cv .afoot-copy svg{width:13px;height:13px}
+
+/* ---------- 产物（T645，Covey v32）：正文下面一颗“产物 N 个 · 第一个 等”，和“工具”那颗一个样子；点开一行一个文件 ---------- */
+.cv .afiles{margin:8px 0 0}
+.cv .afiles-h{border:0;cursor:pointer;max-width:100%;min-width:0}
+.cv .afiles-h .afiles-ic{width:12px;height:12px;color:var(--t3);flex:none}
+.cv .afiles-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .afiles-bad{flex:none;color:var(--st-stopped)}
+.cv .afiles-list{list-style:none;margin:6px 0 0 5px;padding:0 0 0 14px;border-left:2px solid var(--line2);display:flex;flex-direction:column;gap:2px;font-size:13px;line-height:20px}
+.cv .afiles-list li{display:flex;align-items:center;gap:8px;min-height:26px;min-width:0}
+.cv .afiles-fi{width:14px;height:14px;flex:none;color:var(--accent-t)}
+.cv .afiles-list a{display:inline-flex;align-items:center;gap:4px;min-width:0;color:var(--t1);text-decoration:none}
+.cv .afiles-list a:hover{color:var(--accent-t)}
+.cv .afiles-list a:hover .afiles-n{text-decoration:underline}
+.cv .afiles-n{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .afiles-go{width:12px;height:12px;flex:none;color:var(--t3)}
+.cv .afiles-sz{flex:none;font-size:12px;color:var(--t3)}
+.cv .afiles-err{min-width:0;font-size:12px;color:var(--st-stopped);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

@@ -1,0 +1,118 @@
+/* 输入框（T616）：长高、放大、预览、附件小卡、配置栏的换配置面板。颜色只用 token */
+
+/* 长高由 Composer 按内容算（上限按对话区的高），这里放开旧的 160px。
+   兜底：输入框是一列，最高到对话区的高，编辑区先缩、按钮栏和附件卡不缩，所以按钮栏总在看得见的地方（T616 17:30） */
+.cv div.composer{display:flex;flex-direction:column;flex:0 1 auto;min-height:0;max-height:calc(100% - 44px)}
+.cv div.composer>textarea,.cv div.composer>.cp-richbox{flex:1 1 auto;min-height:24px}
+.cv div.composer>.bar,.cv div.composer>.cp-atts,.cv div.composer>.lx-line,.cv div.composer>.lx-hint{flex:none}
+.cv div.composer textarea{max-height:none;min-height:24px;color:var(--t1)}
+.cv div.composer textarea.big{resize:none}
+.cv div.mcomp textarea{max-height:none}
+.cv .composer.drag{outline:2px dashed color-mix(in srgb,var(--a1) 70%,transparent);outline-offset:2px}
+.cv .mcomp.drag .in{outline:2px dashed color-mix(in srgb,var(--a1) 70%,transparent)}
+.cv .cp-drop{position:absolute;inset:0;border-radius:14px;display:grid;place-items:center;background:color-mix(in srgb,var(--s1) 82%,transparent);color:var(--t1);font-size:13px;pointer-events:none}
+
+.cv .composer .bar{min-width:0}
+.cv .cp-ic{width:28px;height:28px;flex:none;display:grid;place-items:center;border-radius:8px;border:0;background:transparent;color:var(--t2);cursor:pointer}
+.cv .cp-ic svg{width:16px;height:16px}
+.cv .cp-ic:hover:not(:disabled){background:var(--s3);color:var(--t1)}
+.cv .cp-ic.on{background:color-mix(in srgb,var(--a1) 18%,transparent);color:var(--t1)}
+.cv .cp-ic:disabled{opacity:.4;cursor:not-allowed}
+.cv .mcomp .pl:disabled{opacity:.4}
+.cv .cp-extra{flex:none;white-space:nowrap}
+
+/* 预览：和编辑区同样的位置，按你说的话的样子画 */
+/* 边写边渲染的编辑区（RichText）：和原来的文字框一样大小、行高；里面按“你说的话”的样子画 */
+.cv .cp-richbox{min-height:24px;overflow-y:auto;cursor:text;color:var(--t1)}
+.cv .mcomp .cp-richbox{width:100%;max-height:30vh}
+.cv .cp-rich{outline:0;min-height:24px;padding:2px;line-height:1.6;font-size:inherit;color:var(--t1);white-space:pre-wrap;overflow-wrap:anywhere;caret-color:var(--a1)}
+.cv .mcomp .cp-rich{padding:0;line-height:1.5}
+.cv .cp-rich>*{margin:0}
+.cv .cp-rich p{margin:0}
+.cv .cp-rich p+p,.cv .cp-rich p+ul,.cv .cp-rich p+ol,.cv .cp-rich ul+p,.cv .cp-rich ol+p{margin-top:4px}
+.cv .cp-rich ul,.cv .cp-rich ol{margin:2px 0;padding-left:22px}
+.cv .cp-rich ul{list-style:disc}
+.cv .cp-rich ol{list-style:decimal}
+.cv .cp-rich li{margin:1px 0}
+.cv .cp-rich li>p{margin:0}
+/* 标题要一眼看得出是标题，不只是加粗：字号逐级放大 */
+.cv .cp-rich h1,.cv .cp-rich h2,.cv .cp-rich h3,.cv .cp-rich h4{font-weight:650;line-height:1.4;margin:6px 0 2px}
+.cv .cp-rich h1{font-size:1.35em}
+.cv .cp-rich h2{font-size:1.2em}
+.cv .cp-rich h3{font-size:1.08em}
+.cv .cp-rich h4{font-size:1em}
+.cv .cp-rich blockquote{margin:4px 0;padding-left:10px;border-left:3px solid var(--line2);color:var(--t2)}
+.cv .cp-rich code{font-family:var(--mono,monospace);font-size:.92em;padding:1px 4px;border-radius:4px;background:var(--s3)}
+.cv .cp-rich pre{margin:4px 0;padding:8px 10px;border-radius:8px;background:var(--s3);overflow-x:auto}
+.cv .cp-rich pre code{padding:0;background:transparent}
+.cv .cp-rich hr{border:0;border-top:1px solid var(--line2);margin:8px 0}
+.cv .cp-rich ul[data-type="taskList"]{list-style:none;padding-left:2px}
+.cv .cp-rich ul[data-type="taskList"] li{display:flex;align-items:flex-start;gap:6px}
+.cv .cp-rich ul[data-type="taskList"] li>label{flex:none;margin-top:3px}
+.cv .cp-rich ul[data-type="taskList"] li>div{flex:1;min-width:0}
+.cv .cp-rich p.is-editor-empty:first-child::before{content:attr(data-placeholder);float:left;height:0;color:var(--t3);pointer-events:none}
+
+/* 附件小卡 */
+.cv .cp-atts{display:flex;flex-wrap:wrap;gap:8px;padding:2px 0 8px}
+.cv .mcatts{margin:0 10px 6px}
+.cv .mcatts .cp-atts{padding:0}
+.cv .cp-att{position:relative;display:flex;align-items:center;gap:8px;max-width:240px;padding:5px 6px 5px 5px;border-radius:10px;border:1px solid var(--line2);background:var(--s2);overflow:hidden}
+.cv .cp-att.bad{border-color:color-mix(in srgb,var(--fail) 55%,transparent)}
+.cv .cp-open{flex:none;padding:0;border:0;background:transparent;border-radius:7px;cursor:zoom-in;line-height:0}
+.cv .cp-open:focus-visible{outline:2px solid var(--a1);outline-offset:1px}
+.cv .cp-thumb{width:40px;height:40px;flex:none;border-radius:7px;object-fit:cover;background:var(--s3)}
+.cv .cp-ficon{width:40px;height:40px;flex:none;border-radius:7px;display:grid;place-items:center;background:var(--s3);color:var(--t2)}
+.cv .cp-ficon svg{width:18px;height:18px}
+.cv .cp-meta{display:flex;flex-direction:column;min-width:0;flex:1;cursor:pointer}
+.cv .cp-name{font-size:12px;color:var(--t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cv .cp-size{font-size:11px;color:var(--t3);white-space:nowrap}
+.cv .cp-att.bad .cp-size{color:var(--fail)}
+.cv .cp-x{width:22px;height:22px;flex:none;display:grid;place-items:center;border:0;border-radius:6px;background:transparent;color:var(--t3);cursor:pointer}
+.cv .cp-x:hover{background:var(--s3);color:var(--t1)}
+.cv .cp-x svg{width:13px;height:13px}
+.cv .cp-bar{position:absolute;left:0;bottom:0;height:2px;background:var(--a1);transition:width .2s}
+
+/* 你说的话：Markdown，换行照写的保留，留白收紧 */
+.cv .mdans.mdsaid{margin:0;padding:0;max-width:none}
+.cv .mdsaid .prose{font-size:inherit;line-height:1.6;color:inherit}
+.cv .mdsaid p{margin:0 0 6px;line-height:1.6;color:inherit}
+.cv .mdsaid ul,.cv .mdsaid ol{margin:2px 0 6px;padding-left:20px}
+.cv .mdsaid li{margin:2px 0;line-height:1.6}
+.cv .mdsaid h1,.cv .mdsaid h2,.cv .mdsaid h3,.cv .mdsaid h4{font-size:inherit;margin:4px 0}
+.cv .mdsaid pre{margin:4px 0 6px}
+.cv .mdsaid .prose>:last-child{margin-bottom:0}
+.cv .um-tx{flex:1;min-width:0;overflow-wrap:anywhere}
+.cv .um-files{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.cv .um-file{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--t2);padding:1px 8px;border-radius:999px;border:1px solid var(--line2)}
+.cv .um-file svg{width:12px;height:12px}
+.cv .a-saytx.md-said{white-space:normal}
+.cv .a-saytx.md-said.clamp{display:block;max-height:6.6em;overflow:hidden;-webkit-mask-image:linear-gradient(#000 65%,transparent);mask-image:linear-gradient(#000 65%,transparent)}
+
+/* 配置栏：点开换配置。面板浮在输入框上面，和输入框一样宽 */
+.cv .cfg{min-width:0;display:inline-flex}
+.cv .cfg-ro{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .cfg-btn{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;padding:3px 8px;border-radius:8px;border:1px solid transparent;background:transparent;color:var(--t3);font-size:12px;cursor:pointer}
+.cv .cfg-btn:hover,.cv .cfg-btn.on{border-color:var(--line2);background:var(--s2);color:var(--t1)}
+.cv .cfg-btn svg{width:14px;height:14px;flex:none}
+.cv .cfg-tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .cfg-pop{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:30;max-height:min(70vh,620px);overflow-y:auto;border-radius:12px;border:1px solid var(--line2);background:var(--s1);box-shadow:0 18px 48px -12px rgba(0,0,0,.55);padding:10px 14px 8px}
+.cv .cfg-head{display:flex;align-items:baseline;gap:10px;padding:0 0 6px;font-size:13px;color:var(--t1)}
+.cv .cfg-head .t3{font-size:12px}
+.cv .cfg-pop .lx-panel{padding:0;border:0;background:transparent}
+.cv .cfg-foot{display:flex;align-items:center;gap:8px;padding:10px 0 2px;border-top:1px solid var(--line)}
+.cv .cfg-note{flex:1;min-width:0;font-size:12px;line-height:1.5;color:var(--t3)}
+.cv .cfg-note .bad{color:var(--fail)}
+.cv .cfg-note .warn{color:var(--wait)}
+.cv .mcfg{position:relative;margin:0 10px 4px}
+.cv .mcfg .cfg-pop{bottom:calc(100% + 6px);max-height:60vh}
+
+@media (max-width:767px){
+  .cv .cfg-foot{flex-wrap:wrap}
+  .cv .cfg-note{flex:1 1 100%}
+}
+
+/* 勾选清单：只画勾选框，不再画圆点 */
+.cv .mdsaid li.task-list-item{list-style:none}
+.cv .mdsaid li.task-list-item::before{display:none}
+.cv .mdsaid ul.contains-task-list{padding-left:4px}
+.cv .mdsaid li.task-list-item input{margin:0 6px 0 0;vertical-align:-2px}

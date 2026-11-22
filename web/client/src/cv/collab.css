@@ -1,0 +1,134 @@
+/* 协作（包 E）、正文里的 @ 胶囊和底栏的汇总小胶囊（T642）、协作往返、协助方回执 */
+.rm-menu{position:absolute;left:0;bottom:calc(100% + 4px);z-index:20;display:flex;flex-direction:column;gap:2px;min-width:180px;max-width:320px;padding:4px;border:1px solid var(--line2);border-radius:8px;background:var(--s3);box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.rm-menu button{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border:0;border-radius:6px;background:none;color:var(--t1);font-size:13px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rm-menu button:hover,.rm-menu button:focus-visible{background:var(--hover)}
+.rm-menu .t3{font-size:11.5px}
+.rm-invite{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 8px;border:1px dashed var(--line2);border-radius:11px;background:none;color:var(--t3);font-size:12px;cursor:pointer;align-self:flex-start}
+.rm-invite:hover{color:var(--accent-t);border-color:var(--accent-t)}
+.rm-invite svg{width:12px;height:12px}
+.rm-pick .rm-ptitle{color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1}
+.rm-pick .rm-pstate{color:var(--t3);font-size:11.5px;flex:none}
+.rm-pick.dim{opacity:.7}
+
+.cb{margin:8px 0;border:1px solid var(--line);border-radius:10px;background:var(--s1);overflow:hidden}
+.cb.hl{box-shadow:0 0 0 2px var(--st-waiting)}
+.cb-top{display:flex;align-items:center;gap:6px;padding-right:8px}
+.cb-head{display:flex;align-items:center;gap:8px;flex:1;min-width:0;min-height:34px;padding:4px 10px;border:0;background:none;color:var(--t1);font-size:13px;text-align:left;cursor:pointer}
+.cb-head svg{width:13px;height:13px;color:var(--t3);flex:none}
+.cb-head b{white-space:nowrap;flex:none}
+.cb-who{color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.cb-n{flex:none;font-size:11.5px;margin-left:auto}
+.cb-stop{flex:none;color:var(--st-stopped)}
+.cb-stop svg{width:11px;height:11px}
+.cb-asks{list-style:none;margin:0;padding:0 12px 8px 31px;display:flex;flex-direction:column;gap:10px}
+.cb-ask{border-left:2px solid var(--line2);padding-left:10px}
+.cb-ask.is-live{border-left-color:var(--st-running)}
+.cb-line{display:flex;align-items:center;gap:8px;font-size:12.5px;min-width:0}
+.cb-line .sp,.cb-rline .sp{flex:1}
+.cb-dir{color:var(--t1);white-space:nowrap}
+.cb-what{color:var(--t3);font-size:12px;white-space:nowrap}
+.cb-line .pill{font-size:11px}
+.cb-q{margin-top:2px;color:var(--t2);font-size:13px;white-space:pre-wrap;word-break:break-word}
+.cb-reply{margin-top:6px;padding:6px 10px;border-radius:8px;background:var(--s2)}
+.cb-rwho{font-size:12px;color:var(--t3);margin-bottom:2px}
+.cb-evrow{display:flex;align-items:flex-start;gap:8px;margin-top:6px;font-size:12px}
+.cb-evl{flex:none;color:var(--t3);line-height:22px}
+.cb-ev{display:flex;flex-wrap:wrap;gap:4px 6px;margin:0;padding:0;list-style:none;min-width:0}
+.cb-evi{display:inline-flex;align-items:center;gap:6px;max-width:100%;min-height:22px;padding:0 8px;border-radius:6px;background:var(--s1);box-shadow:inset 0 0 0 1px var(--line);color:var(--t2)}
+.cb-evi>span,.cb-evi>a{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.cb-evi a{display:inline-flex;align-items:center;gap:3px;color:var(--accent-t);text-decoration:none}
+.cb-evi a:hover{text-decoration:underline}
+.cb-evi a svg{display:inline-block;width:11px;height:11px;flex:none}
+.cb-src{flex:none;font-size:11.5px;color:var(--t3);text-decoration:none}
+.cb-src:hover{color:var(--accent-t)}
+.cb-meta{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;font-size:12px;color:var(--t3)}
+.cb-meta a{color:var(--accent-t);text-decoration:none}
+.cb-why{margin-top:2px;font-size:12px;color:var(--st-stopped)}
+.cb-late{margin-top:4px;font-size:12px;color:var(--t3)}
+.cb-none{font-size:12px;padding:0 12px 8px 31px;margin:0}
+
+.cb-rcpt{margin:8px 0;padding:6px 10px;border:1px dashed var(--line2);border-radius:10px;background:var(--s1);font-size:13px}
+.cb-rline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.cb-rline b{color:var(--t1)}
+.cb-dot{width:7px;height:7px;border-radius:50%;background:var(--st-done);flex:none}
+.cb-dot.ph-live{background:var(--st-running)}
+.cb-dot.ph-off{background:var(--st-stopped)}
+.cb-rbody{margin-top:6px;padding:6px 10px;border-radius:8px;background:var(--s2)}
+.cb-rbody .cb-q{margin-bottom:4px}
+.cb-rbody .cb-q b{color:var(--t1);font-weight:600}
+@media (max-width:767px){
+  .cb-asks{padding-left:14px;padding-right:10px}
+  .cb-head{flex-wrap:wrap}
+  .cb-n{margin-left:0}
+}
+
+/* 头像：话题是它的 T 号，管家、负责人是固定头像（和 RoleAvatar 一样），小一号 */
+.who{display:inline-flex;align-items:center;gap:5px;vertical-align:middle;min-width:0;flex:none}
+.cv .who .rm-pic .a-avatar{width:18px;height:18px}
+.cv .who .a-tbadge{height:18px;min-width:18px;padding:0 5px;border-radius:5px;font-size:10.5px}
+.cv .who .rm-av{width:18px;height:18px;font-size:10px}
+.who-n{color:var(--t1);font-size:inherit;white-space:nowrap}
+
+/* 正文里的 @ 胶囊（编辑器里的行内原子节点） */
+.cv .mn{display:inline-flex;align-items:center;gap:5px;height:22px;max-width:16em;padding:0 8px 0 2px;margin:0 1px;border-radius:11px;background:var(--sel);color:var(--accent-t);font-size:.92em;line-height:1;cursor:pointer;user-select:none;vertical-align:middle;white-space:nowrap}
+.cv .mn .who{gap:4px}
+.cv .mn .who-n{display:none}
+.cv .mn-n{overflow:hidden;text-overflow:ellipsis;color:var(--t1)}
+.cv .mn:hover{box-shadow:inset 0 0 0 1px var(--accent-t)}
+.cv .mn.sel,.cv .mn.sum{box-shadow:inset 0 0 0 1px var(--accent-t)}
+.cv .mn.sel{box-shadow:0 0 0 2px var(--accent-t)}
+.cv .mn-sum{flex:none;height:14px;padding:0 5px;border-radius:7px;background:var(--accent-t);color:#fff;font-size:10px;line-height:14px;font-weight:600}
+.cv .mn-menu{position:fixed;z-index:60;display:flex;flex-direction:column;gap:2px;width:220px;padding:4px;border:1px solid var(--line2);border-radius:8px;background:var(--s3);box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.cv .mn-menu button{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border:0;border-radius:6px;background:none;color:var(--t1);font-size:13px;text-align:left;cursor:pointer}
+.cv .mn-menu button:hover:not(:disabled),.cv .mn-menu button:focus-visible{background:var(--hover)}
+.cv .mn-menu button:disabled{color:var(--t3);cursor:default}
+.cv .mn-menu svg{width:14px;height:14px;flex:none}
+
+/* 底栏左侧的汇总小胶囊：由 [T586] 汇总 ▾ / 由管家归口 ▾ / 协助方太多变红 */
+.cv .cp-chip{flex:0 1 auto;min-width:0;display:inline-flex}
+.rc-wrap{position:relative;display:inline-flex;min-width:0}
+.rc{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px 0 9px;border:1px solid var(--line2);border-radius:13px;background:var(--s1);color:var(--t2);font-size:12px;white-space:nowrap;cursor:pointer;max-width:100%}
+.rc:hover,.rc.open{border-color:var(--accent-t);color:var(--t1)}
+.rc svg{width:13px;height:13px;flex:none;color:var(--accent-t)}
+.rc .rc-d{width:12px;height:12px;color:var(--t3)}
+.rc.bad{cursor:default;border-color:var(--st-stopped);color:var(--st-stopped);white-space:normal;height:auto;min-height:26px;padding:3px 10px;line-height:1.35}
+.rc.bad svg{color:var(--st-stopped)}
+.rc-menu{min-width:220px}
+.rc-menu .rc-h{padding:2px 8px 4px;font-size:11.5px;white-space:normal;line-height:1.4}
+.rc-menu .rc-cur{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;font-size:13px;color:var(--t1)}
+.rc-menu .rc-cur svg{width:14px;height:14px;color:var(--accent-t)}
+.rc-menu .rc-gap{width:14px;flex:none;display:none}
+.cv .mcchip{margin:0 10px 6px;display:flex;min-width:0}
+.cv .mcchip .rc-wrap{max-width:100%}
+.cv .mcchip .rc-menu{bottom:calc(100% + 4px)}
+
+/* 去向里的头像：“→ [T586] 汇总 · 协助 [T505][T601]” */
+.rt{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;vertical-align:middle}
+
+/* 顶栏「成员 N」 */
+.mm{position:relative;flex:none}
+.mm-btn{display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:1px solid var(--line2);border-radius:15px;background:var(--s1);color:var(--t2);font-size:12.5px;cursor:pointer;white-space:nowrap}
+.mm-btn:hover,.mm-btn.on{border-color:var(--accent-t);color:var(--t1)}
+.mm-btn svg{width:14px;height:14px}
+.mm-n{padding:0 5px;border-radius:8px;background:var(--s3);color:var(--t2);font-size:11px;line-height:16px}
+.mm-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:40;width:340px;max-height:min(70vh,520px);display:flex;flex-direction:column;border:1px solid var(--line2);border-radius:10px;background:var(--s3);box-shadow:0 10px 28px rgba(0,0,0,.3);overflow:hidden}
+.mm-search{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.mm-search svg{width:14px;height:14px;color:var(--t3);flex:none}
+.mm-search input{flex:1;min-width:0;border:0;outline:0;background:none;color:var(--t1);font-size:13px}
+.mm-list{overflow:auto;padding:4px}
+.mm-gh{padding:6px 8px 2px;font-size:11.5px;color:var(--t3)}
+.mm-row{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 8px;border:0;border-radius:6px;background:none;color:var(--t1);font-size:13px;text-align:left;cursor:pointer}
+.mm-row:hover,.mm-row:focus-visible{background:var(--hover)}
+.mm-row.dim{opacity:.7}
+.mm-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t2)}
+.mm-s{flex:none;font-size:11.5px}
+.mm-none{padding:10px;font-size:12px}
+.cv.m .mm-btn{height:30px;padding:0 9px}
+.cv.m .mm-pop{position:fixed;left:8px;right:8px;top:58px;width:auto;max-height:70vh}
+
+/* 手机：你那句下面的去向（头像）换到下一行，往返里的“引用”不被挤成竖排 */
+.cv.m .feed .um{flex-wrap:wrap;row-gap:2px}
+.cv.m .feed .um .tm{flex-basis:100%;text-align:right}
+.cv .rt{justify-content:flex-end}
+.cb-line{flex-wrap:wrap;row-gap:4px}
+.cb-line .rm-act{white-space:nowrap;flex:none}

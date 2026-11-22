@@ -1,0 +1,53 @@
+/* 侧栏层次：入口和专项先被看见，话题供扫读，编号与计数退后一层。
+   限定在侧栏里，手机抽屉和桌面共用，正文与对话字号不受影响。 */
+.cv .a-side {
+  .brand .name { font-size:16px; font-weight:600; letter-spacing:-.025em; }
+  .search { font-size:12px; }
+  .a-nav { min-height:32px; font-size:14px; font-weight:500; line-height:20px; }
+  .a-nav.on { font-weight:600; }
+  .a-nav .ic { width:20px; height:20px; }
+  .a-avatar { flex:none; display:block; object-fit:cover; border-radius:50%; }
+  .a-avatar-empty { color:var(--t3); padding:3px; }
+  .a-project-avatar { position:relative; flex:none; }
+  .a-project-avatar i { position:absolute; right:-1px; bottom:-1px; width:6px; height:6px; border-radius:50%; background:var(--c); box-shadow:0 0 0 2px var(--side); }
+  .a-badge { font-size:11px; font-weight:400; }
+
+  .sec { padding:20px 8px 7px; font-size:11px; font-weight:500; letter-spacing:.06em; color:var(--t3); }
+  .sec > span:first-child { font-size:11px; }
+  .sec > span:last-child:not(:first-child), .a-secn { font:11px/18px var(--mono); letter-spacing:0; color:var(--t3); }
+  .a-secn { margin-left:6px; }
+
+  .a-grph { min-height:32px; align-items:center; gap:4px; padding:4px 6px 4px 0; }
+  .a-gname { display:flex; align-items:center; gap:8px; padding-top:0; font-size:14px; font-weight:600; line-height:22px; color:var(--t1); }
+  .a-gtitle { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .a-cnt { margin-top:0; align-self:center; }
+  .a-grpb { margin-left:35px; padding-bottom:6px; }
+  .a-old > .a-grph .a-gname { font-size:12px; font-weight:500; color:var(--t3); }
+  .a-archive { margin-top:10px; padding-top:4px; border-top:1px solid var(--line); }
+  .a-archive-toggle { display:flex; align-items:center; gap:6px; width:100%; padding:8px; border:0; border-radius:6px; background:none; color:var(--t3); font:500 11px/18px var(--font); cursor:pointer; text-align:left; }
+  .a-archive-toggle:hover { color:var(--t1); background:var(--hover); }
+  .a-archive-toggle > span:first-child { flex:1; }
+  .a-archive-count { font:11px/18px var(--mono); }
+  .a-archive-toggle svg { flex:none; width:12px; height:12px; transition:transform .15s; }
+  .a-archive.open > .a-archive-toggle svg { transform:rotate(90deg); }
+
+  .a-tp { font-size:13px; font-weight:400; line-height:20px; }
+  .a-tp.on .a-tt { font-weight:500; }
+  .a-tp .a-tn { font:11px/20px var(--mono); color:var(--t3); }
+  .a-more { font:400 12px/20px var(--font); }
+
+  /* 话题头像（T645）：行首自己颜色上的 T 号，18px 高，行高还是 28px；同一侧栏里一样宽（--tw 是最长号码的字数，Shell.tsx 算），
+     标题对成一条线；状态点在右下角（同专项头像），灰色的状态不画；空闲、已停止的话题头像淡一些 */
+  .a-tlogo { position:relative; flex:none; display:inline-flex; }
+  .a-tlogo .a-tbadge { height:18px; min-width:calc(var(--tw, 4) * 1ch + 9px); padding:0 4px; border-radius:5px; font-size:10.5px; }
+  .a-tlogo .dot { position:absolute; right:-3px; bottom:-3px; width:7px; height:7px; margin:0; box-shadow:0 0 0 2px var(--side); }
+  .a-tp.dim .a-tbadge { opacity:.55; }
+  .a-tspace { visibility:hidden; }
+  .a-more { display:flex; align-items:center; gap:8px; padding-left:8px; }
+  &.mini .a-tlogo .a-tbadge { min-width:0; padding:0 3px; font-size:9.5px; }
+  .sidelink { font-size:12px; font-weight:500; }
+
+  :is(.a-nav, .a-tp, .a-gname, .a-chev, .a-more, .a-archive-toggle, .sidelink):focus-visible {
+    outline:2px solid var(--a1); outline-offset:-2px; border-radius:6px;
+  }
+}

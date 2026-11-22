@@ -1,0 +1,63 @@
+/* 专项右栏（T550 评审第 11 条）：整栏一起滚，三块都不裁；记忆一行摘要、点开看全文；颜色只用 token */
+.cv .a-prail{padding-bottom:56px}
+.cv .a-prail>.rps,.cv .a-prail>.rph{flex:none;overflow:visible}
+.cv .a-prail .rph .a-rcnt{font-size:12px;color:var(--t2)}
+.cv .a-prail .rph .live{margin-left:auto}
+.cv .a-rnow{padding-bottom:12px;border-bottom:1px solid var(--line)}
+.cv .a-rnow .nowrow .tx b{font-weight:400;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .a-rnow .nowrow .tx small{white-space:normal;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cv .a-rnow .nowrow .tm{flex:none}
+.cv .a-rnowmore{display:flex;align-items:center;gap:8px;width:100%;margin:2px 0 0;padding:7px 0;background:none;border:0;border-top:1px dashed var(--line);cursor:pointer;text-align:left;font-size:12px;color:var(--t2);min-width:0}
+.cv .a-rnowmore .a-rn{flex:none;color:var(--accent-t)}
+.cv .a-rnowmore .a-rids{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11.5px var(--mono);color:var(--t3)}
+.cv .a-rnowmore svg,.cv .a-rfold svg{width:13px;height:13px;flex:none;color:var(--accent-t)}
+.cv .a-rnowmore:hover .a-rn,.cv .a-rfold:hover{text-decoration:underline}
+.cv .a-rblk{padding-bottom:6px}
+.cv .a-rblk+.a-rblk{border-top:1px solid var(--line);margin-top:6px}
+.cv .a-rhint{font-size:11px;color:var(--t3)}
+.cv .a-rempty{font-size:12px;line-height:1.6}
+.cv .a-rfold{display:inline-flex;align-items:center;gap:2px;margin:4px 0 6px;padding:6px 0;background:none;border:0;font-size:12px;color:var(--accent-t);cursor:pointer}
+
+/* 记忆：一行摘要，点开看全文和来源 */
+.cv .a-mwho{display:flex;gap:4px;margin:0 0 6px;flex-wrap:wrap}
+.cv .a-mwho button{height:24px;padding:0 9px;border-radius:7px;border:0;background:none;font-size:12px;color:var(--t2);cursor:pointer;box-shadow:inset 0 0 0 1px var(--line)}
+.cv .a-mwho button.on{color:var(--t1);background:var(--s3);box-shadow:inset 0 0 0 1px var(--line2)}
+.cv .a-mem{margin:0 -10px;border-radius:9px}
+.cv .a-mem.open{background:var(--s2);box-shadow:inset 0 0 0 1px var(--line)}
+.cv .a-mrow{display:flex;align-items:center;gap:8px;width:100%;min-width:0;padding:7px 10px;border:0;background:none;border-radius:9px;cursor:pointer;text-align:left;color:var(--t1);font-size:13px}
+.cv .a-mrow:hover{background:var(--hover)}
+.cv .a-mem.open .a-mrow:hover{background:none}
+.cv .a-mrow .tag{flex:none;min-width:58px;justify-content:center}
+.cv .a-msum{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.45}
+.cv .a-mem.open .a-msum{color:var(--t2)}
+.cv .a-mat{flex:none;font:11px var(--mono);color:var(--t3)}
+.cv .a-mdet{padding:0 10px 9px}
+.cv .a-mfull{font-size:13px;line-height:1.6;color:var(--t1);overflow-wrap:anywhere;white-space:pre-wrap}
+.cv .a-mmeta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 10px;margin-top:7px;font-size:11.5px;color:var(--t3)}
+.cv .a-mmeta a{color:var(--accent-t)}
+.cv .a-mmeta a:hover{text-decoration:underline}
+.cv .a-mmeta .sp{flex:1}
+.cv .a-mwrong{background:none;border:0;padding:2px 0;font-size:12px;color:var(--t2);cursor:pointer}
+.cv .a-mwrong:hover{color:var(--fail);text-decoration:underline}
+
+/* 文件：网址直接打开；本机路径、交付说明点开看全文、能复制 */
+.cv .a-file{margin:0 -10px;border-radius:9px}
+.cv .a-file>.fi{width:100%;margin:0;border:0;background:none;text-align:left;color:inherit;font:inherit;cursor:pointer}
+.cv .a-file.open{background:var(--s2);box-shadow:inset 0 0 0 1px var(--line)}
+.cv .a-file.open>.fi:hover{background:none}
+.cv .a-fchev{width:14px;height:14px;flex:none;color:var(--t3);transition:transform .15s}
+.cv .a-file.open .a-fchev{transform:rotate(180deg)}
+.cv .fi .fic svg{width:15px;height:15px}
+.cv .a-fdet{padding:0 10px 9px 50px}
+.cv .a-ftext{font:11.5px/1.6 var(--mono);color:var(--t2);overflow-wrap:anywhere;white-space:pre-wrap;user-select:text}
+.cv .a-fcopy{display:inline-flex;align-items:center;gap:4px;margin-top:6px;padding:0;background:none;border:0;font-size:12px;color:var(--accent-t);cursor:pointer}
+.cv .a-fcopy svg{width:12px;height:12px}
+
+/* 手机和窄屏：“记忆与文件”标签里铺满 */
+.cv .a-prmob{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;display:flex;flex-direction:column;padding-bottom:96px}
+.cv .a-prmob .rph{height:48px}
+.cv .a-prmob .a-mrow,.cv .a-prmob .a-file>.fi{min-height:40px}
+.cv .a-prmob .a-rfold,.cv .a-prmob .a-rnowmore,.cv .a-prmob .a-mwrong,.cv .a-prmob .a-fcopy{min-height:40px}
+
+/* 手机和窄屏：没有在做的话题时“此刻”只占标题一行（T626） */
+.cv .a-rnone{margin-left:auto;font-size:12px;color:var(--t3)}

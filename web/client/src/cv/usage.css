@@ -1,0 +1,72 @@
+/* 用量（Covey 数据约定 v26）：看板「本周用量」的每日柱和用量页。一根柱子一个色（品牌色压暗），停上去的那根亮，今天没过完浅一档；
+   字只用灰度的字色，线是发丝线（dataviz：柱宽不超过 24px、顶上 4px 圆角、底边方的） */
+.cv{
+/* ---------- 柱状图 ---------- */
+.ub{position:relative;outline:none;border-radius:6px;-webkit-tap-highlight-color:transparent}
+.ub:focus-visible{box-shadow:0 0 0 2px color-mix(in srgb,var(--a1) 45%,transparent)}
+.ub svg{display:block;width:auto;height:auto;overflow:visible;stroke:none;fill:none}
+.ub-bar{fill:color-mix(in srgb,var(--a1) 55%,transparent);transition:fill .12s}
+.ub-bar.today{fill:color-mix(in srgb,var(--a1) 30%,transparent)}
+.ub-bar.on{fill:var(--a1)}
+.ub-grid{stroke:var(--line);stroke-width:1}
+.ub-base{stroke:var(--line2);stroke-width:1}
+.ub-tick,.ub-x,.ub-peak{fill:var(--t4,var(--t3));font-size:10.5px;font-family:var(--font);font-variant-numeric:tabular-nums}
+.ub-peak{fill:var(--t3)}
+.ub-x.today{fill:var(--t3)}
+.ub-x.on{fill:var(--t1)}
+.ub-hit{fill:transparent;cursor:pointer}
+.ub-tip{position:absolute;z-index:6;pointer-events:none;transform:translate(-50%,-100%);white-space:nowrap;
+  background:var(--s3);border:1px solid var(--line2);border-radius:8px;padding:6px 10px;font-size:11.5px;line-height:1.6;color:var(--t2);
+  box-shadow:0 8px 22px -8px rgba(0,0,0,.55)}
+.ub-tip b{font-size:15px;font-weight:600;color:var(--t1);font-variant-numeric:tabular-nums}
+.ub-tip .k{color:var(--t3)}
+&.light .ub-tip{background:var(--s1);box-shadow:0 8px 22px -10px rgba(20,25,45,.28)}
+
+/* ---------- 看板右栏：本周用量 ---------- */
+.nb-ph .nb-more{margin-left:auto;font-size:12px;font-weight:400;letter-spacing:0;color:var(--t3)}
+.nb-ph .nb-more:hover{color:var(--t1)}
+.nb-usage .ub{margin-top:10px}
+
+/* ---------- 用量页 ---------- */
+.us-page{display:flex;flex-direction:column;flex:1;min-height:0}
+.us-col{max-width:880px;margin:0 auto;padding:16px 24px 48px}
+.us-ranges{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.us-seg{display:inline-flex;border:1px solid var(--line2);border-radius:8px;padding:2px;gap:2px}
+.us-seg button{border:0;background:transparent;color:var(--t3);font:inherit;font-size:12.5px;padding:3px 12px;border-radius:6px;cursor:pointer}
+.us-seg button:hover{color:var(--t1)}
+.us-seg button[aria-pressed="true"]{background:var(--s3);color:var(--t1);font-weight:500}
+.us-when{font-size:12px;color:var(--t3);font-variant-numeric:tabular-nums}
+.us-sum{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.us-big{font-size:34px;font-weight:600;letter-spacing:-.5px;color:var(--t1);font-variant-numeric:normal}
+.us-big small{font-size:13px;font-weight:400;color:var(--t3);margin-left:6px;letter-spacing:0}
+.us-avg{font-size:13px;color:var(--t2)}
+.us-meta{font-size:12.5px;color:var(--t3);margin:2px 0 14px}
+.us-sec{font-size:11px;letter-spacing:.06em;color:var(--t4,var(--t3));font-weight:500;margin:28px 0 10px}
+.us-chart{margin-top:4px}
+.us-note{font-size:11.5px;color:var(--t4,var(--t3));margin-top:6px}
+/* 各 Harness：名字、一根同色的横条、数（ranked bars，一个色） */
+.us-hs{display:grid;grid-template-columns:minmax(84px,max-content) 1fr auto;gap:8px 12px;align-items:center;font-size:12.5px}
+.us-hs .nm{color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.us-hs .tr{height:6px;border-radius:3px;background:var(--line)}
+.us-hs .tr i{display:block;height:100%;border-radius:3px;background:color-mix(in srgb,var(--a1) 55%,transparent);min-width:2px}
+.us-hs .v{color:var(--t3);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.us-hs .v b{color:var(--t1);font-weight:500}
+/* 每天一行，新的在上 */
+.us-table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.us-table th{font-weight:400;color:var(--t4,var(--t3));text-align:right;padding:6px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+.us-table th:first-child,.us-table td:first-child{text-align:left;padding-left:4px}
+.us-table td{padding:6px 8px;border-bottom:1px solid var(--line);color:var(--t2);text-align:right;white-space:nowrap}
+.us-table td.tok{color:var(--t1)}
+.us-table td.zero{color:var(--t4,var(--t3))}
+.us-table tr.on td{background:color-mix(in srgb,var(--a1) 10%,transparent)}
+.us-table tr.wk td{border-top:1px solid var(--line2)}
+.us-table tbody tr{cursor:pointer}
+.us-table tbody tr:hover td{background:var(--hover)}
+.us-table .today{color:var(--t3);font-size:11px;margin-left:6px}
+.us-empty{padding:40px 0;text-align:center;color:var(--t3)}
+}
+@media (max-width:767px){
+  .cv .us-col{padding:12px 14px 40px}
+  .cv .us-big{font-size:28px}
+  .cv .us-table th,.cv .us-table td{padding:6px 5px}
+}

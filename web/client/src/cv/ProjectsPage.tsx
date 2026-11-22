@@ -1,0 +1,175 @@
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { ChevronRight, Sparkles } from 'lucide-react';
+import type { SnapshotProject, SnapshotTopic } from '@shared/api.interface';
+import { useSnapshot } from '@client/src/hooks/use-workbench';
+import { Head } from './Shell';
+import { Dot, Pill, useTick } from './ui';
+import { STATES, TONE_KEYS } from './look.gen';
+import { byRecent, fmtDur, isRunningTone, isWaiting, pref, setPref, shortWhen, toneOf, TONE_RANK, type ToneKey } from './lib';
+import { isStopped, listTone } from './topicText';
+import { leadOf, projectPill, toneCounts } from './projectData';
+import { useLater } from './store';
+import './projects.css';
+
+/** 专项一览（/projects）：手机底部「专项」标签打开的就是这一页（以前是侧栏抽屉，只有屏幕六成宽、和最近话题混在一起）。
+ * 一张卡一个专项：状态胶囊、名字、目标一行、按状态的话题数和最后动静；卡下列出要紧的话题（等你、停住、在做，最多 HOT_SHOWN 个）和
+ * 等你回答的负责人，点哪行进哪。要紧的专项排前面（和侧栏、看板一个排法）；安静的（没有要紧的话题，做完、收起或三天没动）收进“更早的专项”。 */
+
+const HOT_SHOWN = 3;
+const QUIET_DAYS = 3;
+const HOT: readonly ToneKey[] = ['waiting', 'stopped', 'stuck', 'running'];
+
+/** 一条细色条：按状态分段，段长是这个状态的话题数，要紧的在左（话题多时也不会挤出去） */
+export const ToneBar: React.FC<{ tones: ToneKey[] }> = ({ tones }) => {
+  const parts: [ToneKey, number][] = [...TONE_KEYS]
+    .sort((a: ToneKey, b: ToneKey) => TONE_RANK[a] - TONE_RANK[b])
+    .map((k: ToneKey): [ToneKey, number] => [k, tones.filter((v: ToneKey) => v === k).length])
+    .filter(([, n]) => n > 0);
+  if (!parts.length) return null;
+  return (
+    <span className="pl-bar" aria-hidden="true">
+      {parts.map(([k, n]) => <i key={k} className={`tone-${k}`} style={{ flexGrow: n }} />)}
+    </span>
+  );
+};
+
+interface View {
+  p: SnapshotProject;
+  topics: SnapshotTopic[];
+  tones: Map<string, ToneKey>;
+  hot: SnapshotTopic[];
+  lead: SnapshotTopic | undefined;
+  last: number;
+  rank: number;
+}
+
+const ProjectCard: React.FC<{ x: View; now: number }> = ({ x, now }) => {
+  const { p, lead } = x;
+  const base: string = `/projects/${encodeURIComponent(p.key)}`;
+  const tones: ToneKey[] = x.topics.map((t: SnapshotTopic) => x.tones.get(t.key) ?? listTone(t));
+  const pill = projectPill(p, tones, lead);
+  const counts: [ToneKey, number][] = toneCounts(tones);
+  const goal: string = (p.goal || p.status_reason || '').replace(/^\s*目标\s*[:：]\s*/u, '');
+  const leadWaits: boolean = !!lead && isWaiting(lead);
+  const shown: SnapshotTopic[] = x.hot.slice(0, HOT_SHOWN);
+  const more: number = x.hot.length - shown.length;
+  return (
+    <section className="pl-card">
+      <Link to={base} className="pl-head">
+        <div className="pl-l1">
+          <b className="pl-name">{p.title}</b>
+          <Pill tone={pill.tone} text={pill.text} />
+        </div>
+        {goal ? <div className="pl-goal">{goal}</div> : null}
+        <div className="pl-meta">
+          <ToneBar tones={tones} />
+          <span className="pl-counts">
+            {x.topics.length ? `${x.topics.length} 个话题` : '还没有话题'}
+            {counts.map(([k, n]) => <span key={k} className={`pl-n tone-${k}`}> · {n} {STATES[k].word}</span>)}
+          </span>
+          <span className="pl-when short">{shortWhen(x.last, now)}</span>
+        </div>
+      </Link>
+      {leadWaits || shown.length ? (
+        <div className="pl-hot">
+          {leadWaits && lead ? (
+            <Link to={base} className="pl-row">
+              <Sparkles className="pl-lead" />
+              <span className="pl-tt">负责人问你</span>
+              <span className="pl-st short tone-waiting">{STATES.waiting.word}</span>
+            </Link>
+          ) : null}
+          {shown.map((t: SnapshotTopic) => {
+            const k: ToneKey = x.tones.get(t.key) ?? listTone(t);
+            const sec: number | null = isRunningTone(k) && t.running?.started_at ? now - t.running.started_at : null;
+            return (
+              <Link key={t.key} to={`/topics/${encodeURIComponent(t.key)}`} className="pl-row">
+                <Dot tone={k} />
+                <span className="pl-no short">T{t.number}</span>
+                <span className="pl-tt">{t.title}</span>
+                <span className={`pl-st short tone-${k}`}>{sec ? fmtDur(sec, false) : STATES[k].word}</span>
+              </Link>
+            );
+          })}
+          {more > 0 ? (
+            <Link to={`${base}/graph`} className="pl-row pl-more">
+              还有 {more} 个要紧的 <ChevronRight />
+            </Link>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+};
+
+const ProjectsPage: React.FC = () => {
+  const { data: snap } = useSnapshot();
+  const now: number = useTick(30000);
+  const later = useLater();
+  const [oldOpen, setOldOpen] = useState<boolean>(() => pref('grp.old', '0') === '1');
+  if (!snap) return null;
+  const topics: SnapshotTopic[] = snap.topics.filter((t: SnapshotTopic) => t.kind === 'topic');
+  const qKeys = new Set<string>(snap.questions.map((q) => q.topic_key));
+  // 和侧栏一样读一个话题的状态：有题在等是等你；停住了跟看板走（点过“不管了”的不算）；其余按列表的颜色
+  const toneFor = (t: SnapshotTopic): ToneKey => (qKeys.has(t.key) || isWaiting(t) ? 'waiting' : isStopped(t, now, later) ? 'stopped' : listTone(t));
+  const views: View[] = snap.projects.map((p: SnapshotProject): View => {
+    const own: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => t.project_key === p.key).sort(byRecent);
+    const tones = new Map<string, ToneKey>(own.map((t: SnapshotTopic) => [t.key, toneFor(t)]));
+    const k = (t: SnapshotTopic): ToneKey => tones.get(t.key) as ToneKey;
+    const hot: SnapshotTopic[] = own.filter((t: SnapshotTopic) => HOT.includes(k(t))).sort((a: SnapshotTopic, b: SnapshotTopic) => TONE_RANK[k(a)] - TONE_RANK[k(b)] || byRecent(a, b));
+    const lead: SnapshotTopic | undefined = leadOf(snap, p);
+    const leadHot: boolean = !!lead && (isWaiting(lead) || isRunningTone(toneOf(lead)));
+    const waitN: number = hot.filter((t: SnapshotTopic) => ['waiting', 'stopped', 'stuck'].includes(k(t))).length + (lead && isWaiting(lead) ? 1 : 0);
+    return {
+      p,
+      topics: own,
+      tones,
+      hot,
+      lead,
+      last: Math.max(p.updated_at, ...own.map((t: SnapshotTopic) => t.updated_at)),
+      rank: waitN ? 0 : hot.length || leadHot ? 1 : 2,
+    };
+  });
+  const quiet = (x: View): boolean => x.rank === 2 && (['做完', '收起', '已取消'].includes(x.p.status) || now - x.last > QUIET_DAYS * 86400);
+  const live: View[] = views.filter((x: View) => !quiet(x)).sort((a: View, b: View) => a.rank - b.rank || b.last - a.last || a.p.key.localeCompare(b.p.key));
+  const old: View[] = views.filter(quiet).sort((a: View, b: View) => b.last - a.last);
+  const act: number = live.filter((x: View) => x.rank === 0).length;
+  const sub: string = views.length ? `${views.length} 个${act ? ` · ${act} 个要你处理` : ''}` : '';
+  const toggleOld = (): void => {
+    setPref('grp.old', oldOpen ? '0' : '1');
+    setOldOpen(!oldOpen);
+  };
+  return (
+    <>
+      <Head title="专项" sub={sub || undefined} />
+      <div className="scroll pl-page">
+        <div className="pl-col">
+          {!views.length ? (
+            <p className="pl-empty">还没有专项。让管家把一件长期的事开成专项，或在看板上点「整理」，Covey 会看看哪些话题该归到一起。</p>
+          ) : null}
+          {live.map((x: View) => <ProjectCard key={x.p.key} x={x} now={now} />)}
+          {old.length ? (
+            <section className={`pl-old${oldOpen ? ' open' : ''}`}>
+              <button type="button" className="pl-oldh" onClick={toggleOld} aria-expanded={oldOpen}>
+                <ChevronRight />
+                <span>更早的专项</span>
+                <em>{old.length}</em>
+              </button>
+              {oldOpen
+                ? old.map((x: View) => (
+                    <Link key={x.p.key} to={`/projects/${encodeURIComponent(x.p.key)}`} className="pl-orow">
+                      <span className="pl-tt">{x.p.title}</span>
+                      <span className="pl-om">{x.topics.length} 个话题 · {x.p.status || '安静'} · {shortWhen(x.last, now)}</span>
+                    </Link>
+                  ))
+                : null}
+            </section>
+          ) : null}
+        </div>
+      </div>
+    </>
+  );
+};
+
+export default ProjectsPage;

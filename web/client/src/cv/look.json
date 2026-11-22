@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "states": {
+    "waiting": {
+      "word": "等你",
+      "group": "act",
+      "color": "orange",
+      "tint": "orange-50",
+      "web": "#F5A524",
+      "icon": "time_outlined",
+      "heading": "等你"
+    },
+    "stopped": {
+      "word": "停住了",
+      "group": "act",
+      "color": "red",
+      "tint": "red-50",
+      "web": "#F2555A",
+      "icon": "warning_outlined",
+      "heading": "停住了"
+    },
+    "stuck": {
+      "word": "可能卡住",
+      "group": "act",
+      "color": "orange",
+      "tint": "orange-50",
+      "web": "#F5A524",
+      "icon": "warning_outlined",
+      "heading": "可能卡住"
+    },
+    "result": {
+      "word": "有结果",
+      "group": "tell",
+      "color": "green",
+      "tint": "green-50",
+      "web": "#3DD68C",
+      "icon": "yes_outlined",
+      "heading": "有结果没看"
+    },
+    "running": {
+      "word": "在做",
+      "group": "back",
+      "color": "blue",
+      "tint": "blue-50",
+      "web": "#4C9AFF",
+      "icon": "loading_outlined",
+      "heading": "在做"
+    },
+    "queued": {
+      "word": "排队",
+      "group": "back",
+      "color": "neutral",
+      "tint": "grey-50",
+      "web": "#5B6270",
+      "icon": "",
+      "heading": "排队"
+    },
+    "done": {
+      "word": "做完",
+      "group": "back",
+      "color": "neutral",
+      "tint": "grey-50",
+      "web": "#5B6270",
+      "icon": "yes_outlined",
+      "heading": "做完"
+    },
+    "cancelled": {
+      "word": "已停止",
+      "group": "back",
+      "color": "neutral",
+      "tint": "grey-50",
+      "web": "#5B6270",
+      "icon": "",
+      "heading": "已停止"
+    },
+    "idle": {
+      "word": "空闲",
+      "group": "back",
+      "color": "neutral",
+      "tint": "grey-50",
+      "web": "#5B6270",
+      "icon": "",
+      "heading": "空闲"
+    }
+  },
+  "project": {
+    "word": "专项",
+    "group": "back",
+    "color": "violet",
+    "tint": "violet-50",
+    "web": "#A78BFA",
+    "icon": "folder_outlined"
+  },
+  "pressing": [
+    "waiting",
+    "stopped",
+    "stuck",
+    "result",
+    "running"
+  ],
+  "brand": {
+    "color": "indigo",
+    "web": "#7C83FF"
+  },
+  "band": {
+    "rgb": [
+      94,
+      106,
+      210
+    ],
+    "dark_rgb": [
+      124,
+      131,
+      255
+    ],
+    "top": 0.085,
+    "step": 0.01,
+    "floor": 0.035,
+    "dark": 2.0,
+    "line": [
+      0.2,
+      0.38
+    ],
+    "rows": 6
+  },
+  "topics": {
+    "colors": [
+      "#BE185D",
+      "#C2410C",
+      "#A16207",
+      "#4D7C0F",
+      "#15803D",
+      "#0F766E",
+      "#0369A1",
+      "#1D4ED8",
+      "#4F46E5",
+      "#6D28D9",
+      "#A21CAF",
+      "#475569"
+    ],
+    "step": 5
+  },
+  "web": {
+    "surface": "#07080B",
+    "panel": "#0C0E13",
+    "raised": "#12141B",
+    "line": "#171A21",
+    "line2": "#232733",
+    "ink": "#EDEEF1",
+    "read": "#D0D3DA",
+    "body": "#B3B7C1",
+    "muted": "#7A7F8C",
+    "faint": "#4E535F"
+  }
+}

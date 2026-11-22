@@ -1,0 +1,13 @@
+/* 由 scripts/gen-look.mjs 从 look.json（covey scripts/export_look.py）生成，不要手改 */
+:root{--lk-brand:#7C83FF;--lk-surface:#07080B;--lk-panel:#0C0E13;--lk-raised:#12141B;--lk-line:#171A21;--lk-line2:#232733;--lk-ink:#EDEEF1;--lk-read:#D0D3DA;--lk-body:#B3B7C1;--lk-muted:#7A7F8C;--lk-faint:#4E535F;--st-waiting:#F5A524;--st-stopped:#F2555A;--st-stuck:#F5A524;--st-result:#3DD68C;--st-running:#4C9AFF;--st-queued:#5B6270;--st-done:#5B6270;--st-cancelled:#5B6270;--st-idle:#5B6270;--st-project:#A78BFA;--band-top:rgba(124,131,255,0.170);--band-bottom:rgba(124,131,255,0.070);--band-line:rgba(124,131,255,0.200)}
+.cv.light{--band-top:rgba(94,106,210,0.085);--band-bottom:rgba(94,106,210,0.035);--band-line:rgba(94,106,210,0.200)}
+.tone-waiting,.cv .dot.tone-waiting{--c:var(--st-waiting)}
+.tone-stopped,.cv .dot.tone-stopped{--c:var(--st-stopped)}
+.tone-stuck,.cv .dot.tone-stuck{--c:var(--st-stuck)}
+.tone-result,.cv .dot.tone-result{--c:var(--st-result)}
+.tone-running,.cv .dot.tone-running{--c:var(--st-running)}
+.tone-queued,.cv .dot.tone-queued{--c:var(--st-queued)}
+.tone-done,.cv .dot.tone-done{--c:var(--st-done)}
+.tone-cancelled,.cv .dot.tone-cancelled{--c:var(--st-cancelled)}
+.tone-idle,.cv .dot.tone-idle{--c:var(--st-idle)}
+.tone-project,.cv .dot.tone-project{--c:var(--st-project)}

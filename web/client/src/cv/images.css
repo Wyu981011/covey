@@ -1,0 +1,53 @@
+/* 一轮带的图片（TurnImages.tsx）：消息里的缩略图和看大图 */
+.um.has-img{flex-wrap:wrap;row-gap:0}
+.um.has-img>.tis,.a-said .tis,.um.has-img>.tis-shown{flex-basis:100%}
+.tis{margin-top:8px;display:flex;gap:6px}
+.ti{position:relative;display:block;padding:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--s3);cursor:zoom-in;transition:border-color .18s var(--ease),transform .18s var(--ease)}
+.ti:hover{border-color:var(--line2)}
+.ti.gone{cursor:default;min-width:96px;min-height:64px}
+.ti.one.gone{aspect-ratio:auto!important;height:72px;width:160px!important}
+.ti:focus-visible{outline:2px solid var(--a1);outline-offset:2px}
+.ti img{display:block;width:100%;height:100%;object-fit:cover;object-position:top center}
+.ti-more{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,.55);color:#fff;font-size:18px;font-weight:600;letter-spacing:.02em}
+.ti-gone{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;width:100%;height:100%;min-height:64px;color:var(--t3);font-size:12px}
+.ti-gone svg{width:18px;height:18px}
+/* 主人发的图（方案 A）：一张按原比例（宽图最宽 360，竖图最宽 200），多张 3 列方块，2、4 张 2 列 */
+.tis-a.grid{display:grid;grid-template-columns:repeat(3,112px);gap:6px}
+.tis-a.grid.two{grid-template-columns:repeat(2,140px)}
+.tis-a .sq{aspect-ratio:1}
+.tis-a .one{max-height:260px}
+/* 任务推来的图：高 200、宽按比例，带一句说明；手机上占满宽 */
+.tis-shown{display:flex;flex-wrap:wrap;gap:12px;margin:10px 0 4px}
+.tis-fig{margin:0;max-width:100%}
+.tis-fig .fig{height:200px;max-width:100%}
+.tis-fig figcaption{max-width:320px}
+.tis-fig figcaption{margin-top:6px;font-size:12px;line-height:1.5;color:var(--t2)}
+@media (max-width:767px){
+  .tis-a.grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .tis-a.grid.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .tis-fig .fig{height:auto;width:100%!important;aspect-ratio:var(--r)}
+}
+/* 看大图：深浅色都用深色遮罩，图本身不加滤镜 */
+.lbx{position:fixed;inset:0;z-index:2147483000;background:rgba(8,9,12,.96);backdrop-filter:blur(6px);display:grid;grid-template-rows:auto 1fr auto;animation:lbx-in .16s var(--ease)}
+@keyframes lbx-in{from{opacity:0}to{opacity:1}}
+.lbx-top{display:flex;align-items:center;gap:12px;padding:12px 16px;color:rgba(255,255,255,.86);font-size:13px}
+.lbx-n{font-variant-numeric:tabular-nums;color:rgba(255,255,255,.6);min-width:40px}
+.lbx-note{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lbx-btn{width:34px;height:34px;display:grid;place-items:center;border-radius:8px;color:rgba(255,255,255,.8);background:transparent;border:0;cursor:pointer}
+.lbx-btn:hover{background:rgba(255,255,255,.1);color:#fff}
+.lbx-btn svg{width:18px;height:18px}
+.lbx-stage{display:grid;place-items:center;min-height:0;overflow:hidden;padding:0 64px}
+.lbx-stage img{max-width:100%;max-height:calc(100dvh - 150px);object-fit:contain;border-radius:4px;box-shadow:0 10px 40px rgba(0,0,0,.5);cursor:default}
+.lbx-gone{display:flex;align-items:center;gap:8px;color:rgba(255,255,255,.7);font-size:14px}
+.lbx-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:22px;border:0;display:grid;place-items:center;background:rgba(255,255,255,.08);color:#fff;cursor:pointer}
+.lbx-nav:hover{background:rgba(255,255,255,.18)}
+.lbx-nav.l{left:12px}.lbx-nav.r{right:12px}
+.lbx-nav svg{width:22px;height:22px}
+.lbx-strip{display:flex;justify-content:center;gap:8px;padding:12px 16px 16px;overflow-x:auto}
+.lbx-strip button{flex:none;width:52px;height:52px;padding:0;border-radius:6px;overflow:hidden;border:2px solid transparent;opacity:.55;background:rgba(255,255,255,.06);cursor:pointer;color:rgba(255,255,255,.6)}
+.lbx-strip button.on{border-color:var(--a1);opacity:1}
+.lbx-strip img{width:100%;height:100%;object-fit:cover}
+@media (max-width:767px){
+  .lbx-stage{padding:0 8px}
+  .lbx-nav{display:none}
+}

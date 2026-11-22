@@ -1,0 +1,173 @@
+/* 夜航 v2（covey docs/ui.md，主人 11-20 定：四路调研一致的改法全做）。
+   一屏只留一块有底色和大字的东西（结论带），其余退成无框的行、发丝线和灰度文字；彩色只剩状态点、状态词和一个主按钮。
+   颜色来自 look.gen.css（look.json）：三档底、两档线、四档字。放在所有样式表最后。 */
+.cv{
+&{
+  --bg:var(--lk-surface);--side:var(--lk-surface);
+  --s1:var(--lk-panel);--s2:var(--lk-panel);--s3:var(--lk-raised);--s4:color-mix(in srgb,var(--lk-raised) 88%,#fff 6%);
+  --line:var(--lk-line);--line2:var(--lk-line2);
+  --t1:var(--lk-ink);--t2:var(--lk-body);--t3:var(--lk-muted);--t4:var(--lk-faint);--read:var(--lk-read);
+  --hover:rgba(255,255,255,.04);--sel:rgba(255,255,255,.07);
+  --accent-t:var(--t2);--st-project:var(--t3);
+  --band-bg:linear-gradient(180deg,rgba(124,131,255,.16),rgba(124,131,255,.045) 70%),var(--lk-panel);
+  --band-edge:inset 0 0 0 1px rgba(124,131,255,.22),inset 0 1px 0 rgba(190,194,255,.28);
+  --band-grid:rgba(124,131,255,.10);
+  --num-grad:linear-gradient(180deg,#fff 20%,#A9AEFF 95%);
+  --step-done:#8A8F9C;
+}
+&.light{
+  --t4:#9AA0AD;--read:var(--t1);--accent-t:var(--t2);
+  --band-bg:linear-gradient(180deg,var(--band-top),var(--band-bottom));
+  --band-edge:inset 0 0 0 1px var(--band-line),inset 0 1px 0 rgba(255,255,255,.8);
+  --band-grid:rgba(75,82,224,.07);
+  --num-grad:linear-gradient(180deg,#2A2F8F 20%,#4B52E0 95%);
+  --step-done:#9AA0AD;
+}
+/* 字重只用 400/500/600 */
+b,strong{font-weight:600}
+
+/* ---------- 侧栏：一行一条不折行，T 号在行尾，层级靠竖线，颜色只留状态点 ---------- */
+.sec{font-size:11px;letter-spacing:.06em;color:var(--t4);padding-top:20px}
+.a-tp{align-items:center;height:28px;padding:0 8px;gap:8px;font-size:13px;line-height:28px;color:var(--t2)}
+.a-tp .dot{margin:0;width:6px;height:6px}
+.a-tp .a-tt{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;-webkit-line-clamp:unset}
+.a-tp .a-tn{margin-left:auto;padding:0;min-width:0;font:11px/28px var(--mono);color:var(--t4)}
+.a-tp.on{background:var(--sel);color:var(--t1)}
+.a-tp.dim{color:var(--t3)}
+.a-tp.unseen .a-tt{font-weight:500;color:var(--t1)}
+.a-blue{margin:0;box-shadow:none}
+.a-gname{font-size:13px;color:var(--t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.a-gname.on{color:var(--t1)}
+.a-cnt,.a-cnt.run{background:none;font:11px/17px var(--mono);color:var(--t4);padding:0 2px}
+.a-cnt.wait{background:none;color:var(--st-waiting)}
+.a-lead.on{color:var(--t1)}
+
+/* ---------- 看板结论带：唯一有底色和大字的一块；“炫”只在带子里面（顶沿高光、右侧淡出的细网格） ---------- */
+.nb-band{border:0;border-radius:16px;padding:26px 32px 22px;margin-bottom:16px;background:var(--band-bg);box-shadow:var(--band-edge);position:relative;overflow:hidden}
+.nb-band::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(var(--band-grid) 1px,transparent 1px),linear-gradient(90deg,var(--band-grid) 1px,transparent 1px);background-size:32px 32px;
+  -webkit-mask-image:linear-gradient(105deg,transparent 45%,#000);mask-image:linear-gradient(105deg,transparent 45%,#000)}
+.nb-band>*{position:relative;z-index:1}
+.nb-l1{font-size:12px;letter-spacing:.04em}
+.nb-main{display:flex;align-items:flex-end;gap:24px;margin-top:4px}
+.nb-left{flex:1;min-width:0}
+.nb-l2{align-items:baseline;gap:12px;margin:0}
+.nb-n{font:600 72px/72px var(--mono);letter-spacing:-.04em;background:var(--num-grad);-webkit-background-clip:text;background-clip:text;color:transparent}
+.nb-w{font-size:28px;line-height:36px;font-weight:600;color:var(--t1)}
+.nb-l3{font-size:13px;color:var(--t3);margin-top:6px}
+.nb-counts{display:flex;gap:28px;flex:none;padding-bottom:4px}
+.nb-counts>span{display:flex;flex-direction:column;align-items:center;gap:2px}
+.nb-counts b{font:600 20px/24px var(--mono);color:var(--t1)}
+.nb-counts em{font-style:normal;font-size:12px;color:var(--t2);display:flex;align-items:center;gap:6px}
+.nb-counts em i{width:6px;height:6px;border-radius:50%;background:var(--c)}
+.nb-counts .zero b,.nb-counts .zero em{color:var(--t4)}
+.nb-counts .zero em i{opacity:.35}
+.nb-band .nb-seg{margin-top:18px}
+.nb-band .nb-segbar{height:3px;gap:3px;background:transparent}
+.nb-band .nb-segbar i{position:relative;overflow:hidden;border-radius:2px}
+.nb-band .nb-segbar i.tone-running::after{content:"";position:absolute;top:0;bottom:0;left:0;width:160px;background:linear-gradient(90deg,transparent,rgba(255,255,255,.55),transparent);animation:nb-sweep 2.4s cubic-bezier(.2,.8,.2,1) infinite}
+.nb-todo{background:rgba(0,0,0,.18);margin-top:14px}
+&.light .nb-todo{background:rgba(255,255,255,.6)}
+
+/* 整理专项的标签退成灰（一行、收起、知道了的样式在 tidy.css） */
+.td-tag{color:var(--t3)!important;background:var(--hover)!important;box-shadow:none!important}
+
+/* 要你处理：卡片保留（要你动手的才配一块底），不加左侧色条，状态只在胶囊上 */
+.nb-actgrid{margin-bottom:24px}
+.nb-act{border:1px solid var(--line);border-left:1px solid var(--line);background:var(--s1)}
+.nb-actt{font-size:14px;font-weight:500}
+
+/* 在做、有结果：一张表，不是一摞卡 */
+.nb-sh{font-size:14px;font-weight:600;margin:8px 0 6px}
+.nb-rows{gap:0;margin-bottom:28px;border-top:1px solid var(--line)}
+.nb-trow{display:grid;grid-template-columns:6px 44px minmax(0,1fr) auto auto 36px;align-items:center;column-gap:14px;min-height:60px;padding:8px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .15s}
+.nb-trow:hover{background:var(--hover)}
+.nb-trow .nb-tno{font-size:12px;color:var(--t4)}
+.nb-tt{min-width:0}
+.nb-tt b,.nb-tt small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nb-tt b{font-size:14px;line-height:20px;font-weight:500;color:var(--t1)}
+.nb-tt small{font-size:12px;line-height:18px;color:var(--t3);margin-top:2px}
+.nb-eta{font-size:12px;color:var(--t3);white-space:nowrap}
+.nb-frac{font:12px var(--mono);color:var(--t2);text-align:right}
+.nb-row{border:0;border-bottom:1px solid var(--line);border-radius:0;background:transparent;padding:12px}
+.nb-row:hover{background:var(--hover)}
+.nb-rowt{font-weight:500}
+.nb-steps{display:inline-flex;gap:3px}
+.nb-steps i{width:14px;height:4px;border-radius:2px;background:var(--line2)}
+.nb-steps i.on{background:var(--step-done)}
+.nb-steps i.cur{background:var(--c)}
+.nb-updated{color:var(--t4)}
+
+/* 右栏是索引：分组标题加发丝线，不再一块块卡片 */
+.nb-rail{background:var(--bg);padding:24px 20px;gap:0}
+.nb-panel{border:0;border-radius:0;background:transparent;padding:0 0 24px;margin-bottom:24px;border-bottom:1px solid var(--line)}
+.nb-panel:last-child{border-bottom:0}
+.nb-ph{font-size:11px;letter-spacing:.06em;color:var(--t4);font-weight:500}
+.nb-ph em{color:var(--t4)}
+.nb-proj-card{padding:8px 0;border-top:0}
+.nb-proj-card b{font-size:13px;font-weight:500;color:var(--t1)}
+.nb-pc{color:var(--c)}
+.nb-pc.tone-done,.nb-pc.tone-cancelled,.nb-pc.tone-idle,.nb-pc.tone-queued{color:var(--t3)}
+.nb-big{font-size:28px}
+.nb-spark path:last-child{stroke:var(--t3)}
+
+/* ---------- 话题页：顶部结论带取代三行表；时间线正文不套框；定位到的一轮不画橙框 ---------- */
+.ov2{border:0;background:none;padding:0;box-shadow:none}
+.ov2-goal{margin:0 0 8px;font-size:12px;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov2-goal span{color:var(--t4);margin-right:8px}
+.ov2-band{position:relative;overflow:hidden;border-radius:14px;padding:14px 22px 12px;background:var(--band-bg);box-shadow:var(--band-edge)}
+.ov2-band::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background-image:linear-gradient(var(--band-grid) 1px,transparent 1px),linear-gradient(90deg,var(--band-grid) 1px,transparent 1px);background-size:32px 32px;
+  -webkit-mask-image:linear-gradient(105deg,transparent 55%,#000);mask-image:linear-gradient(105deg,transparent 55%,#000)}
+.ov2-band>*{position:relative;z-index:1}
+.ov2-l1{font-size:12px;color:var(--a1);letter-spacing:.02em}
+.ov2-l1 .a-lnk{color:var(--a1);cursor:pointer}
+.ov2-head{margin:4px 0 2px;font-size:18px;line-height:26px;font-weight:600;color:var(--t1);max-width:720px}
+.ov2-rest{margin:0;max-width:680px;font-size:13px;line-height:22px;color:var(--t2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.ov2-act{margin-top:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.ov2-act .a-why{display:none}
+.ov2-act .a-wb{display:flex;gap:8px;flex-wrap:wrap}
+.ov2-now{display:flex;align-items:baseline;gap:8px;margin-top:10px;padding-top:9px;border-top:1px solid rgba(124,131,255,.14);font-size:13px;color:var(--t2);min-width:0}
+.ov2-now .dot{align-self:center;flex:none}
+.ov2-nowl{color:var(--t3);flex:none}
+.ov2-nowt{min-width:0}
+.ov2-nowt b{font-weight:500;color:var(--t1)}
+.ov2-nowt .a-sub{display:inline-flex;flex-wrap:wrap;gap:4px 12px;margin-left:10px;color:var(--t3);font-size:12px}
+.ov2-nowt .a-sub svg{width:12px;height:12px}
+.ov2-nowt .a-step{background:none;padding:0;color:var(--t2);font:12px var(--mono)}
+
+.a-turn.hl{box-shadow:none;animation:v2-hl 1.6s ease-out}
+.a-turn.open>.a-trow{border-bottom:0}
+.a-tbody>.a-ans{background:transparent;border:0;border-radius:0;padding:0}
+.mdans .prose{color:var(--read)}
+.mdans :is(p,li,td){color:var(--read)}
+.mdans :is(strong,h1,h2,h3,h4,h5){color:var(--t1)}
+.mdans a{color:var(--t1);text-decoration:underline;text-decoration-color:var(--line2);text-underline-offset:3px}
+.mdans a:hover{text-decoration-color:var(--t3)}
+.a-seg i.on{background:var(--step-done)}
+
+/* 输入框：不再有渐变描边，浮起一层 */
+.composer::before{display:none}
+.composer{border:1px solid var(--line2);box-shadow:0 16px 40px rgba(0,0,0,.45)}
+&.light .composer{box-shadow:0 10px 30px rgba(20,25,45,.12)}
+}
+@keyframes v2-hl{from{background:var(--sel)}to{background:transparent}}
+
+@media (max-width:767px){
+  .cv .nb-band{padding:18px 18px 16px}
+  .cv .nb-main{flex-direction:column;align-items:stretch;gap:14px}
+  .cv .nb-n{font-size:48px;line-height:52px}
+  .cv .nb-w{font-size:20px;line-height:28px}
+  .cv .nb-counts{justify-content:space-between;gap:8px}
+  .cv .nb-trow{grid-template-columns:6px minmax(0,1fr) auto 32px;column-gap:10px;padding:8px 4px}
+  .cv .nb-trow .nb-tno,.cv .nb-trow .nb-eta{display:none}
+  .cv .ov2-band{padding:16px 16px 12px;border-radius:12px}
+  .cv .ov2-head{font-size:18px;line-height:28px}
+  .cv .ov2-nowt .a-sub{display:none}
+}
+@media (prefers-reduced-motion:reduce){.cv .nb-band .nb-segbar i::after,.cv .a-turn.hl{animation:none!important}}
+/* 话题页右栏：所在专项也只是索引，不套卡 */
+.cv .a-rproj{border:0;background:transparent;padding:4px 0;box-shadow:none}
+.cv .a-rproj b{font-weight:500}
+.cv .ov2-now{align-items:flex-start}
+.cv .ov2-now .dot{align-self:auto;margin-top:7px}

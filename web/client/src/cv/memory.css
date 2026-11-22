@@ -1,0 +1,37 @@
+/* 三层记忆面板（包 E）：长期约定｜当前决定｜历史记录三个标签，来源只作标签；行的样子沿用 rail.css 的 a-mem */
+.cv .a-mtabs{display:flex;gap:2px;margin:0 0 8px;padding:2px;border-radius:9px;background:var(--s2);box-shadow:inset 0 0 0 1px var(--line)}
+.cv .a-mtabs button{flex:1;display:inline-flex;align-items:center;justify-content:center;gap:5px;height:28px;padding:0 6px;border:0;border-radius:7px;background:none;color:var(--t2);font-size:12.5px;cursor:pointer;white-space:nowrap}
+.cv .a-mtabs button.on{background:var(--s3);color:var(--t1);box-shadow:inset 0 0 0 1px var(--line2)}
+.cv .a-mtabs .n{font:11px var(--mono);color:var(--t3)}
+.cv .a-mpart+.a-mpart{margin-top:8px;padding-top:6px;border-top:1px dashed var(--line)}
+.cv .a-mptitle{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;margin:2px 0 4px;font-size:12.5px}
+.cv .a-mptitle b{color:var(--t1);font-weight:600}
+.cv .a-mptitle .n{font:11px var(--mono);color:var(--t3)}
+.cv .a-mpart.reference .a-mptitle b{color:var(--t2)}
+.cv .a-mapp{margin:-3px 0 4px 76px;font-size:11.5px;line-height:1.5;color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .a-mapp.full{margin:6px 0 0;white-space:normal;color:var(--t2);display:flex;gap:6px;align-items:baseline}
+.cv .a-mapp.full b{flex:none;font-weight:600;color:var(--t3)}
+.cv .a-mvalid{flex:none;height:18px;padding:0 6px;border-radius:5px;font-size:11px;line-height:18px;color:var(--t3);box-shadow:inset 0 0 0 1px var(--line)}
+.cv .a-mem.gone .a-msum{color:var(--t3);text-decoration:line-through;text-decoration-color:var(--line2)}
+.cv .a-mlink{padding:0;border:0;background:none;color:var(--accent-t);font-size:12px;cursor:pointer;text-align:left}
+.cv .a-mlink:hover{text-decoration:underline}
+.cv .a-mfix{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:8px}
+.cv .a-mfix button{padding:2px 0;border:0;background:none;font-size:12px;color:var(--accent-t);cursor:pointer}
+.cv .a-mfix button:hover{text-decoration:underline}
+.cv .a-mfix button:disabled{color:var(--t3);cursor:default;text-decoration:none}
+.cv .a-mfix button.bad{color:var(--t2)}
+.cv .a-mfix button.bad:hover{color:var(--fail)}
+.cv .a-mfix button.on{color:var(--accent-t);font-weight:600}
+.cv .a-mscope{margin-top:8px}
+.cv .a-mscope textarea{width:100%;box-sizing:border-box;padding:6px 8px;border-radius:7px;border:1px solid var(--line2);background:var(--s1);color:var(--t1);font:13px/1.5 inherit;resize:vertical}
+.cv .a-mscope textarea:focus{outline:none;border-color:var(--accent-t)}
+.cv .a-mgone{color:var(--t3)}
+.cv .a-mver{flex:none;margin-left:6px;font:10.5px var(--mono);color:var(--t3)}
+.cv .a-mquote{color:var(--t1)}
+.cv .a-rail .a-mlay,.cv .a-rail .a-rblk{margin-top:6px}
+.cv .a-mobmem{margin:6px 0 10px;padding:4px 12px;border-radius:10px;background:var(--s1);box-shadow:inset 0 0 0 1px var(--line)}
+@media (max-width:767px){
+  .cv .a-mapp{margin-left:10px}
+  .cv .a-mtabs button{height:34px}
+  .cv .a-mfix button{min-height:34px}
+}

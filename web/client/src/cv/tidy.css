@@ -1,0 +1,95 @@
+/* 整理专项的建议（T572 一条一块，T628 能收起、定好的一行一条）。颜色只用 token：要你定的字用等你的橙，没做成用停住了的红，其余灰和正文 */
+.cv .td-panel{margin-bottom:22px}
+.cv .td-run{font-size:12px;font-weight:400;letter-spacing:0;color:var(--t3)}
+.cv .st-failed{color:var(--st-stopped)}
+.cv .td-list{display:flex;flex-direction:column;gap:10px}
+.cv .td-tag{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:10px;font-size:12px;line-height:1;white-space:nowrap;flex:none;
+  color:var(--st-project);background:color-mix(in srgb,var(--st-project) 14%,transparent)}
+.cv.light .td-tag{color:color-mix(in srgb,var(--st-project) 62%,#000)}
+.cv .td-head{display:flex;align-items:baseline;gap:8px;min-width:0}
+.cv .td-head .td-tag{align-self:flex-start;margin-top:1px}
+.cv .td-title{font-size:15px;font-weight:700;color:var(--t1);line-height:1.45;min-width:0;overflow-wrap:anywhere}
+.cv .td-from,.td-goal{font-size:12px;color:var(--t3);line-height:1.5;margin:0}
+.cv .td-why{font-size:13px;color:var(--t2);line-height:1.5;margin:0}
+.cv .td-topics{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px}
+.cv .td-topics li{display:flex;gap:8px;align-items:baseline;font-size:13px;line-height:1.5;min-width:0}
+.cv .td-topics .nb-tno{flex:none;min-width:34px;color:var(--a1)}
+.cv .td-topics .nb-tno:hover{text-decoration:underline}
+.cv .td-tt{color:var(--t2);min-width:0;overflow-wrap:anywhere}
+.cv .td-more{display:inline-flex;align-items:center;gap:3px;padding:0;border:0;background:none;color:var(--t3);font-size:12px;line-height:1.5;text-align:left;cursor:pointer}
+.cv .td-more:hover{color:var(--t1)}
+.cv .td-more svg{width:12px;height:12px}
+.cv .td-btns{display:flex;gap:8px;align-items:center}
+.cv .td-settled{font-size:12px;color:var(--t3);margin:0;line-height:1.5}
+.cv .td-settled.st-failed{color:var(--st-stopped)}
+
+/* 要你定的：一条一块 */
+.cv .td-a{border:1px solid var(--line);border-radius:12px;background:var(--s2);padding:12px 14px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;min-width:0}
+.cv .td-a>*{max-width:100%}
+.cv .td-a .td-topics{margin-top:2px}
+.cv .td-a .td-btns,.td-a .td-settled{margin-top:4px}
+
+/* 标题栏右边：知道了、收起（文字按钮，不抢结论带） */
+.cv .td-panel .nb-ph{gap:8px}
+.cv .td-acts{margin-left:auto;display:flex;align-items:center;gap:2px}
+.cv .td-act,.cv .td-x{display:inline-flex;align-items:center;gap:3px;height:26px;padding:0 8px;border:0;border-radius:6px;background:none;
+  color:var(--t3);font-size:12px;font-weight:400;letter-spacing:0;cursor:pointer;white-space:nowrap}
+.cv .td-act:hover,.cv .td-x:hover{color:var(--t1);background:var(--hover)}
+.cv .td-act svg{width:13px;height:13px}
+
+/* 收成一行：点左边展开，右边「知道了」收走 */
+.cv .td-line{display:flex;align-items:stretch;width:100%;height:40px;margin:0 0 24px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.cv .td-lm{flex:1;min-width:0;display:flex;align-items:center;gap:10px;padding:0 12px 0 14px;border:0;background:none;color:var(--t2);font-size:13px;text-align:left;cursor:pointer}
+.cv .td-lm:hover,.cv .td-line .td-x:hover{background:var(--hover)}
+.cv .td-lm b{font-weight:500;color:var(--t1);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .td-state{color:var(--t3);font-size:12px;white-space:nowrap;flex:none}
+.cv .td-line.asking .td-state,.cv .td-panel .nb-ph em.asking{color:var(--st-waiting)}
+.cv .td-cnt{color:var(--t3);font-size:12px}
+.cv .td-mn{display:none}
+.cv .td-cnt.st-failed{color:var(--st-stopped)}
+.cv .td-open{margin-left:auto;display:inline-flex;align-items:center;gap:3px;color:var(--t3);font-size:12px}
+.cv .td-open svg{width:13px;height:13px}
+.cv .td-line .td-x{height:auto;border-radius:0;padding:0 14px;border-left:1px solid var(--line)}
+
+/* 定好的：一行一条，点开看原因和话题；右边留一格放「去专项」，结果词上下对齐 */
+.cv .td-rows{display:flex;flex-direction:column;margin-top:8px}
+.cv .td-list + .td-rows{margin-top:10px}
+.cv .td-row{display:grid;grid-template-columns:minmax(0,1fr) 64px;align-items:center;border-top:1px solid var(--line)}
+.cv .td-row:first-child{border-top:0}
+.cv .td-rt{display:flex;align-items:center;gap:8px;min-width:0;height:40px;padding:0 6px 0 2px;border:0;background:none;color:var(--t2);font-size:13px;text-align:left;cursor:pointer;border-radius:6px}
+.cv .td-rt:hover{background:var(--hover)}
+.cv .td-rh{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--t1)}
+.cv .td-rn{font-size:12px;color:var(--t3)}
+.cv .td-out{margin-left:auto;font-size:12px;color:var(--t3)}
+.cv .td-out.ok{color:var(--t2)}
+.cv .td-out.bad{color:var(--st-stopped)}
+.cv .td-chev{width:13px;height:13px;flex:none;color:var(--t3);transition:transform .15s}
+.cv .td-row.open .td-chev{transform:rotate(180deg)}
+.cv .td-go-slot{display:flex;justify-content:flex-end}
+.cv .td-go{font-size:12px;color:var(--a1);padding:4px 2px}
+.cv .td-go:hover{text-decoration:underline}
+.cv .td-said{grid-column:1/-1;margin:-2px 0 10px;padding-left:2px;font-size:12px;color:var(--t3);line-height:1.5}
+.cv .td-detail{grid-column:1/-1;display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:2px 2px 12px}
+.cv .td-detail>*{max-width:100%}
+
+/* 有要你定的时：定好的收进“已定 N 条” */
+.cv .td-tuck{display:inline-flex;align-items:center;gap:3px;margin-top:10px;padding:4px 0;border:0;background:none;color:var(--t3);font-size:12px;cursor:pointer}
+.cv .td-tuck:hover{color:var(--t1)}
+.cv .td-tuck svg{width:13px;height:13px;transition:transform .15s}
+.cv .td-tuck.open svg{transform:rotate(180deg)}
+@media (prefers-reduced-motion:reduce){.cv .td-chev,.cv .td-tuck svg{transition:none}}
+
+/* 手机：按钮至少 40px 高（ui.md 8）；一行里先让出标题，几个话题不写 */
+@media (max-width:767px){
+  .cv .td-btns .btn{height:40px;padding:0 14px;font-size:13px}
+  .cv .td-title{font-size:14px}
+  .cv .td-more,.cv .td-tuck{min-height:32px}
+  .cv .td-act{height:40px}
+  .cv .td-line{height:44px}
+  .cv .td-lm{gap:8px;padding:0 10px 0 12px}
+  .cv .td-lm b,.cv .td-lm .td-lmore,.cv .td-lm .td-ot{display:none}
+  .cv .td-lm .td-mn{display:inline}
+  .cv .td-row{grid-template-columns:minmax(0,1fr) 58px}
+  .cv .td-rt{height:44px}
+  .cv .td-rn{display:none}
+}

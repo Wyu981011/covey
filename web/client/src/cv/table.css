@@ -1,0 +1,48 @@
+/* 回答里的 Markdown 表格（covey docs/ui.md 2.5）：横向滚动框、右缘渐隐、放大弹层。数值改这里，同时改规范 */
+.cv{
+/* 框：一条发丝线圆角 10px；表格按内容取宽，比框宽就在框里横向滚 */
+.mdt{position:relative;margin:4px 0 10px;max-width:100%}
+.mdt-scroll{overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;border:1px solid var(--line);border-radius:10px;scrollbar-width:thin}
+.mdt table,.mdt-body table{display:table;width:max-content;min-width:100%;max-width:none;margin:0;border:0;border-collapse:separate;border-spacing:0;font-size:13px;line-height:1.55}
+.mdt :is(th,td),.mdt-body :is(th,td){border:0;border-bottom:1px solid var(--line);padding:5px 10px;vertical-align:top;text-align:left}
+.mdt :is(th,td)+:is(th,td),.mdt-body :is(th,td)+:is(th,td){border-left:1px solid var(--line)}
+.mdt tbody tr:last-child td,.mdt-body tbody tr:last-child td{border-bottom:0}
+/* 表头和短单元格不折行（“有问题”不再被拆成竖排）；长文字列到 28em 才折行 */
+.mdt th,.mdt-body th{white-space:nowrap;font-weight:500;color:var(--t2);background:var(--s1)}
+.mdt td{max-width:28em;overflow-wrap:break-word;color:var(--read)}
+.mdt-body td{max-width:24em;overflow-wrap:break-word;color:var(--read)}
+.mdt :is(td,th) code,.mdt-body :is(td,th) code{white-space:nowrap}
+/* 右边还有内容：右缘 40px 渐隐；滚到头就没了。左边同理 */
+.mdt::before,.mdt::after{content:"";position:absolute;top:1px;bottom:1px;width:40px;pointer-events:none;opacity:0;transition:opacity .2s;z-index:1}
+.mdt::before{left:1px;border-radius:9px 0 0 9px;background:linear-gradient(to left,transparent,var(--bg))}
+.mdt::after{right:1px;border-radius:0 9px 9px 0;background:linear-gradient(to right,transparent,var(--bg))}
+.mdt.l::before,.mdt.r::after{opacity:1}
+/* 放大：悬停时出现，触屏一直在 */
+.mdt-zoom{position:absolute;top:5px;right:5px;z-index:2;width:28px;height:28px;display:grid;place-items:center;padding:0;border-radius:6px;border:1px solid var(--line2);background:var(--s3);color:var(--t2);cursor:pointer;opacity:0;transition:opacity .15s,color .15s}
+.mdt-zoom svg{width:14px;height:14px}
+.mdt:hover .mdt-zoom,.mdt-zoom:focus-visible{opacity:1}
+.mdt-zoom:hover{color:var(--t1)}
+
+/* 弹层：遮罩加面板，面板最大 1400px，表格在面板里两个方向都能滚 */
+.mdt-modal{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:32px;background:rgba(4,5,8,.72);backdrop-filter:blur(4px);animation:mdt-in .16s ease-out}
+.mdt-panel{display:flex;flex-direction:column;width:auto;max-width:min(1400px,100%);max-height:100%;min-width:min(480px,100%);background:var(--s1);border:1px solid var(--line2);border-radius:16px;box-shadow:0 24px 60px rgba(0,0,0,.5);overflow:hidden}
+.mdt-head{flex:none;display:flex;align-items:center;gap:12px;height:48px;padding:0 10px 0 20px;border-bottom:1px solid var(--line);font-size:13px;font-weight:500;color:var(--t1)}
+.mdt-hint{font-size:12px;font-weight:400;color:var(--t3)}
+.mdt-close{margin-left:auto;width:32px;height:32px;display:grid;place-items:center;padding:0;border:0;border-radius:6px;background:none;color:var(--t2);cursor:pointer}
+.mdt-close:hover{background:var(--hover);color:var(--t1)}
+.mdt-body{overflow:auto;padding:16px 20px 20px;overscroll-behavior:contain}
+.mdt-body table{border:1px solid var(--line);border-radius:10px}
+}
+.cv.light .mdt-modal{background:rgba(20,25,45,.35)}
+.cv.light .mdt-panel{box-shadow:0 24px 60px rgba(20,25,45,.18)}
+@keyframes mdt-in{from{opacity:0}to{opacity:1}}
+@media (hover:none){.cv .mdt-zoom{opacity:1}}
+@media (max-width:767px){
+  .cv .mdt-zoom{opacity:1;width:32px;height:32px}
+  .cv .mdt td{max-width:13em}
+  .cv .mdt-modal{padding:0}
+  .cv .mdt-panel{width:100%;height:100%;max-height:none;border-radius:0;border:0}
+  .cv .mdt-body{padding:12px}
+  .cv .mdt-hint{display:none}
+}
+@media (prefers-reduced-motion:reduce){.cv .mdt-modal{animation:none}}
