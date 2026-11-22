@@ -362,6 +362,11 @@ class Intake:
                 self._ready(key)
             else:
                 consumer(key).failed('disconnected')
+        timing, self.timing = getattr(self, 'timing', None), None
+        if up and timing:  # Each step of the first connect, to see where a slow one went (T648).
+            self.log('event websocket connect ms ' + ' '.join(
+                f'{name}={round(timing[name] * 1000)}' for name in ('creds', 'import', 'wait') if name in timing)
+                + f" handshake={round((time.monotonic() - timing['connecting_at']) * 1000)}")
         if up and not keys:  # Connected during the Bridge's start (start): events are taken in, handled once it is over.
             self.log('event websocket connected; events wait for the start to finish')
         if not up:
@@ -407,14 +412,19 @@ class Intake:
     def _run_client(self, over: threading.Event) -> None:
         # lark_oapi is imported here, on this thread: its ws module makes the asyncio loop that start() runs on.
         from covey.feishu import sdk
+        began = time.monotonic()
         creds = sdk.client(self.ctx.profile)  # In memory only; never logged or written. Imports lark_oapi.core alone.
+        steps = {'creds': time.monotonic() - began}
         _skip_pkg_resources()
         from lark_oapi.core.enum import LogLevel
         from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
         from lark_oapi.ws import client as ws_client
+        steps['import'] = time.monotonic() - began - steps['creds']
+        waited = time.monotonic()
         while not self.go.wait(.2):  # Imported (prepare): connect once the Bridge has checked the app's identity.
             if self.shutdown.is_set():
                 return
+        steps['wait'] = time.monotonic() - waited
         handler = EventDispatcherHandler.builder('', '').build()
         handler._do_without_validation = self.on_payload  # The raw envelope: no typed models, no validation.
         client = ws_client.Client(creds.config.app_id, creds.config.app_secret, log_level=LogLevel.ERROR,
@@ -423,6 +433,7 @@ class Intake:
             if self.shutdown.is_set():  # The Bridge began to stop while this connected: take nothing in now.
                 return
             self.client, self.loop = client, ws_client.loop
+            self.timing = {**steps, 'connecting_at': time.monotonic()}  # What the first connect says it took (_set_connected).
         threading.Thread(target=self._watch, args=(client, over), name='event-websocket-watch', daemon=True).start()
         try:
             client.start()  # Blocks: the SDK reconnects by itself; ends when stop() stops its loop.

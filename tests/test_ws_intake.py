@@ -577,6 +577,7 @@ class SdkContractTest(unittest.TestCase):
         self.assertEqual(answered, [ws_intake.TOAST])
         self.assertEqual(len(handled), 1)
         self.assertIn(f'[event] ready event_key={CARD_ACTION_EVENT_KEY}', logs)
+        self.assertTrue(any(line.startswith('event websocket connect ms creds=') and 'handshake=' in line for line in logs))
 
 
 if __name__ == '__main__':
