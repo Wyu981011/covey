@@ -340,6 +340,19 @@ class CollectTest(CollectCase):
         self.assertIn("记下了：", json.dumps(built["body"]["elements"][-1], ensure_ascii=False))
         self.assertEqual(sent["body"]["elements"], [{"tag": "markdown", "content": "答"}])  # The kept card is not changed.
 
+    def test_on_a_relay_the_lines_go_over_its_last_line_where_a_reply_goes(self):
+        # T647 P1-A3: a 做完了 relay ends with 回复这张卡，就是接着跟 T12 说 (cards/relay_card.py reply_hint); it stays last.
+        from covey.cards.relay_card import HINT_ID, reply_hint
+        job = self.turn(memory_lines=[self.LINE])
+        relay = {"schema": "2.0", "body": {"elements": [{"tag": "markdown", "content": "答"}, reply_hint("T12")]}}
+        write_json(answer_cards.record_path(self.state, job.message_id), {"schema_version": 1, "job_key": job.message_id,
+                                                                           "cards": [{"where": "relay", "message_id": "om_relay",
+                                                                                      "card": relay}]})
+        self.collect(job)
+        _, message_id, built = self.messenger.patch_card.call_args.args[:3]
+        self.assertEqual(message_id, "om_relay")
+        self.assertEqual([e.get("element_id") for e in built["body"]["elements"]][1:], [cards.MEMORY_ID, HINT_ID])
+
     def test_in_a_project_topic_it_goes_to_the_project_as_the_owners(self):
         projects.create(self.state, projects.new_record(chat_id=CHAT, name="迁移账单", project_id=PID, now=NOW))
         write_topic(self.state, topic_id="t1", topic_number=7, project=projects.project_field(PID, projects.MEMBER))

@@ -23,6 +23,7 @@ import copy
 import time
 from pathlib import Path
 
+from covey.cards.relay_card import HINT_ID
 from covey.cards.answer_card import (ARTIFACTS_ID, MEMORY_ID, NOT_FOUND, acceptance_element, criteria_element,
                                      input_parts, output_parts)
 from covey.cards.elements import replace_element
@@ -457,8 +458,10 @@ def put_memory(state_dir, profile, messenger, key, element, log, answer_message_
             if entry.get("where") == COPY or not isinstance(built, dict):
                 continue
             if not replace_element(built, MEMORY_ID, element):
-                body = built.setdefault("body", {})
-                body.setdefault("elements", []).append(element)
+                # At the bottom, over a relay's last line saying where a reply goes (cards/relay_card.py HINT_ID).
+                elements = built.setdefault("body", {}).setdefault("elements", [])
+                hinted = bool(elements) and isinstance(elements[-1], dict) and elements[-1].get("element_id") == HINT_ID
+                elements.insert(len(elements) - 1 if hinted else len(elements), element)
             if messenger.patch_card(profile, entry["message_id"], built):
                 written += 1
                 with resource_lock("answer-cards", str(path)):
