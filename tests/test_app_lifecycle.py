@@ -285,6 +285,7 @@ class StartOrderTest(unittest.TestCase):
                 mock.patch("covey.feishu.sdk.lark_cli_direct"), mock.patch("covey.feishu.sdk.enabled", return_value=False), \
                 mock.patch("covey.app.unified.warm_records", step("warm records")), \
                 mock.patch.object(app, "init_target", step("init_target")), \
+                mock.patch.object(ws_intake.Intake, "prepare", step("connection thread")), \
                 mock.patch.object(ws_intake.Intake, "start", step("event connection")), \
                 mock.patch.object(app.harnesses[DEFAULT], "ensure_started", step("ensure_started")), \
                 mock.patch.object(app, "log_startup"), \
@@ -297,7 +298,8 @@ class StartOrderTest(unittest.TestCase):
 
     def test_the_sdk_connection_starts_once_the_identity_is_checked_and_before_the_recovery(self):
         self.assertEqual(self.start({"COVEY_EVENT_TRANSPORT": "sdk"}),
-                         ["warm records", "init_target", "event connection", "ensure_started", "recover questions",
+                         ["warm records", "connection thread", "init_target", "event connection", "ensure_started",
+                          "recover questions",
                           "adopt and interrupt", "workers", "consume"])
 
     def test_lark_cli_consumers_start_with_the_workers_as_before(self):

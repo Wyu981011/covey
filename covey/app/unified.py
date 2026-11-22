@@ -404,6 +404,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
                     threading.Thread(target=client(ctx.profile).warm, daemon=True, name=background.WARMUP).start()
                 except (OSError, ValueError, ImportError):
                     self.runtime.log('CardKit SDK warmup unavailable; CLI remains available')
+            self.start_intake(ctx, connect=False)  # Its modules imported meanwhile, on its own thread.
             self.init_target(ctx)
             self.start_intake(ctx)  # Events come in from here; handled once the workers start (below).
             self.harnesses[self.topics.default].ensure_started(ctx)  # The first job does not check again.
@@ -590,13 +591,15 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         consume(ctx, key, handle=handle, set_process=lambda proc: self.event_procs.__setitem__(key, proc),
                 shutdown=self.runtime.shutdown, log=self.runtime.log, retry_seconds=CARD_ACTION_RETRY_SECONDS)
 
-    def start_intake(self, ctx: BridgeContext) -> None:
+    def start_intake(self, ctx: BridgeContext, *, connect=True) -> None:
         """With COVEY_EVENT_TRANSPORT=sdk, connect as soon as the app's identity is checked (init_target): the clicks
         and messages that come while the start recovers (until the workers below) are taken in and wait for their
         consumers, a click answered at once (feishu/ws_intake.py HELD_TOAST), where without a connection Feishu refused
-        them. lark-cli's consumers (the default) start with the workers, as before."""
+        them. ``connect=False`` (before init_target): only its thread, importing what it connects with meanwhile.
+        lark-cli's consumers (the default) start with the workers, as before."""
         if ws_intake.enabled():
-            ws_intake.intake(ctx, self.runtime.shutdown, self.runtime.log, CARD_ACTION_RETRY_SECONDS).start()
+            intake = ws_intake.intake(ctx, self.runtime.shutdown, self.runtime.log, CARD_ACTION_RETRY_SECONDS)
+            intake.start() if connect else intake.prepare()
 
     def consume_loop(self, ctx: BridgeContext) -> None:
         self.consume_events(ctx, MESSAGE_EVENT_KEY, self.handle_event)

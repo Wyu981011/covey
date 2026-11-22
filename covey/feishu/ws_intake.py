@@ -272,6 +272,7 @@ class Intake:
         self.started = False
         self.client = None
         self.loop = None
+        self.go = threading.Event()  # Set by start (or the first consume): the thread may connect.
 
     # -- events in --
 
@@ -366,13 +367,20 @@ class Intake:
 
     # -- the client --
 
+    def prepare(self) -> None:
+        """Start the connection thread without connecting: it imports lark_oapi's connection modules (a second or two of
+        work) while the Bridge checks the app's identity, then waits for ``start``."""
+        self._start(connect=False)
+
     def start(self) -> None:
         """Connect now, before any consumer attaches: the Bridge's start does, once the app's identity is checked, so
         clicks and messages are taken in (a click answered with HELD_TOAST) while it recovers; each waits in its key's
         queue for that key's consumer. Once only, as the first ``consume`` would."""
         self._start()
 
-    def _start(self) -> None:
+    def _start(self, connect=True) -> None:
+        if connect:
+            self.go.set()
         with self.lock:
             if self.started:
                 return
@@ -397,10 +405,14 @@ class Intake:
     def _run_client(self, over: threading.Event) -> None:
         # lark_oapi is imported here, on this thread: its ws module makes the asyncio loop that start() runs on.
         from covey.feishu import sdk
+        creds = sdk.client(self.ctx.profile)  # In memory only; never logged or written. Imports lark_oapi.core alone.
+        _skip_pkg_resources()
         from lark_oapi.core.enum import LogLevel
         from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
         from lark_oapi.ws import client as ws_client
-        creds = sdk.client(self.ctx.profile)  # In memory only; never logged or written.
+        while not self.go.wait(.2):  # Imported (prepare): connect once the Bridge has checked the app's identity.
+            if self.shutdown.is_set():
+                return
         handler = EventDispatcherHandler.builder('', '').build()
         handler._do_without_validation = self.on_payload  # The raw envelope: no typed models, no validation.
         client = ws_client.Client(creds.config.app_id, creds.config.app_secret, log_level=LogLevel.ERROR,
@@ -445,6 +457,29 @@ class Intake:
         with self.lock:
             return {'status': 'receiving' if self.connected else ('disconnected' if self.started else 'starting'),
                     'transport': 'sdk', 'scope': 'SDK WebSocket connection state'}
+
+
+def _skip_pkg_resources() -> None:
+    """lark-oapi 1.7.4 vendors protobuf under lark_oapi/ws/pb/google, whose __init__ declares a namespace package with
+    pkg_resources: importing that scans every installed distribution, 3.4 s of the connection's 6.5 s start (T648). The
+    vendored package is one directory, so it is put in sys.modules as a plain package of that directory beforehand. Nothing
+    is done when it is imported already, or when lark_oapi or that directory is not where this expects."""
+    import importlib.util
+    import sys
+    import types
+    name = 'lark_oapi.ws.pb.google'
+    if name in sys.modules:
+        return
+    try:
+        spec = importlib.util.find_spec('lark_oapi')
+    except (ImportError, ValueError):  # ValueError: imported without a __spec__.
+        return
+    folder = os.path.join(os.path.dirname(spec.origin), 'ws', 'pb', 'google') if spec and spec.origin else ''
+    if not folder or not os.path.isfile(os.path.join(folder, 'protobuf', '__init__.py')):
+        return
+    package = types.ModuleType(name)
+    package.__path__, package.__package__ = [folder], name
+    sys.modules[name] = package
 
 
 _intake: Intake | None = None

@@ -488,6 +488,50 @@ class SdkContractTest(unittest.TestCase):
         self.assertTrue(client._auto_reconnect)
         self.assertTrue(hasattr(ws_client, 'loop') and callable(client._disconnect))
 
+    def test_the_connection_modules_import_without_pkg_resources(self):
+        # lark_oapi/ws/pb/google declares a pkg_resources namespace: importing pkg_resources scanned every installed
+        # distribution, 3.4 s of the connection's start.
+        code = ("import sys; from covey.feishu import sdk, ws_intake; sdk._core(); ws_intake._skip_pkg_resources(); "
+                "from lark_oapi.ws import client; from lark_oapi.ws.pb.pbbp2_pb2 import Frame; "
+                "assert 'pkg_resources' not in sys.modules; print(Frame.__name__)")
+        env = {k: v for k, v in os.environ.items() if k not in ('COVEY_EVENT_TRANSPORT', 'LARK_BRIDGE_EVENT_TRANSPORT')}
+        proc = subprocess.run([sys.executable, '-B', '-W', 'ignore', '-c', code], cwd=ROOT,
+                              env={**env, 'PYTHONPATH': str(ROOT)}, capture_output=True, text=True, timeout=120)
+        self.assertEqual((proc.returncode, proc.stdout.strip()), (0, 'Frame'), proc.stderr)
+
+    def test_a_prepared_thread_imports_but_connects_only_once_started(self):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            from lark_oapi.ws import client as ws_client
+        ws_intake.reset()
+        self.addCleanup(ws_intake.reset)
+        shutdown, made = threading.Event(), []
+        self.addCleanup(shutdown.set)
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                self._conn = None
+                made.append(self)
+
+            def start(self):
+                self._conn = object()
+                shutdown.wait(5)
+
+        creds = SimpleNamespace(config=SimpleNamespace(app_id='cli_fake', app_secret='fake', domain='https://open.example'))
+        with mock.patch.object(ws_client, 'Client', FakeClient), \
+                mock.patch('covey.feishu.sdk.client', return_value=creds), mock.patch.object(ws_intake, 'POLL_SECONDS', .02):
+            intake = ws_intake.intake(SimpleNamespace(profile='bot'), shutdown, lambda line: None, 300)
+            intake.prepare()
+            time.sleep(.5)
+            self.assertEqual(made, [])  # Imported and waiting: no connection before the identity is checked.
+            intake.start()
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not intake.connected:
+                time.sleep(.02)
+        self.assertEqual(len(made), 1)
+        self.assertTrue(intake.connected)
+
     def test_connection_thread_with_a_fake_client(self):
         import warnings
         with warnings.catch_warnings():
