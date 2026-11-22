@@ -310,7 +310,50 @@ TRIAGE_TOOLS = (
          "recommend": {"type": "string", "description": "可选，你推荐的选项（写选项原文）"},
          "if_not": {"type": "string", "description": "可选，一句话：不选推荐项的代价（写了 recommend 才有用）"}}}},
 )
-PROJECT_NAMES = tuple(tool["name"] for tool in PROJECT_TOOLS + TRIAGE_TOOLS)
+# 协作 (COVEY_COLLAB=1 in the server's environment, core/butler.py mcp_config hands it on; ``lead_tools``): the lead keeps
+# the project's 目标检查表 (app/project_tools.py project_checklist, core/project_checklist.py), and project_answer must
+# name its grounds (``evidence``, checked by the Bridge: app/triage.py grounds). Off, the lead's list is as it was.
+COLLAB_ENV = "COVEY_COLLAB"
+CHECKLIST_ITEM = {"type": "object", "properties": {
+    "id": {"type": "string", "description": "要改的条目 id（状态包“目标检查表”里每行开头的，如 c2）；新加的不填"},
+    "criterion": {"type": "string", "description": "完成标准，一句话（最多 200 字）；新加的必填"},
+    "topic": {"type": "string", "description": "交付这一条的话题：这个专项的话题的 T 号或 topic_id；还没派的不填，写空串清掉"},
+    "needs": {"type": "array", "items": {"type": "string"}, "description": "它依赖的条目 id（要先满足的），最多 6 个"},
+    "evidence": {"type": "string", "description": "证据在哪：提交号、产物路径、topic_read 看到的检查点自检；标 done 必填"},
+    "gap": {"type": "string", "description": "还缺什么、下一步谁做；标 blocked 写卡在哪，标 dropped 写主人为什么不要了"},
+    "state": {"type": "string", "enum": ["open", "done", "blocked", "dropped"],
+              "description": "open 没满足（新加的默认）/ done 有证据满足了 / blocked 卡住 / dropped 主人说不做了"}}}
+CHECKLIST_TOOLS = (
+    {"name": "project_checklist",
+     "description": "维护这个专项的目标检查表：把完成标准拆成几条，每条写清由哪个话题交付、依赖哪几条、证据在哪、还缺什么。"
+                    "第一轮写，目标变了再改；收到话题的交付或协作缺口时对照它查漏项、冲突和依赖，再更新。"
+                    "话题说做完只是它的说法：核对过证据才标 done；主人说不要了的才标 dropped。"
+                    "还有 open、blocked 的条目或没处理的协作缺口时，project_finish 会拒绝收尾。"
+                    "缺口处理完（补齐了、或主人说不用补）用 close_gaps 写怎么处理的。什么都不传就是看现在的检查表。",
+     "input_schema": {"type": "object", "properties": {
+         "items": {"type": "array", "maxItems": 20, "items": CHECKLIST_ITEM,
+                   "description": "要新加或修改的条目；改的只写要改的项"},
+         "close_gaps": {"type": "array", "items": {"type": "object", "required": ["gap", "how"], "properties": {
+             "gap": {"type": "string", "description": "缺口 id（状态包“没处理的协作缺口”里每行开头的，如 g1a2b3c）"},
+             "how": {"type": "string", "description": "一句话：怎么处理的（谁补了、证据在哪，或主人说不用补）"}}}}}}},
+)
+EVIDENCE = {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string"},
+            "description": "替主人答题的依据：专项记忆条目的 id（状态包专项记忆每行开头〔〕里的，如 0123456789abcdef-2），"
+                           "或主人在这个专项里的原话 msg:<消息 id>（状态包“主人在专项里说过的话”里的）。"
+                           "只有主人说的、仍有效的才算依据；待核对参考、作废、做完、被替代或只限当次的会被拒绝，"
+                           "被拒了就用 project_escalate 转给主人。"}
+EVIDENCE_NOTE = "开了协作，要写 evidence：Bridge 核对每条依据，没有主人说的、仍有效的依据就拒绝，回答记着依据，主人核对得到。"
+PROJECT_NAMES = tuple(tool["name"] for tool in PROJECT_TOOLS + TRIAGE_TOOLS + CHECKLIST_TOOLS)
+
+
+def with_evidence(tool) -> dict:
+    """project_answer as the lead sees it with 协作 on: ``evidence`` required, its description saying so; others as they are."""
+    if tool["name"] != "project_answer":
+        return tool
+    schema = tool["input_schema"]
+    return {**tool, "description": tool["description"] + EVIDENCE_NOTE,
+            "input_schema": {**schema, "required": [*schema["required"], "evidence"],
+                             "properties": {**schema["properties"], "evidence": EVIDENCE}}}
 # The lead's two tools were project_thread_start and project_thread_send in older releases. The list names only the new ones;
 # a call under an old name (a session that began earlier, a server of an older release) is run as the new one.
 RENAMED_TOOLS = {"project_thread_start": "project_topic_start", "project_thread_send": "project_topic_send"}
@@ -384,9 +427,13 @@ def project_butler_tools(tools, tidy=False) -> tuple:
 
 
 def lead_tools(environ=None) -> tuple:
-    """The lead's tools; the two of the question triage with COVEY_PROJECT_TRIAGE=1 in ``environ``."""
+    """The lead's tools; the two of the question triage with COVEY_PROJECT_TRIAGE=1 in ``environ``; with COVEY_COLLAB=1 there
+    also project_checklist, and project_answer asks for its ``evidence`` (``with_evidence``)."""
     triage = environ is not None and str(cenv.get(TRIAGE_ENV, "", environ)).strip() == "1"
-    return tuple(tool for tool in TOOLS if tool["name"] in LEAD_READ) + PROJECT_TOOLS + (TRIAGE_TOOLS if triage else ())
+    collab = environ is not None and str(cenv.get(COLLAB_ENV, "", environ)).strip() == "1"
+    asked = tuple(map(with_evidence, TRIAGE_TOOLS)) if collab else TRIAGE_TOOLS
+    return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_READ) + PROJECT_TOOLS + (CHECKLIST_TOOLS if collab else ())
+            + (asked if triage else ()))
 
 
 def listed(environ) -> tuple:

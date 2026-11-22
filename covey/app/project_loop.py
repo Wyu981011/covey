@@ -34,7 +34,13 @@ when something happened since it last looked, and the mechanical checks that sto
   report note in it that its style lets through (``project_lead.reportable``); then it goes as the lead's reply does. A
   member's turn the owner waits for (the lead handed it on while he was there) had its result sent to him by its runner
   (app/relay_targets.py awaited_target): its ``thread_end`` receipt says ``relayed``, and a wake-up turn that read only such
-  receipts and reported only ``thread`` or ``note`` notes stays quiet (``told_already``): one result, told once.
+  receipts (and consults' ``collab_answered`` ones, which are the integrator's to deliver) and reported only ``thread`` or
+  ``note`` notes stays quiet (``told_already``): one result, told once.
+- With 协作 on (COVEY_COLLAB=1, docs/projects.md 负责人对照目标跟进): ordinary receipts that come close together wake the lead
+  once (``settling``: it waits until none has come for ``batch_seconds``, at most BATCH_STRETCH times as long; a ``start``,
+  the owner's choice, a held question or a 协作 gap wakes at once), and a consult's turn (``collab_ask``, in its 咨询通道)
+  has its tokens counted in the project of its collaboration's integrator, else of its helper (``consult_project``), once,
+  so consults spend the same budget (COVEY_PROJECT_BUDGET). It still leaves no ``thread_end`` and adds nothing to the library.
 
 Rules 1 and 5 (AGENTS.md): records are written under their own lock, nothing is sent to Feishu from under it, and the only
 reply that goes out is the saved, authorized one."""
@@ -45,7 +51,8 @@ from collections import namedtuple
 from pathlib import Path
 
 from covey.app import project_context, project_lead, triage as triage_flow
-from covey.core import board_read, collab, projects, triage, turn_source
+from covey.core import board_read, collab, collab_records, projects, triage, turn_source
+from covey.core import env as cenv
 from covey.core.history_storage import append_history
 from covey.core.jobs import find_job_record, job_field, job_key, topic_job_records
 from covey.core.loops import every
@@ -74,6 +81,12 @@ CHOICE_RECEIPT = {
     "finish": "主人看了停住的原因（{why}），选了收尾：这个专项不再开新的话题。请总结做完了什么、还有什么没做完，"
               "用 project_note 标 report 告诉主人，然后调 project_finish（还有话题在做时它会拒绝，等它们结束再收尾）。",
 }
+# With 协作 on the 收尾 receipt says how the 目标检查表 is left: the owner chose to stop, not that the rest was met.
+CHOICE_CHECKLIST = ("目标检查表里没满足的条目标 dropped，gap 写“主人选了收尾，没做完：还差什么”；没处理的协作缺口用 close_gaps 写同样的话。"
+                    "不要把没做完的标成 done。")
+BATCH_ENV = "COVEY_PROJECT_BATCH_SECONDS"  # 协作 on: how long ordinary receipts are gathered before they wake the lead.
+BATCH_SECONDS = 20
+BATCH_STRETCH = 4  # The oldest receipt of a batch waits at most this many windows, however many keep coming.
 
 
 def wakes_of(record) -> dict:
@@ -401,6 +414,8 @@ def pause_receipt(state_dir, project_id, choice, ask) -> None:
     text = CHOICE_RECEIPT[choice].format(why=str(ask.get("why") or ""))
     if ask.get("reason") == "tokens" and type(ask.get("halted")) is int and ask["halted"] > 0:
         text += f"停住时有 {ask['halted']} 个话题的任务被请停了，不会自己接着做；要接着做的用 project_topic_send 再交给它们。"
+    if choice == "finish" and turn_source.enabled():
+        text += CHOICE_CHECKLIST
     project_lead.add_receipt(state_dir, project_id, "owner_choice", text)
 
 
@@ -446,14 +461,64 @@ def heard(state_dir, topic_id, text) -> None:
         return
 
 
+def count_tokens(state_dir, project_id, key, used) -> bool:
+    """``used`` tokens of the task ``key`` added to the project's ``tokens_used``, once a task (``token_jobs``); whether this
+    was the first time."""
+    first = []
+
+    def change(data):
+        counted = data.get("token_jobs") if isinstance(data.get("token_jobs"), list) else []
+        if key in counted:
+            return
+        counted.append(key)
+        data["token_jobs"] = counted[-TOKEN_JOBS_KEPT:]
+        data["tokens_used"] = int(data.get("tokens_used") or 0) + used
+        first.append(True)
+    projects.update(state_dir, project_id, change)
+    return bool(first)
+
+
+def consult_project(state_dir, record) -> str:
+    """The project a consult's turn (``collab_ask``, ``record`` its job record) spends the budget of: its collaboration's
+    integrator's, else the helper it asked's, as they are now (core/projects.py topic_project; a lead's topic only when it is
+    the lead's); '' for none (the collaboration is gone, neither is in a project)."""
+    source = turn_source.of(record) or {}
+    found = collab_records.read(state_dir, str(source.get("collab") or ""))
+    if not found:
+        return ""
+    ask = collab_records.ask_of(found, str(source.get("ask") or ""))
+    chat = str(found.get("chat_id") or "")
+    for key in ((found.get("integrator") or {}).get("key"), ask.get("to")):
+        place = projects.topic_project(state_dir, str(key or ""))
+        if place is not None and (place.role != projects.LEAD or projects.is_lead_topic(state_dir, key, chat)):
+            return place.id
+    return ""
+
+
+def consult_tokens(log, state_dir, job) -> None:
+    """A consult's turn that ended (协作 ``collab_ask``, in a 咨询通道): its tokens counted once in its project
+    (``consult_project``), so asking one another spends the same budget as working. No receipt, nothing in the library:
+    its collaboration tells the lead (app/collab_flow.py)."""
+    key = job_key(str(job_field(job, "message_id")), job_field(job, "job_id"))
+    record = find_job_record(Path(state_dir), key) or {}
+    if str(record.get("status") or "") not in COUNTED or turn_source.kind(record) != turn_source.ASK:
+        return
+    project = consult_project(state_dir, record)
+    if project and count_tokens(state_dir, project, key, record_tokens(record)):
+        log(f"project tokens of a consult counted project={project[:8]} job=#{record.get('job_id')}")
+
+
 def after_runner(log, state_dir, job) -> None:
     """The Bridge, once ``job``'s run has ended (app/butler_relay.py after_runner): a task of a project's lead or one of its
     threads has its tokens added once to ``tokens_used``, and a member's turn that ended says so in a ``thread_end`` receipt
-    (what became of it in a sentence, its status and number). Never raises."""
+    (what became of it in a sentence, its status and number). A consult's turn of 协作 has its tokens counted in its
+    collaboration's project (``consult_tokens``) and nothing else. Never raises."""
     try:
         topic, chat = str(job_field(job, "topic_id")), str(job_field(job, "chat_id"))
         if not projects.enabled() or not topic:
             return
+        if collab.is_channel(topic):
+            return consult_tokens(log, state_dir, job)
         found = projects.topic_project(state_dir, topic)
         if found is None or (found.role == projects.LEAD and not projects.is_lead_topic(state_dir, topic, chat)):
             return
@@ -462,17 +527,7 @@ def after_runner(log, state_dir, job) -> None:
         status = str(record.get("status") or "")
         if status not in COUNTED or not turn_source.behavior(record).own_delivery:
             return  # Nor a 协作 ask's turn: its collaboration writes the lead's receipt (app/collab_flow.py), no thread_end.
-        first, used = [], record_tokens(record)
-
-        def change(data):
-            counted = data.get("token_jobs") if isinstance(data.get("token_jobs"), list) else []
-            if key in counted:
-                return
-            counted.append(key)
-            data["token_jobs"] = counted[-TOKEN_JOBS_KEPT:]
-            data["tokens_used"] = int(data.get("tokens_used") or 0) + used
-            first.append(True)
-        projects.update(state_dir, found.id, change)
+        first = count_tokens(state_dir, found.id, key, record_tokens(record))
         if first and found.role == projects.MEMBER and status in RECEIPT_ENDS:
             said = project_lead.last_line(record.get("final_text"))
             label = topic_label(Path(state_dir), topic) or topic[:8]
@@ -497,9 +552,11 @@ def relayed_to_owner(state_dir, key) -> bool:
 
 def told_already(state_dir, project_id, key) -> bool:
     """Whether every receipt the lead's turn ``key`` read is of a member's turn whose result the owner was sent already
-    (``relayed``): a ``thread`` or ``note`` report of that turn would tell him the same again, so it is not sent (``reported``)."""
+    (``relayed``), or a consult's (``collab_answered``: its integrator delivers what came of it, the lead only reads it): a
+    ``thread`` or ``note`` report of that turn would tell him the same again, so it is not sent (``reported``)."""
     taken = project_lead.taken_receipts(state_dir, project_id, key)
-    return bool(taken) and all(item.get("kind") == "thread_end" and item.get("relayed") is True for item in taken)
+    return bool(taken) and all(item.get("kind") == "thread_end" and item.get("relayed") is True
+                               or item.get("kind") == collab.RECEIPT_ANSWERED for item in taken)
 
 
 # The loop.
@@ -590,6 +647,8 @@ class ProjectLoop:
         pending = unread(state, pid)
         if pending:
             due = autowake_due(pending)
+            if due and settling(pending, now):
+                return  # 协作 on: more ordinary receipts may come in a moment (members ending together): one turn reads them all.
             if due and not open_turns(state, [lead]):
                 reason = hold(record, now)
                 return self.pause(record, reason, now) if reason else self.wake(record, now)
@@ -688,6 +747,38 @@ class ProjectLoop:
             return False
         append_history(ctx.history_path, "user", WAKE_TEXT, {"message_id": message})
         return app.submission.enqueue_chat_job(ctx, WAKE_TEXT, chat, message, prompt_content=WAKE_TEXT) is not None
+
+
+def batch_seconds() -> float:
+    """How long ordinary receipts are gathered before they wake the lead: with 协作 on (COVEY_COLLAB=1)
+    COVEY_PROJECT_BATCH_SECONDS, else BATCH_SECONDS (also for a value that is not a number); 0 turns it off. Off with 协作 off:
+    each wakes at the next look, as before."""
+    if not turn_source.enabled():
+        return 0.0
+    raw = str(cenv.get(BATCH_ENV, "")).strip()
+    try:
+        value = float(raw) if raw else float(BATCH_SECONDS)
+    except ValueError:
+        return float(BATCH_SECONDS)
+    return value if 0 <= value < 3600 else float(BATCH_SECONDS)  # Also NaN and infinity.
+
+
+def urgent(item) -> bool:
+    """Whether the receipt ``item`` wakes the lead at once, never gathered: a ``start``, the owner's choice on a pause card,
+    a held question (it waits only 180 seconds), a 协作 gap (core/collab.py RECEIPT_WAKES)."""
+    return item.get("kind") in ALWAYS_WAKE or collab.RECEIPT_WAKES.get(item.get("kind")) is True
+
+
+def settling(pending, now) -> bool:
+    """Whether the lead's wake-up waits a moment for more receipts (``batch_seconds``, with 协作 on): none of ``pending`` is
+    ``urgent``, the newest ordinary one came less than the window ago, and the oldest has waited less than BATCH_STRETCH
+    windows. Topics that end within seconds of one another are then read in one turn, not one turn each. A consult's
+    receipt (``collab_answered``) wakes nobody and counts for neither."""
+    window = batch_seconds()
+    if window <= 0 or any(urgent(item) for item in pending):
+        return False
+    times = [float(item.get("at") or 0) for item in pending if item.get("kind") not in collab.RECEIPT_WAKES]
+    return bool(times) and now - max(times) < window and now - min(times) < window * BATCH_STRETCH
 
 
 def autowake_due(pending) -> bool:

@@ -15,7 +15,10 @@ app/butler_env.py describes them; app/butler_tools.py puts them with the butler'
 - ``project_answer`` and ``project_escalate`` are phase 2's question triage (P2-5, COVEY_PROJECT_TRIAGE=1; they are listed
   to the lead only then, and answer that it is off otherwise): the lead answers a member topic's held choice question as the
   owner would (the question's own submit path, with a note that the lead answered) or hands it to the owner with a reason
-  (app/triage.py).
+  (app/triage.py). With 协作 on (COVEY_COLLAB=1), or when it names them, an answer stands on ``evidence`` the Bridge checks
+  (app/triage.py grounds): no ground of the owner's that still holds, no answer.
+- With 协作 on, ``project_checklist`` keeps the project's 目标检查表 (core/project_checklist.py), and ``project_finish``
+  refuses while an item of it is not met or a 协作 gap is not dealt with (``checklist_gate``).
 
 A tool that hands out, stops or answers (``acted``) marks the lead's turn as one that changed something, so the reply of
 a wake-up turn that did is sent to the owner (app/project_loop.py reported: 有变化才发).
@@ -29,9 +32,11 @@ from pathlib import Path
 
 from covey.app import butler_topics, project_lead, triage as triage_flow
 from covey.app.butler_env import reply
-from covey.core import butler, project_memory, projects, triage
+from covey.core import butler, project_memory, projects, triage, turn_source
+from covey.core import project_checklist as checklist
 from covey.core import project_proposals as proposals
 from covey.core.jobs import find_job_record
+from covey.core.text import cut
 from covey.core.topics import topic_label
 
 KINDS = ("milestone", "thread", "note")
@@ -39,6 +44,10 @@ MEMORY_KINDS = (*project_memory.KINDS[:-1], *project_memory.LEGACY_KINDS)  # sty
 OFFERED_KINDS = project_memory.KINDS[:-1]
 ACTED_KEPT = 40  # The record's ``acted`` rows kept: one a lead turn that handed out, stopped or answered.
 TRIAGE_OFF = "问题分流没有开：负责人不能替主人答题，也不能转交问题；话题里的问题会直接问主人。"
+CHECKLIST_OFF = "协作没有开（COVEY_COLLAB）：没有目标检查表，收尾照原来的规则。"
+FINISH_NEXT = ("现在不能收尾。先安排补齐：project_topic_send 让原话题返工，或 project_topic_start 开新话题；核对过证据再用 project_checklist "
+               "把那一条标 done（写 evidence）；主人说不要了的标 dropped，在 gap 里写主人怎么说的；协作缺口处理完用 close_gaps 写怎么处理的。"
+               "要主人定范围或取舍的，合成一个问题用 project_note 标 report 问他。")
 
 
 def lead(env, request) -> tuple:
@@ -92,6 +101,26 @@ def finish_gate(record) -> str:
     if origin.get("kind") != "tidy" or record.get("owner_at") or record.get("acted"):
         return ""
     return OWNER_FIRST
+
+
+def checklist_gate(state_dir, record) -> tuple:
+    """('' , [], []) when the 目标检查表 lets the lead finish ``record`` (协作 off, COVEY_COLLAB: always); else (why not, the
+    ids of the items not met, the ids of the 协作 gaps not dealt with), each named: an item open or blocked (only one the owner
+    let go is met without its evidence, core/project_checklist.py MET), a ``collab_gap`` receipt the lead has not closed, read
+    or not. A project whose lead keeps no checklist is held by its open gaps alone."""
+    if not turn_source.enabled():
+        return "", [], []
+    items, gaps = checklist.unmet(record, project_lead.inbox_items(state_dir, record["id"]))
+    if not items and not gaps:
+        return "", [], []
+    parts = []
+    if items:
+        parts.append("目标检查表还有没满足的：" + "；".join(
+            f"{item['id']}「{cut(item['criterion'], 40)}」{checklist.STATE_WORDS[item['state']]}"
+            + (f"（缺口：{cut(item['gap'], 40)}）" if item["gap"] else "") for item in items))
+    if gaps:
+        parts.append("协作里还有没处理的缺口：" + "；".join(f"{gap['id']}「{cut(gap['text'], 60)}」" for gap in gaps))
+    return "，".join(parts) + "。" + FINISH_NEXT, [item["id"] for item in items], [gap["id"] for gap in gaps]
 
 
 def text_of(args, name="text", limit=project_lead.TEXT) -> str:
@@ -280,6 +309,9 @@ def project_finish(env, request):
     live = project_lead.live_members(env.state_dir, record)
     if live:
         return reply(False, f"还有话题在做或等主人（{'、'.join(live)}），不能收尾：等它们结束，或先处理掉。", live=live)
+    unmet, items, gaps = checklist_gate(env.state_dir, record)
+    if unmet:
+        return reply(False, unmet, gate="checklist", unmet=items, gaps=gaps)
     item = project_lead.entry(summary, report=True, kind="finish", job=request.job_key)
 
     def change(data):
@@ -289,7 +321,52 @@ def project_finish(env, request):
         rows.append(item)
         del rows[:-project_lead.NOTES_KEPT]
     projects.update(env.state_dir, pid, change)
-    return reply(True, f"专项已记为完成：{summary}", state=projects.DONE)
+    dropped = [entry for entry in checklist.items(record) if entry["state"] == checklist.DROPPED] \
+        if turn_source.enabled() else []
+    told = ("；目标检查表里主人说不做的：" + "；".join(f"{entry['id']}「{cut(entry['criterion'], 40)}」（{cut(entry['gap'], 40)}）"
+                                              for entry in dropped) + "，汇报里写明") if dropped else ""
+    return reply(True, f"专项已记为完成：{summary}{told}", state=projects.DONE)
+
+
+def project_checklist(env, request):
+    """The project's 目标检查表 (core/project_checklist.py, 协作 on): items added or changed (``items``; a ``topic`` is one of
+    this project's topics, T number or topic id), 协作 gaps closed (``close_gaps``), or nothing given to read it. The record
+    changes under its lock (core/project_checklist.py apply checks everything first: a refusal writes nothing). The answer
+    is the checklist as the pack shows it."""
+    pid, record = lead(env, request)
+    if not turn_source.enabled():
+        return reply(False, CHECKLIST_OFF)
+    state = Path(env.state_dir)
+    rows = request.args.get("items") if isinstance(request.args.get("items"), list) else []
+    close = request.args.get("close_gaps") if isinstance(request.args.get("close_gaps"), list) else []
+    if rows or close:
+        active(record, "改目标检查表")
+        chat, wanted = env.chat(), []
+        for row in rows:
+            row = dict(row) if isinstance(row, dict) else row
+            if isinstance(row, dict) and str(row.get("topic") or "").strip():
+                found = butler_topics.find_topic(env, chat, row["topic"])
+                if isinstance(found, str):
+                    return reply(False, f"{row.get('id') or '新条目'}：{found}")
+                if found[1].topic_id not in (record.get("threads") or ()):
+                    label = topic_label(state, found[1].topic_id) or found[1].topic_id[:8]
+                    return reply(False, f"{label} 不是这个专项的话题：先用 project_topic_send 把它收进来，或换成专项里交付这一条的话题。")
+                row["topic"] = found[1].topic_id
+            wanted.append(row)
+        receipts, changed = project_lead.inbox_items(state, pid), []
+
+        def change(data):
+            changed[:] = checklist.apply(data, wanted, close, receipts=receipts, job=request.job_key)
+        try:
+            record = projects.update(state, pid, change)
+        except ValueError as exc:
+            return reply(False, f"目标检查表没有改：{exc}")
+    else:
+        changed = []
+    text = project_lead.checklist_block(state, record, project_lead.member_rows(state, record))
+    head = f"已更新目标检查表（{'、'.join(changed)}）。" if changed else ""
+    left, gaps = checklist.unmet(record, project_lead.inbox_items(state, pid))
+    return reply(True, head + "\n" + text if head else text, unmet=[item["id"] for item in left], gaps=[gap["id"] for gap in gaps])
 
 
 def held_topic(env, request, record):
@@ -305,14 +382,25 @@ def held_topic(env, request, record):
 
 
 def project_answer(env, request):
-    """Answer the member topic's held choice question for the owner (app/triage.py answer)."""
+    """Answer the member topic's held choice question for the owner (app/triage.py answer). With 协作 on (COVEY_COLLAB=1),
+    or ``evidence`` given, its grounds are checked first (app/triage.py grounds): none of the owner's that still holds, and
+    nothing is answered (the question stays held; the refusal says to escalate)."""
     pid, record = lead(env, request)
     if not triage.enabled():
         return reply(False, TRIAGE_OFF)
     active(record, "替主人答题")
     try:
         app, ctx, chat = held_topic(env, request, record)
-        done = triage_flow.answer(env, app, ctx, chat, record, request.args.get("answers"), f"lead-{request.id}")
+    except ValueError as exc:
+        return reply(False, str(exc))
+    found = []
+    if turn_source.enabled() or "evidence" in request.args:
+        try:
+            found = triage_flow.grounds(env, record, request.args.get("evidence"))
+        except ValueError as exc:
+            return reply(False, f"没有替主人答：{exc}", refused="evidence")
+    try:
+        done = triage_flow.answer(env, app, ctx, chat, record, request.args.get("answers"), f"lead-{request.id}", found)
     except ValueError as exc:
         return reply(False, str(exc))
     acted(env, pid, request, "answer")
@@ -350,4 +438,5 @@ def project_escalate(env, request):
 TOOLS = {"project_topic_start": project_topic_start, "project_topic_send": project_topic_send,
          "project_topic_stop": project_topic_stop,
          "project_note": project_note, "project_goal": project_goal, "project_remember": project_remember, "project_style": project_style,
-         "project_finish": project_finish, "project_answer": project_answer, "project_escalate": project_escalate}
+         "project_finish": project_finish, "project_answer": project_answer, "project_escalate": project_escalate,
+         "project_checklist": project_checklist}

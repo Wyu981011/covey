@@ -15,6 +15,11 @@ how its session lives. Only a lead topic's turn (core/butler.py ``is_lead``) com
 - The inbox, ``projects/<id>/inbox/<n>.json`` ({id, kind, thread, text, at, taken_by}): receipts of what happened since
   the lead last looked (a member topic's turn ended, a question held, the owner spoke in a member topic). ``add_receipt`` writes
   one (the Bridge does, app/project_loop.py: a member's turn ended, the owner spoke in a member topic, nothing moved), ``take_receipts`` gives the lead's turn what it has not read.
+- With 协作 on (COVEY_COLLAB=1, docs/projects.md 负责人对照目标跟进) the lead answers for the project's goal: its rules say so
+  (``COLLAB_RULES``), and its pack (the consult's ``read_only_pack`` too) shows the 目标检查表 and the 协作 gaps not dealt
+  with (``checklist_block``, core/project_checklist.py), the memory's lines with their ids and the owner's own words in the
+  project (the grounds project_answer names, app/triage.py grounds), and the inbox in groups (``inbox_block``: what to look
+  at first, the topics' deliveries, the consults' receipts folded). Off, rules and pack are as they were.
 
 Rules 1 and 6 (AGENTS.md): the records are written under their own lock and nothing here sends to Feishu."""
 from __future__ import annotations
@@ -28,16 +33,18 @@ from pathlib import Path
 from covey.app import project_context
 from covey.app.prompts import project_memory_lines
 from covey.app.triage_view import pack_block
-from covey.core import board_read, butler, project_library, project_memory, projects, triage
+from covey.core import board_read, butler, collab, project_checklist, project_library, project_memory, projects, triage
 from covey.core import memory as core_memory
+from covey.core import turn_source
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import job_key, job_path, read_job_record, topic_job_records
 from covey.core.locks import resource_lock
-from covey.core.state import read_object, write_json
+from covey.core.state import epoch_seconds, read_object, write_json
 from covey.core.statuses import ENDED, RUNNING
 from covey.core.text import cut, last_line, stamp  # noqa: F401  (last_line: app/project_loop.py)
 from covey.core.topics import topic_label, topic_title
 from covey.core.turn_words import RESULTS, UNSET_PHASES
+from covey.core.web_sync import PREFIX as WEB_PREFIX
 
 RESET_TOKENS = 150_000  # A previous turn that read more than this: the next starts a new session.
 RESET_IDLE = 24 * 3600  # Idle this long: the cached prompt is long gone, a new session costs no more.
@@ -142,6 +149,25 @@ TRIAGE_RULES = (
     "- 拿不准、记忆里没有依据、涉及部署、发布、对外发送、花钱、删东西、不可逆的操作，都用 project_escalate 转给主人并写清 why，别猜；"
     "自由文字的问题不会交给你。主人纠正过的做法，用 project_remember 记下，之后照做。",
 )
+# With 协作 on (COVEY_COLLAB=1): the lead answers for the project's goal (docs/projects.md 负责人对照目标跟进), not for
+# passing on what its topics said, and an answer it gives for the owner names its grounds (app/triage.py grounds).
+COLLAB_RULES = (
+    "- 目标检查表：用 project_checklist 把专项的完成标准拆成几条，每条写清由哪个话题交付、依赖哪几条、证据在哪、还缺什么；"
+    "第一轮写，目标变了再改。“专项状态”里的“目标检查表”是它现在的样子。",
+    "- 收到话题的交付（thread_end）或协作缺口（collab_gap）时，对照目标检查表查：交付有没有覆盖那条标准、证据够不够"
+    "（用 Read、topic_read 抽查）、两个结果有没有冲突、后面的条目要的前置结果有没有；有漏项就安排补齐：project_topic_send 让原话题返工，"
+    "或 project_topic_start 开新话题，并用 project_checklist 写明缺口和由谁补。协作缺口处理完用 close_gaps 写怎么处理的。",
+    "- 话题说做完只是它的说法：核对过证据才把那一条标 done（evidence 写提交号、产物路径或检查点里的自检）；还有没满足的条目或没处理的协作缺口时 "
+    "project_finish 会拒绝。主人说不要了的才标 dropped，在 gap 里写主人怎么说的；需要主人定范围、顺序或取舍时，合成一个问题用 project_note 标 report 问他。",
+    "- 协作咨询的回执（collab_answered）只供你参考，不会叫醒你，汇总方会自己交付结论。向主人汇报只说新的东西，比如“3 条标准只覆盖了 2 条，"
+    "缺原版基线对照，还不能收尾”；不要把话题或汇总方的结论换个说法再发一遍。",
+)
+EVIDENCE_RULE = (
+    "- 开了协作，project_answer 必须写 evidence：列出你依据的专项记忆条目 id（状态包专项记忆每行开头〔〕里的）或主人在这个专项里的原话"
+    "（msg:消息 id，见状态包“主人在专项里说过的话”）。只有长期约定、当前决定里没标（无出处）、仍有效的条目和主人原话算依据；"
+    "待核对参考是你整理的，只能一起列，不能单独作依据；作废、做完、被替代或只限当次的 Bridge 会拒绝。被拒了就用 project_escalate 转给主人，"
+    "不要换个说法再答。回答会带上依据，记在专项卡的分流记录里。"
+)
 PRACTICE = ""  # Phase 3's layer: how this kind of specialist works (project.leader.profile). Nothing reads it yet.
 
 
@@ -151,8 +177,12 @@ def style_rule(style) -> str:
 
 def lead_rules(style=None, practice=PRACTICE) -> str:
     """The lead's rules: identity, tools, the style as the record has it, the practice layer (``practice``; none by
-    default). The language rule is the bridge rules' (app/prompts.py LANGUAGE_RULE), said there once."""
+    default). The language rule is the bridge rules' (app/prompts.py LANGUAGE_RULE), said there once. With 协作 on
+    (COVEY_COLLAB=1) the lead's duty to the goal (``COLLAB_RULES``) and, with the triage, the grounds an answer names
+    (``EVIDENCE_RULE``) follow the tools."""
     tools = TOOL_RULES if not triage.enabled() else (*(rule.replace(NOT_YET, "") for rule in TOOL_RULES), *TRIAGE_RULES)
+    if turn_source.enabled():
+        tools = (*tools, *COLLAB_RULES, *((EVIDENCE_RULE,) if triage.enabled() else ()))
     layers = [*IDENTITY, *tools, style_rule(style_of({"style": style})) if style else style_rule(STYLE_DEFAULT)]
     if practice:
         layers.append(practice)
@@ -242,6 +272,16 @@ def taken_receipts(state_dir, project_id, key) -> list:
     return [item for item in (read_object(path) for path in paths) if key and item.get("taken_by") == key]
 
 
+def inbox_items(state_dir, project_id) -> list:
+    """Every receipt of the project's inbox, read or not, oldest first: the 协作 gaps are read from them
+    (core/project_checklist.py gaps). Reads only."""
+    try:
+        paths = sorted(inbox_dir(state_dir, project_id).glob("*.json"))
+    except OSError:
+        return []
+    return [item for item in (read_object(path) for path in paths) if item.get("id")]
+
+
 # The pack.
 
 def member_row(state_dir, topic_id) -> dict:
@@ -265,7 +305,8 @@ def member_row(state_dir, topic_id) -> dict:
     return {"topic_id": topic_id, "label": topic_label(state_dir, topic_id) or topic_id[:8],
             "title": topic_title(state_dir, topic_id) or "（没有标题）", "status": status_words,
             "said": cut(said, LINE), "artifacts": [cut(item, LINE) for item in artifacts[:3]],
-            "live": status in RUNNING or status == "waiting_user", "waiting": status == "waiting_user"}
+            "live": status in RUNNING or status == "waiting_user", "waiting": status == "waiting_user",
+            "ended": status in ENDED or status == "continued"}
 
 
 def member_rows(state_dir, record) -> list:
@@ -308,15 +349,136 @@ def lead_goal(record) -> str:
 LEAD_MEMORY_HEAD = "专项记忆（每一轮都带，和专项的话题读到的是同一份）："
 
 
+# 协作 (COVEY_COLLAB=1): what the pack says besides, for the lead to answer for the goal and name its grounds.
+
+CHECKLIST_EMPTY = "目标检查表：还没有。用 project_checklist 把完成标准拆成几条（每条：交付的话题、依赖、证据、缺口）。"
+GAPS_HEAD = "没处理的协作缺口（处理完用 project_checklist 的 close_gaps 写怎么处理的；有它们时 project_finish 会拒绝）："
+OWNER_WORDS_HEAD = "主人在专项里说过的话（最近几条，替主人答题时可以写 msg:消息 id 作依据）："
+OWNER_PREFIXES = ("om_", WEB_PREFIX)  # The message ids of the owner's own words the Bridge took in: Feishu's, the web page's.
+OWNER_WORDS_SHOWN = 5
+OWNER_WORDS_TEXT = 100
+FIRST_KINDS = (collab.RECEIPT_GAP, "question", "owner_choice", "start", "owner_said")  # The receipts the lead looks at first.
+CONSULTS_SHOWN = 3  # The consults' receipts the inbox shows; the others are counted.
+
+
+def entry_id(item) -> str:
+    """The id of a project memory item (core/memory.py items: its ref is project:<project id>:<entry id>)."""
+    parts = str(item.get("ref") or "").split(":", 2)
+    return parts[2] if len(parts) == 3 else ""
+
+
+def memory_lines(view) -> list:
+    """The memory's lines as the pack says them (app/prompts.py project_memory_lines); with 协作 on each carried line starts
+    with its entry id in 〔〕, what project_answer's evidence names (app/triage.py grounds)."""
+    if not turn_source.enabled():
+        return project_memory_lines(view)
+    parts = {part: {**room, "kept": [{**item, "text": f"〔{entry_id(item)}〕{item['text']}"} for item in room["kept"]]}
+             for part, room in view["parts"].items()}
+    return project_memory_lines({**view, "parts": parts})
+
+
+def owner_message(record) -> bool:
+    """Whether the job ``record`` began with the owner's own words as the Bridge took them in (his Feishu message, his words on
+    the web page) and of a source whose words are his (core/turn_source.py owner_words: no 协作 turn, no hand-on)."""
+    return str(record.get("message_id") or "").startswith(OWNER_PREFIXES) and turn_source.behavior(record).owner_words
+
+
+def owner_word_lines(state_dir, record) -> list:
+    """The owner's own words in the lead's topic, the newest first (at most OWNER_WORDS_SHOWN), each naming itself as
+    project_answer's evidence does: msg:<message id>."""
+    lead = str(record.get("lead_topic_id") or "")
+    jobs = sorted((job for job in topic_job_records(state_dir, lead) if owner_message(job)) if lead else (),
+                  key=lambda job: int(job.get("job_id") or 0), reverse=True)
+    return [f"- msg:{job['message_id']} · {stamp(epoch_seconds(job.get('created_at')) or 0)} · "
+            f"{cut(job.get('user_text'), OWNER_WORDS_TEXT)}" for job in jobs[:OWNER_WORDS_SHOWN]]
+
+
+def checklist_block(state_dir, record, rows) -> str:
+    """The 目标检查表 and the 协作 gaps not dealt with, as the pack says them (core/project_checklist.py): an item a line (its id,
+    state, criterion, the topic that delivers it and how that topic is, what it waits on, the evidence, the gap); then what to
+    look into: an item met while one it needs is not, an item not met whose topic has ended (its claim is to be checked
+    against the criterion); then the open gaps. ``rows``: ``member_rows``."""
+    entries = project_checklist.items(record)
+    out = []
+    if entries:
+        by_topic = {row["topic_id"]: row for row in rows}
+        states = {item["id"]: item["state"] for item in entries}
+        met = sum(1 for item in entries if item["state"] in project_checklist.MET)
+        out.append(f"目标检查表（{len(entries)} 条：{met} 条满足或不做了，{len(entries) - met} 条没满足）：")
+        for item in entries:
+            row = by_topic.get(item["topic"])
+            parts = [item["id"], project_checklist.STATE_WORDS[item["state"]], item["criterion"],
+                     (f"{row['label'] if row else topic_label(state_dir, item['topic']) or item['topic'][:8]}"
+                      f"（{row['status'] if row else '不在专项里了'}）") if item["topic"] else "还没有话题"]
+            if item["needs"]:
+                parts.append("依赖 " + "、".join(f"{need}（{project_checklist.STATE_WORDS.get(states.get(need), '不在了')}）"
+                                               for need in item["needs"]))
+            parts += [f"{name}：{item[key]}" for key, name in (("evidence", "证据"), ("gap", "缺口")) if item[key]]
+            out.append("- " + " · ".join(parts))
+        for item, waiting in project_checklist.conflicts(record):
+            out.append(f"⚠️ {item['id']} 标了{project_checklist.STATE_WORDS[item['state']]}，但它依赖的 {'、'.join(waiting)} "
+                       "还没满足：核对是不是冲突，或漏了前置结果。")
+        for item in entries:
+            row = by_topic.get(item["topic"])
+            if item["state"] not in project_checklist.MET and row and row["ended"]:
+                out.append(f"⚠️ {row['label']} 已经结束（{row['status']}），它交付的 {item['id']} 还没满足："
+                           "对照这条标准核对它的交付和证据，缺什么就让它返工。")
+    else:
+        out.append(CHECKLIST_EMPTY)
+    open_gaps = project_checklist.gaps(record, inbox_items(state_dir, record["id"]))
+    if open_gaps:
+        out += [GAPS_HEAD, *(f"- {gap['id']} · {stamp(gap['at'])} · {cut(gap['text'], 200)}" for gap in open_gaps)]
+    return "\n".join(out)
+
+
+def inbox_block(state_dir, receipts, record) -> str:
+    """The inbox as the pack says it. With 协作 on (COVEY_COLLAB=1) in groups, each in the order it came: what to look at
+    first (a 协作 gap, a question, the owner's choice or word, a start), the topics' deliveries (``thread_end``, with the
+    items of the 目标检查表 a topic delivers that are not met yet), the rest, and last the consults' receipts, folded (the
+    newest CONSULTS_SHOWN and a count: they wake nobody, and their integrator delivers); off, a line each as before."""
+    head = "自上次唤醒以来的收件箱："
+    if not receipts:
+        return head + "没有新的。"
+    if not turn_source.enabled():
+        return head + "\n" + "\n".join(map(receipt_line, receipts))
+    named = [{**item, "label": topic_label(state_dir, item["thread"]) or ""} if item.get("thread") and not item.get("label")
+             else item for item in receipts]
+    first = [item for item in named if item.get("kind") in FIRST_KINDS]
+    ends = [item for item in named if item.get("kind") == "thread_end"]
+    consults = [item for item in named if item.get("kind") == collab.RECEIPT_ANSWERED]
+    rest = [item for item in named if item not in first and item not in ends and item not in consults]
+    open_items = [item for item in project_checklist.items(record) if item["state"] not in project_checklist.MET]
+    out = [head]
+    if first:
+        out += ["先看：", *(receipt_line(item).replace("- ", "- ⚠️ ", 1) if item.get("kind") == collab.RECEIPT_GAP
+                            else receipt_line(item) for item in first)]
+    if ends:
+        out.append(f"话题的交付和结束（{len(ends)} 条，对照目标检查表看各覆盖了哪条）：")
+        for item in ends:
+            mine = [entry["id"] for entry in open_items if entry["topic"] and entry["topic"] == item.get("thread")]
+            out.append(receipt_line(item) + (f"（它交付的 {'、'.join(mine)} 还没满足）" if mine else ""))
+    if rest:
+        out += ["其他：", *map(receipt_line, rest)]
+    if consults:
+        out.append(f"协作咨询的回执（{len(consults)} 条，只供参考，不会叫醒你；汇总方会自己交付结论）：")
+        out += [f"- {stamp(item.get('at'))} {cut(item.get('text'), 100)}" for item in consults[-CONSULTS_SHOWN:]]
+        if len(consults) > CONSULTS_SHOWN:
+            out.append(f"另有 {len(consults) - CONSULTS_SHOWN} 条更早的（要细节用 topic_read 看汇总方的话题）。")
+    return "\n".join(out)
+
+
 def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redacted=False) -> str:
     """The pack at the head of the lead's turn ``key``. ``full``: the whole of it (a new session); else the parts that
     change between turns (members, memory, style, inbox, decisions), the goal being in the session already.
     ``receipts``: the inbox's items when the caller has taken them. The memory is core/memory.py project_view's, as a member
     topic reads it: ``since`` the lead's previous turn's start (a resumed session: what was voided since then is said),
-    ``redacted`` whether the lead's topic reads the lines from topics with redaction on."""
+    ``redacted`` whether the lead's topic reads the lines from topics with redaction on. With 协作 on (COVEY_COLLAB=1) also
+    the 目标检查表 and the open 协作 gaps (``checklist_block``), the memory's ids (``memory_lines``), the owner's own words
+    with the triage on (``owner_word_lines``) and the inbox in groups (``inbox_block``), in a new session and a resumed one."""
     style = style_of(record)
     if receipts is None:
         receipts = take_receipts(state_dir, record["id"], key)
+    collab_on = turn_source.enabled()
     out = [f"[专项状态：{record.get('name') or record['id']}]"]
     if full:
         out.append("目标和完成标准：\n" + (record.get("goal") or "（主人没有写目标：第一轮先问清楚，或按专项名推断）")
@@ -326,11 +488,16 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
     rows = member_rows(state_dir, record)
     out.append("话题（" + (f"{len(rows)} 个，{sum(1 for row in rows if row['live'])} 个没结束" if rows else "还没有") + "）："
                + ("\n" + "\n".join(map(thread_line, rows)) if rows else ""))
+    if collab_on:
+        out.append(checklist_block(state_dir, record, rows))
     view = core_memory.project_view(project_memory.entries(state_dir, record), record["id"], redacted=redacted,
                                     since=None if full else since)
-    memory = project_memory_lines(view)
+    memory = memory_lines(view)
     if memory:
         out.append(LEAD_MEMORY_HEAD + "\n" + "\n".join(memory))
+    words = owner_word_lines(state_dir, record) if collab_on and triage.enabled() else []
+    if words:
+        out.append(OWNER_WORDS_HEAD + "\n" + "\n".join(words))
     if full:
         struck = project_memory.tombstones(state_dir, record)
         if struck:
@@ -350,7 +517,7 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
         last = reopened[-1]
         out.append(f"重开：这个专项收过尾（{cut(str(last.get('summary') or ''), 120) or '没有写结论'}），主人 {stamp(last.get('at'))} "
                    "又在专项里说话，已重新打开：按主人的新要求接着做，做完再 project_finish。")
-    out.append("自上次唤醒以来的收件箱：" + ("\n" + "\n".join(map(receipt_line, receipts)) if receipts else "没有新的。"))
+    out.append(inbox_block(state_dir, receipts, record))
     return "\n\n".join(out)
 
 

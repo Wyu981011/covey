@@ -15,12 +15,17 @@ question goes to the project's lead before the owner, and the owner sees it only
 - The lead answers with ``answer`` (project_answer): the question's own submit path (app/questions.py ``submit_answer``) with its
   note saying the lead answered, so the topic goes on as if the owner had clicked. Every answer and hand-back is a row of the
   project's ``triage`` list (the 专项卡's 分流记录); an answer's row has the 不对 button (``correct``).
+- With 协作 on (COVEY_COLLAB=1), or whenever the lead names them, an answer stands on grounds the Bridge checks (``grounds``,
+  docs/projects.md 分流的依据): entries of the project's memory that the owner said and that still hold, or the owner's own
+  messages in the project; the lead's notes (待核对参考) never alone, a line voided, done, superseded or only for that once
+  never. The grounds go into the answer's note and its 分流记录 row.
 
 Rules 1 and 4 (AGENTS.md): a record is changed under its own lock (``update_question``) and nothing is sent from under it; the
 triage state moves only along core/triage.py TRIAGE_TRANSITIONS."""
 from __future__ import annotations
 
 import dataclasses
+import re
 import time
 from pathlib import Path
 
@@ -28,7 +33,8 @@ from covey.app import project_lead
 from covey.app.triage_view import held_questions, lead_held
 from covey.app.answers import AnswerIncomplete, answer_fields
 from covey.cards.question_cards import triage_element
-from covey.core import project_gates, project_memory, projects, triage
+from covey.core import memory as core_memory
+from covey.core import project_gates, project_memory, projects, triage, turn_source
 from covey.core.jobs import find_job_record, saved_job, upsert_job_record
 from covey.core.state import keyed_json_path, read_object
 from covey.core.store import directory_store, update_question
@@ -114,10 +120,11 @@ class Triage:
 
 # What the Bridge sees: the held questions, their receipts and timeouts, the two tools and the owner's correction.
 
-def log_row(state_dir, project_id, text, *, token="", topic="", kind="") -> None:
-    """One row of the project's 分流记录 (its ``triage`` list); never raises (the record may be gone)."""
+def log_row(state_dir, project_id, text, *, token="", topic="", kind="", evidence=()) -> None:
+    """One row of the project's 分流记录 (its ``triage`` list); never raises (the record may be gone). ``evidence``: the grounds
+    of an answer ({ref, kind, level, layer, part}, ``grounds``), kept only when there are some."""
     row = {"at": time.time(), "text": cut(text, 300), **({"token": token} if token else {}), **({"topic": topic} if topic else {}),
-           **({"kind": kind} if kind else {})}
+           **({"kind": kind} if kind else {}), **({"evidence": list(evidence)} if evidence else {})}
 
     def change(data):
         rows = data.get("triage") if isinstance(data.get("triage"), list) else []
@@ -348,15 +355,125 @@ def receipt(state_dir, project, record, now) -> None:
                     lambda row: {**row, "triage": {**triage.of(row), "receipt": True}} if triage.held(row) else None)
 
 
-def answer(env, app, ctx, chat, project, answers, event_id) -> dict:
-    """project_answer: the newest held question of the topic ``ctx`` answered as the owner would, with NOTE as its 补充说明.
-    ValueError says what does not fit (the answer is not sent then, and the question stays held)."""
+# The grounds of an answer the lead gives in the owner's place (``grounds``; project_answer's ``evidence``).
+
+MSG = "msg:"  # A ground that names the owner's own message in the project: msg:<message id>.
+MESSAGE_ID = re.compile(r"[0-9A-Za-z_\-]{4,128}")
+SPLIT = re.compile(r"[,，、;；\s]+")  # Grounds given as one string (the schema asks for a list).
+GROUNDS_MAX = 6
+GROUND_TEXT = 40  # Characters of a ground's words in the answer's note.
+NO_GROUNDS = ("要写 evidence：你依据的专项记忆条目 id（状态包专项记忆每行开头〔〕里的）或主人原话 msg:<消息 id>；"
+              "没有依据就用 project_escalate 转给主人。")
+ESCALATE = "依据不够就用 project_escalate 转给主人（写清你推荐哪个），不要换个说法再答。"
+NOT_OWNER = ("这些依据都不是主人说的：待核对参考是你整理的口径，（无出处）的旧记录条件可能不全，都不能单独作为替主人答题的依据。"
+             "用 project_escalate 转给主人，写清你推荐哪个、为什么。")
+WHO = {turn_source.LEVEL_OWNER: "你说的", turn_source.LEVEL_AGENT: "它总结的"}
+
+
+def ground_id(text) -> str:
+    """An evidence as the lead wrote it, the decorations it may have copied from the pack taken off (〔〕, a ref's
+    ``project:<id>:`` head)."""
+    text = " ".join(str(text or "").split()).strip("〔〕[]【】 ")
+    return text.rsplit(":", 1)[-1] if text.startswith("project:") else text
+
+
+def owner_message(env, project, message_id) -> dict:
+    """The job record of ``message_id`` when it is the owner's own words in ``project`` (its lead's topic or a member topic, its
+    chat): a message the Bridge took in from him (project_lead.owner_message), sent by him (app/access.py owner_turn); else
+    {}."""
+    record = (find_job_record(Path(env.state_dir), message_id) or {}) if MESSAGE_ID.fullmatch(message_id) else {}
+    topics = {str(project.get("lead_topic_id") or ""), *(topic for topic in project.get("threads") or () if isinstance(topic, str))}
+    access = getattr(getattr(env, "runtime", None), "access", None)
+    if (record.get("message_id") != message_id or record.get("topic_id") not in topics or record.get("chat_id") != project.get("chat_id")
+            or not project_lead.owner_message(record) or access is None
+            or not access.owner_turn(str(record.get("chat_id") or ""), str(record.get("sender_id") or ""))):
+        return {}
+    return record
+
+
+def grounds(env, project, evidence) -> list:
+    """The grounds the lead gave for answering in the owner's place (project_answer's ``evidence``), each checked here and
+    never taken from what the model says of it: [{ref, kind (memory or message), level, layer, part, text}]. An entry id is a
+    line of the project's memory (core/project_memory.py entries; its level and layer core/memory.py describe's); msg:<message
+    id> (or the bare id) the owner's own message in the project (``owner_message``). ValueError says what is wrong, and the
+    answer is not sent: none given, one that is not there (made up), a style line, one voided, done, superseded or only for
+    that once (``ONCE``), or none of the owner's words among them (the lead's notes, 待核对参考, and the owner's older lines
+    without an origin are never the ground alone)."""
+    given = evidence if isinstance(evidence, list) else SPLIT.split(evidence) if isinstance(evidence, str) else []
+    given = list(dict.fromkeys(ground_id(item) for item in given if ground_id(item)))
+    if not given:
+        raise ValueError(NO_GROUNDS)
+    if len(given) > GROUNDS_MAX:
+        raise ValueError(f"依据最多 {GROUNDS_MAX} 条，这次写了 {len(given)} 条：只留真正依据的那几条。")
+    rows = {row["id"]: row for row in project_memory.entries(Path(env.state_dir), project)}
+    found, problems = [], []
+    for ref in given:
+        message = ref[len(MSG):] if ref.startswith(MSG) else ref if ref.startswith(project_lead.OWNER_PREFIXES) else ""
+        if message:
+            record = owner_message(env, project, message)
+            if not record:
+                problems.append(f"{ref} 不是主人在这个专项里说的话（消息 id 抄状态包“主人在专项里说过的话”里的）")
+                continue
+            found.append({"ref": MSG + message, "kind": "message", "level": turn_source.LEVEL_OWNER, "layer": "", "part": "",
+                          "text": cut(record.get("user_text"), 200)})
+            continue
+        row = rows.get(ref)
+        if row is None:
+            problems.append(f"{ref} 不在这个专项的记忆里（id 抄状态包专项记忆每行开头〔〕里的）")
+            continue
+        facts = core_memory.describe(row)
+        if row.get("kind") == "style":
+            problems.append(f"{ref} 是汇报风格，不是答题的依据")
+        elif row.get("deleted") or facts["valid"] == "void":
+            problems.append(f"{ref} 已作废，不再适用")
+        elif facts["layer"] == core_memory.HISTORY:
+            problems.append(f"{ref} 已经做完或被替代，进了历史记录，不再适用")
+        elif facts["applies"] == project_memory.ONCE:
+            problems.append(f"{ref} 只限当次，不能拿来答别的题")
+        else:
+            found.append({"ref": ref, "kind": "memory", "level": facts["level"], "layer": facts["layer"],
+                          "part": facts["part"] or "", "text": cut(row.get("text"), 200), "applies": facts["applies"]})
+    if problems:
+        raise ValueError("；".join(problems) + "。" + ESCALATE)
+    if not any(item["level"] == turn_source.LEVEL_OWNER for item in found):
+        raise ValueError(NOT_OWNER)
+    return found
+
+
+def ground_tag(item) -> str:
+    """Who said a ground and which layer it is, short: 你说的·当前决定, 主人原话, 它总结的·待核对参考."""
+    if item["kind"] == "message":
+        return "主人原话"
+    return WHO.get(item["level"], "它总结的") + "·" + core_memory.PART_WORDS.get(item["part"], core_memory.LAYER_WORDS.get(item["layer"], ""))
+
+
+def ground_note(found) -> str:
+    """The 补充说明 of an answer the lead gave on ``found`` (``grounds``): who answered and on what, for the topic and the owner to
+    check; NOTE without grounds."""
+    if not found:
+        return NOTE
+    return "（负责人替主人答的，依据：" + "；".join(f"{item['ref']} {ground_tag(item)}「{cut(item['text'], GROUND_TEXT)}」"
+                                              for item in found) + "）"
+
+
+def ground_row(found) -> str:
+    """The head of an answer's 分流记录 line with its grounds, short enough to show before the line is clipped."""
+    if not found:
+        return "答了："
+    tags = list(dict.fromkeys(ground_tag(item) for item in found))
+    return f"答了（依据 {'、'.join(tags[:2])}{f' 等 {len(found)} 条' if len(found) > 2 else ''}）："
+
+
+def answer(env, app, ctx, chat, project, answers, event_id, found=()) -> dict:
+    """project_answer: the newest held question of the topic ``ctx`` answered as the owner would, with NOTE as its 补充说明
+    (``ground_note`` when it stands on grounds, ``found``: ``grounds``'s, also kept on its 分流记录 row). ValueError says what
+    does not fit (the answer is not sent then, and the question stays held)."""
     state = Path(env.state_dir)
     rows = held_questions(state, {ctx.topic_id})
     if not rows:
         raise ValueError("这个话题现在没有交给你的问题（可能已经转给主人，或超过 3 分钟了）。")
     path, record = rows[-1]
-    fields = answer_fields(record, answers, NOTE)
+    fields = answer_fields(record, answers, ground_note(found))
     now = time.time()
     taken = update_question(path, lambda row: {**row, "display_pending": False, "triage": {**triage.of(row), "answering": now}}
                             if triage.held(row) else None)
@@ -381,7 +498,8 @@ def answer(env, app, ctx, chat, project, answers, event_id) -> dict:
                         if triage.state(row) == triage.HELD else None)
     label = topic_label(state, ctx.topic_id) or ctx.topic_id[:8]
     line = f"{label} · {summary(record, given)}"
-    log_row(state, project["id"], "答了：" + line, token=record["token"], topic=ctx.topic_id, kind="answered")
+    log_row(state, project["id"], ground_row(found) + line, token=record["token"], topic=ctx.topic_id, kind="answered",
+            evidence=[{key: item[key] for key in ("ref", "kind", "level", "layer", "part")} for item in found])
     return {"label": label, "status": saved.get("status"), "line": line}
 
 
