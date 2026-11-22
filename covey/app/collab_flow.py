@@ -9,7 +9,8 @@ Bridge alone (rule 1: decided under the record's lock, sent outside it).
   record). The root is the owner's message of that turn; ``collab_id`` of it, the integrator and the helpers makes a second
   submission find the first. The checks (app/collab_checks.py): the owner's private chat, the switch, the integrator's
   Harness, at most HELPERS_NAMED helpers he named (HELPERS_DEFAULT otherwise), each helper's static ones (an ask it fails
-  is ``not_taken`` with the reason). A line in the integrator's thread says who was asked and who was not.
+  is ``not_taken`` with the reason). The 协作卡 in the integrator's thread (app/collab_cards.py) says who was asked and who was not, and
+  every change of the record redraws it; a line says it only when the card could not go out.
 - Dispatched (``dispatch``: right away, and the ``collab`` thread every TICK seconds): a queued ask whose helper is idle
   is marked taken first, then its turn is queued in its channel (``enqueue_chat_job`` with the turn source ``collab_ask``,
   the message id the Bridge's own: core/collab.py ask_message); a busy helper keeps it queued (never a 补充 of its running
@@ -38,6 +39,7 @@ import time
 from pathlib import Path
 
 from covey.app import collab_channel
+from covey.app.collab_cards import CollabCards
 from covey.app import collab_checks as checks
 from covey.core import collab, projects, turn_source
 from covey.core import collab_records as records
@@ -181,6 +183,7 @@ class Collaboration:
 
     def __init__(self, runtime, topics, messenger, voice) -> None:
         self.runtime, self.topics, self.messenger, self.voice = runtime, topics, messenger, voice
+        self.cards = CollabCards(runtime, messenger, voice, self)  # 协作卡 (app/collab_cards.py): the record's projection in the chat.
 
     # -- the thread ----------------------------------------------------------------------------------------------------
 
@@ -236,6 +239,7 @@ class Collaboration:
                 self.from_checkpoint(ctx, job, clarify=True)  # Its clarifications and gap, as after_runner would.
                 self.settle_reply(ctx, job, now)
         self.advance(ctx, cid, now)
+        self.cards.refresh(ctx, cid, create=False)  # A write that missed (digest differs), tried again.
 
     # -- the API (package E's page and cards; the checkpoint's asks come the same way) --------------------------------
 
@@ -304,11 +308,13 @@ class Collaboration:
             if ask["state"] == collab.QUEUED:
                 self.dispatch(ctx, cid, ask["id"], now)
         record = records.read(state, cid)
-        self.tell_start(ctx, record)
+        if not self.cards.refresh(ctx, cid):  # The card says what the line did; the line only when the card did not go out.
+            self.tell_start(ctx, record)
         for ask in record.get("asks") or ():
             if ask.get("state") == collab.NOT_TAKEN:
                 self.receipts(ctx, record, ask)
         self.advance(ctx, cid, now)
+        self.cards.refresh(ctx, cid, create=False)
         return {"collab": records.view(records.read(state, cid))}
 
     def clarify(self, ctx, collab_id, helper, question, now=None) -> dict:
@@ -355,6 +361,7 @@ class Collaboration:
         else:
             self.receipts(ctx, records.read(state, collab_id), ask)
         self.advance(ctx, collab_id, now)
+        self.cards.refresh(ctx, collab_id, create=False)
         return {"collab": records.view(records.read(state, collab_id))}
 
     def stop(self, ctx, collab_id, by="card", now=None) -> dict:
@@ -382,6 +389,7 @@ class Collaboration:
         self.runtime.log(f"collab stopped collab={collab_id[:8]} by={by}")
         for topic, message in stopping:
             self.stop_job(ctx, record["chat_id"], topic, message, by)
+        self.cards.refresh(ctx, collab_id, create=False)
         return {"collab": records.view(records.read(state, collab_id))}
 
     def view(self, ctx, collab_id) -> dict:
@@ -442,6 +450,7 @@ class Collaboration:
         if records.change(state, cid, take) is None:
             return
         self.queue_ask(ctx, cid, ask_id)
+        self.cards.refresh(ctx, cid, create=False)
 
     def queue_ask(self, ctx, cid, ask_id) -> None:
         """The taken ask's turn queued in its channel under its message id (once: a job record of it already there is
@@ -536,6 +545,7 @@ class Collaboration:
         for topic, message in ended:
             self.stop_job(ctx, record["chat_id"], topic, message, "card")
         self.receipts(ctx, record, records.ask_of(record, ask_id))
+        self.cards.refresh(ctx, cid, create=False)
 
     def expire(self, ctx, cid, now, *, window=False) -> None:
         """The window's end: every ask still waiting or running expires (its turn stopped)."""
@@ -672,6 +682,7 @@ class Collaboration:
             return
         if outcome.get("late"):
             self.runtime.log(f"collab late answer kept ask={ask_id[-12:]}")
+            self.cards.refresh(ctx, cid, create=False)  # Its note: kept, and it went to nobody.
             return
         if outcome.get("retry"):
             self.runtime.log(f"collab ask queued again ask={ask_id[-12:]}")
@@ -681,6 +692,7 @@ class Collaboration:
         if outcome.get("replied"):
             self.helped(ctx, record, ask)
         self.receipts(ctx, record, ask)
+        self.cards.refresh(ctx, cid, create=False)
         self.advance(ctx, cid, now)
 
     @staticmethod
@@ -737,6 +749,7 @@ class Collaboration:
         if records.change(state, cid, plan) is None:
             return
         self.queue_reply(ctx, cid, number[0])
+        self.cards.refresh(ctx, cid, create=False)
 
     def queue_reply(self, ctx, cid, number) -> None:
         """Continuation ``number`` queued in the integrator's topic (once: a job record of it is not queued again)."""
@@ -833,6 +846,8 @@ class Collaboration:
         record = records.change(state, cid, move)
         if record is not None and record.get("state") != collab.OPEN:
             self.runtime.log(f"collab {record['state']} collab={cid[:8]}")
+        if record is not None:
+            self.cards.refresh(ctx, cid, create=False)
         if record is not None and record.get("state") == collab.OPEN:
             self.advance(ctx, cid, now)
 
@@ -859,12 +874,16 @@ class Collaboration:
                 self.runtime.log(f"collab job not stopped message={message[-16:]}: {type(exc).__name__}")
             return
 
+    def thread_root(self, ctx, chat, topic) -> str:
+        """The message that opens ``topic``'s thread, '' for a place at the chat's top level (the butler's): where a line or the
+        协作卡 of the topic goes."""
+        root = "" if traits(topic, chat).top_level else str(read_object(topic_file(Path(ctx.state_dir), topic)).get("root_id") or "")
+        return "" if collab.own_message(root) else root
+
     def tell(self, ctx, chat, topic, text, key) -> None:
         """A line in ``topic``'s thread (at the top level for the butler's): best effort, once a ``key``."""
         try:
-            root = "" if traits(topic, chat).top_level else str(read_object(topic_file(Path(ctx.state_dir), topic)).get("root_id") or "")
-            if collab.own_message(root):
-                root = ""
+            root = self.thread_root(ctx, chat, topic)
             self.messenger.send_message(ctx.profile, chat, text, self.voice.key("collab", key), voice=self.voice,
                                         reply_to_message_id=root)
         except Exception as exc:  # noqa: BLE001 - the record says it all the same

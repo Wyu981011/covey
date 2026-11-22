@@ -25,6 +25,7 @@ class ButlerEnv:
     settings: Any = None  # app/settings_hub.py SettingsHub: the 设置 card (the tool settings_panel).
     projects: Any = None  # app/projects.py Projects (COVEY_PROJECTS=1): topic_start's ``project`` and the 派发卡's upgrade.
     tidy: Any = None  # app/project_tidy.py ProjectTidy (COVEY_PROJECT_TIDY): projects_tidy and the web page's ``tidy``.
+    collab: Any = None  # app/collab_flow.py Collaboration (COVEY_COLLAB): what the web page's ``say`` and ``stop`` start and stop (app/web_ops.py).
 
     def chat(self) -> str:
         """The chat of the butler whose call this thread runs (``serving``: each chat with a butler has its

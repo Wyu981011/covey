@@ -9,7 +9,7 @@ pickers, the workspace manager, 换配置 (app/harness_switch.py) and 回退
 这些都不用回答了, 飞书应用待补's, the welcome card's, a group's menu card and the shared session's control are here but never reach a task, so
 they name no handler: the Bridge handles them before topic routing (app/proxy_panel.py, app/proxy_resend.py,
 app/owner_send.py, app/group_manager.py, app/redaction_panel.py, app/butler_panel.py, app/settings_hub.py, app/memory_panel.py,
-app/overview.py, app/digest.py, app/app_setup.py, app/welcome.py, app/group_menu.py). The enabled extensions' kinds (core/extensions.py CARD_KINDS) are
+app/overview.py, app/digest.py, app/app_setup.py, app/welcome.py, app/group_menu.py, app/collab_cards.py). The enabled extensions' kinds (core/extensions.py CARD_KINDS) are
 added below, bot_only, their features claiming the clicks.
 """
 from __future__ import annotations
@@ -217,6 +217,9 @@ ACTIONS = {
     "bridge_welcome_try": CardAction("发欢迎卡上的示例", bot_only=True),
     # The menu card of a group with a butler (app/group_menu.py KIND).
     "bridge_group_menu": CardAction("群里的菜单"),
+    # 停止这次协作 on the 协作卡 (cards/collab_card.py KIND, COVEY_COLLAB=1): the owner's, taken before topic routing
+    # (app/collab_cards.py claim); it stops the collaboration's asks and starts no task.
+    "bridge_collab_stop": CardAction("停止这次协作"),
 }
 # 整理专项's cards (cards/project_proposal.py KINDS, COVEY_PROJECT_TIDY): the proposal card, its rename form, the 整理专项 card,
 # 移出 on a topic's card and the 设置 card's 整理专项. The Bridge takes them before topic routing (app/project_tidy.py claim).

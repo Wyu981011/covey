@@ -264,27 +264,49 @@
 
 ### 协作与三层记忆（契约，开发中）
 
-这一节是还没实现的约定（开关 `COVEY_COLLAB`，规则见[多参与者协作](architecture.md#多参与者协作开发中默认关)），网页和 Covey 照着做；实现时再定版本号，旧网页不认就忽略，没带这些字段的操作和现在一样。
+本节已实现（数据约定 v31；标题沿用旧名，architecture.md 的链接按它），开关 `COVEY_COLLAB`（规则见[多参与者协作](architecture.md#多参与者协作开发中默认关)）。旧网页不认的字段和条目忽略；没带这些字段的操作和 v30 一样。**开关没开时**：不读 `collab/`，不推 `collab` 条目，一轮不带 `collab`，已推过的 `collab` 条目在下一次全量对时删掉；`say` 带了新字段也照单目标处理，要多选或引用协作的回 failed“协作没有打开（COVEY_COLLAB）”，`stop` 带了 `collab` 回 failed，**绝不**退成普通停止（那会停掉汇总方在跑的任务）。
 
-- **大厅能点多位**：`say` 多三个可选的字段。
-  - `payload.to`：点到的参与者（管家、负责人、话题的 `key`）的列表，按点的顺序；网页不从正文里的 @ 或 T 号猜收件人。只有一位就是直达，现在也可以是普通话题。
-  - `payload.integrator`：主人选的汇总方，是 `to` 里的一位或当前话题。
-  - `payload.quote`：结构化引用 `{topic_key, seq, collab}`，引用的是哪个话题的哪一轮、属于哪次协作。
-  - 交给谁、谁汇总按 `core/collab.py` 的 `route` 定，和飞书一样。
+- **`say` 的三个可选字段**：
+  - `payload.to`：点到的参与者（管家、负责人、话题的 `key`）的列表，按点的顺序；网页不从正文里的 @ 或 T 号猜收件人。
+  - `payload.integrator`：主人选的汇总方，是 `to` 里的一位或当前话题；只在和默认不同时带。
+  - `payload.quote`：`{topic_key, seq, collab}`，引用的是哪个话题的哪一轮、属于哪次协作。
+  - `payload.room` 为真是大厅发的（`topic_key` 是 `route` 的交付归属：交给管家，归口时是管家），否则是话题页（`topic_key` 是这个话题）。
+- **`say` 怎么走**（`app/web_ops.py`，交给谁、谁汇总按 `core/collab.py` 的 `route` 定，和飞书一样；`where` 是 `payload.room` 的真假，话题页的 `here` 是 `topic_key`）：
+  - 没有 `to`、没有 `quote.collab`，或 `to` 只有一位且就是 `topic_key`（大厅里只点一位也是）：一字不改，按 `topic_key` 直达，可以是普通话题。
+  - 话题页里 `to` 只有一位且不是这个话题，而且开关开着、Bridge 有 `collab` 部件：请这一位协助，这个话题汇总。开关没开时仍照 `topic_key` 直达。
+  - 多位，或带 `quote.collab`：开关没开或 Bridge 没有 `collab` 部件，failed。开着时 `route`：`DESK`、`DIRECT` 照原来交给管家或那一位；`ROUTER`（只点了负责人）交给管家，正文前加一句点了谁、请管家先找出归谁；`REFUSED`（协助方超过 3 位）failed，写 `route.reason`，什么都不发；`COLLAB` 且不是引用协作：`Collaboration.start`，根请求的消息 id 是 `web-<op_id>`，来源是主人（`asserted_by` 为 `owner`），`to` 里的人都算主人点名，回执“已发起协作：T3 汇总，问 T5、T7”（同一句话同一组人再来一次说已经发起过）；预检不过（`refused`）原样 failed。
+  - 引用协作（`route.collab`）：点了人就对每位 `clarify`（每位最多 2 次，上一次没答复前不能再问，不过的那位写原因，全不过则 failed）；没点人就把话作为主人的话交给那次协作的汇总方话题（照原来的 `say`）。找不到那次协作，或它不在主人私聊里，failed。
 - **由谁汇总**：点了多位时输入框写“这件事由 T3 汇总 [更换]”。默认是 `route` 给的那位（引用了话题就是它，否则是第一个点到的普通话题），主人换了就带 `integrator`；后面再加人不偷偷改它。只点了负责人又没选时写“由管家归口”。协助方超过 3 位时发起前就提示，不发。
-- **协作条目**（新的一类 `collab`）：`{key, root, integrator, helpers, state, goal_rev, created_at, updated_at, asks}`，`asks` 每条 `{id, from, to, number, state, text, reply}`，`reply` 是 `{text, evidence, topic_key, seq, at}`。`state` 取 `core/collab.py` 的状态，词用它的 `ASK_WORDS`。
-  - 汇总方那一轮带 `collab: {key, role: "integrator"}`，协助方答的那一轮带 `collab: {key, role: "helper"}`。
-  - 协助方的话题里多一行 `role: event`“已协助 T3（看这次协作）”，它自己的“有结果”和最近交付不变。
-- **回复这次协作**：引用协作里的一句、或点回执上的“回复这次协作”时带 `quote.collab`，话进那次协作，由它的汇总方接；在协助方的话题里不带引用另说一句，仍是对那个话题自己工作的话。
-- **停这件事**：`stop` 多一个可选的 `payload.collab`：只停这次协作排队和在跑的咨询轮，不停接收方别的工作；迟到的答复只留档。
-- **后端已有的**（[执行闭环](architecture.md#执行闭环)）：`app/collab_flow.py` 的 `Collaboration`（Bridge 的 `collab`）给两端调用：`start`（根请求、汇总方、协助方和各自的问题、主人点了谁）、`clarify`、`stop`、`view`、`of_chat`；协作记录读成 `core/collab_records.py` 的 `view`：`{id, chat_id, state, integrator, helpers, goal_rev, root, stopped_by, deadline, asks, replies, created_at, updated_at}`，`asks` 每条 `{id, from, to, number, text, state, words, reason, evidence, reply, late}`，`reply` 是 `{text, at, goal_rev, owner_since, evidence, job_id}`。网页的 `topic_key`、`seq` 由同步按任务号对上。
-- **三层记忆的读法**：专项记忆和话题记忆的每条多这些字段。
-  - `layer`：`rule`（长期约定）、`decision`（当前决定）、`history`（历史记录）。面板按这三层分组。
-  - `asserted_by`、`recorded_by`、`level`、`origin`（`{message_id}` 或 `{question}`），含义同[来源](architecture.md#参与者交付与来源)。“你说的”“它总结的”由它们推出来，只作来源标签。
-  - `applies`：适用范围和条件；`valid`：`active`（有效）、`done`（做完）、`superseded`（被替代，另带 `superseded_by`）、`void`（作废）。
-- **纠正动作**：现有的 `forget`（作废）之外，多一个 `memory_fix`：`{project_key 或 topic_key, entry_id, what}`。
-  - `what` 是 `scope`（改适用范围或条件，带 `applies`）、`once`（只限当次）或 `confirm`（确认长期，只认主人；`level` 记 `owner`，出处是这次操作）。
+- **`stop` 的 `payload.collab`**：`topic_key` 是汇总方；只停这次协作排队和在跑的咨询轮和汇总方还没开跑的续接轮（`Collaboration.stop(by="web")`），汇总方自己的任务和各协助方别的工作不动，迟到的答复只留档。回执写停了几次咨询。已经做完或停过的回“没有要停的”（done）；找不到的 failed。不带 `collab` 的 `stop` 和从前一样。
+- **`memory_fix`**：`{project_key 或 topic_key, entry_id, what, applies?}`，发件行带 `project_key` 或 `topic_key`（只一个），`payload` 也写一份。只认主人的专项（和 `forget` 一样在主人私聊里），经 `app/project_context.py` 的 `fix_memory`（`core/project_memory.py` 的 `fix`）：
+  - `scope`：改适用范围或条件，`applies` 必填；`once`：改成只限当次的当前决定；`confirm`：确认为长期约定，只认主人，`asserted_by` 和 `level` 记 `owner`，`recorded_by` 是 `bridge`，出处是这次操作（`message_id` 为 `web-<op_id>`）。
+  - failed 的情形：专项不认识或不在私聊里、条目已经不在、`what` 不对、`scope` 没写 `applies`、不是主人（“只有主人能改专项记忆”）；只带 `topic_key` 的回“话题记忆的纠正还不支持”（话题记忆还没有对应的纠正）。
   - “查看原文”按 `origin` 跳到那条消息或那道题，不是操作。
+- **协作条目** `collab`（`key` 是协作 id；`app/web_collect.py`，只推主人私聊里的，和别的条目一样按 `rev` 只推变了的，全量对时可删）：
+
+  ```text
+  {key, root: {message_id, job?, words}, integrator: <话题 id>, helpers: [<话题 id>],
+   state: open|done|cancelled, goal_rev: <字符串>, created_at, updated_at（秒）,
+   asks: [{id, from: <话题 id>, to: <话题 id>, number: 1|2, state, words, reason, text,
+           reply: {text, at, topic_key: <协助方话题 id>, seq?, evidence: [{text, topic_key, seq?}]} | null,
+           late: {text, at} | null}]}
+  ```
+
+  - `state`、`words`（`ASK_WORDS` 的词）、`reason`（未接手、失败、到期、已取消时的原因）取 `core/collab.py` 和 `collab_records.view`；`from` 为空时填汇总方；`root.words` 是主人发起这次协作的那句话（截 600 字）。
+  - `reply.evidence` 是一条 `{text: 证据级别的词（EVIDENCE_WORDS：原会话分叉、话题记录（无原会话））, topic_key: 协助方, seq?}`；`seq`（`reply.seq` 同）是协助方话题里那一轮的 `seq`，按证据里的任务号（`evidence.job_id`，没有就 `base.job_id`）对到那一轮，对不上（那个话题还没读到、那一轮不在最近 100 轮里）就省略，读到后下一次推补上。
+  - 协作记录有变化时，汇总方和协助方的话题在下一次看时重建（标记和回执行才跟上）。
+- **一轮的 `collab`**（`{key, role}`）：
+  - 汇总方续接轮（消息 id `collab-<协作 id>-reply-<n>`，`core/collab.py` 的 `reply_message`）的主人行和回答行带 `role: "integrator"`。主人行是 Bridge 拼的长提示，`body` 和 `display` 都只推“（协作的答复到齐，接着汇总）”。正在跑、停了的续接轮也带。
+  - 协助方话题多一行 `role: "event"`、`collab: {key, role: "helper"}` 的回执，“已协助 T3（看这次协作）”；咨询还排着队或在跑时是“正在协助 T3（…）”、`status` 为 `running`，没有一次答复时是“没能协助 T3（…）”；协助方没接手的（未接手）没有这一行。它的 `key` 是 `<话题>:collab-<协作 id>`，`seq` 是那时（这次协作发起或最后一次咨询结束时）协助方最近一轮的 `seq`，不超过这次推的 `last_seq`，所以不会被“删掉 `seq > last_seq` 的轮次”收走，也不和真实轮次的 key 冲突。它不改协助方的 `unseen`、`tone`、`board`、`round`、`last_seq` 和最近交付。管家的话题没有这一行。
+- **回复这次协作**：引用协作里的一句、或点回执上的“回复这次协作”时带 `quote.collab`，话进那次协作，由它的汇总方接；在协助方的话题里不带引用另说一句，仍是对那个话题自己工作的话。
+- **三层记忆**（包 B，专项条目的 `memory` 每条，`memory_version` 是一轮读到的记忆的版本，没有记忆时是空串）：
+  - `layer`：`rule`（长期约定）、`decision`（当前决定）、`history`（历史记录；风格行是 `rule`、`kind` 为 `style`）。面板按这三层分组。
+  - `part`：一轮带它的那一段，`rule`、`decision`、`reference`（待核对参考）；历史记录和风格行是 `null`。
+  - `asserted_by`、`recorded_by`、`level`，含义同[来源](architecture.md#参与者交付与来源)；`said_by`（你说的、它总结的）和 `by`（`owner` 或 `lead`）只作来源标签。
+  - `applies`：适用范围和条件（一句话，没写是空串）；`valid`：`active`、`done`、`superseded`（另带 `superseded_by`）、`void`。
+  - `ref`：`project:<专项 id>:<条目 id>`，和一轮的 `memory_ids` 对得上；`carried`：成员话题的下一轮会不会带它（脱敏的话题只带开了脱敏的话题记下的）；`redacted`：这条在开了脱敏的话题里记下。
+  - `origin`：`at`（记下的时刻），知道的另带 `message_id`（那条消息）或 `question`（那道题的记录）和它的 `item`、`index`，`topic` 和它的 `topic_number`，`job`，主人的原话 `quote`。
+  - 话题记忆还没有推。
 
 ### 版本一览
 
@@ -317,3 +339,4 @@
 | v28 | `tidy` 的每条建议加 `project`（「去专项」） |
 | v29 | 问题卡只剩“提交回答”和“不处理”：`answer` 带 `note` 时没答的题算不回答、`answers` 可空；`ask` 按 `skip` 处理；`extras` 只管“不处理”，不再推 `asked` |
 | v30 | 专项条目加 `avatar`：网页与飞书卡片共用固定头像分配 |
+| v31 | `collab` 条目；一轮的 `collab`；`say` 的 `to`、`integrator`、`quote`；`stop` 的 `collab`；`memory_fix` 操作；专项记忆的 `layer`、`part`、`by`、`ref`、`carried`、`redacted`、`origin` 和条目的 `memory_version`（`COVEY_COLLAB` 没开时没有前几项） |

@@ -104,6 +104,7 @@
 | `app/card_routing.py` | Routing what Feishu sends the Bridge |
 | `app/cards.py` | Cards: the one place that writes a Harness's task and process cards |
 | `app/checkpoint_questions.py` | A question that comes with a checkpoint result |
+| `app/collab_cards.py` | 协作卡 at the Bridge (docs/architecture.md 多参与者协作 · 两端, COVEY_COLLAB=1 |
 | `app/collab_channel.py` | 咨询通道: where a collaboration's ask runs |
 | `app/collab_checks.py` | 协作的预检: whether a collaboration may start, who its participants are, and each helper as it is now |
 | `app/collab_flow.py` | 协作的执行闭环 (docs/architecture.md 多参与者协作, COVEY_COLLAB=1 |
@@ -272,6 +273,7 @@
 | `cards/butler_panel.py` | The 管家 settings card, in the bot menu panels' style |
 | `cards/card_cost.py` | What a card costs CardKit, which refuses one over its size (code 200860) |
 | `cards/cardkit_actions.py` | What a CardKit write says, as plain JSON |
+| `cards/collab_card.py` | The 协作卡: one card in the integrator's thread that says how a collaboration stands, drawn whole from … |
 | `cards/digest.py` | The digest card: sent at the times the deployer set, at the top level of the owner's private chat |
 | `cards/directory.py` | The directory browser card |
 | `cards/dispatch_card.py` | The 派发卡 (app/dispatch_cards.py |

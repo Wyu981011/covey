@@ -38,6 +38,9 @@ class Case(UnifiedCase):
         super().setUp()
         self.enterContext(mock.patch.dict(os.environ, {turn_source.SWITCH: "1"}))
         self.app.runtime.access.agent_chat = lambda chat, group=None: chat == "chat"
+        # The 协作卡 (app/collab_cards.py) is not sent here (tests/test_collab_cards.py has its own CardKit): the line it would
+        # replace goes out as the fallback, and no request leaves for Feishu.
+        self.app.messenger.create_and_send_card = mock.Mock(return_value=("", ""))
         self.state = self.ctx.state_dir
         self.flow = self.app.collab
         self.jobs = 0

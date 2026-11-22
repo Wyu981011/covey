@@ -4,12 +4,13 @@ the page is sent. Reading only: it sends nothing and holds no lock (rule 1, AGEN
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from pathlib import Path
 
 from covey.app import pins, project_lead, project_loop, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
-from covey.core import board_read, failure, look, project_library, project_memory, projects, web_sync
+from covey.core import board_read, collab, collab_records, failure, look, project_library, project_memory, projects, turn_source, web_sync
 from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
 from covey.core.history_storage import history_lines
@@ -38,6 +39,8 @@ UNSTARTED_WORDS = "没开工，已取消"  # The line under the owner's words wh
 # The line under the owner's words whose task waits for 开始 on its launch card (``start_turn``); the page puts 等你： before it.
 START_WORDS = "在启动卡上点开始，这一轮才会开工"
 LIVE = ("running", "cancel_requested")  # The statuses whose turn has a topic.data progress.
+REPLY_MESSAGE = re.compile(r"collab-([0-9a-f]{24})-reply-\d+")  # core/collab.py reply_message: the integrator's continuation turn.
+CONTINUED_WORDS = "（协作的答复到齐，接着汇总）"  # What the page shows of the long prompt the Bridge wrote for that turn.
 
 
 def estimate_of(job, turn) -> None:
@@ -81,6 +84,10 @@ class Collector:
         self.room = web_room.Room()  # Whom the butler's turns handed on to and which topic turns went to the private chat (data contract v23).
         self.origins = None  # web_said.Origins of the owner's chat: who wrote each hand-on, read once.
         self.moved = 0.0  # Monotonic time of the last progress of a look and its push: a topic built, a batch sent (WebSync.loop's stuck check).
+        self.collab_cache, self.collab_primed = {}, False  # name -> ((mtime_ns, size), record) of <state>/collab/ (read_collabs).
+        self.collab_now, self.collab_helpers, self.collab_topics = {}, {}, set()  # This look's: id -> record (the chat's), helper topic -> records, topics in any.
+        self.job_seqs = {}  # topic id -> {job id: seq of its answer turn}, of a topic in a collaboration (the evidence's seq).
+        self.pushed_collabs = set()
         self.lock = threading.Lock()
         self.menu_at, self.menu_models = -MENU_SECONDS, {}  # The model menu (available_models) a topic's ``config`` reads, read again after MENU_SECONDS.
 
@@ -112,6 +119,7 @@ class Collector:
         if self.origins is None or self.origins.chat != str(chat):
             self.origins = web_said.Origins(state, chat)
         self.room.refresh(state)
+        self.read_collabs(state, chat)
         out = {topic for topic, thread in list(self.stuck.items()) if thread.is_alive()}
         back, self.left = self.left - out, out  # A stuck read that came back: its topic is looked at again now.
         running = board_read.running_jobs(state, chat)
@@ -187,9 +195,139 @@ class Collector:
         elif built:
             self.pushed_topics |= built
         projects_now = self.project_items(state, chat, records)  # Read every step, like the hot topics: they go with them.
+        projects_now += self.collab_items()
         items[urgent:urgent] = projects_now
         self.urgent = urgent + len(projects_now)
+        current = {each["key"] for each in projects_now if each["type"] == "collab"}
+        if self.pass_done:
+            deleted += [{"type": "collab", "key": key} for key in sorted(self.pushed_collabs - current)]
+            self.pushed_collabs = current
+        else:
+            self.pushed_collabs |= current
         return items, deleted
+
+    # -- collaborations (COVEY_COLLAB=1) ---------------------------------------------------------------------------------------
+
+    def read_collabs(self, state, chat) -> None:
+        """This look's collaborations of ``chat`` (``collab_now``) from <state>/collab/, a file read again only when it changed; a topic
+        in one whose record changed is built on the next look (``touch``: its marks and its 已协助 line). Without COVEY_COLLAB nothing
+        is read and nothing is kept."""
+        if not turn_source.enabled():
+            self.collab_cache, self.collab_primed = {}, False
+            self.collab_now, self.collab_helpers, self.collab_topics, self.job_seqs = {}, {}, set(), {}
+            return
+        try:
+            paths = sorted((Path(state) / collab_records.FOLDER).glob("*.json"))
+        except OSError:
+            paths = []
+        seen, mine, changed = {}, {}, []
+        for path in paths:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            stamp, kept = (stat.st_mtime_ns, stat.st_size), self.collab_cache.get(path.stem)
+            if kept is not None and kept[0] == stamp:
+                record = kept[1]
+            else:
+                record = collab_records.read(state, path.stem)
+                if record and self.collab_primed:
+                    changed.append(record)
+            seen[path.stem] = (stamp, record)
+            if record and record.get("chat_id") == chat:
+                mine[str(record["id"])] = record
+        self.collab_cache, self.collab_primed, self.collab_now = seen, True, mine
+        self.collab_helpers, self.collab_topics = {}, set()
+        for record in sorted(mine.values(), key=lambda each: float(each.get("created_at") or 0)):
+            integrator = str((record.get("integrator") or {}).get("key") or "")
+            self.collab_topics |= {integrator, *(str(ask.get("to")) for ask in record.get("asks") or ())} - {""}
+            for helper in dict.fromkeys(str(ask.get("to")) for ask in record.get("asks") or ()):
+                self.collab_helpers.setdefault(helper, []).append(record)
+        self.job_seqs = {topic: seqs for topic, seqs in self.job_seqs.items() if topic in self.collab_topics}
+        for record in changed:
+            for topic in {str((record.get("integrator") or {}).get("key") or ""), *(str(ask.get("to")) for ask in record.get("asks") or ())} - {""}:
+                self.touch(topic)
+
+    def collab_items(self) -> list:
+        """One ``collab`` item (docs/web.md 协作与三层记忆) for each collaboration of the chat, the oldest first; none without COVEY_COLLAB."""
+        return [web_sync.item("collab", cid, self.collab_data(record)) for cid, record in self.collab_now.items()]
+
+    def collab_data(self, record) -> dict:
+        """A collaboration as the page reads it: ``collab_records.view`` with the owner's words and the job of its root, each ask's ``from``
+        (the integrator when it has none), its answer with the evidence level in words and, where the helper's topic shows which of its
+        turns the answer stands on, that turn's ``seq`` (``job_seqs``: the task the evidence names), and a late answer's words."""
+        view = collab_records.view(record)
+        integrator = str((view.get("integrator") or {}).get("key") or "")
+        raw = {str(ask.get("id")): ask for ask in record.get("asks") or ()}
+        asks = []
+        for each in view["asks"]:
+            ask, to = raw.get(str(each["id"])) or {}, str(each.get("to") or "")
+            late = ask.get("late") if isinstance(ask.get("late"), dict) else {}
+            asks.append({"id": str(each["id"]), "from": str(each.get("from") or integrator), "to": to, "number": 2 if each.get("number") == 2 else 1,
+                         "state": str(each.get("state") or ""), "words": str(each.get("words") or ""), "reason": str(each.get("reason") or ""),
+                         "text": str(each.get("text") or ""), "reply": self.collab_reply(ask, to),
+                         "late": {"text": web_sync.clip(late["text"]), "at": int(late.get("at") or 0)} if late.get("text") else None})
+        root = record.get("root") or {}
+        job = str(root.get("job_key") or root.get("job_id") or "")
+        return {"key": view["id"], "root": {"message_id": str(root.get("message_id") or ""), **({"job": job} if job else {}),
+                                            "words": str(root.get("words") or "")},
+                "integrator": integrator, "helpers": [str(row.get("key")) for row in view["helpers"] if row.get("key")],
+                "state": str(view.get("state") or ""), "goal_rev": str(view.get("goal_rev") or ""),
+                "created_at": int(view.get("created_at") or 0), "updated_at": int(view.get("updated_at") or 0), "asks": asks}
+
+    def collab_reply(self, ask, helper) -> dict | None:
+        """The answer of ``ask`` (a record's): {text, at, topic_key, seq?, evidence}; None until it has one."""
+        reply = ask.get("reply") if isinstance(ask.get("reply"), dict) else {}
+        if not reply.get("text"):
+            return None
+        grounds = reply.get("evidence") if isinstance(reply.get("evidence"), dict) and reply.get("evidence") else ask.get("evidence")
+        grounds = grounds if isinstance(grounds, dict) else {}
+        words = collab.EVIDENCE_WORDS.get(grounds.get("level"), "")
+        job = str(grounds.get("job_id") or (ask.get("base") or {}).get("job_id") or reply.get("job_id") or "")
+        seq = (self.job_seqs.get(helper) or {}).get(job)
+        out = {"text": web_sync.clip(reply["text"]), "at": int(reply.get("at") or 0), "topic_key": helper,
+               "evidence": [{"text": words, "topic_key": helper, **({"seq": seq} if seq else {})}] if words else []}
+        if seq and words:
+            out["seq"] = seq
+        return out
+
+    def collab_of(self, message_id) -> str:
+        """The collaboration whose integrator's continuation turn has the message id ``message_id`` ('' for any other)."""
+        found = REPLY_MESSAGE.fullmatch(str(message_id or ""))
+        return found[1] if found and found[1] in self.collab_now else ""
+
+    def mark_collab(self, data, message_id, *, prompt=False) -> None:
+        """``data``, the integrator's continuation turn (its owner line, ``prompt``, or its answer), takes ``collab`` {key, role}; the
+        owner line shows ``CONTINUED_WORDS`` for the long prompt the Bridge wrote."""
+        found = self.collab_of(message_id)
+        if not found:
+            return
+        data["collab"] = {"key": found, "role": "integrator"}
+        if prompt:
+            data["body"] = data["display"] = CONTINUED_WORDS
+
+    def helper_rows(self, topic, turns, last) -> list:
+        """[(collaboration id, turn)]: a line of role event in the topic of a helper of each collaboration, 已协助 T3（看这次协作） (正在协助
+        while an ask waits or runs, 没能协助 when none was answered), that changes nothing else of the topic. Its seq is the latest turn
+        started by then and never past ``last`` (the page drops what is: data contract v12), its place under the key
+        ``<topic>:collab-<id>`` where no turn of the topic has one."""
+        out = []
+        for record in self.collab_helpers.get(topic) or ():
+            asks = [ask for ask in record.get("asks") or () if ask.get("to") == topic and ask.get("state") != collab.NOT_TAKEN]
+            if not asks or not turns or not last:
+                continue
+            label = (record.get("integrator") or {}).get("label") or "汇总方"
+            live = any(ask.get("state") in (collab.CHECKING, collab.QUEUED, collab.TAKEN) for ask in asks)
+            helped = any(ask.get("state") in (collab.REPLIED, collab.READ) for ask in asks)
+            at = float(record.get("created_at") or 0) if live else max(float(ask.get("updated_at") or 0) for ask in asks)
+            before = [turn["seq"] for turn in turns if (turn.get("started_at") or 0) <= at]
+            seq = min(max(before, default=min(turn["seq"] for turn in turns)), last)
+            words = f"正在协助 {label}" if live else f"已协助 {label}" if helped else f"没能协助 {label}"
+            out.append((str(record["id"]), {"topic_key": topic, "seq": seq, "role": "event", "body": f"{words}（看这次协作）",
+                                            "status": "running" if live else "done", "job_id": "", "started_at": int(at),
+                                            "ended_at": 0 if live else int(at), "artifacts": [],
+                                            "collab": {"key": str(record["id"]), "role": "helper"}}))
+        return out
 
     @staticmethod
     def family_live(state, chat, topics) -> set:
@@ -270,6 +408,8 @@ class Collector:
             body["joined_at"] = joined
         out = [web_sync.item("topic", topic, body)]
         out += [web_sync.item("turn", f"{topic}:{turn['seq']}", turn) for turn in turns]
+        if not butler:
+            out += [web_sync.item("turn", f"{topic}:collab-{cid}", turn) for cid, turn in self.helper_rows(topic, turns, body["last_seq"])]
         for row in questions:
             made = web_pairing.question(row, topic, count, body["project_key"], number, records, questions)
             if made:
@@ -380,7 +520,12 @@ class Collector:
         self.count_unpaired(topic, entries)
         before = web_pairing.retried(records, entries)
         out = []
+        seqs = {} if topic in self.collab_topics else None  # The seq of each answer turn by its task, for the evidence of a collaboration.
+        if seqs is not None:
+            self.job_seqs[topic] = seqs
         for seq, (at, data, job) in enumerate(entries, 1):
+            if seqs is not None and job is not None and data.get("role") == "agent":
+                seqs[str(job.get("job_id") or "")] = seq
             if seq <= total - TURNS_KEPT:
                 continue
             turn = {"topic_key": topic, "seq": seq, **data}
@@ -424,6 +569,7 @@ class Collector:
             job = None  # Its answer is the last line already, its record not yet ended: no second, running turn of it.
         if job is not None:
             out.append(self.live_turn(state, topic, total + 1, job, wakes, now, butler=butler))
+            self.mark_collab(out[-1], job.get("message_id"))
         elif latest is not None and latest.get("status") in ("failed", "interrupted", "cancelled") and (not rows or rows[-1].get("role") == "user"):
             at = epoch_seconds(latest.get("updated_at")) or 0
             ended = {"topic_key": topic, "seq": total + 1, "role": "agent", "body": web_sync.clip(latest.get("status_message") or ""),
@@ -432,6 +578,7 @@ class Collector:
             fail = failure.failure_view(latest)
             if fail:  # A stop the owner did not make (官方拒绝, a guard) did not succeed either (data contract v10).
                 ended["failure"], ended["status"] = fail, "failed"
+            self.mark_collab(ended, latest.get("message_id"))
             out.append(ended)
         elif records and records[-1].get("status") == "cancelled" and records[-1].get("never_started") and rows \
                 and rows[-1].get("role") == "user":
@@ -482,6 +629,9 @@ class Collector:
                 self.said(data, row, asked)
                 web_pairing.put_images(data, row.get("images"))
                 self.merge_edit(data, str(row.get("message_id") or ""), by_message)
+                self.mark_collab(data, row.get("message_id"), prompt=True)
+            elif job is not None:
+                self.mark_collab(data, job.get("message_id"))
             web_pairing.put_answers(data, answered, job, owner)
             out.append((at, data, None if owner else job))
         return out
@@ -548,6 +698,7 @@ class Collector:
                     self.said(data, row, asked)
                     web_pairing.put_images(data, row.get("images"))
                     web_pairing.put_answers(data, answered, job, True)
+                    self.mark_collab(data, row.get("message_id"), prompt=True)
                     out.append((at, data, None))
                 continue
             key = job_key(job.get("message_id"), job.get("job_id")) if job is not None else ""
@@ -560,6 +711,8 @@ class Collector:
             data = {"role": "agent", "body": web_sync.clip(row.get("content")), "status": "done", "job_id": "", "started_at": at,
                     "ended_at": at, "artifacts": []}
             web_pairing.put_answers(data, answered, job, False)
+            if job is not None:
+                self.mark_collab(data, job.get("message_id"))
             out.append((at, data, job))
         for key, started in wakes.items():  # What a wake-up turn nobody sees started.
             if key in shown or key in running or not started:

@@ -45,6 +45,16 @@ KINDS) as the owner's own and says (state, message) for the ack.
   card's own click (app/project_tidy.py web_decide); done says what came of it, failed why nothing was done (decided already, ...).
 - ``tidy``: 整理专项 (app/project_tidy.py start, COVEY_PROJECT_TIDY on): ``scope`` "" for everything, a project id or a word; ``done`` says
   已开始整理，结果发到私聊 (the 整理专项 card goes to the private chat), or 正在整理（12/40） while one runs; off, or too few topics, is ``failed``.
+- ``say`` with ``to``, ``integrator`` or ``quote`` (data contract v31, COVEY_COLLAB=1, docs/web.md 协作与三层记忆): without ``to`` of two or
+  more and without ``quote.collab`` the words go as above, to the row's topic. With them core/collab.py ``route`` says who owns the
+  delivery: the butler or the one picked as before; the butler once, told whom he must find the owner among (the lead alone); a
+  collaboration started through ``Collaboration.start`` (``env.collab``: the integrator asks each helper, the owner's words are its
+  root ``web-<op_id>``); a quote of a collaboration asks each one picked again (``clarify``), or, none picked, goes to its integrator's
+  topic. Off, or without the part, they are ``failed`` (协作没开); the single-target say is the same either way.
+- ``stop`` with ``collab``: only that collaboration is stopped (``Collaboration.stop``), the integrator's own task and every helper's work
+  stay; off it is ``failed``, never a plain stop of the integrator's task.
+- ``memory_fix``: ``entry_id`` of a project's memory corrected as the owner (core/project_memory.py ``fix`` through app/project_context.py
+  ``fix_memory``): ``what`` ``scope`` (``applies``), ``once`` or ``confirm``; a topic's own memory is not corrected from the page yet.
 The topic or project has to be the owner's private chat's, known and not over; anything else is ``failed`` with the reason.
 
 Rules (AGENTS.md): nothing is sent from under a record's lock; a write to a task is not replayed (the ledger, core/web_sync.py, keeps an
@@ -62,7 +72,7 @@ from covey.app.answers import AnswerIncomplete, answer_fields, skip_all_fields, 
 from covey.app.runtime import job_stage, supplement_target_of
 from covey.app import web_files
 from covey.app.web_settings import WebSettings
-from covey.core import board_read, project_memory, projects, triage, web_sync
+from covey.core import board_read, collab, collab_records, project_memory, projects, triage, turn_source, web_sync
 from covey.core.attachments import message_words
 from covey.core.butler import is_butler_root
 from covey.core.history_storage import append_history
@@ -103,7 +113,7 @@ class Ops:
             handler = {"say": self.say, "answer": self.answer, "stop": self.stop, "reopen": self.reopen, "seen": self.seen,
                        "forget": self.forget, "tidy": self.tidy, "settings": self.settings,
                        "dismiss": self.dismiss, "tidy_decide": self.tidy_decide, "launch": self.launch,
-                       "switch": self.switch}.get(kind)
+                       "switch": self.switch, "memory_fix": self.memory_fix}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -134,6 +144,8 @@ class Ops:
             raise ValueError("话是空的")
         if len(text) > SAY_CHARS:
             raise ValueError(f"话太长（超过 {SAY_CHARS} 字）")
+        if self.collaborating(topic, payload):
+            return self.say_collab(state, chat, row, payload)
         if is_butler_root(topic, chat):
             return self.tell_butler(chat, row, self.attach(state, topic, text, files))
         lead = projects.lead_record(state, topic, chat)
@@ -170,6 +182,117 @@ class Ops:
         if queued is None:
             raise ValueError("话题现在排不上这一轮，话已记进历史但没有开始")
         return "已开下一轮"
+
+    # -- say to several, or to a collaboration ------------------------------------------------------------------------------
+
+    @staticmethod
+    def picked(payload) -> list:
+        """The participants the say named (``to``), in the order picked, each once; [] for none or a field that is no list."""
+        raw = payload.get("to")
+        return list(dict.fromkeys(str(key) for key in raw if isinstance(key, str) and key)) if isinstance(raw, list) else []
+
+    @staticmethod
+    def quoted_collab(payload) -> str:
+        quote = payload.get("quote")
+        return str(quote.get("collab") or "") if isinstance(quote, dict) else ""
+
+    def collaborating(self, topic, payload) -> bool:
+        """Whether the say goes through ``route`` (several picked, one that is not the page's topic, or a quote of a collaboration). A say
+        to one, the topic it is sent to, is as it was before the page knew of collaborations."""
+        picked = self.picked(payload)
+        if self.quoted_collab(payload) or len(picked) > 1:
+            return True  # Off, or without the part, ``say_collab`` says so: nothing goes to one of them instead.
+        return len(picked) == 1 and payload.get("room") is not True and picked[0] != topic and turn_source.enabled() and self.collab is not None
+
+    @property
+    def collab(self):
+        """The Bridge's ``collab`` part (app/collab_flow.py Collaboration; ButlerEnv.collab), None without one."""
+        return getattr(self.env, "collab", None)
+
+    def collab_ready(self):
+        """The part, when COVEY_COLLAB is on and the Bridge has it; ValueError (said to the page) otherwise."""
+        from covey.app import collab_checks
+        if not turn_source.enabled():
+            raise ValueError(collab_checks.OFF)
+        if self.collab is None:
+            raise ValueError("这个 Bridge 没有协作部件")
+        return self.collab
+
+    def collab_ctx(self, state, chat, topic=""):
+        """The context ``Collaboration`` is called with: the integrator's own when it is a topic, else the default app's."""
+        found = self.env.topics.target(state, topic, chat) if topic else None
+        if found is not None:
+            return found[1]
+        from covey.app.web_launch import base_app
+        return base_app(self.env)[1]
+
+    def say_collab(self, state, chat, row, payload) -> str:
+        """The page's say with several picked or a quote of a collaboration: ``route`` (core/collab.py) decides, as it does in Feishu."""
+        from covey.app import collab_checks as checks
+        topic, text = str(row.get("topic_key") or ""), str(payload.get("text") or "").strip()
+        room = payload.get("room") is True
+        picked, quoted = self.picked(payload), self.quoted_collab(payload)
+        gateway = self.collab_ready()
+
+        def who(key):
+            found = checks.participant(state, chat, key)
+            if found is None:
+                raise ValueError(f"{str(key)[:12]} 不能参与协作（不在你的私聊里，或是代答话题）")
+            return found
+        mentions = tuple(who(key) for key in picked)
+        here = None if room else who(topic)
+        quote = None
+        raw = payload.get("quote") if isinstance(payload.get("quote"), dict) else {}
+        if quoted:
+            record = collab_records.read(state, quoted)
+            if not record or record.get("chat_id") != chat:
+                raise ValueError("找不到被引用的这次协作")
+            lead = who(str((record.get("integrator") or {}).get("key") or ""))
+            quote = collab.Quote(of=(who(str(raw.get("topic_key"))) if raw.get("topic_key") else lead), collab=quoted, integrator=lead)
+        elif raw.get("topic_key"):
+            quoted_by = checks.participant(state, chat, str(raw.get("topic_key")))
+            quote = collab.Quote(of=quoted_by) if quoted_by is not None else None
+        integrator = who(str(payload.get("integrator"))) if payload.get("integrator") else None
+        route = collab.route(collab.Entry(where=collab.ROOM if room else collab.IN_TOPIC, here=here, mentions=mentions, quote=quote,
+                                          integrator=integrator))
+
+        def label(key):
+            return checks.label(state, chat, who(key))
+        plain = {key: value for key, value in payload.items() if key not in ("to", "integrator", "quote")}
+        if route.to == collab.REFUSED:
+            raise ValueError(route.reason)
+        if route.to == collab.DESK:
+            from covey.core.butler import butler_topic_id
+            return self.say(state, chat, {**row, "topic_key": butler_topic_id(chat)}, plain)
+        if route.to == collab.DIRECT:
+            return self.say(state, chat, {**row, "topic_key": route.owner}, plain)
+        if route.to == collab.ROUTER:
+            from covey.core.butler import butler_topic_id
+            names = "、".join(label(key) for key in route.helpers)
+            note = f"（主人在网页上点了 {names}，想请他们办这件事：先找出这件事归谁，再按他的意思办。）\n"
+            return self.tell_butler(chat, row, self.attach(state, butler_topic_id(chat), note + text, web_files.listed(payload.get("files"))))
+        ctx = self.collab_ctx(state, chat, route.owner)
+        if route.collab:
+            if not picked:  # His words to the collaboration, no one picked: its integrator takes them as it takes his words.
+                return self.say(state, chat, {**row, "topic_key": route.owner}, plain)
+            said, refused = [], []
+            for key in picked:
+                done = gateway.clarify(ctx, route.collab, key, text)
+                if done.get("refused"):
+                    refused.append(f"{label(key)}：{done['refused']}")
+                else:
+                    said.append(label(key))
+            if not said:
+                raise ValueError("没有问出去：" + "；".join(refused))
+            return "已再问 " + "、".join(said) + ("；没问成：" + "；".join(refused) if refused else "")
+        made = gateway.start(ctx, chat, root={"message_id": PREFIX + str(row.get("op_id")), "words": text},
+                             integrator=route.owner, asks=[{"to": key, "question": text} for key in route.helpers],
+                             owner_named=list(picked), asserted_by=turn_source.PARTY_OWNER)
+        if made.get("refused"):
+            raise ValueError(str(made["refused"]))
+        asks = "、".join(label(key) for key in route.helpers)
+        return (f"这次协作之前已经发起过：{label(route.owner)} 汇总，问 {asks}" if made.get("again")
+                else f"已发起协作：{label(route.owner)} 汇总，问 {asks}")
 
     def attach(self, state, topic, text, files) -> str:
         """``text`` with ``files`` taken from the page into the topic's incoming_media and listed after it; ``text`` itself without files."""
@@ -379,9 +502,35 @@ class Ops:
             raise ValueError("这条记忆已经不在了")
         return "已作废：" + found["text"][:40]
 
+    # -- memory_fix --------------------------------------------------------------------------------------------------------
+
+    def memory_fix(self, state, chat, row, payload) -> str:
+        """The owner's correction of one line of a project's memory (data contract v31): ``what`` ``scope`` (the conditions in ``applies``),
+        ``once`` (a 当前决定 for this time only) or ``confirm`` (a 长期约定 the owner says holds; its origin this operation, ``web-<op_id>``),
+        through app/project_context.py ``fix_memory``, the owner's alone. Like ``forget`` it is the owner's private chat's project; a topic's
+        own memory has no correction here yet."""
+        from covey.app import project_context
+        pid = str(row.get("project_key") or payload.get("project_key") or "")
+        if not pid and (row.get("topic_key") or payload.get("topic_key")):
+            raise ValueError("话题记忆的纠正还不支持")
+        if not projects.valid_id(pid):
+            raise ValueError("没有专项编号")
+        record = projects.read_record(state, pid)
+        if not record or record.get("chat_id") != chat:
+            raise ValueError("这个专项不认识，或不在你的私聊里")
+        entry, what = str(payload.get("entry_id") or ""), str(payload.get("what") or "")
+        applies = payload.get("applies") if isinstance(payload.get("applies"), str) else ""
+        owner = self.runtime.access.is_owner(self.runtime.owner_open_id or "")
+        found = project_context.fix_memory(state, pid, entry, what, owner=owner is True, message_id=PREFIX + str(row.get("op_id")),
+                                           applies=applies)
+        words = {"scope": "已改适用范围", "once": "已改成只限这一次", "confirm": "已确认为长期约定"}.get(what, "已纠正")
+        return f"{words}：{str(found.get('text') or '')[:40]}"
+
     # -- stop --------------------------------------------------------------------------------------------------------------
 
     def stop(self, state, chat, row, payload) -> str:
+        if payload.get("collab"):
+            return self.stop_collab(state, chat, str(payload.get("collab")))
         from covey.app import runner_ipc
         topic = str(row.get("topic_key") or "")
         app, ctx = self.topic(state, chat, topic)
@@ -414,6 +563,21 @@ class Ops:
         if starts and close_open_launches(ctx, chat, getattr(self.env, "messenger", None), WEB_STOP_NOTE):
             said.append("没开工的启动卡已收掉")
         return "；".join(said)
+
+    def stop_collab(self, state, chat, collab_id) -> str:
+        """Only the collaboration ``collab_id`` stopped (``Collaboration.stop``): its asks waiting or running and its continuation turn;
+        the integrator's own task and everything a helper does stay. Never the plain stop of the integrator's topic."""
+        gateway = self.collab_ready()
+        record = collab_records.read(state, collab_id)
+        if not record or record.get("chat_id") != chat:
+            raise ValueError("找不到这次协作")
+        if record.get("state") != collab.OPEN:
+            return "这次协作已经" + ("停了" if record.get("state") == collab.CANCELLED else "做完了") + "，没有要停的"
+        live = [ask for ask in record.get("asks") or () if ask.get("state") in (collab.CHECKING, collab.QUEUED, collab.TAKEN)]
+        reply = any(each.get("state") == "queued" for each in record.get("replies") or ())
+        gateway.stop(self.collab_ctx(state, chat, str((record.get("integrator") or {}).get("key") or "")), collab_id, by="web")
+        parts = [f"{len(live)} 次咨询" if live else "", "汇总方的续接轮" if reply else ""]
+        return "已停止这次协作" + (f"（停了 {'、'.join(part for part in parts if part)}）" if live or reply else "") + "：各话题手上别的工作没有动"
 
     # -- tidy --------------------------------------------------------------------------------------------------------------
 

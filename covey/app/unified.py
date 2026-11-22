@@ -105,7 +105,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
     EARLY = ('workspace_manager', 'launch_model_picker', 'directory_picker', 'harness_switch', 'rewind')
     PANELS = ('proxy.panel', 'proxy.resend', 'proxy.owner_send', 'group_manager', 'redaction_panel', 'nodes.panel',
               'butler_panel', 'settings_hub', 'settings_hub.memory', 'overview', 'digest', 'app_setup', 'welcome',
-              'group_menu', 'project_tidy', 'review')
+              'group_menu', 'project_tidy', 'review', 'collab.cards')
 
     # What only the Bridge uses, built by _build_parts: at once in the Bridge (the default), on first use in a
     # task runner (``task_runner=True``), which rarely meets any of it.
@@ -285,6 +285,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # 协作 (app/collab_flow.py), COVEY_COLLAB=1: the thread that dispatches, expires and reconciles its asks, and the
             # API the web page and cards call; without the switch it has no thread.
             self.collab = Collaboration(self.runtime, self.topics, self.messenger, self.voice)
+            # The web page's say/stop with a collaboration (app/web_ops.py) reach it through the butler's env, as WebSync's Ops does.
+            self.butler_env.collab = self.collab
             features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.proxy,
                         self.group_manager, self.overview, self.topic_seen, self.butler_tools,
                         self.butler_search, self.settings_hub, self.butler, self.digest, self.app_setup, self.welcome,
