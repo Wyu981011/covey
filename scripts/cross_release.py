@@ -860,6 +860,10 @@ VOLATILE_RECORD = {"timings", "latency_ms", "revision", "card_update_failures", 
 # The same, in one variant only: downkilled SIGKILLs the runner right after its first phase, so whether it got to record
 # the native session id first is the kill's timing; every other variant compares session_id as it is.
 VOLATILE_BY_VARIANT = {"downkilled": {"session_id"}}
+# A Bridge line its watcher writes only when it sees done.json while the runner still lives (app/detached.py
+# release_done); a runner that exits before the next look goes straight to its end, so one release alone has the line in
+# one run and not in the next. Left out of the per-run comparison; how many runs have it is still printed.
+RACED_LOG = re.compile(r"task runner done job=#\d+; its topic goes on while it finishes")
 
 
 def normal(value, scratch, trees, key=None):
@@ -895,7 +899,7 @@ def tidy(data, scratch, trees):
                     facts[name][field] = "<PRESENT>"
         # Order of lines and events of different threads is not the protocol, nor are timing lines (their
         # counts, such as journal=jobs:N, vary from run to run within one release).
-        section["log"] = sorted(line for line in section["log"] or [] if not line.startswith("timing "))
+        section["log"] = sorted(line for line in section["log"] or [] if not line.startswith("timing ") and not RACED_LOG.search(line))
         if isinstance(facts.get("runner_log"), list):
             facts["runner_log"] = sorted(line for line in facts["runner_log"] if not TIMING_LINE.match(line))
         if isinstance(facts.get("runner_events"), list):

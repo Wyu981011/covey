@@ -917,6 +917,15 @@ class CrossReleaseTests(unittest.TestCase):
         for variant in ("main", "plain", "stop", "sigterm", "killed"):  # Everywhere else the session id is compared.
             self.assertNotEqual(tidied(variant, session_id=""), tidied(variant, session_id=sid))
 
+        def logged(*lines):
+            data = {"variant": "plain", "start": {"facts": {}, "log": list(lines), "feishu": []}}
+            return cross_release.tidy(data, Path("/absolute/scratch"), [])["start"]["log"]
+
+        ended = "task runner ended job=#7 status=done exit=finished"
+        # Whether the watcher saw done.json before the runner exited: the line or not, the same run.
+        self.assertEqual(logged("task runner done job=#7; its topic goes on while it finishes", ended), logged(ended))
+        self.assertNotEqual(logged(ended), logged("task runner ended job=#7 status=failed exit=finished"))
+
     def test_compare_is_not_equal_when_a_run_asked_for_is_missing_or_left_by_another_run(self):
         trees = {"new": "/absolute/new-tree", "old": "/absolute/old-tree"}
 
