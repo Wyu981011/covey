@@ -38,7 +38,7 @@ HELD_TOAST = {'toast': {'type': 'info', 'content': HELD_TOAST_TEXT}}
 DEDUP_LIMIT = 2048  # Event IDs remembered: an SDK reconnect or Feishu's redelivery repeats a recent one.
 QUEUE_LIMIT = 256  # Events waiting for one key's consumer thread.
 CONNECT_RETRY_SECONDS = 20  # Ceiling of the wait before the connection thread starts the client again.
-POLL_SECONDS = 1.0  # How often the watcher reads whether the client is connected.
+POLL_SECONDS = .25  # How often the watcher reads whether the client is connected (an attribute read).
 
 
 def enabled() -> bool:
@@ -273,6 +273,7 @@ class Intake:
         self.client = None
         self.loop = None
         self.go = threading.Event()  # Set by start (or the first consume): the thread may connect.
+        self.up = threading.Event()  # Set while connected: what wait_connected waits on.
 
     # -- events in --
 
@@ -353,6 +354,7 @@ class Intake:
             if self.connected == up:
                 return
             self.connected = up
+            (self.up.set if up else self.up.clear)()
             self.link.up = up
             keys = sorted(self.attached)
         for key in keys:
@@ -452,6 +454,11 @@ class Intake:
         except Exception:  # noqa: BLE001 - the process is ending
             pass
         loop.call_soon_threadsafe(loop.stop)
+
+    def wait_connected(self, seconds: float) -> bool:
+        """Wait up to ``seconds`` for the connection: the Bridge's start does before its recovery, which otherwise kept
+        the connection thread from the CPU until it was over (T648: connected 0.15 s before the recovery ended)."""
+        return self.up.wait(seconds)
 
     def status(self) -> dict[str, Any]:
         with self.lock:

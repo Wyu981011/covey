@@ -59,6 +59,7 @@ from covey.core.store import directory_store, save_indexes
 # Bridge's controllers (_build_parts), and below, the startup and maintenance parts of main().
 
 CARD_ACTION_RETRY_SECONDS = 300
+INTAKE_WAIT_SECONDS = 3.0  # How long the start waits for the SDK connection before its recovery (start_intake).
 
 
 def run_json(argv: list[str], timeout: int = 30) -> dict[str, Any]:
@@ -599,7 +600,13 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         lark-cli's consumers (the default) start with the workers, as before."""
         if ws_intake.enabled():
             intake = ws_intake.intake(ctx, self.runtime.shutdown, self.runtime.log, CARD_ACTION_RETRY_SECONDS)
-            intake.start() if connect else intake.prepare()
+            if not connect:
+                intake.prepare()
+                return
+            intake.start()
+            # The recovery keeps the connection thread from the CPU until it is over: give it a moment first, so clicks
+            # and messages are taken in from here (a few seconds sooner), the recovery starting at most that much later.
+            intake.wait_connected(INTAKE_WAIT_SECONDS)
 
     def consume_loop(self, ctx: BridgeContext) -> None:
         self.consume_events(ctx, MESSAGE_EVENT_KEY, self.handle_event)

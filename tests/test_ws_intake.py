@@ -383,6 +383,15 @@ class IntakeTest(unittest.TestCase):
         thread.join(5)
         self.assertEqual(done, [True])
 
+    def test_wait_connected_returns_once_connected_or_after_its_time(self):
+        started = time.monotonic()
+        self.assertFalse(self.intake.wait_connected(.2))
+        self.assertGreaterEqual(time.monotonic() - started, .2)
+        threading.Timer(.1, self.intake._set_connected, args=(True,)).start()
+        self.assertTrue(self.intake.wait_connected(5))
+        self.intake._set_connected(False)
+        self.assertFalse(self.intake.up.is_set())
+
     def test_a_connection_made_after_the_bridge_began_to_stop_takes_nothing_in(self):
         self.shutdown.set()
         creds = SimpleNamespace(config=SimpleNamespace(app_id='cli_fake', app_secret='fake', domain='https://open.example'))

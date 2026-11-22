@@ -287,6 +287,7 @@ class StartOrderTest(unittest.TestCase):
                 mock.patch.object(app, "init_target", step("init_target")), \
                 mock.patch.object(ws_intake.Intake, "prepare", step("connection thread")), \
                 mock.patch.object(ws_intake.Intake, "start", step("event connection")), \
+                mock.patch.object(ws_intake.Intake, "wait_connected", step("wait for the connection")), \
                 mock.patch.object(app.harnesses[DEFAULT], "ensure_started", step("ensure_started")), \
                 mock.patch.object(app, "log_startup"), \
                 mock.patch("covey.app.unified.recover_question_delivery", step("recover questions")), \
@@ -298,7 +299,8 @@ class StartOrderTest(unittest.TestCase):
 
     def test_the_sdk_connection_starts_once_the_identity_is_checked_and_before_the_recovery(self):
         self.assertEqual(self.start({"COVEY_EVENT_TRANSPORT": "sdk"}),
-                         ["warm records", "connection thread", "init_target", "event connection", "ensure_started",
+                         ["warm records", "connection thread", "init_target", "event connection", "wait for the connection",
+                          "ensure_started",
                           "recover questions",
                           "adopt and interrupt", "workers", "consume"])
 
