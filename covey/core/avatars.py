@@ -16,6 +16,7 @@ from covey.core.locks import shared_file_lock
 from covey.core.state import read_object, write_json
 
 BUTLER = "butler"
+EXPAND = "expand"  # Not a speaker: the round arrow badge a long answer's fold opens with (cards/ui.py read_more).
 # DiceBear Moods (G), DiceBear Clay (M), the sea set: the names of the files without ".png".
 POOL = ("G-1", "G-2", "G-3", "G-6", "G-7", "G-9",
         "M-2", "M-3", "M-5", "M-9", "M-11", "M-12",
@@ -26,7 +27,7 @@ FILE = "avatars.json"
 
 def asset(name) -> Path | None:
     """The picture file of ``name`` (BUTLER or one of POOL); None for any other name or a missing file."""
-    if name not in (BUTLER, *POOL):
+    if name not in (BUTLER, EXPAND, *POOL):
         return None
     path = ASSETS / f"{name}.png"
     return path if path.is_file() else None

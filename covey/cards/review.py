@@ -152,8 +152,8 @@ def _cut(line, room):
     if end and end[1] >= room * PEEK_CUT:
         return line[:end[0]], line[end[0]:].lstrip()
     if pause and pause[1] >= room * PEEK_CUT:
-        return line[:pause[0] - 1] + "…", line[pause[0]:].lstrip()
-    return (line[:at].rstrip() + "…", line[at:].lstrip()) if at else ("", line)
+        return line[:pause[0]], line[pause[0]:].lstrip()  # No "…": the fold's title stays as it is once open.
+    return (line[:at].rstrip(), line[at:].lstrip()) if at else ("", line)
 
 
 def fits(text, width=PEEK_WIDTH) -> bool:

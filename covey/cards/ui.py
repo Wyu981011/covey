@@ -23,6 +23,7 @@ Colours a card defines itself (``config.style.color``: the band's, a badge's) ar
 """
 from __future__ import annotations
 
+import json
 import re
 
 from covey.cards.elements import chevron, grey, md
@@ -197,7 +198,7 @@ def badge_colors(node) -> dict:
             for each in value:
                 walk(each)
     walk(node)
-    colors = {}
+    colors = {BODY_INK: BODY_INK_COLOR} if f"color='{BODY_INK}'" in json.dumps(node, ensure_ascii=False) else {}
     for place in sorted(found):
         if place < len(look.TOPIC_COLORS):
             rgba = _hex_rgba(look.TOPIC_COLORS[place])
@@ -221,25 +222,32 @@ def split_number(who):
 
 
 # 露一截 (docs/ui.md 4 ``read_more``): a long text's first few hundred characters in view, the rest one click away.
-def read_more(element_id, head, rest, *, hint="", label="", spacing="4px") -> list:
-    """犹抱琵琶半遮面 for a long text: ``head`` (Markdown, its opening as cards/review.py opening cut it, ``label`` grey
-    before it) as the card's own text, lists and links working, then an unframed fold whose title is ``hint`` (grey,
-    点开看全文 and how much in all) and whose body is ``rest``, going on from where ``head`` stopped. Two elements: the
-    opening ``<element_id>_open``, the fold ``element_id``."""
-    if label:
-        head = grey(label) + ("\n" if _BLOCK_START.match(head) else " ") + head
-    # Bold, in the link colour (a grey line under the opening was read as the end of the answer), and under what it
-    # opens (header at the bottom, no frame): opened, the rest follows the opening as one text, the line at its end.
-    fold = {"tag": "collapsible_panel", "element_id": element_id, "expanded": False,
-            "header": {"title": {"tag": "markdown", "content": font("**" + (hint or "展开全文") + "**", READ_MORE)},
-                       "position": "bottom", "vertical_align": "center", "icon": chevron(READ_MORE),
-                       "icon_position": "follow_text", "icon_expanded_angle": -180},
-            "padding": "0px 0px 0px 0px", "vertical_spacing": spacing,
-            "elements": [md(rest)] if isinstance(rest, str) else list(rest)}
-    return [md(head, element_id=f"{element_id}_open"), fold]
+def read_more(element_id, head, rest, *, hint="", label="", spacing="2px", icon_key="") -> list:
+    """犹抱琵琶半遮面 for a long text (the owner chose it on his phone, 2026-11-22): the answer itself is the fold. Its
+    title is ``head`` (Markdown, the opening as cards/review.py opening cut it at a sentence's end, no "…"), every line
+    in the body's colour (BODY_INK: a fold's title is grey otherwise), ``label`` grey before it; a tap on it opens ``rest``
+    right under it, one text, and nothing on it says more after it opened. The sign it opens is a round arrow badge
+    at its top right (``icon_key``, the expand picture's image key, core/avatars.py EXPAND; Feishu's grey chevron
+    without one), turned over once open. ``hint`` is kept for the callers of the framed bar it replaced. One element."""
+    lines = [f"<font color='{BODY_INK}'>{line}</font>" if line.strip() else "" for line in str(head).split("\n")]
+    title = labelled("\n".join(lines), label, head)
+    icon = {"tag": "custom_icon", "img_key": icon_key, "size": "24px 24px"} if icon_key else chevron()
+    return [{"tag": "collapsible_panel", "element_id": element_id, "expanded": False,
+             "header": {"title": {"tag": "markdown", "content": title}, "vertical_align": "top", "icon": icon,
+                        "icon_position": "right", "icon_expanded_angle": -180},
+             "padding": "0px 0px 0px 0px", "vertical_spacing": spacing,
+             "elements": [md(rest)] if isinstance(rest, str) else list(rest)}]
 
 
-READ_MORE = "blue"  # The colour of 展开全文: Feishu's link colour, what can be clicked.
+def labelled(text, label, raw=None) -> str:
+    """``text`` with ``label`` grey before it, on a line of its own when ``raw`` (``text`` as written) starts a block."""
+    if not label:
+        return text
+    return grey(label) + ("\n" if _BLOCK_START.match(str(text if raw is None else raw)) else " ") + text
+
+
+BODY_INK = "ink"  # The body's colour as a card colour: a fold's title is drawn grey without it.
+BODY_INK_COLOR = {"light_mode": "rgba(31,35,41,1)", "dark_mode": "rgba(235,235,235,1)"}
 _BLOCK_START = re.compile(r" {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|#{1,6}\s|\|)")
 
 

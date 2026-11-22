@@ -45,8 +45,10 @@ def standalone_card(ctx, record):
 def top_card(ctx, record, files=None):
     """The top-level copy of ``record``'s card (``mirror``), its "你问" block as it was sent; ``files``: the asking
     turn's 产物 panel (QuestionDisplay.copy_files)."""
+    from covey.feishu.avatars import image_key
     return mirror_card(record, topic_label(ctx.state_dir, record["topic_id"]), record.get("mirror_output") or "",
-                       ask=record.get("mirror_ask"), files=files)
+                       ask=record.get("mirror_ask"), files=files,
+                       expand_icon=image_key(ctx.state_dir, getattr(ctx, "profile", None), "expand"))
 
 
 def question_card_lock(path):

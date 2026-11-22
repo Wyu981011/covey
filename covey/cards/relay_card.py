@@ -11,7 +11,7 @@ from covey.cards.answer_card import ARTIFACTS_ID, check_element, facts_element, 
 from covey.cards.elements import card, collapsible, grey, json_size, md, note
 from covey.cards.review import (ANSWER_CARD_BYTES, answer_lead, bold_minor_headings, drop_part_heading, fits,
                                 inline_one_line_code, opening)
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, read_more,
+from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, labelled, read_more,
                             speaker_row, split_ask, styled, topic_badge)
 from covey.core import look
 from covey.core.failure import HEADLINE_CHARS, split_title
@@ -72,21 +72,21 @@ def whole_words(text) -> str:
     return "展开全文 · 还有" + size_words(text)
 
 
-def reply_peek(text, element_id=FOLD_ID, *, label="") -> list:
+def reply_peek(text, element_id=FOLD_ID, *, label="", icon_key="") -> list:
     """A reply (Markdown) as 犹抱琵琶半遮面 (docs/ui.md 4 露一截, cards/ui.py read_more): its first few hundred
     characters in view as card text (cards/review.py opening, ``label`` grey before them), then a fold that says how
     much there is in all and goes on from there; a reply that fits, as it is; one that does not start with words (a
     table, code), the fold titled with its size (``reply_fold``). Elements, one or two."""
     if fits(text):  # Short: all of it (the owner: 短回复直接完整展示).
-        return [{**read_more(element_id, text, "", label=label)[0], "element_id": element_id}]
+        return [md(labelled(text, label), element_id=element_id)]
     head, rest = opening(text)
     if not head:
         return [reply_fold(text) if element_id == FOLD_ID else collapsible(
             element_id, " · ".join(part for part in (label, size_words(text)) if part) + "（点开看）", [md(text)],
             quiet=True, spacing="6px")]
     if not rest.strip():
-        return [{**read_more(element_id, head, "", label=label)[0], "element_id": element_id}]
-    return read_more(element_id, head, rest, hint=whole_words(rest), label=label)
+        return [md(labelled(head, label), element_id=element_id)]
+    return read_more(element_id, head, rest, label=label, icon_key=icon_key)
 
 
 DETAILS_ID = "relay_details"
@@ -139,7 +139,7 @@ def summary(label, words, text):
 
 def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, outputs=(), files=None,
                files_status=None, ask=None, at=None, took=None, artifacts=0, change=None, delivery="", notes=(),
-               buttons=(), url="", avatar=""):
+               buttons=(), url="", avatar="", expand_icon=""):
     """(card, text): the relay's card (None for a reply over CARD_TEXT_BYTES: the Markdown alone), and
     the same as Markdown when the card is refused. Its first element says whose it is (cards/ui.py speaker_row: the
     topic's T number as its badge, its title, its state as a tag, what it did with the owner's words after it), so the
@@ -173,7 +173,7 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         shown_change = change or delivery
         line = shown_change if isinstance(shown_change, dict) and shown_change else None  # Its 改动 is a line of the foot.
         shown = drop_part_heading(body)  # Its first words say it: no "## 结论" row over them.
-        reply = reply_peek(shown) if shown.strip() else []  # A reply that fits is all of it, a longer one its opening.
+        reply = reply_peek(shown, icon_key=expand_icon) if shown.strip() else []  # A reply that fits is all of it, a longer one its opening.
         ending = foot(inputs, outputs, change=line, links=links)
         extra = [*answer_tail(files, (), (), change=None if line else shown_change, notes=notes),
                  *([check_element(shown_change)] if line and check_element(shown_change) else []), *(buttons or ())]

@@ -527,7 +527,7 @@ QUESTION_WIDTH = 120  # A settled question's opening, in its fold's title: about
 OUTPUT_LABEL = "这一轮输出"
 
 
-def mirror_card(record, topic="", output="", ask=None, files=None):
+def mirror_card(record, topic="", output="", ask=None, files=None, expand_icon=""):
     """The question card again at the private chat's top level (app/question_display.py mirror): the same form, under
     the speaker's row that says whose it is (cards/ui.py speaker_row: ``ask``, the "你问" block, becomes the row, its way
     back a line at the end). ``output``, what the turn wrote before it asked, comes first, its first few hundred
@@ -543,7 +543,7 @@ def mirror_card(record, topic="", output="", ask=None, files=None):
     legacy = [ask] if ask and meta is None else []  # A block sent before the title bar: kept as it was, at the top.
     elements = list(built["body"]["elements"])
     # The turn's output first (the owner, 2026-11-22: without it the questions cannot be understood), then the question.
-    said = reply_peek(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL) if output else []
+    said = reply_peek(reply_body(output), OUTPUT_ID, label=OUTPUT_LABEL, icon_key=expand_icon) if output else []
     line = settled_line(record)
     if line:  # The question's fold (q_<token>) becomes its peek, the answer's line under it.
         at = next((n for n, element in enumerate(elements) if element.get("element_id") == "q_" + record["token"]), None)

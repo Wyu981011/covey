@@ -159,7 +159,10 @@ def _made(state_dir, job, target, outcome, profile, log, facts):
     facts = {**facts, "ask": ask_for(state_dir, job, target, profile, at=card, log=log, doing=outcome)}
     topic = str(target.get("topic_id") or job_field(job, "topic_id"))
     picture = answer_cards.avatar(state_dir, topic, str(target.get("chat_id") or ""), profile, log)  # Its call, outside the lock.
+    from covey.feishu.avatars import image_key
+    expand = image_key(state_dir, profile, "expand", log)  # The fold's badge (cards/ui.py read_more); '' falls back.
     built, text = relay_card(target["label"], outcome, url=topic_url(state_dir, topic, card, profile), avatar=picture,
+                             expand_icon=expand,
                              **facts)
     links = {topic: card}
     built, text = linked(state_dir, target["chat_id"], built, text, profile, cards=links)

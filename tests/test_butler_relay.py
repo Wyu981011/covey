@@ -109,7 +109,7 @@ class CardTest(unittest.TestCase):
         reply = "先说结论。\n\n" + "细节。" * 300 + "\n\n## 逐层结果\n\n最后一段。"
         card, text = relay_card("T410", DONE, text=reply, inputs=["Claude Code"], outputs=[], url="https://x/t410")
         # The speaker's row says whose it is: the T number its badge, the state as a tag (cards/ui.py speaker_row).
-        row, opened, fold, foot = card["body"]["elements"]
+        row, fold, foot = card["body"]["elements"]
         self.assertNotIn("header", card)
         self.assertEqual("<font color='white'>**T410**</font>", badge_words(row))
         self.assertTrue(row_line(row).startswith("<text_tag color='green'>有结果</text_tag>"))
@@ -117,9 +117,8 @@ class CardTest(unittest.TestCase):
         # No conclusion band (T638, 犹抱琵琶半遮面): the reply's first few hundred characters as card text, then a fold
         # that says how much in all and goes on from where they stop (cards/review.py opening, cards/ui.py read_more).
         self.assertEqual(("relay_reply", False), (fold["element_id"], fold["expanded"]))
-        head = opened["content"]
-        self.assertTrue(head.startswith("先说结论。\n\n细节。"))
-        self.assertIn("<font color='blue'>**展开全文 · 还有约", fold["header"]["title"]["content"])
+        head = fold["header"]["title"]["content"]  # The answer itself is the fold, its opening its title.
+        self.assertTrue(head.startswith("<font color='ink'>先说结论。</font>\n\n<font color='ink'>细节。"))
         content = fold["elements"][0]["content"]
         self.assertTrue(content.startswith("细节。"))
         self.assertNotIn("先说结论", content)
