@@ -10,6 +10,14 @@ from covey.cards.elements import button_row, callback, topic_button
 from covey.cards.rewind import rewind_button
 
 SWITCH_OPEN = "bridge_switch_open"
+# The mark in the value of a button on a relay card at the private chat's top level (app/relay_stops.py, a 停住了 relay's
+# buttons; ``relay_switch``, a 做完了 relay's 换配置): its click is answered there, not in the topic's thread.
+RELAY = "relay"
+# The mark in a 停住了 relay's 换个模型 (app/relay_stops.py): its 换配置 card preselects a model of another Harness usable
+# now when there is one (app/harness_switch.py other_harness_key), else the topic's own; the owner still confirms.
+PREFER_OTHER = "prefer_other"
+RELAY_SWITCH_ID = "relay_switch"  # A 做完了 relay's 换配置 (``relay_switch``).
+RELAY_ROW_ID = "relay_switch_row"  # Its row of its own (``beside``: no 独立复核 to stand by).
 # The task card's buttons are the topic cards' bordered small ones (cards/elements.py topic_button) in rows that
 # wrap (button_row); a card sent before keeps its own until redrawn.
 # The panel's element id, from when it held 🔀 分叉 and 💬 侧聊: cards sent since keep the same.
@@ -32,11 +40,36 @@ def topic_panel(topic_id, job_id, route, *, rewind=False, switch=True):
     return button_row(buttons, PANEL_ID)
 
 
+def switch_value(topic_id, job_id, harness_id, revision, **marks):
+    """What a 换配置 click carries (app/harness_switch.py): the topic, the turn and the binding it was drawn under, and
+    ``marks`` (RELAY, PREFER_OTHER, ``other``)."""
+    return {"kind": SWITCH_OPEN, "topic_id": topic_id, "job_id": job_id, "harness_id": harness_id,
+            "binding_revision": revision, **marks}
+
+
 def switch_button(topic_id, job_id, harness_id, revision):
     return topic_button("换配置", element_id="switch_action", behaviors=callback(
-        {"kind": SWITCH_OPEN, "topic_id": topic_id, "job_id": job_id, "harness_id": harness_id,
-         "binding_revision": revision}))
+        switch_value(topic_id, job_id, harness_id, revision)))
 
 
 def switch_panel(topic_id, job_id, harness_id, revision):
     return button_row([switch_button(topic_id, job_id, harness_id, revision)], "switch_actions")
+
+
+def relay_switch(topic_id, job_id, harness_id, revision):
+    """换配置 on a 做完了 relay at the private chat's top level (app/butler_relay.py after_turn, T669 E1): the task card's
+    button with RELAY, so its 换配置 card opens at the top level under the relay, not in the topic's thread."""
+    return topic_button("换配置", element_id=RELAY_SWITCH_ID, behaviors=callback(
+        switch_value(topic_id, job_id, harness_id, revision, **{RELAY: True})))
+
+
+def beside(rows, button):
+    """``rows`` (the elements under an answer's 输入/输出 lines: 独立复核's row, app/review.py) with ``button`` at the end of
+    the first row of buttons among them, else in a row of its own (RELAY_ROW_ID) after them: one row of small buttons
+    under a relay, not two. ``rows`` themselves are not changed."""
+    rows = list(rows or ())
+    for index, row in enumerate(rows):
+        if isinstance(row, dict) and row.get("tag") == "column_set" and row.get("flex_mode") == "flow":
+            rows[index] = {**row, "columns": [*row.get("columns", []), *button_row([button])["columns"]]}
+            return rows
+    return [*rows, button_row([button], RELAY_ROW_ID)]

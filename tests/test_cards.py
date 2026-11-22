@@ -235,6 +235,22 @@ def sample_cards(work=None):
     welcome = {"host": "devbox", "harnesses": ["Codex"], "down": [["Codex", "没登录"]], "workspace": "work",
                "workdir": str(work), "butler": "", "examples": list(EXAMPLES), "tried": {"1": {"state": SENT}}}
     cards.update(welcome=welcome_card(welcome), welcome_no_butler=welcome_card({**welcome, "butler": NO_CLAUDE, "examples": list(TOPIC_EXAMPLES)}))
+    # T669: relays at the top level with 换配置 (beside 独立复核, alone) and a stop with 换个模型, and the switch card there.
+    from covey.app import relay_stops
+    from covey.cards.answer_card import review_element
+    from covey.cards.relay_card import DONE, STOPPED, relay_card
+    from covey.cards.topic_actions import beside, relay_switch
+    from covey.core.failure import failure_view
+    stop = {"job_id": 431, "topic_id": TOPIC, "status": "failed", "execution_status": "failed",
+            "failure_code": "rate_limited", "harness_id": "codex", "binding_revision": 2}
+    cards.update(
+        relay_done_switch=relay_card("T70", DONE, text="改好了。", buttons=beside(
+            [review_element(TOPIC, 431)], relay_switch(TOPIC, 431, "codex", 2)))[0],
+        relay_done_switch_alone=relay_card("T70", DONE, text="改好了。", buttons=beside(
+            [], relay_switch(TOPIC, 431, "codex", 2)))[0],
+        relay_stopped_switch=relay_card("T70", STOPPED, reason=failure_view(stop)["title"], buttons=[
+            relay_stops.buttons(stop, failure_view(stop))])[0],
+        switch_card_top=build_switch_card({**switch_form, "top_level": True}))
     trace = ToolTrace()
     for i in range(40):
         trace.note(f"n{i}", f"第 {i} 步说明 " * 20)

@@ -311,6 +311,140 @@ class HarnessSwitchTests(UnifiedCase):
             self.assertEqual(self.open(click='none', other=True)[0]['token'], form['token'])  # No new form.
         self.assertIn(hs.NO_OTHER_HARNESS, self.said()[-1])
 
+    def top_sends(self):
+        """Where each message the Bridge sent went: its reply_to_message_id ('' at the private chat's top level)."""
+        return [c.kwargs.get('reply_to_message_id') for c in self.app.messenger.send_message.call_args_list]
+
+    def test_a_relay_cards_click_opens_the_card_at_the_top_level_and_closes_it_there(self):
+        """T669: 换配置 on a relay card at the private chat's top level (``relay`` in its value) sends the switch card there, a
+        message of its own naming the topic, whose quote goes to it; confirming closes it in place, and what it says comes
+        next is a reply to it (a top-level message is the butler's). Nothing goes to the topic's thread."""
+        from covey.core.topics import message_topic, routed_topic
+        form, path, send = self.open(click='relay-open', relay=True)
+        self.assertEqual(send.call_args.kwargs['reply_to_message_id'], '')  # Its own message at the top level.
+        self.assertTrue(form['top_level'])
+        self.assertEqual(form['topic_id'], self.source.topic_id)
+        card = json.dumps(switch_form.build_switch_card(form), ensure_ascii=False)
+        self.assertIn(f"话题 {form['topic']} · {switch_form.TOP_SUBTITLE}", card)
+        self.assertTrue(form['topic'].startswith('T'))
+        for message in (message_topic, routed_topic):  # A quote of it goes to the topic.
+            self.assertEqual(message(self.ctx.state_dir, 'chat', 'om_switch'), self.source.topic_id)
+        self.click(form, hs.MODEL, 'claude:claude-model')
+        with mock.patch.object(self.switch, 'replace', wraps=self.switch.replace) as replace:
+            self.click(json.loads(path.read_text()), hs.CONFIRM)
+        self.assertEqual(self.topic()['harness_id'], 'claude')
+        done = json.dumps(replace.call_args.args[4], ensure_ascii=False)
+        self.assertIn('已换配置', done)
+        self.assertIn(hs.TOP_NEXT, done)
+        self.assertNotIn('下一条消息由新会话接手', done)
+        self.assertEqual(json.loads(path.read_text())['message_id'], 'om_switch')  # Closed in place.
+        self.assertEqual(self.said(), [])
+
+    def test_a_card_in_the_topics_thread_still_opens_there(self):
+        form, _, send = self.open(click='thread-open')
+        self.assertEqual(send.call_args.kwargs['reply_to_message_id'], self.source.reply_to_message_id)
+        self.assertNotIn('top_level', form)
+        card = json.dumps(switch_form.build_switch_card(form), ensure_ascii=False)
+        self.assertIn('下一条消息起生效', card)
+        self.assertNotIn(switch_form.TOP_SUBTITLE, card)
+        self.click(form, hs.MODEL, 'claude:claude-model')
+        form = json.loads((self.ctx.state_dir / 'switch-forms' / (form['token'] + '.json')).read_text())
+        text = hs.done_text(form, form['models']['claude:claude-model'], 'high', '', None, False, False,
+                            ({'harness_id': 'codex', 'model': 'm', 'effort': 'high', 'work_mode': ''},
+                             {'harness_id': 'claude', 'model': 'c', 'effort': 'high', 'work_mode': ''}))
+        self.assertIn('下一条消息由新会话接手', text)
+        self.assertEqual(hs.done_text(form, {}, '', '', None, True, False, None).splitlines()[-1], '会话不变，下一条消息起生效。')
+        self.assertEqual(hs.done_text({**form, 'top_level': True}, {}, '', '', None, True, False, None).splitlines()[-1],
+                         '会话不变，话题的下一轮起生效。')
+
+    def test_what_a_relay_cards_click_is_told_goes_to_the_top_level(self):
+        with mock.patch.object(hs, 'available_models', return_value={}):
+            self.assertIsNone(self.open(click='no-catalog', relay=True)[0])
+        self.assertIn('模型目录准备中', self.said()[-1])
+        self.assertEqual(self.top_sends()[-1], '')
+        old = self.topic().get('binding_revision', 1)
+        self.switch_to()
+        self.open(click='stale-relay', relay=True, harness_id='codex', binding_revision=old)  # A 做完了 relay's: no card kept.
+        self.assertIn(hs.STALE_CARD, self.said()[-1])
+        self.assertEqual(self.top_sends()[-1], '')
+        self.open(click='stale-thread', harness_id='codex', binding_revision=old)
+        self.assertEqual(self.top_sends()[-1], self.source.reply_to_message_id)  # A task card's: in the thread, as before.
+        with mock.patch.object(self.switch, 'submit', return_value=False):
+            topic = self.topic()
+            self.switch.dispatch(self.ctx, {'chat_id': 'chat', 'message_id': 'om_relay', 'event_id': 'ev-full-relay',
+                                            'action_value': {'kind': hs.OPEN, 'topic_id': self.source.topic_id,
+                                                             'harness_id': topic['harness_id'], 'relay': True,
+                                                             'binding_revision': topic.get('binding_revision', 1)}})
+        self.assertIn('处理队列已满', self.said()[-1])
+        self.assertEqual(self.top_sends()[-1], '')
+
+    def test_a_stopped_relays_switch_prefers_another_harness_and_opens_without_one(self):
+        form, _, _ = self.open(click='prefer', relay=True, prefer_other=True)
+        self.assertFalse(form['selected_model'].startswith('codex:'), form['selected_model'])
+        self.assertEqual(form['current']['key'], 'codex:codex-model')
+        self.assertEqual(self.topic()['harness_id'], 'codex')  # Nothing switched by itself.
+        with mock.patch('covey.app.availability.usable', return_value=False):
+            form, _, send = self.open(click='prefer-none', relay=True, prefer_other=True)
+        self.assertEqual(form['selected_model'], 'codex:codex-model')  # The topic's own: the card opens all the same.
+        send.assert_called_once()
+        self.assertEqual(self.said(), [])
+
+    def stopped_relay(self, job_id=2):
+        """A 停住了 relay of the topic's job ``job_id`` (its quota ran out) as app/butler_relay.py sends it: its record and its
+        card kept for a redraw (app/relay_send.py), sent as om_relay. Its job record."""
+        from covey.app import relay_send, relay_stops
+        from covey.cards.relay_card import STOPPED, relay_card
+        from covey.core.failure import failure_view
+        from covey.core.state import write_json
+        key = f'job-{job_id}'
+        record = upsert_job_record(self.ctx.state_dir, key, topic_id=self.source.topic_id, chat_id='chat', job_id=job_id,
+                                   status='failed', execution_status='failed', failure_code='quota_exhausted',
+                                   backend='codex', harness_id='codex', kind='chat',
+                                   binding_revision=self.topic().get('binding_revision', 1))
+        view = failure_view(record)
+        card = relay_card('T1', STOPPED, reason=view['title'], buttons=[relay_stops.buttons(record, view)])[0]
+        write_json(relay_send.relay_path(self.ctx.state_dir, key), {
+            'state': 'sent', 'outcome': STOPPED, 'job_key': key, 'job_id': job_id, 'topic_id': self.source.topic_id,
+            'chat_id': 'chat', 'message_id': 'om_relay', 'card': card})
+        return record
+
+    def test_a_stopped_relays_switch_closes_the_relay_too_and_a_stale_one_says_so_on_it(self):
+        from covey.app import relay_stops
+        from covey.cards.elements import find_element
+        record = self.stopped_relay()
+        value = relay_stops.buttons(record, {'actions': ['switch_model']})['columns'][0]['elements'][0]['value']
+        with mock.patch('covey.feishu.messenger.Messenger.patch_card', return_value=True) as patch:
+            form, path, send = self.open(click='relay-quota', **{k: v for k, v in value.items() if k != 'kind'})
+            self.assertEqual(send.call_args.kwargs['reply_to_message_id'], '')
+            patch.assert_not_called()  # Opening changes nothing on the relay.
+            self.click(form, hs.MODEL, 'claude:claude-model')
+            self.click(json.loads(path.read_text()), hs.CONFIRM)
+            self.assertEqual(self.topic()['harness_id'], 'claude')
+            self.assertEqual(patch.call_args.args[1], 'om_relay')
+            label = form['models']['claude:claude-model']['label']
+            area = find_element(patch.call_args.args[2], relay_stops.AREA_ID)
+            self.assertEqual(area['content'], f"<font color='grey'>{relay_stops.SWITCHED.format('：' + label)}</font>")
+            self.assertEqual(self.said(), [])
+            # Its old 换个模型 clicked again (another client still showing it): said on the relay, redrawn; nothing opens.
+            forms = self.forms()
+            self.open(click='relay-stale', **{k: v for k, v in value.items() if k != 'kind'})
+            self.assertEqual((patch.call_count, self.forms(), self.said()), (2, forms, []))
+
+    def test_a_cancel_or_a_switch_from_a_done_relay_redraws_no_relay(self):
+        self.stopped_relay()
+        with mock.patch('covey.feishu.messenger.Messenger.patch_card', return_value=True) as patch:
+            form, path, _ = self.open(click='relay-redaction', job_id=2, relay=True)
+            self.click(form, hs.MODEL, 'claude:claude-model')
+            self.click(json.loads(path.read_text()), hs.CANCEL)
+            self.assertEqual(json.loads(path.read_text())['status'], 'cancelled')
+            patch.assert_not_called()  # Cancelled: the relay keeps its buttons.
+            form, path, send = self.open(click='relay-done', job_id=1, relay=True)  # job 1 ended done: no relay card.
+            self.assertEqual((send.call_args.kwargs['reply_to_message_id'], form['top_level']), ('', True))
+            self.click(form, hs.MODEL, 'claude:claude-model')
+            self.click(json.loads(path.read_text()), hs.CONFIRM)
+            self.assertEqual(self.topic()['harness_id'], 'claude')
+            patch.assert_not_called()
+
     def test_the_stop_first_paragraph_shows_only_while_the_topic_has_a_task(self):
         stop_first = '任务还在排队或执行时不能更换'
         form, path, _ = self.open(click='idle')

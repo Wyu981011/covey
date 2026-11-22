@@ -40,6 +40,9 @@ UNCHANGED = "先改一项再点确认更换"
 # A model that cannot redact, chosen on a redacting topic, turns 脱敏 off on the card (else
 # only Claude is listed, and the reason sits in small print at the bottom).
 AUTO_OFF_NOTE = "所选模型不能脱敏：确认更换后本话题关闭敏感词脱敏，之后各轮把原文发给模型服务。再选回 Claude 会重新打开。"
+# The subtitle's second half on a card at the private chat's top level (``top_level``, opened from a relay card there,
+# app/harness_switch.py): a top-level message is the butler's, a reply to this card the topic's.
+TOP_SUBTITLE = "确认后回复这张卡接着做"
 OFF_TITLE = "关闭敏感词脱敏？"
 OFF_TEXT = "关闭后，之后各轮会把原文发给模型服务；之前各轮不受影响。"
 
@@ -112,12 +115,14 @@ def switch_settings(form):
 
 
 def build_switch_card(form):
-    """The 🔁 换配置 card; ``form`` is the switch record, its ``page`` the row drawn open."""
+    """The 🔁 换配置 card; ``form`` is the switch record, its ``page`` the row drawn open, ``top_level`` a card at the private
+    chat's top level (its subtitle names the topic and where a reply goes)."""
     token, model = form["token"], form["selected_model"]
     choices = offered(form)
     changed = changes(form)
     settings = switch_settings(form)
-    subtitle = (f"话题 {form['topic']} · " if form.get("topic") else "") + "下一条消息起生效"
+    subtitle = (f"话题 {form['topic']} · " if form.get("topic") else "") + (
+        TOP_SUBTITLE if form.get("top_level") else "下一条消息起生效")
     elements = [note(current_line(form))]
     if not choices or model not in choices:
         elements.append(md("模型目录准备中，请稍后重新打开换配置。"))

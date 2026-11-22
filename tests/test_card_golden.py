@@ -702,6 +702,9 @@ def switch_cards():
         "card_redacting": build_switch_card({**form, "selected_model": "claude:opus", "selected_redaction": "off",
                                              "current": {**form["current"], "redaction": True}}),
         "card_refused": build_switch_card({**form, "notice": "**⚠️ 还没有换（20:08）**：本话题还有任务在排队或执行"}),
+        # T669: opened from a relay card at the private chat's top level: there, its subtitle naming the topic and where a
+        # reply goes (app/harness_switch.py).
+        "card_top": build_switch_card({**form, "top_level": True}),
         "closed": notice_card("**🔁 已换配置**", "已换配置"),
         "panel_on_task_card": switch_panel(TOPIC, 431, "codex", 2),
         # T647 E1: the 交接 block above the first task card's answer after a switch (app/switch_handoff.py).
@@ -864,7 +867,7 @@ def answer_tail_cards():
                                          output_parts, review_element, revisit_hint_element, tail, tail_card)
     from covey.cards.elements import markdown_panel
     from covey.cards.review import answer_card
-    from covey.cards.topic_actions import topic_panel
+    from covey.cards.topic_actions import beside, relay_switch, topic_panel
 
     files = markdown_panel(ARTIFACTS_ID, "产物 2 个 · REPORT.md 等", "- [REPORT.md](https://example.invalid/a) · 12 KB\n"
                            "- [本轮改动.diff](https://example.invalid/b) · 3 KB", quiet=True)
@@ -980,6 +983,19 @@ def answer_tail_cards():
             "relay_stopped_quota": stopped_relay(failure_code="quota_exhausted"),
             "relay_stopped_started": (lambda built: replace_element(built, relay_stops.AREA_ID, relay_stops.line(
                 "↪ 已接着做 · 任务 #440")) and built)(stopped_relay(failure_code="timeout")),
+            # T669: a record with a binding offers 换个模型 too (its 换配置 card opens at the top level); once switched there,
+            # the line of it in the buttons' place.
+            "relay_stopped_limit_switch": stopped_relay(failure_code="rate_limited", harness_id="codex", binding_revision=2),
+            "relay_stopped_quota_switch": stopped_relay(failure_code="quota_exhausted", harness_id="codex", binding_revision=2),
+            "relay_stopped_switched": (lambda built: replace_element(built, relay_stops.AREA_ID, relay_stops.line(
+                relay_stops.SWITCHED.format("：Claude · Opus 5.5"))) and built)(
+                stopped_relay(failure_code="quota_exhausted", harness_id="codex", binding_revision=2)),
+            # T669 E1: a 做完了 relay's 换配置, beside 独立复核 when the turn changed code, else in a row of its own.
+            "answer_relay_switch": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
+                                              buttons=beside([], relay_switch(TOPIC, 439, "codex", 2)))[0],
+            "answer_relay_review_switch": relay_card(
+                "T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
+                buttons=beside([review_element(TOPIC, 439)], relay_switch(TOPIC, 439, "codex", 2)))[0],
             "answer_card_asked": answer_card(text, "✅ 结论", tail(files, inputs, outputs), [ask]),
             "answer_relay_asked": relay_card("T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files,
                                              ask=ask)[0],

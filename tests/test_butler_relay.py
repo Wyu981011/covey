@@ -475,6 +475,34 @@ class DeliverTest(Case):
         send = self.deliver(self.job(progress=SimpleNamespace(), checkpoint_path=str(point)))
         self.assertNotIn("改动", str(send.call_args.kwargs["card"]["body"]["elements"]))
 
+    def test_a_done_turn_offers_its_switch_beside_its_review_opening_at_the_top_level(self):
+        """T669 E1 (skipped by T658): 换配置 on a 做完了 relay, a small bordered button in the row of 独立复核 (one row of small
+        buttons, not two), else in a row of its own; its value is the task card's with ``relay``, so its card opens at the top
+        level (app/harness_switch.py). A turn with no Harness has none (test_a_done_turn_sends_its_conclusion)."""
+        from covey.app import review
+        from covey.cards.answer_card import review_element
+        job = self.job(progress=SimpleNamespace(), harness_id="codex", binding_revision=3)
+        elements = self.deliver(job).call_args.kwargs["card"]["body"]["elements"]
+        self.assertEqual(["answer_facts", "relay_switch_row", "relay_hint"], [e.get("element_id") for e in elements[-3:]])
+        value = {"kind": "bridge_switch_open", "topic_id": TOPIC, "job_id": 9, "harness_id": "codex", "binding_revision": 3,
+                 "relay": True}
+        self.assertEqual(switches_of(elements[-2]), [("换配置", value)])
+        relay_send.relay_path(self.state, job_key("main-t1", 9)).unlink()
+        with mock.patch.object(review, "buttons", return_value=[review_element(TOPIC, 9)]):
+            elements = self.deliver(job).call_args.kwargs["card"]["body"]["elements"]
+        self.assertEqual(["answer_facts", "answer_review", "relay_hint"], [e.get("element_id") for e in elements[-3:]])
+        self.assertEqual([label for label, _ in switches_of(elements[-2])], ["独立复核", "换配置"])
+        self.assertEqual(switches_of(elements[-2])[1], ("换配置", value))
+
+    def test_the_butlers_own_turn_and_a_turn_with_no_harness_offer_no_switch(self):
+        from covey.cards.answer_card import review_element
+        rows = [review_element(TOPIC, 9)]
+        self.assertEqual(butler_relay.with_switch(rows, self.job(topic=BUTLER, harness_id="claude")), rows)
+        self.assertEqual(butler_relay.with_switch((), self.job()), [])
+        mine = butler_relay.with_switch(rows, self.job(harness_id="codex"))
+        self.assertEqual(len(mine), 1)
+        self.assertEqual(len(rows[0]["columns"]), 1)  # The rows given are not changed.
+
     def test_a_stopped_turn_with_a_retry_planned_sends_nothing(self):
         send = self.deliver(self.job(progress=SimpleNamespace()), status="failed", retry=auto_retry.Planned(time.time() + 60, 1, auto_retry.RATE_LIMITED))
         send.assert_not_called()
@@ -669,6 +697,25 @@ def labels_of(element):
     return found
 
 
+def switches_of(element):
+    """The labels and callback values of the buttons in ``element`` that carry them as ``behaviors`` (cards/elements.py
+    topic_button with callback), or else as ``value``."""
+    found = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            if value.get("tag") == "button":
+                behaviors = [b.get("value") for b in value.get("behaviors") or () if b.get("type") == "callback"]
+                found.append((value["text"]["content"], behaviors[0] if behaviors else value.get("value")))
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value:
+                walk(child)
+    walk(element)
+    return found
+
+
 class StopButtonsTest(Case):
     """停住了 at the top level (app/relay_stops.py, T650): why and what next in core/failure.py's words, never the status line;
     the task card's 检查并继续 and 看原因 under them, each its own kind marked as the relay's; a click redraws the card in place
@@ -723,27 +770,75 @@ class StopButtonsTest(Case):
         self.assertTrue(card["config"]["update_multi"])  # Redrawn in place once clicked.
         self.assertEqual(saved["card"], card)  # Kept for that.
 
-    def test_each_stop_offers_what_its_task_card_offers_but_another_model(self):
+    def test_each_stop_offers_what_its_task_card_offers(self):
+        """T669: 换个模型 too (T650 left it out, its card opening in the topic's thread): for a record with a binding, the 换配置
+        card's own click with ``relay``, opening at the top level."""
+        route = {"harness_id": "codex", "binding_revision": 2}
         cases = {
             "timeout": ({"failure_code": "timeout"}, ["检查并继续", "拆小再试"]),
-            "limit": ({"failure_code": "rate_limited"}, ["现在重试"]),
-            "quota": ({"failure_code": "quota_exhausted"}, []),  # Only 换个模型: its card opens in the topic's thread.
-            "auth": ({"failure_code": "authentication_error"}, ["看原因"]),
+            "limit": ({"failure_code": "rate_limited", **route}, ["现在重试", "换个模型"]),
+            "quota": ({"failure_code": "quota_exhausted", **route}, ["换个模型"]),  # The one next step, the primary.
+            "policy": ({"status": "cancelled", "policy_stop": {"kind": "refusal", "category": "cyber", "scope": "main"},
+                        **route}, ["拆小再试", "换个模型"]),
+            "auth": ({"failure_code": "authentication_error", **route}, ["看原因"]),
             # A refusal whose retry on an older model is scheduled: nothing to click beside it.
             "policy_retry": ({"status": "cancelled", "policy_stop": {"kind": "refusal", "category": "cyber", "scope": "main"},
-                              "policy_retry_state": "pending", "policy_retry_model": "claude-opus-4-8"}, []),
+                              "policy_retry_state": "pending", "policy_retry_model": "claude-opus-4-8", **route}, []),
+            # A record with no binding (one from before it, a butler's) cannot open the 换配置 card: as the task card.
+            "limit_unbound": ({"failure_code": "rate_limited"}, ["现在重试"]),
+            "quota_unbound": ({"failure_code": "quota_exhausted"}, []),
         }
         for name, (fields, labels) in cases.items():
             with self.subTest(name):
                 card, _ = self.relayed(**fields)
                 self.assertEqual([label for label, _, _ in labels_of(area_of(card))], labels)
                 if labels:
-                    self.assertEqual(labels_of(area_of(card))[0][1], "primary")  # One a block (docs/ui.md 第 6 节).
+                    self.assertEqual([tone for _, tone, _ in labels_of(area_of(card))],
+                                     ["primary"] + ["default"] * (len(labels) - 1))  # One a block (docs/ui.md 第 6 节).
                 else:
                     self.assertIsNone(area_of(card))
-        # Without a button its band's line says the next step: 换个模型 is in the topic (the card's row goes there).
+        # Without a button its band's line still says the next step.
         card, _ = self.relayed(failure_code="quota_exhausted")
         self.assertIn("可以换个模型接着做", json.dumps(card["body"]["elements"][1], ensure_ascii=False))
+
+    def test_its_switch_opens_at_the_top_level_preferring_another_harness(self):
+        card, _ = self.relayed(failure_code="quota_exhausted", harness_id="codex", binding_revision=2)
+        self.assertEqual(labels_of(area_of(card)), [("换个模型", "primary", {
+            "kind": "bridge_switch_open", "topic_id": TOPIC, "job_id": 9, "harness_id": "codex", "binding_revision": 2,
+            "relay": True, "prefer_other": True})])
+
+    def test_a_switch_from_it_redraws_it_as_one_line_a_reply_goes_on_with(self):
+        """Once the owner confirmed the 换配置 its 换个模型 opened (app/harness_switch.py finish): the buttons become one line, the
+        new model named; a reply to the card goes to the topic (app/relay_send.py remember_sent), on the new model."""
+        from covey.cards.elements import find_element
+        from covey.cards.relay_card import NOTE_ID
+        self.relayed(failure_code="quota_exhausted", harness_id="codex", binding_revision=1)
+        part = self.part()
+        form = {"topic_id": TOPIC, "chat_id": CHAT, "job_id": 9, "top_level": True}
+        self.assertFalse(relay_stops.switched(self.state, part.messenger, "unit", form, "Claude · Opus 5.5"))  # Not switched.
+        part.messenger.patch_card.assert_not_called()
+        self.assertNotIn("clicked", read_object(relay_send.relay_path(self.state, self.KEY)))
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, binding_revision=2, switches=[{"revision": 2, "at": 1.0}])
+        self.assertTrue(relay_stops.switched(self.state, part.messenger, "unit", form, "Claude · Opus 5.5"))
+        built = part.messenger.patch_card.call_args.args[2]
+        self.assertEqual(part.messenger.patch_card.call_args.args[:2], ("unit", "om_relay"))
+        self.assertEqual(area_of(built)["content"],
+                         "<font color='grey'>↪ 已换配置：Claude · Opus 5.5；回复这张卡说一句，就按新配置接着做</font>")
+        self.assertEqual(find_element(built, NOTE_ID)["content"], "<font color='grey'>详情在 T410</font>")
+        saved = read_object(relay_send.relay_path(self.state, self.KEY))
+        self.assertEqual((saved["clicked"]["action"], saved["clicked"]["to"]), ("switch_model", "Claude · Opus 5.5"))
+        self.assertEqual(area_of(saved["card"]), area_of(built))
+        self.assertEqual(message_topic(self.state, CHAT, "om_relay"), TOPIC)  # A reply to it is the topic's.
+
+    def test_only_a_stopped_relay_with_its_card_is_redrawn(self):
+        part = self.part()
+        self.assertFalse(relay_stops.redraw(self.state, part.messenger, "unit", TOPIC, CHAT, 9))  # No record.
+        self.record(failure_code="quota_exhausted")
+        self.assertFalse(relay_stops.redraw(self.state, part.messenger, "unit", TOPIC, CHAT, 9))  # Not relayed.
+        write_json(relay_send.relay_path(self.state, self.KEY), {"state": "sent", "outcome": DONE, "message_id": "om_done"})
+        self.assertFalse(relay_stops.redraw(self.state, part.messenger, "unit", TOPIC, CHAT, 9))  # A 做完了 keeps no card.
+        part.messenger.patch_card.assert_not_called()
+        self.assertFalse(relay_stops.switched(self.state, part.messenger, "unit", {"job_id": "x"}))  # Never raises.
 
     def test_a_retry_click_redraws_the_card_with_the_task_that_went_on_and_never_retries_twice(self):
         self.relayed(failure_code="root_failed")
