@@ -49,6 +49,7 @@
     "test:asks": "node --import ./scripts/alias.mjs --test scripts/asks.test.mjs",
     "test:recover": "node --import ./scripts/alias.mjs --test scripts/recover.test.mjs",
     "test:words": "node --import ./scripts/alias.mjs --test scripts/words.test.mjs",
+    "test:v34": "node --import ./scripts/alias.mjs --test scripts/v34.test.mjs",
     "test:selfhost-logic": "node --import ./scripts/alias.mjs --test scripts/selfhost-logic.test.mjs",
     "test:selfhost-tls": "npm run build:selfhost:server && node --test scripts/selfhost-tls.test.mjs",
     "test:selfhost-api": "npm run build:selfhost:server && node --test scripts/selfhost-api.test.mjs"

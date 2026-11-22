@@ -171,16 +171,26 @@ def undo(host, ctx, event) -> bool:
     entry_id = str(raw.get("entry_id") or "")
     if not record or record.get("topic_id") != ctx.topic_id or not entry_id:
         raise ValueError("找不到这条记忆所在的任务")
+    notes = take_back(ctx.state_dir, ctx.topic_id, record, entry_id)
+    if notes is not None:  # None: taken back already (a second click), or not this turn's.
+        after_ack(lambda: show(ctx, host.messenger, record, notes, host.runtime.log))
+    return True
+
+
+def take_back(state, topic_id, record, entry_id):
+    """不对 on the entry ``entry_id`` the turn of job ``record`` (of ``topic_id``) wrote, the card's and the web page's
+    (app/web_ops.py memory_undo, data contract v34): the entry a tombstone, its note ``undone`` in the job record. The job's
+    notes as they are now (the caller redraws the answer card's lines from them); None when there is no such note still
+    remembered (taken back already, or not this turn's), nothing changed."""
     notes = [dict(note) for note in record.get("memory_notes") or ()]
     note = next((note for note in notes if note.get("kind") == "remembered" and note.get("entry_id") == entry_id), None)
     if note is None:
-        return True  # Taken back already (a second click), or not this turn's.
-    _forget(ctx.state_dir, ctx.topic_id, entry_id, note.get("scope"))
+        return None
+    _forget(state, topic_id, entry_id, note.get("scope"))
     note["kind"] = "undone"
     notes = [note if old.get("entry_id") == entry_id and old.get("kind") == "remembered" else old for old in notes]
-    upsert_job_record(ctx.state_dir, str(record["key"]), memory_notes=notes)
-    after_ack(lambda: show(ctx, host.messenger, record, notes, host.runtime.log))
-    return True
+    upsert_job_record(state, str(record["key"]), memory_notes=notes)
+    return notes
 
 
 def _forget(state, topic_id, entry_id, scope="") -> None:

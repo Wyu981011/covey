@@ -122,7 +122,9 @@ export const AgentTurn: React.FC<{
   /** 大厅（T624）：名字旁的“引用”，和选中一段时认出是哪一条 */
   onQuote?: () => void;
   roomKey?: string;
-}> = ({ turn, hl, who, avatar, fail, hideBody, onQuote, roomKey }) => {
+  /** 这一轮所在的话题（记忆的「不对」发给它，v34）；大厅里的轮次自己带 topic_key */
+  topicKey?: string;
+}> = ({ turn, hl, who, avatar, fail, hideBody, onQuote, roomKey, topicKey }) => {
   const live: boolean = turn.status === 'running';
   const now: number = useTick(live ? 1000 : 3600000);
   const [open, setOpen] = useState<boolean>(false);
@@ -175,7 +177,7 @@ export const AgentTurn: React.FC<{
           {turn.steps?.length ? '正在做' : '在做…'}
         </div>
       ) : null}
-      {turn.notes?.length ? <Notes notes={turn.notes} /> : null}
+      {turn.notes?.length ? <Notes notes={turn.notes} topicKey={turn.topic_key ?? topicKey} jobId={turn.job_id} /> : null}
       {turn.started_topics?.length ? <StartedChips items={turn.started_topics} /> : null}
       {turn.status === 'failed' ? fail ?? <p style={{ color: 'var(--fail)', fontSize: 12 }}>这一轮停住了</p> : null}
       {turn.status === 'stopped' ? <p className="t3" style={{ fontSize: 12 }}>这一轮已停止</p> : null}
@@ -192,11 +194,12 @@ export const ChatRound: React.FC<{
   avatar?: React.ReactNode;
   fail?: React.ReactNode;
   hideBody?: boolean;
-}> = ({ owner, agent, hl, who, avatar, fail, hideBody }) => (
+  topicKey?: string;
+}> = ({ owner, agent, hl, who, avatar, fail, hideBody, topicKey }) => (
   <>
     {owner.map((o: TurnView) => (
       <OwnerBubble key={o.key} o={o} answers={agent?.answers} hl={hl === o.seq} />
     ))}
-    {agent ? <AgentTurn turn={agent} hl={hl === agent.seq} who={who} avatar={avatar} fail={fail} hideBody={hideBody} /> : null}
+    {agent ? <AgentTurn turn={agent} hl={hl === agent.seq} who={who} avatar={avatar} fail={fail} hideBody={hideBody} topicKey={topicKey} /> : null}
   </>
 );

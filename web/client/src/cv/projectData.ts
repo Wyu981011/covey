@@ -1,4 +1,4 @@
-import type { ReportResponse, ReportTurn, SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
+import type { ReportResponse, ReportTurn, SettingsAsks, SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { cacheShare, closedAt, sinceOf } from './reportData';
 import { PRESSING, type ToneKey } from './look.gen';
 import { byAsked, byNumberDesc, byRecent, isWaiting, toneOf } from './lib';
@@ -64,6 +64,22 @@ export const askTotal = (a: Asks): number => {
   const c = askCounts(a);
   return c.waiting + c.stopped + c.stuck;
 };
+/** 要你处理各几件（v34）：Covey 推了算好的（snap.asks，core/board_read.py Asks.counts）就以它为准，跨 24 小时的旧题、刚点过不管了的
+ * 那一拍也和飞书一样；旧 Covey 没推时用本地数的（asks）。卡片和列表照旧按本地的话题画 */
+export function askNumbers(a: Asks, authority?: SettingsAsks | null): { waiting: number; stopped: number; stuck: number } {
+  if (authority && [authority.waiting, authority.stopped, authority.stuck].every((n: number) => Number.isInteger(n) && n >= 0)) {
+    return { waiting: authority.waiting, stopped: authority.stopped, stuck: authority.stuck };
+  }
+  return askCounts(a);
+}
+export const askSum = (c: { waiting: number; stopped: number; stuck: number }): number => c.waiting + c.stopped + c.stuck;
+
+/* ---- 专项的收尾、停止（v34，同飞书专项卡的停止专项、停住卡的收尾）：什么状态给哪颗；Covey 还会按守卫再核一次 ---- */
+/** 收尾：在做、等你的，和停住的（护栏停住、你停的、收起的；Covey 先叫醒负责人收尾） */
+export const canFinish = (p: Pick<SnapshotProject, 'status'>): boolean => ['在做', '等你', '停住', '收起'].includes(p.status);
+/** 停止：只给在做、等你的（停住了的再停没有意义；护栏停住的问你那张卡在飞书上） */
+export const canStop = (p: Pick<SnapshotProject, 'status'>): boolean => ['在做', '等你'].includes(p.status);
+
 /** 停住了的话题（看板、侧栏、专项一览都按它画红点） */
 export const stoppedSet = (a: Asks): Set<string> => new Set<string>(a.stopped.map((t: SnapshotTopic) => t.key));
 

@@ -60,6 +60,8 @@ class WebSettingsTest(UnifiedCase):
         # 设备 only with nodes; 代答 only where a sender is (an extension, covey_internal).
         # T619: the card's 配置 is one page here too, every section open (no card's size to keep to).
         self.assertEqual([t["label"] for t in data["tabs"]], ["配置", "工作区", "脱敏", "群聊"] + (["代答"] if available() else []))
+        # Data contract v34: the operations this Covey does, so the page shows 收尾、停止 and 不对 only where they are done.
+        self.assertTrue({"project_finish", "project_stop", "memory_undo", "recover"} <= set(data["ops"]))
         self.assertNotIn("nodes", data)
         config = data["config"]
         self.assertEqual([config[part]["title"] for part in ("topic", "main")], ["新话题", "管家"])

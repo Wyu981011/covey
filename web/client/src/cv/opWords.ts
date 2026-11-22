@@ -67,6 +67,9 @@ export const OP_NAME: Record<string, string> = {
   dismiss: '不管了',
   tidy: '整理',
   tidy_decide: '整理建议',
+  project_finish: '收尾专项',
+  project_stop: '停止专项',
+  memory_undo: '撤销记忆',
 };
 
 /** 话题页里一条动作（回答、补充说明、停止、换配置、恢复…）的结果行。换配置、恢复办好时直接写 Covey 的回执（从什么换成什么、任务几号） */
@@ -75,6 +78,6 @@ export function opLine(o: Pick<OutboxView, 'kind' | 'payload' | 'state' | 'messa
   const lesser: string = o.kind !== 'answer' ? '' : p.skip === true ? '补充说明' : p.ask === true ? '先问一句' : p.aside === true ? '不处理' : p.restore === true ? '撤销不处理' : '';
   const what: string = lesser || (o.kind === 'stop' && p.collab ? '停止本次协作' : OP_NAME[o.kind] ?? o.kind);
   const phase: OpPhase = rowPhase(o.state);
-  if ((o.kind === 'switch' || o.kind === 'recover') && phase === 'done' && plainReceipt(o.message)) return plainReceipt(o.message);
+  if ((o.kind === 'switch' || o.kind === 'recover' || o.kind === 'memory_undo') && phase === 'done' && plainReceipt(o.message)) return plainReceipt(o.message);
   return `${what}：${opWords(phase, o.message)}`;
 }

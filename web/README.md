@@ -42,7 +42,7 @@ MIAODA_APP_TYPE=3 npm run build:client   # 妙搭版前端（Vite + React）构�
 npm run build:selfhost           # 自托管版：服务端和前端构建到 dist-selfhost/
 ```
 
-单测一共 20 组 192 条：工作台 18 组 165 条（`test:graph` 到 `test:words`），自托管 2 组 27 条（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-api` 15 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出走一遍）。
+单测一共 22 组 223 条：工作台 19 组 175 条（`test:graph` 到 `test:v34`），自托管 3 组 48 条（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
 
 部署脚本的测试（不连飞书，用假的 lark-cli 和本机 git 仓库），在 covey 仓库根目录：
 

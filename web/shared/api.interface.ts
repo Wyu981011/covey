@@ -7,7 +7,7 @@ export const TOPIC_STATES = ['等你', '在做', '做完', '已停止', '失败'
 export type TopicState = (typeof TOPIC_STATES)[number];
 
 /** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload */
-export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover'] as const;
+export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo'] as const;
 export type OutboxKind = (typeof OUTBOX_KINDS)[number];
 export const isOutboxKind = (v: string): v is OutboxKind =>
   (OUTBOX_KINDS as readonly string[]).includes(v);
@@ -460,6 +460,10 @@ export interface TurnView {
   started_at: number | null;
   ended_at: number | null;
   artifacts: ArtifactItem[];
+  /** v34：这一轮检查点里的完成标准（{item, state: 满足|没满足|没查, evidence}），没有就不带 */
+  criteria?: TurnCriterion[];
+  /** v34：这一轮检查点里的交付（提交号、部署到哪、怎么验的），没有就不带 */
+  delivery?: TurnDelivery;
 }
 
 export interface TopicDetailResponse {
@@ -556,6 +560,10 @@ export interface SnapshotTopic {
   joined_at?: number;
   /** v20：话题现在的配置（只有 kind=topic、Covey 读得到模型目录时才有）。有它且设置里有 launch 时，输入框下的配置栏能点开换配置 */
   config?: TopicConfig;
+  /** v34：约好到点回来看（开了到点回来看、有待执行的预约才有）：几点（秒）、看什么 */
+  revisit?: TopicRevisit;
+  /** v34：等你在飞书卡上确认的代发草稿（开了代发、有草稿才有）；网页只读，确认和发送都在飞书原卡上 */
+  owner_send?: OwnerSendDraft[];
 }
 
 export interface RunningNow {
@@ -574,6 +582,8 @@ export interface SnapshotResponse {
   projects: SnapshotProject[];
   topics: SnapshotTopic[];
   questions: QuestionView[];
+  /** v34：Covey 算好的要你处理（settings 类条目 asks，和话题同一步推来）；旧 Covey 没有，网页自己数 */
+  asks?: SettingsAsks;
 }
 
 export interface TurnsResponse {
@@ -1069,8 +1079,12 @@ export const LAUNCH_RUN_MODES = ['direct', 'worktree'] as const;
 
 export interface SettingsData {
   launch?: LaunchData;
+  /** v34：要你处理的权威计数 */
+  asks?: SettingsAsks;
   tabs: SettingsTab[];
   feishu: string;
+  /** v34：这个 Covey 认的网页操作；有 project_finish、project_stop、memory_undo 才画收尾、停止和记忆的「不对」 */
+  ops?: string[];
   config?: SettingsConfigPage | SettingsError;
   /** v21 及以前：新话题、管家两页（v22 起并进 config） */
   topic?: SettingsTopicPage | SettingsError;
@@ -1096,7 +1110,7 @@ export type SettingsWhat = (typeof SETTINGS_WHATS)[number];
 /** v15：proxy 的 op */
 export const PROXY_OPS = ['enable', 'disable', 'row', 'pause', 'resume', 'remove'] as const;
 /** 同步条目 type=settings 的 key；settings 是设置快照，usage 是本周用量（v15），tidy 是整理专项的建议（v16） */
-export const SETTINGS_KEYS = ['settings', 'usage', 'tidy'] as const;
+export const SETTINGS_KEYS = ['settings', 'usage', 'tidy', 'asks'] as const;
 export const isSettingsKey = (v: string): boolean => (SETTINGS_KEYS as readonly string[]).includes(v);
 
 /** v16：整理专项的建议。kind 对应的标签词、按钮字由 Covey 给（tag、verb），headline、from 也是 Covey 拼好的 */
@@ -1143,4 +1157,48 @@ export type TidyResponse = TidyData | null;
 export interface TidyDecidePayload {
   proposal: string;
   choice: 'ok' | 'decline';
+}
+
+/* ---- v34：到点回来看、代发草稿、完成标准与改动、要你处理的权威计数 ---- */
+export interface TopicRevisit {
+  /** 约好的时刻（秒） */
+  at: number;
+  /** 到点要看什么（一句话） */
+  what: string;
+}
+export interface OwnerSendDraft {
+  id: string;
+  /** 发给谁（名字或群名，给人看的） */
+  to: string;
+  /** 草稿的状态：waiting 等你确认，sending 在发，failed 没发出去 */
+  state: string;
+  /** 正文开头（给人认出是哪条，全文只在飞书卡上） */
+  preview: string;
+  created_at: number | null;
+  /** 打开飞书里那张草稿卡的链接（拿得到才有） */
+  link?: string;
+}
+export const CRITERION_STATES = ['满足', '没满足', '没查'] as const;
+export interface TurnCriterion {
+  item: string;
+  state: string;
+  evidence?: string;
+}
+export interface TurnDelivery {
+  commit?: string;
+  deployed?: string;
+  verified?: string;
+}
+/** v34：Covey 算好的要你处理（core/board_read.py Asks.counts），网页有它就以它为准 */
+export interface SettingsAsks {
+  waiting: number;
+  stopped: number;
+  stuck: number;
+  /** 算的时刻（秒） */
+  at?: number;
+}
+/** v34：撤销刚记下的一条记忆（同答案卡上的「不对」）；topic_key 是那一轮所在的话题 */
+export interface MemoryUndoPayload {
+  job_id: string;
+  entry_id: string;
 }

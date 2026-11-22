@@ -47,11 +47,14 @@ import {
   type TurnImage,
   type TurnView,
   type WaitingItem,
+  type SettingsAsks,
 } from '@shared/api.interface';
 import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
-import { answersOf, configOf, failureOf, gistOf, progressOf, recoverShape } from './workbench.v4';
+import {
+  answersOf, asksOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectOpShape, recoverShape, revisitOf,
+} from './workbench.v4';
 
 interface TopicRow {
   key: string;
@@ -108,6 +111,8 @@ interface SnapTopicRow {
   board: string | null;
   joined_at: number | string | null;
   config: unknown;
+  revisit: unknown;
+  owner_send: unknown;
 }
 interface SearchRow {
   topic_key: string;
@@ -150,7 +155,8 @@ const SNAP_TOPICS = sql`select t.key, t.number, t.title, t.project_key, t.state,
   t.data->>'round' as round,
   case when jsonb_typeof(t.data->'started_at') = 'number' then (t.data->>'started_at')::float8 end as started_at,
   t.data->'context' as context, t.data->'gist' as gist, t.data->'progress' as progress, t.data->>'tone' as tone, t.data->>'board' as board,
-  case when jsonb_typeof(t.data->'joined_at') = 'number' then (t.data->>'joined_at')::float8 end as joined_at, t.data->'config' as config, r.data as rdata
+  case when jsonb_typeof(t.data->'joined_at') = 'number' then (t.data->>'joined_at')::float8 end as joined_at, t.data->'config' as config,
+  t.data->'revisit' as revisit, t.data->'owner_send' as owner_send, r.data as rdata
   from topics t left join lateral (
     select ${SHOWN} as body, role, status, u.key as lkey, u.data->>'job_id' as ljob, u.data->'failure' as failure from turns u where u.topic_key = t.key and ${OWN_TURN}
       order by u.seq desc limit 1
@@ -254,6 +260,11 @@ function v4Topic(r: SnapTopicRow): Partial<SnapshotTopic> {
   if (r.joined_at !== null && r.joined_at !== undefined && Number(r.joined_at) > 0) out.joined_at = Number(r.joined_at);
   const config = r.kind === 'topic' || !r.kind ? configOf(r.config) : undefined;
   if (config) out.config = config;
+  // v34：约好到点回来看、等你确认的代发草稿（Covey 开关关着或没有时不推，这里也就没有）
+  const revisit = revisitOf(r.revisit);
+  if (revisit) out.revisit = revisit;
+  const drafts = ownerSendOf(r.owner_send);
+  if (drafts) out.owner_send = drafts;
   return out;
 }
 
@@ -284,6 +295,16 @@ function v31Turn(d: Record<string, unknown>): Partial<TurnView> {
   const collab = turnCollabOf(d.collab);
   if (collab) out.collab = collab;
   if (typeof d.message_id === 'string' && d.message_id && d.message_id.length <= 160) out.message_id = d.message_id;
+  return out;
+}
+
+/** v34 的一轮字段：完成标准（criteria）和交付（delivery），来自这一轮的检查点，没有就不带 */
+function v34Turn(d: Record<string, unknown>): Partial<TurnView> {
+  const out: Partial<TurnView> = {};
+  const criteria = criteriaOf(d.criteria);
+  if (criteria) out.criteria = criteria;
+  const delivery = deliveryOf(d.delivery);
+  if (delivery) out.delivery = delivery;
   return out;
 }
 
@@ -549,6 +570,7 @@ export class WorkbenchQueryService {
       ...(Array.isArray(d.images) ? { images: turnImages(d.images) } : {}),
       ...v4Turn(d),
       ...v31Turn(d),
+      ...v34Turn(d),
     };
   }
 
@@ -579,11 +601,12 @@ export class WorkbenchQueryService {
 
   /** 侧栏、看板、专项页的列表都从这里来：几条 SQL 并行，一次返回 */
   async snapshot(): Promise<SnapshotResponse> {
-    const [topicRes, projectRes, questionRes, syncedAt] = await Promise.all([
+    const [topicRes, projectRes, questionRes, syncedAt, asks] = await Promise.all([
       this.db.execute(sql`${SNAP_TOPICS} order by t.updated_at desc`),
       this.db.execute(sql`select key, title, status, updated_at, data from projects order by updated_at desc`),
       this.db.execute(sql`select key, topic_key, turn_key, state, data from questions where state = 'open'`),
       this.syncedAt(),
+      this.snapshotData('asks'),
     ]);
     const all: SnapshotTopic[] = asRows<SnapTopicRow>(topicRes).map((r: SnapTopicRow) => this.snapTopic(r));
     // 网页里 kind=butler 的话题只留一个（updated_at 最新，已按它倒序）
@@ -613,12 +636,15 @@ export class WorkbenchQueryService {
         },
       };
     });
+    const counted: SettingsAsks | undefined = asksOf(asks);
     return {
       synced_at: syncedAt,
       butler_key: butler?.key ?? null,
       projects,
       topics,
       questions: asRows<QuestionRow>(questionRes).map((q: QuestionRow) => this.questionView(q)),
+      // v34：Covey 算好的要你处理，和话题同一步推来；旧 Covey 没推过就不带，网页自己数
+      ...(counted ? { asks: counted } : {}),
     };
   }
 
@@ -1155,6 +1181,21 @@ export class WorkbenchQueryService {
     }
     if (kind === 'reopen') {
       if (!str(req.project_key)) throw new BadRequestException('reopen 要 project_key');
+      return;
+    }
+    if (kind === 'project_finish' || kind === 'project_stop') {
+      // v34：专项的收尾、停止，同飞书专项卡、停住卡上的按钮；能不能做由 Covey 按专项记录和守卫定
+      const bad: string | null = projectOpShape(kind, payload, str(req.topic_key), str(req.project_key));
+      if (bad) throw new BadRequestException(bad);
+      payload.project_key = str(req.project_key);
+      return;
+    }
+    if (kind === 'memory_undo') {
+      // v34：撤销刚记下的一条记忆，同答案卡上的「不对」
+      const shape = memoryUndoShape(payload, str(req.topic_key), str(req.project_key));
+      if ('error' in shape) throw new BadRequestException(shape.error);
+      payload.job_id = shape.job_id;
+      payload.entry_id = shape.entry_id;
       return;
     }
     if (kind === 'recover') {

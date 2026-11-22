@@ -3,6 +3,8 @@ import { Check, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TurnRanWith, TurnView } from '@shared/api.interface';
 import { fmtDur, fmtTok, turnStats } from './lib';
+import { criteriaSummary, deliveryBits } from './v34';
+import './v34.css';
 
 /* 回答下面的输入、输出两行和「复制」（T645）：话题页、大厅的回答和大厅里展开的话题结论（回带）共用，和飞书答案卡、回带卡一样 */
 
@@ -59,10 +61,15 @@ export const AnswerFoot: React.FC<{
   copy?: { text: string; label: string };
 }> = ({ turn, copy: what }) => {
   const [done, setDone] = useState<boolean>(false);
+  const [open, setOpen] = useState<boolean>(false);
   const rows: { label: string; tip: string; bits: string[] }[] = [
     { label: '输入', tip: '这一轮用的配置', bits: inputBits(turn.ran_with) },
     { label: '输出', tip: '这一轮的用时和用量', bits: outputBits(turn) },
+    // v34：和飞书答案卡一样，改了代码的一轮再加一行“改动 提交号 ｜ 部署到哪 ｜ 已自检”
+    { label: '改动', tip: turn.delivery?.verified ? `自检：${turn.delivery.verified}` : '这一轮的提交和部署', bits: deliveryBits(turn.delivery) },
   ].filter((r) => r.bits.length > 0);
+  // v34：完成标准一行：几条满足，点开是每一条和它的依据
+  const crit = criteriaSummary(turn.criteria);
   const copy = (): void => {
     void copyText(what?.text ?? turn.body).then((ok: boolean) => {
       if (!ok) {
@@ -91,6 +98,23 @@ export const AnswerFoot: React.FC<{
         </div>
       ))}
       {rows.length ? null : <div className="afoot-row">{button}</div>}
+      {crit.text ? (
+        <div className="afoot-row">
+          <b>完成标准</b>
+          <span className="afoot-bits">
+            <button type="button" className={`afoot-crit${crit.unmet ? ' unmet' : ''}`} aria-expanded={open} onClick={() => setOpen(!open)}>
+              {crit.text}{open ? ' · 收起' : ' · 展开'}
+            </button>
+          </span>
+        </div>
+      ) : null}
+      {crit.text && open ? (
+        <div className="afoot-list">
+          {(turn.criteria ?? []).map((c, i: number) => (
+            <span key={i}><span className={`st${c.state === '满足' ? '' : ' no'}`}>{c.state}</span>{c.item}{c.evidence ? `（${c.evidence}）` : ''}</span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 };

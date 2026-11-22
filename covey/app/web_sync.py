@@ -70,6 +70,7 @@ class WebSync:
         self.settings_due, self.settings_stamps = True, None  # The 设置 item: built on a full look, after the page changed one, or when its files did.
         self.settings_lock = threading.Lock()  # push_settings runs in both threads.
         self.tidy_stamps, self.tidy_lock, self.tidy_failed = None, threading.Lock(), 0  # The 整理专项 item (push_tidy).
+        self.asks_failed, self.asks_tried = 0, None  # The 要你处理 item (push_asks): failures in a row, the rev tried last.
         self.ledger = None
         self.down = {}  # thread name -> failures in a row.
         self.images_wait, self.images_down = 0.0, 0  # push_images: no sending before this time; failures in a row.
@@ -211,6 +212,7 @@ class WebSync:
                     del self.backlog[name]
             self.sent_changed = True
         if collector is self.collector:
+            self.push_asks(collector, full)
             self.push_images(collector, now)
         if full and collector is self.collector:
             self.last_full = now
@@ -323,6 +325,30 @@ class WebSync:
             return len(due)
         finally:
             self.settings_lock.release()
+
+    def push_asks(self, collector, full=False) -> int:
+        """The ``settings`` item ``asks`` (data contract v34): 要你处理 as every card counts it ({waiting, stopped, stuck},
+        core/board_read.py Asks.counts, the collector's last look), posted on its own right after the step's topics, when it
+        changed. A page older than v34 refuses the key: that is logged (the first time, then every tenth) and the same counts are
+        tried again only on a full look, never holding up the topics, which went in their own request. How many went (0 or 1)."""
+        if collector.asks is None:
+            return 0
+        each = web_sync.item("settings", web_sync.ASKS_KEY, collector.asks)
+        name = (each["type"], each["key"])
+        if self.sent.get(name) == each["rev"] or (self.asks_tried == each["rev"] and not full):
+            return 0
+        self.asks_tried = each["rev"]
+        try:
+            self.client.request("POST", "/sync/upsert", {"items": [each], "deleted": []})
+        except Exception as exc:  # noqa: BLE001 - logged; a change or the next full look tries again
+            self.asks_failed += 1
+            if self.asks_failed == 1 or self.asks_failed % 10 == 0:
+                self.runtime.log(f"web asks not pushed ({self.asks_failed}): {type(exc).__name__}: {self.why(exc)}")
+            return 0
+        self.asks_failed = 0
+        self.sent[name] = each["rev"]
+        self.sent_changed = True
+        return 1
 
     def push_tidy(self, now, full=False) -> int:
         """The ``settings`` item ``tidy`` (整理专项's suggestions, app/project_tidy.py web_view, data contract v16), posted on its own: when

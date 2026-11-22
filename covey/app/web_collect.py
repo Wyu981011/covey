@@ -9,8 +9,9 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import pins, project_lead, project_loop, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
-from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, turn_source, web_sync
+from covey.app import owner_send, pins, project_lead, project_loop, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
+from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, revisits, turn_source, web_sync
+from covey.core import owner_send as owner_send_records
 from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
 from covey.core.history_storage import history_lines
@@ -69,6 +70,7 @@ class Collector:
         self.hot, self.dirty = set(), set()
         self.unseen = set()
         self.board = None  # topic id -> its group on the board (``board_groups``); None without the board (COVEY_PINNED_TOPICS unset).
+        self.asks = None  # 要你处理 as every card counts it ({waiting, stopped, stuck}, core/board_read.py Asks.counts), data contract v34.
         self.states = {}  # topic id -> its state word, from its last build (a project's 等你 reads it).
         self.pushed_topics = set()
         # The full pass under way: the topics still to look at, the ones looked at so far, and whether the last step ended it.
@@ -143,6 +145,7 @@ class Collector:
             looked.look(state, chat, now, read, board=pins.laid())
             self.unseen = set(looked.unseen)
             self.board = board_groups(looked.rows, looked.dismissed) if pins.laid() else None
+            self.asks = self.counted(state, chat, now, looked)
         quick = [topic for topic in hot | self.hot | touched if topic not in family]
         if start:
             backfill, self.backfill = self.backfill, False  # Every topic once, not only the recent ones (images of older turns).
@@ -399,6 +402,8 @@ class Collector:
         gist = self.gist(state, topic) if not (butler or project) else None
         if gist:
             body["gist"] = gist
+        if not (butler or project):  # Data contract v34: what comes back to it at a time it set, and what waits for the owner to send.
+            body.update(later_and_drafts(state, topic))
         # The page drops this topic's turns past it (data contract v12): a turn pushed as running at count + 1 whose answer came in
         # at a lower seq (the answer's row and a stale "running" row of the same task) was never replaced,
         # so the 专项报告 counted that task's tokens twice and drew it as still running.
@@ -431,6 +436,18 @@ class Collector:
             ran = web_turns.ran_with(job, menu, redaction, data)
             if ran:
                 turn["ran_with"] = ran
+
+    @staticmethod
+    def counted(state, chat, now, looked):
+        """要你处理 now as every card counts it (core/board_read.py Asks.counts, what the 看板 and 手上的事 say: 等你 with the
+        butler's and the leads' questions and 整理专项's proposals, 停住了 with the projects a guard paused, 可能卡住), from the look
+        just taken (``looked``: app/pins.py PinnedTopics, its topics taken off left out); None when it cannot be read."""
+        try:
+            off = dict(looked.dismissed)
+            found = board_read.waits(state, chat, now, off=off)
+            return dict(looked.asks(state, chat, found, now, off, proposals=True).counts())
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return None
 
     @staticmethod
     def gist(state, topic):
@@ -970,6 +987,32 @@ def start_link(state, topic, card) -> str:
 def never_started(records) -> bool:
     """Whether a topic's last task was cancelled before it started (a launch card closed by a stop, one taken out of the queue)."""
     return bool(records) and records[-1].get("status") == "cancelled" and bool(records[-1].get("never_started"))
+
+
+def later_and_drafts(state, topic) -> dict:
+    """A topic's ``revisit`` {at, what}: its 到点回来看 that is due (core/revisits.py, COVEY_REVISIT=1, state pending), and its
+    ``owner_send``: the 代发 drafts that wait for the owner on their card in Feishu (core/owner_send.py drafted, or unsent and to be
+    sent again; COVEY_OWNER_SEND, with a 代答 sender), each {id, to, state, preview, created_at}, newest first, at most
+    DRAFTS_SHOWN. The page shows them and sends nobody anything: a draft goes out only from its card. {} for neither."""
+    out = {}
+    if revisits.enabled():
+        found = revisits.read(state, topic)
+        if found.get("state") == revisits.PENDING and isinstance(found.get("due_at"), (int, float)):
+            out["revisit"] = {"at": round(found["due_at"]), "what": " ".join(str(found.get("look") or "").split())[:200]}
+    if owner_send.enabled():
+        drafts = [row for row in owner_send_records.topic_records(state, topic) if row.get("status") in DRAFT_WAITS]
+        if drafts:
+            out["owner_send"] = [{
+                "id": str(row.get("id") or ""), "to": str(row.get("to_label") or row.get("to") or "")[:60],
+                "state": "waiting" if row.get("status") == "drafted" else "failed",
+                "preview": " ".join(str(row.get("text") or "").split())[:120],
+                "created_at": round(row["created_at"]) if isinstance(row.get("created_at"), (int, float)) else None,
+            } for row in drafts[:DRAFTS_SHOWN]]
+    return out
+
+
+DRAFT_WAITS = ("drafted", "unsent")  # A draft that waits for the owner's 确认 on its card (app/owner_send.py decide).
+DRAFTS_SHOWN = 5
 
 
 def board_groups(rows, dismissed) -> dict:

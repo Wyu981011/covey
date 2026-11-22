@@ -37,6 +37,16 @@ class TableTest(unittest.TestCase):
         self.assertEqual(data, json.loads(json.dumps(look.export())))
         self.assertEqual(data["states"]["result"]["heading"], "有结果没看")
         self.assertEqual(data["states"]["stopped"]["word"], "停住了")
+        # The retired words go out with it: the web page's test reads them from look.json, not from a copy of its own.
+        self.assertEqual(data["retired"], {key: list(words) for key, words in look.RETIRED.items()})
+
+    def test_web_copy_is_the_export(self):
+        """web/client/src/cv/look.json is this export, re-run when core/look.py changes (scripts/export_look.py --out)."""
+        copy = REPO / "web" / "client" / "src" / "cv" / "look.json"
+        if not copy.exists():
+            self.skipTest("no web/ in this tree")
+        self.assertEqual(json.loads(copy.read_text(encoding="utf-8")), json.loads(json.dumps(look.export())),
+                         "web/client/src/cv/look.json is stale: python3 -B scripts/export_look.py --out web/client/src/cv/look.json")
 
 
 class ToneTest(unittest.TestCase):

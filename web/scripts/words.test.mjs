@@ -92,16 +92,10 @@ test('进度说明：在等命令跑完、这步比平均慢、可能卡住多�
 });
 
 /* ---------- P1-B8：退役的状态词不回潮 ---------- */
-// covey core/look.py RETIRED（covey 导出的 look.json 不带它，这里照抄；look.json 带了 retired 时一并认），加网页自己退役的说法
+// 退役的状态词只有一个来源：covey core/look.py 的 RETIRED，经 scripts/export_look.py 导出进 look.json 的 retired（v34）；
+// 这里不再照抄一份（covey tests/test_look.py 核对 web 的 look.json 就是那次导出）
 const LOOK = JSON.parse(readFileSync(join(CV, 'look.json'), 'utf8'));
-const RETIRED = {
-  done: ['已完成', '完成', '✅ 完成', '✅ 已完成'],
-  waiting: ['等你回答', '需要你回答', '❓ 需要你回答'],
-  running: ['进行中'],
-  result: ['有结果未看', '做完没看'],
-  stopped: ['失败', '执行失败', '❌ 失败', '⚠️ 失败', '⚠️ 执行失败', '中断', '已中断'],
-  ...(LOOK.retired ?? {}),
-};
+const RETIRED = LOOK.retired ?? {};
 // 网页自己说过的旧词：“这一轮失败了 / 停了”（T647 B8）、被停止了、只记在本机的“先放着”（P1-C3 并成不管了）
 const WEB_RETIRED = ['这一轮失败了', '这一轮被停止了', '停了', '先放着'];
 // 短词只在整句就是它、或当状态前缀（“失败：…”）时算；长词出现在哪都算
@@ -138,6 +132,11 @@ test('页面代码里给人看的字没有退役的状态词（covey look.RETIRE
     }
   }
   assert.deepEqual(hits, []);
+});
+
+test('退役词来自 look.json（covey look.RETIRED 的导出），不是网页自己抄的一份', () => {
+  assert.deepEqual(Object.keys(RETIRED).sort(), ['done', 'result', 'running', 'stopped', 'waiting']);
+  assert.ok(RETIRED.stopped.includes('执行失败') && RETIRED.waiting.includes('等你回答') && RETIRED.running.includes('进行中'));
 });
 
 test('退役词检查自己认得出来：整句的“失败”、“失败：”前缀、长词出现在句中都拦', () => {

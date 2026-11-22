@@ -5,6 +5,11 @@ import {
   FAILURE_HOWS,
   RECOVER_ACTIONS,
   type FailureAction,
+  type OwnerSendDraft,
+  type SettingsAsks,
+  type TopicRevisit,
+  type TurnCriterion,
+  type TurnDelivery,
   type FailureButton,
   type FailureHow,
   type TopicCommand,
@@ -184,4 +189,92 @@ export function recoverShape(payload: Record<string, unknown>, topicKey: string,
   if (!/^\d{1,12}$/u.test(job)) return { error: 'recover 要任务号 job_id' };
   if (!(RECOVER_ACTIONS as readonly string[]).includes(str(payload.action))) return { error: 'recover 的 action 不合法' };
   return { job_id: job };
+}
+
+/* ---- v34：到点回来看、代发草稿、完成标准与改动；形状不对就当没有 ---- */
+const clip = (v: unknown, n: number): string => Array.from(str(v).trim()).slice(0, n).join('');
+
+/** 话题约好的到点回来看 {at, what}：at 是正数秒 */
+export function revisitOf(v: unknown): TopicRevisit | undefined {
+  if (!isObj(v)) return undefined;
+  const d: Record<string, unknown> = obj(v);
+  const at: number | undefined = finite(d.at);
+  if (at === undefined || at <= 0) return undefined;
+  return { at, what: clip(d.what, 200) };
+}
+
+/** 等你确认的代发草稿：只留认得的字段，链接只认 https；最多 5 条 */
+export function ownerSendOf(v: unknown): OwnerSendDraft[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: OwnerSendDraft[] = [];
+  for (const x of v) {
+    const d: Record<string, unknown> = obj(x);
+    const id: string = clip(d.id, 64);
+    if (!id) continue;
+    const link: string = str(d.link).trim();
+    const at: number | undefined = finite(d.created_at);
+    out.push({
+      id, to: clip(d.to, 60), state: clip(d.state, 20) || 'waiting', preview: clip(d.preview, 120), created_at: at !== undefined && at > 0 ? at : null,
+      ...(/^https:\/\//u.test(link) ? { link: link.slice(0, 500) } : {}),
+    });
+  }
+  return out.length ? out.slice(0, 5) : undefined;
+}
+
+/** 一轮的完成标准 [{item, state, evidence}]：最多 20 条 */
+export function criteriaOf(v: unknown): TurnCriterion[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: TurnCriterion[] = [];
+  for (const x of v) {
+    const d: Record<string, unknown> = obj(x);
+    const item: string = clip(d.item, 300);
+    if (!item) continue;
+    const evidence: string = clip(d.evidence, 300);
+    out.push({ item, state: clip(d.state, 10) || '没查', ...(evidence ? { evidence } : {}) });
+  }
+  return out.length ? out.slice(0, 20) : undefined;
+}
+
+/** 一轮的交付 {commit, deployed, verified}：都空就没有 */
+export function deliveryOf(v: unknown): TurnDelivery | undefined {
+  if (!isObj(v)) return undefined;
+  const d: Record<string, unknown> = obj(v);
+  const out: TurnDelivery = {};
+  const commit: string = clip(d.commit, 400);
+  const deployed: string = clip(d.deployed, 200);
+  const verified: string = clip(d.verified, 400);
+  if (commit) out.commit = commit;
+  if (deployed) out.deployed = deployed;
+  if (verified) out.verified = verified;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** v34：专项的收尾、停止（同飞书专项卡、停住卡上的按钮）：要 project_key、不带 topic_key，payload 是空的 */
+export function projectOpShape(kind: string, payload: Record<string, unknown>, topicKey: string, projectKey: string): string | null {
+  if (!projectKey || topicKey) return `${kind} 要 project_key、不带 topic_key`;
+  if (Object.keys(payload).some((k: string) => k !== 'project_key')) return `${kind} 的 payload 要是空的`;
+  return null;
+}
+
+/** v34：撤销刚记下的一条记忆（同答案卡上的「不对」）：要 topic_key，payload 是 job_id（任务号）和 entry_id */
+export function memoryUndoShape(payload: Record<string, unknown>, topicKey: string, projectKey: string): { job_id: string; entry_id: string } | { error: string } {
+  if (!topicKey || projectKey) return { error: 'memory_undo 要 topic_key、不带 project_key' };
+  if (Object.keys(payload).some((k: string) => k !== 'job_id' && k !== 'entry_id')) return { error: 'memory_undo 只有 job_id 和 entry_id' };
+  const job: string = typeof payload.job_id === 'number' && Number.isInteger(payload.job_id) ? String(payload.job_id) : str(payload.job_id).trim();
+  if (!/^\d{1,12}$/u.test(job)) return { error: 'memory_undo 要任务号 job_id' };
+  const entry: string = str(payload.entry_id).trim();
+  if (!/^[A-Za-z0-9_.:-]{1,64}$/u.test(entry)) return { error: 'memory_undo 要 entry_id' };
+  return { job_id: job, entry_id: entry };
+}
+
+/** v34：Covey 算好的要你处理 {waiting, stopped, stuck}（settings 类条目 asks）：三个都是非负整数才认 */
+export function asksOf(v: unknown): SettingsAsks | undefined {
+  if (!isObj(v)) return undefined;
+  const d: Record<string, unknown> = obj(v);
+  const n = (x: unknown): number | undefined => (typeof x === 'number' && Number.isInteger(x) && x >= 0 ? x : undefined);
+  const waiting: number | undefined = n(d.waiting);
+  const stopped: number | undefined = n(d.stopped);
+  const stuck: number | undefined = n(d.stuck);
+  if (waiting === undefined || stopped === undefined || stuck === undefined) return undefined;
+  return { waiting, stopped, stuck };
 }

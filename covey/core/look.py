@@ -201,9 +201,11 @@ def topic_color(label) -> int:
 def export() -> dict:
     """The table as the web page reads it (look.json): each state's word, group and colours, the order of the most
     pressing, the brand, the band's gradient, the topics' colours (``topic_color`` picks one: number × step, modulo
-    their count) and the web page's own colours."""
+    their count), the web page's own colours and the words retired for each state (``RETIRED``: the page's test keeps
+    them off the page from this one list)."""
     return {"version": 1,
             "states": {key: {**look._asdict(), "heading": group_word(key)} for key, look in STATES.items()},
             "project": PROJECT._asdict(), "pressing": list(PRESSING), "brand": dict(BRAND),
             "band": {**BAND, "rgb": list(BAND["rgb"]), "dark_rgb": list(BAND["dark_rgb"]), "line": list(BAND["line"])},
-            "topics": {"colors": list(TOPIC_COLORS), "step": TOPIC_STEP}, "web": dict(WEB)}
+            "topics": {"colors": list(TOPIC_COLORS), "step": TOPIC_STEP}, "web": dict(WEB),
+            "retired": {key: list(words) for key, words in RETIRED.items()}}

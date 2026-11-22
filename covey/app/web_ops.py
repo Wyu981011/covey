@@ -60,6 +60,11 @@ KINDS) as the owner's own and says (state, message) for the ack.
 - ``login`` (self-hosted page, docs/web.md 网页登录确认): a browser asks to sign in, payload ``{request_id, code, browser, os, at}``; the 网页登录确认
   card goes to the private chat (app/web_login.py) and the owner's 允许 / 不是我 is told to the page as a ``login`` item; ``done`` says the card was sent
   (not that the owner agreed), a request over 5 minutes old or without the part is ``failed``.
+- ``project_stop``, ``project_finish`` (data contract v34): 停止 as the 专项卡's 停止专项 (or the pause card's 停) does it, the tasks of the
+  lead and the member topics asked to stop; 收尾 as the pause card's 收尾, or the owner's choice the lead finishes from, the lead's own gates
+  (a member topic running or waiting, the 目标检查表) checked first and their reason said, nothing done.
+- ``memory_undo`` (data contract v34): 不对 on a turn's "记下了" line as on its answer card (app/memory_collect.py take_back); a line taken
+  back already says so, ``done``.
 The topic or project has to be the owner's private chat's, known and not over; anything else is ``failed`` with the reason.
 
 Rules (AGENTS.md): nothing is sent from under a record's lock; a write to a task is not replayed (the ledger, core/web_sync.py, keeps an
@@ -72,7 +77,7 @@ import re
 import time
 from pathlib import Path
 
-from covey.app import auto_retry, project_loop
+from covey.app import auto_retry, memory_collect, project_clicks, project_lead, project_loop, project_tools
 from covey.app.answers import AnswerIncomplete, answer_fields, skip_all_fields, submitted_answer
 from covey.app.binding import stale_job_card
 from covey.app.runtime import job_stage, supplement_target_of
@@ -101,6 +106,9 @@ RECOVER_ACTIONS = (failure.CONTINUE, failure.RETRY, failure.DIAGNOSE, failure.SP
 # The message id of the turn a ``recover`` starts: ``recover-<op_id>``, as a card click's is its event id. Not ``web-``: those are the
 # owner's own words (app/project_lead.py OWNER_PREFIXES, app/butler_asks.py, app/collab_flow.py), and a retry or a 看原因 says none.
 RECOVER_PREFIX = "recover-"
+# 收尾 from the page on a project that is on (no pause put to the owner): the lead's ``owner_choice`` receipt, as the pause card's.
+WEB_FINISH = ("主人在网页上选了收尾：这个专项不再开新的话题。请总结做完了什么、还有什么没做完，用 project_note 标 report 告诉主人，"
+              "然后调 project_finish（还有话题在做时它会拒绝，等它们结束再收尾）。")
 RECOVER_DONE = {failure.DIAGNOSE: "已开一轮只读排查：看看这一轮为什么没成功，不改文件、不重跑",
                 failure.SPLIT: "已开始拆小再试：把这件事拆成更小的几步重新做"}
 
@@ -129,7 +137,8 @@ class Ops:
                        "forget": self.forget, "tidy": self.tidy, "settings": self.settings,
                        "dismiss": self.dismiss, "tidy_decide": self.tidy_decide, "launch": self.launch,
                        "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover,
-                       "login": self.login}.get(kind)
+                       "login": self.login, "project_finish": self.project_finish, "project_stop": self.project_stop,
+                       "memory_undo": self.memory_undo}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -706,6 +715,105 @@ class Ops:
         return self.web_settings.change(payload, self.runtime.access.is_owner(self.runtime.owner_open_id or ""))
 
     # -- reopen ------------------------------------------------------------------------------------------------------------
+
+    # -- 专项的收尾、停止 (data contract v34) -------------------------------------------------------------------------------
+
+    def owned_project(self, state, chat, row, what) -> dict:
+        """The record of the row's project, the owner's (app/access.py is_owner) and in his chat; ValueError says why not."""
+        pid = str(row.get("project_key") or "")
+        if not projects.valid_id(pid):
+            raise ValueError("没有专项编号")
+        record = projects.read_record(state, pid)
+        if not record or record.get("chat_id") != chat:
+            raise ValueError("这个专项不认识，或不在你的私聊里")
+        if self.runtime.access.is_owner(self.runtime.owner_open_id or "") is not True:
+            raise ValueError(f"只有主人能{what}专项")
+        return record
+
+    def project_stop(self, state, chat, row, payload) -> str:
+        """停止 of a project from the page: what 停止专项 on its 专项卡 does to one that is on (``ACTIVE``: app/project_clicks.py
+        stop_project) and what 停 on its pause card does to one a guard paused and put to the owner (``project_loop.answer_pause``):
+        停住 as the owner's stop, the lead's and the member topics' queued and running tasks asked to stop (stop source ``web``, the
+        owner's own). Any other state, or the pause card's choice made already, says why and does nothing."""
+        record = self.owned_project(state, chat, row, "停止")
+        pid, name = str(record["id"]), str(record.get("name") or "专项")[:30]
+        ask = record.get("pause_ask") if isinstance(record.get("pause_ask"), dict) else None
+        if record.get("state") == projects.ACTIVE:
+            try:
+                projects.set_state(state, pid, projects.PAUSED, projects.OWNER_STOP)
+            except ValueError:  # The lead, a guard or a click moved it first.
+                raise ValueError(f"专项「{name}」刚变了状态，没有停：刷新后再看") from None
+        elif record.get("state") == projects.PAUSED and ask is not None and not ask.get("choice"):
+            outcome = project_loop.answer_pause(state, pid, "stop")
+            if outcome != "ok":
+                raise ValueError(project_clicks.ASK_REFUSED[outcome].format(name=name))
+        else:
+            raise ValueError(f"专项「{name}」已经是{'做完' if record.get('state') == projects.DONE else '停住'}的，没有要停的")
+        lead, stopped = str(record.get("lead_topic_id") or ""), 0
+        try:
+            app, ctx = self.topic(state, chat, lead)
+            stopped = project_clicks.stop_tasks(app.controls, ctx, [lead, *(record.get("threads") or ())], chat,
+                                                PREFIX + str(row.get("op_id") or ""), by="web")
+        except ValueError:  # No lead topic to stop from (gone): the project is 停住 all the same.
+            pass
+        return f"已停住专项「{name}」，已请 {stopped} 个任务停下（在跑的命令可能要过一会儿才停）。要继续，点「继续」"
+
+    def project_finish(self, state, chat, row, payload) -> str:
+        """收尾 of a project from the page: the owner's choice of 收尾 its lead acts on, as on the pause card (``answer_pause`` and the
+        lead's ``owner_choice`` receipt, ``pause_receipt``) when a guard's pause was put to him, else the same receipt in words
+        of his own choosing on a project that is on (the lead sums up and calls project_finish). The lead's own gates go first
+        and refuse with their reason, nothing done: a member topic running or waiting for the owner (app/project_lead.py
+        live_members), the 目标检查表 or 协作 gaps not dealt with (app/project_tools.py checklist_gate)."""
+        record = self.owned_project(state, chat, row, "收尾")
+        pid, name = str(record["id"]), str(record.get("name") or "专项")[:30]
+        if record.get("state") not in (projects.ACTIVE, projects.PAUSED):
+            raise ValueError(f"专项「{name}」已经{'做完' if record.get('state') == projects.DONE else '取消'}了，不用再收尾")
+        live = project_lead.live_members(state, record)
+        if live:
+            raise ValueError(f"还有话题在做或等你（{'、'.join(live)}），不能收尾：等它们结束，或先处理掉")
+        unmet, _, _ = project_tools.checklist_gate(state, record)
+        if unmet:  # The reason as the lead gets it, without the steps the lead is told to take.
+            raise ValueError(unmet.removesuffix(project_tools.FINISH_NEXT) + "等负责人补齐，或在专项里告诉它哪些不要了")
+        ask = record.get("pause_ask") if isinstance(record.get("pause_ask"), dict) else None
+        if record.get("state") == projects.PAUSED and ask is not None and not ask.get("choice"):
+            outcome = project_loop.answer_pause(state, pid, "finish")
+            if outcome != "ok":
+                raise ValueError(project_clicks.ASK_REFUSED[outcome].format(name=name))
+            project_loop.pause_receipt(state, pid, "finish", (projects.read_record(state, pid) or {}).get("pause_ask") or {})
+        else:
+            projects.update(state, pid, project_loop.owner_spoke)  # His word: on again if it was folded or stopped.
+            project_lead.add_receipt(state, pid, "owner_choice",
+                                     WEB_FINISH + (project_loop.CHOICE_CHECKLIST if turn_source.enabled() else ""))
+        return f"已请负责人收尾专项「{name}」：它会总结做完了什么、还有什么没做完，再结束这个专项"
+
+    # -- 记忆的「不对」 (data contract v34) ------------------------------------------------------------------------------------
+
+    def memory_undo(self, state, chat, row, payload) -> str:
+        """不对 on a "记下了" line of a turn on the page: what the line's 不对 on its answer card does (app/memory_collect.py
+        take_back, the card's lines redrawn); a line taken back already says so, done."""
+        topic = str(row.get("topic_key") or "")
+        job_id, entry_id = str(payload.get("job_id") or "").strip(), str(payload.get("entry_id") or "").strip()
+        if not TOPIC_ID.fullmatch(topic):
+            raise ValueError("没有话题编号")
+        if not job_id.isdigit() or not entry_id:
+            raise ValueError("没有任务编号或记忆编号")
+        if self.runtime.access.is_owner(self.runtime.owner_open_id or "") is not True:
+            raise ValueError("只有主人能撤销记忆")
+        app, ctx = self.topic(state, chat, topic)
+        record = next((each for each in topic_job_records(state, topic, chat_id=chat) if str(each.get("job_id")) == job_id), None)
+        if record is None:
+            raise ValueError(f"这个话题里没有任务 #{job_id}")
+        note = next((each for each in record.get("memory_notes") or () if isinstance(each, dict) and each.get("entry_id") == entry_id), None)
+        if note is None:
+            raise ValueError("这一轮没有记下这条记忆")
+        notes = memory_collect.take_back(state, topic, record, entry_id)
+        if notes is None:
+            return "这条记忆已经撤销过了"
+        try:
+            memory_collect.show(ctx, app.controls.messenger, record, notes, self.runtime.log)
+        except Exception as exc:  # noqa: BLE001 - taken back all the same; the card's lines follow on its next redraw
+            self.runtime.log(f"web memory_undo card not redrawn: {type(exc).__name__}")
+        return "已撤销：" + " ".join(str(note.get("text") or "").split())[:40]
 
     def reopen(self, state, chat, row, payload) -> str:
         pid = str(row.get("project_key") or "")

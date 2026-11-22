@@ -14,6 +14,7 @@ import { Head } from './Shell';
 import { DurValue, Pill, Tile, useTick } from './ui';
 import { haltWords, isHalted, leadOf, metrics, ownTopics, projectNote, projectPill, toneCounts, type ProjectMetrics } from './projectData';
 import { TopicBadge } from './RoleAvatar';
+import { ProjectOps } from './V34Bits';
 import { useOutboxOp } from './sendOp';
 import './recover.css';
 import './mproj.css';
@@ -114,6 +115,8 @@ const HaltBar: React.FC<{ p: SnapshotProject }> = ({ p }) => {
           <Play /> 继续
         </button>
       )}
+      {/* v34：同停住卡上的收尾（Covey 认 project_finish 时才有） */}
+      {op.phase === 'done' ? null : <ProjectOps p={p} finishOnly />}
     </div>
   );
 };
@@ -184,7 +187,7 @@ const ProjectPage: React.FC = () => {
           ) : undefined
         }
       />
-      {isHalted(p) ? <HaltBar key={p.key} p={p} /> : null}
+      {isHalted(p) ? <HaltBar key={p.key} p={p} /> : <ProjectOps key={p.key} p={p} wrap />}
       {desktop ? null : <ProjectTabs base={base} view={view} mobile rail={!!lead} />}
       {view === 'chat' && !lead && !desktop ? null : view === 'report' || view === 'rail' ? null : desktop ? <MetricStrip m={m} topics={topics} /> : <MetricLine m={m} topics={topics} />}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, marginTop: view === 'report' || view === 'rail' ? 0 : desktop ? 10 : 4 }}>

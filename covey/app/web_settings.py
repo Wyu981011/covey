@@ -39,7 +39,7 @@ from covey.cards.settings_hub import (ABOUT, CONFIG, DOCTOR, GROUPS, LABELS, MEM
 from covey.cards.workspace_manager import list_entries, tag_words, tail
 from covey.app import web_launch, web_panels
 from covey.app.access import free_talk_on
-from covey.core import butler, butler_settings
+from covey.core import butler, butler_settings, web_sync
 from covey.core.workspaces import add_workspace, load_config, missing_workspaces, remove_workspaces
 
 LIMIT = 60  # The most options a row lists (the card cuts to fit its size; the page need not).
@@ -139,7 +139,9 @@ class WebSettings:
         choices = self.choices(ctx)
         labels = {**LABELS, PROXY_TAB: PROXY_LABEL}
         tabs = [*tabs, *([PROXY_TAB] if self.proxy_panel() is not None else [])]
-        data = {"tabs": [{"key": tab, "label": labels[tab]} for tab in tabs], "feishu": self.feishu()}
+        # ``ops``: the page's operations this Covey does (core/web_sync.py KINDS, data contract v34), so a page shows a button only
+        # for what is done (收尾、停止 of a project, 不对 on a memory line) and an older Covey's page stays as it was.
+        data = {"tabs": [{"key": tab, "label": labels[tab]} for tab in tabs], "feishu": self.feishu(), "ops": list(web_sync.KINDS)}
         build = {CONFIG: lambda: self.config(ctx, settings, choices, chat),
                  WORKSPACE: lambda: self.workspaces(ctx, settings), REDACTION: lambda: self.redaction(ctx),
                  GROUPS: lambda: self.groups(ctx, now), NODES: lambda: self.nodes(ctx),

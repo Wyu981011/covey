@@ -4,6 +4,7 @@ import { AlertTriangle, Check, ChevronDown, Clock, Loader2 } from 'lucide-react'
 import type { PlanItem, SnapshotProject, SnapshotTopic, StepView, TopicProgress, TurnFailure, TurnView } from '@shared/api.interface';
 import { useSnapshot, useTurns } from '@client/src/hooks/use-workbench';
 import { DismissButton, RecoverActions, useBoardOn } from './RecoverBits';
+import { DraftLines, LaterLine } from './V34Bits';
 import { Dot, useTick } from './ui';
 import { fmtDur, hhmm, isFinished, isRunning, isWaiting, shortWhen, toneOf, toneWord, type ToneKey } from './lib';
 import { TopicMemory } from './MemoryPanel';
@@ -232,6 +233,12 @@ export const TopicOverview: React.FC<{ topicKey: string; mobile?: boolean; compa
             <button type="button" className="btn pri sm" onClick={() => document.getElementById('a-question')?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>去回答</button>
           </div>
         ) : wait && v.failed ? <div className="ov2-act">{wait}</div> : null}
+        {t.revisit || t.owner_send?.length ? (
+          <div className="ov2-later">
+            <LaterLine t={t} />
+            <DraftLines drafts={t.owner_send} />
+          </div>
+        ) : null}
         {where && !(question && !v.live) ? (
           <div className="ov2-now">
             <Dot tone={nowTone} />

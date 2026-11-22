@@ -18,10 +18,11 @@ import { TidyPanel } from './Tidy';
 import { etaText, FALLBACK_FAILURE, listTone, progressNote, splitTitle } from './topicText';
 import { UsageBars } from './UsageBars';
 import { cachePct, shownDays, spanOf, weekWord } from './usageData';
-import { askCounts, asks, askTotal, haltWords, isHalted, type Asks } from './projectData';
+import { askNumbers, asks, askSum, haltWords, isHalted, type Asks } from './projectData';
 import { DismissButton, RecoverActions, useBoardOn } from './RecoverBits';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { useOutboxOp } from './sendOp';
+import { LaterPanel, ProjectOps } from './V34Bits';
 import { OP_WAIT_MS, opWords } from './opWords';
 
 const topicPath = (t: SnapshotTopic): string => `/topics/${encodeURIComponent(t.key)}`;
@@ -144,6 +145,7 @@ const HaltCard: React.FC<{ p: SnapshotProject }> = ({ p }) => {
             <Play /> 继续
           </button>
         )}
+        {op.phase === 'done' ? null : <ProjectOps p={p} finishOnly toastDone />}
         <button type="button" className="btn sm" onClick={() => void nav(base)}>打开专项</button>
         <span className="nb-meta nb-proj">专项</span>
       </div>
@@ -385,8 +387,9 @@ const Board: React.FC = () => {
   // 要你处理：和侧栏角标、手机标签栏同一个算法（projectData.ts asks，口径同 covey board_read）：管家、负责人的题也算，护栏停住的专项算停住了
   const a: Asks = asks(snap, now);
   const { waiting, stopped, stuck, projects: halted } = a;
-  const c = askCounts(a);
-  const act: number = askTotal(a);
+  // 数以 Covey 算好的为准（v34 snap.asks），没有时自己数；卡片照本地的话题画
+  const c = askNumbers(a, snap.asks);
+  const act: number = askSum(c);
   const running: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => toneOf(t) === 'running' && !qBy.has(t.key)).sort(byNumberDesc);
   const unseen: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => toneOf(t) === 'result').sort(byRecent);
   const views: ProjectView[] = snap.projects.map((p: SnapshotProject): ProjectView => {
@@ -505,6 +508,8 @@ const Board: React.FC = () => {
               <div className="nb-rows">{unseen.slice(0, 12).map((t: SnapshotTopic) => <ResultRow key={t.key} t={t} />)}</div>
             </>
           ) : null}
+          {/* v34：约好回来看的话题、等你在飞书确认的代发草稿 */}
+          <LaterPanel topics={topics} />
           {!desktop ? <div className="nb-mrail">{rail}</div> : null}
           {!topics.length ? (
             <div className="nb-empty">

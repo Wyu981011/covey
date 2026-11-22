@@ -31,9 +31,9 @@ from pathlib import Path
 
 from covey.app import auto_retry
 from covey.cards import facts
-from covey.core import failure
+from covey.core import criteria, failure
 from covey.core.butler import traits_of
-from covey.core.checkpoint import artifact_key, artifact_paths, checkpoint_steps, read_checkpoint, upload_ledger
+from covey.core.checkpoint import artifact_key, artifact_paths, checkpoint_delivery, checkpoint_steps, read_checkpoint, shows_change, upload_ledger
 from covey.core.look import WAITS
 from covey.core.metrics import run_seconds, timings_of
 from covey.core.state import epoch_seconds
@@ -312,8 +312,38 @@ def extras(state, record, running, now=None, snapshot=None) -> dict:
         notes = notes_of(record)
         if notes:
             out["notes"] = notes
+        if not running and record.get("status") not in WAITS:
+            out.update(checked(state, record))
     except (OSError, ValueError, KeyError, TypeError):
         return out
+    return out
+
+
+def checked(state, record) -> dict:
+    """What an ended turn's checkpoint says of its topic's 完成标准 and of what it delivered (data contract v34), as its answer
+    card has it: ``criteria`` [{item, state, evidence}] for each of the topic's criteria (core/criteria.py, the state its
+    checkpoint marked, 没查 for one it did not; without criteria on the topic, the checkpoint's own marks), ``delivery``
+    {commit, deployed, verified} (core/checkpoint.py checkpoint_delivery) when the card shows 改动 (``shows_change``: a commit,
+    or files changed and a delivery written). Neither when there is nothing to say."""
+    path = str(record.get("checkpoint_path") or "")
+    cp = read_checkpoint(Path(path)) if path else {}
+    if not cp:
+        return {}
+    out = {}
+    items, marked = criteria.read(state, str(record.get("topic_id") or "")), criteria.marks(cp)
+    if items:
+        unmet = {item: state_ for state_, item in criteria.unmet(items, cp)}
+        evidence = {item: said for item, _, said in marked if said}
+        rows = [{"item": item, "state": unmet.get(item, criteria.MET), **({"evidence": evidence[item]} if item in evidence else {})}
+                for item in items]
+    else:
+        rows = [{"item": item, "state": state_, **({"evidence": said} if said else {})} for item, state_, said in marked if item]
+    if rows:
+        out["criteria"] = rows
+    delivery = checkpoint_delivery(cp)
+    diff = str(record.get("diff_json_path") or "")
+    if delivery and shows_change(delivery, bool(diff) and Path(diff).is_file()):
+        out["delivery"] = {name: value for name, value in delivery.items() if value}
     return out
 
 

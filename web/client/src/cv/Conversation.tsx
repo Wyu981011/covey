@@ -689,6 +689,7 @@ export const Conversation: React.FC<{
                       />
                     ) : undefined}
                     hideBody={!!g.agent && stopWords(g.agent)}
+                    topicKey={topicKey}
                   />
                 ) : room && rt && g.agent && speaker(rt, snap, butlerKey).kind === 'topic' ? (
                   <RelayTurn t={rt} topic={turnTopic(rt.topic_key)} hl={hl === rt.seq} onQuote={() => quoteOf(rt)} />

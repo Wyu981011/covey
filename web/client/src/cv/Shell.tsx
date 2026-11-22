@@ -13,7 +13,7 @@ import { Avatar, Dot, useTick } from './ui';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { setCollapsed, setMenu, useUi } from './store';
 import { listTone } from './topicText';
-import { asks, askTotal, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
+import { askNumbers, asks, askSum, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
 import './covey.css';
 import './layout-a.css';
 import './night.css';
@@ -270,7 +270,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
   const qKeys = new Set<string>(data.questions.map((q) => q.topic_key));
   // 要你处理：和看板、手机标签栏同一个数（projectData.ts asks）：管家、负责人的题，可能卡住，护栏停住的专项都算
   const a: Asks = asks(data, now);
-  const act: number = askTotal(a);
+  const act: number = askSum(askNumbers(a, data.asks));
   const stoppedKeys: Set<string> = stoppedSet(a);
   // “N 在做”同看板结论带：可能卡住的算在要你处理里，不再数一遍
   const running: number = topics.filter((t: SnapshotTopic) => toneOf(t) === 'running').length;
@@ -475,7 +475,7 @@ const TabBar: React.FC = () => {
   const { data } = useSnapshot();
   const now: number = useTick(60000);
   // 和看板、侧栏同一个数（projectData.ts asks）
-  const act: number = data ? askTotal(asks(data, now)) : 0;
+  const act: number = data ? askSum(askNumbers(asks(data, now), data.asks)) : 0;
   const on = (focus: 'topics'): boolean => ui.menu && ui.focus === focus;
   return (
     <nav className="nb-tabs" aria-label="主导航" style={gap ? { paddingRight: gap } : undefined}>
