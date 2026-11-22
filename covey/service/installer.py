@@ -36,15 +36,19 @@ from pathlib import Path
 from covey.core import app_manifest, claude_retention, extensions, qr, switches, welcome
 from covey.core import env as cenv
 from covey.core.paths import REPO_ROOT, data_home
-from covey.core.state import write_json
+from covey.core.process import service_key
+from covey.core.state import read_json, write_json
 from covey.feishu.app_config import remove, survey
 from covey.service import browser_setup, install_probe
 from covey.service.app_check import draw, profile_app_id, profile_app_name
-from covey.service.manager import PROXY_ENV_KEYS, change_settings, persistable, validate_environment
+from covey.service.manager import PROXY_ENV_KEYS, change_settings, manifest_path, persistable, validate_environment
 
 # What ./install switches on in the service it registers (docs/install.md): the code's default stays off (AGENTS.md rule 4).
 # One table with the 演示套餐 `--showcase` writes instead (core/switches.py SHOWCASE).
 INSTALL_SWITCHES = switches.INSTALL
+# Settings of a registered service a re-run does not carry over (keep_registered): dev-only names that must never be in a
+# manifest (the deploy pre-check stops them), and what this run decides itself (PATH, LANG, the proxy).
+NOT_KEPT = frozenset({"COVEY_EXTENSIONS", "COVEY_EXTENSION_PATH", "PATH", "LANG"}) | PROXY_ENV_KEYS
 
 DEFAULT_PROFILE = "covey"
 DEFAULT_APP_NAME = "Covey"
@@ -230,6 +234,7 @@ class Installer:
         self.workdir, self.phone_step, self.poll_seconds = None, 0, 5
         self.browser_python, self.live_open, self.prepare_browser = None, False, prepare_browser
         self.working, self.extra, self.reasons, self.leftovers = [], [], {}, []
+        self.switches_settled = False  # settle_switches ran
         self.app_id = ""
 
     # Output ----------------------------------------------------------------------------------
@@ -549,6 +554,7 @@ class Installer:
             else:
                 python = self.ensure_browser()
                 self.create_and_authorize(python, have_profile)
+            self.settle_switches()  # Before the app's needs are read: they follow the switches (menu 看板, Pin scopes).
             lacking = self.lacking()
             if lacking and reused and not self.interactive and not self.args.browser_login_dir:
                 # An upgrade with nobody to scan (no login copy either): list what is missing, go on with the service; the Bridge's 飞书应用待补 card finishes it.
@@ -594,7 +600,7 @@ class Installer:
             raise Fail(f"浏览器这一步没做成：{result.get('detail')}")
 
     def lacking(self):
-        online, lacking, full = self.survey_app(self.args.profile, self.app_id)
+        online, lacking, full = self.survey_app(self.args.profile, self.app_id, self.env)
         if online.get("error") and online.get("error") != "no_self_manage":
             self.leftovers.append(f"读不到应用的线上配置（{online.get('detail') or online['error']}）")
             return []
@@ -698,10 +704,52 @@ class Installer:
         if not ok:
             self.note("没能预编译字节码（只是每个进程启动慢一点，不影响使用）")
 
+    def registered_environment(self):
+        """The environment the service registered for this app runs with (its manifest under <data>/bridge-services), None
+        when there is none yet: a new service."""
+        if not self.app_id:
+            return None
+        record = read_json(manifest_path(self.data / "bridge-services", service_key(self.service_state())), None)
+        environment = record.get("environment") if isinstance(record, dict) else None
+        return dict(environment) if isinstance(environment, dict) else None
+
+    def keep_registered(self, registered):
+        """Put into this run's environment the settings ``registered`` has that it sets under no spelling, so registering
+        again (another clone, other flags, a service that was down) keeps what `covey_service.py set` changed. What this
+        shell or this run sets wins; NOT_KEPT and what a manifest cannot keep stay out."""
+        for name, value in registered.items():
+            if name in NOT_KEPT or not persistable(name) or not isinstance(value, str):
+                continue
+            if not any(spelling in self.env for spelling in cenv.spellings(name)):
+                self.env[name] = value
+
+    def settle_switches(self):
+        """The switches the service will run with, settled once the app is known and before anything reads them (the
+        app's needs in feishu_app, the registration in start_service). A new service: INSTALL_SWITCHES, with ``--showcase``
+        the 演示套餐 (default_switches). A service registered for this app already: its manifest's settings this run does
+        not set are kept (keep_registered) and no new default is added (a re-run is safe); ``--showcase`` turns on what
+        the 演示套餐 has that the manifest lacks or has off (core/switches.py preset_changes) unless this shell sets it."""
+        if self.switches_settled:
+            return
+        self.switches_settled = True
+        registered = self.registered_environment()
+        if registered is None:
+            self.default_switches()
+            return
+        shell = set(self.env)
+        self.keep_registered(registered)
+        if getattr(self.args, "showcase", False):
+            for name, value in switches.preset_changes("showcase", registered).items():
+                spellings = cenv.spellings(name)
+                if not shell & set(spellings):
+                    for spelling in spellings:
+                        self.env.pop(spelling, None)
+                    self.env[spellings[-1]] = value
+
     def start_service(self, config_path):
         self.step(5, "注册并启动服务")
         self.precompile()
-        self.default_switches()
+        self.settle_switches()
         record = self.data / "install.json"
         now = self.fingerprint(config_path)
         try:

@@ -175,7 +175,8 @@ class InstallerCase(unittest.TestCase):
         return {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.root), "FAKE_DIR": str(self.fake),
                 "COVEY_PLAYWRIGHT_PYTHON": sys.executable, "COVEY_EXTENSIONS": "", **extra}
 
-    def survey(self, profile, app_id):
+    def survey(self, profile, app_id, env=None):
+        self.surveyed = getattr(self, "surveyed", []) + [dict(env or {})]
         need = list(self.lacking)
         return {"version": "1.0.0"}, need, []
 
@@ -649,6 +650,65 @@ class LoginCopyTest(InstallerCase):
         ins.open_browser("python")
         self.assertEqual("c", (ins.browser_home / "profile" / "Cookies").read_text())
         self.assertNotIn("browser-login-dir", installer.parser().format_help())
+
+
+class SwitchesTest(InstallerCase):
+    """The switches are settled before the app's needs are read, and a re-run keeps what the registered service has (T647 P0-9)."""
+
+    def registered(self, environment):
+        from covey.service.manager import register
+        state = self.data / "harness-cli_fake"
+        state.mkdir(parents=True, exist_ok=True)
+        register(self.data / "bridge-services", state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                 workdir=self.root, environment=environment, health_timeout=90)
+
+    def settled(self, *argv, **shell):
+        ins = self.make(*argv, env=self.env(**shell))
+        ins.app_id = "cli_fake"
+        ins.settle_switches()
+        return lambda name: cenv.get(name, None, ins.env), ins
+
+    def test_the_app_is_checked_against_the_switches_the_new_service_starts_with(self):
+        self.lacking.clear()
+        self.assertEqual(0, self.make("--no-start", interactive=True).run())
+        seen = self.surveyed[0]
+        self.assertEqual(("1", None), (cenv.get("COVEY_BOARD", None, seen), cenv.get("COVEY_PINNED_TOPICS", None, seen)))
+        self.surveyed.clear()
+        self.assertEqual(0, self.make("--no-start", "--showcase", interactive=True).run())
+        seen = self.surveyed[0]  # The menu 看板, the Pin scopes and the read event are asked for in the one scan.
+        self.assertEqual({name: cenv.get(name, None, seen) for name in switches.SHOWCASE}, switches.SHOWCASE)
+
+    def test_a_rerun_keeps_the_registered_settings_adds_no_new_default_and_the_shell_wins(self):
+        self.registered({"PATH": "/absolute/bin", "HTTPS_PROXY": "http://proxy.example.invalid:3128",
+                         "LARK_BRIDGE_MEMORY": "0", "LARK_BRIDGE_DIGEST_TIMES": "10:00",
+                         "LARK_BRIDGE_HISTORY_CMD": "/absolute/kb", "LARK_BRIDGE_PROJECTS": "1"})
+        get, ins = self.settled(COVEY_DIGEST_TIMES="08:00")
+        self.assertEqual(("08:00", "0", "/absolute/kb", "1"),
+                         tuple(get(name) for name in ("COVEY_DIGEST_TIMES", "COVEY_MEMORY", "COVEY_HISTORY_CMD", "COVEY_PROJECTS")))
+        self.assertIsNone(get("COVEY_REVIEW"))  # Registered already: no new default.
+        self.assertNotIn("HTTPS_PROXY", ins.env)  # The proxy and PATH are this run's own.
+        self.assertNotEqual(ins.env["PATH"], "/absolute/bin")
+        before = dict(ins.env)
+        ins.settle_switches()
+        self.assertEqual(ins.env, before)
+        get, ins = self.settled("--showcase", COVEY_DIGEST_TIMES="08:00", COVEY_COLLAB="0")
+        # The 演示套餐 turns on what the manifest lacks or has off; what this shell sets wins.
+        self.assertEqual(("1", "08:00", "0", "1", "/absolute/kb"),
+                         tuple(get(name) for name in ("COVEY_MEMORY", "COVEY_DIGEST_TIMES", "COVEY_COLLAB",
+                                                      "COVEY_PINNED_TOPICS", "COVEY_HISTORY_CMD")))
+
+    def test_registering_again_starts_from_the_registered_settings(self):
+        self.registered({"LARK_BRIDGE_HISTORY_CMD": "/absolute/kb", "LARK_BRIDGE_REVISIT": "0"})
+        ins = self.make()
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["codex"]
+        (self.data / "tmp").mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(installer.Installer, "run_logged", return_value=(0, "")) as ran, \
+                mock.patch.object(installer.Installer, "service_up", return_value=False), \
+                mock.patch.object(installer.Installer, "precompile"):
+            ins.start_service(self.data / "harnesses.json")
+        self.assertEqual(["service-install", "bootstrap"], [call.args[0] for call in ran.call_args_list])
+        self.assertEqual(("/absolute/kb", "0", None), tuple(cenv.get(name, None, ins.env)
+                                                      for name in ("COVEY_HISTORY_CMD", "COVEY_REVISIT", "COVEY_REVIEW")))
 
 
 class EntryTest(unittest.TestCase):

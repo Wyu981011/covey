@@ -35,7 +35,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 
 | 选项 | 含义 |
 | --- | --- |
-| `--reconfigure` | 重来：重新建应用、授权、补配置并重注册服务。不加时，已有的应用、授权、配置、服务都复用，重复运行是安全的 |
+| `--reconfigure` | 重来：重新建应用、授权、补配置并重注册服务。不加时，已有的应用、授权、配置、服务都复用，重复运行是安全的：要重新注册时（换了检出目录、服务没在运行），服务清单里已有的设置（包括用 `covey_service.py set` 改的开关）照旧，只有终端里设了的才盖过它，新版本的默认开关只写给新服务 |
 | `--skills` | 同时同步 `skills/` 到 Codex 和 Claude 的 Skills 目录（`harness-bridge-onboarding`、`change-walkthrough`） |
 | `--non-interactive` | 不提问；缺什么就报什么退出；最后也不等第一个回答 |
 | `--data-home DIR` | 数据根（不给时用 `COVEY_DATA_HOME`，再不然是仓库同级的 `<仓库目录名>-data`） |
@@ -45,7 +45,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 | `--no-autostart` | 没有 systemd、launchd 时不往 crontab 加开机自启的一行 |
 | `--profile`、`--app-name` | `lark-cli` profile 名（默认 `covey`）、新应用的名称（默认 `Covey`） |
 | `--no-start` | 只准备到飞书应用为止，不注册、不启动服务 |
-| `--showcase` | 演示套餐：默认开的之外，再开协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡，见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动。已经装好、在运行的服务只把套餐里的开关改进服务清单（同 `covey_service.py set --preset showcase`），别的设置不动 |
+| `--showcase` | 演示套餐：默认开的之外，再开协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡，见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动。已经装好的服务：清单里已有的设置照旧，只打开套餐里清单没有或关着的开关（效果同 `covey_service.py set --preset showcase`） |
 
 ## 第一个回答
 

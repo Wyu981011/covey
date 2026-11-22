@@ -8,7 +8,7 @@
 
 ### 默认已开
 
-`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`），代码本身的默认是关，所以装这个版本之前注册的服务不变，要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。
+`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`），代码本身的默认是关，所以装这个版本之前注册的服务不变（重跑 `./install` 也只保留服务清单里已有的设置，不加新默认），要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。安装器在补飞书应用之前就定好这些开关，所以它们要的菜单和权限（菜单「看板」、置顶）一次补齐。
 
 | 功能 | 开关 | 怎么确认开着 | 怎么关 |
 | --- | --- | --- | --- |
@@ -82,7 +82,7 @@
 | [同时做几件事](butler.md#同时做几件事开关默认关) | `COVEY_BUTLER_TRACKS=1` |
 | [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` |
 
-- **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动。已经装好、在运行的服务再跑一次 `./install --showcase` 也行，这时它和下一条一样只改服务清单里的这几个开关。
+- **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动。已经装好的服务再跑一次 `./install --showcase` 也行：服务清单里已有的设置照旧，只打开套餐里清单没有或关着的开关，效果和下一条一样。
 - **已经装好的**：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" --preset showcase`，先加 `--dry-run` 看会改什么（见[改开关三步](#改开关三步)）。它打开套餐里服务清单还没设、或设成关闭值（空、`0`、`off`、`false`、`no`）的开关，安装器写的那些也算在内，所以装这个版本之前注册的服务一条命令就补齐；设了别的值的不动（比如你自己的汇总时间、`COVEY_PROJECT_TIDY=auto`）；同一条命令里另写的 `KEY=VALUE` 盖过套餐。
 - 置顶和自动 Pin 要应用有置顶权限和“消息已读”事件，「飞书应用待补」卡会提示；汇总的两个时间也是[夜里不打扰](usage.md#早晚汇总)的时段（没设 `COVEY_QUIET_HOURS` 时）。
 - 套餐没有一键关：不要哪一项，照[改开关三步](#改开关三步)把它设成关闭值。
@@ -271,7 +271,7 @@
 - `auto`：再加新建专项也直接做（专项卡上留「不要专项」撤回）。主人在提议卡上点了「以后直接建」，效果和 `auto` 一样。
 - 不设、`off` 或别的值：关。没有后台线程、管家没有 `projects_tidy`、设置卡没有这一行、每轮的消息里没有话题要点那段，行为和原来一样。
 
-仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 写服务清单时，终端里没设的就写上安装器的那组开关（`core/switches.py` 的 `INSTALL`，其中有 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`，全部见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
+仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 给新服务写服务清单时，终端里没设的就写上安装器的那组开关（`core/switches.py` 的 `INSTALL`，其中有 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`，全部见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动；已经注册过的服务重跑 `./install` 时保留清单里的设置，不加新默认。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
 
 可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断用 Claude Code 的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装，和[同时做几件事](butler.md#同时做几件事开关默认关)的小模型判断同一套做法。没有 Claude Harness（比如只装了 Codex）时，设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>` 就改问那个[模型网关](harnesses.md#模型网关codexpi-与-dsh)（`harnesses.json` 的 `gateways` 或扩展带的网关，用你给它配的个人密钥；这时 `COVEY_PROJECT_TIDY_MODEL` 不管用，模型就是这里写的，选一个读得懂整段对话的）；不设时判断不了，整理卡写“没有可用的 Claude Code 来判断”。
 
