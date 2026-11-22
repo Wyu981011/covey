@@ -33,6 +33,7 @@ BUTLER_TITLE = "管家"
 LEAD_TITLE = "负责人"
 EXTRA_TURNS = 20  # The newest turns of a topic that get their process and plan; every kept turn gets its figures (each read from its trace file once).
 FIGURES_KEPT = 8192  # Ended turns whose figures are remembered (a few numbers each): all kept turns of all topics a full look builds.
+FILES_GOING, FILES_SETTLED = 15.0, 300.0  # Seconds a turn's 产物 are kept before they are read again: while one goes up, and after.
 RECEIPTS_KEPT = 200  # The newest receipts of a project's inbox that are looked at.
 EDIT_PREFIX = "edit-"  # The message id of the owner's edit sent into a running task (app/source_watch.py): edit-<message id>-<stamp>.
 UNSTARTED_WORDS = "没开工，已取消"  # The line under the owner's words whose task was cancelled before it started (its record's reason after it).
@@ -78,6 +79,7 @@ class Collector:
         self.projects = {}  # project id -> its record, from this look (a member topic's ``joined_at``).
         self.extra = {}  # (job key, updated_at) -> the optional fields of an ended turn (web_turns.extras).
         self.figures = {}  # (job key, updated_at) -> the figures of an ended turn (web_turns.ended_figures).
+        self.files = {}  # (job key, updated_at) -> (when read, the turn's 产物) (``artifacts``, data contract v32).
         self.unpaired = {}  # topic id -> its answer turns with no task record, as last logged (count_unpaired).
         self.log = log  # The bridge.log writer (WebSync's runtime.log); None: nothing logged.
         self.receipts = {}  # project id -> {receipt file name: its row} (thread_end only).
@@ -532,6 +534,9 @@ class Collector:
             if job is not None and data.get("role") == "agent":
                 turn["job_id"] = str(job.get("job_id") or "")
                 web_pairing.put_images(turn, self.images.shown(job, topic, data.get("started_at"), self.now) if self.images else [])
+                files = self.artifacts(state, job)
+                if files:
+                    turn["artifacts"] = files
             if job is not None:
                 turn.update(self.ended_extras(state, job) if seq > total - EXTRA_TURNS else self.ended_figures(state, job))
                 self.fold_usage(state, turn, before.get(id(job)) or ())
@@ -779,6 +784,23 @@ class Collector:
                 self.figures.clear()
             self.figures[key] = web_turns.ended_figures(state, job)
         return self.figures[key]
+
+    def artifacts(self, state, job) -> list:
+        """The 产物 of an answer turn (web_turns.artifacts_of, data contract v32), read again only while they can still change: after
+        FILES_GOING seconds while one goes up, after FILES_SETTLED once settled (重新上传 on a card rewrites the upload's ledger, not the
+        job's record); a turn without any is read once."""
+        key = (job_key(job.get("message_id"), job.get("job_id")), str(job.get("updated_at")))
+        now = self.now or time.time()
+        hit = self.files.get(key)
+        if hit is not None:
+            at, items = hit
+            if not items or now - at < (FILES_GOING if any(item.get("uploading") for item in items) else FILES_SETTLED):
+                return items
+        if len(self.files) > FIGURES_KEPT:
+            self.files.clear()
+        items = web_turns.artifacts_of(state, job, now)
+        self.files[key] = (now, items)
+        return items
 
     def ended_extras(self, state, job) -> dict:
         """The process, plan and figures of an ended turn, read once (they do not change once it has ended)."""

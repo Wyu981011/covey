@@ -141,6 +141,7 @@
   - 被 Bridge 重启打断、由自动重试接着做完的任务，它的 token 算进重试那一轮的 `usage`。
 - **发到了私聊**（v23）：普通话题的回答那一轮，结论发到了私聊顶层（[结论回到顶层](butler.md#结论回到顶层)，`main-thread/relays/` 里这个任务的记录是 `sent`；合成一条发的也算）时带 `relayed_at`（发出的时刻，秒）。网页的大厅把这些轮收成一行放进时间线；负责人、管家的轮不带。
 - **用的什么配置**（v27，`app/web_turns.py` 的 `ran_with`）：回答那一轮带 `ran_with`：`{harness, provider, model, effort, workspace, redaction}`，用启动卡上的叫法（Claude Code、自带、Opus 5.5），从这一轮的任务记录取；脱敏取话题现在的开关（任务记录不存）；菜单读不到时 `model` 是模型自己的名字、不带 `provider`。网页写在回答下面一行。
+- **产物**（v32，`app/web_turns.py` 的 `artifacts_of`）：回答那一轮带 `artifacts`，就是它答案卡上「产物」里列的文件（`app/artifact_policy.py` 的 `drive_paths`：配置和凭据路径不列），每个 `{name}` 只有文件名，不带本机路径。传到云空间以后加 `link`（https）和 `size`（字节）；传不上的加 `error`（原因）；还在传的（上传账本 `status` 是 uploading，或者账本还没写、这一轮的任务记录 10 分钟内动过）加 `uploading: true`。上传在这一轮结束以后才做完，任务记录不跟着变：推送按任务记住读过的结果，有在传的 15 秒后、其余 5 分钟后才再读，链接随下一次全量（每分钟）推上去。网页在回答正文下面画一颗能点开的“产物 N 个 · 第一个 等”，顺序同答案卡：正文 → 产物 → 输入/输出。没有产物的一轮仍是空数组。
 - **预计用时**：`estimate_seconds` 是这一轮第一次估出来的总用时（秒），写进任务记录后不改；专项报告的“预计 vs 实际用时”拿它比。没估出来过的轮次不带。
 - **答题**（v4）：回答问题卡的那一轮带 `answers`：`[{question, choice}]`，只从问题记录取，不解析正文。答案作为新任务发出去的带在主人那一轮上，交回给还在跑的提问那一轮的带在那一轮的回答上；`choice` 是选中的选项或写的字，多选用“、”连起来，没答的写“没答”。
 - **没开工就取消的一轮**：最后那句话的任务从没开工就取消了（启动卡被收起、排队时取消），补一行 `role: agent`、`status: stopped`，正文“没开工，已取消（原因）”。没有这一行时网页会一直写“排队中…”。
@@ -340,3 +341,4 @@
 | v29 | 问题卡只剩“提交回答”和“不处理”：`answer` 带 `note` 时没答的题算不回答、`answers` 可空；`ask` 按 `skip` 处理；`extras` 只管“不处理”，不再推 `asked` |
 | v30 | 专项条目加 `avatar`：网页与飞书卡片共用固定头像分配 |
 | v31 | `collab` 条目；一轮的 `collab`；`say` 的 `to`、`integrator`、`quote`；`stop` 的 `collab`；`memory_fix` 操作；专项记忆的 `layer`、`part`、`by`、`ref`、`carried`、`redacted`、`origin` 和条目的 `memory_version`（`COVEY_COLLAB` 没开时没有前几项） |
+| v32 | 回答那一轮的 `artifacts`：文件名、`link`、`size`、`error`、`uploading`（以前一直是空数组） |

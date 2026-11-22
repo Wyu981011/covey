@@ -15,7 +15,7 @@ from functools import cached_property
 from pathlib import Path
 
 from covey.core.backup import backup_paths, backup_sets, old_backups
-from covey.core.checkpoint import artifact_key
+from covey.core.checkpoint import artifact_key, upload_ledger
 from covey.core.history_storage import HISTORY_LOCK
 from covey.core.jobs import (FINISHED_UNREAD_FIELDS, job_file, read_job_record, slim_finished_job_record,
                                       upsert_job_record)
@@ -138,7 +138,7 @@ def diff_uploaded(state, folder):
     ledger (app.artifacts.Artifacts.upload_artifacts) holds the file with the same digest."""
     key = folder.name  # job-diffs/<job key>: a job key is already a slug.
     raw = read_object(state / "jobs" / (key + ".json")).get("diff_artifact_path")
-    files = _upload_ledger(state, key).get("files")
+    files = upload_ledger(state, key).get("files")
     entry = files.get(artifact_key(raw)) if raw and isinstance(files, dict) else None
     if not isinstance(entry, dict) or not entry.get("sha256"):
         return False
@@ -146,16 +146,6 @@ def diff_uploaded(state, folder):
         return hashlib.sha256((folder / "diff.md").read_bytes()).hexdigest() == entry["sha256"]
     except OSError:
         return False
-
-
-def _upload_ledger(state, key):
-    """The artifact-drive ledger of job ``key`` ({} if none), named by Voice.safe_key
-    (feishu.delivery.safe_idempotency_key: a long key by its digest, after the Harness's prefix)."""
-    name = re.sub(r"[^A-Za-z0-9_-]", "-", key)
-    folder = state / "artifact-drive"
-    paths = [folder / (name + ".json")] if len(name) <= 50 else \
-        sorted(folder.glob("*-" + hashlib.sha1(key.encode()).hexdigest()[:24] + ".json"))
-    return next((ledger for ledger in map(read_object, paths) if ledger), {})
 
 
 def _finished(state, key):

@@ -9,7 +9,9 @@ import re
 from pathlib import Path
 
 from covey.core.paths import expand_user
-from covey.core.state import utc_now_iso, write_private_text
+from covey.core.state import read_object, utc_now_iso, write_private_text
+
+UPLOADS = "artifact-drive"  # <state>/artifact-drive/: each job's ledger of its artifacts' upload to the cloud space (app/artifacts.py).
 
 
 def read_checkpoint(path: Path) -> dict:
@@ -41,6 +43,18 @@ def artifact_paths(record):
 def artifact_key(path):
     """The key a button and the upload ledger name an artifact by: a digest of its recorded path."""
     return hashlib.sha256(path.encode()).hexdigest()[:24]
+
+
+def upload_ledger(state, key) -> dict:
+    """The ledger of the cloud-space upload of job ``key``'s artifacts, as app/artifacts.py writes it ({} if none): ``files``
+    {artifact_key: {name, size, sha256, token, url}}, ``errors`` {artifact_key: why}, ``status`` (uploading, done or failed) and
+    ``folder_url``. Read without the Harness's voice: the file is named by Voice.safe_key (feishu/delivery.py safe_idempotency_key),
+    a key of more than 50 characters by its digest after the Harness's prefix."""
+    name = re.sub(r"[^A-Za-z0-9_-]", "-", str(key))
+    folder = Path(state) / UPLOADS
+    paths = [folder / (name + ".json")] if len(name) <= 50 else \
+        sorted(folder.glob("*-" + hashlib.sha1(str(key).encode()).hexdigest()[:24] + ".json"))
+    return next((ledger for ledger in map(read_object, paths) if ledger), {})
 
 
 def release_user_wait(path: Path, *, drop_questions: bool = False) -> None:

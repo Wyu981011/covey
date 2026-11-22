@@ -14,6 +14,8 @@ the checkpoint's plan, the token figures, the time it took and the notes of the 
   whole number, so a quiet minute does not change the item's ``rev`` every second.
 - ``notes``: the record's ``memory_notes`` as written by the memory feature ({kind, text, scope, entry_id}); none without the field.
 - ``ran_with`` (data contract v27): the Harness, provider, model, budget, workspace and 敏感词脱敏 the turn ran with (``ran_with``).
+- ``artifacts`` (data contract v32): the turn's 产物 as its answer card lists them, each by its file name only, with its cloud-space link
+  and size once uploaded, why it could not be, or that it is going up (``artifacts_of``).
 
 A field is left out when nothing is known; the page draws what it gets. Nothing here reads more than the trace file and the checkpoint of
 one turn, and never raises."""
@@ -25,9 +27,10 @@ import time
 from pathlib import Path
 
 from covey.cards import facts
-from covey.core.checkpoint import checkpoint_steps, read_checkpoint
+from covey.core.checkpoint import artifact_key, artifact_paths, checkpoint_steps, read_checkpoint, upload_ledger
 from covey.core.look import WAITS
 from covey.core.metrics import run_seconds, timings_of
+from covey.core.state import epoch_seconds
 from covey.core.trace_store import load_trace
 
 STEPS_KEPT = 80
@@ -43,6 +46,9 @@ STEP_STATES = {"running": "running", "done": "done", "failed": "failed", "stoppe
 AGENT_STATES = {"running": "running", "pendingInit": "running", "completed": "done", "errored": "failed", "interrupted": "failed",
                 "cancelled": "failed", "shutdown": "done"}
 SUBTASK = "子任务"
+UPLOAD_WAIT = 600  # Seconds after its turn's record last changed that an artifact neither up nor failed still reads 上传中 (the upload starts as the turn ends).
+NAME_CHARS = 120
+ERROR_CHARS = 200
 SAID_BY = {"owner": "你说的", "owner_answer": "你说的", "owner_fix": "你说的", "lead": "它总结的"}
 RESULT_WORDS = {"完成": "做完了", "失败": "失败了", "中断": "中断了", "已停止": "停住了"}
 
@@ -184,6 +190,42 @@ def ran_with(record, menu=None, redaction=False, topic=None) -> dict:
            "effort": str(record.get("effort") or ""), "workspace": str(record.get("workspace_name") or topic.get("workspace_name") or ""),
            "redaction": "on" if redaction else "off"}
     return {key: value for key, value in out.items() if value}
+
+
+def artifacts_of(state, record, now=None) -> list:
+    """The 产物 of the turn the job ``record`` made (data contract v32 ``artifacts``), the files its answer card lists
+    (app/artifact_policy.py ``drive_paths``: configuration and credential paths left off) with what their cloud-space upload says
+    (core/checkpoint.py ``upload_ledger``): {name} each, plus ``link`` and ``size`` once up, ``error`` when it could not go up,
+    ``uploading`` while the upload is under way or, without a ledger, within UPLOAD_WAIT of the record's last change. A file's own name
+    only: no local path goes to the page. [] without artifacts or when they cannot be read."""
+    from covey.app.artifact_policy import drive_paths
+    try:
+        if not artifact_paths(record):
+            return []
+        paths = drive_paths(record)
+        ledger = upload_ledger(state, record["key"]) if paths else {}
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    files, errors = ledger.get("files"), ledger.get("errors")
+    files, errors = files if isinstance(files, dict) else {}, errors if isinstance(errors, dict) else {}
+    now = time.time() if now is None else now
+    going = ledger.get("status") == "uploading" or (not ledger and now - (epoch_seconds(record.get("updated_at")) or 0) < UPLOAD_WAIT)
+    out = []
+    for raw in paths:
+        key = artifact_key(raw)
+        up = files.get(key) if isinstance(files.get(key), dict) else {}
+        link = str(up.get("url") or "")
+        item = {"name": str(up.get("name") or Path(raw).name or raw)[:NAME_CHARS]}
+        if link.startswith("https://"):
+            item["link"] = link
+            if type(up.get("size")) is int:
+                item["size"] = up["size"]
+        elif str(errors.get(key) or "").strip():
+            item["error"] = " ".join(str(errors[key]).split())[:ERROR_CHARS]
+        elif going:
+            item["uploading"] = True
+        out.append(item)
+    return out
 
 
 def ended_figures(state, record) -> dict:
