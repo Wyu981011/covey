@@ -100,6 +100,11 @@ class TopicFixture:
         self.logs = quiet(self.app)
         self.app.cards.streaming = False
         self.app.messenger.send_message = mock.Mock(return_value=True)
+        # Reactions (app/butler_reactions.py: a message quoted from outside its topic's thread, a supplement that went
+        # in): never a real one. ``receive`` with a root and no thread is such a quote at the chat's top level.
+        self.app.messenger.react = mock.Mock(return_value="reaction-1")
+        self.app.messenger.unreact = mock.Mock(return_value=True)
+        self.app.messenger.reaction_ids = mock.Mock(return_value=[])
         self.app.runtime.owner_open_id = "ou_user"
 
     def topic(self, root, chat="oc_chat", **extra):

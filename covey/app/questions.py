@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from covey.core.checkpoint import read_checkpoint, release_user_wait
-from covey.app import device_files, project_context
+from covey.app import butler_reactions, device_files, project_context
 from covey.app.card_lanes import after_ack
 from covey.core.turn_words import retry_hint
 from covey.app.outbox import AUDIT_REFUSED_NOTE
@@ -168,17 +168,27 @@ class Questions:
                 self.runtime.log(f"Folded question task display failed: {type(exc).__name__}")
         return True
 
-    def submit_answer(self, ctx, chat, token, fields, event_id):
+    def submit_answer(self, ctx, chat, token, fields, event_id, *, top=""):
+        """``fields`` as the answer to question ``token``: into the task that asks it when it still runs, else as its
+        continuation, queued after the click is acknowledged. ``top``: the message the answer was typed in, quoted from
+        outside the topic's thread (app/butler_reactions.py top_message): DONE on it once the running task took the
+        answer, else the continuation's reactions."""
         if forward_answer(self.runtime, ctx, chat, token, fields, event_id):
-            return None  # The task runner that asked the question took the answer.
-        return self._submit_answer(ctx, chat, token, fields, event_id)
+            self._took(ctx, top)  # The task runner that asked the question took the answer.
+            return None
+        return self._submit_answer(ctx, chat, token, fields, event_id, **({"top": top} if top else {}))
 
-    def submit_question_feedback(self, ctx, chat, token, text, event_id, attachments=""):
+    def _took(self, ctx, top):
+        """DONE on ``top`` (none: nothing) for an answer or note the running task took. Never raises."""
+        if top:
+            butler_reactions.top_took(self.messenger, ctx.profile, top, self.runtime.log)
+
+    def submit_question_feedback(self, ctx, chat, token, text, event_id, attachments="", *, top=""):
         record = scoped_question(ctx, chat, token)
         fields = question_feedback_fields(record["questions"], text)
         if attachments:
             fields[ATTACHMENTS] = attachments
-        return self.submit_answer(ctx, chat, token, fields, event_id)
+        return self.submit_answer(ctx, chat, token, fields, event_id, **({"top": top} if top else {}))
 
     def resume_saved_answer(self, ctx, chat, token, mid):
         """核查已保存回答 on a question whose saved answer's delivery is uncertain: submitted again once no
@@ -220,7 +230,7 @@ class Questions:
                 not record.get("body_delivery_confirmed") or not self.checkpoints.result_delivered(ctx, record))):
             raise ValueError(f"完整结果或问题控件尚未送达，请先{retry_hint()} 重新投递，不能提前确认")
 
-    def _submit_answer(self, ctx, chat, token, fields, event_id):
+    def _submit_answer(self, ctx, chat, token, fields, event_id, *, top=""):
         path = question_path(ctx, token)
         # The card lock first: an answer clicked while its form is still being recorded waits for it.
         with question_card_lock(path), resource_lock("question", path):
@@ -257,7 +267,7 @@ class Questions:
                                          **response)
         project_context.remember_answer(ctx.state_dir, ctx.topic_id, record, self.runtime.log)  # A project's topic: a decision noted.
         try:
-            return self._deliver_answer(ctx, chat, token, record, answers, event_id, path)
+            return self._deliver_answer(ctx, chat, token, record, answers, event_id, path, **({"top": top} if top else {}))
         except Exception:
             self._answer_unconfirmed(ctx, path)
             raise
@@ -271,7 +281,7 @@ class Questions:
             except Exception as exc:  # noqa: BLE001 - the question card already says it
                 self.runtime.log(f"held notes not repainted: {type(exc).__name__}")
 
-    def _deliver_answer(self, ctx, chat, token, record, answers, event_id, path):
+    def _deliver_answer(self, ctx, chat, token, record, answers, event_id, path, *, top=""):
         feedback = record.get("feedback", "") if record.get("response_kind") == "feedback" else ""
         original = self.harness.topic_record(ctx, chat, record['job_id']) or {}
         if original.get('checkpoint_path'):
@@ -335,9 +345,10 @@ class Questions:
             # and the notices take seconds; they follow, in this topic's order.
             self.answering.add(token)
             after_ack(functools.partial(self._queue_continuation, ctx, chat, token, record, path, answers, feedback,
-                                        prior, title, retried, sender))
+                                        prior, title, retried, sender, **({"top": top} if top else {})))
             return
         self._commit_answer(ctx, chat, token, record, path, notes, feedback)
+        self._took(ctx, top)  # The running task has the answer.
 
     def _device_message(self, ctx, chat, job, token, record, text, delivered):
         """(text, delivered) of an answer to a running task on a device with the files they name put there: the answer
@@ -357,7 +368,7 @@ class Questions:
         return text, delivered
 
     def _queue_continuation(self, ctx, chat, token, record, path, answers, feedback, prior, title, policy_retry=None,
-                            sender_id=""):
+                            sender_id="", *, top=""):
         try:
             # The held notes as they are now: one withdrawn or kept for the next round since the click stays out.
             notes = self.notes.claim_held(ctx, chat, token, "feedback" if feedback else "answer",
@@ -367,7 +378,8 @@ class Questions:
             if record.get('reconcile_saved'):
                 text = '上次回答送达状态未确认。先核查后端会话、已有产物和外部操作是否已完成，避免重复执行。\n' + text
             continuation = self.enqueue_continuation(ctx, text, chat, "answer-" + token, prior, title=title,
-                                                     display=shown, policy_retry=policy_retry, sender_id=sender_id)
+                                                     display=shown, policy_retry=policy_retry, sender_id=sender_id,
+                                                     **({"top": top} if top else {}))
             if continuation is None:
                 raise ValueError("回答已保存，但后续任务未能入队；请检查模型配置后再核查提交状态")
             record["continuation_job_id"] = continuation.job_id
@@ -504,19 +516,20 @@ class Questions:
             self.runtime.log(f"held notes not settled: {type(exc).__name__}")
 
     def enqueue_continuation(self, ctx, text, chat, message_id, recovery_context, title="", display="",
-                             policy_retry=None, sender_id=""):
+                             policy_retry=None, sender_id="", top=""):
         """Queue the job that carries an answer on; a task runner asks its bridge to do this.
 
         `display` is the request its card shows when `text` carries lines meant only for the model; `policy_retry`
         the answered job's mark of a retry after a safety refusal (core/jobs.py), which the continuation keeps, and
-        `sender_id` who sent the answered job's message ('' none known)."""
+        `sender_id` who sent the answered job's message ('' none known). `top`: the message whose reactions say how it
+        stands (app/butler_reactions.py top_message); the Bridge's alone (a task runner's answers are clicks)."""
         if self.runtime.runner is not None:
             return self.runtime.runner.enqueue(self.harness.spec.name, ctx, text, chat, message_id, recovery_context,
                                                title=title, display=display, policy_retry=policy_retry,
                                                sender_id=sender_id)
         return self.enqueue_chat_job(ctx, display or text, chat, message_id, prompt_content=text,
                                      recovery_context=recovery_context, title=title, policy_retry=policy_retry,
-                                     sender_id=sender_id)
+                                     sender_id=sender_id, **({"top": top} if top else {}))
 
     def retire_orphaned_live_questions(self, ctx, chat):
         """The topic's pending live questions (``native_live_question``) whose task is gone: no task runner or job of this
@@ -544,8 +557,9 @@ class Questions:
     def undelivered_checkpoint_jobs(self, ctx, chat):
         return self.checkpoints.undelivered_jobs(ctx, chat)
 
-    def hold_note(self, ctx, chat, text, mid, pending, attachments=""):
-        return self.notes.hold_note(ctx, chat, text, mid, pending, attachments=attachments)
+    def hold_note(self, ctx, chat, text, mid, pending, attachments="", *, top=""):
+        return self.notes.hold_note(ctx, chat, text, mid, pending, attachments=attachments,
+                                    **({"top": top} if top else {}))
 
     def note_action(self, ctx, chat, raw, mid):
         return self.notes.note_action(ctx, chat, raw, mid)

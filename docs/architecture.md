@@ -384,6 +384,18 @@ read、refused、withdrawn：终态
 - `stop_command`（能力 `command_stop`，只有本机的 Claude）：从事件里取主任务正在等的前台 Bash 调用（不含后台命令和子任务的命令），在 Claude CLI 的子进程里按命令行找到它的 shell（`backends/claude/command_stop.py`），先送一条说明（为什么命令被停）再停它的进程组（SIGTERM，2 秒后 SIGKILL，pidfd 防 PID 复用）。`core/steer.py` 的 `keeps_running` 列的命令（推送、部署、发布、安装、远程拷贝、改服务、删除和移动）从不停。
 - 管家的补充没有回执卡：确定没读到的（`refused`，或 `target_ended`）标 `requeue_auto`，由 Bridge 用同一个 `_requeue` 以主人消息的 id 排成新一轮，同样只排一次（[butler.md](butler.md) 收尾时发来的消息）。
 
+## 引用卡片接着说的表情
+
+用户看到的见[使用参考 · 引用卡片接着说](reference.md#引用卡片接着说)。在顶层引用一张直达话题的卡（`core/topics.py` 的 `route_message` 记的 `routes_to`，或话题记过的卡）说话时，`context_for_topic` 把消息交给那个话题，回复进话题的串（`reply_to_message_id` 是话题的根），这条消息下面没有卡。`app/butler_reactions.py` 的 `top_message(ctx, event)` 认出它：`om_` 开头；`reply_to_message_id` 非空且不是它自己；不在话题串里（没有 `thread_id`，或有 `thread_id` 而 `root_id` 不是话题的根：在别的串里引用）；不是管家一家（`Traits.top_level`，它们归 `placement.marked`），也不是代答话题。只在 `BridgeApp.handle_event` 里、`supplement` 为空（话题自己的消息）时算，代答、管家转话、网页的消息不经过它。飞书发来的话题串里的消息都带 `thread_id`，没有 `root_id` 的串里消息也当作在话题串里。
+
+- **记在哪**：`BridgeReplyJob.top_message`（声明的状态，handoff 的 `extras` 里非空才写），任务记录里非空才写 `top_message`，`job_from_record` 和 `requeue` 读回。老版本的任务进程把它当未知 extras 忽略，老记录没有它，都当没有，什么都不加。回退到老版本时，新版本排了队还没开跑的任务由老版本接着跑，表情停在 OneSecond 或 OnIt；新版本的任务进程被老 Bridge 接管时照常收尾。
+- **入队**（`Submission.publish_submission` → `top_queued`）：马上能开工挂 OnIt；前面有本话题的任务或名额满了挂 OneSecond，在任务的 `execution_lock` 里看过 `execution_started` 才挂（交给任务进程、worker 开跑拿的是同一把锁：开跑前挂上的由 `begin` 摘掉，已经开跑的改挂 OnIt）。要自动补充给在跑任务的（`plan["steer"]`）入队时不挂。
+- **开跑和结束**：`worker` 调的 `begin` 见到 `top_message` 就查一次机器人挂的 OneSecond，查到就摘掉、挂 OnIt（和多路并行的开关无关）；`butler_reply.react_end` 对它和管家一样调 `finish`，`routed` 恒为假，所以只会是 DONE、CrossMark 或不留。
+- **补充**（`Steering.steer_queued_job`，自动的和点“现在补给”都走这里）：送进去后 `top_steered`：`sent`、`read` 挂 DONE（点击的先摘 OneSecond），`held` 挂 OneSecond，`uncertain` 不挂。自动的没送进去（`steer_on_arrival` 返回假）由 `enqueue_chat_job` 补一次 `top_queued(waits=True)`；`acknowledge_arrival` 对这类消息不再挂 DONE。送达记录的 `requeue` 记下 `top`：`settle_steer`（`held` 之后的去向）先 `top_settled`（摘 OneSecond，送进去了挂 DONE）再 `requeue_lost`；`watch_steer` 等到晚来的确认也挂 DONE；`_requeue` 排成的新一轮带上 `top`，并摘掉先前的 DONE。
+- **回答**（引用问题卡的副本打字作答）：`interactive_command(top=)` → `submit_answer(top=)`。交给在跑任务的（包括转给任务进程的）`top_took` 挂 DONE；排成续接的，续接任务带 `top`；几道题时 `hold_note(top=)` 在暂存记录里记 `"top": true` 并挂 OneSecond，`settle_notes` 带走时换成 DONE，撤回时摘掉，留作下一轮的 `note-` 任务带 `top`；被拒的（结果或问题卡没送达、`ValueError`）`top_refused` 挂 CrossMark，原因照旧回在话题串里。
+- **停止和恢复**：排队时停止或撤回，`unqueue` 摘 OneSecond 和 OnIt；`show_recovery_card` 和 `report_unfinished`（带原生问题直接返回的那条路也算）调 `TaskControls.top_stopped`：摘 OneSecond 和 OnIt，记录是 `failed`（开跑前就失败）时再挂 CrossMark；`requeue`（检查并继续、自动重试、换旧模型重试）先摘 DONE 和 CrossMark，再挂 OnIt。
+- 摘表情都先用 `Messenger.reaction_ids` 列出再删（`clear`、`take_off`），不为拿 id 先加一个；只有结束时的 `finish` 沿用管家的做法。失败只记日志；都不持记录锁（规则 1、2），挂 OneSecond 那一次持的是任务自己的 `execution_lock`。
+
 ## 问题与回答
 
 用户看到的见[回答模型的问题](usage.md#回答模型的问题)。`questions/<token>.json`，token 是 `sha256(任务消息ID-request_id)` 的前 16 位。`core/statuses.py` 的 `QUESTION_TRANSITIONS`：

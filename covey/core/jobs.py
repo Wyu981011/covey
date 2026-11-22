@@ -130,6 +130,12 @@ class BridgeReplyJob:
     # The owner's message a retry or resume of such a turn reacts on and links in its 你问 block (app/task_controls.py
     # requeue): its own message id is the retry's, not a Feishu one. '' for every other job. Saved: its task runner reacts.
     reaction_message: str = _state("")
+    # The message a topic's turn answers when its card is not under it (a reply quoting a relay or a question card's copy at
+    # the chat's top level, 引用直达; app/butler_reactions.py top_message): its reactions say how the turn stands. Kept by
+    # a retry, a requeued supplement, an answer's continuation and a held note's turn of that message. '' for every other
+    # job (the butler's reactions go by ``reaction_message``). Saved, and in a record, only when set: its task runner
+    # reacts; an older release reads it as nothing.
+    top_message: str = _state("")
     # A retry on an older model after an official safety refusal (app/policy_retry.py): {"of": the refused job's key,
     # "category", "model"}; its subagents run on that model too (context_for_job), and it never retries again. {} for
     # every other job. Saved: its task runner reads it.
@@ -473,6 +479,8 @@ def record_bridge_job_state(
         payload["read_only"] = True  # A launch card's wait keeps it (app/submission.py job_from_record).
     if getattr(job, "turn_source", None):
         payload["turn_source"] = job.turn_source  # So does a record's reader (core/turn_source.py of).
+    if getattr(job, "top_message", ""):
+        payload["top_message"] = job.top_message  # A retry and a recovery card react there (app/task_controls.py).
     resolved_sessions_dir = getattr(job, "sessions_dir", None) or sessions_dir
     if resolved_sessions_dir:
         payload["sessions_dir"] = str(resolved_sessions_dir)

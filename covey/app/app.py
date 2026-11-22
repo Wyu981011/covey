@@ -60,7 +60,7 @@ from covey.app.stuck_check import StuckCheck
 from covey.app.diag_summary import DiagSummary
 from covey.app.worker import process_bridge_reply_job
 from covey.core.harness import BridgeContext, HarnessBackend, HarnessSpec, SessionStore
-from covey.app import devices as device_turns, project_context, project_loop, source_watch
+from covey.app import butler_reactions, devices as device_turns, project_context, project_loop, source_watch
 from covey.core import device_reap, turn_words
 from covey.core.run_dir import run_dir
 from covey.core.jobs import BridgeReplyJob as ReplyJob
@@ -260,8 +260,10 @@ class BridgeApp:
         timing.mark("context")
         content = enriched.display_text or enriched.text
         attachments = getattr(enriched, "attachments", "")
-        self.runtime.log(f"received message id={message_id}")
-        if self.workspace_command(ctx, content, chat_id, message_id, attachments):
+        # A topic's message sent where its thread is not (引用直达 at the top level): its reactions say how it stands.
+        top = butler_reactions.top_message(ctx, event) if supplement is None else ""
+        self.runtime.log(f"received message id={message_id}" + (" top" if top else ""))
+        if self.workspace_command(ctx, content, chat_id, message_id, attachments, **({"top": top} if top else {})):
             timing.outcome("answer")  # An answer, a held note or why neither (app/interaction.py).
             return
         timing.mark("command")
@@ -281,7 +283,7 @@ class BridgeApp:
         timing.mark("history")
         # A topic's message while its task runs goes into that task (app/submission.py steers_on_arrival).
         submit = dict(prompt_content=prompt, received_at=received_at, sender_id=sender, steer=supplement is None,
-                      **({"hold": hold} if hold else {}))
+                      **({"hold": hold} if hold else {}), **({"top": top} if top else {}))
         try:
             job = self.submission.enqueue_chat_job(ctx, content, chat_id, message_id, **submit)
             # Gone into the task before it, it is watched as a supplement of that task (a recall or an edit follows).
@@ -389,5 +391,8 @@ class BridgeApp:
         if chat_id and getattr(ctx, "topic_id", ""):
             self.reply(ctx, chat_id, "旧卡片功能已移除，请在话题里直接描述需求。", self.key("retired-card", event_id))
 
-    def workspace_command(self, ctx, content, chat_id, message_id, attachments=""):
-        return self.interaction.interactive_command(ctx, content, chat_id, message_id, attachments)
+    def workspace_command(self, ctx, content, chat_id, message_id, attachments="", *, top=""):
+        """Whether the message was an answer or a held note (app/interaction.py interactive_command), or why neither;
+        ``top``: its ``top_message`` (app/butler_reactions.py), whose reactions say which."""
+        return self.interaction.interactive_command(ctx, content, chat_id, message_id, attachments,
+                                                    **({"top": top} if top else {}))

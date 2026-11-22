@@ -31,6 +31,7 @@ from covey.core.text import literal
 from covey.core.topics import load_topic
 from covey.core.steer import SteerNotReady, SteerRefused, SteerUncertain
 from covey.app import device_files
+from covey.app import butler_reactions
 from covey.app.butler_reactions import DONE
 from covey.app.butler import SUPPLEMENT_LOST, SUPPLEMENT_UNCERTAIN
 from covey.app.runtime import job_stage
@@ -146,6 +147,8 @@ class Steering(SteerForms, SteerReceiptFlow, SteerInterrupt):
         """DONE on the owner's message once its supplement is in the running task (delivery sent or read), as a receipt
         beside the card: nothing for a held, refused or uncertain one. Called with no lock held; a failure is a log
         line, the supplement is in either way."""
+        if getattr(queued, "top_message", ""):
+            return False  # A message quoted from outside the topic's thread: steer_queued_job said it (top_steered).
         saved = read_delivery(delivery_path(ctx.state_dir, queued.topic_id, QUEUED_STEER + mid)) or {}
         if saved.get("status") not in ("sent", "read"):
             return False
@@ -179,8 +182,10 @@ class Steering(SteerForms, SteerReceiptFlow, SteerInterrupt):
             # The message is already in the topic history from when it arrived.
             # One that went in as it arrived becomes a round of its own should its task never take it
             # (``requeue_lost``): queued as its sender's, as the message would have run.
+            # A message quoted from outside the topic's thread (``top``) keeps its reactions on a turn of its own too.
             again = {"text": shown, "prompt": sent,
-                     **({"sender_id": queued.sender_id} if auto and getattr(queued, "sender_id", "") else {})}
+                     **({"sender_id": queued.sender_id} if auto and getattr(queued, "sender_id", "") else {}),
+                     **({"top": queued.top_message} if getattr(queued, "top_message", "") else {})}
             try:
                 saved = self.deliver_steer(
                     ctx, target, sent, delivery_id, record_history=False,
@@ -222,6 +227,10 @@ class Steering(SteerForms, SteerReceiptFlow, SteerInterrupt):
         if queued.progress:
             self.cards.close_streaming_reply(ctx, queued.progress)  # Then the whole card becomes the receipt.
         self.runtime.unregister_reply_job(queued)
+        if getattr(queued, "top_message", ""):
+            # Its card is in the topic's thread: the message itself says it went in (or waits to).
+            butler_reactions.top_steered(self.messenger, ctx.profile, queued.top_message, saved.get("status"),
+                                         self.runtime.log, auto=auto)
         if form:
             # The receipt is on the form; the queued card says where its message went.
             record = find_job_record(ctx.state_dir, queued.message_id)
@@ -247,6 +256,10 @@ class Steering(SteerForms, SteerReceiptFlow, SteerInterrupt):
                     record = reconcile(path, record)
                 if record.get("status") not in {"submitting", "uncertain"}:
                     self.show_steer_receipt(ctx, record)
+                    top = butler_reactions.steered_top(record)
+                    if top and record.get("status") in ("sent", "read"):
+                        # Confirmed late: a message quoted from outside the topic's thread says it went in.
+                        butler_reactions.put(self.messenger, ctx.profile, top, DONE, "top confirmed", self.runtime.log)
                     return
         background.start(background.CARD_UPDATES, watch)
 
@@ -446,6 +459,10 @@ class Steering(SteerForms, SteerReceiptFlow, SteerInterrupt):
 
     def settle_steer(self, ctx, job, mid, **changes):
         record = update_delivery(delivery_path(ctx.state_dir, job.topic_id, mid), **changes)
+        top = butler_reactions.steered_top(record)
+        if top:
+            # Held for its task (排队中 on the message): sent, or not (a turn of its own puts its reactions on after this).
+            butler_reactions.top_settled(self.messenger, ctx.profile, top, record.get("status"), self.runtime.log)
         if record and record.get("receipt"):
             if record.get("status") == "refused" and on_arrival(record):
                 # Taken off the queue as it arrived, then never sent: a round of its own, marked before it is shown.

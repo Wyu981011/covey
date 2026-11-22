@@ -11,6 +11,7 @@ from covey.core.deliveries import REQUEUE, offers, on_arrival, read_delivery, re
 from covey.core.jobs import find_job_record
 from covey.core.statuses import RUNNING
 from covey.core.locks import resource_lock
+from covey.app import butler_reactions
 from covey.app.card_lanes import after_ack
 
 REQUEUE_UNCONFIRMED = "重新排队已提交，结果未确认；不会重复排队，需要时请直接在本话题再发送一次"
@@ -141,10 +142,12 @@ class SteerReceiptFlow:
         have queued it: it is unconfirmed and never queued again by itself. ``message_id``: the new task's, the
         owner's message itself for a butler one (app/steering.py queue_lost); else its own requeue key."""
         again, token = record["requeue"], record["token"]
+        top = butler_reactions.steered_top(record)  # A message quoted from outside the topic's thread.
         try:
             job = self.enqueue_chat_job(ctx, again["text"], chat, message_id or "requeue-" + token[:24],
                                         prompt_content=again.get("prompt") or again["text"],
-                                        **({"sender_id": again["sender_id"]} if again.get("sender_id") else {}))
+                                        **({"sender_id": again["sender_id"]} if again.get("sender_id") else {}),
+                                        **({"top": top} if top else {}))
         except Exception:
             unconfirmed = update_delivery(path, requeue_state="uncertain")
             if unconfirmed:
@@ -157,4 +160,8 @@ class SteerReceiptFlow:
             # Refused before anything was queued (its reason was sent): it may be tried again.
             update_delivery(path, requeue_state="")
             raise ValueError("重新排队未成功，请直接在本话题再发送一次")
+        if top:
+            # Its DONE said it went into the task that then never read it: the turn of its own says it from now on.
+            butler_reactions.clear(self.messenger, ctx.profile, top, (butler_reactions.DONE,), f"requeued job=#{job.job_id}",
+                                   self.runtime.log)
         return update_delivery(path, requeue_state="queued", requeued_job_id=job.job_id) or record

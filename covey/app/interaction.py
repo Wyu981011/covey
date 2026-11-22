@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from covey.app import policy_guard
+from covey.app import butler_reactions, policy_guard
 from covey.app import triage as triage_flow
 from covey.core import timing, triage
 from covey.core.checkpoint import release_user_wait
@@ -227,14 +227,18 @@ class Interaction:
             self._dispatch_structured_event(ctx, job, "progress_note", {
                 "id": f"policy-tolerated-{time.time_ns()}", "title": BRIDGE_NOTE, "text": f"机器人 {at}：{text}"}, None)
 
-    def interactive_command(self, ctx, content, chat, mid, attachments=""):
+    def interactive_command(self, ctx, content, chat, mid, attachments="", *, top=""):
+        """Whether the message ``mid`` was an answer, a held note or refused as either (said in the topic); False: a
+        turn of its own. ``top``: its ``top_message`` (app/butler_reactions.py), quoted from outside the topic's thread,
+        whose reactions say which (DONE in, 排队中 kept, CrossMark refused, a continuation's own)."""
         try:
-            return self._interactive_command(ctx, content, chat, mid, attachments)
+            return self._interactive_command(ctx, content, chat, mid, attachments, **({"top": top} if top else {}))
         except (ValueError, OSError, RuntimeError) as exc:
             self.messenger.reply(ctx, chat, f"交互暂未完成：{exc}", self.voice.key("interaction-error", mid), voice=self.voice)
+            butler_reactions.top_refused(self.messenger, ctx.profile, top, self.runtime.log)
             return True
 
-    def _interactive_command(self, ctx, content, chat, mid, attachments=""):
+    def _interactive_command(self, ctx, content, chat, mid, attachments="", *, top=""):
         self.questions.reconcile_checkpoint_questions(ctx, chat)
         # Before the message is routed: it answers, or waits for, only the newest question card.
         fold_older_questions(ctx, [self.questions], topic=(ctx.topic_id, chat))
@@ -265,6 +269,7 @@ class Interaction:
                     if not undelivered and triage_flow.ENV is not None and any(triage_flow.unshown(row) for _, row in rows)
                     else f"原结果或问题控件尚未送达，请先{retry_hint()} 重新投递；本条没有续接或排队。")
             self.messenger.reply(ctx, chat, text, self.voice.key("answer-awaiting-result", mid), voice=self.voice)
+            butler_reactions.top_refused(self.messenger, ctx.profile, top, self.runtime.log)
             return True
         from covey.core.harness import backend_capabilities
         capabilities = backend_capabilities(self.harness.backend, ctx)
@@ -277,11 +282,13 @@ class Interaction:
         # An image sent as the answer reaches the model as its downloaded path; cards show only "附件：图片 1 张".
         if len(blocking) == 1 and len(blocking[0]["questions"]) == 1:
             self.questions.submit_answer(ctx, chat, blocking[0]["token"],
-                               {"answer_0": content, **({ATTACHMENTS: attachments} if attachments else {})}, mid)
+                               {"answer_0": content, **({ATTACHMENTS: attachments} if attachments else {})}, mid,
+                               **({"top": top} if top else {}))
             return True
         if blocking:
             # Several answers are awaited: keep the message for the first submitted answer.
-            self.questions.hold_note(ctx, chat, content, mid, blocking, attachments=attachments)
+            self.questions.hold_note(ctx, chat, content, mid, blocking, attachments=attachments,
+                                     **({"top": top} if top else {}))
             return True
         return False
 

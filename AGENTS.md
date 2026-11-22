@@ -27,6 +27,7 @@
 | 谁被服务、群聊、别人私聊时回一句（`COVEY_STRANGER_REPLY`，默认开） | `app/access.py`、`core/groups.py`、`app/group_manager.py`、`app/strangers.py` | [谁被服务](docs/architecture.md#谁被服务) |
 | 管家（私聊模式） | `app/butler.py`、`core/butler.py`、`core/placement.py`、`app/butler_tools.py` | [butler.md](docs/butler.md) |
 | 话题与回带 | `app/butler_topics.py`（新话题的 Harness、模型、预算在 `app/butler_model_choice.py`；请求幂等账本 `core/butler_opened.py`）、`app/butler_relay.py`、`app/relay_targets.py`、`app/relay_send.py`；停住卡的原因、按钮和点击 `app/relay_stops.py` | [butler.md](docs/butler.md) |
+| 引用卡片接着说（顶层引用结论卡、问题卡副本等直达话题的那句话上的表情） | `app/butler_reactions.py` 的 `top_message`、`top_queued` 等，接入点在 `app/submission.py`、`app/steering.py`、`app/questions.py`、`app/held_notes.py`、`app/task_controls.py` | [引用卡片接着说的表情](docs/architecture.md#引用卡片接着说的表情) |
 | 看板、Pin、手上的事 | `app/pins.py`、`app/status_cards.py`、`app/overview.py`、`core/board_read.py` | [手上的事](docs/usage.md#手上的事)、[配置](docs/configuration.md#手上的事与话题看板) |
 | 整理专项与话题要点（`COVEY_PROJECT_TIDY`） | `app/project_tidy.py`（`ProjectTidy` 协调器：`__init__` 里组装下面各部件，自己管线程和话题要点收集；部件不继承、只调更下面的）、`app/tidy_facts.py`（记录读写的纯函数，最底层）、`app/tidy_state.py`（共享状态 `busy`/`progress`/`counted`/`handed`）、`app/tidy_words.py`（话题在卡上的字样与链接）、`app/tidy_apply.py`（照办：建、归进、移出、合并、拆、收起）、`app/tidy_proposals.py`（提议新专项、提议卡与跟着归并更新）、`app/tidy_realtime.py`（实时归并、新专项扫一遍）、`app/tidy_run.py`（定时/手动整理与整理卡）、`app/tidy_clicks.py`（卡片点击，`claim` 是入口）、`app/tidy_web.py`（网页面板）、`app/project_sorter.py`（小模型读什么、补要点）、`core/topic_gist.py`（话题要点）、`core/project_proposals.py`（提议与主人的决定）、`cards/project_proposal.py`、`app/projects.py` 的 `gather`、`app/project_members.py` 的 `join_topic`/`leave_topic` | [projects.md](docs/projects.md#整理专项)、[配置](docs/configuration.md#整理专项) |
 | 专项（`COVEY_PROJECTS=1`）：负责人、专项卡、问题分流、停住后问主人、满额腾位置、话题转给管家 | `core/projects.py`、`app/project_lead.py`、`app/project_tools.py`、`app/project_loop.py`（`make_room`）、`app/butler_asks.py`、`app/project_cards.py`、`cards/project_card.py`、`app/triage.py`、`core/project_memory.py`、`core/project_library.py` | [projects.md](docs/projects.md)、[架构 · 专项](docs/architecture.md#专项第-2-期开发中默认关) |
@@ -92,7 +93,7 @@
 | `app/butler_model_choice.py` | What Harness, model and thinking budget a topic the butler opens runs with |
 | `app/butler_panel.py` | The 管家 settings card: the owner changes the butler's settings in the private chat |
 | `app/butler_projects.py` | 管家的专项工具: `projects_list`, `project_send` and `projects_tidy`, handlers as app/butler_env.py describes them |
-| `app/butler_reactions.py` | Reactions on the owner's message for a butler turn when its topics hang under his question (core/placement.py … |
+| `app/butler_reactions.py` | Reactions on the message a turn answers when its card is not under it |
 | `app/butler_relay.py` | A topic turn's outcome back at the private chat's top level, only with the butler on |
 | `app/butler_reply.py` | How a butler turn ends on its task card, for the turns whose Traits say `answers_in_place` (the butler's) |
 | `app/butler_search.py` | topics_search, the butler's tool that finds which topic, and which turn of it, a clue came from |

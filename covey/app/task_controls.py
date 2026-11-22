@@ -28,7 +28,7 @@ from covey.cards.review import recent_user_questions
 from covey.core.saved_results import has_saved_reply, load_authorized_reply
 from covey.core.locks import LOCK, topic_lock
 from covey.core.store import directory_store
-from covey.app import auto_retry, relay_stops, subagent_recovery
+from covey.app import auto_retry, butler_reactions, relay_stops, subagent_recovery
 from covey.app.recovery_cards import paint_answered, recovery_card
 from covey.app.task_card import card_failure_notice
 from covey.app.redelivery import Redelivery
@@ -95,6 +95,10 @@ class _Marked:
     def reaction_message(self):
         return self.record.get("reaction_message")
 
+    @property
+    def top_message(self):
+        return self.record.get("top_message")
+
 
 class TaskControls(Redelivery):
     """One Harness's task controls: the stop and retry buttons of a task card, retrying a
@@ -154,6 +158,7 @@ class TaskControls(Redelivery):
         if not turn_source.behavior(record).own_delivery:
             self.runtime.log(f"no recovery card for the 协作 ask job=#{record.get('job_id')}")
             return True
+        self.top_stopped(ctx, record)  # A message quoted from outside the topic's thread: its OnIt never stays.
         card = self.asked_card(ctx, record, recovery_card(record, state_dir=ctx.state_dir))
         if self.cards.replace_record_card(ctx, record, card):
             return True
@@ -175,9 +180,21 @@ class TaskControls(Redelivery):
             upsert_job_record(ctx.state_dir, record["key"], card_id=card_id, card_message_id=outgoing,
                               **({TOP_CARD: True} if top else {}))
         if top and placement.marked(ctx.state_dir, record):
-            from covey.app import butler_reactions
             butler_reactions.finish(self.messenger, ctx.profile, _Marked(record), "", self.runtime.log)
         return bool(outgoing)
+
+    def top_stopped(self, ctx, record):
+        """The message a recorded turn of a ``top_message`` reacts on (app/butler_reactions.py), once that turn will not
+        end by itself (interrupted, or failed before its worker ran it, ``show_recovery_card``): 排队中 and OnIt come off,
+        CrossMark goes on for a failure; a retry or resume puts OnIt back (``requeue``). Never raises."""
+        message = butler_reactions.top_of(record)
+        if not message:
+            return
+        what = f"stopped job=#{record.get('job_id')}"
+        butler_reactions.clear(self.messenger, ctx.profile, message, (butler_reactions.QUEUED, butler_reactions.ON_IT),
+                               what, self.runtime.log)
+        if record.get("status") == "failed":
+            butler_reactions.put(self.messenger, ctx.profile, message, butler_reactions.FAILED, what, self.runtime.log)
 
     def report_unfinished(self, ctx, record, notice, key, *, keep_question_forms, restart=True):
         """Tell the user ``record``'s job ended unfinished: its card offers 检查并继续, or ``notice`` goes to its
@@ -189,6 +206,7 @@ class TaskControls(Redelivery):
             return  # A 协作 ask's turn: its collaboration record settles it (app/collab_flow.py), nothing is said here.
         questions = (keep_question_forms or restart) and self.questions.has_native_questions(ctx, record["job_id"])
         if questions and keep_question_forms:
+            self.top_stopped(ctx, record)  # No card, its question form waits: the message's OnIt comes off all the same.
             return
         if restart and not questions:
             record = auto_retry.schedule_restart(ctx, record)
@@ -420,7 +438,6 @@ class TaskControls(Redelivery):
             self.close_unstarted_job(ctx, job, "原消息已撤回" if recalled else "已取消排队",
                                      "你撤回了这条消息，它不会执行；其他任务继续。" if recalled else "本条消息不会执行；其他任务继续。",
                                      self.voice.key("cancel-queued", message_id))
-            from covey.app import butler_reactions
             butler_reactions.unqueue(self.messenger, ctx.state_dir, ctx.profile, job, self.runtime.log)
             if recalled:
                 self.runtime.log(f"job cancelled for its recalled message job=#{job.job_id}")
@@ -571,6 +588,9 @@ class TaskControls(Redelivery):
         if quiet:
             job.reaction_message = placement.owner_message(record)
             job.card_deferred = True
+        else:
+            # A message quoted from outside the topic's thread: the retry's reactions go on it too (top_queued below).
+            job.top_message = butler_reactions.top_of(record)
         # The topic's binding, as context_for_topic read it: its controls and a later retry check it,
         # as for a job from a message.
         job.binding_revision = int(ctx.options.get("binding_revision") or 0)
@@ -590,8 +610,9 @@ class TaskControls(Redelivery):
             raise
         upsert_job_record(ctx.state_dir, record["key"], retried_by=job.message_id)
         if quiet:
-            from covey.app import butler_reactions
             butler_reactions.start(self.messenger, ctx.state_dir, ctx.profile, job, self.runtime.log, again=True)
+        elif job.top_message:
+            butler_reactions.top_queued(self.messenger, ctx.profile, job, self.runtime.log, again=True)
         self.cards.replace_record_card(ctx, record, self.asked_card(ctx, record, recovery_card(
             record, state_dir=ctx.state_dir, moved_to=job.job_id, automatic=kind, moved=moved)))
         queued_line = f"本话题任务已重新入队，任务 #{job.job_id}。"

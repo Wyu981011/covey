@@ -225,7 +225,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 
 - **开**：管家开着、查得到提问、提问的别名还指向管家时（`core/topics.py` 的 `claim_area_root`），以这条提问为根：先把别名改给新话题（`move_topic_message`），再建上下文，不发话题卡。`opened/` 记 `area_root`、`area_taken`。
 - **一条提问只挂一个串**：同一条提问的第二个话题、查不到提问时，提问的串里已挂着同一轮转交的[派发卡](#派发卡开关默认关)时，根是顶层新发的话题卡；分叉挂不上时把源话题合并转发到私聊当根。第二个话题的“你问”仍写那条提问，链接打开它自己的串。
-- **引用直达**：引用专项负责人的回答，交给负责人（`app/butler.py` 的 `app_for`；负责人算管家一家，`core/butler.py` 的 `is_lead`）。管家这一轮的卡只交给了一个话题时，卡的别名记上 `routes_to`。回带的结论、问题卡副本也记成话题的消息并带 `routes_to`。引用它们就是对那个话题说话（`context_for_topic` 先看 `routes_to`），不经管家。纯话题模式下串里不看 `routes_to`。
+- **引用直达**：引用专项负责人的回答，交给负责人（`app/butler.py` 的 `app_for`；负责人算管家一家，`core/butler.py` 的 `is_lead`）。管家这一轮的卡只交给了一个话题时，卡的别名记上 `routes_to`。回带的结论、问题卡副本也记成话题的消息并带 `routes_to`。引用它们就是对那个话题说话（`context_for_topic` 先看 `routes_to`），不经管家。纯话题模式下串里不看 `routes_to`。这样说的话下面没有卡，表情跟着那个话题的这一轮走（[架构 · 引用卡片接着说的表情](architecture.md#引用卡片接着说的表情)）。
 
 ## 结论回到顶层
 

@@ -356,6 +356,12 @@ class Submission:
                 self._repaint_answered(answered)
         if job.card_deferred:
             butler_reactions.start(self.messenger, ctx.state_dir, ctx.profile, job, self.runtime.log)
+        if job.top_message and not steering:
+            # A message quoted from outside its topic's thread (引用直达): its card is in that thread, so the message says
+            # it is queued: OnIt, or 排队中 while tasks of its topic or a full house are before it. One being sent into
+            # the task before it says what became of it instead (Steering.steer_queued_job).
+            butler_reactions.top_queued(self.messenger, ctx.profile, job, self.runtime.log,
+                                        waits=bool(ahead or capacity_full or held))
         if carded:
             return  # The queued card says all of it and changes with the message; no second notice.
         if steering:
@@ -418,6 +424,7 @@ class Submission:
         carry_device(job, ctx)
         job.read_only = r.get("read_only") is True
         job.turn_source = r.get(turn_source.FIELD) or {}  # A source it was made with goes on with it (app/job_dispatch.py).
+        job.top_message = str(r.get("top_message") or "")  # Its reactions too, once it is queued (publish_submission).
         job.harness_id = r.get('harness_id') or r.get('backend') or self.harness.spec.name
         job.binding_revision = int(r.get('binding_revision') or ctx.options.get('binding_revision', 1))
         return job
@@ -457,7 +464,7 @@ class Submission:
         self, ctx: Any, content: str, chat_id: str, message_id: str,
         *, prompt_content: str | None = None, recovery_context: dict | None = None, received_at=None, title: str = "",
         sender_id: str = "", hold: float = 0, policy_retry: dict | None = None, steer: bool = False,
-        read_only: bool = False, source: dict | None = None,
+        read_only: bool = False, source: dict | None = None, top: str = "",
     ) -> BridgeReplyJob | None:
         """Submit one message of ctx's topic as a new job of this Harness; ``sender_id`` is who sent it.
         ``hold``: seconds it waits before it starts (the butler's, app/butler.py). ``policy_retry``: an
@@ -467,12 +474,15 @@ class Submission:
         before it runs, it goes into that task (``steers_on_arrival``), outside the topic's lock as a 补充 click
         does; the job is then cancelled, its card the receipt. ``source``: the job's 轮次来源 as the Bridge made it
         (core/turn_source.py make), none for the owner's and every message as before; a source whose words are not the
-        owner's starts no owner turn of a lead and never goes into a running task."""
+        owner's starts no owner turn of a lead and never goes into a running task. ``top``: the message whose reactions
+        say how the job stands, because its card is not under it (app/butler_reactions.py top_message: a message
+        quoted from outside the topic's thread, or the answer, held note or supplement of one)."""
         try:
             ctx = self.models.prepare_submission_context(ctx)
         except (ValueError, OSError, RuntimeError) as exc:
             self.messenger.reply(ctx, chat_id, "任务未提交：模型配置无法确认。" + str(exc),
                                  self.voice.key("model-config-error", message_id), voice=self.voice)
+            butler_reactions.top_refused(self.messenger, ctx.profile, top, self.runtime.log)  # Said in its topic's thread.
             return None
         history_snapshot = recent_history(ctx.history_path)
         timing.mark("prepare")
@@ -503,6 +513,8 @@ class Submission:
             job.read_only = True
         if source:
             job.turn_source = dict(source)
+        if top:
+            job.top_message = top
         if hold:
             job.start_held_until = time.time() + hold
         from covey.app import project_loop
@@ -511,6 +523,7 @@ class Submission:
         if acts.owner_words:
             project_loop.owner_turn(ctx.state_dir, job.topic_id, chat_id, message_id)  # The owner's turn in a lead's topic.
         plan = self.submit_topic_job(ctx, job, steer=steer and acts.steers)
-        if plan.get("steer"):
-            self.steering.steer_on_arrival(ctx, chat_id, job, message_id)
+        if plan.get("steer") and not self.steering.steer_on_arrival(ctx, chat_id, job, message_id) and job.top_message:
+            # Not taken: it stays queued behind the task it was bound to (or starts, that task having ended).
+            butler_reactions.top_queued(self.messenger, ctx.profile, job, self.runtime.log, waits=True)
         return job

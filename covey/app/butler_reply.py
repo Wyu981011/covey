@@ -318,13 +318,15 @@ def hook_topics(delivery) -> None:
 
 def react_end(delivery) -> None:
     """A quiet butler turn's OnIt becomes its end (app/butler_reactions.py ending), unless ``handed_quietly`` put
-    it there. Never raises."""
-    from covey.app.butler_reactions import ending
+    it there; so does a topic's turn of a message quoted from outside its thread (its ``top_message``), which hands
+    nothing on (never Get). Never raises."""
+    from covey.app.butler_reactions import ending, top_of
     job, ctx, turn = delivery.job, delivery.ctx, delivery.turn
     try:
-        if delivery.reacted or delivery.react is None or not placement.marked(ctx.state_dir, job):
+        marked = placement.marked(ctx.state_dir, job)
+        if delivery.reacted or delivery.react is None or not (marked or top_of(job)):
             return
-        routed = turn.status == "done" and bool(routes(ctx.state_dir, job_key(job.message_id, job.job_id)))
+        routed = marked and turn.status == "done" and bool(routes(ctx.state_dir, job_key(job.message_id, job.job_id)))
         refused = bool(getattr(getattr(turn, "outcome", None), "policy_event", None))
         delivery.reacted = True
         delivery.react(job, ending(turn.status, routed, refused))

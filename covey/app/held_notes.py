@@ -20,6 +20,7 @@ import hashlib
 import json
 import time
 
+from covey.app import butler_reactions
 from covey.app.card_lanes import after_ack
 from covey.cards.held_note import ANSWER_REQUIRED, feedback_chooser, note_card, note_parts, waiting_text
 from covey.core.locks import resource_lock
@@ -53,6 +54,10 @@ class HeldNotes:
     - ``cards``: repaints a note card when its status changes.
     - ``questions``: the Questions that owns these notes: which questions wait, the feedback a
       note can become, and the job that carries a queued note on.
+
+    A note typed outside the topic's thread (``top``: quoting a question card's copy at the chat's top level) keeps its
+    message's reactions (app/butler_reactions.py): 排队中 while it is held, DONE once an answer took it, nothing once
+    withdrawn, its own turn's when it runs as one.
     """
 
     def __init__(self, harness, *, messenger, cards, questions) -> None:
@@ -60,6 +65,16 @@ class HeldNotes:
         self.voice = harness.voice
         self.cards = cards
         self.questions = questions
+
+    def _log(self, line):
+        log = getattr(getattr(self.questions, "runtime", None), "log", None)
+        if callable(log):
+            log(line)
+
+    @staticmethod
+    def top_of(note) -> str:
+        """The message a note's reactions are on: its own, when it was typed outside the topic's thread; else ''."""
+        return str(note.get("message_id") or "") if note.get("top") is True and str(note.get("message_id") or "").startswith("om_") else ""
 
     @staticmethod
     def note_path(ctx, token):
@@ -69,7 +84,9 @@ class HeldNotes:
         rows = directory_store(ctx.state_dir / "held-notes").query(topic_id=ctx.topic_id, chat_id=chat)
         return sorted((r for _, r in rows if r.get("status") in statuses), key=lambda r: r.get("created_at", 0))
 
-    def hold_note(self, ctx, chat, text, mid, pending, attachments=""):
+    def hold_note(self, ctx, chat, text, mid, pending, attachments="", *, top=""):
+        """Keep ``text`` (message ``mid``) for the next submitted answer and show its card in the topic. ``top``: ``mid``
+        was typed outside the topic's thread (app/butler_reactions.py top_message): 排队中 on it while it is held."""
         token = hashlib.sha256(f"{ctx.topic_id}-{mid}".encode()).hexdigest()[:32]
         path = self.note_path(ctx, token)
         with resource_lock("question", path):
@@ -78,8 +95,11 @@ class HeldNotes:
             record = {"schema_version": 1, "token": token, "topic_id": ctx.topic_id, "chat_id": chat, "text": text,
                       "message_id": mid, "status": "held", "created_at": time.time(),
                       "question_tokens": [q["token"] for q in pending], "waiting": waiting_for(pending),
-                      **({"attachments": attachments} if attachments else {})}
+                      **({"attachments": attachments} if attachments else {}),
+                      **({"top": True} if top and top == mid else {})}
             write_private_text(path, json.dumps(record, ensure_ascii=False))
+        if self.top_of(record):
+            butler_reactions.top_waits(self.messenger, ctx.profile, mid, self._log)
 
         def remember(card_message):
             with resource_lock("question", path):
@@ -129,6 +149,9 @@ class HeldNotes:
         verb = raw.get("verb")
         if verb == "withdraw":
             changed = self.update_note(ctx, token, {"held", "next_round"}, status="withdrawn")
+            if changed is not None and self.top_of(changed):
+                butler_reactions.clear(self.messenger, ctx.profile, self.top_of(changed), (butler_reactions.QUEUED,),
+                                       "note withdrawn", self._log)
         elif verb == "attach":
             changed = self.update_note(ctx, token, {"next_round"}, status="held")
         elif verb == "next":
@@ -160,7 +183,9 @@ class HeldNotes:
                 changed = self.update_note(ctx, token, {"next_round"}, status="held")
             if changed is not None:
                 said, paths = note_parts(record)
-                self.questions.submit_question_feedback(ctx, chat, pending[0]["token"], said, mid, attachments=paths)
+                top = self.top_of(record)
+                self.questions.submit_question_feedback(ctx, chat, pending[0]["token"], said, mid, attachments=paths,
+                                                        **({"top": top} if top else {}))
         else:
             raise ValueError("未知操作")
         if changed is None:
@@ -217,7 +242,9 @@ class HeldNotes:
             text = said + ("\n" + paths if paths else "")
             append_history(ctx.history_path, "user", text, {"message_id": note["message_id"]})
             try:
-                job = self.questions.enqueue_continuation(ctx, text, chat, "note-" + note["token"], None, display=said)
+                top = self.top_of(note)
+                job = self.questions.enqueue_continuation(ctx, text, chat, "note-" + note["token"], None, display=said,
+                                                          **({"top": top} if top else {}))
             except Exception:
                 self.repaint_note(ctx, note)  # It may have been queued: never sent again by itself.
                 raise
@@ -230,6 +257,9 @@ class HeldNotes:
         """After an answer: the notes it took (claim_held) show its job; notes left for the next
         round are queued behind it once no question waits or is being answered."""
         for note in attached:
-            self.update_note(ctx, note["token"], {"attached"}, job_id=job_id, response_kind=response_kind)
+            settled = self.update_note(ctx, note["token"], {"attached"}, job_id=job_id, response_kind=response_kind)
+            if settled is not None and self.top_of(settled):
+                # Typed outside the topic's thread: it went with the answer (its turn's request, or the running task).
+                butler_reactions.top_took(self.messenger, ctx.profile, self.top_of(settled), self._log)
         if not self.questions.pending_questions(ctx, chat) and not self.questions.answer_in_flight(ctx, chat):
             self.queue_notes(ctx, chat, self.held_notes(ctx, chat, "next_round"))
