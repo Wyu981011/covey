@@ -97,29 +97,35 @@ class DeleteTest(Case):
 
 
 class LimitTest(Case):
-    def test_past_40_entries_the_oldest_goes_but_the_style_line_stays(self):
+    def test_past_the_entries_limit_the_oldest_goes_but_the_style_line_stays(self):
         memory.set_style(self.state, PID, "汇报风格：x", now=NOW - 5)
-        for number in range(45):
-            memory.add(self.state, PID, f"条目{number}", "fact", now=NOW + number)
+        with mock.patch.object(memory, "MAX_ENTRIES", 40):
+            for number in range(45):
+                memory.add(self.state, PID, f"条目{number}", "fact", now=NOW + number)
         rows = self.stored()
         self.assertEqual(len([row for row in rows if not row["deleted"]]), 40)  # The style line is one of the 40.
         texts = [row["text"] for row in rows]
         self.assertIn("汇报风格：x", texts)
         self.assertNotIn("条目0", texts)
         self.assertIn("条目44", texts)
+        self.assertEqual([row["text"] for row in memory.archived(self.state, PID)], [f"条目{n}" for n in range(6)])  # Kept, not lost.
+        self.assertGreaterEqual(memory.MAX_ENTRIES, 120)
 
-    def test_past_6_kb_the_oldest_goes_first_and_a_tombstone_before_a_live_entry(self):
+    def test_past_the_bytes_limit_the_oldest_goes_first_and_a_tombstone_before_a_live_entry(self):
         gone, _ = memory.add(self.state, PID, "老的", "fact", now=NOW)
         memory.add(self.state, PID, "最老的活条目", "fact", now=NOW - 100)
         memory.delete(self.state, PID, gone["id"], now=NOW + 1)
-        for number in range(30):
-            memory.add(self.state, PID, f"{number:02d}" + "字" * 190, "fact", now=NOW + 10 + number)
+        with mock.patch.object(memory, "MAX_BYTES", 6 * 1024):
+            for number in range(30):
+                memory.add(self.state, PID, f"{number:02d}" + "字" * 190, "fact", now=NOW + 10 + number)
         raw = memory.memory_path(self.state, PID).read_text()
-        self.assertLessEqual(len(raw.encode()), memory.MAX_BYTES)
+        self.assertLessEqual(len(raw.encode()), 6 * 1024)
         texts = [row["text"] for row in self.stored()]
         self.assertNotIn("老的", texts)  # The tombstone went first.
         self.assertNotIn("最老的活条目", texts)
         self.assertTrue(texts[-1].startswith("29"))
+        self.assertEqual(memory.archived(self.state, PID)[0]["text"], "最老的活条目")  # A tombstone is not kept, a live entry is.
+        self.assertGreaterEqual(memory.MAX_BYTES, 64 * 1024)
 
     def test_forget_drops_what_is_older_than_the_cut_and_keeps_style_and_untimed(self):
         memory.add(self.state, PID, "很老", "fact", now=NOW - 200 * DAY)

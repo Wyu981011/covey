@@ -82,13 +82,16 @@ def _topic_marked(ctx, topic_id) -> bool:
         return True
 
 
-def _take(ctx, record, text, marked):
-    """(the note of one ``memory`` line, or None): the line written in the narrowest place."""
+def _take(ctx, record, text, marked, quote=""):
+    """(the note of one ``memory`` line, or None): the line written in the narrowest place; a project's keeps where it came
+    from (the owner's message the turn answered, its topic and job, and the owner's words ``quote``d)."""
     topic_id = str(record.get("topic_id") or "")
     state = ctx.state_dir
     found = projects.topic_project(state, topic_id) if projects.memory_enabled() else None
     if found is not None and found.role == projects.MEMBER:
-        entry, new = project_memory.add(state, found.id, text, "constraint", "owner", redacted=marked)
+        entry, new = project_memory.add(state, found.id, text, "constraint", "owner", redacted=marked, origin={
+            "message_id": str(record.get("message_id") or ""), "topic": topic_id, "job": str(record.get("key") or ""),
+            "quote": str(quote or "")})
         scope = PROJECT_WORDS
     elif found is None:
         entry, new = topic_memory.add(state, topic_id, text, source="owner", redacted=marked)
@@ -106,8 +109,8 @@ def _void(ctx, record, item):
         return None
     _, project_id, entry_id = str(carried["ref"]).split(":", 2)
     row = next((row for row in project_memory.stored(ctx.state_dir, project_id) if row["id"] == entry_id and not row["deleted"]), None)
-    if row is None or memory.by_source(row["source"]) != memory.LEAD or not project_memory.delete(ctx.state_dir, project_id, entry_id):
-        return None
+    if row is None or memory.describe(row)["asserted_by"] == "owner" or not project_memory.delete(ctx.state_dir, project_id, entry_id):
+        return None  # What the owner said (a correction of his included) is never voided by a model's word.
     return {"kind": "voided", "text": row["text"], "scope": PROJECT_WORDS, "entry_id": entry_id}
 
 
@@ -136,7 +139,7 @@ def collect(runtime, messenger, job, ctx) -> None:
         for item in wanted[:PER_TURN]:
             text = project_memory.clean(item.get("text")) if isinstance(item, dict) else ""
             if text and from_owner(item.get("quote"), said):
-                notes.append(_take(ctx, record, text, marked))
+                notes.append(_take(ctx, record, text, marked, item.get("quote")))
         notes = [note for note in notes if note]
         runtime.log(f"memory lines written={len(notes)} of {len(wanted) + len(voids)} job=#{record.get('job_id')}")
         if notes:

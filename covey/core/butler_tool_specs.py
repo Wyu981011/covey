@@ -292,7 +292,8 @@ PROJECT_TOOLS = (
 TRIAGE_ENV = "COVEY_PROJECT_TRIAGE"
 TRIAGE_TOOLS = (
     {"name": "project_answer",
-     "description": "替主人答专项里一个话题交给你的选择题（题目在“专项状态”的“交给你的话题问题”里）。只答能依据专项记忆和主人定过的事回答的；"
+     "description": "替主人答专项里一个话题交给你的选择题（题目在“专项状态”的“交给你的话题问题”里）。只答能依据专项记忆和主人定过的事回答的"
+                    "（专项记忆里的“待核对参考”是你整理的，不能单独作为依据）；"
                     "每题都要答，答案必须是选项原文，多选的给数组。拿不准就用 project_escalate，不要猜。回答会注明是负责人替主人答的，话题照常往下做，"
                     "也会记进专项卡的分流记录，主人看得到、可以点“不对”。",
      "input_schema": {"type": "object", "required": ["thread", "answers"], "properties": {

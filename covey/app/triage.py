@@ -434,7 +434,8 @@ def correct(project, token, text) -> str:
     projects.update(state, pid, change)
     if projects.memory_enabled():  # COVEY_PROJECT_MEMORY=1: the owner's word over the lead's answer is a decision of the project too (member topics start with it).
         try:
-            project_memory.add(state, pid, f"主人纠正了负责人替答的：{cut(str(row.get('text')), 80)} → {cut(text, 100)}", "decision", "owner_fix")
+            project_memory.add(state, pid, f"主人纠正了负责人替答的：{cut(str(row.get('text')), 200)} → {text}", "decision", "owner_fix",
+                               origin={"question": str(token), "topic": topic})
         except Exception as exc:  # noqa: BLE001 - the correction is sent and in the decision log whether or not the memory took it
             env.runtime.log(f"project memory of a correction failed: {type(exc).__name__}")
     return "已记下：这句话发给了那个话题" + ("" if queued is not None else "（话题现在排不上，没有发出，但已记进决定日志）") + "，也记进专项的决定日志，负责人之后照做。"

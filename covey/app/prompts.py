@@ -18,8 +18,9 @@ from typing import Any
 
 from covey.cards.review import render_history
 from covey.core import env as cenv
-from covey.core import extensions, knowledge, projects
+from covey.core import extensions, knowledge, projects, turn_source
 from covey.core import memory as core_memory
+from covey.core.text import stamp
 from covey.core.checkpoint import checkpoint_rules
 from covey.core.butler_tool_specs import BUTLER_RULES_ENV
 
@@ -175,18 +176,69 @@ def principles_block(owner, workspace=(), workspace_name: str = "", limit: int =
 
 # 专项记忆 and 资料库 (core/project_memory.py, core/project_library.py), when COVEY_PROJECT_MEMORY=1: what a topic of a project reads, after
 # the principles in the rules and in each resumed turn's reminder (app/project_context.py builds the lines).
-PROJECT_CHARS = 3000  # Of the memory's lines; the oldest go first past it. The library's index has its own 2 KB.
+PROJECT_CHARS = 3000  # Of the memory's lines given as they are; the oldest go first past it. The library's index has its own 2 KB.
 PROJECT_MEMORY_HEAD = ("专项记忆（这个话题属于专项「{name}」；下面是专项里已经定下的事，做事时照着办，"
                        "和主人这一轮的话冲突时以这一轮为准）：")
 PROJECT_LIBRARY_HEAD = "专项资料库（主人给专项的文件，和专项各话题的产物、交付；需要时按路径去读，设备上的话题读不到本机的文件）："
+# A project's memory in its three parts (core/memory.py project_view), as a member topic reads it with COVEY_MEMORY off and as the
+# lead's state pack has it (app/project_lead.py): each part's head and lines, what was left out, what was voided, the version.
+PROJECT_PART_HEADS = {
+    core_memory.RULE: "长期约定（主人明说以后都照做的）：",
+    core_memory.DECISION: "当前决定（主人答过的问题，一题一条，只管那道题问的范围；换了批次、目标或扩大范围要重新问）：",
+    core_memory.REFERENCE: "待核对参考（负责人整理的口径，不是主人原话；和主人的话冲突时让路，不能单独作为替主人答题的依据）：",
+}
+VOIDED_HEAD = "上一轮之后作废、不再适用的（之前带过，现在不要再照着做）："
+LEFT_PARTS = "专项记忆里这一轮放不下、没有带上的：{parts}（都还在专项记忆里）。"
+NO_ORIGIN = "（无出处）"  # After the owner's words of an older line the Bridge has no origin of (core/turn_source.py level agent).
 
 
-def project_block(name, memory=(), library=(), limit: int = PROJECT_CHARS) -> str:
+def unsourced(item) -> bool:
+    """Whether ``item`` is a project's line of the owner's words the Bridge has no origin of (core/turn_source.py level agent)."""
+    return bool(item.get("part")) and item["by"] == core_memory.OWNER and item.get("level") == turn_source.LEVEL_AGENT
+
+
+def item_text(item) -> str:
+    """An item's words as a block says them: a 当前决定 with the day it was given, a line with its conditions (``applies``)."""
+    text = item["text"]
+    if item.get("part") == core_memory.DECISION and item.get("at"):
+        text += f"（{stamp(item['at'], '%m-%d')}）"
+    if item.get("applies"):
+        text += f"（适用：{item['applies']}）"
+    return text
+
+
+def left_parts(view) -> str:
+    """The line of what a project's parts left out (``view``: core/memory.py project_view), '' when nothing was."""
+    parts = [f"{core_memory.PART_WORDS[part]} {len(view['parts'][part]['left'])} 条" for part in core_memory.PARTS
+             if view["parts"][part]["left"]]
+    return LEFT_PARTS.format(parts="、".join(parts)) if parts else ""
+
+
+def project_memory_lines(view) -> list:
+    """A project's memory (``view``: core/memory.py project_view) as lines: each part that has any, its head and its lines
+    "- [kind] text", the oldest first ("（新）" after one written since the reader's previous turn); then what was left out, what
+    was voided since that turn and the version. [] when the view has nothing to say."""
+    lines = []
+    for part in core_memory.PARTS:
+        kept = sorted(view["parts"][part]["kept"], key=lambda item: (item["at"], item["ref"]))
+        if kept:
+            lines.append(PROJECT_PART_HEADS[part])
+            lines += [f"- [{item['kind'] or 'fact'}] {item_text(item)}" + (NO_ORIGIN if unsourced(item) else "")
+                      + ("（新）" if item["ref"] in view["new"] else "") for item in kept]
+    if left_parts(view):
+        lines.append(left_parts(view))
+    if view["voided"]:
+        lines += [VOIDED_HEAD, *(f"- [{item['kind'] or 'fact'}] {item['text']}" for item in view["voided"])]
+    return [*lines, f"专项记忆版本 {view['version']}。"] if lines else []
+
+
+def project_block(name, memory=(), library=(), limit: int | None = PROJECT_CHARS) -> str:
     """The project's memory and library a topic of it reads: ``memory`` (lines, oldest first; past ``limit`` characters the
-    oldest are left out and a line says how many), then ``library`` (the index's lines); '' when both are empty."""
+    oldest are left out and a line says how many; ``limit`` None: lines already chosen, ``project_memory_lines``), then
+    ``library`` (the index's lines); '' when both are empty."""
     kept, used = [], 0
     for line in reversed(list(memory)):
-        if used + len(line) + 1 > limit:
+        if limit is not None and used + len(line) + 1 > limit:
             break
         kept.append(line)
         used += len(line) + 1
@@ -258,6 +310,14 @@ MEMORY_RULES = (
     "这里的记忆和你自己记下的笔记冲突时，以这里为准。",
     "要问主人之前，先看标“你说的”的记忆：主人已经同意的事（比如测试通过就合并、空闲时直接部署）照着做，不要再问。",
 )
+MEMORY_LAYER_RULES = (  # With a project's lines in the block: what its three parts are (core/memory.py PARTS).
+    "专项的记忆分三段：“长期约定”是主人明说以后都照做的；“当前决定”是主人答过的问题，一题一条，只管那道题问的范围"
+    "（哪一版、哪一批、什么目标），同一范围里照着做、重试不用再问，换了批次、目标或扩大了范围，不能当作主人已经同意，照常问；"
+    "“待核对参考”是负责人整理的口径。",
+    "标“待核对参考”的可以照着做，但它不是主人的原话：和主人的话、长期约定、当前决定冲突时让路，也不能单独作为替主人答题、"
+    "或做要主人点头的事的依据。",
+)
+NO_ORIGIN_RULE = "标“你说的（无出处）”的是没留下原问题或原话出处的旧记录，条件可能不全，拿不准就照常问主人。"
 MEMORY_FIX_RULE = (
     "记忆纠正：主人这一轮的话里说了“以后”“每次”“别再”“不要再”“记住”这类长期适用的话，才在检查点里加 memory："
     '[{"quote":"主人原话里的一段","text":"一句话，最多 200 字，把“这个”“那个”写成所指的事"}]，最多 3 条；'
@@ -267,16 +327,34 @@ MEMORY_FIX_RULE = (
 )
 
 
-def memory_block(kept, left: int = 0) -> str:
-    """The memory block of a turn: its items (core/memory.py select), each "- M12 · 管这个专项 · 你说的：…", then how many
-    were left out and the four rules that say who counts; '' with none."""
-    if not kept:
+def memory_line(item, new=False) -> str:
+    """One item of the memory block: "- M12 · 管这个专项 · 当前决定 · 你说的：…" (a project's line says its part, and
+    ``item_text`` what else it knows); ``new``: written since the topic's previous turn."""
+    part = core_memory.PART_WORDS.get(item.get("part")) if item["scope"] == core_memory.PROJECT else None
+    return (f"- {item['n']} · 管{core_memory.WORDS[item['scope']]} · " + (f"{part} · " if part else "")
+            + f"{core_memory.OWNER_WORDS[item['by']]}{NO_ORIGIN if unsourced(item) else ''}：{item_text(item)}" + ("（新）" if new else ""))
+
+
+def memory_block(kept, left: int = 0, project=None) -> str:
+    """The memory block of a turn: its items (core/memory.py select), each a ``memory_line``, then how many were left out; with
+    ``project`` (core/memory.py project_view of the turn's project) what its parts left out, the lines voided since the topic's
+    previous turn and the version; then the rules that say who counts (with a project's lines, what its parts are, and of an
+    older line of the owner's without an origin). '' with nothing to say."""
+    view = project or {"items": [], "voided": [], "new": set()}
+    if not kept and not view["voided"]:
         return ""
-    lines = [MEMORY_HEAD]
-    lines += [f"- {item['n']} · 管{core_memory.WORDS[item['scope']]} · {core_memory.OWNER_WORDS[item['by']]}：{item['text']}" for item in kept]
+    lines = [MEMORY_HEAD, *(memory_line(item, item.get("ref") in view["new"]) for item in kept)]
     if left:
         lines.append(f"另有 {left} 条放不下，没有列出。")
-    return "\n".join([*lines, *MEMORY_RULES])
+    if project is not None and left_parts(project):
+        lines.append(left_parts(project))
+    if view["voided"]:
+        lines += [VOIDED_HEAD, *(f"- {core_memory.PART_WORDS[item['part']]}：{item['text']}" for item in view["voided"])]
+    if view["items"] or view["voided"]:
+        lines.append(f"专项记忆版本 {view['version']}。")
+    projects_lines = [item for item in (*kept, *view["voided"]) if item["scope"] == core_memory.PROJECT]
+    return "\n".join([*lines, *MEMORY_RULES, *(MEMORY_LAYER_RULES if projects_lines else ()),
+                      *((NO_ORIGIN_RULE,) if any(unsourced(item) for item in kept) else ())])
 
 
 # COVEY_WORKSPACE_GISTS (app/workspace_gists.py): a new topic's rules carry the 话题要点 of the workspace's last topics.

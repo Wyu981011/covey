@@ -3,9 +3,15 @@ COVEY_PROJECTS=1 and COVEY_PROJECT_MEMORY=1; with either off every function here
 
 - ``block``: the lines a topic of a project reads when it starts (app/runs.py puts them into the rules of a new session and
   into the reminder of a resumed one): the memory, and in a new session the library's index too. An ordinary topic, a
-  lead's (it has its pack, app/project_lead.py) and a 代答 topic get none.
-- ``remember_answer`` (app/questions.py): the owner's answer to a question card of a project's topic or lead becomes a memory
-  entry (kind decision, source owner_answer): the question and the answer in one line. Feedback and skipped answers do not.
+  lead's (it has its pack, app/project_lead.py) and a 代答 topic get none. The memory is ``memory_view``'s, the one read the
+  lead's pack and the web page take too (core/memory.py project_view): its three layers, each with its own room, what was
+  voided since the topic's previous turn, the version.
+- ``remember_answer`` (app/questions.py): the owner's answer to a question card of a project's topic or lead becomes memory
+  entries, one a question answered (kind decision, source owner_answer, "主人答：question→answer", ``answer_line``), and the
+  question record as it was answered is kept whole beside them (core/project_memory.py note_answers). Feedback and skipped
+  answers do not.
+- ``fix_memory``: the owner's correction of a line (docs/web.md memory_fix: ``scope`` its conditions, ``once`` only that time,
+  ``confirm`` his for good), for the page and the cards to call once they checked the click is the owner's.
 - ``owner_files`` (app/app.py, the message of the owner in a lead's topic: quoting the project's card goes there): the files it
   carries are copied into the library with their sha256.
 - ``turn_to_library`` (app/project_loop.py after_runner, the Bridge once a topic's run has ended; rule 8: a task process writes
@@ -19,16 +25,18 @@ from __future__ import annotations
 from pathlib import Path
 
 from covey.app.answers import SKIPPED
-from covey.app.prompts import project_block
+from covey.app.prompts import project_block, project_memory_lines
+from covey.core import board_read
 from covey.core import memory as core_memory
 from covey.core import project_library, project_memory, projects, triage
 from covey.core.attachments import ATTACHMENTS_HEADER, parse_attachment_block
 from covey.core.checkpoint import checkpoint_delivery, read_checkpoint
+from covey.core.redaction import topic_redaction
 from covey.core.text import cut
 from covey.core.topics import proxy_topic
 
-QUESTION_CHARS = 70
-ANSWER_CHARS = 50
+ANSWER_CHARS = 190  # Of an answer that does not fit with its question in one line: what it keeps before the question is cut.
+ANSWER_HEAD = "主人答："
 ARTIFACTS_PER_TURN = 8
 FILES_PER_MESSAGE = 5
 
@@ -58,6 +66,29 @@ def memory_rows(ctx, job) -> tuple[str, list]:
         return "", []
 
 
+def marked(state_dir, topic_id) -> bool:
+    """Whether ``topic_id`` reads the lines from topics with redaction on: its own redaction is on (off when it cannot be read)."""
+    try:
+        return bool(topic_redaction(state_dir, topic_id))
+    except ValueError:
+        return False
+
+
+def memory_view(ctx, job, *, redacted=None):
+    """The project's memory as ``job``'s turn in a member topic reads it (core/memory.py project_view of every entry), None when
+    ``member_record`` has none: ``since`` the start of the topic's previous turn (core/board_read.py previous_start), so the lines
+    voided after it are said. ``redacted``: whether the topic reads the lines from topics with redaction on (None: its own
+    setting, ``marked``)."""
+    found = member_record(ctx, job)
+    if found is None:
+        return None
+    pid, record = found
+    topic = getattr(job, "topic_id", "") or ctx.topic_id
+    since = board_read.previous_start(ctx.state_dir, topic, getattr(job, "job_id", 0))
+    return core_memory.project_view(project_memory.entries(ctx.state_dir, record), pid,
+                                    redacted=marked(ctx.state_dir, topic) if redacted is None else redacted, since=since)
+
+
 def block(ctx, job, *, resumed: bool) -> str:
     """The project block for ``job``'s turn in ``ctx``'s topic: '' unless it is a topic of a project that is not cancelled.
     ``resumed``: the memory alone (the session read the library's index when it began). With COVEY_MEMORY=1 the memory is in
@@ -68,15 +99,29 @@ def block(ctx, job, *, resumed: bool) -> str:
             return ""
         pid, record = found
         state = ctx.state_dir
-        memory = [] if core_memory.enabled() else [f"- [{row['kind']}] {row['text']}" for row in project_memory.live(state, record, style=False)]
+        memory = [] if core_memory.enabled() else project_memory_lines(memory_view(ctx, job))
         library = [] if resumed else ["- " + line for line in project_library.index_lines(state, pid)]
-        return project_block(record.get("name"), memory, library)
+        return project_block(record.get("name"), memory, library, limit=None)
     except Exception:  # noqa: BLE001 - the turn goes on without it
         return ""
 
 
+def answer_line(question, answer) -> str:
+    """One answered question as a line of the project's memory, "主人答：<question>→<answer>": both whole when they fit in
+    core/project_memory.py ANSWER_TEXT, else the question cut first, the answer keeping at least ``ANSWER_CHARS`` (the whole of
+    both stays in the question record kept beside the memory)."""
+    question, answer = " ".join(str(question or "").split()), " ".join(str(answer or "").split())
+    room = project_memory.ANSWER_TEXT - len(ANSWER_HEAD) - 1
+    if len(question) + len(answer) > room:
+        answer = cut(answer, max(room - len(question), ANSWER_CHARS))
+        question = cut(question, room - len(answer))
+    return f"{ANSWER_HEAD}{question}→{answer}"
+
+
 def remember_answer(state_dir, topic_id, record, log=None) -> None:
-    """Note the owner's saved answer ``record`` (a question record with ``answers``) of ``topic_id`` as a decision of its project.
+    """Note the owner's saved answer ``record`` (a question record with ``answers``) of ``topic_id`` in its project's memory:
+    a decision for each question answered (``answer_line``), the record kept whole beside them (core/project_memory.py
+    note_answers; a record with no token, as none is, an entry a question with no record kept).
     An answer the lead gave in the owner's place (COVEY_PROJECT_TRIAGE=1: the record is still ``held`` while it is saved,
     app/triage.py ``answer``) is not the owner's word and is not noted; the 分流记录 and the decision log hold it, and the
     owner's 不对 corrects it. A question the lead passed on (``escalated``) and the owner answered is noted as always."""
@@ -87,17 +132,39 @@ def remember_answer(state_dir, topic_id, record, log=None) -> None:
         if found is None:
             return
         answers = record.get("answers") if isinstance(record.get("answers"), dict) else {}
-        pairs = []
-        for question in record.get("questions") or ():
+        lines = []
+        for index, question in enumerate(record.get("questions") or (), 1):
+            if not isinstance(question, dict):
+                continue
             given = (answers.get(question.get("id")) or {}).get("answers")
             parts = [str(part) for part in given or () if str(part).strip() and part != SKIPPED]
             if parts:
-                pairs.append(f"{cut(question.get('question'), QUESTION_CHARS)}→{cut('；'.join(parts), ANSWER_CHARS)}")
-        if pairs:
-            project_memory.add(state_dir, found.id, "主人答：" + "；".join(pairs), "decision", "owner_answer")
+                lines.append({"index": index, "item": str(question.get("id") or ""),
+                              "text": answer_line(question.get("question") or question.get("header"), "；".join(parts))})
+        if not lines:
+            return
+        if project_memory.TOKEN.fullmatch(str(record.get("token") or "")):
+            project_memory.note_answers(state_dir, found.id, {**record, "topic_id": record.get("topic_id") or topic_id}, lines)
+            return
+        for line in lines:
+            project_memory.add(state_dir, found.id, line["text"], "decision", "owner_answer",
+                               origin={"item": line["item"], "index": line["index"], "topic": topic_id})
     except Exception as exc:  # noqa: BLE001 - the answer is delivered whether or not it was noted
         if log is not None:
             log(f"project memory of an answer failed: {type(exc).__name__}")
+
+
+def fix_memory(state_dir, project_id, entry_id, what, *, owner, message_id, applies="") -> dict:
+    """The owner's correction ``what`` of the line ``entry_id`` of the project's memory (core/project_memory.py fix): ``scope``
+    sets its conditions (``applies``), ``once`` makes it a 当前决定 for that one time, ``confirm`` makes it a 长期约定 the owner
+    said, at the owner's level, its origin this correction. ``owner``: the caller checked the click or the page's operation is
+    the owner's (app/access.py); anybody else's is refused, and no model's word comes here. ``message_id``: the id the Bridge
+    took the correction in with. The line as core/memory.py describe reads it, with its text and id. ValueError for a refusal
+    or a line that is not there."""
+    if owner is not True:
+        raise ValueError("只有主人能改专项记忆")
+    row = project_memory.fix(state_dir, project_id, entry_id, what, origin={"message_id": str(message_id or "")}, applies=applies)
+    return {"id": row["id"], "text": row["text"], **core_memory.describe(row)}
 
 
 def owner_files(state_dir, topic_id, chat_id, text, media, log=None) -> None:

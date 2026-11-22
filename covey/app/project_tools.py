@@ -246,7 +246,7 @@ def project_remember(env, request):
     state = Path(env.state_dir)
     if any(row["kind"] == kind and row["text"] == text for row in project_memory.tombstones(state, record)):
         raise ValueError("主人删掉过这条专项记忆，不再记回去。")
-    item, new = project_memory.add(state, pid, text, kind, "lead")
+    item, new = project_memory.add(state, pid, text, kind, "lead", origin={"job": str(request.job_key or "")})
     if not new:
         return reply(True, f"专项记忆里已有这条（{item['id']}），没有重复记。", id=item["id"], new=False)
     return reply(True, f"已记进专项记忆（{item['id']}）：{item['text']}", id=item["id"], new=True)

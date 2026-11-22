@@ -6,8 +6,10 @@ its checkpoint (app/memory_collect.py reads them once the turn has ended).
 
 Who reads what is as it was: a 代答 topic nothing; the owner's 全局 entries only on the owner's own turn (``owner_turn()``), the
 workspace's on any; the project's lines in an ordinary topic of a project; the topic's own always. A line from a topic with
-redaction on is only read by one with it on (a setting that cannot be read counts as off here). Nothing is written but
-``memory_ids``; nothing raises into the turn."""
+redaction on is only read by one with it on (a setting that cannot be read counts as off here). The project's lines come with
+what its parts left out, the lines voided since the topic's previous turn and the version (app/project_context.py
+memory_view, the read the lead's pack and the web page take too). Nothing is written but ``memory_ids``; nothing raises into
+the turn."""
 from __future__ import annotations
 
 from covey.app import knowledge_turn, project_context
@@ -15,7 +17,6 @@ from covey.app.prompts import memory_block
 from covey.core import knowledge, memory, principles, topic_memory
 from covey.core.butler import is_butler_topic
 from covey.core.jobs import job_key, upsert_job_record
-from covey.core.redaction import topic_redaction
 from covey.core.topics import proxy_topic
 
 WORDS = ("以后", "每次", "别再", "不要再", "记住", "再也不要", "从现在起")  # The owner's words that start a correction.
@@ -36,10 +37,7 @@ def active(ctx) -> bool:
 
 def redacted(ctx, topic_id) -> bool:
     """Whether the topic has redaction on; off when it cannot be read (the lines that need it are then left out)."""
-    try:
-        return bool(topic_redaction(ctx.state_dir, topic_id))
-    except ValueError:
-        return False
+    return project_context.marked(ctx.state_dir, topic_id)
 
 
 def gather(ctx, job, owner_turn) -> list:
@@ -61,7 +59,11 @@ def build(ctx, job, owner_turn) -> tuple[list, int]:
 def block(ctx, job, *, owner_turn) -> str:
     """The memory block of ``job``'s turn; '' with COVEY_MEMORY off, for a 代答 topic, or with nothing to say."""
     try:
-        return memory_block(*build(ctx, job, owner_turn)) if active(ctx) else ""
+        if not active(ctx):
+            return ""
+        kept, left = build(ctx, job, owner_turn)
+        topic_id = getattr(job, "topic_id", "") or ctx.topic_id
+        return memory_block(kept, left, project_context.memory_view(ctx, job, redacted=redacted(ctx, topic_id)))
     except Exception:  # noqa: BLE001 - the turn goes on without it
         return ""
 

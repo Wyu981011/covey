@@ -2,9 +2,10 @@
 how its session lives. Only a lead topic's turn (core/butler.py ``is_lead``) comes here; with the switch off nothing does.
 
 - ``state_pack``: the project's state read from disk, put in front of every turn: the goal, the members (status, one
-  sentence, deliverables), the project's memory and library (phase 2's P2-7 fills both; here the memory the lead wrote
-  with project_remember, the library empty), the style, the inbox since its last wake-up and the last ten decisions. The
-  session is only a cache of it: a new one gets the whole pack, a resumed one the changing parts.
+  sentence, deliverables), the project's memory and library, the style, the inbox since its last wake-up and the last ten
+  decisions. The session is only a cache of it: a new one gets the whole pack, a resumed one the changing parts. The memory
+  is in both, read as a member topic reads it (core/memory.py project_view: the same parts, choice, version), a resumed one
+  with what was voided since the lead's previous turn, so a delete is gone at the next turn's start.
 - ``lead_rules``: the lead's rules in layers (identity, tools, style, and the practice layer phase 3 fills for a
   specialist: nothing now).
 - ``settle_session`` (app/worker.py ``_start_turn``): the session is dropped, and the pack sent again, when the previous
@@ -24,8 +25,11 @@ import sys
 import time
 from pathlib import Path
 
+from covey.app import project_context
+from covey.app.prompts import project_memory_lines
 from covey.app.triage_view import pack_block
 from covey.core import board_read, butler, project_library, project_memory, projects, triage
+from covey.core import memory as core_memory
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import job_key, job_path, read_job_record, topic_job_records
 from covey.core.locks import resource_lock
@@ -98,7 +102,8 @@ IDENTITY = (
     "- 你是一个专项的负责人：主人交给你一件要分成几个话题、跨几天才能做完的事，你拆、派、跟进、收尾，不自己动手干活。"
     "你的 Claude Code 工具只有 Read、Grep、Glob，只用来读文件；改东西、跑命令、联网都是专项的话题里做的事。",
     "- 每一轮开头有“专项状态”：目标和完成标准、话题清单、专项记忆、风格、自上次以来的收件箱、近 10 条决定。"
-    "它是磁盘上的真实状态，比你对之前几轮的印象可靠；对不上时以它为准。",
+    "它是磁盘上的真实状态，比你对之前几轮的印象可靠；对不上时以它为准。专项记忆每一轮都带，和专项的话题读到的是同一份，"
+    "写着作废的那几条不再适用。",
     "- 一轮只做这一轮该做的判断，派完就结束这一轮，不要等话题做完，不要轮询：话题有了结果，会有下一轮叫醒你。",
 )
 TOOL_RULES = (
@@ -131,7 +136,8 @@ TOOL_RULES = (
 NOT_YET = "话题里问到主人的选择题，不由你答（分流还没开）。"  # The tail of a TOOL_RULES line while COVEY_PROJECT_TRIAGE is off.
 TRIAGE_RULES = (
     "- 分流：专项的话题问了选择题，会先交给你（“专项状态”里“交给你的话题问题”，收件箱里有 question 回执），3 分钟内你不处理就转给主人。"
-    "只替主人答你能依据专项记忆、决定日志和主人在这个专项里说过的话答的题：用 project_answer，每题都答，答案写选项原文，多选给数组；"
+    "只替主人答你能依据专项记忆、决定日志和主人在这个专项里说过的话答的题（专项记忆里的“待核对参考”是你整理的口径，不能单独作为依据；"
+    "“当前决定”只管那道题问的范围，换了批次、目标或扩大范围的转给主人）：用 project_answer，每题都答，答案写选项原文，多选给数组；"
     "回答会注明是你替主人答的，记在专项卡上，主人可以点“不对”纠正。",
     "- 拿不准、记忆里没有依据、涉及部署、发布、对外发送、花钱、删东西、不可逆的操作，都用 project_escalate 转给主人并写清 why，别猜；"
     "自由文字的问题不会交给你。主人纠正过的做法，用 project_remember 记下，之后照做。",
@@ -299,10 +305,15 @@ def lead_goal(record) -> str:
     return " ".join(str(found.get("text") or "").split())
 
 
-def state_pack(state_dir, record, key, *, full, receipts=None) -> str:
+LEAD_MEMORY_HEAD = "专项记忆（每一轮都带，和专项的话题读到的是同一份）："
+
+
+def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redacted=False) -> str:
     """The pack at the head of the lead's turn ``key``. ``full``: the whole of it (a new session); else the parts that
-    change between turns (members, style, inbox, decisions), the goal and the memory being in the session already.
-    ``receipts``: the inbox's items when the caller has taken them."""
+    change between turns (members, memory, style, inbox, decisions), the goal being in the session already.
+    ``receipts``: the inbox's items when the caller has taken them. The memory is core/memory.py project_view's, as a member
+    topic reads it: ``since`` the lead's previous turn's start (a resumed session: what was voided since then is said),
+    ``redacted`` whether the lead's topic reads the lines from topics with redaction on."""
     style = style_of(record)
     if receipts is None:
         receipts = take_receipts(state_dir, record["id"], key)
@@ -315,10 +326,12 @@ def state_pack(state_dir, record, key, *, full, receipts=None) -> str:
     rows = member_rows(state_dir, record)
     out.append("话题（" + (f"{len(rows)} 个，{sum(1 for row in rows if row['live'])} 个没结束" if rows else "还没有") + "）："
                + ("\n" + "\n".join(map(thread_line, rows)) if rows else ""))
+    view = core_memory.project_view(project_memory.entries(state_dir, record), record["id"], redacted=redacted,
+                                    since=None if full else since)
+    memory = project_memory_lines(view)
+    if memory:
+        out.append(LEAD_MEMORY_HEAD + "\n" + "\n".join(memory))
     if full:
-        memory = project_memory.live(state_dir, record, style=False)
-        if memory:
-            out.append("专项记忆：\n" + "\n".join(f"- [{row['kind']}] {row['text']}" for row in memory[-20:]))
         struck = project_memory.tombstones(state_dir, record)
         if struck:
             out.append("主人删掉的记忆（近 30 天，不要再记回去）：\n" + "\n".join(f"- [{row['kind']}] {row['text']}" for row in struck[-10:]))
@@ -402,7 +415,8 @@ def lead_turn(ctx, job, prompt, session_id, log, release, now=None):
     if job.kind != "chat":
         return ctx, prompt
     try:
-        pack = state_pack(ctx.state_dir, record, key, full=not session_id)
+        pack = state_pack(ctx.state_dir, record, key, full=not session_id, redacted=project_context.marked(ctx.state_dir, job.topic_id),
+                          since=board_read.previous_start(ctx.state_dir, job.topic_id, job.job_id) if session_id else None)
     except Exception as exc:  # noqa: BLE001 - the turn goes on with the rules alone
         log(f"lead state pack unavailable job=#{job.job_id}: {type(exc).__name__}")
         pack = "[专项状态暂时读不到：先用 topic_read 看话题]"

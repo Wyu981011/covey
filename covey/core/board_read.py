@@ -386,6 +386,29 @@ def started_at(record):
     return epoch_seconds(record.get("created_at")) or 0.0
 
 
+def previous_start(state, topic_id, job_id):
+    """When the latest turn of ``topic_id`` before job ``job_id`` began to run (core/metrics.py run_start: its rules and
+    memory were read then), None without one: since when a project's memory says what changed (core/memory.py project_view)."""
+    try:
+        current = int(job_id or 0)
+    except (TypeError, ValueError):
+        return None
+    try:
+        records = topic_job_records(Path(state), str(topic_id)) if topic_id and current else []
+    except (OSError, ValueError):  # The records cannot be read: no previous turn to say changes since.
+        return None
+    starts = []
+    for record in records:
+        try:
+            number = int(record.get("job_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        begun = run_start(timings_of(record))
+        if number < current and begun is not None:
+            starts.append(begun)
+    return max(starts, default=None)
+
+
 def seconds(value, default):
     """``value`` as epoch seconds when it is a number, else ``default``."""
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default

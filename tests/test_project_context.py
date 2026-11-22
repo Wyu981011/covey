@@ -187,16 +187,16 @@ class SwitchOffTest(Case):
 
 
 class AnswerTest(Case):
-    def test_an_answer_is_a_decision_with_the_owner_as_its_source(self):
-        record = {"questions": [{"id": "a", "question": "按日期还是按租户分区？"}, {"id": "b", "question": "先迁哪年？"},
+    def test_each_answer_is_a_decision_of_its_own_with_the_owner_as_its_source(self):
+        record = {"token": "0123456789abcdef", "questions": [{"id": "a", "question": "按日期还是按租户分区？"}, {"id": "b", "question": "先迁哪年？"},
                                 {"id": "c", "question": "要不要停机？"}],
                   "answers": {"a": {"answers": ["按日期"]}, "b": {"answers": ["2023", "2024"]}, "c": {"answers": ["用户选择不回答此题（不表示同意或授权）"]}}}
         project_context.remember_answer(self.state, MEMBER, record, self.logs.append)
         rows = memory.live(self.state, self.record())
-        self.assertEqual([(row["kind"], row["source"]) for row in rows], [("decision", "owner_answer")])
-        self.assertEqual(rows[0]["text"], "主人答：按日期还是按租户分区？→按日期；先迁哪年？→2023；2024")
+        self.assertEqual([(row["kind"], row["source"]) for row in rows], [("decision", "owner_answer")] * 2)
+        self.assertEqual([row["text"] for row in rows], ["主人答：按日期还是按租户分区？→按日期", "主人答：先迁哪年？→2023；2024"])
         project_context.remember_answer(self.state, MEMBER, record)  # The same answer is not noted twice.
-        self.assertEqual(len(memory.live(self.state, self.record())), 1)
+        self.assertEqual(len(memory.live(self.state, self.record())), 2)
 
     def test_the_lead_counts_feedback_and_a_plain_topic_do_not(self):
         record = {"questions": [{"id": "a", "question": "用哪个？"}], "answers": {"a": {"answers": ["新库"]}}}

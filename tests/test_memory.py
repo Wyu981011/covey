@@ -17,7 +17,7 @@ from support.world import harness_app
 
 from covey.app import answer_cards, memory_collect, memory_turn
 from covey.app.card_actions import ACTIONS
-from covey.app.prompts import MEMORY_FIX_RULE, MEMORY_HEAD, MEMORY_RULES, memory_block, resume_reminders
+from covey.app.prompts import MEMORY_FIX_RULE, MEMORY_HEAD, MEMORY_LAYER_RULES, MEMORY_RULES, memory_block, resume_reminders
 from covey.backends.claude.bridge import CLAUDE_SPEC
 from covey.backends.claude.sessions import ClaudeSessionStore
 from covey.cards import answer_card as cards
@@ -63,7 +63,7 @@ class SelectTest(Case):
         self.assertEqual(sorted(row["ref"] for row in kept), sorted(f"p:{i}" for i in range(20 - len(kept), 20)))  # The newest.
 
     def test_the_owners_words_come_first_and_a_lead_line_gives_way_when_full(self):
-        rows = [item("project:x:l1", memory.PROJECT, memory.LEAD, "总" * 1900, at=9),
+        rows = [item("project:x:l1", memory.PROJECT, memory.LEAD, "总" * 2700, at=9),  # Past the project's room, lent room and all.
                 item("project:x:o1", memory.PROJECT, memory.OWNER, "说" * 100, at=1)]
         kept, left = memory.select(rows)
         self.assertEqual([row["ref"] for row in kept], ["project:x:o1"])
@@ -88,17 +88,19 @@ class SelectTest(Case):
         self.assertEqual([row["text"] for row in memory.items(topic=[marked, plain])], ["普通的"])
         self.assertEqual(len(memory.items(topic=[marked, plain], redacted=True)), 2)
 
-    def test_the_block_says_number_scope_and_speaker_then_the_five_rules(self):
+    def test_the_block_says_number_scope_layer_and_speaker_then_the_rules(self):
         kept, left = memory.select([item("project:x:o1", memory.PROJECT, memory.OWNER, "先做迁移"),
                                     item("topic:t1", memory.TOPIC, memory.LEAD, "产物放 out/")])
         block = memory_block(kept, left)
         lines = block.splitlines()
         self.assertEqual(lines[0], MEMORY_HEAD)
-        self.assertRegex(lines[1], r"^- M\d+ · 管这个专项 · 你说的：先做迁移$")
+        self.assertRegex(lines[1], r"^- M\d+ · 管这个专项 · 长期约定 · 你说的：先做迁移$")  # A project's line says its layer.
         self.assertRegex(lines[2], r"^- M\d+ · 管这个话题 · 它总结的：产物放 out/$")
-        self.assertEqual(lines[3:], list(MEMORY_RULES))
+        self.assertEqual(lines[3:], [*MEMORY_RULES, *MEMORY_LAYER_RULES])  # With a project's lines, what its layers are.
         self.assertEqual(len(MEMORY_RULES), 5)  # The fifth: what the owner allowed is not asked again.
         self.assertEqual(memory_block([], 0), "")
+        alone = memory_block(*memory.select([item("topic:t1", memory.TOPIC, memory.OWNER, "只看报错")])).splitlines()
+        self.assertEqual(alone[2:], list(MEMORY_RULES))  # No project, no layers.
 
     def test_the_words_are_in_the_glossary(self):
         text = "\n".join((MEMORY_HEAD, *MEMORY_RULES, MEMORY_FIX_RULE))
@@ -208,13 +210,13 @@ class TurnTest(TurnCase):
         self.env(**ON, **{projects.ENV: "1", projects.MEMORY_ENV: "1"})
         projects.create(self.state, projects.new_record(chat_id=CHAT, name="迁移账单", project_id=PID, now=NOW))
         write_topic(self.state, topic_id=TOPIC, chat_id=CHAT, project=projects.project_field(PID, projects.MEMBER))
-        project_memory.add(self.state, PID, "先迁 2024 年", "decision", "owner_answer")
+        project_memory.add(self.state, PID, "先迁 2024 年", "decision", "owner_answer", origin={"question": "0123456789abcdef"})
         project_memory.add(self.state, PID, "接口叫 bill_v2", "fact", "lead")
         topic_memory.add(self.state, TOPIC, "这个话题只看报错")
         self.ctx.topic_id = TOPIC
         text = memory_turn.block(self.ctx, self.job(topic=TOPIC), owner_turn=lambda: True)
-        self.assertRegex(text, r"- M\d+ · 管这个专项 · 你说的：先迁 2024 年")
-        self.assertRegex(text, r"- M\d+ · 管这个专项 · 它总结的：接口叫 bill_v2")
+        self.assertRegex(text, r"- M\d+ · 管这个专项 · 当前决定 · 你说的：先迁 2024 年")
+        self.assertRegex(text, r"- M\d+ · 管这个专项 · 待核对参考 · 它总结的：接口叫 bill_v2")
         self.assertRegex(text, r"- M\d+ · 管这个话题 · 你说的：这个话题只看报错")
         self.assertLess(text.index("先迁 2024 年"), text.index("接口叫 bill_v2"))
 

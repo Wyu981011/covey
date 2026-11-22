@@ -10,6 +10,7 @@ from pathlib import Path
 
 from covey.app import pins, project_lead, project_loop, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
 from covey.core import board_read, failure, look, project_library, project_memory, projects, web_sync
+from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
 from covey.core.history_storage import history_lines
 from covey.core.butler import butler_topic_id
@@ -681,25 +682,62 @@ class Collector:
             lead = str(record.get("lead_topic_id") or "")
             word, why = self.project_state(record, [lead, *members])
             try:
-                memory = [self.memory_row(row) for row in project_memory.live(state, record)]
+                entries = project_memory.entries(state, record)
+                # The read a member topic's turn takes (app/project_context.py memory_view): one without redaction, and a line
+                # from a topic with redaction on as a topic with it on carries it.
+                view = core_memory.project_view(entries, pid)
+                carried = {item["ref"] for item in view["kept"]} | {
+                    item["ref"] for item in core_memory.project_view(entries, pid, redacted=True)["kept"] if item["redacted"]}
+                numbers = {}
+
+                def number(topic):
+                    if topic not in numbers:
+                        numbers[topic] = self.topic_number(state, topic)
+                    return numbers[topic]
+                memory = [self.memory_row(row, pid, carried, number) for row in entries if not row["deleted"]]
                 library = [self.library_row(state, row) for row in project_library.entries(state, pid) if not row.get("purged")]
+                version = view["version"]
             except Exception:  # noqa: BLE001 - the rest of the project is still worth pushing
-                memory, library = [], []
+                memory, library, version = [], [], ""
             out.append(web_sync.item("project", pid, {
                 "title": str(record.get("name") or ""), "goal": project_lead.lead_goal(record), "status": word, "status_reason": why,
-                "lead_topic_key": lead, "topic_keys": members, "memory": memory, "library": library,
+                "lead_topic_key": lead, "topic_keys": members, "memory": memory, "memory_version": version, "library": library,
                 "started_at": web_pairing.moment(record.get("created_at")), "updated_at": web_pairing.moment(record.get("updated_at"))}))
         return out
 
     @staticmethod
-    def memory_row(row) -> dict:
-        """One entry of a project's memory: its words, who said it (``web_turns.SAID_BY``) and when."""
+    def topic_number(state, topic) -> int:
+        """The T number of ``topic`` (0 when it has none)."""
+        label = board_read.topic_label(state, topic)[0] if topic else ""
+        return int(label[1:]) if label[1:].isdigit() else 0
+
+    @staticmethod
+    def memory_row(row, project_id="", carried=(), number=None) -> dict:
+        """One entry of a project's memory as core/memory.py reads it for a turn (docs/web.md 三层记忆): its words; who said it
+        and who wrote it down (``asserted_by``, ``recorded_by``), its ``level`` (core/turn_source.py provenance) and the label
+        ``said_by`` (你说的 for what the owner said, 它总结的 for the rest), ``by`` owner or lead; its ``layer`` (rule, decision,
+        history; the style line is a rule of kind style) and the ``part`` a turn carries it in (rule, decision, reference 待核对参考;
+        none for history), ``applies``, ``valid``, ``superseded_by``; its ``ref`` (as a turn's memory_ids name it), whether a
+        member topic's next turn carries it (``carried``), and where it came from (``origin``: {at} and, when the entry knows,
+        ``message_id`` or ``question`` with its ``item`` and ``index``, ``topic`` and its ``topic_number``, ``job``, the owner's
+        words ``quote``). ``number``: a topic's T number, for ``topic_number``."""
+        facts = core_memory.describe(row)
         out = {"id": str(row.get("id") or ""), "text": row["text"], "kind": row["kind"], "source": row["source"], "at": row["at"]}
-        said = web_turns.said_by(row["source"])
-        if said:
-            out["said_by"] = said
-        if row["at"]:
-            out["origin"] = {"at": row["at"]}  # The record does not say which topic it came from.
+        out.update(said_by=core_memory.OWNER_WORDS[core_memory.OWNER if facts["asserted_by"] == "owner" else core_memory.LEAD],
+                   by=core_memory.OWNER if facts["asserted_by"] == "owner" else core_memory.LEAD, ref=f"project:{project_id}:{out['id']}",
+                   **{key: facts[key] for key in ("asserted_by", "recorded_by", "level", "layer", "part", "applies", "valid",
+                                                  "superseded_by")})
+        if row["kind"] == "style":
+            out["part"] = None
+        out["carried"] = out["ref"] in carried
+        origin = {"at": row["at"]} if row["at"] else {}
+        origin.update({key: value for key, value in facts["origin"].items() if value})
+        if origin.get("topic") and number is not None and number(origin["topic"]):
+            origin["topic_number"] = number(origin["topic"])
+        if origin:
+            out["origin"] = origin
+        if row.get("redacted"):
+            out["redacted"] = True
         return out
 
     @staticmethod

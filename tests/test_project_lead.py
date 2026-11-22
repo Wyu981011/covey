@@ -139,12 +139,12 @@ class PackTest(Case):
         self.assertIn("风格：report=milestones；detail=简\n", pack)
         self.assertIn("没有新的。", pack)
 
-    def test_a_resumed_session_gets_only_what_changes(self):
+    def test_a_resumed_session_gets_what_changes_and_the_memory_every_turn(self):
         self.thread("ab" * 16, "导出旧账单", 41, status="running")
         projects.update(self.state, PID, lambda r: r.update(memory=[{"id": "m1", "kind": "fact", "text": "记忆里的话", "at": NOW}]))
         pack = project_lead.state_pack(self.state, self.reload(), "lead-1", full=False)
         self.assertNotIn("目标和完成标准", pack)
-        self.assertNotIn("记忆里的话", pack)
+        self.assertIn("- [fact] 记忆里的话", pack)  # As a member topic reads it (core/memory.py project_view), every turn.
         self.assertIn("T41", pack)
         self.assertIn("风格：", pack)
 
