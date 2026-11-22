@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from covey.core import knowledge
+from covey.core import knowledge, turn_source
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record
 from covey.core.butler import is_butler_topic
@@ -33,6 +33,8 @@ def reason_to_ignore(runtime, ctx, job, record) -> str:
     topic_id = str(record.get("topic_id") or getattr(job, "topic_id", "") or "")
     if record.get("status") not in ENDED_WELL:
         return "not-finished"
+    if not turn_source.behavior(job, record).owner_words:
+        return "not-owner-words"  # A 协作 turn's text is not the owner's (core/turn_source.py).
     if not runtime.access.owner_turn(str(record.get("chat_id") or getattr(job, "chat_id", "")),
                                      str(record.get("sender_id") or getattr(job, "sender_id", "") or "")):
         return "not-owner"

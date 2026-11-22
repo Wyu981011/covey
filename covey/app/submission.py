@@ -6,7 +6,7 @@ import functools
 import time
 from typing import Any
 
-from covey.core import background, devices, failure, placement, timing
+from covey.core import background, devices, failure, placement, timing, turn_source
 from covey.core import env as cenv
 from covey.core.jobs import BridgeReplyJob, carry_device, find_job_record
 from covey.core.metrics import mark, run_start, took_text
@@ -406,6 +406,7 @@ class Submission:
         )
         carry_device(job, ctx)
         job.read_only = r.get("read_only") is True
+        job.turn_source = r.get(turn_source.FIELD) or {}  # A source it was made with goes on with it (app/job_dispatch.py).
         job.harness_id = r.get('harness_id') or r.get('backend') or self.harness.spec.name
         job.binding_revision = int(r.get('binding_revision') or ctx.options.get('binding_revision', 1))
         return job
@@ -445,7 +446,7 @@ class Submission:
         self, ctx: Any, content: str, chat_id: str, message_id: str,
         *, prompt_content: str | None = None, recovery_context: dict | None = None, received_at=None, title: str = "",
         sender_id: str = "", hold: float = 0, policy_retry: dict | None = None, steer: bool = False,
-        read_only: bool = False,
+        read_only: bool = False, source: dict | None = None,
     ) -> BridgeReplyJob | None:
         """Submit one message of ctx's topic as a new job of this Harness; ``sender_id`` is who sent it.
         ``hold``: seconds it waits before it starts (the butler's, app/butler.py). ``policy_retry``: an
@@ -453,7 +454,9 @@ class Submission:
         a turn the butler started at once because it judged it read-only (app/tool_limits.py LOOK). ``steer``: a
         message the owner (or whoever the topic serves) sent in the topic (app/app.py handle_event): while the task
         before it runs, it goes into that task (``steers_on_arrival``), outside the topic's lock as a 补充 click
-        does; the job is then cancelled, its card the receipt."""
+        does; the job is then cancelled, its card the receipt. ``source``: the job's 轮次来源 as the Bridge made it
+        (core/turn_source.py make), none for the owner's and every message as before; a source whose words are not the
+        owner's starts no owner turn of a lead and never goes into a running task."""
         try:
             ctx = self.models.prepare_submission_context(ctx)
         except (ValueError, OSError, RuntimeError) as exc:
@@ -487,12 +490,16 @@ class Submission:
             job.policy_retry = dict(policy_retry)
         if read_only:
             job.read_only = True
+        if source:
+            job.turn_source = dict(source)
         if hold:
             job.start_held_until = time.time() + hold
         from covey.app import project_loop
 
-        project_loop.owner_turn(ctx.state_dir, job.topic_id, chat_id, message_id)  # The owner's turn in a lead's topic.
-        plan = self.submit_topic_job(ctx, job, steer=steer)
+        acts = turn_source.behavior(job)
+        if acts.owner_words:
+            project_loop.owner_turn(ctx.state_dir, job.topic_id, chat_id, message_id)  # The owner's turn in a lead's topic.
+        plan = self.submit_topic_job(ctx, job, steer=steer and acts.steers)
         if plan.get("steer"):
             self.steering.steer_on_arrival(ctx, chat_id, job, message_id)
         return job

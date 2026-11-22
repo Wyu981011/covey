@@ -138,6 +138,10 @@ class BridgeReplyJob:
     # (app/butler_topics.py): held to it where its Harness can (app/tool_limits.py LOOK). False for every other job.
     # Saved: its task runner reads it.
     read_only: bool = _state(False)
+    # 轮次来源 (core/turn_source.py): what started the turn, written by the Bridge only; {} for every job of the owner's,
+    # the butler's and the Bridge's own as before (LEGACY). Saved, and in a record, only when set: a job of a source this
+    # release does not run is never run as the owner's message (app/job_dispatch.py, app/worker.py).
+    turn_source: dict = _state(factory=dict)
     interrupted: bool = _state(False)  # Its task runner took a SIGTERM (app/runner.py interrupt), not a stop.
     result_backend: str = _state("")
     last_backend_control: Any = _state()
@@ -467,6 +471,8 @@ def record_bridge_job_state(
         payload["policy_retry"] = dict(job.policy_retry)  # Never retried again (app/policy_retry.py eligible).
     if getattr(job, "read_only", False) is True:
         payload["read_only"] = True  # A launch card's wait keeps it (app/submission.py job_from_record).
+    if getattr(job, "turn_source", None):
+        payload["turn_source"] = job.turn_source  # So does a record's reader (core/turn_source.py of).
     resolved_sessions_dir = getattr(job, "sessions_dir", None) or sessions_dir
     if resolved_sessions_dir:
         payload["sessions_dir"] = str(resolved_sessions_dir)

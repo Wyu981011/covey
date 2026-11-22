@@ -199,6 +199,7 @@
 | [内存看门狗](operations.md#内存看门狗) | `bin/covey_memguard.py enable` | 独立进程；`memguard` 后台线程转发告警 |
 | [本机运行锁](runtime-locks.md) | `COVEY_LOCK_ROOT` | 同机多个服务共用的锁 |
 | [到点回来看](usage.md#到点回来看) | `COVEY_REVISIT=1` | `revisits` 后台线程；普通话题每轮多一行规则；`revisits/` 记录；看板多“到点回来看”一组 |
+| [多参与者协作](architecture.md#多参与者协作开发中默认关)（开发中） | `COVEY_COLLAB=1` | 这一版不多线程、不派发：只认任务的轮次来源，不认识、不支持的不跑；开着也没有协作轮 |
 
 ### 代答
 
@@ -419,6 +420,7 @@
 | `COVEY_DIGEST_TIMES` | `app/digest.py`、`core/app_manifest.py`（有它或 `COVEY_BOARD=1` 才要菜单「看板」）、`app/tidy_run.py`（`scheduled`：整理专项的定时也按这些时间）、`core/quiet_hours.py`（`COVEY_QUIET_HOURS` 没设时，夜里是最后一个时间到第一个时间） | 空：不发早晚汇总，整理专项也没有定时的一次 | 否 |
 | `COVEY_BOARD` | `core/app_manifest.py`（`board_switch`：`required` 据此要菜单「看板」，`app/digest.py` 的 `menu_items` 据此加这一项） | 关：菜单「看板」跟着早晚汇总，设了 `COVEY_DIGEST_TIMES` 才有，和原来一样；`1`：没有早晚汇总也有。`./install` 新装的服务写 `1`（`service/installer.py` 的 `INSTALL_SWITCHES`） | 否 |
 | `COVEY_REVISIT` | `core/revisits.py`（`enabled`：`app/revisits.py` 的 `revisits` 后台线程、`app/runs.py` 普通话题每轮的规则行、`app/digest.py` 看板的“到点回来看”一组都看它；任务进程里 `app/turn_delivery.py` 据此决定没有变化的那一轮不发；`app/revisit_hint.py` 据此决定说了稍后的答案卡下面有没有「约 30 分钟后回来看」，提示那一行不看开关） | 关：检查点里的 `revisit` 不读，不写 `revisits/`，和原来一样；`1` 开，见[到点回来看](usage.md#到点回来看) | 否 |
+| `COVEY_COLLAB` | `core/turn_source.py`（`enabled`：`refusal` 据此决定协作轮跑不跑；问它的有 `app/job_dispatch.py` 的 `refuse_source`，`app/worker.py` 开跑前） | 关：不派发协作轮；`1`：Bridge、任务进程、后端三方都支持时派发（这一版没有能派发的，见[多参与者协作](architecture.md#多参与者协作开发中默认关)） | 否 |
 | `COVEY_KNOWLEDGE` | `core/knowledge.py`（`enabled`）、`core/butler.py`（`mcp_config` 交给管家的 MCP 服务）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此列知识工具） | 空：不开知识条目 | 否 |
 | `COVEY_HISTORY_CMD` | `core/knowledge.py`（`history_cmd`）、`core/butler.py`（`mcp_config` 同上）、`core/butler_tool_specs.py`（`listed`：据此列 `history_search`） | 空：没有历史搜索；要绝对路径 | 否 |
 | `COVEY_EXTENSIONS` | `core/extensions.py` | 空：读仓库根和数据根的 `extensions/enabled`；设成空串表示一个都不要。逗号分隔的 Python 包名，见[扩展](architecture.md#扩展) | 否 |

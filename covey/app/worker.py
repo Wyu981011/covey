@@ -23,7 +23,7 @@ from covey.app import devices as device_turns
 from covey.core.jobs import (DEVICE_LOST_STATUS, RECALLED, SIGTERM_STATUS, context_for_job, job_key, quick_held,
                              topic_job_records)
 from covey.core.progress import turn_seconds
-from covey.core import timing
+from covey.core import timing, turn_source
 from covey.core.metrics import mark, mark_first_output
 from covey.core.longtask import SEED_PHASE, TaskMonitor
 from covey.core.status_line import STARTING
@@ -179,6 +179,15 @@ def process_bridge_reply_job(job: Any, ctx: Any, *, harness, runtime, messenger,
     ctx = context_for_job(ctx, job)
     if job.kind != "chat":
         record_job_state(ctx, job, "cancelled", "旧的专用任务类型已移除，不再执行")
+        return
+    refused = (turn_source.refusal(job, capabilities=backend_capabilities(getattr(harness, "backend", None), ctx))
+               if turn_source.of(job) is not None else "")
+    if refused:
+        # Its Bridge ran the same check before the handoff (app/job_dispatch.py refuse_source); this runner's release
+        # checks again what it runs itself: neither side runs a source it does not know as the owner's message.
+        job.cancelled_before_start = True
+        record_job_state(ctx, job, "cancelled", refused)
+        runtime.log(f"turn source refused job=#{job.job_id} kind={turn_source.kind(job)}")
         return
     with job.execution_lock:
         if job.cancelled_before_start:

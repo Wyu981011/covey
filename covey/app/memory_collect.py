@@ -26,7 +26,7 @@ from covey.app import answer_cards, memory_turn
 from covey.app.card_actions import action_value
 from covey.app.card_lanes import after_ack
 from covey.cards.answer_card import memory_element
-from covey.core import memory, project_memory, projects, topic_memory
+from covey.core import memory, project_memory, projects, topic_memory, turn_source
 from covey.core.butler import is_butler_topic
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record, upsert_job_record
@@ -53,6 +53,8 @@ def reason_to_ignore(runtime, ctx, job, record) -> str:
     chat = str(record.get("chat_id") or getattr(job, "chat_id", ""))
     if record.get("status") not in ENDED_WELL:
         return "not-finished"
+    if not turn_source.behavior(job, record).owner_words:
+        return "not-owner-words"  # A 协作 turn's text is not the owner's (core/turn_source.py).
     if not runtime.access.owner_turn(chat, str(record.get("sender_id") or getattr(job, "sender_id", "") or "")):
         return "not-owner"
     if memory_turn.handed_on(record.get("message_id") or getattr(job, "message_id", "")):

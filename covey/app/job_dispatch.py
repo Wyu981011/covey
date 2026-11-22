@@ -9,7 +9,8 @@ from covey.app.availability import check_or_raise
 from covey.app.launch_submit import recover_worktree_launches
 from covey.app.butler import HARNESS as BUTLER_HARNESS
 from covey.app.topics import retired_notice, topic_target
-from covey.core import timing
+from covey.core import timing, turn_source
+from covey.core.harness import backend_capabilities
 from covey.core.jobs import (context_for_job, find_job_record, harness_of, running_job_records,
                                       upsert_job_record)
 from covey.core.statuses import RUNNING
@@ -58,6 +59,8 @@ class JobDispatch:
             app.record_job_state(record_ctx, job, 'failed', '话题绑定与入队快照不一致，未执行任务')
             app.runtime.unregister_reply_job(job)
             return
+        if self.refuse_source(app, job, record_ctx):
+            return
         try:
             # Pending launch jobs enter the queue directly. Initialize their
             # selected backend here, outside the fast card callback. A task runner's
@@ -91,6 +94,21 @@ class JobDispatch:
                     app.controls.show_recovery_card(record_ctx, record)
                 except (OSError, ValueError, RuntimeError) as exc:
                     self.runtime.log(f'recovery card unavailable: {type(exc).__name__}')
+
+    def refuse_source(self, app, job, record_ctx) -> bool:
+        """Whether ``job`` came from a source this release does not run (core/turn_source.py refusal: 协作's turns, a newer
+        release's): then it is recorded cancelled and never started, with the reason, and its text never runs as the
+        owner's message. A job without a source (every one as before) is not looked at further."""
+        if turn_source.of(job) is None:
+            return False
+        refused = turn_source.refusal(job, capabilities=backend_capabilities(app.backend, record_ctx))
+        if not refused:
+            return False
+        job.cancelled_before_start = True
+        app.record_job_state(record_ctx, job, 'cancelled', refused)
+        app.runtime.unregister_reply_job(job)
+        self.runtime.log(f'turn source refused job=#{job.job_id} kind={turn_source.kind(job)}')
+        return True
 
     def notify_stale_jobs(self, ctx):
         recover_worktree_launches(self.topics, ctx)

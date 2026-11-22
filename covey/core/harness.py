@@ -118,6 +118,10 @@ class HarnessCapabilities:
     # holds a turn to its ``options[TOOL_LIMIT]`` (app/tool_limits.py): Claude Code's tools, Codex's sandbox. Without it
     # a READ turn does not run and the other limits are words in the prompt only.
     read_only: bool = False
+    # runs a 协作 turn (core/turn_source.py NEEDS): one in a topic's own native session whose tool limits hold for that turn
+    # alone and leave the session's own as they were, declared once a real write was refused in such a turn. None does
+    # yet: no 协作 turn runs (docs/architecture.md 多参与者协作).
+    collab: bool = False
 
 
 # What a turn may do, where its Harness can hold it to that (``HarnessCapabilities.read_only``): a context's

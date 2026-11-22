@@ -30,6 +30,7 @@
 | 看板、Pin、手上的事 | `app/pins.py`、`app/status_cards.py`、`app/overview.py`、`core/board_read.py` | [手上的事](docs/usage.md#手上的事)、[配置](docs/configuration.md#手上的事与话题看板) |
 | 整理专项与话题要点（`COVEY_PROJECT_TIDY`） | `app/project_tidy.py`（`ProjectTidy` 协调器：`__init__` 里组装下面各部件，自己管线程和话题要点收集；部件不继承、只调更下面的）、`app/tidy_facts.py`（记录读写的纯函数，最底层）、`app/tidy_state.py`（共享状态 `busy`/`progress`/`counted`/`handed`）、`app/tidy_words.py`（话题在卡上的字样与链接）、`app/tidy_apply.py`（照办：建、归进、移出、合并、拆、收起）、`app/tidy_proposals.py`（提议新专项、提议卡与跟着归并更新）、`app/tidy_realtime.py`（实时归并、新专项扫一遍）、`app/tidy_run.py`（定时/手动整理与整理卡）、`app/tidy_clicks.py`（卡片点击，`claim` 是入口）、`app/tidy_web.py`（网页面板）、`app/project_sorter.py`（小模型读什么、补要点）、`core/topic_gist.py`（话题要点）、`core/project_proposals.py`（提议与主人的决定）、`cards/project_proposal.py`、`app/projects.py` 的 `gather`、`app/project_members.py` 的 `join_topic`/`leave_topic` | [projects.md](docs/projects.md#整理专项)、[配置](docs/configuration.md#整理专项) |
 | 专项（`COVEY_PROJECTS=1`）：负责人、专项卡、问题分流、停住后问主人 | `core/projects.py`、`app/project_lead.py`、`app/project_tools.py`、`app/project_loop.py`、`app/project_cards.py`、`cards/project_card.py`、`app/triage.py`、`core/project_memory.py`、`core/project_library.py` | [projects.md](docs/projects.md)、[架构 · 专项](docs/architecture.md#专项第-2-期开发中默认关) |
+| 多参与者协作（`COVEY_COLLAB`，开发中）：轮次来源、交付归属、协作的状态表 | `core/turn_source.py`（来源、行为表 `behavior`、`refusal`、来源等级 `provenance`）、`core/collab.py`（`route`、状态表、限额、幂等键）；来源闸在 `app/job_dispatch.py` 的 `refuse_source` 和 `app/worker.py` 开跑前 | [多参与者协作](docs/architecture.md#多参与者协作开发中默认关) |
 | 网页工作台（`COVEY_WEB=1`） | `core/web_sync.py`、`app/web_sync.py`、`app/web_collect.py`、`app/web_ops.py`、`app/web_settings.py`；换配置 `app/web_switch.py`，附件 `app/web_files.py` | [web.md](docs/web.md) |
 | 到点回来看（`COVEY_REVISIT=1`）：话题约好几点再看一次，到点 Bridge 排一轮 | `app/revisits.py`（线程、`after_runner`、`silent`、看板的行）、`app/revisit_hint.py`（普通话题说了稍后没人回来时答案卡的提示和按钮）、`core/revisits.py`（记录）、`cards/board.py` 的 `revisit_blocks` | [到点回来看](docs/usage.md#到点回来看) |
 | 早晚汇总 | `app/digest.py`、`cards/digest.py`；晚间汇总的“你反复说的” `app/memory_candidates.py`，“本周找你” `app/weekly_usage.py` 的 `reached` | [早晚汇总](docs/usage.md#早晚汇总)、[配置](docs/configuration.md#早晚汇总) |
@@ -334,6 +335,7 @@
 | `core/card_sequence.py` | One rule for the sequence of every CardKit write to an existing card |
 | `core/checkpoint.py` | Durable task checkpoints written by the agent and read by the bridge, and the artifacts a task lists in one |
 | `core/claude_retention.py` | How long Claude Code keeps its session transcripts, read from its settings (never changed here) |
+| `core/collab.py` | 多参与者协作的契约: who owns the delivery of what the owner said (`route`), the states of a collaboration and of each … |
 | `core/completion.py` | One post-root deadline, independent of model-request retry policy |
 | `core/criteria.py` | A topic's completion criteria (完成标准) |
 | `core/defaults.py` | Product defaults, separate from provider-native default metadata |
@@ -439,6 +441,7 @@
 | `core/triage.py` | 问题分流的记录和开关: what a question record says about being held for a project's lead, and the switch |
 | `core/ttft.py` | Numeric first-output timing |
 | `core/turn_export_rows.py` | The rows of a turn export |
+| `core/turn_source.py` | 轮次来源: what started a turn, as a field only the Bridge writes, so no reader guesses it from a message id or a … |
 | `core/turn_words.py` | The words the cards, the pinned board and the butler say about a turn and a topic, in one place |
 | `core/updates.py` | Per-task coalesced UI updates, isolated from backend event handling |
 | `core/usage.py` | Numeric-only output throughput |

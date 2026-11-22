@@ -262,6 +262,29 @@
 - `proxy`（`op`）：`enable`、`disable`、`row`（`kind`、`option`）、`pause`、`resume`、`remove`（`contact`），和代答卡同一处。按名字查找添加、去登录留在飞书。
 - 其余回 failed“这一项网页上只读”。
 
+### 协作与三层记忆（契约，开发中）
+
+这一节是还没实现的约定（开关 `COVEY_COLLAB`，规则见[多参与者协作](architecture.md#多参与者协作开发中默认关)），网页和 Covey 照着做；实现时再定版本号，旧网页不认就忽略，没带这些字段的操作和现在一样。
+
+- **大厅能点多位**：`say` 多三个可选的字段。
+  - `payload.to`：点到的参与者（管家、负责人、话题的 `key`）的列表，按点的顺序；网页不从正文里的 @ 或 T 号猜收件人。只有一位就是直达，现在也可以是普通话题。
+  - `payload.integrator`：主人选的汇总方，是 `to` 里的一位或当前话题。
+  - `payload.quote`：结构化引用 `{topic_key, seq, collab}`，引用的是哪个话题的哪一轮、属于哪次协作。
+  - 交给谁、谁汇总按 `core/collab.py` 的 `route` 定，和飞书一样。
+- **由谁汇总**：点了多位时输入框写“这件事由 T3 汇总 [更换]”。默认是 `route` 给的那位（引用了话题就是它，否则是第一个点到的普通话题），主人换了就带 `integrator`；后面再加人不偷偷改它。只点了负责人又没选时写“由管家归口”。协助方超过 3 位时发起前就提示，不发。
+- **协作条目**（新的一类 `collab`）：`{key, root, integrator, helpers, state, goal_rev, created_at, updated_at, asks}`，`asks` 每条 `{id, from, to, number, state, text, reply}`，`reply` 是 `{text, evidence, topic_key, seq, at}`。`state` 取 `core/collab.py` 的状态，词用它的 `ASK_WORDS`。
+  - 汇总方那一轮带 `collab: {key, role: "integrator"}`，协助方答的那一轮带 `collab: {key, role: "helper"}`。
+  - 协助方的话题里多一行 `role: event`“已协助 T3（看这次协作）”，它自己的“有结果”和最近交付不变。
+- **回复这次协作**：引用协作里的一句、或点回执上的“回复这次协作”时带 `quote.collab`，话进那次协作，由它的汇总方接；在协助方的话题里不带引用另说一句，仍是对那个话题自己工作的话。
+- **停这件事**：`stop` 多一个可选的 `payload.collab`：只停这次协作排队和在跑的咨询轮，不停接收方别的工作；迟到的答复只留档。
+- **三层记忆的读法**：专项记忆和话题记忆的每条多这些字段。
+  - `layer`：`rule`（长期约定）、`decision`（当前决定）、`history`（历史记录）。面板按这三层分组。
+  - `asserted_by`、`recorded_by`、`level`、`origin`（`{message_id}` 或 `{question}`），含义同[来源](architecture.md#参与者交付与来源)。“你说的”“它总结的”由它们推出来，只作来源标签。
+  - `applies`：适用范围和条件；`valid`：`active`（有效）、`done`（做完）、`superseded`（被替代，另带 `superseded_by`）、`void`（作废）。
+- **纠正动作**：现有的 `forget`（作废）之外，多一个 `memory_fix`：`{project_key 或 topic_key, entry_id, what}`。
+  - `what` 是 `scope`（改适用范围或条件，带 `applies`）、`once`（只限当次）或 `confirm`（确认长期，只认主人；`level` 记 `owner`，出处是这次操作）。
+  - “查看原文”按 `origin` 跳到那条消息或那道题，不是操作。
+
 ### 版本一览
 
 | 版本 | 加了什么 |

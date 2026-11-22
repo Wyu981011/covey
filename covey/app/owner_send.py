@@ -39,6 +39,7 @@ from covey.cards.owner_send import (ASK, ASK_FIELD, ASK_LABEL, DROP, PICK, PICKS
                                     owner_send_card, top_card)
 from covey.core import env as cenv
 from covey.core import owner_send as records
+from covey.core import turn_source
 from covey.core.butler import is_butler_topic
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import context_for_job, find_job_record
@@ -417,7 +418,10 @@ class OwnerSend:
 
 
 def collect(gateway, job, ctx) -> None:
-    """After a task's runner exited (app/detached.py, app/job_dispatch.py): its drafts. Nothing without the Bridge's proxy."""
+    """After a task's runner exited (app/detached.py, app/job_dispatch.py): its drafts. Nothing without the Bridge's proxy,
+    nor for a turn whose source may draft none (core/turn_source.py: a 协作 ask)."""
+    if not turn_source.behavior(job).owner_send:
+        return
     proxy = getattr(gateway, "proxy", None)
     if proxy is not None and hasattr(proxy, "owner_send"):
         proxy.owner_send.collect(job, ctx)

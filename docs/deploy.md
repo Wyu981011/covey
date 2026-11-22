@@ -86,7 +86,7 @@ scripts/deploy_bridge.sh --workdir /absolute/workspace --profile covey --app-id 
   --commit <上一个核心提交> [--ext-repo /absolute/<扩展检出> --ext-commit <上一个扩展提交>] --allow-rollback
 ```
 
-release 目录已存在时不重新打包，只重新注册，所以回滚很快。旧 release 要留到用它的任务进程都结束（见下面第 5 步）。开了多设备时回滚的注意事项见[运维 · 多设备：设备上的任务没停掉](operations.md#多设备设备上的任务没停掉)第 5 条。
+release 目录已存在时不重新打包，只重新注册，所以回滚很快。旧 release 要留到用它的任务进程都结束（见下面第 5 步）。开了多设备时回滚的注意事项见[运维 · 多设备：设备上的任务没停掉](operations.md#多设备设备上的任务没停掉)第 5 条。开过多参与者协作的，回滚前照[兼容 · 新旧版本混跑](compat.md#新旧版本混跑)里轮次来源那一条做。
 
 ## 部署新版本
 
