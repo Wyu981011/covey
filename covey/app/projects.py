@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import dispatch_cards, project_cards, project_facts, project_lead, project_loop
+from covey.app import butler_harness, dispatch_cards, project_cards, project_facts, project_lead, project_loop
 from covey.app.project_clicks import topic_ctx
 from covey.app.project_members import GATHERED_NOTE, topic_line, wanted_topics
 from covey.app.butler_env import arg_text, reply
@@ -268,9 +268,9 @@ class Projects:
         return True  # Written when the project was made; the tick is part of that write.
 
     def step_lead(self, record) -> bool:
-        """The lead's topic: topic.json with ``project`` {id, role lead}, the butler's own model settings (Claude Code,
-        its model and budget: the butler's), the workspace of the topic the project grew from (else the one the direct start
-        chose, else the butler's), locked."""
+        """The lead's topic: topic.json with ``project`` {id, role lead}, the butler's own model settings (its Harness, model
+        and budget, from the butler's topic.json, else as its first message would write them), the workspace of the topic the
+        project grew from (else the one the direct start chose, else the butler's), locked."""
         state, chat, pid = Path(self.env.state_dir), str(record["chat_id"]), record["id"]
         lead, origin = record["lead_topic_id"], record.get("origin") or {}
         field = projects.project_field(pid, projects.LEAD)
@@ -279,7 +279,11 @@ class Projects:
             return True
         root = read_object(topic_file(state, butler.butler_topic_id(chat)))
         if not root.get("harness_id"):
-            raise RuntimeError("the main thread has no topic.json yet")
+            # The butler has not run in this chat yet (a project 整理专项 or the web page started): what its first message
+            # would write, on the Harness it runs on now (app/butler_harness.py unwritten_topic).
+            root = butler_harness.unwritten_topic(state, self.env.topics.apps)
+            if not root:
+                raise RuntimeError("no enabled Harness can run the lead: none takes the Bridge tools")
         source = read_object(topic_file(state, origin["topic_id"])) if origin.get("topic_id") else {}
         data = {key: value for key, value in root.items() if key not in LEAD_DROPS}
         name = source.get("workspace_name") or origin.get("workspace") or root.get("workspace_name") or ""

@@ -24,8 +24,9 @@ from covey.core import butler_tracks, collab, metrics, projects
 
 ENV = "COVEY_BUTLER"
 MCP_SERVER = "bridge"  # The MCP server's name in the butler's session: its tools are mcp__bridge__<tool> in Claude Code.
-# The butler's Harness when its settings name none (core/butler_settings.py Settings.harness): one that takes the
-# Bridge's tools (core/harness.py HarnessCapabilities.bridge_tools) may be chosen on the 设置 card.
+# The butler's Harness when its settings name none (core/butler_settings.py Settings.harness) and Claude Code can run it;
+# else the first enabled Harness that takes the Bridge's tools (core/harness.py HarnessCapabilities.bridge_tools,
+# app/butler_harness.py). Any of those may be chosen on the 设置 card.
 HARNESS = "claude"
 MCP_ENTRY = "bin/covey_butler_mcp.py"  # Relative to the release the Bridge runs from.
 STATE_ENV = "COVEY_BUTLER_STATE"  # Tells the MCP server the Bridge's state directory.

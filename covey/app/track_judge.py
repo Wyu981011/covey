@@ -8,19 +8,23 @@ the model: nothing is called), no task to choose from, the process did not start
 (COVEY_TRACK_JUDGE_MS, default 3000; the whole process group is killed), exited with an error, or its answer was not
 one line of JSON, had a confidence below CONFIDENCE_MIN, or an index outside the list.
 
-Two channels, COVEY_TRACK_JUDGE: ``claude`` (the default) starts a one-shot Claude Code on Haiku in an empty directory of
-its own with no tools, MCP servers, hooks or saved session, its argv given to the Harness's ``backend.wrap_argv`` and
-its environment from ``backend.child_env`` so the machine's login shell, proxy and variables apply (the caller hands in
-the Claude backend and a context for it; this module imports no backend); ``cmd:/absolute/path`` starts that command
-instead, with one JSON object on its standard input and one JSON line expected on its standard output. Where the Claude
-Harness is not enabled, ``claude`` asks the model gateway COVEY_JUDGE_GATEWAY names (app/judge_gateway.py), unset: as
-before, ``no_backend``; ``ask`` is that choice for the other small-model questions too. Either gets
-(and the model's prompt carries) the same object: ``message``, ``tasks`` (``index`` from 1, ``phase``, ``request``; at
+Two channels, COVEY_TRACK_JUDGE: ``claude`` (the default: the name is the old one; it means "the small model where it is")
+and ``cmd:/absolute/path``, which starts that command instead, with one JSON object on its standard input and one JSON line
+expected on its standard output. Where the default channel asks (``tools`` picks it, ``ask`` puts every other small-model
+question the same way: 整理专项, the patrol, the memory candidates, 看看): the model gateway COVEY_JUDGE_GATEWAY names
+(app/judge_gateway.py) when it is set, the owner's explicit choice; else the Claude Harness when it is enabled, a one-shot
+Claude Code on Haiku in an empty directory of its own with no tools, MCP servers, hooks or saved session, its argv given to
+the Harness's ``backend.wrap_argv`` and its environment from ``backend.child_env`` so the machine's login shell, proxy and
+variables apply (the caller hands in the backend and a context for it; this module imports no backend); else the first of
+NATIVE (Codex, then Antigravity) that is enabled and answers one question by itself (core/harness.py ask_once: its own CLI,
+read-only, no MCP server, no saved session, its process group killed at the limit; backends/codex/judge.py,
+backends/agy/judge.py); with none, ``no_backend``. Each gets (and the model's prompt carries) the same object: ``message``, ``tasks`` (``index`` from 1, ``phase``, ``request``; at
 most MAX_TASKS, the newest), and when there are any ``question`` (what the waiting task asks) and ``quote`` (the text the
 message replies to), each text cut to CLIP characters. The answer is ``{"route":"merge"|"new","target":<index|null>,
 "confidence":0-1}``.
 
-On the ``claude`` channel the process is, when it can be, a standby started and primed before the question
+A native Harness's CLI starts for each question (5 to 9 s seen): its hard limit is NATIVE_MS unless COVEY_TRACK_JUDGE_MS
+says. Through Claude Code the process is, when it can be, a standby started and primed before the question
 (``warm``, called by app/butler_tracks.py; app/track_standby.py): it saves the CLI's start and the slow first request, answers
 this one question and is killed. COVEY_TRACK_JUDGE_HEDGE (default 2) standbys are kept and all asked at once, the first
 usable answer wins (the gateway's slow requests are each request's own); the next ones are started as these are taken, so a
@@ -29,7 +33,7 @@ COVEY_TRACK_JUDGE_WARM=0 never starts a standby. COVEY_TRACK_JUDGE_SLIM (default
 input tokens instead of 4800.
 
 One log line per call, never with the owner's text: ``track judge route=… target=… conf=… why=… ms=… via=…`` or
-``track judge failed|skipped reason=… ms=… via=…``. Needs a Claude Code that takes ``--no-session-persistence``
+``track judge failed|skipped reason=… ms=… via=…`` (via: claude, gateway, cmd, or the native Harness's name). Needs a Claude Code that takes ``--no-session-persistence``
 (2.1.322 does); an older one that refuses it is remembered and asked without it from the next call on.
 """
 from __future__ import annotations
@@ -47,6 +51,7 @@ from typing import Callable
 from covey.app import judge_gateway, track_standby
 from covey.app.track_standby import Failed
 from covey.core import env as cenv
+from covey.core.harness import AskFailed, backend_capabilities
 from covey.core.process import signal_group
 from covey.core.process_env import env_flag
 from covey.core.text import cut
@@ -55,7 +60,12 @@ from covey.core.track_route import LIVE_PHASES, LiveJob, Message
 MODEL = "haiku"
 CONFIDENCE_MIN = 0.7
 DEFAULT_MS = 3000  # One Haiku call through a gateway often takes 1–2 s; with 2000 about 4 in 10 judgments timed out.
+# A native Harness's own CLI answering (``ask_native``): a new process each question, 5 to 7 s through Codex (up to 11, codex-cli
+# 0.171.0), about 9 through Antigravity (agy 1.5.14).
+NATIVE_MS = 10000
 MIN_MS, MAX_MS = 200, 10000
+CLAUDE = "claude"
+NATIVE = ("codex", "agy")  # Where Claude Code is not enabled, the Harnesses whose own CLI answers, in this order.
 DEFAULT_HEDGE, MAX_HEDGE = 2, 3  # The gateway's latency spikes are per request: the second of two asked at once usually misses them.
 MAX_TASKS = 3
 CLIP = 300
@@ -102,13 +112,61 @@ def mode(environ=None) -> str:
     return "bad"
 
 
-def limit_ms(environ=None) -> int:
-    """The hard limit, COVEY_TRACK_JUDGE_MS clamped to MIN_MS..MAX_MS; DEFAULT_MS when unset or not a number."""
+def limit_ms(environ=None, *, native=False) -> int:
+    """The hard limit, COVEY_TRACK_JUDGE_MS clamped to MIN_MS..MAX_MS; when unset or not a number DEFAULT_MS, or NATIVE_MS for
+    a native Harness's own CLI (``native``)."""
+    default = NATIVE_MS if native else DEFAULT_MS
     try:
-        value = int(str(cenv.get("COVEY_TRACK_JUDGE_MS", "", environ) or "").strip() or DEFAULT_MS)
+        value = int(str(cenv.get("COVEY_TRACK_JUDGE_MS", "", environ) or "").strip() or default)
     except ValueError:
-        return DEFAULT_MS
+        return default
     return max(MIN_MS, min(MAX_MS, value))
+
+
+def tools(apps) -> tuple:
+    """(backend, context) the small model's questions go through where no gateway is set (``ask``): the Claude Harness's
+    when it is enabled (Claude Code's one-shot and standby here), else the first of NATIVE that is enabled and answers one
+    question by itself (core/harness.py ask_once); (None, None) with neither. Each is that Harness's own context (its
+    command and environment), never an event's, which is the default Harness's."""
+    for name in (CLAUDE, *NATIVE):
+        harness = getattr((apps or {}).get(name), "harness", None)
+        backend, ctx = getattr(harness, "backend", None), getattr(harness, "context", None)
+        if backend is None or ctx is None:
+            continue
+        if name == CLAUDE or native(backend, ctx):
+            return backend, ctx
+    return None, None
+
+
+def native(backend, ctx) -> bool:
+    """Whether ``backend`` answers a question with its own CLI (core/harness.py ask_once: Codex, Antigravity), not as the
+    Claude Code this module starts."""
+    return backend is not None and ctx is not None and bool(backend_capabilities(backend, ctx).ask_once)
+
+
+def available(apps, environ=None) -> bool:
+    """Whether the small model's questions have somewhere to go: a gateway set, the Claude Harness, or a native one."""
+    return judge_gateway.configured(environ) is not None or tools(apps)[0] is not None
+
+
+def via_of(backend, ctx, environ=None) -> str:
+    """What answers a question asked with (``backend``, ``ctx``): "gateway", "claude", the native Harness's name, or ""."""
+    if judge_gateway.configured(environ) is not None:
+        return "gateway"
+    if native(backend, ctx):
+        return str(ctx.options.get("harness_id") or "native")
+    return CLAUDE if backend is not None and ctx is not None else ""
+
+
+def ask_native(system: str, data: str, *, backend, ctx, limit: float, cwd, heavy: bool = False) -> str:
+    """One question through a native Harness's own CLI (``backend.ask_once``), its answer as Claude Code's JSON envelope
+    (``answer_text`` reads it, as it reads the gateway's); Failed with its reason otherwise. ``heavy``: a question that needs
+    more than the small model (整理专项's): the Harness's own default model instead of its light one."""
+    try:
+        text = backend.ask_once(ctx, system, data, heavy=heavy, limit=limit, cwd=cwd)
+    except AskFailed as exc:
+        raise Failed(exc.reason, exc.detail) from None
+    return json.dumps({"type": "result", "is_error": False, "result": text}, ensure_ascii=False)
 
 
 def listed(live) -> list[LiveJob]:
@@ -196,10 +254,12 @@ def standby_target(backend, ctx):
 
 def warm(backend, ctx, environ=None) -> bool:
     """Have a Claude Code ready for the next question (app/track_standby.py): started and primed now unless a live one is
-    waiting. Nothing when the channel is not ``claude``, the warm standby is off, or ``backend`` or ``ctx`` is missing.
-    Never raises, never waits (the Popen only). True when a process was started."""
+    waiting. Nothing when the channel is not ``claude``, a gateway is set, the warm standby is off, or ``backend`` or ``ctx``
+    is missing or a native Harness's (``tools``: no Claude Code here). Never raises, never waits (the Popen only). True when
+    a process was started."""
     try:
-        if mode(environ) != "claude" or not warm_enabled(environ) or backend is None or ctx is None:
+        if mode(environ) != "claude" or not warm_enabled(environ) or backend is None or ctx is None \
+                or judge_gateway.configured(environ) is not None or native(backend, ctx):
             return False
         return track_standby.warm(*standby_target(backend, ctx), spares=hedge(environ) - 1)
     except Exception:  # noqa: BLE001  A standby that cannot start is a one-shot later.
@@ -207,10 +267,15 @@ def warm(backend, ctx, environ=None) -> bool:
 
 
 def ask(system: str, data: str, *, backend, ctx, limit: float, cwd, model: str = MODEL, environ=None) -> str:
-    """One question's raw answer, as Claude Code's JSON envelope (``answer_text`` reads it): through the Claude Harness
-    (``backend`` and ``ctx``, the way ``judge`` asks Haiku, in ``cwd``) when there is one, else through the model
-    gateway COVEY_JUDGE_GATEWAY names (app/judge_gateway.py); Failed("no_backend") when neither. ``system``, ``model``:
-    the question's own (app/patrol_judge.py, app/project_sorter.py)."""
+    """One question's raw answer, as Claude Code's JSON envelope (``answer_text`` reads it): through the model gateway
+    COVEY_JUDGE_GATEWAY names (app/judge_gateway.py) when it is set; else through ``backend`` and ``ctx`` (``tools``): a
+    native Harness's own CLI (``ask_native``; ``model`` other than MODEL makes it a heavy question), or the Claude Harness
+    the way ``judge`` asks Haiku, in ``cwd``; Failed("no_backend") with none. ``system``, ``model``: the question's own
+    (app/patrol_judge.py, app/project_sorter.py)."""
+    if judge_gateway.configured(environ) is not None:
+        return judge_gateway.ask(system, data, limit, state_dir=getattr(ctx, "state_dir", None), environ=environ)
+    if native(backend, ctx):
+        return ask_native(system, data, backend=backend, ctx=ctx, limit=limit, cwd=cwd, heavy=model != MODEL)
     if backend is not None and ctx is not None:
         Path(cwd).mkdir(parents=True, exist_ok=True)
         env = backend.child_env(ctx) if hasattr(backend, "child_env") else os.environ.copy()
@@ -219,9 +284,7 @@ def ask(system: str, data: str, *, backend, ctx, limit: float, cwd, model: str =
         except Failed as exc:
             refused(exc)
             raise
-    if judge_gateway.configured(environ) is None:
-        raise Failed("no_backend")
-    return judge_gateway.ask(system, data, limit, state_dir=getattr(ctx, "state_dir", None), environ=environ)
+    raise Failed("no_backend")
 
 
 def run(argv, stdin: str, env, cwd, limit: float) -> str:
@@ -254,8 +317,9 @@ def run(argv, stdin: str, env, cwd, limit: float) -> str:
 
 
 def answer_text(raw: str, via: str) -> str:
-    """The text that holds the verdict: the ``result`` of Claude Code's JSON envelope, or the command's whole output."""
-    if via != "claude":
+    """The text that holds the verdict: the ``result`` of Claude Code's JSON envelope (the gateway's and a native Harness's
+    answers come in one too), or the command's whole output (``via`` a ``cmd:``)."""
+    if via.startswith("cmd:"):
         return raw
     try:
         envelope = json.loads(raw)
@@ -305,14 +369,15 @@ def judge(message: Message, *, question: str = "", redacted: bool = False, backe
           log: Callable[[str], None] = print, environ=None) -> Verdict:
     """The small model's verdict on ``message`` (core/track_route.Message, its ``live`` and ``quote.text`` are what the
     model sees) given what the waiting task asks (``question``). ``redacted``: the topic redacts, nothing is sent.
-    ``backend`` and ``ctx``: the Claude backend and a context for it (``claude`` channel only)."""
+    ``backend`` and ``ctx``: what ``tools`` picked, the Claude Harness's or a native one's (``claude`` channel only)."""
     started = time.monotonic()
     via = mode(environ)
-    gateway = via == "claude" and (backend is None or ctx is None) and judge_gateway.configured(environ) is not None
+    gateway = via == "claude" and judge_gateway.configured(environ) is not None  # The owner's explicit choice comes first.
+    own = via == "claude" and not gateway and native(backend, ctx)
 
     def done(verdict: Verdict, how: str = "", **fields) -> Verdict:
         verdict = dataclasses.replace(verdict, ms=round((time.monotonic() - started) * 1000))
-        shown = "gateway" if gateway else via.split(":")[0]
+        shown = "gateway" if gateway else via_of(backend, ctx, environ) if own else via.split(":")[0]
         if how:
             log(f"track judge {how} reason={verdict.why} ms={verdict.ms} via={shown}" + "".join(f" {k}={v}" for k, v in fields.items()))
         else:
@@ -330,10 +395,12 @@ def judge(message: Message, *, question: str = "", redacted: bool = False, backe
     if not tasks or not (message.text or "").strip():
         return done(Verdict("new", why="no_tasks"), "skipped")
     data = json.dumps(payload(message, tasks, question), ensure_ascii=False)
-    limit = limit_ms(environ) / 1000
+    limit = limit_ms(environ, native=own) / 1000
     try:
-        if gateway:  # No Claude Code to ask: the model gateway COVEY_JUDGE_GATEWAY names (app/judge_gateway.py).
+        if gateway:  # The model gateway COVEY_JUDGE_GATEWAY names (app/judge_gateway.py).
             raw = judge_gateway.ask(SYSTEM, data, limit, environ=environ)
+        elif own:  # No Claude Code here: Codex's or Antigravity's own CLI, one question (core/harness.py ask_once).
+            raw = ask_native(SYSTEM, data, backend=backend, ctx=ctx, limit=limit, cwd=Path(ctx.state_dir) / "track-judge")
         elif via == "claude":
             if backend is None or ctx is None:
                 raise Failed("no_backend")

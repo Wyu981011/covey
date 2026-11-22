@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shutil
 import stat
 import subprocess
 import sys
@@ -999,11 +1000,12 @@ class ServiceEnvTest(InstallerCase):
         self.assertNotIn("MYGW_API_KEY", env)
 
 
-class CodexOnlyTest(InstallerCase):
-    """D3 (T647 二波): where only Codex answers, a new service gets its butler on Codex (core/butler_settings.py
-    preset_harness, before its first start) and none of what needs Claude Code (core/switches.py NEEDS_CLAUDE: 专项, 整理专项),
-    with --showcase too; a re-run changes neither the switches nor the butler's Harness the owner has; Claude Code working
-    later is enabled by a re-run, and the closing lines say what is off and how to turn it on."""
+class WithoutClaudeTest(InstallerCase):
+    """D3 (T647 二波, T664): where Claude Code does not answer, a new service gets its butler on the first of Codex and
+    Antigravity that does (core/butler_settings.py preset_harness, before its first start) and every switch it would have
+    had anyway (专项, 整理专项: their lead and judging run on that Harness too), with --showcase too; a re-run changes
+    neither the switches nor the butler's Harness the owner has; Claude Code working later is enabled by a re-run, and the
+    closing lines say what the butler runs on and, on a service an older release left without 专项, how to turn it on."""
 
     def setUp(self):
         super().setUp()
@@ -1034,47 +1036,53 @@ class CodexOnlyTest(InstallerCase):
     def switches_of(self, ins):
         return {key: cenv.get(key, None, ins.env) for key in switches.SHOWCASE}
 
-    def test_a_new_service_with_only_codex_gets_its_butler_on_codex_and_no_projects(self):
-        ins = self.start()
-        self.assertEqual(self.switches_of(ins), {key: switches.INSTALL.get(key) if key not in switches.NEEDS_CLAUDE else None
-                                                 for key in switches.SHOWCASE})
-        self.assertEqual(json.loads(butler_settings.path(self.state).read_text()), {"harness": "codex"})  # No mode.
-        self.assertEqual(self.order, [("service-install", False), ("bootstrap", True)])  # Written before the first start.
-        self.assertIn("只有 Codex 能调通：管家用 Codex；专项和整理专项要 Claude Code，先不开", self.text())
-        self.assertEqual(butler_settings.settle_mode(self.state), "agent")  # The first start: the butler, on Codex.
-        self.assertEqual(butler_settings.load(self.state).butler_harness, "codex")
+    def test_a_new_service_without_claude_code_gets_its_butler_on_the_first_that_works_and_every_switch(self):
+        for working, butler, title in ((("codex",), "codex", "Codex"), (("agy",), "agy", "Antigravity"),
+                                       (("agy", "codex"), "codex", "Codex")):
+            with self.subTest(working=working):
+                shutil.rmtree(self.data, ignore_errors=True)
+                self.lines.clear()
+                ins = self.start(working=working)
+                self.assertEqual(self.switches_of(ins), {key: switches.INSTALL.get(key) for key in switches.SHOWCASE})
+                self.assertEqual(json.loads(butler_settings.path(self.state).read_text()), {"harness": butler})  # No mode.
+                self.assertEqual(self.order, [("service-install", False), ("bootstrap", True)])  # Before the first start.
+                self.assertIn(f"Claude Code 没调通：管家用 {title}；专项、整理专项照常开，负责人和小模型判断也用 {title}",
+                              self.text())
+                self.assertEqual(butler_settings.settle_mode(self.state), "agent")  # The first start: the butler.
+                self.assertEqual(butler_settings.load(self.state).butler_harness, butler)
 
     def test_with_claude_code_working_nothing_changes(self):
-        for working in (("claude", "codex"), ("claude",)):
+        for working in (("claude", "codex"), ("claude",), ("claude", "agy")):
             with self.subTest(working=working):
+                shutil.rmtree(self.data, ignore_errors=True)
+                self.lines.clear()
                 ins = self.start(working=working)
                 self.assertEqual(self.switches_of(ins), {key: switches.INSTALL.get(key) for key in switches.SHOWCASE})
                 self.assertFalse(butler_settings.path(self.state).exists())
-                self.assertNotIn("只有 Codex", self.text())
+                self.assertNotIn("Claude Code 没调通", self.text())
 
-    def test_only_codex_with_showcase_turns_on_the_demo_set_but_no_projects(self):
+    def test_installer_preset_is_the_first_of_codex_and_antigravity_that_answered_without_claude_code(self):
+        for working, want in ((("codex",), "codex"), (("agy",), "agy"), (("codex", "agy"), "codex"),
+                              (("claude", "codex"), ""), (("claude",), ""), ((), ""), (("pi", "dsh"), "")):
+            with self.subTest(working=working):
+                self.assertEqual(installer.butler_preset(working), want)
+
+    def test_without_claude_code_showcase_turns_on_the_whole_demo_set(self):
         ins = self.start("--showcase")
-        self.assertEqual(self.switches_of(ins), {key: switches.SHOWCASE[key] if key not in switches.NEEDS_CLAUDE else None
-                                                 for key in switches.SHOWCASE})
-        self.assertEqual(cenv.get("COVEY_COLLAB", None, ins.env), "1")
+        self.assertEqual(self.switches_of(ins), dict(switches.SHOWCASE))
         self.registered({"LARK_BRIDGE_REVIEW": "1", "LARK_BRIDGE_PROJECTS": "0"})
         (self.data / "install.json").write_text("{}")
-        ins = self.start("--showcase")  # Registered, down: registers again with the demo set but no 专项.
+        ins = self.start("--showcase")  # Registered, down: registers again with the demo set, 专项 on too.
         self.assertEqual((cenv.get("COVEY_PROJECTS", None, ins.env), cenv.get("COVEY_PROJECT_TIDY", None, ins.env),
-                          cenv.get("COVEY_PINNED_TOPICS", None, ins.env)), ("0", None, "1"))
+                          cenv.get("COVEY_PINNED_TOPICS", None, ins.env)), ("1", "suggest", "1"))
         fingerprint = ins.fingerprint(self.data / "harnesses.json")
         (self.data / "install.json").write_text(json.dumps(fingerprint))
         self.registered({"LARK_BRIDGE_REVIEW": "1", "LARK_BRIDGE_PROJECTS": "0"})
         ins = self.make("--showcase")
         ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["codex"]
         with mock.patch.object(installer, "change_settings", return_value={"changed": {}}) as changed:
-            ins.showcase_running()  # Running unchanged: the preset in its manifest, 专项 left as they are.
-        keep = {key: ("0" if key == "COVEY_PROJECTS" else None) for key in switches.NEEDS_CLAUDE}
-        changed.assert_called_once_with(self.data / "bridge-services", self.state, keep, preset="showcase")
-        from covey.service.manager import change_settings
-        report = change_settings(self.data / "bridge-services", self.state, keep, dry_run=True, preset="showcase")
-        self.assertEqual(sorted(report["changed"]), sorted(cenv.spellings(key)[-1] for key in switches.SHOWCASE
-                                                           if key not in switches.NEEDS_CLAUDE and key != "COVEY_REVIEW"))
+            ins.showcase_running()  # Running unchanged: the preset in its manifest, nothing kept back.
+        changed.assert_called_once_with(self.data / "bridge-services", self.state, {}, preset="showcase")
 
     def test_a_rerun_keeps_the_switches_and_the_butler_s_harness_the_owner_has(self):
         self.registered({"LARK_BRIDGE_PROJECTS": "1", "LARK_BRIDGE_MEMORY": "0"})
@@ -1115,36 +1123,38 @@ class CodexOnlyTest(InstallerCase):
         with mock.patch.object(Path, "cwd", return_value=installer.REPO_ROOT):
             return "\n".join(ins.closing_lines())
 
-    def test_the_closing_lines_say_what_only_codex_means_and_how_to_turn_projects_on(self):
-        installed = {cenv.spellings(key)[-1]: value for key, value in switches.without_claude(switches.INSTALL).items()}
-        text = self.closing(("codex",), installed, butler="codex")
+    def test_the_closing_lines_say_what_the_butler_runs_on_and_how_to_turn_projects_on_where_they_are_off(self):
+        installed = {cenv.spellings(key)[-1]: value for key, value in switches.INSTALL.items()}
         state = self.state
-        turn_on = " ".join(f"{key}={switches.INSTALL[key]}" for key in switches.NEEDS_CLAUDE)
-        for words in ("已经开着：管家（Codex）、菜单「看板」、独立复核、到点回来看、记忆、知识条目",
-                      "只有 Codex 能调通：管家用 Codex；专项和整理专项要 Claude Code（专项的负责人跑在它上面），先没开",
-                      "装好并登录 Claude Code 以后：重新运行 ./install（它会把 Claude Code 加进启用的 Harness）；想让管家用它，"
-                      "在「设置」→「配置」的管家一段换成 Claude Code",
-                      f"开专项和整理专项：python3 -B bin/covey_service.py set --state-dir {state} {turn_on}",
-                      "COVEY_COLLAB=1", "（不含专项）"):
+        turn_on = " ".join(f"{key}={switches.INSTALL[key]}" for key in installer.PROJECT_SWITCHES)
+        command = f"python3 -B bin/covey_service.py set --state-dir {state} {turn_on}"
+        text = self.closing(("codex",), installed, butler="codex")
+        for words in ("已经开着：管家（Codex）、专项（", "Claude Code 没调通：管家用 Codex，专项的负责人和整理专项、同时做几件事的"
+                      "小模型判断也用它", "装好并登录 Claude Code 以后：重新运行 ./install（它会把 Claude Code 加进启用的 Harness）；"
+                      "想让管家用它，在「设置」→「配置」的管家一段换成 Claude Code", "--preset showcase"):
             self.assertIn(words, text)
-        self.assertNotIn("--preset showcase", text)  # It would turn 专项 on.
-        self.assertNotIn("专项（", text.split("只有 Codex")[0])
-        text = self.closing(("codex",), installed)  # Installed before D3: no butler until it is switched.
-        self.assertIn("管家默认用 Claude Code，现在没有管家，在飞书「设置」→「配置」的管家一段把 Harness 换成 Codex", text)
-        self.assertNotIn("已经开着：管家", text)
-        text = self.closing(("claude", "codex"), installed, butler="codex")  # Claude Code installed since.
-        self.assertIn("Claude Code 能用了：管家还在用 Codex", text)
-        self.assertIn(f"开专项和整理专项：python3 -B bin/covey_service.py set --state-dir {state} {turn_on}", text)
+        self.assertNotIn("（不含专项）", text)
+        self.assertNotIn(command, text)  # 专项 is on: nothing to turn on.
+        text = self.closing(("agy",), installed)  # No Harness named: the butler follows what works, Antigravity here.
+        self.assertIn("已经开着：管家（Antigravity）", text)
+        self.assertIn("Claude Code 没调通：管家用 Antigravity", text)
+        older = {key: value for key, value in installed.items()
+                 if not any(key in cenv.spellings(name) for name in installer.PROJECT_SWITCHES)}
+        text = self.closing(("codex",), older, butler="codex")  # An older release installed it with Codex only.
+        self.assertIn(f"；专项和整理专项没开，要开：{command}", text)
+        self.assertNotIn("专项（", text.split("Claude Code 没调通")[0])
+        text = self.closing(("claude", "codex"), older, butler="codex")  # Claude Code installed since.
+        self.assertIn("Claude Code 能用了：管家用的是 Codex，想换在飞书「设置」→「配置」的管家一段改", text)
+        self.assertIn(command, text)
         self.assertIn("--preset showcase", text)
-        both = {cenv.spellings(key)[-1]: value for key, value in switches.INSTALL.items()}
-        text = self.closing(("claude", "codex"), both, butler="codex")  # The owner's own choice with 专项 on: nothing said.
+        text = self.closing(("claude", "codex"), installed)  # Claude Code's own butler: nothing said.
         self.assertNotIn("Claude Code 能用了", text)
-        self.assertIn("已经开着：管家（Codex）、专项（", text)
+        self.assertNotIn("Claude Code 没调通", text)
+        self.assertIn("已经开着：管家、专项（", text)
 
-    def test_the_tables_and_the_butler_file(self):
-        self.assertEqual(set(switches.NEEDS_CLAUDE) - set(switches.INSTALL), set())
-        self.assertEqual(set(switches.without_claude(switches.SHOWCASE)) & set(switches.NEEDS_CLAUDE), set())
-        self.assertEqual(set(switches.without_claude(switches.SHOWCASE)) | set(switches.NEEDS_CLAUDE), set(switches.SHOWCASE))
+    def test_the_project_switches_and_the_butler_file(self):
+        self.assertEqual(set(installer.PROJECT_SWITCHES) - set(switches.INSTALL), set())
+        self.assertFalse(hasattr(switches, "NEEDS_CLAUDE") or hasattr(switches, "without_claude"))
         self.state.mkdir(parents=True)
         butler_settings.path(self.state).write_text(json.dumps({"model": "gpt-x", "topic_defaults": {"run_mode": "direct"}}))
         self.assertTrue(butler_settings.preset_harness(self.state, "codex"))

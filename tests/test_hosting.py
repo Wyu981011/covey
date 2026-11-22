@@ -252,6 +252,25 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(calls[0][1:3], ['-p', harness_probe.PROMPT])
         self.assertEqual(calls[1][1:3], ['exec', '--skip-git-repo-check'])
 
+    def test_agy_is_asked_in_a_scratch_home_and_never_waits_for_a_sign_in(self):
+        """T664: ./install probes agy too. Without its sign-in nothing starts (agy would wait a minute for a browser);
+        with one it answers in a HOME of its own, removed with its conversation, never the owner's ~/.gemini."""
+        home, record = self.dir / 'home', self.dir / 'record'
+        home.mkdir()
+        env = {**self.fake('agy', f'echo "$HOME $*" > {record}; echo ok'), 'HOME': str(home)}
+        result = harness_probe.probe('agy', env=env, cwd=str(self.dir / 'probe'))
+        self.assertEqual((result['ok'], result['reason'], record.exists()), (False, 'not_logged_in', False))
+        token = home / '.gemini' / 'antigravity-cli' / 'antigravity-oauth-token'
+        token.parent.mkdir(parents=True)
+        token.write_text('fake')
+        result = harness_probe.probe('agy', env=env, cwd=str(self.dir / 'probe'))
+        self.assertTrue(result['ok'], result)
+        used, *argv = record.read_text().split()
+        self.assertTrue(used.startswith(str(self.dir / 'probe' / 'agy-scratch-')))
+        self.assertFalse(Path(used).exists())
+        self.assertEqual(argv[:2], ['-p', harness_probe.PROMPT.split()[0]])
+        self.assertIsNone(harness_probe.command_for('agy', 'agy'))  # A device's agy is not asked this way.
+
     def test_a_harness_without_a_probe_only_needs_its_program(self):
         env = self.fake('dsh', 'exit 9')
         result = harness_probe.probe('dsh', env=env)

@@ -1,8 +1,12 @@
-"""Harness 能不能真的调通：跑一次最便宜的真实调用（claude -p、codex exec），把失败分成几类。
+"""Harness 能不能真的调通：跑一次最便宜的真实调用（claude -p、codex exec、agy -p），把失败分成几类。
 
 只查二进制在不在、``auth status`` 通过，不等于模型能答：没登录、出口需要代理、直连 403，都是装完才发现。
 安装器、doctor 和（开了 ``COVEY_HARNESS_PROBE=1`` 的）Bridge 共用这里。不导入 app/、feishu/、cards/，
-只用标准库和 core/state。
+只用标准库和 core/state、core/agy_home。
+
+agy 的探测（只在本机，``command_for`` 不给设备）：没有登录凭据（core/agy_home.py ``signed_in``）就直接算没登录，
+不然 agy 会等一分钟浏览器登录；有就在一个临时 HOME 里问一次（core/agy_home.py ``ScratchHome``），这次的对话和日志
+跟着临时目录删掉，不留在主人的 ~/.gemini 里。
 
 ``probe(name, ...)`` 返回 ``{'ok': bool, 'reason': 'ok'|'not_installed'|'not_logged_in'|'network'|'timeout'|'other',
 'detail': str}``；``detail`` 是截短、抹掉密钥样子字符串的一两行，可以直接给用户看。没有探测方式的 Harness
@@ -20,6 +24,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from covey.core import agy_home
 from covey.core.paths import data_home
 from covey.core.state import read_json, write_json
 
@@ -95,9 +100,15 @@ def probe(name, *, command=None, env=None, timeout=DEFAULT_TIMEOUT, cwd=None):
     resolved = shutil.which(executable, path=(env or os.environ).get('PATH'))
     if not resolved:
         return _result(False, 'not_installed', f'{executable} not found on PATH')
+    if name == 'agy':
+        return _probe_agy(resolved, env=env, timeout=timeout, cwd=cwd)
     argv = _argv(name, resolved)
     if argv is None:
         return {**_result(True, 'ok', 'executable found; no live probe for this Harness'), 'probed': False}
+    return _run(argv, env=env, timeout=timeout, cwd=cwd)
+
+
+def _run(argv, *, env, timeout, cwd):
     try:
         proc = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
                               timeout=timeout, check=False)
@@ -106,6 +117,19 @@ def probe(name, *, command=None, env=None, timeout=DEFAULT_TIMEOUT, cwd=None):
     except OSError as exc:
         return _result(False, 'other', f'{type(exc).__name__}: {exc}')
     return {**classify((proc.stderr or '') + '\n' + (proc.stdout or ''), proc.returncode), 'probed': True}
+
+
+def _probe_agy(executable, *, env, timeout, cwd):
+    """agy 的一次真实调用：没有登录凭据就直接算没登录（agy 会等一分钟浏览器登录）；有就在临时 HOME 里问，问完连同这次的
+    对话一起删掉。临时目录放在 ``cwd``（没有就放探测缓存目录）下面。"""
+    source = env if env is not None else os.environ
+    if not agy_home.signed_in(source):
+        return {**_result(False, 'not_logged_in', 'agy is not signed in: run agy once and sign in with Google'),
+                'probed': True}
+    parent = Path(cwd) if cwd else probe_directory()
+    with agy_home.ScratchHome(parent, source) as home:
+        return _run([executable, '-p', PROMPT, '--output-format', 'text', '--disable-slash-commands'],
+                    env={**source, 'HOME': str(home)}, timeout=timeout, cwd=cwd)
 
 
 def _fingerprint(name, command, env):

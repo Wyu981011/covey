@@ -33,7 +33,7 @@ Covey 在飞书里驱动你自己开发机上的编程 Agent。一个机器人�
 ## 能做什么
 
 - **话题就是会话**：发一条消息开一个话题，选模型、思考预算、工作区和运行方式后开始；话题里的后续消息沿用同一个会话。
-- **私聊管家**：私聊顶层的话交给一个常驻的会话（默认 Claude Code，也能换成 Codex、Antigravity）。能马上答的它直接答，要做的事它开话题去做，结论回到聊天区。
+- **私聊管家**：私聊顶层的话交给一个常驻的会话（默认 Claude Code，没有时用 Codex 或 Antigravity，也能手动换）。能马上答的它直接答，要做的事它开话题去做，结论回到聊天区。
 - **卡片上操作**：看执行过程，停止任务，执行中补充要求，回答模型的提问，聊到一半换 Harness 或模型，Claude 话题还能回退一步。
 - **结果和产物**：答案单独发成一张卡，登记的产物上传云空间并给出链接。
 - **长任务不怕重启**：每个任务在自己的任务进程里运行，机器人重启或升级时任务继续。
@@ -43,7 +43,7 @@ Covey 在飞书里驱动你自己开发机上的编程 Agent。一个机器人�
 
 ## 快速开始
 
-前提：机器上已装好并登录了 Claude Code 或 Codex，Linux 或 macOS，Python 3.10+。管家默认跑在 Claude Code 上；只有 Codex 或 Antigravity 时，在设置卡「配置」页的“管家”一段把 Harness 换成它，换之前私聊里每句话直接开一个话题。
+前提：机器上已装好并登录了 Claude Code、Codex 或 Antigravity，Linux 或 macOS，Python 3.10+。管家、专项负责人和整理专项默认跑在 Claude Code 上；没有它时跑在 Codex 或 Antigravity 上，不用另外设置（[安装 · 没有 Claude Code 时](docs/install.md#没有-claude-code-时)）。
 
 ```bash
 git clone https://github.com/ericxk/covey.git && cd covey

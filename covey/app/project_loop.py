@@ -50,7 +50,7 @@ import time
 from collections import namedtuple
 from pathlib import Path
 
-from covey.app import project_context, project_lead, triage as triage_flow
+from covey.app import butler_harness, project_context, project_lead, triage as triage_flow
 from covey.core import board_read, collab, collab_records, projects, triage, turn_source
 from covey.core import env as cenv
 from covey.core.history_storage import append_history
@@ -63,7 +63,6 @@ from covey.core.text import cut
 from covey.core.topics import load_topic, remember_topic_message, topic_label
 from covey.core.turn_words import RESULTS
 
-HARNESS = "claude"  # A lead runs on Claude Code (app/butler.py HARNESS: not imported, it imports project_lead).
 TICK = 10  # Seconds between two looks.
 START_WAIT = 20  # After the Bridge starts: its own recovery of interrupted turns goes first.
 HOUR = 3600
@@ -662,7 +661,7 @@ class ProjectLoop:
             return
         try:
             state, chat, lead = Path(self.env.state_dir), str(record.get("chat_id") or ""), str(record["lead_topic_id"])
-            app = self.env.topics.apps.get(load_topic(state, lead).get("harness_id") or HARNESS)
+            app = lead_app(self.env, state, load_topic(state, lead))
             if app is None:
                 return
             message = f"project-pause-{record['id']}"
@@ -782,7 +781,7 @@ class ProjectLoop:
         """The wake-up turn queued as a message in the lead's topic (an alias makes the message the topic's)."""
         state, chat, topic = Path(self.env.state_dir), str(record.get("chat_id") or ""), str(record["lead_topic_id"])
         data = load_topic(state, topic)
-        app = self.env.topics.apps.get(data.get("harness_id") or HARNESS)
+        app = lead_app(self.env, state, data)
         if app is None:
             return False
         remember_topic_message(state, topic, chat, message)
@@ -791,6 +790,14 @@ class ProjectLoop:
             return False
         append_history(ctx.history_path, "user", WAKE_TEXT, {"message_id": message})
         return app.submission.enqueue_chat_job(ctx, WAKE_TEXT, chat, message, prompt_content=WAKE_TEXT) is not None
+
+
+def lead_app(env, state, data):
+    """The app a lead's turns run on: the Harness its topic.json (``data``) is bound to, else, before the lead has one, the
+    butler's (app/butler_harness.py: the settings', else Claude Code while it can, else the first enabled Harness that takes
+    the Bridge's tools). None when that Harness is not enabled here: a lead's session is its Harness's own."""
+    apps = env.topics.apps
+    return apps.get(data.get("harness_id") or butler_harness.chosen(state, apps)[0])
 
 
 def batch_seconds() -> float:

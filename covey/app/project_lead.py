@@ -10,8 +10,8 @@ how its session lives. Only a lead topic's turn (core/butler.py ``is_lead``) com
   specialist: nothing now).
 - ``settle_session`` (app/worker.py ``_start_turn``): the session is dropped, and the pack sent again, when the previous
   turn read over ``RESET_TOKENS``, the topic has been idle ``RESET_IDLE`` seconds, or the model changed.
-- ``lead_turn`` (app/butler.py ``butler_turn``): the turn's context (its tools, the built-in ones narrowed to
-  ``LEAD_TOOLS``) and message (rules, pack, then the turn's own message).
+- ``lead_turn`` (app/butler.py ``butler_turn``): the turn's context (its Bridge tools, the turn held to reading on
+  whichever Harness it runs: LEAD, ``held``) and message (rules, pack, then the turn's own message).
 - The inbox, ``projects/<id>/inbox/<n>.json`` ({id, kind, thread, text, at, taken_by}): receipts of what happened since
   the lead last looked (a member topic's turn ended, a question held, the owner spoke in a member topic). ``add_receipt`` writes
   one (the Bridge does, app/project_loop.py: a member's turn ended, the owner spoke in a member topic, nothing moved), ``take_receipts`` gives the lead's turn what it has not read.
@@ -37,6 +37,7 @@ from covey.core import board_read, butler, collab, devices, project_checklist, p
 from covey.core import memory as core_memory
 from covey.core import turn_source
 from covey.core.checkpoint import read_checkpoint
+from covey.core.harness import CONSULT, LEAD, PROXY, READ, TOOL_LIMIT
 from covey.core.jobs import job_key, job_path, read_job_record, topic_job_records
 from covey.core.locks import resource_lock
 from covey.core.state import epoch_seconds, read_object, write_json
@@ -55,9 +56,10 @@ LINE = 120
 INBOX_ROWS = 20
 GOOD_ENDS = frozenset({"done", "waiting_user", "continued"})  # A turn that took its inbox and answered.
 
-# The Claude Code tools the lead has itself: it reads, it does not change anything or run commands (the work is the
-# threads'). backends/claude/argv.py turns ``options["tools"]`` into --tools.
-LEAD_TOOLS = ("Read", "Grep", "Glob")
+# What the lead may do itself, on any Harness: read and search, and its Bridge tools; it changes nothing and runs no command
+# (the work is the threads'). Its turn is held to LEAD (core/harness.py): Claude Code gets Read, Grep and Glob, Codex its
+# read-only sandbox with the Bridge's tools approved, Antigravity deny rules for file writes, commands and URL reads.
+HELD_BY = (CONSULT, PROXY, READ)  # Stricter limits a turn may have already (app/tool_limits.py): they stay.
 
 # A project has no limit on its member topics at the same time, and its style no 派活 (deploys
 # that would clash queue, the topics are not held back). An older record's or project-style.json's ``spawn`` is read past.
@@ -107,7 +109,7 @@ def now_of(now=None) -> float:
 IDENTITY = (
     "[负责人规则]",
     "- 你是一个专项的负责人：主人交给你一件要分成几个话题、跨几天才能做完的事，你拆、派、跟进、收尾，不自己动手干活。"
-    "你的 Claude Code 工具只有 Read、Grep、Glob，只用来读文件；改东西、跑命令、联网都是专项的话题里做的事。",
+    "你这一轮是只读的：只能读文件、搜索和用 Bridge 工具，改文件、执行命令、联网都会被拒绝；改东西、跑命令、联网都是专项的话题里做的事。",
     "- 每一轮开头有“专项状态”：目标和完成标准、话题清单、专项记忆、风格、自上次以来的收件箱、近 10 条决定。"
     "它是磁盘上的真实状态，比你对之前几轮的印象可靠；对不上时以它为准。专项记忆每一轮都带，和专项的话题读到的是同一份，"
     "写着作废的那几条不再适用。",
@@ -120,7 +122,7 @@ NOT_WOKEN = ("话题有了结果不会叫醒你（没开叫醒负责人）：它
              "别对主人说“我会跟进”“有结果我再告诉你”。")
 assert any(WOKEN in rule for rule in IDENTITY)
 TOOL_RULES = (
-    "- 工具都是 Bridge 工具（mcp__bridge__<工具名>）。开话题用 project_topic_start（写干净的任务说明：做什么、范围、约束、"
+    "- 下面说的工具都是 Bridge 工具（MCP 服务 bridge 的工具，名字是 mcp__bridge__<工具名> 或 mcp_bridge_<工具名>）。开话题用 project_topic_start（写干净的任务说明：做什么、范围、约束、"
     "交付什么；不抄本机路径），给已有话题加话用 project_topic_send；同时在做的话题不设上限，一件独立的事一个话题。",
     "- 主人点名要比较几种做法时：用 project_topic_start 开两个只读话题（readonly 为 true），给一模一样的任务说明，最好一家一个"
     "模型（harness、model）；两边都结束后再汇总，写清采纳了哪边的哪部分、为什么，以及两边都没回答的问题。",
@@ -134,7 +136,7 @@ TOOL_RULES = (
     "用 project_style 改汇报风格。",
     "- 目标和完成标准都达到、话题都结束了，才用 project_finish 收尾；还有话题在跑时它会拒绝。"
     # #19: a topic saying it is done is its claim (Persona: "只开了 PR、合了没部署的，不要说「做完了」").
-    "话题说做完只是它的说法：收尾前对照完成标准抽查关键产物（用 Read、Grep 看文件，用 topic_read 看检查点的提交、部署和自检）；"
+    "话题说做完只是它的说法：收尾前对照完成标准抽查关键产物（读文件、搜索看产物，用 topic_read 看检查点的提交、部署和自检）；"
     "只提了合并请求、合了没部署的，不算做完。整理专项把已有话题收进来建的专项，"
     "收进来的话题做完不等于专项完成：主人在里面说过话或你派过活之前它也会拒绝，先汇报现状、等主人。"
     "收过尾的专项，主人再在里面说话就会自动重开，按主人的新要求接着做。主人要停专项里的某个话题（包括停掉"
@@ -161,7 +163,7 @@ COLLAB_RULES = (
     "- 目标检查表：用 project_checklist 把专项的完成标准拆成几条，每条写清由哪个话题交付、依赖哪几条、证据在哪、还缺什么；"
     "第一轮写，目标变了再改。“专项状态”里的“目标检查表”是它现在的样子。",
     "- 收到话题的交付（thread_end）或协作缺口（collab_gap）时，对照目标检查表查：交付有没有覆盖那条标准、证据够不够"
-    "（用 Read、topic_read 抽查）、两个结果有没有冲突、后面的条目要的前置结果有没有；有漏项就安排补齐：project_topic_send 让原话题返工，"
+    "（读文件、用 topic_read 抽查）、两个结果有没有冲突、后面的条目要的前置结果有没有；有漏项就安排补齐：project_topic_send 让原话题返工，"
     "或 project_topic_start 开新话题，并用 project_checklist 写明缺口和由谁补。协作缺口处理完用 close_gaps 写怎么处理的。",
     "- 话题说做完只是它的说法：核对过证据才把那一条标 done（evidence 写提交号、产物路径或检查点里的自检）；还有没满足的条目或没处理的协作缺口时 "
     "project_finish 会拒绝。主人说不要了的才标 dropped，在 gap 里写主人怎么说的；需要主人定范围、顺序或取舍时，合成一个问题用 project_note 标 report 问他。",
@@ -598,18 +600,26 @@ def settle_session(ctx, job, sessions, runtime, revision, session_id, now=None):
 
 # The turn.
 
+def held(ctx):
+    """``ctx`` held to LEAD (core/harness.py TOOL_LIMIT: reading, searching and the Bridge's tools, on whichever Harness the
+    lead runs); a stricter limit the turn has already (``HELD_BY``) stays, a LOOK gives way."""
+    if ctx.options.get(TOOL_LIMIT) in HELD_BY:
+        return ctx
+    return dataclasses.replace(ctx, options={**ctx.options, TOOL_LIMIT: LEAD})
+
+
 def lead_turn(ctx, job, prompt, session_id, log, release, now=None):
-    """(context, message) of a lead's turn: the Bridge's tools of the lead ,
-    the built-in tools narrowed to LEAD_TOOLS, and the message headed by the rules and the state pack. A turn whose
-    project record is gone (``read_record``) goes on as the butler's would not: no tools, the message as it is."""
+    """(context, message) of a lead's turn: the Bridge's tools of the lead, the turn held to reading (``held``), and the
+    message headed by the rules and the state pack. A turn whose project record is gone (``read_record``) goes on as the
+    butler's would not: no tools, the message as it is, held to reading all the same."""
     found = projects.topic_project(ctx.state_dir, job.topic_id)
     record = projects.read_record(ctx.state_dir, found.id) if found is not None else {}
     if not record:
         log(f"lead turn without a project record job=#{job.job_id}")
-        return ctx, prompt
+        return held(ctx), prompt
     key = job_key(job.message_id, job.job_id)
     config = butler.mcp_config(release, ctx.state_dir, key, sys.executable, lead=record["id"])
-    ctx = dataclasses.replace(ctx, options={**ctx.options, "mcp_config": config, "tools": LEAD_TOOLS})
+    ctx = held(dataclasses.replace(ctx, options={**ctx.options, "mcp_config": config}))
     if job.kind != "chat":
         return ctx, prompt
     try:

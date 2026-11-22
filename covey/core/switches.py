@@ -1,8 +1,8 @@
 """The optional switches (docs/configuration.md 开关速查): what a new service starts with, the 演示套餐, and which a service has set.
 
 ``INSTALL`` is what ./install writes into a new service's manifest (service/installer.py), ``SHOWCASE`` the 演示套餐 on top
-of it (`./install --showcase`, `covey_service.py set --preset showcase` through ``preset_changes``); where only Codex works,
-./install writes either ``without_claude`` (no 专项 and 整理专项: ``NEEDS_CLAUDE``).
+of it (`./install --showcase`, `covey_service.py set --preset showcase` through ``preset_changes``), whichever Harnesses work:
+专项's lead and 整理专项's judging run on Codex and Antigravity too (app/butler_harness.py, app/track_judge.py tools).
 
 Which a service has set is for the people who help with it: the 复制诊断 block (app/diag_summary.py) and the 设置 card's 诊断
 tab (service/doctor.py, app/doctor_panel.py, cards/doctor_card.py). Read only, and limited on purpose: a name is shown only when it is one of ``KNOWN`` (the switches that table names; a test keeps
@@ -40,11 +40,6 @@ INSTALL = {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD"
 SHOWCASE = {**INSTALL, "COVEY_COLLAB": "1", "COVEY_PINNED_OVERVIEW": "1", "COVEY_PINNED_TOPICS": "1",
             "COVEY_DIGEST_TIMES": "09:30,21:30", "COVEY_BUTLER_TRACKS": "1", "COVEY_DISPATCH_CARD": "1"}
 PRESETS = {"showcase": SHOWCASE}
-# What of INSTALL and SHOWCASE needs Claude Code to work: 专项 (its lead runs on Claude Code, app/project_loop.py HARNESS) and
-# 整理专项 (its small model's judging, app/project_sorter.py, unless COVEY_JUDGE_GATEWAY names a gateway). ./install leaves
-# them out of a new service where only Codex works (service/installer.py, docs/install.md 只有 Codex 时).
-NEEDS_CLAUDE = ("COVEY_PROJECTS", "COVEY_PROJECT_TIDY", "COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK",
-                "COVEY_PROJECT_MEMORY", "COVEY_PROJECT_TRIAGE")
 OFF_VALUES = ("", "0", "off", "false", "no")  # A preset turns on a switch set to one of these (core/process_env.py's and empty).
 SECRET_NAME = re.compile(r"SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|(^|_)KEY($|_)")
 PLAIN = re.compile(r"[A-Za-z0-9_.:,=+-]{1,32}")
@@ -83,11 +78,6 @@ def shown(environ=None) -> list:
 def words(pairs) -> str:
     """The pairs as "NAME=value" apart by "；"; "" without one."""
     return "；".join(f"{name}={value}" for name, value in pairs)
-
-
-def without_claude(table) -> dict:
-    """``table`` ({switch: value}: INSTALL, SHOWCASE or a preset's changes) without NEEDS_CLAUDE's switches."""
-    return {switch: value for switch, value in table.items() if switch not in NEEDS_CLAUDE}
 
 
 def preset_changes(name, environ) -> dict:

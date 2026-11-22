@@ -28,6 +28,7 @@ from covey.backends.claude.bridge import ClaudeBackend
 from covey.core import butler_mcp, butler, butler_tool_specs, project_memory, project_proposals, projects
 from covey.core import butler_settings as settings
 from covey.core.jobs import job_key
+from covey.core.harness import CONSULT, LEAD as HELD, READ, TOOL_LIMIT  # LEAD here is the lead topic's id.
 from covey.core.butler_requests import Request
 from covey.core.state import write_json
 
@@ -77,7 +78,8 @@ class RulesTest(Case):
     def test_the_rules_are_layered_and_the_practice_layer_is_empty_until_phase_3(self):
         base = project_lead.lead_rules()
         self.assertTrue(base.startswith("[负责人规则]"))
-        self.assertIn("Read、Grep、Glob", base)
+        self.assertIn("你这一轮是只读的", base)  # On whichever Harness the lead runs (core/harness.py LEAD).
+        self.assertNotIn("Claude Code", base)
         self.assertIn("project_topic_start", base)
         self.assertNotIn("管家规则", base)
         self.assertEqual(project_lead.PRACTICE, "")
@@ -357,7 +359,8 @@ class TurnTest(Case):
 
     def test_a_lead_turn_has_its_tools_narrowed_and_its_message_headed_by_rules_and_pack(self):
         ctx, message = self.run_turn()
-        self.assertEqual(ctx.options["tools"], ("Read", "Grep", "Glob"))
+        self.assertEqual(ctx.options[TOOL_LIMIT], HELD)  # Held to reading on any Harness (core/harness.py LEAD).
+        self.assertNotIn("tools", ctx.options)
         server = ctx.options["mcp_config"]["mcpServers"][butler.MCP_SERVER]
         self.assertEqual(server["env"][butler.LEAD_ENV], PID)
         self.assertEqual(server["env"][butler.JOB_ENV], job_key("lead-1", 1))
@@ -368,6 +371,15 @@ class TurnTest(Case):
         self.assertNotIn("compact_instructions", ctx.options)  # No compaction: the session is rebuilt from the disk.
         self.assertIn("把账单迁到新库", message)
 
+    def test_a_stricter_limit_the_turn_has_stays_and_a_look_gives_way_to_the_leads(self):
+        from covey.core.harness import LOOK, PROXY
+        for limit in (CONSULT, PROXY, READ):
+            with self.subTest(limit=limit):
+                self.assertEqual(project_lead.held(self.context(**{TOOL_LIMIT: limit})).options[TOOL_LIMIT], limit)
+        for options in ({}, {TOOL_LIMIT: LOOK}):
+            with self.subTest(options=options):
+                self.assertEqual(project_lead.held(self.context(**options)).options[TOOL_LIMIT], HELD)
+
     def test_a_resumed_lead_gets_the_changing_parts_only(self):
         _, message = self.run_turn(session_id="sid")
         self.assertNotIn("把账单迁到新库", message)
@@ -377,7 +389,8 @@ class TurnTest(Case):
         projects.record_path(self.state, PID).unlink()
         ctx, message = self.run_turn()
         self.assertEqual(message, "叫醒")
-        self.assertNotIn("tools", ctx.options)
+        self.assertNotIn("mcp_config", ctx.options)
+        self.assertEqual(ctx.options[TOOL_LIMIT], HELD)  # Still a lead: it reads, it changes nothing.
         self.assertTrue(any("without a project record" in line for line in self.logs))
 
     def test_the_butler_turn_has_no_project_tools(self):
@@ -448,9 +461,9 @@ class ArgvTest(Case):
         ctx = dataclasses.replace(codex_context(self.state, "stream-json"), options=options)
         return stream_argv(ClaudeBackend(), ctx)
 
-    def test_tools_in_the_options_become_a_tools_whitelist_beside_the_mcp_tools(self):
+    def test_a_lead_turn_gets_a_tools_whitelist_beside_the_mcp_tools(self):
         config = {"mcpServers": {"bridge": {}}}
-        argv = self.argv(mcp_config=config, tools=("Read", "Grep", "Glob"))
+        argv = self.argv(mcp_config=config, **{TOOL_LIMIT: HELD})
         self.assertEqual(argv[argv.index("--tools") + 1], "Read,Grep,Glob")
         self.assertEqual(argv[argv.index("--allowedTools") + 1], "mcp__bridge")
         self.assertIn("--mcp-config", argv)

@@ -4,10 +4,9 @@ jobs, the butler's lost supplements). JobDispatch is a part of app/unified.py's 
 and runtime it reads."""
 from __future__ import annotations
 
-from covey.app import butler_asks, detached, knowledge_collect, memory_collect, butler_relay, owner_send
+from covey.app import butler_asks, butler_harness, detached, knowledge_collect, memory_collect, butler_relay, owner_send
 from covey.app.availability import check_or_raise
 from covey.app.launch_submit import recover_worktree_launches
-from covey.app.butler import HARNESS as BUTLER_HARNESS
 from covey.app.topics import retired_notice, topic_target
 from covey.core import timing, turn_source
 from covey.core.harness import backend_capabilities
@@ -120,9 +119,10 @@ class JobDispatch:
         self.close_retired_jobs(ctx)
         self.release_started_launches(ctx)
         # The butler's messages a turn that ended while no Bridge watched never took: turns of their own now.
-        # By the butler's Harness now (app/butler.py harness_app), Claude Code's when it has none.
+        # By the butler's Harness now (app/butler.py harness_app), else the one it would run on (app/butler_harness.py).
         butler = getattr(self, "butler", None)
-        app = (butler.harness_app(ctx.state_dir)[1] if butler is not None else None) or self.apps.get(BUTLER_HARNESS)
+        app = (butler.harness_app(ctx.state_dir)[1] if butler is not None else None) \
+            or self.apps.get(butler_harness.default_name(self.apps))
         detached.queue_stranded(self, ctx, app)
 
     def release_started_launches(self, ctx):

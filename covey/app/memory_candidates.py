@@ -10,9 +10,10 @@ before the digest time, of ordinary topics (not the butler's, not a 代答 topic
 topic with redaction on or whose setting cannot be read; each message split into sentences, the ones with a correction's word
 (CUES) kept, at most PER_TOPIC a topic and MAX_SENTENCES in all. Nothing is read unless two topics or more have such words.
 
-Who groups them (``find``): the small model (Haiku, the way app/patrol_judge.py asks it: one Claude Code through the Harness's
-own wrapping, no tools, at most JUDGE_SECONDS) groups the sentences that say the same correction and words each group as
-one rule; without a Claude Code, or when the call fails, the rules alone group sentences that read nearly the same
+Who groups them (``find``): the small model (where app/track_judge.py ``ask`` puts it, as app/patrol_judge.py does: the
+model gateway COVEY_JUDGE_GATEWAY names, else Haiku through the Claude Harness's own wrapping, else Codex's or Antigravity's own
+CLI; no tools, at most JUDGE_SECONDS) groups the sentences that say the same correction and words each group as one rule;
+without any of them, or when the call fails, the rules alone group sentences that read nearly the same
 (core/topic_gist.py ``same_essence``): a correction said in other words is then missed, never invented. A group must span two
 topics or more; one that says what a principle already says (core/principles.py ``same_key``) or what the owner declined is
 left out.
@@ -25,7 +26,6 @@ once (``ran``), rows older than KEPT_DAYS go. Written under its own lock, never 
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 import time
@@ -185,20 +185,12 @@ def by_rules(rows) -> list:
 
 
 def ask(rows, existing, declined, backend, ctx, state_dir):
-    """The model's groups of ``rows``; Failed when it gave none."""
-    if backend is None or ctx is None:
-        raise Failed("no_backend")
+    """The model's groups of ``rows`` (app/track_judge.py ``ask``: the gateway, Claude Code, Codex's or Antigravity's own
+    CLI); Failed when it gave none."""
     data = {"sentences": [{"index": i + 1, "topic": row["label"], "text": row["text"]} for i, row in enumerate(rows)],
             "principles": [cut(text, SENTENCE) for text in existing][-30:], "declined": declined[-30:]}
-    cwd = Path(state_dir) / "memory-candidates"
-    cwd.mkdir(parents=True, exist_ok=True)
-    env = backend.child_env(ctx) if hasattr(backend, "child_env") else os.environ.copy()
-    try:
-        argv = track_judge.claude_argv(backend, ctx, track_judge.use_flag(), system=SYSTEM)
-        raw = track_judge.run(argv, json.dumps(data, ensure_ascii=False), env, cwd, JUDGE_SECONDS)
-    except Failed as exc:
-        track_judge.refused(exc)
-        raise
+    raw = track_judge.ask(SYSTEM, json.dumps(data, ensure_ascii=False), backend=backend, ctx=ctx, limit=JUDGE_SECONDS,
+                          cwd=Path(state_dir) / "memory-candidates")
     return parse(track_judge.answer_text(raw, "claude"), rows)
 
 
@@ -303,15 +295,14 @@ def rows_of(state_dir, slot) -> list:
 
 
 class Candidates:
-    """The digest's hook (app/digest.py ``candidates``): ``topics`` for the Claude Code that judges, ``runtime`` for the
-    owner and the log."""
+    """The digest's hook (app/digest.py ``candidates``): ``topics`` for the small model that judges (app/track_judge.py
+    tools), ``runtime`` for the owner and the log."""
 
     def __init__(self, runtime, topics):
         self.runtime, self.topics = runtime, topics
 
     def offer(self, ctx, chat, slot) -> list:
-        app = self.topics.apps.get("claude")
-        harness = getattr(app, "harness", None)
+        backend, context = track_judge.tools(self.topics.apps)  # Claude Code, else Codex's or agy's own CLI.
         return offer(ctx.state_dir, chat, slot, lambda: find(
-            ctx.state_dir, chat, slot, owner_turn=self.runtime.access.owner_turn,
-            backend=getattr(harness, "backend", None), ctx=getattr(harness, "context", None), log=self.runtime.log))
+            ctx.state_dir, chat, slot, owner_turn=self.runtime.access.owner_turn, backend=backend, ctx=context,
+            log=self.runtime.log))

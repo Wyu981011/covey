@@ -1584,11 +1584,28 @@ class HarnessNoteTest(unittest.TestCase):
     def test_a_missing_harness_is_one_warning_line_and_an_enabled_one_none(self):
         with mock.patch.object(session.contract, "enabled", return_value=True):
             note = self.thread({}).harness_note(self.state)
-            self.assertIn(f"Harness {session.HARNESS} is not enabled", note)
+            self.assertIn("no enabled Harness can take the Bridge tools", note)
             self.assertIn("纯话题", note)
             self.assertEqual(self.thread({session.HARNESS: self.app()}).harness_note(self.state), "")
+            note = self.thread({"pi": self.app(tools=False)}).harness_note(self.state)  # Enabled, but no Bridge tools.
+            self.assertIn("no enabled Harness can take the Bridge tools", note)
         with mock.patch.object(session.contract, "enabled", return_value=False):
             self.assertEqual(self.thread({}).harness_note(self.state), "", "the main thread off: nothing to warn of")
+
+    def test_with_none_named_the_butler_runs_on_claude_code_else_the_first_enabled_harness_that_takes_the_tools(self):
+        """T664: a butler whose settings name no Harness follows what is enabled: Claude Code while it can run it (as
+        before), else Codex, else Antigravity; never one without the Bridge's tools; nothing saved."""
+        claude, codex, agy, pi = self.app(), self.app(), self.app(), self.app(tools=False)
+        with mock.patch.object(session.contract, "enabled", return_value=True):
+            for apps, want in (({session.HARNESS: claude, "codex": codex, "agy": agy}, (session.HARNESS, claude)),
+                               ({"codex": codex, "agy": agy}, ("codex", codex)),
+                               ({"agy": agy, "pi": pi}, ("agy", agy)),
+                               ({session.HARNESS: self.app(tools=False), "codex": codex}, ("codex", codex)),
+                               ({"pi": pi}, (session.HARNESS, None))):
+                with self.subTest(apps=sorted(apps)):
+                    self.assertEqual(self.thread(apps).harness_app(self.state), want)
+                    self.assertEqual(self.thread(apps).harness_note(self.state) == "", want[1] is not None)
+        self.assertFalse(butler_settings.path(self.state).exists())  # Followed, never written.
 
     def test_the_settings_harness_counts_and_only_one_that_takes_the_bridge_tools(self):
         butler_settings.update(self.state, harness="agy")

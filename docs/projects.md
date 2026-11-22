@@ -210,6 +210,19 @@
 - **点了以后**：这张卡整卡写成一行（“你选了继续 / 收尾 / 停”），专项卡下一次刷新自然变成在做或停住。专项被别处处理了（你在负责人话题里直接说话、负责人收尾）而没点，这张卡缩成“已在别处处理”。每张卡的写入用它自己的 sequence（`pause_ask.card`）。
 - **试用**：设 `COVEY_PROJECT_BUDGET=<小数>` 一会儿就停住；`COVEY_PROJECT_STALL_SECONDS=60` 并开 `COVEY_PROJECT_AUTOWAKE=1`，一个有任务排队或有没读的回执、却没有动静的专项约两分钟后停住（没有要做的事、或只在等你回答的专项不会停滞）。唤醒次数的上限不能调。
 
+## 负责人只读
+
+负责人只拆、派、跟进、收尾，不自己动手：它这一轮只能读文件、搜索和用 Bridge 工具（开话题、给话题加话、记一笔……），改文件、执行会改东西的命令、联网都会被拒（`core/harness.py` 的 `LEAD`，`app/project_lead.py` 的 `held`）。负责人跑在建它时管家用的 Harness 上（`app/projects.py` 的 `step_lead`，建好就锁定），每个 Harness 用自己的办法守住：
+
+| Harness | 怎么守住只读 |
+| --- | --- |
+| Claude Code | 自带工具只给 `Read`、`Grep`、`Glob`，Bridge 工具照常（`--tools`，和以前一样） |
+| Codex | 线程和每一轮都在只读沙箱里（`read-only`，`sandboxPolicy: readOnly`）：能跑只读的命令，写文件、联网被沙箱拒。只读沙箱里 MCP 工具默认要批准、批准策略又是从不问，所以给 Bridge 工具单独设成直接批准（`mcp_servers.bridge.default_tools_approval_mode = "approve"`）。接着上一轮时在一个不带你的规则、hook、插件和记忆的 `CODEX_HOME` 里跑，和群成员只读的一轮一样（`ReadingHome`）；开新线程的那一轮在你的 `CODEX_HOME` 里，执行规则里 allow 的命令那时仍在沙箱外执行（[harnesses.md 执行权限](harnesses.md#执行权限)） |
+| Antigravity | 这一轮带上只对这次运行生效的拒绝规则（`--settings`，不写进你的设置，`backends/agy/bridge.py` 的 `READ_ONLY_SETTINGS`）：写文件（新建和改已有的都算）、执行命令、读网址都被拒；读文件、搜索和 Bridge 工具照常（agy 1.5.14 实测） |
+| Pi、dsh | 接不了 Bridge 工具，当不了负责人：这一轮不启动，任务卡上说为什么（`app/tool_limits.py` 的 `refusal`） |
+
+这一轮已经有更严的限制时（群成员只读、代答、协作咨询）照那个；只看不改（`look`）的一轮让位给负责人的。负责人话题的专项记录没了时这一轮照样只读，只是没有 Bridge 工具。实测记录见 Codex 的 C8 检查（`tests/test_collab_c8.py`）和 `tests/test_butler_harness.py`。
+
 ## 负责人对照目标跟进
 
 `COVEY_COLLAB=1`（[多参与者协作](architecture.md#多参与者协作开发中默认关)的开关，默认关）时，负责人对专项的目标负责，而不只是收发消息：维护完成标准、发现漏项、安排依赖、检查证据够不够、协调返工。关着时下面这些都没有，负责人的规则、状态包、工具清单和收尾都和原来逐字一样。
@@ -265,7 +278,7 @@
 `app/project_sorter.py`。
 
 - 每个话题的要点，加你在这个话题里说过的话的全文（每轮的请求，合计 1200 字，留开头和最近的）、每轮结论的第一段（最近 6 段）、工作区、所在专项、开了几天、你说了几次；已有专项的名字、目标、状态和它的话题的本质；你以前给的理由（`lessons`）。
-- 判断用 `COVEY_PROJECT_TIDY_MODEL`（默认 Sonnet：要读整段对话说出本质，Haiku 不够），做法同 `app/track_judge.py`（没有工具、MCP、hook 和保存的会话，过了上限整组进程杀掉），一次调用。
+- 判断去[小模型判断](configuration.md#小模型判断)说的地方，一次调用，做法同 `app/track_judge.py`（没有工具、MCP、hook 和保存的会话，过了上限整组进程杀掉）：有 Claude Code 时用 `COVEY_PROJECT_TIDY_MODEL`（默认 Sonnet：要读整段对话说出本质，Haiku 不够）；没有时用 Codex 或 Antigravity 自己的默认模型（不用它们的轻量模型，理由同上）；设了 `COVEY_JUDGE_GATEWAY` 时用网关的那个模型。
 - 拿不准时它可以先回 `{"read":[…]}` 要最多 3 个话题的全文（每轮请求和结论加长到 12000 字），再判断一次。
 - 脱敏的话题不送给模型，在结果里单独写明。
 - **补要点**：整理（定时、手动）先给没有要点的老话题补：一个话题单独一次只读调用（`GIST_SYSTEM`），整理卡上显示“正在读 T42（12/40）”。读不了的（被官方内容安全拒绝、超时、回答看不懂）只标 `unreadable` 跳过，整理照常做完，卡上写“N 个话题读不了，没参与这次整理”；它有了新的一轮之后的整理会再试。

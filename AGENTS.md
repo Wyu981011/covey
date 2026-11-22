@@ -25,7 +25,8 @@
 | 收消息、路由、建任务 | `app/card_routing.py`、`app/topics.py`、`app/submission.py` | [一条消息的数据流](docs/architecture.md#一条消息的数据流) |
 | 卡片按钮与点击 | `app/card_actions.py`、`app/card_routing.py`、`app/card_lanes.py` | [卡片点击的数据流](docs/architecture.md#卡片点击的数据流)、[cards.md](docs/cards.md) |
 | 谁被服务、群聊、别人私聊时回一句（`COVEY_STRANGER_REPLY`，默认开） | `app/access.py`、`core/groups.py`、`app/group_manager.py`、`app/strangers.py` | [谁被服务](docs/architecture.md#谁被服务) |
-| 管家（私聊模式） | `app/butler.py`、`core/butler.py`、`core/placement.py`、`app/butler_tools.py` | [butler.md](docs/butler.md) |
+| 管家（私聊模式） | `app/butler.py`、`core/butler.py`、`core/placement.py`、`app/butler_tools.py`；跑在哪个 Harness `app/butler_harness.py` | [butler.md](docs/butler.md) |
+| 小模型判断（整理专项、巡逻、分流、晚间候选、看看；网关 → Claude Code → Codex → Antigravity） | `app/track_judge.py`（`tools`、`ask`、`judge`）、`app/judge_gateway.py`、`backends/codex/judge.py`、`backends/agy/judge.py`、`core/one_shot.py` | [配置 · 小模型判断](docs/configuration.md#小模型判断) |
 | 话题与回带 | `app/butler_topics.py`（新话题的 Harness、模型、预算在 `app/butler_model_choice.py`；请求幂等账本 `core/butler_opened.py`）、`app/butler_relay.py`、`app/relay_targets.py`、`app/relay_send.py`；停住卡的原因、按钮和点击 `app/relay_stops.py` | [butler.md](docs/butler.md) |
 | 引用卡片接着说（顶层引用结论卡、问题卡副本等直达话题的那句话上的表情） | `app/butler_reactions.py` 的 `top_message`、`top_queued` 等，接入点在 `app/submission.py`、`app/steering.py`、`app/questions.py`、`app/held_notes.py`、`app/task_controls.py` | [引用卡片接着说的表情](docs/architecture.md#引用卡片接着说的表情) |
 | 看板、Pin、手上的事 | `app/pins.py`、`app/status_cards.py`、`app/overview.py`、`core/board_read.py` | [手上的事](docs/usage.md#手上的事)、[配置](docs/configuration.md#手上的事与话题看板) |
@@ -89,6 +90,7 @@
 | `app/butler_asks.py` | 话题转交管家: what the owner asks of a topic that only the butler can do (open a project, put this topic into one … |
 | `app/butler_env.py` | What a butler tool handler gets besides its request |
 | `app/butler_handoff.py` | What a topic gets when the butler hands it work |
+| `app/butler_harness.py` | Which Harness the butler runs on, and with it a project's lead: the one the settings name when they name one |
 | `app/butler_knowledge.py` | The butler's knowledge-entry tools and history_search, the one that asks the history command … |
 | `app/butler_model_choice.py` | What Harness, model and thinking budget a topic the butler opens runs with |
 | `app/butler_panel.py` | The 管家 settings card: the owner changes the butler's settings in the private chat |
@@ -133,7 +135,7 @@
 | `app/idle_compaction.py` | The butler's compaction while it is idle: the owner no longer waits for it |
 | `app/interaction.py` | Backend event dispatch and task-card callbacks |
 | `app/job_dispatch.py` | Running a dequeued job (process_reply_job |
-| `app/judge_gateway.py` | The small model's one-shot questions through a model gateway where there is no Claude Code to ask |
+| `app/judge_gateway.py` | The small model's one-shot questions through a model gateway the owner names |
 | `app/knowledge_collect.py` | A topic's turn writes what the owner asked it to remember |
 | `app/knowledge_turn.py` | What a turn reads of the knowledge entries and the history command (COVEY_HISTORY_CMD), for app/runs.py |
 | `app/launch.py` | The launch card of unified topics: its form, defaults and rebuilds, and closing or retiring a launch form |
@@ -331,6 +333,7 @@
 
 | 文件 | 管什么 |
 | --- | --- |
+| `core/agy_home.py` | A HOME of its own for one Antigravity (`agy`) run that must leave nothing behind |
 | `core/app_manifest.py` | What the Feishu app behind a Bridge must have, and what its online version lacks |
 | `core/attachments.py` | Image attachments a Harness hands its model itself (Claude Code's stream-json input, pi's prompt) |
 | `core/avatars.py` | The avatars of the private chat's cards: which picture a speaker has, and the image keys Feishu gave them |
@@ -369,7 +372,7 @@
 | `core/gateways.py` | 模型网关的配置：一个网关是“OpenAI Responses / Anthropic Messages 兼容”的上游，由数据描述，可以有多个。 |
 | `core/groups.py` | The group records: one per group, `<state>/groups/<sha256(chat_id)>.json`, with `chat_id`, `active` … |
 | `core/harness.py` | Harness adapter contracts for the Feishu bridge |
-| `core/harness_probe.py` | Harness 能不能真的调通：跑一次最便宜的真实调用（claude -p、codex exec），把失败分成几类。 |
+| `core/harness_probe.py` | Harness 能不能真的调通：跑一次最便宜的真实调用（claude -p、codex exec、agy -p），把失败分成几类。 |
 | `core/history_storage.py` | A topic's history: appending a turn's rows (append_history), reading the latest ones and rounds … |
 | `core/http_upstream.py` | Requests a local relay or gateway sends on to its upstream, and the answer it passes back |
 | `core/ignored_env.py` | Backend parameters the environment no longer sets, and the two whose old values a service must not keep |
@@ -395,6 +398,7 @@
 | `core/node_agent.py` | The Node: the program that stays on a device (and on the hub itself) and keeps one connection to its hub |
 | `core/node_rules.py` | The rules that turn a node's samples into alerts, as pure functions |
 | `core/nodes.py` | Nodes (节点): the machines that keep a connection to this hub, the hub itself included, and what they report |
+| `core/one_shot.py` | One question to a Harness CLI and nothing else |
 | `core/owner_send.py` | 代发 records: a message a topic drafted for the owner to send as themselves, sent only once the owner confirmed … |
 | `core/paths.py` | Resolve service storage independently of the execution workspace |
 | `core/patrol.py` | What the butler noticed and would have done: records and numbers, no judging |
@@ -519,6 +523,7 @@
 | --- | --- |
 | `backends/agy/bridge.py` | Antigravity (Google's `agy` CLI): Gemini and the other models of the owner's Google account, headless |
 | `backends/agy/home.py` | agy's private home for one turn that takes the Bridge's tools (`options["mcp_config"]`, the butler's) |
+| `backends/agy/judge.py` | One question to Antigravity and nothing else |
 
 ### backends/claude
 
@@ -558,6 +563,7 @@
 | `backends/codex/export.py` | One turn's model requests and responses, from Codex's own rollout (the 下载请求与结果 button) |
 | `backends/codex/gateway.py` | A model gateway's OpenAI Responses models inside the regular Codex Harness |
 | `backends/codex/handoff.py` | A handoff summary from a Codex thread the topic is leaving, as backends/claude/handoff.py writes Claude Code's |
+| `backends/codex/judge.py` | One question to Codex and nothing else: the small model's questions where no Claude Code is enabled |
 | `backends/codex/rpc.py` | The Codex App Server process and its JSON-RPC over stdio (AppServer) |
 | `backends/codex/sessions.py` | Codex rollout session store for the Lark bridge |
 | `backends/codex/turn.py` | One Codex turn read to its end (read_turn) |

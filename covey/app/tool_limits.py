@@ -18,14 +18,19 @@ before.
   and hooks off and none of the Bridge's tools (backends/codex/consult.py); any other Harness does not run it
   (``refusal``). Its message ends with CONSULT_NOTE. Apart from the others: READ and LOOK are as they were.
 
-Several at once: the strictest (``limit``): CONSULT, then PROXY (a 代答 topic's own), then READ, then LOOK.
+- LEAD: a project lead's turn (app/project_lead.py ``held``, set there after ``limited``, not here): reading, searching and
+  its Bridge tools on whichever Harness the lead runs (core/harness.py LEAD). A Harness that cannot take the Bridge's tools
+  cannot run a lead and does not run its turn (``refusal``); each that can holds LEAD.
+
+Several at once: the strictest (``limit``): CONSULT, then PROXY (a 代答 topic's own), then READ, then LOOK; a lead's LEAD
+gives way to the first three and takes a LOOK's place.
 """
 from __future__ import annotations
 
 import dataclasses
 
 from covey.core import turn_source
-from covey.core.harness import CONSULT, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
+from covey.core.harness import CONSULT, LEAD, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
 from covey.core.proxy import read_contacts
 from covey.core.topics import proxy_topic, read_topic
 
@@ -85,10 +90,13 @@ def limited(access, ctx, job, log=lambda _: None):
 
 
 def refusal(ctx, capabilities, title) -> str:
-    """Why a READ or CONSULT turn does not run on this Harness (it cannot hold the turn to reading), '' when it may."""
+    """Why a READ, CONSULT or LEAD turn does not run on this Harness (it cannot hold the turn to reading), '' when it may."""
     found = ctx.options.get(TOOL_LIMIT)
     if found == CONSULT and not (capabilities.read_only and capabilities.collab):
         return f"{title} 还不能做只读咨询，这一轮没有启动。"
+    if found == LEAD and not capabilities.bridge_tools:
+        return (f"{title} 不能当专项负责人（用不了 Bridge 工具，也守不住只读），这一轮没有启动。"
+                "可以在「设置」→「配置」的管家一段换成 Claude Code、Codex 或 Antigravity。")
     if found != READ or capabilities.read_only:
         return ""
     return (f"这个群设成了群成员只读，{title} 做不到只读，这一轮没有启动。"

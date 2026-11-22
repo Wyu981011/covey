@@ -124,6 +124,8 @@ NOT_BACKED_UP = {
     "stuck-check": "the working directory of a small model's run",
     "track-judge": "the working directory of a small model's run",
     "memory-candidates": "the working directory of a small model's run",
+    "codex-judge": "the working directory of a small model's run",
+    "agy-judge": "the working directory of a small model's run",
     "launch-models": "model lists, asked again",
     "native-models": "model lists, asked again",
     "pi-sessions": "a backend's own sessions: no Harness's session store is backed up",

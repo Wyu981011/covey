@@ -597,6 +597,27 @@ class ButlerPanelTests(UnifiedCase):
         self.assertFalse(self.settings().redaction)
         self.assertEqual(self.values(panel_card.REDACTION), [])
 
+    def test_without_claude_code_the_rows_show_the_harness_it_runs_on_and_a_model_picked_saves_it(self):
+        """T664: no Harness named and no Claude Code: the card draws the butler on Codex with Codex's own model (a model
+        saved with no Harness named is Claude Code's); a model picked there saves Codex with it."""
+        def entry(harness, title, model):
+            return {'harness': harness, 'model': model, 'title': title, 'display_name': model.upper(),
+                    'levels': ['low', 'high'], 'bridge_tools': True}
+        choices = {'codex:g1': entry('codex', 'Codex', 'g1'), 'codex:g2': entry('codex', 'Codex', 'g2'),
+                   'agy:n1': entry('agy', 'Antigravity', 'n1')}
+        self.enterContext(mock.patch.object(panel, 'available_models', lambda topics, ctx: choices))
+        apps = self.app.topics.apps
+        self.enterContext(mock.patch.dict(apps, {name: app for name, app in apps.items() if name != 'claude'}, clear=True))
+        settings.update(self.ctx.state_dir, model='claude-opus-x', effort='max')
+        self.ask()
+        self.assertEqual([o for o, _ in self.rows(panel_card.MODEL)], ['g1', 'g2'])
+        subtitle = self.cards[-1]['header']['subtitle']['content']
+        self.assertIn('管家 Codex', subtitle)  # Codex's own default, not Claude Code's model.
+        self.assertNotIn('claude-opus-x', json.dumps(self.cards[-1]).lower())
+        self.click(self.option(panel_card.MODEL, 'g2'), event_id='m1')
+        current = self.settings()
+        self.assertEqual((current.harness, current.model), ('codex', 'g2'))
+
     def test_the_butlers_harness_and_workspace_rows(self):
         """T614 (the owner, 2026-11-21): 管家 chooses its Harness as a new topic does, among those that can run it
         (agy, Codex beside Claude Code); another Harness takes its first model and a budget by name (T615). With 脱敏 on, one that cannot

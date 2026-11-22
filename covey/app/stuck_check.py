@@ -6,10 +6,10 @@ may be the stuck one) and looks in a thread of its own (``look``): the job's tas
 the processes under it and which of them used the CPU over SAMPLE_SECONDS (``processes``: names and states, never their
 command lines), when its runner.log was last written and its last lines, the trace's latest steps and the turn's
 progress. ``verdict`` says in one sentence what that means (still working, waiting for a command, waiting for the
-model, its runner gone); for a topic that does not redact, the small model (app/track_judge.py's way of asking: Haiku
-through this Bridge's Claude Harness, no tools, no session, killed at MODEL_SECONDS) words that sentence from the same
-facts, on any Harness's topic (#17: a topic of another Harness is asked about through the Claude Harness, when this
-Bridge has one), and the rules' sentence stands when it cannot. The reply is that sentence and the facts it rests on. Nothing is stopped,
+model, its runner gone); for a topic that does not redact, the small model (app/track_judge.py ``ask``: the gateway
+COVEY_JUDGE_GATEWAY names, else Haiku through this Bridge's Claude Harness, else Codex's or Antigravity's own CLI; no tools, no
+session, killed at MODEL_SECONDS) words that sentence from the same facts, on any Harness's topic (#17: a topic of another
+Harness is asked about through those), and the rules' sentence stands when it cannot. The reply is that sentence and the facts it rests on. Nothing is stopped,
 changed or started, and no task runs.
 
 The stops route's 看原因 (a turn that ended) is the same kind of read-only look; the two are to be merged.
@@ -196,21 +196,20 @@ def reply_text(found, sentence, job_id, now=None) -> str:
     return "\n".join([f"🔍 看了一下任务 #{job_id}：{sentence}", *(f"- {line}" for line in facts_lines(found, now))])
 
 
-def ask_model(found, rule, backend, ctx, limit=MODEL_SECONDS) -> str:
-    """The small model's sentence of ``found`` (``rule``: the rules' own), '' when it cannot be had."""
+def ask_model(found, rule, backend, ctx, limit=MODEL_SECONDS, state_dir=None) -> str:
+    """The small model's sentence of ``found`` (``rule``: the rules' own), '' when it cannot be had. Where
+    app/track_judge.py ``ask`` puts it: the gateway COVEY_JUDGE_GATEWAY names, Claude Code (``backend``, ``ctx``), or
+    Codex's or Antigravity's own CLI. ``state_dir``: where its directory is when there is no ``ctx`` (a gateway's)."""
     from covey.app import track_judge
     data = json.dumps({"rule": rule, **{key: found[key] for key in ("processes", "log", "steps")},
                        "phase": found["progress"].get("phase"), "plan": turn_progress.plan_words(found["progress"]),
                        "last": turn_progress.activity_line(found["progress"], time.time()),
                        "runner": found["runner"]}, ensure_ascii=False)
-    cwd = Path(ctx.state_dir) / "stuck-check"
-    cwd.mkdir(parents=True, exist_ok=True)
-    env = backend.child_env(ctx) if hasattr(backend, "child_env") else os.environ.copy()
+    cwd = Path(state_dir or ctx.state_dir) / "stuck-check"
     try:
-        argv = track_judge.claude_argv(backend, ctx, track_judge.use_flag(), system=SYSTEM)
-        text = track_judge.answer_text(track_judge.run(argv, data, env, cwd, limit), "claude")
-    except Failed as exc:
-        track_judge.refused(exc)
+        text = track_judge.answer_text(track_judge.ask(SYSTEM, data, backend=backend, ctx=ctx, limit=limit, cwd=cwd),
+                                       "claude")
+    except Failed:
         return ""
     except (OSError, ValueError, AttributeError, TypeError):
         return ""
@@ -279,19 +278,22 @@ class StuckCheck:
                 return ""
         except ValueError:
             return ""
+        from covey.app import judge_gateway
         backend, judge_ctx = self.judge(ctx)
         if backend is None or judge_ctx is None or not getattr(judge_ctx, "backend_cmd", None):
-            return ""
-        return ask_model(found, rule, backend, judge_ctx)
+            backend = judge_ctx = None
+            if judge_gateway.configured() is None:
+                return ""
+        return ask_model(found, rule, backend, judge_ctx, state_dir=ctx.state_dir)
 
     def judge(self, ctx):
         """(backend, context) the small model is asked through: this Harness's own when it is Claude Code, else this
-        Bridge's Claude Harness (``topics``; #17); (None, None) without one."""
+        Bridge's (``topics``; #17, app/track_judge.py tools): its Claude Harness, else Codex's or Antigravity's own CLI;
+        (None, None) without one."""
+        from covey.app import track_judge
         if getattr(getattr(self.harness, "spec", None), "name", "") == "claude":
             return getattr(self.harness, "backend", None), ctx
-        apps = getattr(self.topics, "apps", None) or {}
-        claude = getattr(apps.get("claude"), "harness", None)
-        return getattr(claude, "backend", None), getattr(claude, "context", None)
+        return track_judge.tools(getattr(self.topics, "apps", None) or {})
 
     def reply(self, ctx, chat, text, name, event_id):
         if chat:

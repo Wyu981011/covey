@@ -52,9 +52,10 @@ class Settings:
     # The private chat mode (docs/butler.md 私聊模式): True 管家, False 纯话题, the chat's top level
     # opening topics as before. Saved as ``mode``, and as ``enabled`` for an older release.
     enabled: bool = True
-    # The butler's own Harness (core/roster.py NAMES; "" is contract.HARNESS, Claude Code), model and budget; ""
-    # the Harness's default model. A Harness that cannot run the butler (no Bridge tools, not enabled) is not used:
-    # app/butler.py says so and the chat's messages open topics, as when Claude Code was not enabled.
+    # The butler's own Harness (core/roster.py NAMES; "" follows what is enabled: Claude Code while it can run the butler,
+    # else the first enabled Harness that can, app/butler_harness.py), model and budget; "" the Harness's default model. A
+    # Harness named here that cannot run the butler (no Bridge tools, not enabled) is not replaced: app/butler.py says so
+    # and the chat's messages open topics.
     harness: str = ""
     model: str = ""
     effort: str = ""
@@ -74,7 +75,8 @@ class Settings:
 
     @property
     def butler_harness(self) -> str:
-        """The Harness the butler runs on: ``harness``, or Claude Code."""
+        """``harness``, or Claude Code: what the file says, knowing nothing of what is enabled. The Harness the butler runs
+        on is app/butler_harness.py's (name_of, chosen), which fills an empty one from the enabled Harnesses."""
         return self.harness or contract.HARNESS
 
     def note(self, workspace: str) -> str:
@@ -173,8 +175,8 @@ def merge_topic_defaults(state_dir, **fields) -> None:
 def preset_harness(state_dir, harness) -> bool:
     """The butler's Harness written into a settings file that names none yet, the rest of the file left as it is (no mode:
     ``settle_mode`` writes that at the Bridge's first start, 管家 for a new deployment): what ./install does for a new service
-    where only that Harness works (service/installer.py, docs/install.md 只有 Codex 时). A file that names a Harness (the
-    owner chose it on the 设置 card) stays as it is. Whether it was written."""
+    where Claude Code did not answer and this Harness did (service/installer.py butler_preset, docs/install.md 没有 Claude
+    Code 时). A file that names a Harness (the owner chose it on the 设置 card) stays as it is. Whether it was written."""
     with resource_lock("main-thread-settings", str(path(state_dir))):
         data = read_object(path(state_dir))
         if _text(data.get("harness")):

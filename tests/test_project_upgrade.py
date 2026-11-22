@@ -221,6 +221,22 @@ class UpgradeTest(UpCase):
         # was refused as other_topic while the 派发卡's alias still named the thread).
         self.assertEqual(message_topic(self.state, CHAT, dispatch["card_message_id"]), project["lead_topic_id"])
 
+    def test_a_lead_before_the_butler_ever_ran_takes_what_the_butlers_first_message_would_write(self):
+        """T664: the butler's topic.json is written by its first message; a project made before it (整理专项, the web
+        page) gets the Harness the butler runs on now and the settings' model, never an error or a hard-coded Claude Code."""
+        from covey.core.topics import topic_file
+        topic_file(self.state, butler.butler_topic_id(CHAT)).unlink()
+        butler_settings.update(self.state, model="claude-opus-x", effort="max")  # Claude Code's: no Harness named.
+        apps = self.app.topics.apps
+        without_claude = {name: app for name, app in apps.items() if name != "claude"}
+        with mock.patch.dict(apps, without_claude, clear=True):
+            topic, dispatch, project = self.upgraded()
+        self.assertEqual(set(project["steps"]), set(upgrades.UPGRADE_STEPS))
+        lead = load_topic(self.state, project["lead_topic_id"])
+        # On Codex, its own default model: Claude Code's model id would not run there.
+        self.assertEqual((lead["harness_id"], lead["model"], lead["effort"]), ("codex", "", ""))
+        self.assertTrue(lead["harness_locked"])
+
     def test_the_start_receipt_says_what_the_lead_takes_over(self):
         topic, dispatch, project = self.upgraded()
         (receipt,) = self.receipts(project["id"])

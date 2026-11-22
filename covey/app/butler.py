@@ -1,5 +1,6 @@
 """The butler's session (docs/butler.md), only in the private chat mode 管家 (core/butler.py
-enabled: COVEY_BUTLER not 0, the mode on the settings card): what the owner writes at the top level of the private chat goes to one long-lived Claude Code session, whose topic
+enabled: COVEY_BUTLER not 0, the mode on the settings card): what the owner writes at the top level of the private chat goes to one long-lived session (on the
+Harness app/butler_harness.py picks: the settings', else Claude Code while it can, else Codex or Antigravity), whose topic
 (butler_topic_id) has no root message and no T number; its topic.json says ``main_thread: true`` (the field keeps its old name on disk).
 
 - ``Butler.handle_event``, called after the extensions' in app/card_routing.py: claims the message, keeps the topic's binding
@@ -33,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-from covey.app import idle_compaction, butler_relay, pins, project_lead, track_digest, track_standby
+from covey.app import butler_harness, idle_compaction, butler_relay, pins, project_lead, track_digest, track_standby
 from covey.app.compaction import left_for_idle
 from covey.core.topic_seen import SEEN_FILE
 from covey.app import butler_tracks as tracks_module
@@ -44,7 +45,6 @@ from covey.core import butler_tracks
 from covey.core import board_read, butler_opened, butler_settings, placement, projects, timing, turn_words
 from covey.core import progress as turn_progress
 from covey.core.board_read import ended_at, topic_label as topic_words
-from covey.core.harness import backend_capabilities
 from covey.core.attachments import message_words
 from covey.core.checkpoint import checkpoint_steps
 from covey.core.jobs import job_key, job_path, read_job_record
@@ -58,7 +58,6 @@ from covey.core.steer import SteerRefused, SteerUncertain
 from covey.core.statuses import RUNNING
 from covey.core.topics import (message_topic, move_topic_message, remember_topic_message, retired_topic,
                                         routed_topic, topic_file)
-from covey.core.workspaces import load_config
 from covey.feishu.message_parts import collect_message_parts_named, json_object, strip_paragraph_markup
 from covey.feishu.message_request import configure_top_level
 
@@ -129,13 +128,10 @@ class Butler:
         track_standby.shutdown()
 
     def harness_app(self, state_dir):
-        """(name, app) of the Harness the butler runs on: the settings' (``HARNESS`` when they name none). The app is
-        None when that Harness is not enabled here or cannot take the Bridge's tools (core/harness.py bridge_tools)."""
-        name = butler_settings.load(state_dir).butler_harness
-        app = self.topics.apps.get(name)
-        if app is None or not backend_capabilities(app.backend, app.harness.context).bridge_tools:
-            return name, None
-        return name, app
+        """(name, app) of the Harness the butler runs on (app/butler_harness.py chosen): the settings', else Claude Code
+        while it can, else the first enabled Harness that takes the Bridge's tools. The app is None when that Harness is
+        not enabled here or cannot take the Bridge's tools (core/harness.py bridge_tools)."""
+        return butler_harness.chosen(state_dir, self.topics.apps)
 
     def harness_note(self, state_dir) -> str:
         """The start's warning when the private chat is set to 管家 but the butler's Harness is not enabled (or cannot
@@ -146,6 +142,9 @@ class Butler:
         name, app = self.harness_app(state_dir)
         if app is not None:
             return ""
+        if not butler_settings.load(state_dir).harness:  # None named, and no enabled Harness takes the Bridge's tools.
+            return ("main thread is on but no enabled Harness can take the Bridge tools (Claude Code, Codex or Antigravity): "
+                    "private chat messages open topics instead; enable one of them in harnesses.json, or choose 纯话题")
         return (f"main thread is on but its Harness {name} is not enabled or cannot take the Bridge tools: private chat "
                 f"messages open topics instead; enable {name} in harnesses.json, choose another Harness in the settings "
                 f"card's 配置, its 管家 part, or choose 纯话题")
@@ -271,16 +270,15 @@ class Butler:
         history goes with the new session's first message). The Harness the topic is bound to now."""
         settings = butler_settings.load(ctx.state_dir)
         topic_id = butler_topic_id(chat)
-        config = load_config(ctx.state_dir, ctx.default_workdir)
-        name = settings.workspace if settings.workspace in config["workspaces"] else config["default"]
-        workdir = str(Path(config["workspaces"][name]).expanduser().resolve())
+        name, workdir = butler_harness.workspace_of(ctx.state_dir, ctx.default_workdir, settings)
+        model, effort = butler_harness.model_of(settings, app.spec.name)  # A fallback Harness's own default.
 
         def build(saved):
             data = {**(saved or {
                 "topic_id": topic_id, "chat_id": chat, "root_id": "", "thread_id": "", "main_thread": True,
                 "harness_id": app.spec.name, "binding_revision": 1, "workspace_locked": True, "harness_locked": True,
                 "model_settings_snapshot": True, "workspace_name": name, "workdir": workdir}),
-                    "model": settings.model, "effort": settings.effort}
+                    "model": model, "effort": effort}
             # 脱敏 from the next turn, as 换配置 turns a topic's (app/binding.py set_redaction).
             if settings.redaction:
                 data[REDACTION_KEY] = True

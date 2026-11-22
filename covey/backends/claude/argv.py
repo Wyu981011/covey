@@ -7,11 +7,11 @@ import json
 
 from covey.backends.claude import redaction, subagents, tool_guard
 from covey.backends.claude.sessions import ClaudeSessionStore, claude_projects_root
-from covey.core.harness import CONSULT, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
+from covey.core.harness import CONSULT, LEAD, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
 
 # No MCP server at all: the catalog's probe, and a turn held to READ, PROXY or CONSULT (none of the owner's MCP servers).
 NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
-# A READ or CONSULT turn's tools (core/harness.py), the lead's too (app/project_lead.py).
+# A READ, CONSULT or LEAD turn's tools (core/harness.py): a project lead's (app/project_lead.py) keeps its Bridge tools.
 READ_TOOLS = ("Read", "Grep", "Glob")
 FILE_TOOLS = ("Edit", "Write", "NotebookEdit")  # What a LOOK turn goes without: Claude Code's tools that change files.
 
@@ -82,10 +82,10 @@ def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""
         elif limit == LOOK:
             # No tool that changes files, in its subagents too; its shell stays for read-only commands.
             argv += ["--disallowedTools", ",".join(FILE_TOOLS)]
-        elif ctx.options.get("tools"):
-            # A project's lead (app/project_lead.py LEAD_TOOLS): Claude Code's own tools narrowed to these; the MCP tools
-            # above are not among the built-in ones --tools names, so they stay.
-            argv += ["--tools", ",".join(ctx.options["tools"])]
+        elif limit == LEAD:
+            # A project's lead (core/harness.py LEAD, app/project_lead.py): Claude Code's own tools narrowed to reading; the
+            # MCP tools above (its Bridge tools) are not among the built-in ones --tools names, so they stay.
+            argv += ["--tools", ",".join(READ_TOOLS)]
         # Its subagents' read-only Explore on Haiku (backends/claude/subagents.py), unless the setting says "same" or
         # the app sets the subagents' model (a retry after a refusal).
         argv += subagents.argv(ctx)

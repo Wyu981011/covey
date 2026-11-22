@@ -77,7 +77,7 @@ PAGE_OF = {**dict.fromkeys(KINDS - {NOTES}, CONFIG), NOTES: WORKSPACE}
 
 TITLE = '管家'  # A card of its own; on the 设置 card each page's title and icon (cards/settings_hub.py TITLES, ICONS).
 ICON = 'robot_outlined'
-CLAUDE = 'claude'  # The butler's Harness when its settings name none (core/butler.py HARNESS).
+CLAUDE = 'claude'  # The butler's Harness when its settings name none and Claude Code is enabled (core/butler.py HARNESS).
 COMPACT_CHOICES = (0, 100_000, 200_000, 300_000)
 SUBAGENT_LABELS = {'light': '轻量（Sonnet，搜索用 Haiku）', 'same': '跟主模型'}  # core/butler_settings.py SUBAGENTS.
 # The 工作区 row's empty choice: the launch card follows the last launch, the butler picks by 用途.

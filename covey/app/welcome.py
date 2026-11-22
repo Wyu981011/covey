@@ -35,6 +35,7 @@ import json
 import platform
 import time
 
+from covey.app import butler_harness
 from covey.app.butler import HARNESS
 from covey.app.card_lanes import after_ack
 from covey.cards import welcome as cards
@@ -85,8 +86,9 @@ def harnesses(apps, runtime) -> tuple[list, list]:
 
 def butler_state(apps, harness=HARNESS) -> str:
     """'' when the owner's top-level messages go to the butler now, else why not (cards/welcome.py BUTLER_WORDS);
-    ``apps``: the Bridge's Harness apps by name; ``harness``: the butler's (core/butler_settings.py butler_harness,
-    Claude Code unless the 设置 card chose another). The 设置 card's 能做什么 says the same (app/about_panel.py)."""
+    ``apps``: the Bridge's Harness apps by name; ``harness``: the butler's (app/butler_harness.py name_of: the 设置 card's
+    choice, else Claude Code while it can run it, else the first enabled Harness that can). The 设置 card's 能做什么 says the
+    same (app/about_panel.py)."""
     if not contract.available():
         return cards.OFF
     app = apps.get(harness)
@@ -216,8 +218,8 @@ class Welcome:
 
     def butler_state(self, state_dir) -> str:
         """'' when the owner's top-level messages go to the butler now, else why not (``butler_state``, on the
-        Harness its settings in ``state_dir`` name)."""
-        return butler_state(self.topics.apps, butler_settings.load(state_dir).butler_harness)
+        Harness it runs on: app/butler_harness.py)."""
+        return butler_state(self.topics.apps, butler_harness.name_of(butler_settings.load(state_dir), self.topics.apps))
 
     # A click ---------------------------------------------------------------------------------------------------
 

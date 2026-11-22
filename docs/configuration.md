@@ -8,11 +8,11 @@
 
 ### 默认已开
 
-`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`；只有 Codex 能调通时不写专项、整理专项和四个进阶开关，它们要 Claude Code，见[安装 · 只有 Codex 时](install.md#只有-codex-时)），代码本身的默认是关，所以装这个版本之前注册的服务不变（重跑 `./install` 也只保留服务清单里已有的设置，不加新默认），要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。安装器在补飞书应用之前就定好这些开关，所以它们要的菜单和权限（菜单「看板」、置顶）一次补齐。
+`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`；没有 Claude Code、只有 Codex 或 Antigravity 调通时也一样，见[安装 · 没有 Claude Code 时](install.md#没有-claude-code-时)），代码本身的默认是关，所以装这个版本之前注册的服务不变（重跑 `./install` 也只保留服务清单里已有的设置，不加新默认），要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。安装器在补飞书应用之前就定好这些开关，所以它们要的菜单和权限（菜单「看板」、置顶）一次补齐。
 
 | 功能 | 开关 | 怎么确认开着 | 怎么关 |
 | --- | --- | --- | --- |
-| [管家](#管家) | `COVEY_BUTLER`（不设即允许） | 私聊发一句话由管家回答或开话题；设置卡「配置」页有管家一段。管家默认用 Claude Code，设置卡「配置」页的“管家”一段可换成 Codex 或 Antigravity；选的 Harness 没启用时私聊照旧开话题 | `COVEY_BUTLER=0`；或主人在设置卡「配置」页的“管家”一段把私聊顶层改成“每条直接开一个话题” |
+| [管家](#管家) | `COVEY_BUTLER`（不设即允许） | 私聊发一句话由管家回答或开话题；设置卡「配置」页有管家一段。管家没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity；设置卡「配置」页的“管家”一段可换；选的 Harness 没启用时私聊照旧开话题 | `COVEY_BUTLER=0`；或主人在设置卡「配置」页的“管家”一段把私聊顶层改成“每条直接开一个话题” |
 | [专项](projects.md) | `COVEY_PROJECTS=1`（`./install` 写） | 管家把长期要跟进的事开成专项时，私聊出现专项卡 | `COVEY_PROJECTS=0` |
 | [整理专项](#整理专项)（只提议） | `COVEY_PROJECT_TIDY=suggest`（`./install` 写，要 `COVEY_PROJECTS=1`） | 话题多了以后私聊出现“建个专项？”的提议卡；有菜单「看板」时看板卡上有「整理专项」 | `COVEY_PROJECT_TIDY=off` |
 | [菜单「看板」](usage.md#看板) | `COVEY_BOARD=1`（`./install` 写） | 菜单里有「看板」，随时点开看现在等你、停住、在做的事；不用开早晚汇总（应用里还没有这一项时，「飞书应用待补」卡会补上） | `COVEY_BOARD=0`（开了早晚汇总时「看板」照旧跟着它） |
@@ -57,7 +57,7 @@
 | 功能 | 要准备什么 | 开关 |
 | --- | --- | --- |
 | [代答](#代答) | 带发送器的扩展（核心没有发送器）、主人本人登录的 lark-cli profile | `COVEY_PROXY_PROFILE`，见[代答 · 前置条件与怎么开](proxy.md#前置条件与怎么开) |
-| 没有 Claude Code 时的小模型判断 | harnesses.json 里或扩展提供的模型网关，和你在这个网关上的密钥 | `COVEY_JUDGE_GATEWAY=<网关名>:<模型>`：整理专项、“我本来想找你的事”、同时做几件事这几个一问一答的判断改走网关（见清单里这一行）。管家不靠它：它可以跑在 Codex 或 Antigravity 上（设置卡「配置」页的管家一段），只有 Codex 能调通时 `./install` 新装就把管家设成 Codex；专项的负责人仍要 Claude Code |
+| 小模型判断走模型网关 | harnesses.json 里或扩展提供的模型网关，和你在这个网关上的密钥 | `COVEY_JUDGE_GATEWAY=<网关名>:<模型>`：整理专项、“我本来想找你的事”、同时做几件事这几个一问一答的判断都改走网关，Claude Code 开着也一样（见[小模型判断](#小模型判断)）。不设时有 Claude Code 问它，没有时问 Codex 或 Antigravity 自己的命令行；管家和专项负责人都不靠它 |
 | [网页工作台](web.md) | 一个配套的网页应用和它的开放接口密钥 | `COVEY_WEB=1`、`COVEY_WEB_CONFIG` |
 | [多设备](#多设备开发中默认关)（开发中） | 能 ssh 过去的其他机器、`devices.json` | `COVEY_DEVICES=1` |
 | [节点与机器状况](#节点与机器状况默认关) | 一个设备能连进来的监听地址 | `COVEY_NODE_LISTEN` |
@@ -82,7 +82,7 @@
 | [同时做几件事](butler.md#同时做几件事开关默认关) | `COVEY_BUTLER_TRACKS=1` |
 | [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` |
 
-- **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动；只有 Codex 能调通时套餐里不含专项和整理专项（`core/switches.py` 的 `NEEDS_CLAUDE`），重跑加 `--showcase` 也一样。已经装好的服务再跑一次 `./install --showcase` 也行：服务清单里已有的设置照旧，只打开套餐里清单没有或关着的开关，效果和下一条一样。
+- **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动；没有 Claude Code 时也是整套。已经装好的服务再跑一次 `./install --showcase` 也行：服务清单里已有的设置照旧，只打开套餐里清单没有或关着的开关，效果和下一条一样。
 - **已经装好的**：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" --preset showcase`，先加 `--dry-run` 看会改什么（见[改开关三步](#改开关三步)）。它打开套餐里服务清单还没设、或设成关闭值（空、`0`、`off`、`false`、`no`）的开关，安装器写的那些也算在内，所以装这个版本之前注册的服务一条命令就补齐；设了别的值的不动（比如你自己的汇总时间、`COVEY_PROJECT_TIDY=auto`）；同一条命令里另写的 `KEY=VALUE` 盖过套餐。只有 Codex 能用的机器不要用 `--preset`：它照样打开专项和整理专项（`covey_service.py` 不看哪个 Harness 能调通），用 `./install --showcase`，或安装器最后几行给的那条不含专项的命令。
 - 置顶和自动 Pin 要应用有置顶权限和“消息已读”事件，「飞书应用待补」卡会提示；汇总的两个时间也是[夜里不打扰](usage.md#早晚汇总)的时段（没设 `COVEY_QUIET_HOURS` 时）。
 - 套餐没有一键关：不要哪一项，照[改开关三步](#改开关三步)把它设成关闭值。
@@ -273,7 +273,7 @@
 
 仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 给新服务写服务清单时，终端里没设的就写上安装器的那组开关（`core/switches.py` 的 `INSTALL`，其中有 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`，全部见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动；已经注册过的服务重跑 `./install` 时保留清单里的设置，不加新默认。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
 
-可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断用 Claude Code 的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装，和[同时做几件事](butler.md#同时做几件事开关默认关)的小模型判断同一套做法。没有 Claude Harness（比如只装了 Codex）时，设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>` 就改问那个[模型网关](harnesses.md#模型网关codexpi-与-dsh)（`harnesses.json` 的 `gateways` 或扩展带的网关，用你给它配的个人密钥；这时 `COVEY_PROJECT_TIDY_MODEL` 不管用，模型就是这里写的，选一个读得懂整段对话的）；不设时判断不了，整理卡写“没有可用的 Claude Code 来判断”。
+可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断都是一问一答，去[小模型判断](#小模型判断)说的地方：有 Claude Code 时用它的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装；没有时用 Codex 或 Antigravity 自己的默认模型（不用它们的轻量模型，理由同上）；设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>` 时问那个[模型网关](harnesses.md#模型网关codexpi-与-dsh)（`harnesses.json` 的 `gateways` 或扩展带的网关，用你给它配的个人密钥；这时 `COVEY_PROJECT_TIDY_MODEL` 不管用，模型就是这里写的，选一个读得懂整段对话的）。三处都没有时判断不了，整理卡写“没有能判断的模型（Claude Code、Codex、Antigravity 都没启用，也没设模型网关）”。
 
 ### 记忆
 
@@ -281,9 +281,24 @@
 - 关着（代码的默认；`./install` 新装的服务写 `COVEY_MEMORY=1`，见[默认已开](#默认已开)）：规则、续接提醒、答案卡和任务记录都和没有这个功能时一样，不读不写话题的 `memory.json`，设置卡没有「记忆」标签。
 - 开着时设置卡多一个「记忆」标签（`app/memory_panel.py`）：按范围列出每一条、能删、能把原则标成常驻（`principles.json` 里那一条多 `"pinned": true`，每组最多 8 条，放不下时也照带），专项和话题里你说的那条能“升为全局”，并显示选中工作区下一轮会带上的那一块和每个范围的余量。
 - 升为全局：答案卡上“记下了”那一行（管这个专项、管这个话题的）和设置卡「记忆」里都有这个按钮。点了把这一条记成一条通用的原则（`principles.json` 的 `owner`，以后你自己的每一轮都带），专项或话题里原来那条留墓碑；答案卡那一行改成“管全局”，再点“不对”删掉的是这条原则。来自开着脱敏的话题的那条不给升（它只给开着脱敏的话题读），它总结的也不给升。日志：`memory line promoted to a principle job=#…`。
-- 开着且设了[早晚汇总](#早晚汇总)时，每天的晚间汇总多一节“你反复说的”（`app/memory_candidates.py`）：从那之前 24 小时里结束的普通话题（不读开了脱敏的话题、管家话题、代答话题，只读主人自己那一轮的原话里带纠正字眼的句子）找主人在两个以上话题里重复说的纠正，最多 3 条，每天看一次。分组用 Claude Code 的小模型（Haiku，和[同时做几件事](butler.md#同时做几件事开关默认关)的判断同一套做法，最多 30 秒）；没有 Claude Code 或调用失败时只按“几乎一样的话”分组。点「记下」才记成一条原则（来源话题都在一个工作区就记到那个工作区，否则通用），点「不用」以后不再提同一句；记录在 `<state>/memory-candidates.json`。日志：`memory candidates found=N via=model|rules sentences=N`、`memory candidates none: …`、`memory candidates judge failed reason=…`，不写原话。
+- 开着且设了[早晚汇总](#早晚汇总)时，每天的晚间汇总多一节“你反复说的”（`app/memory_candidates.py`）：从那之前 24 小时里结束的普通话题（不读开了脱敏的话题、管家话题、代答话题，只读主人自己那一轮的原话里带纠正字眼的句子）找主人在两个以上话题里重复说的纠正，最多 3 条，每天看一次。分组用小模型（[小模型判断](#小模型判断)：有 Claude Code 时是 Haiku，没有时是 Codex 或 Antigravity 的轻量模型，设了网关时是网关的；最多 30 秒）；哪个都没有或调用失败时只按“几乎一样的话”分组。点「记下」才记成一条原则（来源话题都在一个工作区就记到那个工作区，否则通用），点「不用」以后不再提同一句；记录在 `<state>/memory-candidates.json`。日志：`memory candidates found=N via=model|rules sentences=N`、`memory candidates none: …`、`memory candidates judge failed reason=…`，不写原话。
 - 关掉：按[改开关三步](#改开关三步)设成 `0`；已经写下的记忆留着，标了常驻的原则在原则块里照样不被挤掉。
 - 日志：`memory lines written=N of M job=#…`、`memory lines ignored reason=… job=#…`、`memory lines failed job=#…`。
+
+### 小模型判断
+
+整理专项、“我本来想找你的事”（`COVEY_PATROL`）、同时做几件事的分流、晚间的“你反复说的”和任务卡上的“看看”都是一问一答的小判断：给一段 JSON，要一行 JSON，不用工具、不留会话，到点连进程组一起杀掉。它们去哪问由 `app/track_judge.py` 的 `tools` 和 `ask` 定，和管家用哪个 Harness 无关：
+
+1. 设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>`：问这个模型网关，Claude Code 开着也一样（以前只在没有 Claude Code 时才用它）。
+2. 启用了 Claude Code：问它，和以前一样（Haiku，有待命进程，同时做几件事的分流一般 1 到 3 秒；整理专项用 `COVEY_PROJECT_TIDY_MODEL`）。
+3. 都没有时问启用了的 Codex，再没有问 Antigravity，用它们自己的命令行一次一问（`core/harness.py` 的 `ask_once`）：
+   - Codex：`codex exec --ephemeral`，只读沙箱，在一个自己的 `CODEX_HOME` 里（只有登录和模型供应商，没有你的 MCP 服务、规则、hook、插件、记忆和全局 `AGENTS.md`），不开 shell 和子 Agent，问题从标准输入进（`backends/codex/judge.py`）。
+   - Antigravity：在一个临时主目录里跑（只链着登录，对话和日志跟着临时目录删掉，不留在你的 `~/.gemini`），不带 `--dangerously-skip-permissions`，再加一层不许写文件、跑命令、读网址的规则（`backends/agy/judge.py`）；没登录时直接算失败，不等它一分钟的浏览器登录。
+   - 模型：轻量的判断用目录里名字或说明写着是轻量的第一个（Codex 如 `gpt-6-luna`，Antigravity 如 `gemini-3.8-flash`），最低一档思考；整理专项用它们自己的默认模型。`COVEY_JUDGE_CODEX_MODEL`、`COVEY_JUDGE_AGY_MODEL` 可以指定。
+   - 慢：实测一次 6 到 12 秒（大半是命令行自己起来的时间），所以同时做几件事的分流在这里最多等 10 秒（`COVEY_TRACK_JUDGE_MS` 设了就按它），超时按新开一件，这段时间这句话等着分流。嫌慢就设上面的网关。
+4. 哪个都没有：这些判断不做（`no_backend`），各自照原来的退路：分流按新开一件，整理卡写为什么，候选只按规则分组。
+
+脱敏话题的内容哪里都不送；日志只记原因、毫秒和问的是谁（`via=claude|gateway|codex|agy`），不记你的原话。
 
 ### 新话题带上最近话题的要点
 
@@ -309,7 +324,7 @@
 
 - `0`：不允许。不起后台线程、不改消息路由，设置卡没有管家的标签。
 - 不设或 `1`：允许。用不用由主人在设置卡上选的模式定（`<state>/main-thread.json` 的 `mode`），改模式不用重启。新部署第一次启动写成管家，日志 `main thread mode settled mode=agent|topics`。
-- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话默认用 Claude Code，设置卡「配置」页的管家一段可以换成 Codex 或 Antigravity（`harness`，见[管家 · 换 Harness](butler.md#换-harness)）；只有 Codex 能调通的新装，`./install` 在服务第一次启动前写好 `"harness": "codex"`（`core/butler_settings.py` 的 `preset_harness`，文件里已经有 Harness 的不动）。
+- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity（`app/butler_harness.py`）；设置卡「配置」页的管家一段可以换（`harness`，见[管家 · 换 Harness](butler.md#换-harness)）。Claude Code 没调通的新装，`./install` 在服务第一次启动前写好调通的那个，如 `"harness": "codex"`（`core/butler_settings.py` 的 `preset_harness`，文件里已经有 Harness 的不动）。
 - `main-thread.json` 里旧的 `"desk_topics": true` 读到也按 `false` 处理，启动时记一行 warning，见[已下线的功能与旧配置](legacy.md)。
 - 开着专项（`COVEY_PROJECTS=1`）时，话题能把只有管家能办的事转给管家（检查点 `ask_butler`，记录在 `<state>/butler-asks/`），没有单独的开关，见[在话题里说开专项](projects.md#在话题里说开专项)。
 
@@ -467,9 +482,11 @@
 | `COVEY_PROJECTS` | `core/projects.py`、`core/butler.py`、`core/placement.py`、`core/board_read.py`、`core/butler_tool_specs.py` | 空：关（`./install` 新装的服务写 `1`）；`1` 开专项和负责人的运行（入口是管家直接开，和 `COVEY_PROJECT_UPGRADE` 的转成专项）。关着时谓词全为假，放置表和看板和原来一样，不建记录。见[架构 · 专项](architecture.md#专项第-2-期开发中默认关) | 否 |
 | `COVEY_BUTLER_TRACKS_MAX`（旧名 COVEY_MAIN_TRACKS_MAX、LARK_BRIDGE_MAIN_TRACKS_MAX） | `core/butler_tracks.py`（`limit`） | 3：同时在跑的件数上限，取值限制在 2 到 4，读不出来按 3 | 否 |
 | `COVEY_BUTLER`（旧名 COVEY_MAIN_THREAD、LARK_BRIDGE_MAIN_THREAD） | `core/butler.py` | 允许（模式看 `main-thread.json`）；`0` 不允许 | 否 |
-| `COVEY_TRACK_JUDGE` | `app/track_judge.py`（同时做几件事里，规则没能定的新消息交给小模型判断是并进哪件在做的事还是新开一件；`app/butler_tracks.py` 的 `Tracks.decide` 调用，`COVEY_BUTLER_TRACKS=1` 才会问） | `claude`（默认）：Claude Code 的 Haiku；`off` 不问，直接新开；`cmd:/absolute/path` 用自己的命令（标准输入一段 JSON，标准输出一行 JSON）。超时、出错、拿不准、脱敏话题都按新开一件 | 否 |
-| `COVEY_JUDGE_GATEWAY` | `app/judge_gateway.py`（`configured`；`app/track_judge.py` 的 `ask` 在没有 Claude Harness 时用它，整理专项 `app/project_sorter.py`、“我本来想找你的事” `app/patrol_judge.py`、同时做几件事 `app/track_judge.py` 的小模型判断都经它） | 空：和原来一样，没有 Claude Harness 时这些判断不做（`no_backend`）；`<网关名>:<模型>`（如 `acme:claude-haiku-4-5`）：没有 Claude Harness 时一次 HTTP 请求问这个网关的这个模型，协议按网关目录缓存里这个模型的，没有时只给 dsh 用的网关走 Anthropic Messages、其余走 OpenAI Responses；有 Claude Harness 时不用它。网关名或模型写错、没有密钥、超时、非 200 都记成这次判断失败的原因 | 否 |
-| `COVEY_TRACK_JUDGE_MS` | `app/track_judge.py` | 3000：小模型硬上限（毫秒，200 到 10000），超过按新开一件 | 否 |
+| `COVEY_TRACK_JUDGE` | `app/track_judge.py`（同时做几件事里，规则没能定的新消息交给小模型判断是并进哪件在做的事还是新开一件；`app/butler_tracks.py` 的 `Tracks.decide` 调用，`COVEY_BUTLER_TRACKS=1` 才会问） | `claude`（默认，名字沿用旧的）：小模型在哪就问哪，见[小模型判断](#小模型判断)（网关、Claude Code 的 Haiku、Codex 或 Antigravity）；`off` 不问，直接新开；`cmd:/absolute/path` 用自己的命令（标准输入一段 JSON，标准输出一行 JSON）。超时、出错、拿不准、脱敏话题都按新开一件 | 否 |
+| `COVEY_JUDGE_GATEWAY` | `app/judge_gateway.py`（`configured`；`app/track_judge.py` 的 `ask`、`judge` 先看它，整理专项 `app/project_sorter.py`、“我本来想找你的事” `app/patrol_judge.py`、同时做几件事 `app/track_judge.py`、晚间候选 `app/memory_candidates.py`、“看看” `app/stuck_check.py` 的小模型判断都经它） | 空：不用网关，判断去 Claude Code，没有时去 Codex 或 Antigravity（[小模型判断](#小模型判断)）；`<网关名>:<模型>`（如 `acme:claude-haiku-4-5`）：这些判断都一次 HTTP 请求问这个网关的这个模型，Claude Code 开着也一样（以前只在没有 Claude Harness 时用），协议按网关目录缓存里这个模型的，没有时只给 dsh 用的网关走 Anthropic Messages、其余走 OpenAI Responses。网关名或模型写错、没有密钥、超时、非 200 都记成这次判断失败的原因 | 否 |
+| `COVEY_TRACK_JUDGE_MS` | `app/track_judge.py`（`limit_ms`） | 3000：小模型硬上限（毫秒，200 到 10000），超过按新开一件；问的是 Codex 或 Antigravity 自己的命令行时不设默认 10000（它们一次要 6 到 12 秒），设了就按设的 | 否 |
+| `COVEY_JUDGE_CODEX_MODEL` | `backends/codex/judge.py`（`choose`：没有 Claude Code 时小模型判断问 Codex 用的模型） | 空：轻量的判断用账号模型目录里 id 或说明写着轻量的第一个（如 `gpt-6-luna`），最低一档思考；整理专项用 Codex 自己的默认模型、`medium`。写一个目录里有的模型 id 就都用它（目录里没有的不用） | 否 |
+| `COVEY_JUDGE_AGY_MODEL` | `backends/agy/judge.py`（`choose`：没有 Claude Code 和 Codex 时小模型判断问 Antigravity 用的模型） | 空：轻量的判断用保存的模型目录里名字带 flash、lite 这类词的第一个（如 `gemini-3.8-flash`），最低一档；整理专项用 agy 自己的默认。写一个 `agy models` 列出的 id（带档位，如 `gemini-3.8-flash-low`）就都用它 | 否 |
 | `COVEY_TRACK_JUDGE_WARM` | `app/track_judge.py`（`warm_enabled`；`Tracks.handle` 经 `warm` 调用，进程在 `app/track_standby.py`） | 空：开，收到管家消息时提前起好一个待命的 Claude Code 进程（空闲 10 分钟或 Bridge 停止时结束）；`0`、`off`、`false`、`no` 关，每次现起，慢约 1 秒 | 否 |
 | `COVEY_TRACK_JUDGE_HEDGE` | `app/track_judge.py`（`hedge`；`warm` 据此多留几个待命进程，`judge` 同时问它们，进程在 `app/track_standby.py`） | 2：同一问同时交给几个待命进程（1 到 3），第一个能用的答案算数；只在待命开着、通道是 `claude` 时有用 | 否 |
 | `COVEY_TRACK_JUDGE_SLIM` | `app/track_judge.py`（`slim_enabled`，给小模型的 Claude Code 命令行多两个选项） | 空：开，小模型的 Claude Code 带 `--setting-sources user --disable-slash-commands`，不读项目设置和技能清单；`0`、`off`、`false`、`no` 关 | 否 |

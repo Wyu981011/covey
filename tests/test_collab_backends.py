@@ -17,7 +17,7 @@ from covey.backends.claude.bridge import ClaudeBackend
 from covey.backends.codex import appserver, consult, turn
 from covey.backends.codex.bridge import CodexBackend
 from covey.core import collab, turn_source
-from covey.core.harness import (CONSULT, LOOK, PROXY, READ, TOOL_LIMIT, HarnessCapabilities, backend_capabilities)
+from covey.core.harness import (CONSULT, LEAD, LOOK, PROXY, READ, TOOL_LIMIT, HarnessCapabilities, backend_capabilities)
 from covey.core.jobs import find_job_record
 from covey.core.state import write_json
 
@@ -108,7 +108,7 @@ class ClaudeConsultTest(unittest.TestCase):
     def test_the_butlers_and_a_leads_turn_without_the_limit_are_as_before(self):
         argv = self.argv(mcp_config=BRIDGE_TOOLS)
         self.assertEqual(self.value(argv, "--allowedTools"), "mcp__bridge")
-        self.assertEqual(self.value(self.argv(tools=("Read",)), "--tools"), "Read")
+        self.assertEqual(self.value(self.argv(mcp_config=BRIDGE_TOOLS, **{TOOL_LIMIT: LEAD}), "--tools"), "Read,Grep,Glob")
 
 
 class CodexConsultTest(unittest.TestCase):

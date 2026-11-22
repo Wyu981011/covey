@@ -13,10 +13,12 @@ record written but the gists the backfill reads (core/topic_gist.py); app/projec
   KINDS). The model may first ask to read up to READ_MAX topics in full (``read``): they are given with READ_CHARS each and it is
   asked once more, its last answer taken. ``focus`` (a real-time 整理): only suggestions about that topic count.
 
-Both calls ask COVEY_PROJECT_TIDY_MODEL (core/project_proposals.py model, Sonnet by default) the way app/track_judge.py asks Haiku (no tools, MCP servers, hooks or saved session, killed past the limit),
-through the Claude Harness's own wrapping, or without it the model gateway COVEY_JUDGE_GATEWAY names (app/track_judge.py
-``ask``, its model then that one); a topic that redacts (core/redaction.py) is never sent and is counted apart. Every
-failure is a reason, never an exception (``Failed``)."""
+Both calls go where app/track_judge.py ``ask`` puts the small model's questions (no tools, MCP servers, hooks or saved session,
+killed past the limit): the model gateway COVEY_JUDGE_GATEWAY names when it is set (its model then that one); else the Claude
+Harness, asked for COVEY_PROJECT_TIDY_MODEL (core/project_proposals.py model, Sonnet by default) through its own wrapping;
+else Codex's or Antigravity's own CLI on its default model (a heavy question: core/harness.py ask_once). A topic that
+redacts (core/redaction.py) is never sent and is counted apart. Every failure is a reason, never an exception
+(``Failed``)."""
 from __future__ import annotations
 
 import dataclasses
@@ -149,9 +151,8 @@ def hidden(state, topic) -> bool:
 # The calls -----------------------------------------------------------------------------------------------------------
 
 def ask(system, data, backend, ctx, limit) -> str:
-    """The model's raw answer (Claude Code's JSON envelope) to ``data``, one call of the 整理 model with ``system``: through
-    the Claude Harness, or without one the model gateway COVEY_JUDGE_GATEWAY names (app/track_judge.py ``ask``); Failed
-    otherwise."""
+    """The model's raw answer (as Claude Code's JSON envelope) to ``data``, one call of the 整理 model with ``system``, where
+    app/track_judge.py ``ask`` puts it (the gateway, the Claude Harness, Codex's or Antigravity's own CLI); Failed otherwise."""
     cwd = proposals.folder(ctx.state_dir) / "judge" if ctx is not None else None
     return track_judge.ask(system, data, backend=backend, ctx=ctx, limit=limit, cwd=cwd, model=proposals.model())
 

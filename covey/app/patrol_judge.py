@@ -1,8 +1,9 @@
 """The second layer (docs/butler.md 我本来想找你的事): the small model (Haiku, the way app/track_judge.py asks it) reads the
 candidates app/patrol_rules.py found and says, for each, drop it, note it or handle it, why in one short line, and
 what the butler would do about it. One call takes at most BATCH candidates; it is one process with no tools, MCP servers
-or saved session, killed at COVEY_PATROL_JUDGE_MS (default 30000), and nothing it answers is acted on. Without the Claude
-Harness it asks the model gateway COVEY_JUDGE_GATEWAY names (app/track_judge.py ``ask``), else nothing (``no_backend``).
+or saved session, killed at COVEY_PATROL_JUDGE_MS (default 30000), and nothing it answers is acted on. It goes where
+app/track_judge.py ``ask`` puts the small model's questions: the model gateway COVEY_JUDGE_GATEWAY names when it is set, else
+the Claude Harness, else Codex's or Antigravity's own CLI (``tools``); with none, nothing (``no_backend``).
 
 The input is one JSON object: ``items`` (index from 1, ``kind`` in words, ``title``, ``what``, ``waited`` words) and the
 owner's ``principles`` (core/principles.py: what he asked to be told or not told about, newest last, at most
@@ -101,14 +102,14 @@ def parse(text, batch) -> list:
 
 
 def ask(data, backend, ctx, limit):
-    """The model's raw answer to ``data`` (a JSON text): one Claude Code through the Harness's own wrapping, or without
-    one the model gateway COVEY_JUDGE_GATEWAY names (app/track_judge.py ``ask``)."""
+    """The model's raw answer to ``data`` (a JSON text), where app/track_judge.py ``ask`` puts it (the gateway, Claude Code
+    through its Harness's own wrapping, Codex's or Antigravity's own CLI)."""
     cwd = patrol.folder(ctx.state_dir) / "judge" if ctx is not None else None
     return track_judge.ask(SYSTEM, data, backend=backend, ctx=ctx, limit=limit, cwd=cwd)
 
 
 def decide(state_dir, batch, *, backend, ctx, log=print, environ=None):
-    """(the decisions on ``batch``, reason). ``backend`` and ``ctx``: the Claude backend and a context for it."""
+    """(the decisions on ``batch``, reason). ``backend`` and ``ctx``: what app/track_judge.py ``tools`` picked."""
     try:
         if (backend is None or ctx is None) and judge_gateway.configured(environ) is None:
             raise Failed("no_backend")

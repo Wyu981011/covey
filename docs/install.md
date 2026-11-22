@@ -4,8 +4,8 @@
 
 ## 前提
 
-- 这台机器上已装好并登录了 Claude Code 或 Codex（任一个）。怎么装、怎么登录见[安装和登录 Harness](harnesses.md#安装和登录-harness)；安装器不教、也不替你装。
-- **管家默认用 Claude Code。** 只有 Codex 能调通时照样装：安装器让管家用 Codex，专项和整理专项先不开，见[只有 Codex 时](#只有-codex-时)。只有 Antigravity 时，在设置卡「配置」页的“管家”一段把 Harness 换成它（[管家 · 换 Harness](butler.md#换-harness)），换之前私聊里每句话开一个话题、先出启动卡。整理专项、“我本来想找你的事”这些小判断默认也问 Claude Code；没有它时可以让它们走模型网关（`COVEY_JUDGE_GATEWAY`，见[配置 · 整理专项](configuration.md#整理专项)），不设就判断不了。
+- 这台机器上已装好并登录了 Claude Code、Codex 或 Antigravity（任一个）。怎么装、怎么登录见[安装和登录 Harness](harnesses.md#安装和登录-harness)；安装器不教、也不替你装。
+- **管家默认用 Claude Code。** 没有它、只有 Codex 或 Antigravity 调通时照样装：安装器让管家用调通的那个，专项、整理专项和别的默认开关照常开，小模型判断也问它，见[没有 Claude Code 时](#没有-claude-code-时)。
 - Python 3.10+。没有 `lark-cli` 时安装器会用 npm 装它（没有 npm 时它会告诉你去装 Node.js）。
 - 公司同事装核心加扩展，照扩展库 README 的「同事第一次安装」一节装；本文只写核心自己的装法。
 
@@ -24,28 +24,29 @@ git clone https://github.com/ericxk/covey.git && cd covey
 
 1. **检查环境和目录**：数据根（默认是仓库同级的 `<仓库目录名>-data`，`--data-home` 或 `COVEY_DATA_HOME` 可改）、默认工作区、临时目录、浏览器和 `lark-cli` 的安装位置都有默认值，自动建好，不写系统盘。默认工作区是新话题干活的目录：`--workdir` 给了就用它；重跑时沿用上次注册的；在别的目录里运行是当前目录；在仓库里运行时终端里问一句“新话题默认在哪个目录干活？”，输入你的项目目录，或直接回车用 `<数据根>/workspace`。这个新建的空目录里会放一份 `README.md`，写着怎么换成你的项目（欢迎卡上的示例读得到它）；之后随时可以在飞书「设置」→「工作区」加项目。
 2. **准备 `lark-cli`**：没有就装；Skills 默认不同步（要用加 `--skills`）。
-3. **检查 Harness**：对 Claude Code 和 Codex 各真实调用一次模型。没登录、网络不通会分别说明；没调通的不启用。网络不通时问一次代理地址，通过后代理和飞书域名的 `NO_PROXY` 一起写进服务环境。启用了扩展时，扩展的安装钩子也在这一步运行（装它要的工具、报告它提供的 Harness）。
+3. **检查 Harness**：对 Claude Code、Codex 和 Antigravity 各真实调用一次模型（Antigravity 没登录时不调，它会等一分钟浏览器登录；调的那次在一个临时主目录里，对话不留在你的 `~/.gemini`）。没登录、网络不通会分别说明；没调通的不启用。网络不通时问一次代理地址，通过后代理和飞书域名的 `NO_PROXY` 一起写进服务环境。启用了扩展时，扩展的安装钩子也在这一步运行（装它要的工具、报告它提供的 Harness）。
 4. **飞书应用**：准备一个无头浏览器（用机器上已有的 Chrome/Chromium，没有就下载），扫一次码，在同一个会话里建应用、授权、在开发者后台补回调、事件、菜单和权限、发布，再读回核对。主人的网页登录只在本次运行的临时目录里，结束就删（`--keep-login` 留下）。
 5. **注册并启动服务**：把服务注册给后台的 Manager 托管并启动，再注册开机自启：Linux 用 systemd 用户服务，macOS 用 launchd，都没有但有 `crontab` 时加一行 `@reboot`（`--no-autostart` 不加），什么都没有时开机不会自启，安装器会说明。细节见[服务托管](operations.md#服务托管)。终端里设了 Harness 可能靠它登录的变量（`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`OPENAI_API_KEY` 这类，或名字像密钥的）时，安装器按服务自己的环境再调一次模型：服务清单不存凭据，终端里能调通不代表服务里也能。调不通时只列变量名（不打印值）和改法，见下面「出问题」。
 6. **等待就绪，等第一个回答**：诊断通过后先打几行“装在这里”：数据根、状态目录（日志 `bridge.log` 在里面）、默认工作区、服务开着哪些功能，和多开的现成命令（演示套餐、单个开关、诊断），再打印「去飞书私聊机器人「Covey」发一句话」。没就绪时打出诊断的中文摘要。在终端里运行时，安装器接着读状态目录里的记录，等私聊里第一句话真的有了回答，最多 10 分钟，每到一步打一行（欢迎卡已发、收到了、启动卡在等你点「开始任务」、已回答）。Ctrl-C 不等；没有终端（`--non-interactive`、管道或后台运行）时不等，和以前一样打印完就退出；之前已经有过回答的部署也不等。等到超时不算安装失败，最后一行说该查什么（[排障](troubleshooting.md#扫码后机器人没反应)）。
 
-`harnesses.json`（`<数据根>/harnesses.json`）里只写调通的 Harness；重跑时已启用的照旧，这次调通、上次注册时没调通的 Claude Code 或 Codex 加进去（之后装好了它，重跑一次就启用），你自己从文件里删掉的不加回；之后要加 Pi、dsh、Antigravity 见[手工加一个 Harness](harnesses.md#手工加一个-harness)。
+`harnesses.json`（`<数据根>/harnesses.json`）里只写调通的 Harness；重跑时已启用的照旧，这次调通、上次注册时没调通的 Claude Code、Codex 或 Antigravity 加进去（之后装好了它，重跑一次就启用），你自己从文件里删掉的不加回；之后要加 Pi、dsh 见[手工加一个 Harness](harnesses.md#手工加一个-harness)。
 
-## 只有 Codex 时
+## 没有 Claude Code 时
 
-第 3 步只有 Codex 调通（Claude Code 没装、没登录或调不通）时，新装的服务这样开：
+第 3 步 Claude Code 没调通（没装、没登录或调不通）、Codex 或 Antigravity 调通了时，新装的服务这样开：
 
-- **管家用 Codex**：安装器在服务第一次启动前把管家的 Harness 写成 Codex（状态目录里 `main-thread.json` 的 `harness`；文件里已经选了 Harness 的不动），私聊里照样是管家先接住每句话。
-- **专项和整理专项不开**：专项的负责人跑在 Claude Code 上，整理专项的判断也问它，所以不写 `COVEY_PROJECTS`、`COVEY_PROJECT_TIDY` 和专项的四个进阶开关；别的默认开关照旧。加 `--showcase` 也只多开套餐里不要 Claude Code 的那几项。
-- 装好后的最后几行写着这些，和装好 Claude Code 以后怎么开（命令里带着你的状态目录）。
+- **管家用调通的那个**：先 Codex 后 Antigravity。安装器在服务第一次启动前把它写进状态目录里 `main-thread.json` 的 `harness`（文件里已经选了 Harness 的不动），私聊里照样是管家先接住每句话。
+- **别的照常开**：专项（负责人也跑在这个 Harness 上，只读，见[专项 · 负责人只读](projects.md#负责人只读)）、整理专项和其余默认开关都和有 Claude Code 时一样，`--showcase` 也开整套。
+- **小模型判断问它自己的命令行**：整理专项、“我本来想找你的事”、同时做几件事的分流这些一问一答的判断改问 Codex 或 Antigravity，一次 6 到 12 秒（Claude Code 有待命进程时 1 到 3 秒）。分流最多等 10 秒，超时按新开一件；嫌慢可以设 `COVEY_JUDGE_GATEWAY` 走模型网关（[配置 · 小模型判断](configuration.md#小模型判断)）。
+- **用不了的**只有 Claude Code 自己的功能：敏感词脱敏、↩️ 回退、子 Agent 的模型（设置卡「能做什么」一页写着）。
+- 装好后的最后几行写着管家用的是哪个，和装好 Claude Code 以后怎么换。
 
 装好并登录 Claude Code 以后：
 
 1. 重新运行 `./install`，它把 Claude Code 加进启用的 Harness；已经在跑的服务的开关一项不动。
-2. 想让管家用 Claude Code：飞书里「设置」→「配置」的管家一段，把 Harness 换成 Claude Code（安装器不替你换回）。
-3. 开专项和整理专项：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" COVEY_PROJECTS=1 COVEY_PROJECT_TIDY=suggest COVEY_PROJECT_AUTOWAKE=1 COVEY_PROJECT_ASK=1 COVEY_PROJECT_MEMORY=1 COVEY_PROJECT_TRIAGE=1`，先加 `--dry-run` 看会改什么（[改开关三步](configuration.md#改开关三步)）。
+2. 想让管家用 Claude Code：飞书里「设置」→「配置」的管家一段，把 Harness 换成 Claude Code（安装器不替你换回）。已有的专项负责人留在原来的 Harness 上，之后新开的专项跟着管家。
 
-重跑 `./install` 不会因为只有 Codex 就关掉你开着的专项，也不改你在设置卡上选过的管家 Harness。
+旧版本在只有 Codex 时装的服务没开专项和整理专项。重跑 `./install` 时最后几行给出打开它们的命令：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" COVEY_PROJECTS=1 COVEY_PROJECT_TIDY=suggest COVEY_PROJECT_AUTOWAKE=1 COVEY_PROJECT_ASK=1 COVEY_PROJECT_MEMORY=1 COVEY_PROJECT_TRIAGE=1`，先加 `--dry-run` 看会改什么（[改开关三步](configuration.md#改开关三步)）。重跑不改你开着或关着的开关，也不改你在设置卡上选过的管家 Harness。
 
 ## 选项
 
@@ -69,8 +70,8 @@ git clone https://github.com/ericxk/covey.git && cd covey
 
 也可以在飞书里私聊机器人，自己发「只告诉我当前工作目录，不修改文件」：
 
-- 私聊顶层的话交给[管家](usage.md#管家)：它直接回答，或开一个话题去做、做完把结论带回私聊。Claude Code 调通了的管家用它，只有 Codex 时用 Codex。
-- 没有管家时（管家用的 Harness 没启用，比如只有 Antigravity），消息下出现启动卡，点「开始任务」，答案里的目录就是默认工作区。
+- 私聊顶层的话交给[管家](usage.md#管家)：它直接回答，或开一个话题去做、做完把结论带回私聊。Claude Code 调通了的管家用它，没有时用调通了的 Codex 或 Antigravity。
+- 没有管家时（比如管家选过的 Harness 后来没启用），消息下出现启动卡，点「开始任务」，答案里的目录就是默认工作区。
 
 看到回答就说明装好了，终端里的安装器这时也打印「已回答，装好了。」并结束。再花两分钟走一遍下面的验收，确认追问、停止、问答都正常（本地测试代替不了飞书客户端里的点击）：
 
@@ -82,7 +83,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 
 ## 装好以后
 
-- **默认开着的**：管家、专项（连同叫醒负责人、停住问你、专项记忆、问题分流四个进阶开关）、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目、撤回或编辑消息后跟着处理、自动补齐飞书应用；只有 Codex 时不开专项和整理专项（[只有 Codex 时](#只有-codex-时)）。推荐再打开的（早晚汇总、置顶的「手上的事」等）见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做；想一次都打开，装的时候加 `--showcase`（[演示套餐](configuration.md#演示套餐)）。
+- **默认开着的**：管家、专项（连同叫醒负责人、停住问你、专项记忆、问题分流四个进阶开关）、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目、撤回或编辑消息后跟着处理、自动补齐飞书应用；没有 Claude Code 时也一样（[没有 Claude Code 时](#没有-claude-code-时)）。推荐再打开的（早晚汇总、置顶的「手上的事」等）见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做；想一次都打开，装的时候加 `--showcase`（[演示套餐](configuration.md#演示套餐)）。
 - **怎么用**：一页纸的[五分钟上手](quickstart.md)；[使用指南](usage.md)从[第一次使用](usage.md#第一次使用)开始。
 - **扩展**：装好后用 `bin/covey_plugins.py` 查看、启用、停用，见[扩展的装和卸](operations.md#扩展的装和卸)。
 - **升级**：在仓库里运行 `scripts/upgrade.sh`（先加 `--dry-run` 看看）：它取上游的新提交，照服务清单原样的开关做部署前检查，再部署成固定的 release、重启机器人，成功后把检出快进过去，见[日常升级](deploy.md#日常升级)。不要直接 `git pull`：`./install` 装的服务直接从这个检出运行，拉代码之后新开的任务立刻用新代码，机器人本身却还是旧的。
@@ -92,7 +93,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 | 现象 | 做法 |
 | --- | --- |
 | 「安装停在这里：……」 | 下面一行「下一步」写着该做什么（换个能写的目录、装 Node.js、设代理、`--no-browser` 改用手机扫码……），日志在数据根的 `install-logs/`；照做后重新运行 `./install`，做完的步骤会复用 |
-| 「没有能调通的 Harness」 | 先在终端里登录 Claude Code 或 Codex，并确认 `claude -p "ok"` 或 `codex exec --skip-git-repo-check "ok"` 有回答 |
+| 「没有能调通的 Harness」 | 先在终端里登录 Claude Code、Codex 或 Antigravity，并确认 `claude -p "ok"`、`codex exec --skip-git-repo-check "ok"` 或 `agy -p "ok"` 有回答 |
 | 「claude 在服务里调不通」「codex 在服务里调不通」 | 终端里靠环境变量（API key、网关地址）调通的，服务里没有这些变量（服务清单不存凭据）。Claude Code：把这些变量写进 `~/.claude/settings.json`（设了 `CLAUDE_CONFIG_DIR` 就是它下面的）的 `"env"`，或在终端里运行 `claude` 用 `/login` 登录；Codex：`codex login`（API key 用 `printenv OPENAI_API_KEY \| codex login --with-api-key`）。改完不用重装，重新运行 `./install` 会再查一次 |
 | Harness 探测像网络不通 | 先 `export HTTPS_PROXY=http://主机:端口` 再 `./install`；代理地址不能带用户名密码 |
 | 浏览器装不上、下载太慢 | 安装器自动改用手机扫码，也可以一开始就 `./install --no-browser`：每个链接画成二维码和 PNG，一步一步扫（建应用、授权、补回调和事件订阅，共 3 步）；非交互（没有终端）时把链接都列出来，扫完后重新运行 `./install` 或等几分钟，机器人缺订阅时每 20 秒重试一次 |

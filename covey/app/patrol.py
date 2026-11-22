@@ -14,7 +14,7 @@ import hashlib
 import time
 from pathlib import Path
 
-from covey.app import patrol_judge, patrol_rules
+from covey.app import patrol_judge, patrol_rules, track_judge
 from covey.core import patrol
 from covey.core.locks import resource_lock
 from covey.core.loops import every
@@ -126,9 +126,7 @@ class Patrol:
             data["calls"] = {"day": patrol.day_of(now), "n": used + 1}  # Counted before the call: a failed one used the model too.
             patrol.save(state_dir, data)
         self.judged_at = now
-        app = self.env.topics.apps.get("claude")
-        backend = getattr(getattr(app, "harness", None), "backend", None)
-        context = getattr(getattr(app, "harness", None), "context", None)
+        backend, context = track_judge.tools(self.env.topics.apps)  # Claude Code, else Codex's or agy's own CLI.
         decisions, _ = patrol_judge.decide(state_dir, batch, backend=backend, ctx=context, log=self.runtime.log)
         with resource_lock("patrol", str(patrol.folder(state_dir))):
             data = patrol.load(state_dir)

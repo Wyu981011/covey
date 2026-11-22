@@ -25,7 +25,7 @@ from covey.backends.codex.sessions import rollout_root
 from covey.backends.codex import gateway as gateway_models
 from covey.backends.codex.appserver import run_appserver, sandbox_mode
 from covey.backends.codex.consult import ConsultHome, ReadingHome
-from covey.core.harness import CONSULT, READ, TOOL_LIMIT
+from covey.core.harness import CONSULT, LEAD, READ, TOOL_LIMIT
 from covey.backends.gateway.catalog import turn_relay
 from covey.core import gateways
 
@@ -98,10 +98,15 @@ class CodexBackend(BackendRuntime):
     def capabilities(self, ctx):
         # collab: a 协作 ask held to CONSULT in a private CODEX_HOME (backends/codex/consult.py; C8 on the installed CLI:
         # tests/test_collab_c8.py, the exec-policy, apps, network and memory checks). rate_limit_retry, fault_retry: what
-        # backends/codex/turn.py codex_failure_code tells apart.
+        # backends/codex/turn.py codex_failure_code tells apart. ask_once: backends/codex/judge.py.
         return for_device(HarnessCapabilities(questions=True, steering=True, native_fork=True, turn_export=True,
                                               bridge_tools=True, read_only=True, collab=True, rate_limit_retry=True,
-                                              fault_retry=True), ctx)
+                                              fault_retry=True, ask_once=True), ctx)
+
+    def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None):
+        """One question to Codex and nothing else (backends/codex/judge.py): the answer's text, or AskFailed."""
+        from covey.backends.codex.judge import ask_once
+        return ask_once(ctx, system, data, heavy=heavy, limit=limit, cwd=cwd)
 
     # The signed-in account's models plus the gateways' Responses models (<prefix><model>, core/gateways.py).
     def model_catalog(self, ctx: BridgeContext) -> dict:
@@ -135,12 +140,12 @@ class CodexBackend(BackendRuntime):
             # A 协作 ask: its app server in a CODEX_HOME of its own (backends/codex/consult.py), for this turn alone.
             with ConsultHome(ctx.state_dir, env) as env:
                 return self._run(request, ctx, env)
-        if limit == READ and request.session_id and not device_of(ctx):
-            # A group member's turn going on on the topic's thread: a home without the owner's exec-policy rules (an
-            # allow rule runs a command outside the sandbox), hooks, plugins and memories (ReadingHome). Only a resumed
-            # thread: one started or forked there is recorded under that home and never found again once it is gone
-            # (tests/test_collab_c8.py), so a LOOK turn (a topic's first) and a READ turn starting the thread run in the
-            # owner's home, with READING_FLAGS alone. A device's home is the device's.
+        if limit in (READ, LEAD) and request.session_id and not device_of(ctx):
+            # A group member's turn, or a project lead's, going on on the topic's thread: a home without the owner's
+            # exec-policy rules (an allow rule runs a command outside the sandbox), hooks, plugins and memories
+            # (ReadingHome). Only a resumed thread: one started or forked there is recorded under that home and never
+            # found again once it is gone (tests/test_collab_c8.py), so a LOOK turn (a topic's first) and a READ or LEAD
+            # turn starting the thread run in the owner's home, with READING_FLAGS alone. A device's home is the device's.
             with ReadingHome(ctx.state_dir, env) as env:
                 return self._run(request, ctx, env)
         return self._run(request, ctx, env)

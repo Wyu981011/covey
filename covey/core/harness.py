@@ -112,8 +112,9 @@ class HarnessCapabilities:
     # rewind_point/rewind_files(ctx, session_id, prompt_uuid), ``resume_at`` and the prompt_read event: drops a
     # session's last turn (↩️ 回退, app/rewind.py)
     rewind: bool = False
-    # Takes ``options["mcp_config"]`` (the butler's Bridge tools, core/butler.py mcp_config) into the turn: the butler
-    # runs only on a Harness that does (app/butler.py).
+    # Takes ``options["mcp_config"]`` (the butler's Bridge tools, core/butler.py mcp_config) into the turn, and holds a
+    # project lead's turn to LEAD with them: the butler and a project's lead run only on a Harness that does
+    # (app/butler_harness.py, app/tool_limits.py refusal).
     bridge_tools: bool = False
     # holds a turn to its ``options[TOOL_LIMIT]`` (app/tool_limits.py): Claude Code's tools, Codex's sandbox. Without it
     # a READ turn does not run and the other limits are words in the prompt only.
@@ -123,6 +124,20 @@ class HarnessCapabilities:
     # marker are never touched, and the fork's limits hold for that turn alone. Declared once a real write was refused in
     # such a turn on the installed CLI (C8, docs/architecture.md 多参与者协作 · 能力与预检).
     collab: bool = False
+    # Answers one question by itself (``backend.ask_once(ctx, system, data, *, heavy, limit, cwd)``, the answer's text, or
+    # AskFailed): a system prompt and one JSON text in, in a process of its own with no tool that changes anything, no MCP
+    # server, no hook and no saved session, its whole process group killed at the limit. The small model's questions go
+    # there where no Claude Code is enabled (app/track_judge.py ``tools``); Claude Code's own one-shot is app/track_judge.py's.
+    ask_once: bool = False
+
+
+class AskFailed(Exception):
+    """A question ``ask_once`` got no usable answer to: ``reason`` as the small model's log lines say it (spawn_failed,
+    timeout, exit_nonzero, model_error, bad_output), ``detail`` a short line that never holds the question's text."""
+
+    def __init__(self, reason: str, detail: str = ""):
+        super().__init__(reason)
+        self.reason, self.detail = reason, detail
 
 
 # What a turn may do, where its Harness can hold it to that (``HarnessCapabilities.read_only``): a context's
@@ -131,9 +146,12 @@ class HarnessCapabilities:
 # the owner's click because the butler judged it read-only (no file changes); PROXY: a 代答 topic's turn (reading,
 # searching, lark-cli's read commands, writing the contact's notes); CONSULT: a 协作 ask's turn (core/turn_source.py ASK):
 # reading and searching only, none of the owner's MCP servers and none of the Bridge's tools whatever the turn's options
-# say, no shell, no network, no question, no checkpoint (Codex: its read-only sandbox in a private CODEX_HOME).
+# say, no shell, no network, no question, no checkpoint (Codex: its read-only sandbox in a private CODEX_HOME). LEAD: a
+# project lead's turn (app/project_lead.py lead_turn): reading and searching and its Bridge tools, no file change and no
+# command that changes anything (Claude Code: Read, Grep and Glob; Codex: its read-only sandbox, the Bridge's tools
+# approved; Antigravity: deny rules for commands, file writes and URL reads).
 TOOL_LIMIT = "tool_limit"
-READ, LOOK, PROXY, CONSULT = "read", "look", "proxy", "consult"
+READ, LOOK, PROXY, CONSULT, LEAD = "read", "look", "proxy", "consult", "lead"
 TOOL_NOTES = "tool_notes"  # With PROXY: the contact's notes directory, the one place its edit tools may write ('' none).
 
 
@@ -145,8 +163,10 @@ def backend_capabilities(backend, ctx):
 # What a Harness process on a device cannot do: each reads files of the hub (the session store, the request log, the
 # file snapshots) or runs the hub's relay, none of which exist there.
 # bridge_tools: the butler's tools are a process on this machine, its state directory too. collab: no device ran C8, and
-# its session store is the device's (app/collab_checks.py refuses a topic on a device).
-DEVICE_OFF = ("native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools", "collab")
+# its session store is the device's (app/collab_checks.py refuses a topic on a device). ask_once: its private home and
+# directory are this machine's.
+DEVICE_OFF = ("native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools", "collab",
+              "ask_once")
 
 
 def for_device(capabilities, ctx):

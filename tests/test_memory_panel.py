@@ -335,14 +335,19 @@ class AboutTabTests(HubCase):
             half = about_panel._memory(None)
         self.assertEqual(half[:2], (True, '“记一下”的事还没开：设 COVEY_KNOWLEDGE=1'))
 
-    def test_without_claude_code_there_is_no_butler_and_it_says_how_to_get_one(self):
+    def test_without_claude_code_the_butler_runs_on_codex_and_without_any_it_says_how_to_get_one(self):
+        """T664: no Harness named, no Claude Code: the butler runs on Codex (app/butler_harness.py); only with no Harness
+        that takes the Bridge's tools is there none, and the row says how to get one. 脱敏 still needs Claude Code."""
+        def row(apps, name):
+            rows = about_panel.features(about_panel.Probe(self.state, apps, self.app.runtime))
+            return next(row for row in rows if row['name'] == name)
         apps = {name: app for name, app in self.app.topics.apps.items() if name != 'claude'}
-        rows = about_panel.features(about_panel.Probe(self.state, apps, self.app.runtime))
-        butler = next(row for row in rows if row['name'] == '管家')
+        self.assertTrue(row(apps, '管家')['on'])
+        self.assertFalse(row(apps, '敏感词脱敏')['on'])
+        none = {name: app for name, app in apps.items() if name not in ('codex', 'agy')}
+        butler = row(none, '管家')
         self.assertFalse(butler['on'])
-        self.assertIn('装好并登录 Claude Code', butler['line'])
-        redaction = next(row for row in rows if row['name'] == '敏感词脱敏')
-        self.assertFalse(redaction['on'])
+        self.assertIn('装好并登录 Claude Code、Codex 或 Antigravity 中的一个', butler['line'])
 
     def test_a_check_that_fails_says_so_and_the_page_stays(self):
         def broken(probe):

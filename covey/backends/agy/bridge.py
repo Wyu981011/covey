@@ -40,7 +40,7 @@ import time
 
 from covey.backends.agy.home import PrivateHome
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
-                                JobCancelled, UUID_RE, for_device)
+                                JobCancelled, LEAD, TOOL_LIMIT, UUID_RE, for_device)
 from covey.core import env as cenv
 from covey.core import procfs
 from covey.core.process import device_of, is_owned, process_identity, stop_group, stream_subprocess_lines
@@ -78,6 +78,11 @@ POLICY_RE = re.compile(r"\bsafety\b|prohibited.?content|blocklist|recitation|\bs
 RETRIED = ("rate_limited", "server_fault")  # What app/auto_retry.py retries, of what error_code says.
 NOT_LOGGED_IN = ("Antigravity 还没有登录：在运行机器人的账号下执行一次 agy，选 Google OAuth 登录"
                  "（远程机器上打开它给的链接、把授权码贴回终端），再重试本轮。")
+# A project lead's turn (core/harness.py LEAD): agy's own deny rules for this run alone (``--settings`` is never saved): no
+# file written, no command run, no URL read; its reading tools and its MCP tools (the Bridge's) stay. Seen on agy 1.5.14 with
+# --dangerously-skip-permissions: write_file and a shell command were refused ("Matches user-configured deny rule"), a
+# Bridge tool answered and a file was read.
+READ_ONLY_SETTINGS = {"permissions": {"deny": ["write_file(*)", "command(*)", "read_url(*)"]}}
 
 AGY_SPEC = HarnessSpec(
     name="agy", title="Antigravity", prompt_agent_name="Antigravity", idempotency_prefix="agy-lark",
@@ -250,10 +255,17 @@ class AntigravityBackend(BackendRuntime):
     def capabilities(self, ctx):
         # A supplement stops agy with SIGINT and looks for what it left in this machine's process tree (AgyControl): on a
         # device, whose program passes on TERM and KILL only, a running turn takes none (the next turn takes the words).
-        # rate_limit_retry, fault_retry: what stream_outcome tells apart in agy's error.
+        # rate_limit_retry, fault_retry: what stream_outcome tells apart in agy's error. bridge_tools: the butler's tools through
+        # a home of its own (backends/agy/home.py), a lead's turn held to reading by READ_ONLY_SETTINGS. ask_once:
+        # backends/agy/judge.py (this machine's only: DEVICE_OFF).
         here = not device_of(ctx)
         return for_device(HarnessCapabilities(steering=here, steer_reads=here, bridge_tools=True, rate_limit_retry=True,
-                                              fault_retry=True), ctx)
+                                              fault_retry=True, ask_once=True), ctx)
+
+    def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None):
+        """One question to agy and nothing else (backends/agy/judge.py): the answer's text, or AskFailed."""
+        from covey.backends.agy.judge import ask_once
+        return ask_once(self, ctx, system, data, heavy=heavy, limit=limit, cwd=cwd, settings=READ_ONLY_SETTINGS)
 
     def environment(self, ctx):
         return child_process_env(ctx.workdir, device=process_device(ctx))
@@ -310,7 +322,9 @@ class AntigravityBackend(BackendRuntime):
                 *(["--dangerously-skip-permissions"] if ctx.skip_permissions else []),
                 *(["--conversation", session_id] if session_id else []),
                 *(["--model", ctx.model] if ctx.model else []),
-                *(["--effort", effort] if effort else [])]
+                *(["--effort", effort] if effort else []),
+                *(["--settings", json.dumps(READ_ONLY_SETTINGS, separators=(",", ":"))]
+                  if ctx.options.get(TOOL_LIMIT) == LEAD else [])]
 
     def run(self, request):
         request.check_cancelled()
@@ -331,6 +345,8 @@ class AntigravityBackend(BackendRuntime):
             return run_stream(request, argv, stdin, {**env, "HOME": str(path)})
 
     def prompt_runtime_note(self, ctx):
+        if ctx.options.get(TOOL_LIMIT) == LEAD:
+            return "Antigravity 权限模式：只读，这一轮写文件、执行命令和读网址都会被拒绝，Bridge 工具照常可用"
         return ("Antigravity 权限模式：always-proceed（--dangerously-skip-permissions）" if ctx.skip_permissions
                 else "Antigravity 权限模式：request-review，要批准的操作会被跳过")
 

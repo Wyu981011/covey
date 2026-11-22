@@ -1,10 +1,11 @@
-"""The small model's one-shot questions through a model gateway (core/gateways.py) where there is no Claude Code to ask:
-COVEY_JUDGE_GATEWAY=<gateway>:<model> (unset: as before, such a question fails with ``no_backend``).
+"""The small model's one-shot questions through a model gateway (core/gateways.py) the owner names:
+COVEY_JUDGE_GATEWAY=<gateway>:<model> (unset: they go to Claude Code, else Codex's or Antigravity's own CLI, app/track_judge.py
+``tools``; with none of those either, such a question fails with ``no_backend``).
 
-The questions are the ones app/track_judge.py ``ask`` puts to Claude Code (整理专项 in app/project_sorter.py, the patrol's
-second layer in app/patrol_judge.py, the track judge): a system prompt, one JSON text in, one JSON text out. Where the
-Claude Harness is enabled they still go to it; this channel is the fallback, one HTTP request to the gateway with the
-owner's key for it (backends/gateway/connection.py ``api_key``: the key never reaches a log or an argv), no redirect
+The questions are the ones app/track_judge.py ``ask`` puts to the small model (整理专项 in app/project_sorter.py, the patrol's
+second layer in app/patrol_judge.py, the memory candidates, 看看, the track judge): a system prompt, one JSON text in, one
+JSON text out. Set, it comes first, the Claude Harness enabled or not (the owner's explicit choice): one HTTP request to the
+gateway with the owner's key for it (backends/gateway/connection.py ``api_key``: the key never reaches a log or an argv), no redirect
 followed (core/http_upstream.py), the environment's proxy used, killed at the question's own limit.
 
 The wire protocol is the model's as the gateway's cached catalog says it (``native-models/<gateway>.json``), else

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from covey.app import project_sorter as sorter
-from covey.app import topic_links
+from covey.app import topic_links, track_judge
 from covey.cards import project_proposal as cards
 from covey.core import project_proposals as proposals
 from covey.core import projects, topic_gist
@@ -105,10 +105,10 @@ def owner_chat(runtime) -> str:
 
 
 def judge_tools(env) -> tuple:
-    """(the backend, the context) the small model's calls go through: the Claude app's, (None, None) without one."""
-    app = env.topics.apps.get("claude") if env is not None and env.topics is not None else None
-    harness = getattr(app, "harness", None)
-    return getattr(harness, "backend", None), getattr(harness, "context", None)
+    """(the backend, the context) the small model's calls go through (app/track_judge.py tools): the Claude app's, else
+    Codex's or Antigravity's own CLI; (None, None) with none (COVEY_JUDGE_GATEWAY may still answer, track_judge.ask)."""
+    apps = getattr(getattr(env, "topics", None), "apps", None) or {}
+    return track_judge.tools(apps)
 
 
 def live_projects(state, chat) -> list:

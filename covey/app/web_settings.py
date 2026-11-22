@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from covey.app import butler_harness
 from covey.app import butler_panel as panel_rules
 from covey.app.menu_panel import hub_tabs
 from covey.cards import butler_panel as cards
@@ -99,6 +100,10 @@ class WebSettings:
     def hub(self):
         return getattr(self.env, "settings", None)
 
+    def apps(self) -> dict:
+        """The Bridge's Harness apps by name ({} without them)."""
+        return getattr(getattr(self.env, "topics", None), "apps", {}) or {}
+
     def context(self):
         """The Bridge's default Harness's context (state_dir, profile, default_workdir), as a panel's click gets one."""
         topics = self.env.topics
@@ -130,7 +135,7 @@ class WebSettings:
         now = time.time() if now is None else now
         ctx = self.context()
         tabs = web_tabs()
-        settings = butler_settings.load(ctx.state_dir)
+        settings = butler_harness.drawn(butler_settings.load(ctx.state_dir), self.apps())  # Never saved.
         choices = self.choices(ctx)
         labels = {**LABELS, PROXY_TAB: PROXY_LABEL}
         tabs = [*tabs, *([PROXY_TAB] if self.proxy_panel() is not None else [])]
@@ -330,7 +335,7 @@ class WebSettings:
             raise ValueError(READ_ONLY)
         if not isinstance(option, str):
             raise ValueError(GONE)
-        settings = butler_settings.load(ctx.state_dir)
+        settings = butler_harness.drawn(butler_settings.load(ctx.state_dir), self.apps())  # Never saved.
         on = butler.available() and settings.enabled
         if kind in BUTLER_KINDS and not on:
             raise ValueError("管家没开，这一项现在不起作用")

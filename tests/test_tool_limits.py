@@ -168,7 +168,7 @@ class ClaudeArgvTests(unittest.TestCase):
             self.assertNotIn(flag, argv)
         self.assertEqual(json.loads(self.value(self.argv(**{redaction.SETTINGS_ENV: {'A': 'b'}}), '--settings')),
                          {'env': {'A': 'b'}})
-        self.assertEqual(self.value(self.argv(tools=('Read',)), '--tools'), 'Read')  # A lead's, as before.
+        self.assertNotIn('--tools', self.argv(tools=('Read',)))  # A lead's list of old: LEAD holds it now (ArgvTest).
 
 
 class CodexSandboxTests(unittest.TestCase):

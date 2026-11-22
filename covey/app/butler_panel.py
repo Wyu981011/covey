@@ -22,6 +22,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, NamedTuple
 
+from covey.app import butler_harness
 from covey.app.card_actions import form_fields
 from covey.app.launch_models import available_models
 from covey.core.menu_choice import (budget_effort, butler_harnesses, default_entry, entry_of, explicit,
@@ -246,7 +247,9 @@ class ButlerPanel:
             return self.pages[tab](ctx, view['token'], {'view': view, 'tab': tab})
         from covey.app import review
 
-        settings, choices = butler_settings.load(ctx.state_dir), available_models(self.topics, ctx)
+        # The butler's Harness as it runs now when the settings name none (app/butler_harness.py drawn, never saved).
+        settings = butler_harness.drawn(butler_settings.load(ctx.state_dir), self.topics.apps)
+        choices = available_models(self.topics, ctx)
         page = tab if view.get('hub') and tab in BUTLER_PAGES else None
         defaults = settings.topic_defaults
         return butler_panel_card(view['token'], view, settings, choices, workspace_names(ctx.state_dir),
@@ -365,7 +368,8 @@ class ButlerPanel:
 
     def changes(self, ctx, event, value):
         """The settings fields the click sets: {} when nothing changes, None when its choice is no longer offered."""
-        settings = butler_settings.load(ctx.state_dir)
+        saved = butler_settings.load(ctx.state_dir)
+        settings = butler_harness.drawn(saved, self.topics.apps)
         defaults = settings.topic_defaults
         kind, option = value['kind'], value.get('option')
         if kind == ENABLE:
@@ -396,11 +400,14 @@ class ButlerPanel:
             # offers and the turn runs with. Its topic.json takes a budget as it is (app/butler.py keep_topic): 推荐 is
             # saved as the level it names now.
             harness = settings.butler_harness
+            # A model or budget picked while the settings name no Harness is that Harness's (the one it runs on now,
+            # ``drawn``): it is saved with it, so Claude Code enabled later does not take a model id it does not know.
+            pinned = {} if saved.harness or harness == CLAUDE else {'harness': harness}  # Claude Code is saved as ''.
             rows = Rows(harness, settings.model, settings.effort, False,
                         lambda: (entry_of(choices, harness, settings.model) if settings.model
                                  else default_entry(choices, harness)),
                         lambda entry, option: budget_effort(entry, option) if option else '',
-                        lambda **fields: fields)
+                        lambda **fields: {**pinned, **fields} if fields else fields)
         else:
             rows = Rows(defaults.harness, defaults.model, defaults.effort, True,
                         lambda: (entry_of(choices, defaults.harness, defaults.model) if defaults.model

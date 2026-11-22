@@ -22,11 +22,14 @@ BUSY_WORDS = proposals.BUSY_PREFIX + "（{done}/{total}）"
 FEW_WORDS = "话题还不多（不到 {} 个），先不整理专项。"
 OFF_WORDS = "整理专项没有开（COVEY_PROJECT_TIDY）。"
 UNREADABLE_WORDS = {"model_error": "模型调用出错", "refused": "官方内容安全拦了", "too_long": "内容太长，一次读不完",
-                    "exit_nonzero": "读它的 Claude Code 出错退出了", "timeout": "读超时了",
+                    "exit_nonzero": "读它的进程出错退出了", "timeout": "读超时了",
                     "bad_output": "模型的回答看不懂", "empty": "里面还没有你说的话", "redacted": "开了脱敏，内容不外发",
-                    "no_backend": "没有可用的 Claude Code 来读", "error": "读的时候出错"}
-FAILED_WORDS = {"timeout": "判断超时了", "no_backend": "没有可用的 Claude Code 来判断", "bad_output": "判断的回答看不懂",
-                "model_error": "模型拒绝了这次判断", "exit_nonzero": "判断的进程出错了", "spawn_failed": "判断的进程没起来"}
+                    "no_backend": "没有能读它的模型（Claude Code、Codex、Antigravity 都没启用，也没设模型网关）",
+                    "not_signed_in": "Antigravity 没登录", "error": "读的时候出错"}
+FAILED_WORDS = {"timeout": "判断超时了",
+                "no_backend": "没有能判断的模型（Claude Code、Codex、Antigravity 都没启用，也没设模型网关）",
+                "bad_output": "判断的回答看不懂", "model_error": "模型拒绝了这次判断", "exit_nonzero": "判断的进程出错了",
+                "spawn_failed": "判断的进程没起来", "not_signed_in": "判断用的 Antigravity 没登录"}
 
 
 class Runs:

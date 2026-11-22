@@ -19,8 +19,8 @@ CHOICES = 20  # Topics the proposal card's select offers: the proposal's, then t
 
 
 class ProposalCards:
-    """The proposal cards. ``runtime``: the log. ``messenger``, ``voice``: sending and redrawing. ``env``: the judge's tools (the
-    Claude app's). ``words``: app/tidy_words.py TopicWords, the rows of topics and of the 整理专项 card. ``applier``:
+    """The proposal cards. ``runtime``: the log. ``messenger``, ``voice``: sending and redrawing. ``env``: the judge's tools (app/tidy_facts.py
+    judge_tools). ``words``: app/tidy_words.py TopicWords, the rows of topics and of the 整理专项 card. ``applier``:
     app/tidy_apply.py Applier, which makes the project when it needs no card."""
 
     def __init__(self, runtime, messenger, voice, env, words, applier) -> None:

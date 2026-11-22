@@ -53,7 +53,8 @@ HUB_ENV = {"LARK_APP_SECRET": "hub-secret-lark", "LARK_BRIDGE_TOKEN": "hub-token
 DOC = {"schema": 1, "control_dir": "/dev/shm/covey-ssh-gates",
        "devices": {"gpu1": {"ssh": {"host": "gpu1.example"}, "harnesses": ["claude", "codex"],
                             "spaces": ["owner_private"]}}}
-REMOVED = {"native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools", "collab"}
+REMOVED = {"native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools", "collab",
+           "ask_once"}  # ask_once: Codex's and agy's one question runs in a home and a directory of this machine.
 
 
 def checkpoint_text(**fields):
@@ -65,7 +66,7 @@ class Capabilities(unittest.TestCase):
     def ctx(self, **fields):
         return make_context(Path("/nonexistent-root"), **fields)
 
-    def test_a_device_turns_off_exactly_the_eight_that_need_the_hubs_files_or_its_processes(self):
+    def test_a_device_turns_off_exactly_the_nine_that_need_the_hubs_files_or_its_processes(self):
         self.assertEqual(set(DEVICE_OFF), REMOVED)
         for backend in (ClaudeBackend(), CodexBackend()):
             local = backend_capabilities(backend, self.ctx())
@@ -78,9 +79,9 @@ class Capabilities(unittest.TestCase):
 
     def test_the_local_twin_still_has_them(self):
         claude = backend_capabilities(ClaudeBackend(), self.ctx())
-        self.assertTrue(all(getattr(claude, name) for name in REMOVED))
+        self.assertTrue(all(getattr(claude, name) for name in REMOVED - {"ask_once"}))  # Its one-shot is app/track_judge.py's.
         codex = backend_capabilities(CodexBackend(), self.ctx())
-        self.assertTrue(codex.native_fork and codex.turn_export)
+        self.assertTrue(codex.native_fork and codex.turn_export and codex.ask_once)
         self.assertEqual(backend_capabilities(ClaudeBackend(), self.ctx(device="")), claude)  # "" is this machine.
 
     def test_a_context_without_the_device_fields_is_local(self):

@@ -185,9 +185,11 @@ class Tracks:
             redacted = topic_redaction(ctx.state_dir, core.root_topic_id(chat))
         except ValueError:
             redacted = True
-        own = judge_context(app, ctx)
-        verdict = track_judge.judge(message, redacted=redacted, backend=app.harness.backend, ctx=own, log=self.runtime.log)
-        track_judge.warm(app.harness.backend, own)  # The standby it used is gone; the next one starts now.
+        # The small model where it is (app/track_judge.py tools): never the butler's own Harness as such, whose command
+        # is Codex's or agy's when the butler runs there (asked as Claude Code, each judgment failed).
+        backend, own = self.judge_tools()
+        verdict = track_judge.judge(message, redacted=redacted, backend=backend, ctx=own, log=self.runtime.log)
+        track_judge.warm(backend, own)  # The standby it used is gone; the next one starts now.
         if verdict.route == "merge" and verdict.target is not None:
             fresh = self.entries(ctx, chat, now)  # The model took a while: the task may have ended meanwhile.
             target = self.newest_of(fresh, verdict.target)
@@ -195,6 +197,11 @@ class Tracks:
                 return route.Decision(route.MERGE, verdict.target, "judge", target.live.job_id,
                                       answers=target.live.phase == route.PAUSED)
         return route.Decision(route.NEW, None, "judge")
+
+    def judge_tools(self) -> tuple:
+        """(backend, context) of the small model that decides a message the rules could not (app/track_judge.py tools):
+        the Claude Harness's, else Codex's or Antigravity's own CLI; (None, None) with none (a gateway may still answer)."""
+        return track_judge.tools(getattr(self.main.topics, "apps", {}) or {})
 
     @staticmethod
     def newest_of(entries, slot):
@@ -239,8 +246,8 @@ class Tracks:
         started = time.monotonic()
         now = time.time()
         # A Claude Code ready for the judge of the next message (app/track_standby.py): this message may start the task
-        # that message will have to be told from.
-        track_judge.warm(app.harness.backend, judge_context(app, ctx))
+        # that message will have to be told from. Nothing where the small model is not Claude Code (``warm``).
+        track_judge.warm(*self.judge_tools())
         entries = self.entries(ctx, chat, now)
         if not entries:
             self.remember_bare(chat, 0, bare, now)
@@ -347,14 +354,6 @@ def quoted_id(event) -> str:
     the reply context (1.0.69 and later, feishu/events.py REPLY_CONTEXT) gives ``reply_to`` and no ``parent_id`` at all,
     so reading ``parent_id`` alone saw no quote and a "停止" quoting a track stopped the newest one."""
     return str(event.get("parent_id") or event.get("reply_to") or "")
-
-
-def judge_context(app, ctx):
-    """What the judge's Claude Code and its standby run with: the Claude Harness's own context (its command and its
-    environment), not the event's, which is the default Harness's: where Codex is the default the judge ran
-    ``codex -p`` and failed every time (deploy check). The event's while the Harness has none (a test)."""
-    own = getattr(getattr(app, "harness", None), "context", None)
-    return own if own is not None and getattr(own, "backend_cmd", None) else ctx
 
 
 def clear_pointer(harness, state_dir, topic_id) -> None:

@@ -18,7 +18,7 @@ from covey.backends.codex.rpc import AppServer, RpcError, failed
 from covey.backends.codex.turn import close_turn, paused_question_end, read_turn
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.backends.codex import consult
-from covey.core.harness import CONSULT, LOOK, READ, TOOL_LIMIT, JobCancelled, RunResult
+from covey.core.harness import CONSULT, LEAD, LOOK, READ, TOOL_LIMIT, JobCancelled, RunResult
 from covey.core.paths import entry_script
 from covey.core.process import device_of
 from covey.core.protocol import deliver_event
@@ -52,24 +52,28 @@ BRIDGE_TOOL_SECONDS = 150.0
 
 
 # The turns held to reading (core/harness.py TOOL_LIMIT): the read-only sandbox for the thread and the turn.
-READ_ONLY = (READ, LOOK, CONSULT)
+READ_ONLY = (READ, LOOK, CONSULT, LEAD)
 
 
 def bridge_servers(ctx):
     """The thread config entries of ``options["mcp_config"]`` (the butler's Bridge tools, core/butler.py mcp_config):
     each server of it as a stdio MCP server of this thread, beside the workspace reader. Empty for every other turn, and
-    for a CONSULT one whatever its options say (a 协作 ask never gets the Bridge's tools)."""
+    for a CONSULT one whatever its options say (a 协作 ask never gets the Bridge's tools). In the read-only sandbox (a
+    project lead's turn, LEAD) their tools are approved: there Codex asks before an MCP tool runs, and with the approval
+    policy ``never`` it refuses every one ("MCP tool call requires approval", codex-cli 0.171.0); its commands stay held."""
     if ctx.options.get(TOOL_LIMIT) == CONSULT:
         return {}
+    approve = ctx.options.get(TOOL_LIMIT) in READ_ONLY
     config = {}
     for name, server in ((ctx.options.get("mcp_config") or {}).get("mcpServers") or {}).items():
         prefix = f"mcp_servers.{name}."
         config.update({prefix + "command": server["command"], prefix + "args": list(server.get("args") or ()),
                        prefix + "env": dict(server.get("env") or {}), prefix + "enabled": True,
-                       prefix + "tool_timeout_sec": BRIDGE_TOOL_SECONDS})
+                       prefix + "tool_timeout_sec": BRIDGE_TOOL_SECONDS,
+                       **({prefix + "default_tools_approval_mode": "approve"} if approve else {})})
     return config
 def sandbox_mode(ctx) -> str:
-    """The turn's sandbox: read-only for a turn held to READ, LOOK or CONSULT (core/harness.py TOOL_LIMIT), else the
+    """The turn's sandbox: read-only for a turn held to READ, LOOK, CONSULT or LEAD (core/harness.py TOOL_LIMIT), else the
     Harness's --sandbox (danger-full-access unless it says otherwise). A 代答 turn keeps it: in a sandbox lark-cli could
     not read the chats (no network, its login not refreshed)."""
     if ctx.options.get(TOOL_LIMIT) in READ_ONLY:
@@ -127,10 +131,10 @@ def thread_params(ctx, session_id, instructions="", process=None):
 
 def server_flags(ctx) -> list:
     """The app server's -c switches after its thread limit: the non-blocking question on, as before; a CONSULT turn's
-    (backends/codex/consult.py FLAGS) instead: apps, plugins, memories, hooks and the question off; a READ or LOOK turn's
-    (READING_FLAGS): apps, plugins, memories and hooks off, the question on."""
+    (backends/codex/consult.py FLAGS) instead: apps, plugins, memories, hooks and the question off; a READ, LOOK or LEAD
+    turn's (READING_FLAGS): apps, plugins, memories and hooks off, the question on."""
     limit = ctx.options.get(TOOL_LIMIT)
-    flags = (consult.FLAGS if limit == CONSULT else consult.READING_FLAGS if limit in (READ, LOOK)
+    flags = (consult.FLAGS if limit == CONSULT else consult.READING_FLAGS if limit in (READ, LOOK, LEAD)
              else ("features.default_mode_request_user_input=true",))
     return [part for flag in flags for part in ("-c", flag)]
 
