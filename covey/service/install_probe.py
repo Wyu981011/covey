@@ -20,7 +20,9 @@ class Probe:
     detail: str = ""  # one short line of what the CLI said (already trimmed and scrubbed of key-like strings)
 
 
-def probe(name, env, *, cwd=None, timeout=harness_probe.DEFAULT_TIMEOUT, directory=None, cached=harness_probe.cached_probe):
-    """Ask Harness ``name`` one cheap question under ``env`` (cached in ``directory``); a Probe."""
-    row = cached(directory or harness_probe.probe_directory(), name, env=env, cwd=cwd, timeout=timeout)
+def probe(name, env, *, cwd=None, timeout=harness_probe.DEFAULT_TIMEOUT, directory=None, cached=harness_probe.cached_probe,
+          refresh=False):
+    """Ask Harness ``name`` one cheap question under ``env`` (cached in ``directory``; ``refresh`` asks anew); a Probe."""
+    row = cached(directory or harness_probe.probe_directory(), name, env=env, cwd=cwd, timeout=timeout,
+                 **({"refresh": True} if refresh else {}))
     return Probe(bool(row.get("ok")), KINDS.get(row.get("reason"), OTHER), row.get("detail") or "")

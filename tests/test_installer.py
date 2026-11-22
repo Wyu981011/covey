@@ -711,6 +711,294 @@ class SwitchesTest(InstallerCase):
                                                       for name in ("COVEY_HISTORY_CMD", "COVEY_REVISIT", "COVEY_REVIEW")))
 
 
+class WorkspaceTest(InstallerCase):
+    """D1 (T647): in the checkout without --workdir a terminal run asks once where new topics work; Enter (or a directory that
+    is not there, twice) keeps <data>/workspace, which gets the guide (core/welcome.py GUIDE) while it is empty; a re-run
+    keeps the workspace the last run registered (install.json); a project directory is never written to."""
+
+    def check(self, *, interactive, answers=(), here=REPO, argv=()):
+        args = installer.parser().parse_args(["--data-home", str(self.data), *argv])
+        replies, asked = iter(answers), []
+
+        def ask(prompt):
+            asked.append(prompt)
+            return next(replies, "")
+        ins = installer.Installer(args, env=self.env(), say=self.lines.append, interactive=interactive, ask=ask)
+        with mock.patch.object(Path, "cwd", return_value=here):
+            ins.check_environment()
+        return ins, asked
+
+    def test_a_terminal_run_in_the_checkout_asks_once_and_takes_a_project_as_it_is(self):
+        project = self.root / "myapp"
+        project.mkdir()
+        ins, asked = self.check(interactive=True, answers=[str(project)])
+        self.assertEqual((ins.workdir, len(asked)), (project.resolve(), 1))
+        self.assertIn("新话题默认在哪个目录干活", asked[0])
+        self.assertEqual(list(project.iterdir()), [])  # Nothing is written into a project.
+        self.assertFalse((self.data / "workspace").exists())
+
+    def test_enter_or_a_missing_directory_twice_keeps_the_new_workspace_with_its_guide(self):
+        for number, answers in enumerate(([""], ["/absolute/nowhere", "/absolute/nowhere-either"])):
+            with self.subTest(answers=answers):
+                self.data = self.root / f"data-{number}"
+                self.lines.clear()
+                ins, asked = self.check(interactive=True, answers=answers)
+                self.assertEqual((ins.workdir, len(asked)), (self.data / "workspace", len(answers)))
+                self.assertTrue((ins.workdir / welcome.GUIDE).read_text().startswith(welcome.GUIDE_TITLE))
+                self.assertTrue(welcome.bare_workspace(ins.workdir))
+                self.assertIn("「设置」→「工作区」", self.text())
+                self.assertIn("--workdir", self.text())
+        self.assertIn("没有这个目录：/absolute/nowhere", self.text())
+
+    def test_no_terminal_asks_nothing_and_a_rerun_keeps_the_workspace_it_registered(self):
+        ins, asked = self.check(interactive=False)
+        self.assertEqual((asked, ins.workdir), ([], self.data / "workspace"))
+        project = self.root / "proj"
+        project.mkdir()
+        (self.data / "install.json").write_text(json.dumps({"workdir": str(project)}))
+        ins, asked = self.check(interactive=True)  # A terminal in the checkout: still no question.
+        self.assertEqual((asked, ins.workdir), ([], project))
+        ins, _ = self.check(interactive=True, argv=["--workdir", str(self.root / "other")])  # --workdir wins.
+        self.assertEqual(ins.workdir, (self.root / "other").resolve())
+        (self.data / "install.json").write_text(json.dumps({"workdir": "/absolute/gone"}))  # Not a directory any more.
+        ins, asked = self.check(interactive=False, here=project)  # Outside the checkout: the current directory.
+        self.assertEqual((asked, ins.workdir), ([], project))
+
+    def test_a_workspace_with_anything_in_it_gets_no_guide(self):
+        folder = self.data / "workspace"
+        folder.mkdir(parents=True)
+        (folder / "notes.txt").write_text("mine")
+        self.check(interactive=False)
+        self.assertEqual(sorted(p.name for p in folder.iterdir()), ["notes.txt"])
+        self.assertNotIn("README.md", self.text())
+
+
+class StopTest(InstallerCase):
+    """D7 (T647): where a run stops it says why, what to do next (下一步) and where the logs are; a command that hangs or a
+    directory that cannot be made is said the same way, never a traceback."""
+
+    def test_a_data_root_that_cannot_be_made_names_one_that_can(self):
+        ins = self.make("--no-start")
+        with mock.patch.object(Path, "mkdir", side_effect=PermissionError(13, "Permission denied")):
+            self.assertEqual(1, ins.run())
+        self.assertIn("安装停在这里：数据根建不了", self.text())
+        self.assertIn("Permission denied", self.text())
+        self.assertIn("下一步：换一个自己能写的目录：./install --data-home", self.text())
+
+    def test_no_working_harness_says_how_to_get_one_and_where_the_logs_are(self):
+        self.probes = {n: Probe(False, install_probe.NOT_LOGGED_IN, "x") for n in ("claude", "codex")}
+        (self.data / "install-logs").mkdir(parents=True)
+        self.assertEqual(1, self.make("--no-start").run())
+        text = self.text()
+        self.assertIn("安装停在这里：没有能调通的 Harness", text)
+        self.assertIn("    claude：没登录", text)
+        self.assertIn("下一步：", text)
+        for words in ("codex login", "HTTPS_PROXY", "claude -p"):
+            self.assertIn(words, text)
+        self.assertIn(f"安装日志在 {self.data / 'install-logs'}", text)
+        self.assertLess(text.index("    codex：没登录"), text.index("下一步："))
+
+    def test_a_command_that_hangs_is_said_with_a_next_step_not_a_traceback(self):
+        for error in (subprocess.TimeoutExpired(["lark-cli", "auth", "status"], 60), OSError(28, "No space left on device")):
+            with self.subTest(error=type(error).__name__):
+                self.lines.clear()
+                ins = self.make("--no-start")
+                with mock.patch.object(installer.Installer, "feishu_app", side_effect=error):
+                    self.assertEqual(1, ins.run())
+                self.assertIn(f"安装停在这里：{type(error).__name__}", self.text())
+                self.assertIn("下一步：", self.text())
+
+    def test_each_step_that_stops_carries_its_next_step(self):
+        with self.assertRaises(installer.Fail) as caught:
+            installer.Installer.expect({"ok": False, "detail": "按钮没找到"})
+        self.assertIn("--no-browser", caught.exception.next)
+        ins = self.make()
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["codex"]
+        (self.data / "tmp").mkdir(parents=True)
+        with mock.patch.object(installer.Installer, "run_logged", side_effect=lambda name, argv, **kw: (1 if name == "bootstrap" else 0, "boom")), \
+                mock.patch.object(installer.Installer, "service_up", return_value=False), \
+                mock.patch.object(installer.Installer, "precompile"), self.assertRaises(installer.Fail) as caught:
+            ins.start_service(self.data / "harnesses.json")
+        self.assertIn("bootstrap.log", caught.exception.next)
+        ins = self.make()
+        with mock.patch.object(installer.subprocess, "Popen") as popen, self.assertRaises(installer.Fail) as caught:
+            popen.return_value.stdout = io.StringIO("Error: denied\n")
+            popen.return_value.wait.return_value = 1
+            popen.return_value.poll.return_value = 0
+            (self.data / "install-logs").mkdir(parents=True, exist_ok=True)
+            ins.run_flow(["lark-cli", "config", "init"], lambda link: None, wait=5)
+        self.assertIn("--reconfigure", caught.exception.next)
+
+    def test_a_service_not_ready_in_time_says_what_the_doctor_says(self):
+        ins = self.make()
+        ins.app_id, ins.ready_seconds = "cli_fake", 0
+        said = ["结论：有 1 项要看", "✗ 机器人 harness-cli_fake 有问题：进程不在"]
+        with mock.patch.object(installer.Installer, "service_up", return_value=False), \
+                mock.patch.object(installer.Installer, "doctor_lines", return_value=said):
+            ins.wait_ready()
+        self.assertIn("诊断这么说", ins.leftovers[-1])
+        self.assertIn("    ✗ 机器人 harness-cli_fake 有问题：进程不在", ins.leftovers[-1])
+        with mock.patch.object(installer.Installer, "service_up", return_value=False), \
+                mock.patch.object(installer.Installer, "doctor_lines", return_value=[]):
+            ins.wait_ready()
+        self.assertIn("--runtime-only", ins.leftovers[-1])
+        self.assertIn(str(self.data / "harness-cli_fake" / "bridge.log"), ins.leftovers[-1])
+        done = subprocess.CompletedProcess([], 2, "Covey 诊断\n\n结论：有 1 项要看\n", "")
+        with mock.patch.object(installer.subprocess, "run", return_value=done) as run:
+            self.assertEqual(ins.doctor_lines(), ["Covey 诊断", "结论：有 1 项要看"])
+        argv = run.call_args.args[0]
+        self.assertEqual(argv[argv.index("--root") + 1:], [str(self.data / "bridge-services"), "--runtime-only", "--summary"])
+
+
+class ClosingTest(InstallerCase):
+    """D5 (T647): once a service is registered the last lines say where things are, what it runs with (its manifest's
+    switches, in words) and the commands for more; then the call to action stays the last line."""
+
+    def registered(self, environment):
+        from covey.service.manager import register
+        state = self.data / "harness-cli_fake"
+        state.mkdir(parents=True, exist_ok=True)
+        register(self.data / "bridge-services", state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                 workdir=self.root, environment=environment, health_timeout=90)
+
+    def closing(self, working=("claude", "codex")):
+        ins = self.make()
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", list(working)
+        with mock.patch.object(Path, "cwd", return_value=installer.REPO_ROOT):
+            return "\n".join(ins.closing_lines())
+
+    def test_a_new_service_names_its_places_its_features_and_the_commands_for_more(self):
+        self.registered({cenv.spellings(key)[-1]: value for key, value in switches.INSTALL.items()})
+        text = self.closing()
+        state = self.data / "harness-cli_fake"
+        for words in (f"数据根      {self.data}", f"状态目录    {state}（日志 {state / 'bridge.log'}）",
+                      f"默认工作区  {self.root / 'work'}",
+                      "已经开着：管家、专项（叫醒负责人、停住问你、专项记忆、问题分流）、整理专项（只提议）、菜单「看板」、独立复核、"
+                      "到点回来看、记忆、知识条目",
+                      f"演示套餐  python3 -B bin/covey_service.py set --state-dir {state} --preset showcase",
+                      "--dry-run COVEY_DIGEST_TIMES=09:30,21:30", "docs/configuration.md「开关速查」", "python3 -B bin/covey_doctor.py",
+                      "scripts/upgrade.sh"):
+            self.assertIn(words, text)
+
+    def test_the_demo_set_on_is_not_offered_again_and_codex_alone_has_no_butler(self):
+        self.registered({cenv.spellings(key)[-1]: value for key, value in switches.SHOWCASE.items()})
+        text = self.closing(working=("codex",))
+        self.assertNotIn("--preset showcase", text)
+        self.assertNotIn("管家、", text)
+        for words in ("协作（开发中）", "置顶的「手上的事」", "话题看板", "早晚汇总（09:30、21:30）", "管家同时做几件事", "派发卡"):
+            self.assertIn(words, text)
+        self.registered({"LARK_BRIDGE_PROJECTS": "0", "LARK_BRIDGE_PROJECT_ASK": "1", "LARK_BRIDGE_MAIN_THREAD": "0"})
+        text = self.closing()
+        self.assertNotIn("已经开着", text)  # The butler off, projects off (an extra of theirs alone is no feature).
+
+    def test_every_switch_the_install_or_the_demo_set_writes_has_its_words(self):
+        self.assertEqual(set(switches.SHOWCASE) - set(installer.SWITCH_WORDS), set())
+        self.assertEqual(set(installer.PROJECT_PARTS) - set(switches.INSTALL), set())
+
+    def test_the_lines_come_after_what_is_left_and_before_the_call_to_action(self):
+        self.registered({"LARK_BRIDGE_REVIEW": "1"})
+        ins = self.make()
+        ins.app_id = "cli_fake"
+        ins.leftovers.append("飞书应用还缺 看板")
+        with contextlib.ExitStack() as stack:
+            for name in ("check_environment", "ensure_lark_cli", "check_harnesses", "feishu_app", "start_service", "wait_ready"):
+                stack.enter_context(mock.patch.object(installer.Installer, name))
+            stack.enter_context(mock.patch.object(installer.Installer, "write_harness_config",
+                                                  return_value=self.data / "harnesses.json"))
+            self.assertEqual(0, ins.run())
+        self.assertEqual(self.lines[-1], "\n完成。去飞书私聊刚建的机器人发一句话。")
+        self.assertLess(self.lines.index("还差：飞书应用还缺 看板"), self.lines.index("装在这里："))
+        self.assertIn("已经开着：独立复核", self.lines)
+        self.lines.clear()
+        ins = self.make("--no-start")
+        ins.app_id = "cli_fake"
+        with contextlib.ExitStack() as stack:
+            for name in ("check_environment", "ensure_lark_cli", "check_harnesses", "feishu_app"):
+                stack.enter_context(mock.patch.object(installer.Installer, name))
+            stack.enter_context(mock.patch.object(installer.Installer, "write_harness_config",
+                                                  return_value=self.data / "harnesses.json"))
+            ins.run()
+        self.assertNotIn("装在这里：", self.lines)  # --no-start registers nothing.
+
+
+class ServiceEnvTest(InstallerCase):
+    """D4 (T647): a Harness that answered from this shell, where the shell has a variable it may log in with (an API key, a
+    gateway's address), is asked once more in the service's own environment (the manifest's settings over the account's and
+    systemd's); a failure names the variables, never a value, and the fix."""
+
+    SHELL = {"ANTHROPIC_AUTH_TOKEN": "fake-token-for-the-test", "ANTHROPIC_BASE_URL": "https://gateway.example.invalid",
+             "GITHUB_TOKEN": "ghp_test_not_real", "USER": "someone"}
+
+    def ready(self, **shell):
+        from covey.service.manager import register
+        state = self.data / "harness-cli_fake"
+        state.mkdir(parents=True, exist_ok=True)
+        (self.data / "tmp").mkdir(exist_ok=True)
+        register(self.data / "bridge-services", state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                 workdir=self.root, environment={"PATH": "/absolute/service/bin", "LARK_BRIDGE_MEMORY": "1"}, health_timeout=90)
+        ins = self.make(env=self.env(**shell))
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["claude", "codex"]
+        return ins
+
+    def test_a_key_only_this_shell_has_is_named_with_the_fix_and_never_its_value(self):
+        ins = self.ready(**self.SHELL)
+        self.probes["claude"] = lambda env: (Probe(True, "ok") if env.get("ANTHROPIC_AUTH_TOKEN")
+                                             else Probe(False, install_probe.NOT_LOGGED_IN, "Invalid API key"))
+        ins.check_service_env()
+        probed = dict(self.probed)
+        for name in ("claude", "codex"):  # codex too: this shell has credential-like names the service will not have.
+            self.assertNotIn("ANTHROPIC_AUTH_TOKEN", probed[name])
+            self.assertNotIn("GITHUB_TOKEN", probed[name])
+            self.assertEqual((probed[name]["PATH"], probed[name]["COVEY_MEMORY"], probed[name]["USER"]),
+                             ("/absolute/service/bin", "1", "someone"))
+        left = "\n".join(ins.leftovers)
+        self.assertIn("claude 在服务里调不通（没登录）", left)
+        self.assertIn("它可能靠这个终端里的 ANTHROPIC_AUTH_TOKEN、ANTHROPIC_BASE_URL，", left)  # Its own names, not GITHUB_TOKEN.
+        self.assertNotIn("GITHUB_TOKEN", left)
+        self.assertIn("~/.claude/settings.json 的 \"env\"", left)
+        self.assertNotIn("codex 在服务里", left)
+        self.assertIn("codex：服务的环境里也能调通", self.text())
+        for value in self.SHELL.values():
+            if value != "someone":
+                self.assertNotIn(value, left + self.text())
+
+    def test_without_such_a_variable_nothing_more_is_probed(self):
+        ins = self.ready()
+        ins.check_service_env()
+        self.assertFalse(hasattr(self, "probed"))
+        self.assertEqual(ins.leftovers, [])
+
+    def test_registering_and_an_unchanged_service_both_check_it(self):
+        for up in (False, True):  # Registered now, or running with nothing changed.
+            with self.subTest(up=up):
+                ins = self.ready()
+                ins.settle_switches()
+                config = self.data / "harnesses.json"
+                (self.data / "install.json").write_text(json.dumps(ins.fingerprint(config)) if up else "{}")
+                with mock.patch.object(installer.Installer, "run_logged", return_value=(0, "")) as ran, \
+                        mock.patch.object(installer.Installer, "service_up", return_value=up), \
+                        mock.patch.object(installer.Installer, "precompile"), \
+                        mock.patch.object(installer.Installer, "check_service_env") as checked:
+                    ins.start_service(config)
+                checked.assert_called_once_with()
+                self.assertEqual(ran.call_count, 0 if up else 2)
+
+    def test_under_systemd_the_user_manager_s_environment_is_the_base(self):
+        ins = self.ready(**self.SHELL)
+        (self.data / "bridge-services" / "boot-installation.json").write_text(json.dumps({"mode": "systemd-user"}))
+        shown = subprocess.CompletedProcess([], 0, "XDG_RUNTIME_DIR=/run/user/1\nMYGW_API_KEY=from-environment-d\n", "")
+        with mock.patch.object(installer.subprocess, "run", return_value=shown) as run:
+            env = ins.service_probe_env()
+        self.assertEqual(run.call_args.args[0], ["systemctl", "--user", "show-environment"])
+        self.assertEqual((env["MYGW_API_KEY"], env["PATH"], env["COVEY_MANAGED"]), ("from-environment-d", "/absolute/service/bin", "1"))
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
+        (self.data / "bridge-services" / "boot-installation.json").write_text(json.dumps({"mode": "cron"}))
+        with mock.patch.object(installer.subprocess, "run") as run:
+            env = ins.service_probe_env()
+        run.assert_not_called()
+        self.assertNotIn("MYGW_API_KEY", env)
+
+
 class EntryTest(unittest.TestCase):
     def test_the_shell_entry_prints_the_options(self):
         done = subprocess.run([str(REPO / "install"), "--help"], capture_output=True, text=True, timeout=60)

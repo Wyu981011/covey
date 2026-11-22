@@ -17,6 +17,7 @@ from covey.core.paths import service_root
 from covey.core import claude_retention
 from covey.core.ignored_env import loosened
 from covey.core.switches import shown as switches_set
+from covey.service import doctor_words
 
 
 def hosting_report(receipt, run=subprocess.run, root=None):
@@ -226,23 +227,52 @@ def diagnose(root, *, check_events=True, probe=False):
             'events_checked': check_events}
 
 
+def service_states(root):
+    """{service id: its state directory} of the manifests under ``root`` (for the summary's commands); {} when unreadable."""
+    found = {}
+    for path in sorted((root / 'services').glob('*.json')):
+        manifest = read_json(path, None)
+        if isinstance(manifest, dict) and manifest.get('id') and manifest.get('state_dir'):
+            found[manifest['id']] = str(manifest['state_dir'])
+    return found
+
+
 def main():
-    parser = argparse.ArgumentParser(prog="covey_doctor.py", description=__doc__)
+    parser = argparse.ArgumentParser(prog="covey_doctor.py", description=__doc__ + (
+        " In a terminal it prints a short report in Chinese with the next step for each fault; a pipe or a script gets "
+        "the JSON report as before."))
     parser.add_argument('--root', type=Path, default=service_root())
     parser.add_argument('--skip-events', action='store_true', help='local process diagnostics only')
     parser.add_argument('--probe-harnesses', action='store_true',
                         help='also make one short real call per Harness (claude -p, codex exec) and report why one fails')
     parser.add_argument('--runtime-only', action='store_true', help='exit code ignores boot readiness; report still includes it')
+    shape = parser.add_mutually_exclusive_group()
+    shape.add_argument('--json', action='store_true', help='print the full JSON report (the default when stdout is not a terminal)')
+    shape.add_argument('--summary', action='store_true',
+                       help='print the short report in Chinese with next steps (the default in a terminal)')
     args = parser.parse_args()
+    root = args.root.expanduser().resolve()
+    summary = args.summary or (not args.json and sys.stdout.isatty())
+    root_arg = '' if root == service_root().expanduser().resolve() else f' --root {root}'
     try:
-        report = diagnose(args.root.expanduser().resolve(), check_events=not args.skip_events, probe=args.probe_harnesses)
+        report = diagnose(root, check_events=not args.skip_events, probe=args.probe_harnesses)
     except (OSError, ValueError, KeyError):
-        print(json.dumps({'status': 'unavailable', 'reason': 'invalid or unreadable service configuration'}))
+        if summary:
+            print('\n'.join(doctor_words.unavailable_lines(root, root_arg)))
+        else:
+            print(json.dumps({'status': 'unavailable', 'reason': 'invalid or unreadable service configuration'}))
         return 2
-    print(json.dumps(report, ensure_ascii=False, indent=2))
-    for service in report['services']:
-        for line in service.get('permission_env', ()):
-            print(f"service {service['id']}: {line}, then register it again (docs/troubleshooting.md)", file=sys.stderr)
+    if summary:
+        try:
+            states = service_states(root)
+        except (OSError, ValueError):
+            states = {}
+        print('\n'.join(doctor_words.lines(report, root=str(root), states=states, root_arg=root_arg)))
+    else:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        for service in report['services']:
+            for line in service.get('permission_env', ()):
+                print(f"service {service['id']}: {line}, then register it again (docs/troubleshooting.md)", file=sys.stderr)
     return 0 if report['runtime_status' if args.runtime_only else 'status'] == 'ready' else 2
 
 

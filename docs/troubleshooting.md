@@ -7,7 +7,7 @@
 几乎每条诊断都从状态目录里的 `bridge.log` 开始。用 `./install` 装的没设过任何变量也能找到，在仓库目录里：
 
 ```bash
-python3 -B bin/covey_doctor.py                      # 先跑一次诊断；不用设变量，退出码 0 就绪，2 降级
+python3 -B bin/covey_doctor.py                      # 先跑一次诊断：中文写哪里不对、下一步做什么；退出码 0 就绪，2 降级
 export COVEY_DATA_HOME="$(python3 -B bin/covey_paths.py)"   # 数据根，默认是仓库同级的 <仓库目录名>-data
 ls -d "$COVEY_DATA_HOME"/harness-cli_*              # 状态目录，目录名里是 APP_ID
 STATE_DIR="$COVEY_DATA_HOME/harness-cli_xxx"        # 换成上一行看到的
@@ -51,7 +51,7 @@ tail -n 100 "$STATE_DIR/bridge.log"
 
 ## 安装停住或失败
 
-安装器停下时最后一行是“安装停在这里：<原因>”，每步的完整输出在 `$COVEY_DATA_HOME/install-logs/<步骤>.log`。修好后重新运行 `./install`，它跳过已做完的、接着做缺的；常见原因和做法见[安装 · 出问题](install.md#出问题)。
+安装器停下时打印“安装停在这里：<原因>”，下面一行“下一步：”写着该做什么（换个能写的目录、装 Node.js、设代理、`./install --no-browser` 改用手机扫码……），每步的完整输出在 `$COVEY_DATA_HOME/install-logs/<步骤>.log`。修好后重新运行 `./install`，它跳过已做完的、接着做缺的；常见原因和做法见[安装 · 出问题](install.md#出问题)。安装完成但最后几行有“还差：某某 在服务里调不通”的，是终端里靠环境变量（API key、网关地址）调通、服务里没有这些变量，改法见同一张表。
 
 ## 扫码后机器人没反应
 
@@ -130,7 +130,7 @@ tail -n 100 "$STATE_DIR/bridge.log"
 
 1. 飞书登录不等于模型登录，先查 Harness 自己的登录状态和供应商权限。
 2. 看 Bridge 实际的 `PATH`、`CODEX_HOME`、`CLAUDE_CONFIG_DIR` 和代理，缺少时按[服务清单里的环境变量](configuration.md#服务清单里的环境变量)重新注册。
-3. 在同样的环境里发一次真实请求：`python3 -B bin/covey_doctor.py --probe-harnesses` 对 Claude Code、Codex 各调用一次，`harness_probe` 里每个的 `reason` 是 `ok`、`not_installed`、`not_logged_in`、`network`、`timeout` 或 `other`；别的 Harness 在服务的账号下直接跑一次它的 CLI。
+3. 在同样的环境里发一次真实请求：`python3 -B bin/covey_doctor.py --probe-harnesses` 对 Claude Code、Codex 各调用一次，摘要里写哪个调不通、为什么；`--json` 报告的 `harness_probe` 里每个的 `reason` 是 `ok`、`not_installed`、`not_logged_in`、`network`、`timeout` 或 `other`；别的 Harness 在服务的账号下直接跑一次它的 CLI。
 
 ## 机器要代理才能连模型
 
@@ -249,7 +249,10 @@ python3 -B bin/covey_doctor.py
 python3 -B bin/covey_doctor.py --runtime-only     # 退出码只看运行状态，报告仍含开机守护
 python3 -B bin/covey_doctor.py --skip-events      # 只查本地状态，不调用 lark-cli
 python3 -B bin/covey_doctor.py --probe-harnesses  # 另对 Claude Code、Codex 各真实调用一次模型，说明调不通的原因
+python3 -B bin/covey_doctor.py --json             # 完整报告（JSON），下面说的字段都在里面
 ```
+
+在终端里运行时它打一份中文摘要：第一行结论（都正常，或几项要看），然后一项一行，`✓` 正常、`✗` 有问题、`!` 要知道、`·` 只是说一声，有问题和要知道的下面跟一行“下一步：”，命令里的状态目录就是你这台的；最后一行是完整报告的命令。输出给管道、脚本或别的程序（不是终端）时照旧打 JSON，`--json`、`--summary` 可以强制选一种，退出码两种一样。
 
 doctor 只读：不发消息、不修复状态；默认不调用模型，只有带 `--probe-harnesses` 才对 Claude Code、Codex 各发一次最小请求（其他 Harness 不探测）。不用设任何变量，`--root` 默认就是服务根。退出码 0 表示所选范围就绪，2 表示降级，或配置读不出来（这时只输出 `status: unavailable`）；某一项的 `unverified` 是这一项没法验证（比如设备还没自检），不一定让整体降级。它依次检查：
 

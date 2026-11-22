@@ -124,6 +124,39 @@ class RecordTest(unittest.TestCase):
         self.assertEqual(welcome.first_answer(self.state), welcome.ANSWERED)  # Answered once is enough.
 
 
+class WorkspaceGuideTest(unittest.TestCase):
+    """D1 (T647): ./install's new default workspace gets the guide while empty (core/welcome.py seed_workspace), and it
+    counts as holding no project while that is all it holds (bare_workspace)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.folder = Path(tmp.name) / "workspace"
+        self.folder.mkdir()
+
+    def test_an_empty_workspace_gets_the_guide_once_and_stays_bare(self):
+        self.assertTrue(welcome.bare_workspace(self.folder))
+        self.assertTrue(welcome.seed_workspace(self.folder))
+        self.assertEqual([p.name for p in self.folder.iterdir()], [welcome.GUIDE])
+        text = (self.folder / welcome.GUIDE).read_text()
+        self.assertTrue(text.startswith(welcome.GUIDE_TITLE + "\n"))
+        for words in ("「设置」→「工作区」", "＋ 添加工作区…", "./install --workdir", "可以随意改、删"):
+            self.assertIn(words, text)
+        self.assertTrue(welcome.bare_workspace(self.folder))
+        self.assertFalse(welcome.seed_workspace(self.folder))  # Not empty any more: never written again.
+
+    def test_anything_else_in_it_is_a_project(self):
+        (self.folder / welcome.GUIDE).write_text("# my project\n")  # A README of the owner's own.
+        self.assertFalse(welcome.bare_workspace(self.folder))
+        self.assertFalse(welcome.seed_workspace(self.folder))
+        self.assertEqual((self.folder / welcome.GUIDE).read_text(), "# my project\n")
+        (self.folder / welcome.GUIDE).write_text(welcome.GUIDE_TEXT)
+        (self.folder / "main.py").write_text("print(1)\n")
+        self.assertFalse(welcome.bare_workspace(self.folder))
+        self.assertFalse(welcome.bare_workspace(self.folder / "missing"))
+        self.assertFalse(welcome.seed_workspace(self.folder / "missing"))
+
+
 class CardTest(unittest.TestCase):
     def test_with_the_butler_it_says_how_a_message_is_answered_and_offers_three_examples(self):
         card = cards.welcome_card({**VIEW, "down": [["Pi", "没登录"]]})
@@ -144,6 +177,13 @@ class CardTest(unittest.TestCase):
                     self.assertIn(part, words)
                 self.assertNotIn("表情", words)
         self.assertIn("装好并登录 Claude Code", texts(cards.welcome_card({**VIEW, "butler": cards.NO_CLAUDE})))
+
+    def test_a_default_workspace_with_no_project_yet_says_how_to_add_one(self):
+        words = texts(cards.welcome_card({**VIEW, "bare_workspace": True}))
+        self.assertIn(cards.BARE_WORKSPACE, words)
+        self.assertLess(words.index("/absolute/work"), words.index(cards.BARE_WORKSPACE))
+        self.assertIn("「设置」→「工作区」→「＋ 添加工作区…」", cards.BARE_WORKSPACE)
+        self.assertNotIn(cards.BARE_WORKSPACE, texts(cards.welcome_card(VIEW)))
 
     def test_an_example_tried_is_off_and_one_that_failed_is_offered_again(self):
         tried = {"0": {"state": cards.SENT}, "1": {"state": cards.FAILED}, "2": {"state": cards.UNCERTAIN}}
@@ -216,6 +256,19 @@ class SendTest(WelcomeCase):
         self.assertEqual(self.welcome.threads(), ())  # Sent: no thread at the next start.
         self.welcome.settle(self.ctx)
         self.assertEqual(self.record()["state"], welcome.SENT)
+
+    def test_the_view_says_while_the_default_workspace_holds_no_project(self):
+        workdir = Path(self.welcome.view(self.ctx)["workdir"])
+        for item in list(workdir.iterdir()):
+            if item.is_file():
+                item.unlink()
+        if any(workdir.iterdir()):
+            self.skipTest("the test world's workspace holds directories")
+        self.assertTrue(self.welcome.view(self.ctx).get("bare_workspace"))
+        welcome.seed_workspace(workdir)
+        self.assertTrue(self.welcome.view(self.ctx).get("bare_workspace"))
+        (workdir / "app.py").write_text("print(1)\n")
+        self.assertNotIn("bare_workspace", self.welcome.view(self.ctx))
 
     def test_once_the_owner_wrote_it_goes_to_his_private_chat(self):
         self.welcome.settle(self.ctx)

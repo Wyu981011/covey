@@ -59,7 +59,8 @@
 | 扩展（`COVEY_EXTENSIONS` 或 `extensions/enabled` 启用的包，核心不按名字引用；扩展自带 README） | `core/extensions.py`（manifest 并进 `core/roster.py`、`core/providers.py` 的表，`features(app)` 并进 `app/unified.py` 的 `self.features`） | [扩展](docs/architecture.md#扩展) |
 | 节点与机器状况（`COVEY_NODE_LISTEN`） | `core/node_agent.py`（设备和本机上常驻的节点）、`core/nodes.py`（名单、口令、记录）、`core/node_rules.py`（告警规则）、`app/node_gateway.py`（TLS 服务）、`app/node_alerts.py`、`app/nodes.py`、`cards/node_cards.py` | [节点](docs/architecture.md#节点默认关)、[配置](docs/configuration.md#节点与机器状况默认关) |
 | 维护与备份 | `core/maintenance.py`（规则表在 `core/maintenance_rules.py`，备份在 `core/backup.py`）、`app/stale.py`、`core/migrate.py` | [备份、归档与维护](docs/operations.md#备份归档与维护) |
-| 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、`service/doctor.py`（设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
+| 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、`service/doctor.py`（终端里的中文摘要 `service/doctor_words.py`；设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
+| 安装与日常升级（`./install`、`scripts/upgrade.sh`） | `service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh` | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级) |
 
 ## 模块表
 
@@ -496,6 +497,7 @@
 | `service/browser_setup.py` | ./install 准备无头浏览器的全部细节（service/installer.py 调用）：用机器上已有的 Chrome/Chromium，没有就下载 Playwright 的 … |
 | `service/device_check.py` | Check the devices of devices.json from the command line |
 | `service/doctor.py` | Read-only layered diagnostics |
+| `service/doctor_words.py` | The doctor's report said in plain Chinese for a person at a terminal, with the next step |
 | `service/down_notice.py` | The Manager tells the owner when his bot is down (COVEY_DOWN_NOTICE in the service's manifest, on unless 0) |
 | `service/install.py` | Install an explicit boot registration without changing platform init files |
 | `service/install_probe.py` | ./install 对 Harness 做的一次真实探测：薄适配层，判断本身在 core/harness_probe.py（安装器、doctor、可用性检查共用一份）。 |

@@ -87,7 +87,7 @@ python3 -B bin/covey_pairing.py --state-dir "$STATE_DIR" --app-id "$APP_ID"
 ```bash
 STATE_DIR="$COVEY_DATA_HOME/harness-$APP_ID"
 python3 -B bin/covey_service.py status --state-dir "$STATE_DIR"
-python3 -B bin/covey_doctor.py --root "$COVEY_DATA_HOME/bridge-services" --runtime-only
+python3 -B bin/covey_doctor.py --root "$COVEY_DATA_HOME/bridge-services" --runtime-only --json
 grep 'ready event_key=' "$STATE_DIR/bridge.log" | tail -n 2
 ```
 

@@ -1,17 +1,22 @@
 """./install 的安装器本体：一遍跑完，扫一次码，最后发一句话就有回答（docs/install.md）。
 
 步骤（每步一行标题，之后只有必要的提示）：
-  1 检查环境和目录   Python、平台；数据根、工作区、临时目录、浏览器和 lark-cli 的安装位置都给默认值并自动建
+  1 检查环境和目录   Python、平台；数据根、工作区、临时目录、浏览器和 lark-cli 的安装位置都给默认值并自动建；在检出里运行、
+                    没给 --workdir 时终端里问一次默认工作区（回车用 <数据根>/workspace，新建的空目录里放一份说明
+                    core/welcome.py GUIDE）；重跑沿用上次注册的工作区（install.json）
   2 准备 lark-cli   没有就装（npm 全局，不行装到数据根下 tools/）；``--skills`` 才同步 Skills
   3 检查 Harness    对 claude、codex 各做一次真实调用（service/install_probe.py），分清没登录、网络不通、其他；
                     像网络问题时问一次代理地址；通过后把代理写进服务环境；扩展的安装钩子在这里跑
   4 飞书应用        一个无头浏览器扫一次码：登录、建应用、授权、开发者后台补回调/事件/菜单/权限并发布、读回核对
                     （feishu/install_browser.py）；浏览器装不上或 ``--no-browser`` 时退回手机多次扫码
   5 注册并启动服务   scripts/bootstrap_harness_bridge.sh，先 bin/covey_service_install.py --mode auto --activate（托管），再 bootstrap（注册）；
-                    先用将注册的 python3 给检出预编译 .pyc（scripts/precompile_release.py，失败只提示）
-  6 等待就绪        bin/covey_doctor.py 退出码 0；在终端里运行时接着等私聊里第一句话真的有了回答（core/welcome.py
-                    first_answer，最多 ANSWER_SECONDS，每到一步一行；Ctrl-C 不等，超时不算失败，只说该查什么）
+                    先用将注册的 python3 给检出预编译 .pyc（scripts/precompile_release.py，失败只提示）；终端里有
+                    Harness 可能靠它登录的变量（API key、网关地址）时，按服务自己的环境再探测一次（check_service_env）
+  6 等待就绪        bin/covey_doctor.py 退出码 0（没就绪时打出它的中文摘要）；在终端里运行时接着等私聊里第一句话真的有了回答
+                    （core/welcome.py first_answer，最多 ANSWER_SECONDS，每到一步一行；Ctrl-C 不等，超时不算失败，只说该查什么）
 
+停下时（Fail，或命令超时、文件写不了）打印停在哪、下一步做什么和安装日志在哪；装好时最后几行写数据根、状态目录、默认工作区、
+服务开着的功能和多开的命令（演示套餐、单个开关），再请主人去私聊发一句话。
 幂等：已有的 lark-cli profile、授权、应用配置、服务都复用，只做缺的；``--reconfigure`` 才重来。
 浏览器登录态放本次运行的临时目录，结束时删掉（``--keep-login`` 留下并说明路径）。
 核心里没有任何公司的名词：扩展的钩子（extensions/<包>/scripts/setup_hook.sh）按它自己的约定在步骤 3 里被调用。
@@ -41,7 +46,8 @@ from covey.core.state import read_json, write_json
 from covey.feishu.app_config import remove, survey
 from covey.service import browser_setup, install_probe
 from covey.service.app_check import draw, profile_app_id, profile_app_name
-from covey.service.manager import PROXY_ENV_KEYS, change_settings, manifest_path, persistable, validate_environment
+from covey.service.manager import (PROXY_ENV_KEYS, SECRET_NAME, change_settings, manifest_path, persistable,
+                                   runtime_environment, service_environment, validate_environment)
 
 # What ./install switches on in the service it registers (docs/install.md): the code's default stays off (AGENTS.md rule 4).
 # One table with the 演示套餐 `--showcase` writes instead (core/switches.py SHOWCASE).
@@ -77,6 +83,21 @@ TIMEOUT_WORDS = {
                       "的「发消息后没有反应」。",
 }
 TIMEOUT_WORDS[welcome.STOPPED] = TIMEOUT_WORDS[welcome.RECEIVED]
+NO_BROWSER = "./install --no-browser（不用浏览器，每一步画一个二维码用手机扫）"
+AGAIN = "重新运行 ./install，做完的步骤会复用"
+# What a Harness CLI reads for its account or endpoint, by name prefix (never a value is read out): a shell may have them,
+# a service never gets them, since a manifest keeps no credential (service/manager.py persistable). check_service_env.
+ACCOUNT_PREFIXES = {"claude": ("ANTHROPIC_", "CLAUDE_CODE_", "AWS_", "CLOUD_ML_", "GOOGLE_APPLICATION_CREDENTIALS"),
+                    "codex": ("OPENAI_", "AZURE_OPENAI_", "CODEX_")}
+# The words the closing lines name a service's switches by (docs/install.md 装好以后, docs/configuration.md 演示套餐); every
+# switch of core/switches.py INSTALL and SHOWCASE has one (a test keeps them so).
+SWITCH_WORDS = {"COVEY_PROJECTS": "专项", "COVEY_PROJECT_AUTOWAKE": "叫醒负责人", "COVEY_PROJECT_ASK": "停住问你",
+                "COVEY_PROJECT_MEMORY": "专项记忆", "COVEY_PROJECT_TRIAGE": "问题分流", "COVEY_PROJECT_TIDY": "整理专项",
+                "COVEY_BOARD": "菜单「看板」", "COVEY_REVIEW": "独立复核", "COVEY_REVISIT": "到点回来看", "COVEY_MEMORY": "记忆",
+                "COVEY_KNOWLEDGE": "知识条目", "COVEY_COLLAB": "协作（开发中）", "COVEY_PINNED_OVERVIEW": "置顶的「手上的事」",
+                "COVEY_PINNED_TOPICS": "话题看板", "COVEY_DIGEST_TIMES": "早晚汇总", "COVEY_BUTLER_TRACKS": "管家同时做几件事",
+                "COVEY_DISPATCH_CARD": "派发卡"}
+PROJECT_PARTS = ("COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY", "COVEY_PROJECT_TRIAGE")
 
 
 def say_now(text):
@@ -85,7 +106,12 @@ def say_now(text):
 
 
 class Fail(Exception):
-    """A step that cannot go on; the message is what the user reads."""
+    """A step that cannot go on; the message is what the user reads, ``next`` what to do about it (a command or a step),
+    printed under it as 下一步."""
+
+    def __init__(self, message, next=""):
+        super().__init__(message)
+        self.next = next
 
 
 def parser():
@@ -163,14 +189,14 @@ class BrowserSession:
             except queue.Empty:
                 continue
             if line is None:
-                raise Fail("浏览器进程意外退出")
+                raise Fail("浏览器进程意外退出", next=f"{AGAIN}；还不行就 {NO_BROWSER}")
             try:
                 event = json.loads(line)
             except ValueError:
                 continue
             if self.handle(event) == kind:
                 return event
-        raise Fail("浏览器没有响应")
+        raise Fail("浏览器没有响应", next=f"{AGAIN}；还不行就 {NO_BROWSER}")
 
     def handle(self, event):
         kind = event.get("event")
@@ -263,23 +289,66 @@ class Installer:
     def check_environment(self):
         self.step(1, "检查环境和目录")
         if sys.version_info < (3, 10):
-            raise Fail("需要 Python 3.10 或更新")
+            raise Fail(f"需要 Python 3.10 或更新（现在是 {platform.python_version()}）",
+                       next="装好 Python 3.10+ 后指定它运行：PYTHON=python3.12 ./install")
         if platform.system() not in ("Linux", "Darwin"):
-            raise Fail("目前只支持 Linux 和 macOS")
-        for sub in ("", "tmp", "browsers", "tools"):
-            (self.data / sub).mkdir(parents=True, exist_ok=True)
+            raise Fail("目前只支持 Linux 和 macOS", next="换一台 Linux 或 macOS 机器（Windows 上可以在 WSL 里装）")
+        try:
+            for sub in ("", "tmp", "browsers", "tools"):
+                (self.data / sub).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise Fail(f"数据根建不了：{self.data}（{exc.strerror or type(exc).__name__}）",
+                       next="换一个自己能写的目录：./install --data-home ~/covey-data") from None
         if not os.access(self.data, os.W_OK):
-            raise Fail(f"数据根不可写：{self.data}")
+            raise Fail(f"数据根不可写：{self.data}", next="换一个自己能写的目录：./install --data-home ~/covey-data")
         self.env["LARK_BRIDGE_DATA_HOME"] = str(self.data)
         self.env.setdefault("TMPDIR", str(self.data / "tmp"))
         self.env["PLAYWRIGHT_BROWSERS_PATH"] = str(self.data / "browsers")
-        if self.args.workdir:
-            self.workdir = Path(self.args.workdir).expanduser().resolve()
-        else:
-            here = Path.cwd().resolve()
-            self.workdir = self.data / "workspace" if here == REPO_ROOT.resolve() else here
-        self.workdir.mkdir(parents=True, exist_ok=True)
+        self.workdir, made = self.choose_workdir()
+        try:
+            self.workdir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise Fail(f"默认工作区建不了：{self.workdir}（{exc.strerror or type(exc).__name__}）",
+                       next="换一个能写的目录：./install --workdir <你的项目目录>") from None
         self.note(f"数据根 {self.data}；默认工作区 {self.workdir}")
+        if made and welcome.seed_workspace(self.workdir):
+            self.note("默认工作区是新建的空目录，里面放了一份说明（README.md）。要它在你的项目里干活：飞书里「设置」→「工作区」"
+                      "添加项目目录，或 ./install --workdir <项目目录>")
+
+    def recorded_workdir(self):
+        """The default workspace this data root's last run registered (install.json, the fingerprint), when it is still a
+        directory; else None."""
+        try:
+            recorded = json.loads((self.data / "install.json").read_text()).get("workdir")
+        except (OSError, ValueError, AttributeError):
+            return None
+        return Path(recorded) if isinstance(recorded, str) and recorded and Path(recorded).is_dir() else None
+
+    def choose_workdir(self):
+        """(the default workspace, whether it is the <data>/workspace this run makes): ``--workdir``; else the one the last
+        run registered (a re-run keeps what was chosen); else the current directory, or in the checkout <data>/workspace,
+        which a run in a terminal offers to change once (docs/install.md 它做了什么)."""
+        if self.args.workdir:
+            return Path(self.args.workdir).expanduser().resolve(), False
+        recorded = self.recorded_workdir()
+        if recorded is not None:
+            return recorded, False
+        here = Path.cwd().resolve()
+        if here != REPO_ROOT.resolve():
+            return here, False
+        default = self.data / "workspace"
+        if not self.interactive:
+            return default, True
+        for _ in range(2):
+            answer = self.ask(f"    新话题默认在哪个目录干活？输入你的项目目录（如 ~/code/myapp），直接回车用 {default}"
+                              "（新建的空目录，之后在飞书「设置」→「工作区」也能加）：").strip()
+            if not answer:
+                break
+            chosen = Path(answer).expanduser().resolve()
+            if chosen.is_dir():
+                return chosen, False
+            self.note(f"没有这个目录：{chosen}")
+        return default, True
 
     # 2 -----------------------------------------------------------------------------------------
 
@@ -293,7 +362,8 @@ class Installer:
         else:
             npm = self.which("npm")
             if not npm:
-                raise Fail(f"没有 lark-cli，也没有 npm 可以装它。先装 Node.js（{RELEASES}），再重新运行 ./install")
+                raise Fail("没有 lark-cli，也没有 npm 可以装它",
+                           next=f"先装 Node.js（{RELEASES}，装好后 npm -v 能打出版本号），再运行 ./install")
             self.note("安装 lark-cli（npm）")
             code, tail = self.run_logged("lark-cli-install", [npm, "install", "-g", "@larksuite/cli"], timeout=600)
             if code != 0 or not self.which("lark-cli"):
@@ -302,7 +372,10 @@ class Installer:
                                                                   "@larksuite/cli"], timeout=600)
                 self.env["PATH"] = f"{prefix / 'node_modules' / '.bin'}{os.pathsep}{self.env.get('PATH', '')}"
                 if code != 0 or not self.which("lark-cli"):
-                    raise Fail(f"lark-cli 装不上：{tail or '见 ' + str(self.log('lark-cli-install'))}")
+                    raise Fail(f"lark-cli 装不上：{tail or '见 ' + str(self.log('lark-cli-install'))}",
+                               next=f"完整输出在 {self.log('lark-cli-install')}。多半是网络：设好代理（export HTTPS_PROXY="
+                                    "http://主机:端口）或 npm 镜像再运行 ./install；也可以自己 npm install -g @larksuite/cli "
+                                    "装好再来")
         if self.args.skills:
             code, tail = self.run_logged("skills", [str(REPO_ROOT / "scripts" / "install_skills.sh")], timeout=600)
             self.note("Skills 已同步" if code == 0 else f"Skills 同步失败（不影响安装）：{tail}")
@@ -356,7 +429,9 @@ class Installer:
         try:
             validate_environment({k: v for k, v in self.env.items() if k in PROXY_ENV_KEYS})
         except ValueError:
-            raise Fail("代理地址带了用户名或密码，不能写进服务；换一个不带凭据的代理地址再运行") from None
+            raise Fail("代理地址带了用户名或密码，不能写进服务", next=(
+                "换一个不带凭据的代理地址（比如本机起一个不用登录的本地转发），export HTTPS_PROXY=http://127.0.0.1:端口 再运行 "
+                "./install")) from None
         self.note("代理设置会一起写进服务（飞书域名直连）")
 
     def ask_proxy(self, name):
@@ -393,7 +468,10 @@ class Installer:
         for h in self.extra:
             self.note(f"{h}：扩展提供，沿用它自己的检查")
         if not self.working and not self.extra:
-            raise Fail("没有能调通的 Harness。先装好并登录 Claude Code 或 Codex（官方链接见 docs/harnesses.md），再重新运行 ./install")
+            raise Fail("没有能调通的 Harness", next=(
+                "按下面的原因修好其中一个：没装的照 docs/harnesses.md「安装和登录 Harness」装；没登录的在终端里运行 claude "
+                "按提示登录，或 codex login；网络不通的先 export HTTPS_PROXY=http://主机:端口。确认 claude -p \"ok\" 或 "
+                "codex exec --skip-git-repo-check \"ok\" 有回答，再运行 ./install"))
         self.finish_proxy()
 
     def retention_hint(self):
@@ -515,9 +593,10 @@ class Installer:
                     on_url(found.group(0))
                     deadline = time.monotonic() + wait
             else:
-                raise Fail("等太久了：lark-cli 还没有结束")
+                raise Fail("等太久了：lark-cli 还没有结束（二维码过期或这一步没做完）", next=f"{AGAIN}，已建好的应用不用重建")
             if proc.wait(timeout=30) != 0:
-                raise Fail("lark-cli 没有成功：" + " | ".join(meaningful(seen)[-3:]) + f"（完整输出：{self.log(flow_name(argv))}）")
+                raise Fail("lark-cli 没有成功：" + " | ".join(meaningful(seen)[-3:]) + f"（完整输出：{self.log(flow_name(argv))}）",
+                           next=f"{AGAIN}；还不行就 ./install --reconfigure 从头建应用")
         finally:
             self.log(flow_name(argv)).write_text("\n".join(seen) + "\n")
             if proc.poll() is None:
@@ -591,13 +670,13 @@ class Installer:
             self.run_flow(login, lambda link: self.by_phone("授权（点「开通并授权」，弹窗里再点一次）", link))
         self.app_id = self.app_id_of(profile)
         if not self.app_id:
-            raise Fail("读不到应用的 appId：lark-cli 的 profile 没建好，重新运行 ./install --reconfigure")
+            raise Fail("读不到应用的 appId：lark-cli 的 profile 没建好", next="./install --reconfigure 从头建应用")
         self.note(f"应用 {self.app_id} 已建好并授权")
 
     @staticmethod
     def expect(result):
         if not result.get("ok"):
-            raise Fail(f"浏览器这一步没做成：{result.get('detail')}")
+            raise Fail(f"浏览器这一步没做成：{result.get('detail')}", next=f"{AGAIN}；还不行就 {NO_BROWSER}")
 
     def lacking(self):
         online, lacking, full = self.survey_app(self.args.profile, self.app_id, self.env)
@@ -761,6 +840,7 @@ class Installer:
                 self.showcase_running()
             else:
                 self.note("服务已在运行，配置没变")
+            self.check_service_env()
             return
         # Hosting first (the unit's Manager takes the single-instance lock), then the registration; without systemd or
         # launchd ("manager" mode) nothing is hosted here and the bootstrap's own launch starts the Manager.
@@ -774,10 +854,11 @@ class Installer:
             str(REPO_ROOT / "scripts" / "bootstrap_harness_bridge.sh"), "--workdir", str(self.workdir),
             "--profile", self.args.profile, "--app-id", self.app_id, "--harness-config", str(config_path)], timeout=300)
         if code != 0:
-            raise Fail(f"服务没注册成功：{tail_boot}")
+            raise Fail(f"服务没注册成功：{tail_boot}", next=f"看 {self.log('bootstrap')} 里的报错，改好后{AGAIN}")
         write_json(record, now)
         if not hosted:
             self.leftovers.append("开机自启没注册上（服务已在运行，重启这台机器后要再运行 ./install）：" + tail)
+        self.check_service_env()
 
     def showcase_running(self):
         """`--showcase` for a service running unchanged: the 演示套餐 goes into its manifest the way `covey_service.py set
@@ -791,6 +872,145 @@ class Installer:
                                   "--preset showcase")
             return
         self.note(f"服务已在运行：演示套餐打开了 {len(changed)} 个开关" if changed else "服务已在运行，演示套餐的开关都开着")
+
+    # The service's own environment (D4) ---------------------------------------------------------------------------
+
+    def account_names(self, name):
+        """The variables this shell sets that Harness ``name`` may take its account or endpoint from and the service will
+        not have: its own (ACCOUNT_PREFIXES), else any credential-like one (a custom gateway's key; the names a manifest
+        refuses, service/manager.py SECRET_NAME). Names only, sorted."""
+        prefixes = ACCOUNT_PREFIXES.get(name, ())
+        kept = [k for k, v in self.env.items() if v and not persistable(k)]
+        return sorted(k for k in kept if k.startswith(prefixes)) or sorted(k for k in kept if SECRET_NAME.search(k))
+
+    def hosting_environment(self):
+        """What the Manager starts with besides the manifest when systemd hosts it (its user manager's environment:
+        ``systemctl --user show-environment``, which ~/.config/environment.d adds to); {} for the other hostings, whose
+        Manager gets only the account's basics after a reboot (launchd's plist and cron's line pass few)."""
+        try:
+            receipt = read_json(self.data / "bridge-services" / "boot-installation.json", {})
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(receipt, dict) or receipt.get("mode") != "systemd-user":
+            return {}
+        try:
+            done = subprocess.run(["systemctl", "--user", "show-environment"], env=self.env, capture_output=True,
+                                  text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return {}
+        return dict(line.split("=", 1) for line in done.stdout.splitlines() if "=" in line) if done.returncode == 0 else {}
+
+    def service_probe_env(self):
+        """The environment the registered service's Bridge runs with, as the Manager builds it (service/manager.py
+        service_environment): the manifest's settings over the account's basics and the hosting's own environment;
+        never this shell's other variables (a credential among them)."""
+        base = {k: self.env[k] for k in ("HOME", "USER", "LOGNAME", "SHELL") if self.env.get(k)}
+        base.update(self.hosting_environment())
+        saved = self.registered_environment()
+        if saved is None:
+            try:
+                saved = runtime_environment(self.env)
+            except ValueError:
+                saved = {}
+        env = service_environment(base, saved)
+        env.update(PYTHONDONTWRITEBYTECODE="1", TMPDIR=str(self.data / "tmp"))
+        return env
+
+    def check_service_env(self):
+        """D4: a Harness that answered from this shell may lean on a variable only the shell has (an API key, a gateway's
+        address): the service never gets one, so its first task would fail. For each Harness that worked and has such a
+        variable here, one more probe in the service's own environment (service_probe_env, a cache of its own); when it
+        fails, the names (never a value) and the fix go into the closing lines. Nothing is done without such a variable."""
+        suspects = {name: found for name in self.working if (found := self.account_names(name))}
+        if not suspects:
+            return
+        env = self.service_probe_env()
+        for name, found in suspects.items():
+            result = self.probe(name, env, cwd=str(self.data / "tmp"), directory=self.data / "harness-probe" / "service",
+                                refresh=True)
+            if result.ok:
+                self.note(f"{name}：服务的环境里也能调通")
+                continue
+            why = {install_probe.NOT_LOGGED_IN: "没登录", install_probe.NETWORK: "网络不通"}.get(result.kind, "调用失败")
+            names = "、".join(found)
+            self.note(f"{name}：这个终端里能调通，服务的环境里调不通（{why}）")
+            if name == "claude":
+                settings = Path(self.env.get("CLAUDE_CONFIG_DIR") or "~/.claude") / "settings.json"
+                fix = (f"把它们写进 {settings} 的 \"env\"（Claude Code 每次启动都读），或在终端里运行 claude 用 /login 登录"
+                       "（登录存在它自己的目录里，服务读得到）")
+            else:
+                fix = ("用 codex login 把登录存进 Codex 自己的目录（API key：printenv OPENAI_API_KEY | codex login --with-api-key），"
+                       "服务读得到")
+            self.leftovers.append(f"{name} 在服务里调不通（{why}）：它可能靠这个终端里的 {names}，服务清单不存凭据，服务里没有它们。"
+                                  f"{fix}；改完不用重装，重新运行 ./install 会再查一次")
+
+    # The closing lines (D5) ------------------------------------------------------------------------------------------
+
+    @staticmethod
+    def path_of(relative):
+        """A file of the checkout as the closing lines name it: relative in the checkout (where ./install runs), absolute
+        elsewhere."""
+        return relative if Path.cwd().resolve() == REPO_ROOT.resolve() else str(REPO_ROOT / relative)
+
+    def entry(self, name):
+        """The command line of a bin/ script, as path_of names it."""
+        return f"python3 -B {self.path_of('bin/' + name)}"
+
+    def doctor_lines(self):
+        """The doctor's summary of the service root (covey_doctor.py --summary), its lines; [] when it cannot be had."""
+        try:
+            done = subprocess.run([sys.executable, "-B", str(REPO_ROOT / "bin" / "covey_doctor.py"), "--root",
+                                   str(self.data / "bridge-services"), "--runtime-only", "--summary"], env=self.env,
+                                  capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        return [line for line in done.stdout.splitlines() if line.strip()]
+
+    def feature_words(self, environment):
+        """What the service runs with, in the words of docs/install.md 装好以后: the butler (Claude Code enabled, COVEY_BUTLER
+        not off) and the switches of SWITCH_WORDS it has on (core/switches.py shown: its manifest's, either spelling)."""
+        set_now = dict(switches.shown(environment))
+
+        def on(key):
+            return key in set_now and str(set_now[key]).strip().lower() not in switches.OFF_VALUES
+
+        words = []
+        if "claude" in self.working + self.extra and str(set_now.get("COVEY_BUTLER", "1")).strip().lower() not in switches.OFF_VALUES:
+            words.append("管家")
+        for key, word in SWITCH_WORDS.items():
+            if key in PROJECT_PARTS or not on(key):
+                continue
+            if key == "COVEY_PROJECTS":
+                parts = [SWITCH_WORDS[part] for part in PROJECT_PARTS if on(part)]
+                word += f"（{'、'.join(parts)}）" if parts else ""
+            elif key == "COVEY_PROJECT_TIDY" and set_now[key] == "suggest":
+                word += "（只提议）"
+            elif key == "COVEY_DIGEST_TIMES" and set_now[key] != switches.HIDDEN:
+                word += f"（{set_now[key].replace(',', '、')}）"
+            words.append(word)
+        return words
+
+    def closing_lines(self):
+        """Where the install put things, what the service runs with and the commands for more (docs/install.md 装好以后):
+        printed before the last line once a service is registered."""
+        state = self.service_state()
+        environment = self.registered_environment() or {}
+        service = self.entry("covey_service.py")
+        lines = ["", "装在这里：", f"    数据根      {self.data}", f"    状态目录    {state}（日志 {state / 'bridge.log'}）"]
+        if self.workdir:
+            lines.append(f"    默认工作区  {self.workdir}")
+        words = self.feature_words(environment)
+        if words:
+            lines.append("已经开着：" + "、".join(words))
+        lines.append("想多开：")
+        if switches.preset_changes("showcase", environment):
+            lines.append(f"    演示套餐  {service} set --state-dir {state} --preset showcase")
+        lines += [f"    单个开关  {service} set --state-dir {state} --dry-run COVEY_DIGEST_TIMES=09:30,21:30"
+                  "（先看会改什么，去掉 --dry-run 才改）",
+                  "    开关一览  docs/configuration.md「开关速查」",
+                  f"出问题时：{self.entry('covey_doctor.py')}（说哪里不对、下一步做什么）；升级：{self.path_of('scripts/upgrade.sh')}"
+                  "（docs/deploy.md「日常升级」）"]
+        return lines
 
     def wait_ready(self):
         self.step(6, "等待就绪")
@@ -808,8 +1028,12 @@ class Installer:
             self.leftovers.append(f"机器人还没就绪：在等你扫完手机第 {steps} 步（订阅没生效前消息收不到）。扫完后约半分钟内自动就绪，"
                                   "也可以重新运行 ./install 确认")
             return
-        self.leftovers.append(f"服务起来了但还没就绪；诊断：python3 -B bin/covey_doctor.py --root "
-                              f"{self.data / 'bridge-services'} --runtime-only")
+        command = f"{self.entry('covey_doctor.py')} --root {self.data / 'bridge-services'} --runtime-only"
+        found = self.doctor_lines()
+        if found:
+            self.leftovers.append("服务起来了但还没就绪，诊断这么说：\n" + "\n".join(f"    {line}" for line in found))
+        else:
+            self.leftovers.append(f"服务起来了但还没就绪；诊断：{command}；日志：{self.service_state() / 'bridge.log'}")
 
     def waits_for_answer(self):
         """Whether the run waits for the first answer (``wait_answer``): in a terminal, once the service is ready, for a
@@ -854,6 +1078,17 @@ class Installer:
 
     # Run ---------------------------------------------------------------------------------------
 
+    def stopped(self, why, next_step=""):
+        """What a run that cannot go on prints (D7): where it stopped, each Harness's reason, the next step, the logs."""
+        self.say(f"\n安装停在这里：{why}")
+        for name, reason in self.reasons.items():
+            self.say(f"    {name}：{reason}")
+        if next_step:
+            self.say(f"下一步：{next_step}")
+        logs = self.data / "install-logs"
+        if logs.is_dir():
+            self.say(f"安装日志在 {logs}（每步一个文件）。改好后重新运行 ./install，做完的步骤会复用。")
+
     def run(self):
         try:
             self.check_environment()
@@ -870,15 +1105,20 @@ class Installer:
                 self.start_service(config_path)
                 self.wait_ready()
         except Fail as fail:
-            self.say(f"\n安装停在这里：{fail}")
-            for name, why in self.reasons.items():
-                self.say(f"    {name}：{why}")
+            self.stopped(str(fail), fail.next)
+            return 1
+        except (OSError, subprocess.SubprocessError) as exc:  # A command that hung or a file that would not be written.
+            self.stopped(f"{type(exc).__name__}: {exc}", f"多半是网络慢或权限不够：{AGAIN}；一直这样时把这几行和安装日志一起"
+                         "发给帮你装的人")
             return 1
         except KeyboardInterrupt:
             self.say("\n已取消；重新运行 ./install 会接着做缺的。")
             return 130
         for line in self.leftovers:
             self.say(f"还差：{line}")
+        if not self.args.no_start and self.app_id:
+            for line in self.closing_lines():
+                self.say(line)
         name = self.app_name_of(self.args.profile) if self.app_id else ""
         bot = f"机器人「{name}」" if name else "刚建的机器人"
         if not self.waits_for_answer():

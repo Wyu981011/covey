@@ -9,7 +9,7 @@
 | 用 `./install` 装的（多数人） | 看状态、重启、停用 | [日常操作](#日常操作) |
 | | 改开关、改参数 | [配置 · 改开关三步](configuration.md#改开关三步)、[升级与部署 · 改设置后重新注册](deploy.md#改设置后重新注册) |
 | | 装、启用、停用扩展 | [扩展的装和卸](#扩展的装和卸) |
-| | 升级到新版本、出事回滚 | [升级与部署 · 升级与回滚](deploy.md#升级与回滚) |
+| | 升级到新版本、出事回滚 | `./install` 装的：`scripts/upgrade.sh`（[日常升级](deploy.md#日常升级)）；其余和回滚：[升级与部署 · 升级与回滚](deploy.md#升级与回滚) |
 | | 看日志、备份、机器重启后没回来 | [日志](#日志)、[备份、归档与维护](#备份归档与维护)、[开机恢复](#开机恢复) |
 | | 飞书应用缺权限、菜单不出来 | [飞书应用配置](feishu-app.md) |
 | 自己注册服务、维护固定 release 的 | 以上全部，再加 | [服务组成](#服务组成)、[注册与启动服务](#注册与启动服务)、[部署新版本](deploy.md#部署新版本)、[服务托管](#服务托管) |
@@ -477,7 +477,7 @@ python3 -B bin/covey_service_install.py --mode auto --uninstall   # 删掉单元
 
 ## 开机恢复
 
-开机自启见上一节「服务托管」。扩展提供的托管方式的说明在扩展自己的 README。确认开机自启注册好了：看 `covey_doctor.py` 报告的 `boot` 段（`status` 为 `ready`）；systemd、launchd、cron 也可以用 `python3 -B bin/covey_service_install.py --mode auto --status` 看注册。
+开机自启见上一节「服务托管」。扩展提供的托管方式的说明在扩展自己的 README。确认开机自启注册好了：`covey_doctor.py` 的摘要写“开机会自动拉起”（`--json` 报告的 `boot` 段 `status` 为 `ready`）；systemd、launchd、cron 也可以用 `python3 -B bin/covey_service_install.py --mode auto --status` 看注册。
 
 **扩展提供的模式**（`--mode` 的其他取值）：守护 `service/boot.py` 在核心：每轮等待配置的挂载盘就绪，再通过本地 socket 检查 Manager；Manager 不存在就拉起；控制循环延迟超过 120 秒或失去响应时，只向核对过身份的 Manager 发 SIGTERM，20 秒后仍在就 SIGKILL。Manager 在挂载恢复前不启动任何服务。
 
@@ -485,7 +485,7 @@ python3 -B bin/covey_service_install.py --mode auto --uninstall   # 删掉单元
 
 ## 升级与回滚
 
-用 `scripts/deploy_bridge.sh` 换到固定 release、出事加 `--allow-rollback` 换回去，见[升级与部署 · 升级与回滚](deploy.md#升级与回滚)。
+`./install` 装的机器人日常升级用 `scripts/upgrade.sh`（先 `--dry-run`），见[升级与部署 · 日常升级](deploy.md#日常升级)；它底下和手工的做法一样，用 `scripts/deploy_bridge.sh` 换到固定 release、出事加 `--allow-rollback` 换回去，见[升级与部署 · 升级与回滚](deploy.md#升级与回滚)。
 
 ## 部署新版本
 

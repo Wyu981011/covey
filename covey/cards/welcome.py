@@ -9,7 +9,8 @@ the launch card), 这台机器 (the Harnesses, those unavailable now, the defaul
 
 - ``host``: the machine's name; ``harnesses``: the titles of the Harnesses this Bridge enables; ``down``: [title, why] of
   those the availability watch found unavailable;
-- ``workspace``, ``workdir``: the default workspace's name and directory;
+- ``workspace``, ``workdir``: the default workspace's name and directory; ``bare_workspace``: True while it holds no project
+  (BARE_WORKSPACE under it);
 - ``butler``: '' with the butler, else why not: NO_CLAUDE, OFF, TOPICS, DOWN (BUTLER_WORDS);
 - ``examples``: their words; ``tried``: the examples clicked, by their index as a string, and what came of each
   (TRIED: 已发出, the button off; anything else, FAILED, the button again); ``notice``: one grey line under them.
@@ -24,6 +25,8 @@ KIND = "bridge_welcome_try"  # 发这句: the value carries ``example``, its ind
 ICON = "start_outlined"
 TITLE = "欢迎使用 Covey"
 TRY, TRIED_LABEL = "发这句", "已发出"
+# Under the default workspace while it holds no project (``bare_workspace``): how to put one in its place.
+BARE_WORKSPACE = "里面还没有项目：点菜单「设置」→「工作区」→「＋ 添加工作区…」加上你的项目，再在「配置」页的新话题一段选它"
 STARTING, SENT, FAILED, UNCERTAIN = "starting", "sent", "failed", "uncertain"  # What became of a click on an example.
 TRIED = frozenset({STARTING, SENT, UNCERTAIN})  # The button is off: never sent twice (a failed one is offered again).
 NO_CLAUDE, OFF, TOPICS, DOWN = "no_claude", "off", "topics", "down"  # Why the private chat has no butler.
@@ -60,6 +63,8 @@ def machine_lines(view) -> str:
     if view.get("workspace"):
         lines.append(f"默认工作区：{literal(view['workspace'])}" + (ui.font(f" · {literal(view['workdir'])}", "grey")
                                                                   if view.get("workdir") else ""))
+        if view.get("bare_workspace"):
+            lines.append(ui.font(BARE_WORKSPACE, "grey"))
     return "\n".join(lines)
 
 

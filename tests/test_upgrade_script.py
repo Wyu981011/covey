@@ -1,0 +1,259 @@
+"""scripts/upgrade.sh (D11 of T647, docs/deploy.md 日常升级): a throwaway checkout with an origin a commit ahead and a fake
+scripts/deploy_bridge.sh that records what it was given, so each boundary is seen without a deploy: a clean checkout, a
+fetch and fast-forward only, the one service found, the manifest's own environment and command handed to the pre-check,
+--dry-run changing nothing, a failed check or a running deploy stopping before anything, the checkout fast-forwarded only
+after a deploy that went through. One test runs the real deploy_bridge.sh --check-only on a fake service root. Each run is
+one short-lived bash, Python and git child under TMPDIR; nothing touches the network."""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+from pathlib import Path
+
+from support import REPO
+
+from covey.service.manager import runtime_environment
+
+UPGRADE = REPO / "scripts" / "upgrade.sh"
+APP = "cli_up"
+# Records its arguments and environment (FAKE_DEPLOY_LOG), answers what FAKE_DEPLOY_ANSWER says for a check or a deploy.
+FAKE_DEPLOY = """#!/bin/bash
+exec python3 - "$@" <<'EOF'
+import json, os, sys
+from pathlib import Path
+check = "--check-only" in sys.argv
+with open(os.environ["FAKE_DEPLOY_LOG"], "a") as log:
+    log.write(json.dumps({"argv": sys.argv[1:], "env": dict(os.environ)}) + "\\n")
+answers = json.loads(Path(os.environ["FAKE_DEPLOY_ANSWER"]).read_text()) if os.environ.get("FAKE_DEPLOY_ANSWER") else {}
+code, result = answers.get("check" if check else "deploy", [0, {"ok": True}])
+if not check and code == 0:
+    result = {"release": "/absolute/releases/" + sys.argv[sys.argv.index("--commit") + 1], "post": {"generation": 8}, **result}
+print(json.dumps(result))
+sys.exit(code)
+EOF
+"""
+GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@localhost", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@localhost", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+
+
+def git(cwd, *argv):
+    done = subprocess.run(["git", *argv], cwd=cwd, env={**os.environ, **GIT_ENV}, capture_output=True, text=True,
+                          timeout=60)
+    if done.returncode:
+        raise AssertionError(f"git {argv}: {done.stderr}")
+    return done.stdout.strip()
+
+
+class UpgradeCase(unittest.TestCase):
+    deploy_script = FAKE_DEPLOY
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.origin, self.checkout, self.other = self.tmp / "origin.git", self.tmp / "covey", self.tmp / "other"
+        git(self.tmp, "init", "-q", "--bare", "-b", "main", str(self.origin))
+        self.checkout.mkdir()
+        self.lay_out()
+        git(self.checkout, "init", "-q", "-b", "main")
+        git(self.checkout, "add", "-A")
+        git(self.checkout, "commit", "-q", "-m", "first")
+        git(self.checkout, "remote", "add", "origin", str(self.origin))
+        git(self.checkout, "push", "-q", "-u", "origin", "main")
+        self.first = git(self.checkout, "rev-parse", "HEAD")
+        git(self.tmp, "clone", "-q", str(self.origin), str(self.other))
+        (self.other / "NEWS.md").write_text("a newer commit\n")
+        git(self.other, "add", "-A")
+        git(self.other, "commit", "-q", "-m", "newer")
+        git(self.other, "push", "-q", "origin", "main")
+        self.newer = git(self.other, "rev-parse", "HEAD")
+        self.data = self.tmp / "data"
+        self.state, self.work = (self.data / f"harness-{APP}").resolve(), self.tmp / "work"
+        for path in (self.state, self.data / "bridge-services" / "services", self.work):
+            path.mkdir(parents=True)
+        self.log, self.answer = self.tmp / "deploy-calls.jsonl", self.tmp / "answer.json"
+        self.base = {"PATH": os.environ["PATH"], "HOME": str(self.tmp), "LANG": "C.UTF-8", "TMPDIR": str(self.tmp),
+                     "COVEY_DATA_HOME": str(self.data), "FAKE_DEPLOY_LOG": str(self.log), **GIT_ENV}
+        self.saved = {**runtime_environment(self.base), "LARK_BRIDGE_REVIEW": "1",
+                      "https_proxy": "http://proxy.example.invalid:3128"}
+        self.manifest()
+
+    def lay_out(self):
+        (self.checkout / "README.md").write_text("covey\n")
+        (self.checkout / "scripts").mkdir()
+        (self.checkout / "scripts" / "deploy_bridge.sh").write_text(self.deploy_script)
+
+    def args(self):
+        return ["--harness", "unified", "--state-dir", str(self.state), "--workdir", str(self.work), "--profile", "covey",
+                "--app-id", APP, "--sandbox", "danger-full-access", "--harness-config", str(self.data / "harnesses.json"),
+                "--claude-transport", "stream-json"]
+
+    def manifest(self, name="a", entry=None, state=None, python=None, **fields):
+        state = state or self.state
+        record = {"id": name, "state_dir": str(state), "desired_state": "running", "environment": self.saved,
+                  "command": [python or shutil.which("python3", path=self.saved["PATH"]), "-B",
+                              str(entry or self.checkout / "bin" / "covey_bridge.py"), *self.args()], **fields}
+        (self.data / "bridge-services" / "services" / f"{name}.json").write_text(json.dumps(record))
+
+    def upgrade(self, *argv, **env):
+        done = subprocess.run(["bash", str(UPGRADE), "--repo", str(self.checkout), *argv], env={**self.base, **env},
+                              capture_output=True, text=True, timeout=300)
+        return done.returncode, done.stdout + done.stderr
+
+    def calls(self):
+        return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def head(self):
+        return git(self.checkout, "rev-parse", "HEAD")
+
+
+class UpgradeTests(UpgradeCase):
+    def test_a_dry_run_checks_with_the_service_s_own_environment_and_command_and_changes_nothing(self):
+        code, out = self.upgrade("--dry-run", COVEY_PINNED_TOPICS="1", https_proxy="http://other.example.invalid:1")
+        self.assertEqual(code, 0, out)
+        for words in ("比检出新 1 个提交", "现网：直接从检出运行", "部署前的检查都过了", "--dry-run：什么都没换"):
+            self.assertIn(words, out)
+        [call] = self.calls()
+        argv = call["argv"]
+        self.assertIn("--check-only", argv)
+        for flag, value in (("--repo", str(self.checkout)), ("--commit", self.newer), ("--workdir", str(self.work)),
+                            ("--profile", "covey"), ("--app-id", APP), ("--state-dir", str(self.state)),
+                            ("--harness-config", str(self.data / "harnesses.json"))):
+            self.assertEqual(argv[argv.index(flag) + 1], value, flag)
+        self.assertTrue(argv[argv.index("--run-dir") + 1].startswith(str(self.data / "deploy-runs")))
+        self.assertEqual(argv[argv.index("--") + 1:], ["--claude-transport", "stream-json"])  # The rest of the live command.
+        env = call["env"]
+        self.assertEqual((env["LARK_BRIDGE_REVIEW"], env["https_proxy"], env["PATH"]),
+                         ("1", "http://proxy.example.invalid:3128", self.saved["PATH"]))
+        self.assertNotIn("COVEY_PINNED_TOPICS", env)  # This shell's own settings never reach the service.
+        self.assertEqual(env["FAKE_DEPLOY_LOG"], str(self.log))  # What the manifest does not decide is this shell's.
+        self.assertEqual(self.head(), self.first)
+
+    def test_an_upgrade_deploys_after_the_check_then_fast_forwards_and_a_second_run_is_up_to_date(self):
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        self.assertEqual([("--check-only" in call["argv"]) for call in self.calls()], [True, False])
+        self.assertIn("部署中：机器人会重启", out)
+        self.assertIn(f"升级好了：机器人第 8 代，从 release {self.newer[:8]} 运行。", out)
+        self.assertIn("不要再用 ./install 改", out)  # It ran from the checkout until now.
+        self.assertIn(f"检出已快进到 {self.newer[:8]}", out)
+        self.assertEqual(self.head(), self.newer)
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"已经是最新（{self.newer[:8]}）", out)
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_a_dirty_checkout_or_a_commit_upstream_lacks_stops_before_anything(self):
+        (self.checkout / "README.md").write_text("changed\n")
+        code, out = self.upgrade()
+        self.assertEqual(code, 1, out)
+        self.assertIn("检出里有没提交的改动：README.md", out)
+        self.assertIn("git stash", out)
+        git(self.checkout, "commit", "-q", "-am", "mine")
+        code, out = self.upgrade()
+        self.assertEqual(code, 1, out)
+        self.assertIn("检出里有 origin/main 没有的提交（1 个）", out)
+        self.assertIn("--ref HEAD", out)
+        self.assertEqual(self.calls(), [])
+        code, out = self.upgrade("--ref", "HEAD")  # Its own commit, asked for: no stop for it (it runs that already).
+        self.assertEqual(code, 0, out)
+        self.assertIn("已经是最新", out)
+
+    def test_the_one_service_is_found_or_the_choice_is_asked_for(self):
+        (self.data / "bridge-services" / "services" / "a.json").unlink()
+        code, out = self.upgrade("--dry-run")
+        self.assertEqual(code, 2, out)
+        self.assertIn("没有注册的机器人", out)
+        self.assertIn("./install", out)
+        second = (self.data / "harness-cli_two").resolve()
+        second.mkdir()
+        self.manifest("a")
+        self.manifest("b", state=second)
+        code, out = self.upgrade("--dry-run")
+        self.assertEqual(code, 2, out)
+        self.assertIn("有 2 个机器人", out)
+        self.assertIn(str(second), out)
+        code, out = self.upgrade("--dry-run", "--state-dir", str(self.state))
+        self.assertEqual(code, 0, out)
+        self.manifest("a", desired_state="stopped")
+        code, out = self.upgrade("--dry-run", "--state-dir", str(self.state))
+        self.assertEqual(code, 1, out)
+        self.assertIn("这个机器人停着", out)
+
+    def test_a_live_release_at_the_target_is_up_to_date_and_one_with_extensions_is_left_to_its_own_steps(self):
+        release = self.data / "releases" / self.newer
+        (release / "bin").mkdir(parents=True)
+        self.manifest(entry=release / "bin" / "covey_bridge.py")
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"现网：release {self.newer}", out)
+        self.assertIn("已经是最新", out)
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.head(), self.newer)  # The service runs from a release: the checkout catches up at once.
+        mixed = self.data / "releases" / f"{self.first[:8]}-0123abcd"
+        (mixed / "bin").mkdir(parents=True)
+        (mixed / "RELEASE_MANIFEST").write_text(f"core {self.first}\nextension {'0' * 40} covey_internal\n")
+        self.manifest(entry=mixed / "bin" / "covey_bridge.py")
+        code, out = self.upgrade()
+        self.assertEqual(code, 1, out)
+        self.assertIn("带着扩展", out)
+        self.assertIn("--ext-repo", out)
+        self.assertEqual(self.calls(), [])
+
+    def test_a_failed_check_or_a_running_deploy_is_said_and_nothing_is_deployed(self):
+        self.answer.write_text(json.dumps({"check": [1, {"ok": False, "error": "pre-checks failed: ['restart_blockers']",
+                                                         "pre": {"restart_blockers": [{"job_id": 3}]}}]}))
+        code, out = self.upgrade(FAKE_DEPLOY_ANSWER=str(self.answer))
+        self.assertEqual(code, 1, out)
+        self.assertIn("部署前的检查没过", out)
+        self.assertIn("有任务重启会被打断", out)
+        self.assertIn(str(self.data / "deploy-runs"), out)
+        self.assertEqual(len(self.calls()), 1)
+        self.assertEqual(self.head(), self.first)
+        self.answer.write_text(json.dumps({"check": [3, {"ok": False, "deploy_running": {"pid": 42, "started": "now"}}]}))
+        code, out = self.upgrade(FAKE_DEPLOY_ANSWER=str(self.answer))
+        self.assertEqual(code, 3, out)
+        self.assertIn("另一个部署正在跑（pid 42", out)
+        self.answer.write_text(json.dumps({"deploy": [1, {"ok": False, "error": "bootstrap failed, see bootstrap.log"}]}))
+        code, out = self.upgrade(FAKE_DEPLOY_ANSWER=str(self.answer))
+        self.assertEqual(code, 1, out)
+        self.assertIn("部署没成功", out)
+        self.assertEqual(self.head(), self.first)  # Not fast-forwarded after a deploy that did not go through.
+
+    def test_a_service_python_that_cannot_run_and_bad_arguments_stop(self):
+        self.manifest(python="/absolute/no/python3")
+        code, out = self.upgrade()
+        self.assertEqual(code, 1, out)
+        self.assertIn("服务用的 Python 不能用或低于 3.10", out)
+        code, out = self.upgrade("--what")
+        self.assertEqual(code, 2, out)
+        code, out = self.upgrade("--ref", "origin/nowhere")
+        self.assertEqual(code, 2, out)
+        self.assertIn("找不到 origin/nowhere", out)
+        self.assertEqual(self.calls(), [])
+
+
+class RealCheckTests(UpgradeCase):
+    """The real scripts/deploy_bridge.sh --check-only, run by upgrade.sh in a checkout whose bin/ and covey/ are this
+    repository's: with the manifest loaded its environment and command checks pass, whatever this shell sets."""
+    deploy_script = (REPO / "scripts" / "deploy_bridge.sh").read_text()
+
+    def lay_out(self):
+        super().lay_out()
+        for name in ("bin", "covey"):
+            (self.checkout / name).symlink_to(REPO / name)
+
+    def test_the_pre_check_passes_with_the_service_s_environment(self):
+        code, out = self.upgrade("--dry-run", COVEY_PINNED_TOPICS="1", LARK_BRIDGE_REVIEW="0")
+        self.assertEqual(code, 0, out)
+        self.assertIn("部署前的检查都过了", out)
+        [run] = sorted((self.data / "deploy-runs").iterdir())
+        self.assertTrue(run.name.endswith("-check"))
+        self.assertFalse((self.data / "releases").exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

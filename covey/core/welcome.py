@@ -9,11 +9,15 @@
   (never sent again), SKIPPED.
 - ``first_answer``: how far the owner's private chat has got, from its job records, for ./install's wait
   (docs/install.md 第一个回答).
+- The default workspace ./install makes when none is given (<data>/workspace) starts empty: ``seed_workspace`` writes
+  GUIDE into it (what it is, how to put a project in its place), so the card's examples have something to read, and
+  ``bare_workspace`` tells the welcome card it still holds nothing else (app/welcome.py, cards/welcome.py).
 
 Standard library and core only (./install reads it).
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from covey.core.locks import resource_lock
@@ -26,6 +30,22 @@ OWNER_CHAT = "owner-chat.json"  # app/access.py OWNER_CHAT: the owner's private 
 # first_answer's stages, in the order a first message goes through them.
 NONE, RECEIVED, LAUNCH, STOPPED, ANSWERED = "none", "received", "launch", "stopped", "answered"
 REPLIED = frozenset({"done", "waiting_user", "continued"})  # A turn that ended with its reply (or its question) sent.
+GUIDE = "README.md"  # What seed_workspace writes into an empty default workspace; its first line is GUIDE_TITLE.
+GUIDE_TITLE = "# 默认工作区"
+GUIDE_TEXT = f"""{GUIDE_TITLE}
+
+这是 Covey 装好时建的默认工作区：没指定工作区的新话题在这里干活。现在这里只有这份说明。
+
+让它在你的项目里干活：
+
+1. 飞书里点机器人菜单「设置」→「工作区」，点「＋ 添加工作区…」，找到你的项目目录，点「添加此目录」。
+2. 还是「设置」，在「配置」页的“新话题”一段，把“工作区”选成它。
+3. 之后跟机器人说在哪个工作区做就行，比如“在 myapp 里看看测试为什么挂了”。
+
+也可以重新运行 `./install --workdir <项目目录>`，把默认工作区直接换成它。
+
+这个目录和这份说明都可以随意改、删，Covey 不靠它们运行。
+"""
 
 
 def path(state_dir) -> Path:
@@ -102,3 +122,34 @@ def first_answer(state_dir) -> str:
             return 0
     status = max(records, key=number).get("status")
     return LAUNCH if status == "waiting_workspace" else STOPPED if status in ENDED else RECEIVED
+
+
+def seed_workspace(path) -> bool:
+    """GUIDE written into the directory ``path`` when it holds nothing (./install's new default workspace); whether it was.
+    Never raises: a workspace that cannot be read or written is left as it is."""
+    folder = Path(path)
+    try:
+        with os.scandir(folder) as found:
+            if next(found, None) is not None:
+                return False
+        (folder / GUIDE).write_text(GUIDE_TEXT)
+    except OSError:
+        return False
+    return True
+
+
+def bare_workspace(path) -> bool:
+    """Whether the directory ``path`` holds nothing, or nothing but the GUIDE seed_workspace wrote: no project in it yet.
+    False when it cannot be read (the welcome card then says nothing about it)."""
+    folder = Path(path)
+    try:
+        with os.scandir(folder) as found:
+            names = [entry.name for _, entry in zip(range(2), found)]
+        if not names:
+            return True
+        if names != [GUIDE]:
+            return False
+        with open(folder / GUIDE, errors="replace") as guide:
+            return guide.readline().rstrip("\n") == GUIDE_TITLE
+    except OSError:
+        return False

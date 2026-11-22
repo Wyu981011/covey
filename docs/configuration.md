@@ -565,7 +565,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | --- | --- | --- | --- |
 | `--root`、`--state-dir`、`--workdir`、`--profile`、`--interval`、`--health-timeout`、`--log`、`--dry-run`、`--preset` | `service/manager.py`（`bin/covey_service.py`；`--dry-run` 是 `set`、`unset` 的：只打印会改什么，见[改开关三步](#改开关三步)；`--preset showcase` 是 `set` 的：打开[演示套餐](#演示套餐)里清单没设或设成关的开关） | 见 `--help` | 否 |
 | `--root`、`--mode`、`--activate`、`--label`、`--status`、`--uninstall`、`--no-autostart` | `service/install.py` | 见 `--help`（`--mode` 有 `auto`、`systemd`、`launchd`、`cron`、`manager`，扩展可加；`auto` 在没有 systemd/launchd 时给 crontab 加一行 `@reboot`，`--no-autostart` 跳过；`--label` 是 launchd 标签，默认 `com.covey.manager`；公司托管模式的 `--persistent-virtio-pfs` 见扩展 README） | 否 |
-| `--root`、`--runtime-only`、`--skip-events`、`--probe-harnesses` | `service/doctor.py` | 见 `--help` | 否 |
+| `--root`、`--runtime-only`、`--skip-events`、`--probe-harnesses`、`--json`、`--summary` | `service/doctor.py`（`bin/covey_doctor.py`；`--json` 打完整的 JSON 报告，`--summary` 打中文摘要和每项的下一步，见[排障 · 健康诊断](troubleshooting.md#健康诊断)） | 都不给时：输出是终端就打中文摘要，管道和脚本照旧拿到 JSON | 否 |
 | `--state-dir`、`--app-id` | `service/pairing.py` | 见 `--help` | 否 |
 | `--config`、`--data-dir`、`--dry-run`、`--duration`、`--kill`、`--parent-pid`、`--target`、`--as-mib`、`--alert-levels-mib`、`--rg-guard`、`--search-kill-mib` | `service/memguard.py` | 见[内存看门狗](operations.md#内存看门狗) | 否 |
 | `--state-dir`、`--apply`、`--dry-run`、`--destination`、`--restore`、`--verify` | `core/maintenance.py` | 见 [备份、归档与维护](operations.md#备份归档与维护) | 否 |

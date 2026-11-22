@@ -1,0 +1,301 @@
+#!/bin/bash
+# 日常升级（docs/deploy.md 日常升级）：把 ./install 装的机器人换到上游的新提交。真正的部署还是 scripts/deploy_bridge.sh
+# （docs/deploy.md 升级与回滚），这里替你做它前后那几步：
+#
+#   scripts/upgrade.sh [--dry-run] [--state-dir DIR] [--ref REV] [--no-fetch]
+#
+#   1. 检出要干净（没提交的改动不会被部署，先提交或 git stash），git fetch 上游（--no-fetch 不取）；要升到的提交（--ref，默认
+#      当前分支的上游，没有上游时 origin/main）必须包含检出的 HEAD：检出里有它没有的提交时停下，从不强制拉取、不重置。
+#   2. 找机器人：服务根（COVEY_SERVICE_ROOT，或数据根下的 bridge-services）里唯一一个，几个时用 --state-dir 指定。它的现网
+#      release（直接从检出运行的，是检出的 HEAD）已经是这个提交时说“已经是最新”就结束；现网 release 带扩展时停下（按扩展
+#      自己的升级说明做）。
+#   3. 核对依赖：服务清单里的 python3 是 3.10+，服务的 PATH 里有 lark-cli（没有只提示）。
+#   4. 照服务清单载入环境（清单里的变量原样，终端里别的本项目变量不带进去，所以开关和代理都不变），从清单的启动命令抄出
+#      --workdir、--profile、--app-id、--state-dir、--harness-config 和其余参数，先跑 deploy_bridge.sh --check-only；
+#      --dry-run 到此为止，什么都不换。
+#   5. 部署：机器人重启（几十秒内收不到消息和点击，在跑的任务不中断、由新进程接管），日志在 <数据根>/deploy-runs/<时间>/。
+#      成功后检出快进（git merge --ff-only）到这个提交；还有任务进程用着检出里的代码时先不快进，下次运行时补上。
+#
+# 退出码：0 升级好了（或已经是最新、--dry-run 检查都过了），1 某项检查没过（部署前停下的什么都没换），2 参数不对或找不到
+# 机器人，3 另一个部署正在跑（等它结束再运行）。
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec python3 -I - "$ROOT" "$@" <<'PY'
+import argparse, json, os, re, shutil, subprocess, sys, time
+from pathlib import Path
+
+ROOT = Path(sys.argv[1])
+sys.path.insert(0, str(ROOT))
+from covey.core.paths import data_home, service_root  # noqa: E402
+from covey.service.manager import persistable  # noqa: E402
+
+KNOWN = ("--harness", "--state-dir", "--workdir", "--profile", "--app-id", "--harness-config")
+# The processes that run code from the checkout a service ran from before its first upgrade: a task runner the new Bridge
+# adopts keeps reading it until it ends, so the checkout is fast-forwarded only once none is left (docs/deploy.md 第 5 步).
+USERS = ("covey_runner.py", "covey_bridge.py", "covey_butler_mcp.py", "lark_task_runner.py", "lark_harness_bridge.py",
+         "bridge_main_mcp.py", "covey_main_mcp.py")
+PRE_WORDS = {
+    "restart_blockers": "有任务重启会被打断：等它们结束再升级（python3 -B bin/covey_service.py status --state-dir {state} 的 restart_blockers）",
+    "creating_worktree": "有启动卡正在建独立 worktree：等它建完再升级",
+    "proxy_sending": "有代答批次正在发：等它发完再升级",
+    "env_missing": "服务清单里有、这次没带上的变量：{value}",
+    "env_extra": "这次多带了服务清单里没有的变量：{value}",
+    "env_value_diff": "和服务清单的值不一样的变量：{value}",
+    "permission_env": "清单里留着已不生效的权限变量：{value}；按 docs/troubleshooting.md「权限变量让诊断或部署失败」去掉后再升级",
+    "command_diff": "这次要注册的启动命令和现网的不一样：照 docs/deploy.md「升级与回滚」手工部署",
+    "rollback": "要部署的提交没包含现网的提交：{value}",
+    "extension_env": "清单或终端里有 COVEY_EXTENSIONS / COVEY_EXTENSION_PATH：{value}",
+}
+
+
+def say(text=""):
+    print(text, flush=True)
+
+
+def stop(code, why, next_step=""):
+    say(f"升级停在这里：{why}")
+    if next_step:
+        say(f"下一步：{next_step}")
+    sys.exit(code)
+
+
+ap = argparse.ArgumentParser(prog="upgrade.sh", description="把 ./install 装的机器人升级到上游的新提交（docs/deploy.md 日常升级）")
+ap.add_argument("--dry-run", action="store_true", help="只取新提交、跑部署前的检查，不部署、不动检出")
+ap.add_argument("--state-dir", help="要升级的机器人的状态目录（服务根下只有一个机器人时不用给）")
+ap.add_argument("--ref", help="升级到哪个提交（默认当前分支的上游，没有上游时 origin/main）")
+ap.add_argument("--no-fetch", action="store_true", help="不 git fetch，只用本地已有的提交")
+ap.add_argument("--repo", default=str(ROOT), help=argparse.SUPPRESS)  # The checkout to upgrade (tests); this one by default.
+args = ap.parse_args(sys.argv[2:])
+repo = Path(args.repo).resolve()
+
+
+def git(*argv, timeout=120):
+    try:
+        return subprocess.run(["git", *argv], cwd=repo, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "", f"git {argv[0]} timed out after {timeout} s")
+
+
+def short(sha):
+    return sha[:8]
+
+
+# ---- 1. the checkout and the commit to go to
+if not shutil.which("git"):
+    stop(2, "找不到 git")
+if git("rev-parse", "--git-dir").returncode:
+    stop(2, f"{repo} 不是 git 检出")
+dirty = [line for line in git("status", "--porcelain", "--untracked-files=no").stdout.splitlines() if line.strip()]
+if dirty:  # Each line is "XY path": the leading space of X matters, so the output is not stripped.
+    stop(1, "检出里有没提交的改动：" + "、".join(line[3:] for line in dirty[:5]),
+         "先提交或 git stash，再运行 scripts/upgrade.sh（升级部署的是提交，不含没提交的改动）")
+ref = args.ref
+if not ref:
+    upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
+    ref = upstream.stdout.strip() if upstream.returncode == 0 and upstream.stdout.strip() else "origin/main"
+if not args.no_fetch:
+    remotes = git("remote").stdout.split()
+    remote = ref.split("/", 1)[0] if "/" in ref and ref.split("/", 1)[0] in remotes else None
+    fetched = git("fetch", "--quiet", *([remote] if remote else []))
+    if fetched.returncode:
+        stop(1, "git fetch 没成功：" + " ".join((fetched.stderr or fetched.stdout).split())[-300:],
+             "检查网络或代理后再试；只用本地已有的提交时加 --no-fetch")
+target = git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").stdout.strip()
+if not target:
+    stop(2, f"找不到 {ref}", "用 --ref 指定要升级到的提交或分支（比如 origin/main）")
+head = git("rev-parse", "HEAD").stdout.strip()
+if git("merge-base", "--is-ancestor", head, target).returncode:
+    ahead = git("rev-list", "--count", f"{target}..{head}").stdout.strip() or "?"
+    stop(1, f"检出里有 {ref} 没有的提交（{ahead} 个）：升级会部署 {ref}，不含它们",
+         "要部署检出现在的提交：scripts/upgrade.sh --ref HEAD；要跟上游一致，先自己处理这些提交（本脚本不强制拉取、不重置）")
+newer = git("rev-list", "--count", f"{head}..{target}").stdout.strip() or "0"
+
+# ---- 2. the service
+root = Path(service_root())
+manifests = []
+for path in sorted((root / "services").glob("*.json")):
+    try:
+        found = json.loads(path.read_text())
+    except (OSError, ValueError):
+        continue
+    if isinstance(found, dict) and found.get("state_dir") and isinstance(found.get("command"), list):
+        manifests.append(found)
+if args.state_dir:
+    wanted = os.path.realpath(os.path.expanduser(args.state_dir))
+    manifests = [m for m in manifests if os.path.realpath(m["state_dir"]) == wanted]
+    if not manifests:
+        stop(2, f"服务根 {root} 里没有状态目录是 {wanted} 的机器人", "看 python3 -B bin/covey_service.py status --state-dir <状态目录>")
+elif len(manifests) > 1:
+    stop(2, f"服务根 {root} 里有 {len(manifests)} 个机器人",
+         "用 --state-dir 指定要升级的那个：" + "、".join(m["state_dir"] for m in manifests))
+if not manifests:
+    stop(2, f"服务根 {root} 里没有注册的机器人",
+         "还没装就先 ./install；数据根不在默认位置时先 export COVEY_DATA_HOME=<数据根>（或 COVEY_SERVICE_ROOT）")
+manifest = manifests[0]
+state = manifest["state_dir"]
+if manifest.get("desired_state") != "running":
+    stop(1, "这个机器人停着", f"先 python3 -B bin/covey_service.py start --state-dir {state}，再升级")
+saved = manifest.get("environment") if isinstance(manifest.get("environment"), dict) else {}
+data = Path(saved.get("LARK_BRIDGE_DATA_HOME") or saved.get("COVEY_DATA_HOME") or data_home()).expanduser()
+command = [str(part) for part in manifest["command"]]
+entry = Path(command[2]) if len(command) > 2 else None
+live_id, live_core, with_extensions = None, None, False
+try:
+    rel = entry.resolve().relative_to((data / "releases").resolve()) if entry else None
+except (ValueError, OSError):
+    rel = None
+if rel is not None and len(rel.parts) > 1:
+    live_id = rel.parts[0]
+    try:
+        rows = [line.split() for line in (data / "releases" / live_id / "RELEASE_MANIFEST").read_text().splitlines()]
+    except OSError:
+        rows = []
+    live_core = next((row[1] for row in rows if row[:1] == ["core"] and len(row) > 1), None)
+    with_extensions = any(row[:1] == ["extension"] for row in rows) or ("-" in live_id and not rows)
+    if live_core is None and re.fullmatch(r"[0-9a-f]{40}", live_id):
+        live_core = live_id
+if with_extensions:
+    stop(1, f"这个机器人的现网 release（{live_id}）带着扩展",
+         "按扩展自己的升级说明做（它底下也用 scripts/deploy_bridge.sh，要加 --ext-repo）")
+
+
+def in_use():
+    """Whether a process still runs code from the checkout (USERS): only checked for a service that ran from it."""
+    if live_id is not None:
+        return False
+    proc = Path("/proc")
+    if not proc.is_dir():
+        return True  # No /proc to look in (macOS): fast-forward the next time, once the service runs from a release.
+    prefix = str(repo) + "/bin/"
+    for item in proc.glob("[0-9]*/cmdline"):
+        try:
+            argv = item.read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if any(a.decode(errors="replace").startswith(prefix) and a.decode(errors="replace").endswith(USERS) for a in argv):
+            return True
+    return False
+
+
+def fast_forward():
+    if head == target:
+        return
+    if in_use():
+        say(f"检出先不快进：还有任务进程用着检出里的代码。它们结束后运行 git -C {repo} merge --ff-only {short(target)}，"
+            "或下次运行 scripts/upgrade.sh 时自动补上")
+        return
+    merged = git("merge", "--ff-only", "--quiet", target)
+    if merged.returncode:
+        say(f"检出没能快进到 {short(target)}（{' '.join((merged.stderr or merged.stdout).split())[-200:]}）：机器人已经是新版本，"
+            f"检出自己运行 git -C {repo} merge --ff-only {short(target)}")
+    else:
+        say(f"检出已快进到 {short(target)}")
+
+
+say("升级 Covey")
+say(f"    检出      {repo}（{short(head)}）")
+say(f"    升到      {ref} = {short(target)}" + (f"（比检出新 {newer} 个提交）" if newer != "0" else ""))
+say(f"    机器人    {state}（现网：" + (f"release {live_id}" if live_id else "直接从检出运行") + "）")
+if (live_core if live_id is not None else head) == target:  # A service run from the checkout runs its HEAD.
+    say(f"已经是最新（{short(target)}），不用升级。")
+    if not args.dry_run:
+        fast_forward()
+    sys.exit(0)
+
+# ---- 3. dependencies
+python = command[0] if command else "python3"
+try:
+    version = subprocess.run([python, "-c", "import sys; print(sys.version_info >= (3, 10))"], capture_output=True,
+                             text=True, timeout=30).stdout.strip()
+except (OSError, subprocess.SubprocessError):
+    version = ""
+if version != "True":
+    stop(1, f"服务用的 Python 不能用或低于 3.10：{python}", "装好 Python 3.10+，用它重新运行 ./install 注册服务，再升级")
+if not shutil.which("lark-cli", path=saved.get("PATH", "")):
+    say("提示：服务的 PATH 里找不到 lark-cli（机器人收发消息要用它）；升级照常做，之后用 ./install 检查")
+
+# ---- 4. the service's own environment and the pre-check
+env = {key: value for key, value in os.environ.items() if not persistable(key)}
+env.update({key: value for key, value in saved.items() if isinstance(value, str)})
+values, options, rest = {}, [], command[3:]
+index, sandboxed = 0, False
+while index < len(rest):
+    word = rest[index]
+    value = rest[index + 1] if index + 1 < len(rest) else None
+    if word in KNOWN and word not in values and value is not None:
+        values[word] = value
+        index += 2
+    elif word == "--sandbox" and not sandboxed and value == "danger-full-access":  # The one bootstrap adds.
+        sandboxed = True
+        index += 2
+    else:
+        options.append(word)
+        index += 1
+missing = [name for name in ("--workdir", "--profile", "--app-id") if name not in values]
+if missing:
+    stop(2, "从服务清单的启动命令里读不出 " + "、".join(missing), "照 docs/deploy.md「升级与回滚」手工部署")
+stamp = time.strftime("%Y%m%d-%H%M%S")
+deploy = [str(repo / "scripts" / "deploy_bridge.sh"), "--repo", str(repo), "--commit", target,
+          "--workdir", values["--workdir"], "--profile", values["--profile"], "--app-id", values["--app-id"],
+          "--state-dir", state, "--harness-config", values.get("--harness-config") or str(data / "harnesses.json")]
+tail = ["--", *options] if options else []
+
+
+def run_deploy(*extra, run_dir):
+    try:
+        done = subprocess.run(["bash", *deploy, "--run-dir", str(run_dir), *extra, *tail], env=env, capture_output=True,
+                              text=True, timeout=1800)
+    except subprocess.TimeoutExpired:
+        stop(1, "部署脚本半小时没结束", f"看 {run_dir} 里的日志")
+    try:
+        return done.returncode, json.loads(done.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return done.returncode, {"ok": False, "error": " ".join((done.stderr or done.stdout).split())[-300:] or f"exit {done.returncode}"}
+
+
+def explain(code, result, run_dir):
+    """Say why a deploy did not go through and exit with its code (1, or 3 for a deploy running already)."""
+    if code == 3:
+        holder = result.get("deploy_running") or {}
+        stop(3, "另一个部署正在跑" + (f"（pid {holder.get('pid')}，{holder.get('started')} 开始）" if holder.get("pid") else ""),
+             "等它结束再运行 scripts/upgrade.sh")
+    pre = result.get("pre") or {}
+    found = []
+    for key, words in PRE_WORDS.items():
+        value = pre.get(key)
+        if value:
+            shown = "、".join(map(str, value)) if isinstance(value, list) else json.dumps(value, ensure_ascii=False)[:300]
+            found.append(words.format(value=shown, state=state))
+    if any("HTTPS_PROXY" in str(pre.get(key)) for key in ("env_missing", "env_value_diff")):
+        found.append("清单里存的是大写的 HTTPS_PROXY：照 docs/deploy.md「升级与回滚」的已知限制改存成小写的 https_proxy 再升级")
+    for line in found:
+        say(f"    {line}")
+    stop(code or 1, result.get("error") or "部署没成功", f"日志在 {run_dir}；处理好再运行 scripts/upgrade.sh")
+
+
+runs = data / "deploy-runs"
+check_dir = runs / f"{stamp}-check"
+code, result = run_deploy("--check-only", run_dir=check_dir)
+if code or not result.get("ok"):
+    say("部署前的检查没过：")
+    explain(code, result, check_dir)
+say("部署前的检查都过了。")
+if args.dry_run:
+    say("--dry-run：什么都没换。去掉 --dry-run 就会部署 " + short(target) + "。")
+    sys.exit(0)
+
+# ---- 5. the deploy
+say("部署中：机器人会重启，几十秒内收不到消息和卡片点击（之后收下的会照常处理）；在跑的任务不中断，新进程接管它们。")
+deploy_dir = runs / stamp
+code, result = run_deploy(run_dir=deploy_dir)
+if code or not result.get("ok"):
+    say("部署没成功：")
+    explain(code, result, deploy_dir)
+post = result.get("post") or {}
+release = result.get("release_id") or Path(str(result.get("release") or target)).name
+say(f"升级好了：机器人第 {post.get('generation') or '?'} 代，从 release {short(release) if len(release) == 40 else release} 运行。")
+if live_id is None:
+    say("以后改开关用 python3 -B bin/covey_service.py set（docs/configuration.md「改开关三步」）；不要再用 ./install 改，"
+        "它会把服务注册回检出目录。")
+fast_forward()
+PY
