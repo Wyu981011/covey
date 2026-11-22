@@ -236,7 +236,7 @@ class RelayTest(unittest.TestCase):
         head = opened["content"]
         self.assertTrue(head.startswith("好了。\n\n细节很多。"))  # 犹抱琵琶半遮面: the first few hundred characters.
         self.assertIn("<font color='blue'>**展开全文 · 还有约", fold["header"]["title"]["content"])  # Bold, framed.
-        self.assertEqual("blue", fold["border"]["color"])
+        self.assertEqual("bottom", fold["header"]["position"])
         self.assertNotIn("结论", head)
         body = fold["elements"][0]["content"]
         self.assertNotIn("好了", body)  # Going on from where the opening stopped, nothing said twice.

@@ -92,7 +92,8 @@ class ReadMoreTest(unittest.TestCase):
         self.assertEqual(("collapsible_panel", "relay_reply", False), (fold["tag"], fold["element_id"], fold["expanded"]))
         self.assertEqual("<font color='blue'>**展开全文 · 还有约 900 字**</font>", fold["header"]["title"]["content"])
         self.assertEqual([{"tag": "markdown", "content": "后面的内容"}], fold["elements"])
-        self.assertEqual("blue", fold["border"]["color"])  # A framed bar, not a grey line read as the end.
+        self.assertEqual("bottom", fold["header"]["position"])  # Opened, the rest follows the opening as one text.
+        self.assertNotIn("border", fold)
         self.assertTrue(fits("短短一句。\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"))  # A short reply with a table: whole.
         self.assertFalse(fits("字" * (PEEK_WIDTH // 2 + 1)))
 
