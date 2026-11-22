@@ -47,6 +47,31 @@
 
 `base_url` 只接受 `https://`，唯一的例外是本机回环的 `http://127.0.0.1`、`http://localhost`、`http://[::1]`（可带端口）；其他 `http://` 一律拒绝，密钥不会走明文发到别的机器（早先的版本也收任意 `http://`；升级后这种配置读不进来，同步停住、日志里写明原因，改成 `https://` 即可）。要从别的设备访问，在前面放自己的反向代理并用 `https://`，写在 `page_url` 里；回环端口本身不要对外开。没设 `COVEY_WEB_SELFHOST` 时 Manager 不起线程、不起进程。
 
+### 公网直连（自带 HTTPS）
+
+要从别的设备直接打开，不想另搭反向代理时，网页进程可以自己在公网端口上听 HTTPS。本机回环的 HTTP 照旧一直开（Covey 同步靠它）。
+
+1. 备好密钥和配置时加 `--public`：`python3 -B -m covey.service.web_selfhost --dir /absolute/path/to/covey-web/dist-selfhost --public 203.0.113.10`（地址可以是 IPv4、IPv6、域名，逗号分隔写几个；`--public auto` 在终端里用本机的公网地址问一次确认，非终端要写明；端口用 `--public-port`，默认 18443；监听地址 `--bind`，默认 `0.0.0.0`）。命令会多打印要设的开关 `COVEY_WEB_SELFHOST_PUBLIC`（端口、监听地址不是默认时另设 `COVEY_WEB_SELFHOST_PUBLIC_PORT`、`COVEY_WEB_SELFHOST_BIND`），把 `page_url` 写成 `https://<第一个地址>:<端口>/`（IPv6 自动加方括号）；`--page-url` 优先。
+2. 在防火墙和云服务器的安全组里放行命令打印的 TCP 端口。
+3. 证书：不给就用网页进程生成的自签证书（`<数据根>/web/tls/`，EC P-256，有效期 397 天，名字写进 SAN，30 天内到期或地址变了会重建）。命令在构建产物里有 `server/selfhost/tls-cli.js` 时会先生成并打印指纹。浏览器第一次会警告“不安全”：核对页面的证书指纹和命令打印的一致，点“高级”→“继续访问”。有域名和证书时用 `--tls-cert`、`--tls-key`（绝对路径，一起给）换成自己的，浏览器就不会警告。网页不发 HSTS，所以自签证书能点“继续访问”。
+4. 重新注册服务，Manager 拉起带公网监听的网页进程（设置变了会重启它）。证书准备不了时只记日志、不开公网监听，回环照常，体检会说原因。
+
+公网监听上的约束：`/openapi/*` 一律拒绝（不论密钥），`/healthz` 不开，会话和登录的 cookie 都带 `Secure`，响应带 `X-Frame-Options: DENY`、`Content-Security-Policy: frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: same-origin`。登录用飞书确认（见下一节）：浏览器打开网页地址，点“用飞书登录”，在飞书私聊里核对对照码、点「允许」。没设 `COVEY_WEB_SELFHOST_PUBLIC` 时不开公网监听、不生成证书。
+
+### 体检
+
+开了 `COVEY_WEB_SELFHOST=1` 的运行中的服务，`covey_doctor.py` 里多一行自托管网页（JSON 报告里是该服务的 `web_selfhost`；没开时没有这一项、不发请求）：构建产物在不在、`node` 在不在服务的 `PATH` 里、密钥文件在且权限 600、`web.json` 的 `base_url` 指向本机这个端口、回环的 `/healthz` 通不通；公网模式再看公网监听起没起来、证书和私钥在不在（私钥只看权限、不读内容）、证书 30 天内会不会过期、SAN 盖没盖住地址、公网端口连不连得上（从本机连，防火墙和安全组放行没有，只能从外面试）。正常时一行 `✓ 自托管网页在运行：本机 …，公网 https://…:18443/（自签证书到 YYYY-MM-DD）`，有问题每条一行 `✗` 或 `!` 加“下一步”。它不让服务变 degraded，也不影响退出码；设置卡的「诊断」标签不变。
+
+### 备份与恢复
+
+开了自托管时，每日备份（见[备份、归档与维护](operations.md#备份归档与维护)）多收网页数据库：成员 `selfhost-web/pglite.tar.gz`，结果记在 `maintenance-status.json` 的 `web_backup`。恢复：
+
+```
+python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/bridge-<时间>.tar.gz
+```
+
+也可以给 `pglite.tar.gz` 本身。命令安全地解到 `<数据根>/web/db.restore/`（拒绝 `..`、绝对路径、链接和设备文件），最后写标记，再给运行中的网页进程发 SIGTERM；Manager 几秒后拉起它，它把旧库改名为 `db.before-restore-<时间>`、换上恢复的库。网页进程没在跑时只放好，下次起来生效。外部 Postgres 用 `pg_dump` 和 `pg_restore`，不走这里。
+
 ### 网页登录确认
 
 自托管的网页用飞书确认登录：在网页上点“用飞书登录”，网页往发件箱写一条 `login` 操作（`op_id` 是 `login-<request_id>`，`payload` 带 `request_id`、4 位对照码 `code`、`browser`、`os`、来源地址 `ip` 和发起时间 `at`，秒）。Covey 取到后在你的私聊发一张「网页登录确认」卡：写明浏览器、系统、来源（本机回环写“本机”，经 Tailscale 或反向代理来的写对方地址；旧网页不带 `ip` 时不写这一行）、对照码和发起时间，按钮「允许」「不是我」；这条操作的回执只说“已发出确认卡”，不代表你同意了。

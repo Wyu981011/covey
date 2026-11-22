@@ -1,10 +1,15 @@
 // 自托管服务的接口级测试：起真服务（构建产物 dist-selfhost，PGlite 用临时目录），走完密钥、登录、会话、频控的全流程。
 // 先 npm run build:selfhost:server（test:selfhost-api 脚本会先构建）。端口 18690–18699 里找一个空的。
+// 公网 HTTPS 也一并测：公网监听绑 127.0.0.1 的另一个端口（18760–18779），用生成的自签证书做 ca 去连。
 // 设了 SELFHOST_TEST_DATABASE_URL 就改连那个外部 Postgres（要一个空库），验 DATABASE_URL 那条路。
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
+import { X509Certificate } from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
@@ -19,7 +24,10 @@ let dir;
 let child;
 let base;
 let keyFile;
+let pubPort;
 const output = [];
+const extra = []; // 额外起的服务（恢复、证书出错那几个），after 里一起停
+const usedPorts = new Set();
 
 function freePort(port) {
   return new Promise((ok) => {
@@ -29,18 +37,29 @@ function freePort(port) {
   });
 }
 
+/** 18760–18779 里取一个没人用的端口 */
+async function takePort() {
+  for (let p = 18760; p <= 18779; p += 1) {
+    if (usedPorts.has(p) || !(await freePort(p))) continue;
+    usedPorts.add(p);
+    return p;
+  }
+  throw new Error('18760-18779 没有空端口');
+}
+
 before(async () => {
   assert.ok(existsSync(MAIN), '先构建：npm run build:selfhost:server');
   let port = 0;
   for (let p = 18690; p <= 18699 && !port; p += 1) if (await freePort(p)) port = p;
   assert.ok(port, '18690-18699 没有空端口');
+  pubPort = await takePort();
   dir = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'selfhost-api-'));
   keyFile = join(dir, 'key');
   writeFileSync(keyFile, `${KEY}\n`, { mode: 0o600 });
   const staticDir = join(dir, 'client');
   child = spawn(process.execPath, [MAIN], {
     cwd: WEB,
-    env: { ...process.env, COVEY_WEB_PORT: String(port), COVEY_WEB_DB_DIR: join(dir, 'db'), COVEY_WEB_KEY_FILE: keyFile, COVEY_WEB_STATIC_DIR: staticDir, DATABASE_URL: process.env.SELFHOST_TEST_DATABASE_URL || '', NODE_ENV: 'production' },
+    env: { ...process.env, COVEY_WEB_PORT: String(port), COVEY_WEB_DB_DIR: join(dir, 'db'), COVEY_WEB_KEY_FILE: keyFile, COVEY_WEB_STATIC_DIR: staticDir, COVEY_WEB_PUBLIC_NAMES: '127.0.0.1', COVEY_WEB_PUBLIC_PORT: String(pubPort), COVEY_WEB_PUBLIC_HOST: '127.0.0.1', COVEY_WEB_TLS_DIR: join(dir, 'tls'), DATABASE_URL: process.env.SELFHOST_TEST_DATABASE_URL || '', NODE_ENV: 'production' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (d) => output.push(String(d)));
@@ -56,9 +75,15 @@ before(async () => {
       await new Promise((r) => setTimeout(r, 200));
     }
   }
+  for (let i = 0; i < 100; i += 1) {
+    const h = await (await fetch(`${base}/healthz`)).json();
+    if (h.public?.listening || h.public?.error) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
 });
 
 after(() => {
+  for (const e of extra) e.kill('SIGTERM');
   if (child && !child.killed) child.kill('SIGTERM');
   if (dir) rmSync(dir, { recursive: true, force: true });
 });
@@ -325,4 +350,278 @@ test('页面：没构建前端时 index 是 404 说明，/api 下没有的是 JS
   assert.equal(page.status, 404);
   const missing = await api('/api/nope', { cookie: '' });
   assert.equal(missing.status, 401);
+});
+
+
+// ---------------------------------------------------------------- 公网 HTTPS、健康检查、备份与恢复
+
+/** 走公网 HTTPS 监听：用服务生成的自签证书做 ca */
+function pub(path, { method = 'GET', headers = {}, body, cookie = '' } = {}) {
+  const ca = readFileSync(join(dir, 'tls', 'cert.pem'));
+  return new Promise((ok, fail) => {
+    const req = https.request(
+      { host: '127.0.0.1', port: pubPort, path, method, ca, headers: { 'user-agent': CHROME_MAC, ...(method !== 'GET' ? { 'x-covey-csrf': '1' } : {}), ...(cookie ? { cookie } : {}), ...headers } },
+      (res) => {
+        const chunks = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => ok({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+      },
+    );
+    req.on('error', fail);
+    req.end(body);
+  });
+}
+
+const backup = (url = base, key = KEY) => fetch(`${url}/openapi/selfhost/backup`, { headers: key ? { authorization: `Bearer ${key}` } : {} });
+
+/** 起一个额外的服务（自己的数据目录、端口），等回环 /healthz 通 */
+async function startExtra(root, env = {}) {
+  const port = await takePort();
+  const out = [];
+  const c = spawn(process.execPath, [MAIN], {
+    cwd: WEB,
+    env: { ...process.env, COVEY_WEB_PORT: String(port), COVEY_WEB_DB_DIR: join(root, 'db'), COVEY_WEB_KEY_FILE: keyFile, COVEY_WEB_STATIC_DIR: join(root, 'client'), DATABASE_URL: '', NODE_ENV: 'production', ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  c.stdout.on('data', (d) => out.push(String(d)));
+  c.stderr.on('data', (d) => out.push(String(d)));
+  extra.push(c);
+  const url = `http://127.0.0.1:${port}`;
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      await fetch(`${url}/healthz`);
+      break;
+    } catch {
+      if (Date.now() - t0 > 60000) throw new Error(`额外服务没起来：${out.join('')}`);
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  const stop = () =>
+    new Promise((ok) => {
+      if (c.exitCode !== null) return ok();
+      c.once('exit', () => ok());
+      c.kill('SIGTERM');
+    });
+  return { url, stop, out };
+}
+
+test('所有响应都带安全头（回环和公网）', async () => {
+  const want = { 'x-frame-options': 'DENY', 'content-security-policy': "frame-ancestors 'none'", 'x-content-type-options': 'nosniff', 'referrer-policy': 'same-origin' };
+  for (const r of [await fetch(`${base}/healthz`), await fetch(`${base}/api/me`), await fetch(`${base}/settings`), await fetch(`${base}/openapi/sync/inbox`)]) {
+    for (const [k, v] of Object.entries(want)) assert.equal(r.headers.get(k), v, `${r.url} ${k}`);
+    assert.equal(r.headers.get('strict-transport-security'), null);
+  }
+  const p = await pub('/api/me');
+  for (const [k, v] of Object.entries(want)) assert.equal(p.headers[k], v, `公网 ${k}`);
+});
+
+test('回环 /healthz：不要会话；public 段有指纹、listening=true', async () => {
+  const res = await fetch(`${base}/healthz`);
+  assert.equal(res.status, 200);
+  const h = await res.json();
+  assert.equal(h.ok, true);
+  assert.equal(h.pid, child.pid);
+  assert.equal(h.db, process.env.SELFHOST_TEST_DATABASE_URL ? 'postgres' : 'pglite');
+  assert.ok(Math.abs(new Date(h.started_at) - Date.now()) < 120000);
+  const cert = new X509Certificate(readFileSync(join(dir, 'tls', 'cert.pem')));
+  assert.deepEqual(h.public, {
+    host: '127.0.0.1', port: pubPort, names: ['127.0.0.1'], tls: 'self-signed', fingerprint: cert.fingerprint256,
+    not_after: new Date(cert.validTo).toISOString(), listening: true, error: '',
+  });
+  // 大小写换个写法和带斜杠一样
+  assert.equal((await fetch(`${base}/HEALTHZ/`)).status, 200);
+  const files = readdirSync(join(dir, 'tls')).sort();
+  assert.deepEqual(files, ['cert.pem', 'key.pem']);
+});
+
+test('回环 /healthz 只给本机直连：经反代来的（带转发头）当没有', async () => {
+  for (const h of [{ 'x-forwarded-for': '198.51.100.9' }, { forwarded: 'for=198.51.100.9' }, { 'x-real-ip': '198.51.100.9' }]) {
+    const r = await fetch(`${base}/healthz`, { headers: h });
+    assert.equal(r.status, 404, JSON.stringify(h));
+  }
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+});
+
+test('公网：只有 HTTPS，明文 HTTP 连公网端口失败', async () => {
+  const ok = await pub('/api/me');
+  assert.equal(ok.status, 401);
+  await assert.rejects(
+    new Promise((res, rej) => {
+      const r = http.get({ host: '127.0.0.1', port: pubPort, path: '/api/me', timeout: 3000 }, (x) => {
+        x.resume();
+        x.on('end', () => res(x.statusCode));
+      });
+      r.on('error', rej);
+      r.on('timeout', () => r.destroy(new Error('timeout')));
+    }),
+  );
+  // 不信这张证书的客户端连不上（证书是自签的，没有系统信任）
+  await assert.rejects(new Promise((res, rej) => https.get({ host: '127.0.0.1', port: pubPort, path: '/' }, res).on('error', rej)), /self[- ]signed|UNABLE_TO|DEPTH_ZERO/iu);
+});
+
+test('公网：/openapi 一律 403（有密钥、不分大小写也一样），/healthz 404', async () => {
+  for (const p of ['/openapi/sync/inbox', '/OPENAPI/sync/inbox', '/openapi/selfhost/backup', '/Openapi']) {
+    const r = await pub(p, { headers: { authorization: `Bearer ${SECOND_KEY}` } });
+    assert.equal(r.status, 403, p);
+    const nokey = await pub(p);
+    assert.equal(nokey.status, 403, `${p} 没密钥`);
+  }
+  assert.equal((await pub('/openapi/sync/upsert', { method: 'POST', headers: { authorization: `Bearer ${SECOND_KEY}`, 'content-type': 'application/json' }, body: '{"items":[]}' })).status, 403);
+  for (const p of ['/healthz', '/HealthZ/']) {
+    const r = await pub(p);
+    assert.equal(r.status, 404, p);
+    assert.doesNotMatch(r.body.toString(), /<html/iu);
+  }
+});
+
+test('公网：登录 cookie 带 Secure；回环仍不带', async () => {
+  const hdr = { 'x-forwarded-for': '198.51.100.77' };
+  const r = await pub('/api/auth/login-requests', { method: 'POST', headers: hdr });
+  assert.equal(r.status, 200, r.body.toString());
+  const c = [].concat(r.headers['set-cookie'] ?? []).find((x) => x.startsWith('covey_login='));
+  assert.ok(c);
+  assert.match(c, /Secure/u);
+  assert.match(c, /HttpOnly/u);
+  const { id } = JSON.parse(r.body.toString());
+  assert.equal((await decide(id, 'approved')).status < 300, true);
+  const poll = await pub(`/api/auth/login-requests/${id}`, { cookie: c.split(';')[0] });
+  assert.deepEqual(JSON.parse(poll.body.toString()), { state: 'approved' });
+  const sess = [].concat(poll.headers['set-cookie']).find((x) => x.startsWith('covey_session='));
+  assert.match(sess, /Secure/u);
+  assert.match(sess, /HttpOnly/u);
+  // 会话在公网照样能用
+  assert.equal((await pub('/api/me', { cookie: sess.split(';')[0] })).status, 200);
+});
+
+test('备份：带密钥 200 且是 tar.gz；没密钥或错密钥 401；带转发头 403', { skip: Boolean(process.env.SELFHOST_TEST_DATABASE_URL) }, async () => {
+  assert.equal((await backup(base, '')).status, 401);
+  assert.equal((await backup(base, 'wrong-key')).status, 401);
+  assert.equal((await fetch(`${base}/openapi/selfhost/backup`, { headers: { authorization: `Bearer ${SECOND_KEY}`, 'x-forwarded-for': '198.51.100.7' } })).status, 403);
+  assert.equal((await fetch(`${base}/OPENAPI/selfhost/backup`)).status, 401);
+  const ok = await backup(base, SECOND_KEY);
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get('content-type'), 'application/gzip');
+  const buf = Buffer.from(await ok.arrayBuffer());
+  assert.equal(buf.length, Number(ok.headers.get('content-length')));
+  assert.ok(gunzipSync(buf).length > 1000);
+  const list = spawnSync('tar', ['-tzf', '-'], { input: buf, encoding: 'utf8' });
+  assert.equal(list.status, 0, list.stderr);
+  assert.match(list.stdout, /^\/?PG_VERSION$/mu);
+});
+
+test('备份超过 COVEY_WEB_BACKUP_MAX_BYTES 是 413；.restore 没有完成标记不动它', { skip: Boolean(process.env.SELFHOST_TEST_DATABASE_URL) }, async () => {
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'selfhost-restore-'));
+  try {
+    mkdirSync(join(root, 'db.restore'));
+    writeFileSync(join(root, 'db.restore', 'half'), 'x');
+    const s = await startExtra(root, { COVEY_WEB_BACKUP_MAX_BYTES: '100' });
+    const big = await backup(s.url, SECOND_KEY);
+    assert.equal(big.status, 413);
+    assert.equal((await big.json()).error.code, 'TOO_LARGE');
+    assert.ok(existsSync(join(root, 'db.restore', 'half')), '没标记的 .restore 原样留着');
+    assert.deepEqual(readdirSync(root).filter((n) => n.includes('before-restore')), []);
+    assert.match(s.out.join(''), /没有 \.covey-restore-complete/u);
+    await s.stop();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('恢复交换：备份解到 db.restore 写上标记，下次启动换上，原库留作 before-restore，数据是备份时的', { skip: Boolean(process.env.SELFHOST_TEST_DATABASE_URL) }, async () => {
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'selfhost-restore-'));
+  try {
+    const snap = Buffer.from(await (await backup(base, SECOND_KEY)).arrayBuffer());
+    // 先起一次空库的服务，让 db/ 存在（里面没有 say-1）
+    const first = await startExtra(root);
+    const inbox0 = await (await fetch(`${first.url}/openapi/sync/inbox`, { headers: { authorization: `Bearer ${SECOND_KEY}` } })).json();
+    assert.equal(inbox0.items.some((i) => i.op_id === 'say-1'), false);
+    await first.stop();
+    assert.ok(existsSync(join(root, 'db')));
+    // 解到 db.restore（成员名带前导 /，tar 会去掉），最后写标记
+    mkdirSync(join(root, 'db.restore'));
+    const x = spawnSync('tar', ['-xzf', '-', '-C', join(root, 'db.restore')], { input: snap, encoding: 'utf8' });
+    assert.equal(x.status, 0, x.stderr);
+    writeFileSync(join(root, 'db.restore', '.covey-restore-complete'), '');
+    const second = await startExtra(root);
+    assert.equal(existsSync(join(root, 'db.restore')), false);
+    const aside = readdirSync(root).filter((n) => /^db\.before-restore-\d{8}-\d{6}$/u.test(n));
+    assert.equal(aside.length, 1, readdirSync(root).join(','));
+    assert.equal(existsSync(join(root, 'db', '.covey-restore-complete')), false);
+    const inbox = await (await fetch(`${second.url}/openapi/sync/inbox`, { headers: { authorization: `Bearer ${SECOND_KEY}` } })).json();
+    assert.ok(inbox.items.some((i) => i.op_id === 'say-1'), '恢复后应有备份时的 say-1');
+    await second.stop();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('证书准备不了：不开公网，回环照常，/healthz 的 public.error 写原因', async () => {
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'selfhost-badtls-'));
+  try {
+    const port = await takePort();
+    const s = await startExtra(root, { COVEY_WEB_PUBLIC_NAMES: '127.0.0.1', COVEY_WEB_PUBLIC_PORT: String(port), COVEY_WEB_PUBLIC_HOST: '127.0.0.1', COVEY_WEB_TLS_CERT: join(root, 'nope-cert.pem'), COVEY_WEB_TLS_KEY: join(root, 'nope-key.pem') });
+    const h = await (await fetch(`${s.url}/healthz`)).json();
+    assert.equal(h.ok, true);
+    assert.equal(h.public.listening, false);
+    assert.equal(h.public.tls, 'provided');
+    assert.match(h.public.error, /读不了证书/u);
+    assert.equal((await fetch(`${s.url}/api/me`)).status, 401);
+    assert.equal(await freePort(port), true, '公网端口没被占用');
+    assert.match(s.out.join(''), /公网 HTTPS 没开/u);
+    await s.stop();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+/** 用给定的 ca 连一次公网监听，返回对方证书的 SHA-256 指纹（大写、冒号分隔，和 /healthz 的写法一样） */
+function peerFingerprint(port, ca) {
+  return new Promise((ok, fail) => {
+    const req = https.request({ host: '127.0.0.1', port, path: '/api/me', ca, agent: false }, (res) => {
+      const fp = res.socket.getPeerCertificate().fingerprint256;
+      res.resume();
+      res.on('end', () => ok(fp));
+    });
+    req.on('error', fail);
+    req.end();
+  });
+}
+
+test('证书换了（自己的证书续期）：不重启，下次检查就地换上，新连接拿到新证书', async () => {
+  const root = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'selfhost-renew-'));
+  const cli = join(WEB, 'dist-selfhost/server/selfhost/tls-cli.js');
+  try {
+    const made = ['a', 'b'].map((n, i) => {
+      const done = spawnSync(process.execPath, [cli, '--dir', join(root, n), '--names', i ? '127.0.0.1,localhost' : '127.0.0.1'], { encoding: 'utf8' });
+      assert.equal(done.status, 0, done.stderr);
+      return JSON.parse(done.stdout.trim());
+    });
+    assert.notEqual(made[0].fingerprint, made[1].fingerprint);
+    const own = { cert: join(root, 'own-cert.pem'), key: join(root, 'own-key.pem') };
+    writeFileSync(own.cert, readFileSync(made[0].cert));
+    writeFileSync(own.key, readFileSync(made[0].key), { mode: 0o600 });
+    const port = await takePort();
+    const s = await startExtra(root, { COVEY_WEB_PUBLIC_NAMES: '127.0.0.1', COVEY_WEB_PUBLIC_PORT: String(port), COVEY_WEB_PUBLIC_HOST: '127.0.0.1', COVEY_WEB_TLS_CERT: own.cert, COVEY_WEB_TLS_KEY: own.key, COVEY_WEB_TLS_CHECK_SECONDS: '1' });
+    try {
+      assert.equal(await peerFingerprint(port, readFileSync(made[0].cert)), made[0].fingerprint);
+      writeFileSync(own.key, readFileSync(made[1].key), { mode: 0o600 });
+      writeFileSync(own.cert, readFileSync(made[1].cert));
+      let h = null;
+      for (let i = 0; i < 40; i += 1) {
+        h = await (await fetch(`${s.url}/healthz`)).json();
+        if (h.public.fingerprint === made[1].fingerprint) break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      assert.equal(h.public.fingerprint, made[1].fingerprint, '健康口的指纹换成新证书的');
+      assert.equal(h.public.listening, true);
+      assert.equal(h.public.error, '');
+      assert.equal(await peerFingerprint(port, readFileSync(made[1].cert)), made[1].fingerprint, '新连接拿到新证书');
+      assert.match(s.out.join(''), /公网证书已换上新的/u);
+    } finally {
+      await s.stop();
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

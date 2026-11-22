@@ -464,6 +464,7 @@
 | `core/turn_words.py` | The words the cards, the pinned board and the butler say about a turn and a topic, in one place |
 | `core/updates.py` | Per-task coalesced UI updates, isolated from backend event handling |
 | `core/usage.py` | Numeric-only output throughput |
+| `core/web_backup.py` | 自托管网页的数据库备份与恢复: the page's own PGlite database in the daily backup and back out of it |
 | `core/web_profile.py` | 代答's Feishu web login (its browser profile) |
 | `core/web_sync.py` | 网页工作台同步的数据: the config, the four kinds of items pushed to the web page, and the ledger of the operations … |
 | `core/welcome.py` | The welcome card's record and a new deployment's first answer, as the Bridge and ./install read them |

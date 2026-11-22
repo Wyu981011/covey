@@ -3,7 +3,7 @@
 ``covey_doctor.py`` prints these lines instead of its JSON when its output is a terminal (or with ``--summary``); a pipe, a
 script and ``--json`` get the JSON as before. ``lines(report, ...)``: a title, the conclusion (都正常, or how many parts need a
 look), one row a part (the Manager, each service of the root, its switches, how long Claude Code keeps sessions, its
-devices, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, and
+devices, the self-hosted page, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, and
 where the full report is. A row's mark: ``✓`` fine, ``✗`` a fault, ``!`` to know, ``·`` only said.
 
 Only the report's fields are read: nothing is asked of a process, a model or Feishu here, and no value of an environment
@@ -138,7 +138,28 @@ def service_rows(row, state, root_arg) -> list:
                          f"python3 -B bin/covey_devices.py{state_arg} check {failed[0]}"))
         else:
             rows.append((NOTE, "设备读不出来", "看 docs/operations.md「多设备」"))
+    rows += web_rows(_dict(row.get("web_selfhost")))
     return rows
+
+
+def web_rows(web) -> list:
+    """The self-hosted page's rows (service/web_selfhost.py ``check``): one line when all is well, else one a problem; [] when the
+    service does not run one."""
+    if not web:
+        return []
+    problems = [p for p in web.get("problems") or () if isinstance(p, dict)]
+    rows = [(NOTE if p.get("level") == "note" else FAULT, str(p.get("what") or "自托管网页有问题"), str(p.get("next") or "")) for p in problems]
+    if any(mark == FAULT for mark, _, _ in rows):
+        return rows
+    public = _dict(web.get("public"))
+    text = f"自托管网页在运行：本机 {web.get('url')}"
+    if public:
+        names = public.get("names") or ["?"]
+        host = f"[{names[0]}]" if ":" in str(names[0]) else names[0]
+        until = str(public.get("not_after") or "")[:10]
+        text += f"，公网 https://{host}:{public.get('port')}/（{'自签证书' if public.get('tls') == 'self-signed' else '自己的证书'}"
+        text += f"到 {until}）" if until else "）"
+    return [(OK, text, ""), *rows]
 
 
 def boot_row(boot, root_arg) -> tuple:

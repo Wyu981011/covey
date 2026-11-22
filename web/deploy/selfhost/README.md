@@ -54,7 +54,50 @@ python3 -B -m covey.service.web_selfhost --dir /absolute/path/to/covey-web/dist-
 
 ## 从别的设备打开
 
-网页进程只听 `127.0.0.1`，别的设备直接连不上，这是故意的。按你的情况选一种：
+网页进程的回环端口只听 `127.0.0.1`，别的设备直接连不上，这是故意的。按你的情况选一种：
+
+### 公网 IP 直连（自带 HTTPS）
+
+这台机器有公网 IP（或有指向它的域名）时，最省事的做法：网页进程自己再开一个 HTTPS 端口，不用装别的东西。回环端口照旧只听本机，Covey 同步和本机浏览器不受影响。
+
+```bash
+python3 -B -m covey.service.web_selfhost --dir /absolute/path/to/covey-web/dist-selfhost --public 203.0.113.10
+```
+
+`--public` 写公网 IP 或域名（逗号分隔可写多个，第一个写进飞书卡片上的网页地址；`auto` 取本机出网网卡的公网地址并让你确认）。命令会打印：
+
+- **要放行的 TCP 端口**：默认 18443（`--public-port` 改），在云厂商的安全组和系统防火墙里放行。
+- **网页地址**：`https://203.0.113.10:18443/`。
+- **自签证书的指纹**和浏览器第一次怎么信任。
+- 要设的开关：`COVEY_WEB_SELFHOST_PUBLIC`（公网地址，非空才开公网监听）、`COVEY_WEB_SELFHOST_PUBLIC_PORT`、`COVEY_WEB_SELFHOST_BIND`（默认 `0.0.0.0`）。照打印的改服务清单、重新注册服务。
+
+**第一次打开：信任自签证书。** 证书是网页进程自己生成的（EC P-256，397 天，剩 30 天内自动换新；换新后指纹变了，浏览器会再问一次）。没有机构签发，浏览器会警告“不安全”。核对警告页或证书详情里的 SHA-256 指纹和命令打印的一致，再继续：
+
+- 电脑浏览器：点“高级”，再点“继续访问”。
+- iPhone Safari：点“显示详细信息”，再点“访问此网站”。
+- 安卓 Chrome：点“高级”，再点“继续前往”。
+
+指纹对不上就别继续：可能有人在中间。想完全不出警告，用自己的域名和证书（下一条）。
+
+**用自己的证书**：有域名和正式证书（例如 Let's Encrypt）时，加 `--tls-cert /absolute/path/fullchain.pem --tls-key /absolute/path/privkey.pem`（PEM，私钥不带口令；两个一起给），浏览器不会警告。证书续期后不用管：网页进程每天看一次证书文件，变了就地换上（新连接用新证书，不重启）。
+
+**安全边界**：
+
+- 公网端口上只有 HTTPS，明文 HTTP 连不上；登录和会话 cookie 一律带 `Secure`、`HttpOnly`。
+- 开放接口（`/openapi/*`，Covey 同步和备份用）在公网端口上一律 403，不管带不带密钥；只有回环端口上、本机直连并带密钥才能用。`/healthz` 在公网端口上是 404。
+- 页面接口都要有效会话，会话只能在飞书私聊里点「允许」换来；发起登录同一来源 30 秒一次、同时最多 5 个等你确认的，登录确认卡上写着来源地址。
+- 所有响应带 `X-Frame-Options: DENY`、`Content-Security-Policy: frame-ancestors 'none'`、`X-Content-Type-Options: nosniff`、`Referrer-Policy: same-origin`。不加 HSTS（自签证书加了，浏览器就不给“继续访问”）。
+- 这台机器上的另一个用户能读到回环端口，但读不到证书私钥（`tls/key.pem` 权限 600，目录 700）。
+
+**备份与恢复**：Covey 的每日维护会自动把网页库快照（PGlite 的 tar.gz，`selfhost-web/pglite.tar.gz`）放进每日备份包；密钥文件和证书私钥不进备份。外部 Postgres 不在其内，用 `pg_dump`。库坏了想用备份换回来：
+
+```bash
+python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/bridge-YYYYMMDD.tar.gz
+```
+
+它把快照解到 `<数据根>/web/db.restore/`、最后写上完成标记，再让网页进程退出；Manager 几秒后拉起它，启动时把旧库改名成 `db.before-restore-<时间>`（留着，确认没问题再删），换上恢复的库。`db.restore` 没有完成标记（没放完）时网页进程只在日志里警告，不动它。
+
+下面三种不带自己的 HTTPS，各有各的适用场景：
 
 | 情况 | 做法 | `page_url` 写什么 |
 | --- | --- | --- |
@@ -88,7 +131,7 @@ location / {
 }
 ```
 
-不要把 18650 端口直接开到公网，也不要让网页进程听 `0.0.0.0`：那样登录 cookie 走明文。
+不要把 18650 端口直接开到公网，也不要让回环端口听 `0.0.0.0`：那样登录 cookie 走明文。要直接对公网，用上面的“公网 IP 直连”。
 
 ## 谁能看
 
@@ -124,6 +167,11 @@ bash web/deploy/selfhost/build.sh /absolute/path/to/covey-web --restart
 | 进程反复退出 | `<数据根>/web/logs/selfhost.log` 的最后几行；端口被占用时换端口（第 2 步 `--port` 和开关一起改） |
 | 点了“用飞书登录”私聊里没有卡 | Bridge 要开着 `COVEY_WEB=1` 且 `COVEY_WEB_CONFIG` 指向第 2 步的 `web.json`；`curl -s http://127.0.0.1:18650/api/me` 回 401 说明网页进程活着 |
 | 卡上点了「允许」，卡写“没有送到网页” | 网页进程没在跑或密钥对不上（卡上写了原因），起来后再点一次 |
+| 公网地址打不开（超时） | 安全组和系统防火墙放行了 `COVEY_WEB_SELFHOST_PUBLIC_PORT`（默认 18443）的 TCP 吗；`curl -s http://127.0.0.1:18650/healthz` 的 `public.listening` 是不是 `true` |
+| `/healthz` 里 `public.error` 有内容 | 公网 HTTPS 没开（回环照常）：写的是原因，常见是自己的证书路径读不了、私钥和证书对不上、证书过期、公网端口被占用；改好后让网页进程重启 |
+| 浏览器警告证书不受信任 | 自签证书的正常现象：核对指纹（`/healthz` 的 `public.fingerprint`）再继续；想免警告用自己的域名和证书 |
+| 手机能开但登录后马上掉线 | 登录 cookie 带 `Secure`，只在 HTTPS 下发：确认地址是 `https://` 开头，不是反代到明文 |
+| `/openapi/…` 在公网地址上 403 | 正常：开放接口只在回环端口上开 |
 | 卡写“已失效” | 网页上这次登录已经过期或处理过了，在网页上重新点“用飞书登录” |
 
 ## 手工运行（不经 Manager）
@@ -143,6 +191,12 @@ COVEY_WEB_PORT=18650 COVEY_WEB_DB_DIR=/absolute/path/to/data/web/db COVEY_WEB_KE
 | `DATABASE_URL`、`COVEY_WEB_DATABASE_URL_FILE` | 空 | 外部 Postgres 的连接串，或放连接串的文件；都没有就用 PGlite |
 | `COVEY_WEB_STATIC_DIR` | `dist-selfhost/client` | 前端文件目录 |
 | `COVEY_WEB_OPENAPI_ALLOW_REMOTE` | 空 | `1`：`/openapi` 也收非本机、经代理来的请求（仍要密钥）。Covey 和网页不在同一台机器时才用，前面必须是 https |
+| `COVEY_WEB_PUBLIC_NAMES` | 空 | 公网地址（IP 或域名，逗号分隔）；非空才另开 HTTPS 监听。Manager 从 `COVEY_WEB_SELFHOST_PUBLIC` 传来 |
+| `COVEY_WEB_PUBLIC_PORT`、`COVEY_WEB_PUBLIC_HOST` | `18443`、`0.0.0.0` | 公网 HTTPS 的端口和监听地址 |
+| `COVEY_WEB_TLS_DIR` | `./data/tls` | 自签证书放这里（`cert.pem`、`key.pem`），缺了、快过期（30 天内）、地址变了就重建 |
+| `COVEY_WEB_TLS_CERT`、`COVEY_WEB_TLS_KEY` | 空 | 自己的证书链和私钥（PEM，两个一起给）；给了就不用自签 |
+| `COVEY_WEB_BACKUP_MAX_BYTES` | 256 MiB | `/openapi/selfhost/backup` 的快照上限，超了回 413 |
+| `COVEY_WEB_TLS_CHECK_SECONDS` | 86400 | 多久再看一次证书：自签的离过期不到 30 天就重建，自己的证书文件换了（续期）就读新的，都是就地换上、不用重启 |
 | `COVEY_WEB_PARENT_PID` | 空 | Manager 设成自己的 pid：Manager 不在了网页进程自己退出 |
 
 ## 开发和检查
@@ -152,7 +206,8 @@ COVEY_WEB_PORT=18650 COVEY_WEB_DB_DIR=/absolute/path/to/data/web/db COVEY_WEB_KE
 ```bash
 npm run build:selfhost             # 服务端到 dist-selfhost/server，前端到 dist-selfhost/client
 npm run test:selfhost-logic        # 纯逻辑：对照码、频控、cookie、密钥比较、配置
-npm run test:selfhost-api          # 接口：起真服务（PGlite 临时目录），走完密钥、登录、会话、频控、登出
+npm run test:selfhost-tls          # 证书：生成、SAN、重建条件、权限、指纹、tls-cli
+npm run test:selfhost-api          # 接口：起真服务（PGlite 临时目录），走完密钥、登录、会话、频控、登出，以及公网 HTTPS、/healthz、备份和恢复
 npm run start:selfhost             # 本地起服务（环境变量同上）
 ```
 

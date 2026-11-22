@@ -8,6 +8,7 @@ import {
   SESSION_TTL_MS,
   buildCookie,
   clearCookie,
+  isSecureRequest,
   parseCookies,
   type LoginState,
 } from './auth.logic';
@@ -22,7 +23,7 @@ export class AuthController {
   async start(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<{ id: string; code: string; expires_at: string }> {
     try {
       const r = await this.auth.start(req.ip ?? '', req.headers['user-agent']);
-      res.setHeader('Set-Cookie', buildCookie(LOGIN_COOKIE, r.secret, { maxAgeSec: LOGIN_TTL_MS / 1000, secure: req.secure, path: '/api/auth' }));
+      res.setHeader('Set-Cookie', buildCookie(LOGIN_COOKIE, r.secret, { maxAgeSec: LOGIN_TTL_MS / 1000, secure: isSecureRequest(req), path: '/api/auth' }));
       res.setHeader('Cache-Control', 'no-store');
       return { id: r.id, code: r.code, expires_at: r.expires_at };
     } catch (e) {
@@ -44,8 +45,8 @@ export class AuthController {
     const token: string | null = await this.auth.redeem(id, secret, req.ip ?? '', req.headers['user-agent']);
     if (!token) return { state: 'used' };
     res.setHeader('Set-Cookie', [
-      buildCookie(SESSION_COOKIE, token, { maxAgeSec: SESSION_TTL_MS / 1000, secure: req.secure }),
-      clearCookie(LOGIN_COOKIE, { secure: req.secure, path: '/api/auth' }),
+      buildCookie(SESSION_COOKIE, token, { maxAgeSec: SESSION_TTL_MS / 1000, secure: isSecureRequest(req) }),
+      clearCookie(LOGIN_COOKIE, { secure: isSecureRequest(req), path: '/api/auth' }),
     ]);
     return { state: 'approved' };
   }
@@ -59,7 +60,7 @@ export class AuthController {
   @HttpCode(200)
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<{ ok: true }> {
     await this.auth.logout(String((req as Request & { sessionId?: string }).sessionId ?? ''));
-    res.setHeader('Set-Cookie', clearCookie(SESSION_COOKIE, { secure: req.secure }));
+    res.setHeader('Set-Cookie', clearCookie(SESSION_COOKIE, { secure: isSecureRequest(req) }));
     return { ok: true };
   }
 
@@ -67,7 +68,7 @@ export class AuthController {
   @HttpCode(200)
   async logoutAll(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<{ ok: true; removed: number }> {
     const removed: number = await this.auth.logoutAll();
-    res.setHeader('Set-Cookie', clearCookie(SESSION_COOKIE, { secure: req.secure }));
+    res.setHeader('Set-Cookie', clearCookie(SESSION_COOKIE, { secure: isSecureRequest(req) }));
     return { ok: true, removed };
   }
 }

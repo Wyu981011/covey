@@ -48,6 +48,28 @@ git clone https://github.com/ericxk/covey.git && cd covey
 
 旧版本在只有 Codex 时装的服务没开专项和整理专项。重跑 `./install` 时最后几行给出打开它们的命令：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" COVEY_PROJECTS=1 COVEY_PROJECT_TIDY=suggest COVEY_PROJECT_AUTOWAKE=1 COVEY_PROJECT_ASK=1 COVEY_PROJECT_MEMORY=1 COVEY_PROJECT_TRIAGE=1`，先加 `--dry-run` 看会改什么（[改开关三步](configuration.md#改开关三步)）。重跑不改你开着或关着的开关，也不改你在设置卡上选过的管家 Harness。
 
+## 网页工作台（可选）
+
+默认不装。想在这台机器上自托管[网页工作台](web.md)（浏览器里看专项和话题）时，三种方式任选：
+
+- **终端里问一次**：这台机器有 Node 22 以上和 npm、服务还没开过网页时，安装器问“要不要在这台机器上跑网页工作台”，默认不要；回答要，再问要不要让人在外面直接打开（只在出网地址是公网地址时问，默认不要，建议值是那个地址，可以改成别的 IP 或域名）。Node 或 npm 不够时不问。没有终端（`--non-interactive`、管道）时不问。
+- **`./install --web`**：不问，直接装；Node 或 npm 不够时在最后的「还差」里说原因，不影响服务。
+- **`./install --web-public ADDR`**：隐含 `--web`，同时开公网 HTTPS 直连。`ADDR` 是 IP 或域名，逗号分隔；写 `auto` 用本机出网网卡的公网地址（终端里让你确认，没有终端时直接用，找不到就只开本机地址并在「还差」里说）。
+
+选了之后，安装器在检查 Harness 之后马上在后台构建（`web/deploy/selfhost/build.sh`，目录 `<数据根>/web/app`，要联网装依赖，约 1 GB、几分钟），输出在 `<数据根>/install-logs/web-build.log`，和扫码等步骤并行；第 5 步注册服务前等它（每分钟说一句还在构建，最多等 20 分钟）。成功后写好网页配置和开放接口密钥，并把开关随注册写进服务清单，Manager 起网页进程。Ctrl-C 或别的步骤失败时构建按进程组停掉。
+
+没选就什么都不做：不检测 Node、不构建、不写开关，最后「想多开」里多一行 `./install --web`。重跑是安全的：服务清单里已经开着网页的照旧保留、不再问；没开过又没选的不开；显式 `./install --web` 重跑则升级构建（`web/deploy/selfhost/build.sh --restart`，正在跑的网页进程几秒内换成新版）。
+
+构建失败（或超时、Node 不够）只在「还差」里写原因和日志位置，服务照常注册。改好后手动补：
+
+```bash
+bash web/deploy/selfhost/build.sh <数据根>/web/app && python3 -B -m covey.service.web_selfhost --data-root <数据根> --dir <数据根>/web/app/dist-selfhost
+```
+
+第二条会打印要在服务清单里设的开关，按[改开关三步](configuration.md#改开关三步)写进去；也可以直接重新运行 `./install --web`。
+
+装好后最后几行写网页地址。公网直连时还有要放行的 TCP 端口（防火墙或云安全组）、自签证书的指纹和第一次访问怎么信任：浏览器提示不安全时核对指纹一致，再选“继续访问”。第一次登录：打开网页，飞书私聊里机器人发来确认卡，点「允许」。构建目录、公网和证书选项、备份与排障见 [web/deploy/selfhost/README.md](../web/deploy/selfhost/README.md) 和 [web.md](web.md)。
+
 ## 选项
 
 | 选项 | 含义 |
@@ -62,6 +84,8 @@ git clone https://github.com/ericxk/covey.git && cd covey
 | `--no-autostart` | 没有 systemd、launchd 时不往 crontab 加开机自启的一行 |
 | `--profile`、`--app-name` | `lark-cli` profile 名（默认 `covey`）、新应用的名称（默认 `Covey`） |
 | `--no-start` | 只准备到飞书应用为止，不注册、不启动服务 |
+| `--web` | 在这台机器上自托管网页工作台（要 Node 22 以上和 npm）：后台构建，注册服务前等它，见[网页工作台](#网页工作台可选)；不加时终端里没开过网页的机器问一次 |
+| `--web-public ADDR` | 隐含 `--web`，同时开公网 HTTPS 直连：IP 或域名（逗号分隔），`auto` 用本机出网网卡的公网地址 |
 | `--showcase` | 演示套餐：默认开的之外，再开协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡，见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动；只有 Codex 时不含专项和整理专项。已经装好的服务：清单里已有的设置照旧，只打开套餐里清单没有或关着的开关（效果同 `covey_service.py set --preset showcase`） |
 
 ## 第一个回答

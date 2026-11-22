@@ -27,7 +27,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from covey.core.backup import (BACKUP_KEEP, back_up, create_backup, last_backup, old_backups, remove_backup,
+from covey.core.backup import (BACKUP_KEEP, back_up, create_backup, last_backup, old_backups, remove_backup, web_extra,
                                         restore_backup, verify_backup)
 from covey.core.loops import every
 from covey.core.maintenance_report import Report, mib, tree_bytes
@@ -74,18 +74,21 @@ def maintain(state, *, apply=False, days=30, history_bytes=1024 * 1024, backup_k
     plan["migrated"] = migrate(state)  # Old records (core/migrate.py): nothing once the Bridge's start did it.
     status = state / "maintenance-status.json"
     last_backup = now if backup else read_object(status).get("last_backup")
+    web = read_object(status).get("web_backup")  # The self-hosted page's database in the backup (core/web_backup.py).
     if backup:
-        plan["backup"] = str(create_backup(state))
+        extra, web = web_extra(now)
+        plan["backup"] = str(create_backup(state, extra))
     plan["deferred"] = not _cleanup(state, plan, idle, now, days)
     plan["remove_backups"] = old_backups(state, backup_keep, now=now)
     for name in plan["remove_backups"]:
         remove_backup(name)
     plan["closed"] = []
     # Recorded before the stale records are closed: a failure there never repeats today's backup.
-    write_json(status, {"last_completed": now, "last_backup": last_backup, "plan": plan}, ensure_ascii=False)
+    record = {"last_completed": now, "last_backup": last_backup, "plan": plan, **({"web_backup": web} if web else {})}
+    write_json(status, record, ensure_ascii=False)
     if close_stale and not plan["deferred"]:
         plan["closed"] = close_stale(plan)
-        write_json(status, {"last_completed": now, "last_backup": last_backup, "plan": plan}, ensure_ascii=False)
+        write_json(status, record, ensure_ascii=False)
     return plan
 
 

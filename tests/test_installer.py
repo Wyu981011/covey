@@ -1164,12 +1164,290 @@ class WithoutClaudeTest(InstallerCase):
         self.assertEqual(butler_settings.load(self.state).butler_harness, "codex")
 
 
+class FakeBuild:
+    """The page's build process: ends with ``code`` at once, or never (``code`` None) until it is stopped."""
+    pid = 4242424
+
+    def __init__(self, code):
+        self.code = code
+
+    def poll(self):
+        return self.code
+
+    def wait(self, timeout=None):
+        return self.code
+
+
+class WebTest(InstallerCase):
+    """T653: the self-hosted page in ./install: chosen by a flag or one question, built in the background, prepared once
+    the build is done; nothing happens for a run that does not choose it. Node, the build and prepare are all fakes."""
+
+    def setUp(self):
+        super().setUp()
+        self.spawned, self.prepared, self.signalled = [], [], []
+        self.build_code = 0
+        self.suggestion = ""
+        self.prepare_error = None
+        for name, patch in (("spawn_web_build", self.spawn), ("signal_group", self.signal)):
+            patcher = mock.patch.object(installer.Installer, name, autospec=True, side_effect=patch)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.prerequisite_patch = mock.patch.object(installer.Installer, "web_prerequisite", autospec=True)
+        self.prerequisite = self.prerequisite_patch.start()
+        self.prerequisite.return_value = ""
+        self.addCleanup(mock.patch.stopall)
+
+    def spawn(self, ins, argv, log):
+        self.spawned.append(argv)
+        Path(log).write_text("npm 日志\nbuild 日志 第二行\n")
+        return FakeBuild(self.build_code)
+
+    def signal(self, ins, proc, sig):
+        self.signalled.append(sig)
+
+    def prepare(self, data, **kwargs):
+        if self.prepare_error:
+            raise self.prepare_error
+        self.prepared.append((data, kwargs))
+        names = kwargs.get("public") or []
+        result = {"page_url": f"https://{names[0]}:18443/" if names else "http://127.0.0.1:18650/", "config": "x",
+                  "switches": ["COVEY_WEB=1", "COVEY_WEB_CONFIG=/absolute/web.json", "COVEY_WEB_SELFHOST=1",
+                               f"COVEY_WEB_SELFHOST_DIR={kwargs['folder']}"] + ([f"COVEY_WEB_SELFHOST_PUBLIC={','.join(names)}"] if names else []),
+                  "public": {"names": names} if names else None, "open_ports": [18443] if names else [],
+                  "fingerprint": "AB:CD:EF" if names else ""}
+        return result
+
+    def web(self, *argv, interactive=False, answers=(), env=None):
+        replies = list(answers)
+        ins = self.make(*argv, interactive=interactive, env=env, ask=lambda prompt: (self.asked.append(prompt), replies.pop(0) if replies else "")[1])
+        ins.web_prepare, ins.web_suggest, ins.web_poll = self.prepare, lambda: self.suggestion, 0.01
+        (self.data / "tmp").mkdir(parents=True, exist_ok=True)
+        return ins
+
+    def folder(self):
+        return self.data / "web" / "app"
+
+    def switch_names(self, ins):
+        return {key for key in ins.env if "WEB" in key}
+
+    def test_a_terminal_answer_of_yes_builds_in_the_background_and_prepares_the_page_for_the_manifest(self):
+        ins = self.web(interactive=True, answers=["y"])
+        ins.choose_web()
+        self.assertEqual(1, len(self.asked))
+        self.assertIn("网页工作台", self.asked[0])
+        self.assertEqual(["bash", str(installer.REPO_ROOT / "web/deploy/selfhost/build.sh"), str(self.folder())], self.spawned[0])
+        self.assertEqual([], self.prepared)  # Not before the registration step waits for the build.
+        ins.finish_web()
+        self.assertEqual([(self.data, {"folder": str(self.folder() / "dist-selfhost")})], self.prepared)
+        self.assertEqual("1", cenv.get("COVEY_WEB_SELFHOST", None, ins.env))
+        self.assertEqual(str(self.folder() / "dist-selfhost"), cenv.get("COVEY_WEB_SELFHOST_DIR", None, ins.env))
+        self.assertEqual([], ins.leftovers)
+        self.assertIn("web-build.log", self.text())
+
+    def test_the_flag_builds_without_a_question_and_public_asks_for_the_address(self):
+        ins = self.web("--web-public", "203.0.113.7")
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual([], self.asked)
+        self.assertEqual(["203.0.113.7"], self.prepared[0][1]["public"])
+        self.assertEqual("203.0.113.7", cenv.get("COVEY_WEB_SELFHOST_PUBLIC", None, ins.env))
+        self.assertIn("--web-public", installer.parser().format_help())
+
+    def test_a_terminal_that_says_yes_is_offered_a_suggested_public_address_once_with_no_as_the_default(self):
+        self.suggestion = "203.0.113.9"
+        ins = self.web(interactive=True, answers=["y", "y"])
+        ins.choose_web()
+        self.assertEqual(2, len(self.asked))
+        ins.finish_web()
+        self.assertEqual(["203.0.113.9"], self.prepared[0][1]["public"])
+        self.asked.clear()
+        self.prepared.clear()
+        ins = self.web(interactive=True, answers=["y", ""])
+        ins.choose_web()
+        ins.finish_web()
+        self.assertNotIn("public", self.prepared[0][1])
+
+    def test_auto_takes_the_suggestion_without_a_terminal_and_says_so_when_there_is_none(self):
+        self.suggestion = "203.0.113.9"
+        ins = self.web("--web-public", "auto")
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual(["203.0.113.9"], self.prepared[0][1]["public"])
+        self.suggestion, self.prepared[:] = "", []
+        ins = self.web("--web-public", "auto")
+        ins.choose_web()
+        ins.finish_web()
+        self.assertNotIn("public", self.prepared[0][1])
+        self.assertIn("没找到这台机器的公网地址", "\n".join(ins.leftovers))
+
+    def test_a_run_that_does_not_choose_the_page_does_nothing_for_it(self):
+        ins = self.web(interactive=True, answers=[""])  # The question's default is no.
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual(([], [], set(), []), (self.spawned, self.prepared, self.switch_names(ins), ins.leftovers))
+        self.prerequisite.reset_mock()
+        ins = self.web()  # Without a terminal and without a flag: not even a check of Node.
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual(([], [], set(), [], 1), (self.spawned, self.prepared, self.switch_names(ins), ins.leftovers, len(self.asked)))
+        self.prerequisite.assert_not_called()
+
+    def test_without_node_22_and_npm_nothing_is_asked_and_the_flag_says_it_among_the_leftovers(self):
+        self.prerequisite.return_value = "Node 版本太低（v20.1.0，要 22 以上）"
+        ins = self.web(interactive=True)
+        ins.choose_web()
+        self.assertEqual([], self.asked)
+        self.assertEqual([], ins.leftovers)
+        ins = self.web("--web")
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual([], self.spawned)
+        self.assertEqual(set(), self.switch_names(ins))
+        text = "\n".join(ins.leftovers)
+        self.assertIn("Node 版本太低", text)
+        self.assertIn(f"bash {ins.path_of('web/deploy/selfhost/build.sh')} {self.folder()} && python3 -B -m covey.service.web_selfhost", text)
+
+    def test_the_real_check_reads_node_s_version_and_npm(self):
+        self.prerequisite_patch.stop()
+        ins = self.make()
+        for name, body, why in (("node", "#!/bin/bash\necho v22.3.0\n", "没有 npm"), ("npm", "#!/bin/bash\n", "")):
+            path = self.bin / name
+            path.write_text(body)
+            path.chmod(path.stat().st_mode | stat.S_IEXEC)
+            self.assertEqual(why, ins.web_prerequisite())
+        (self.bin / "node").write_text("#!/bin/bash\necho v20.9.0\n")
+        self.assertIn("版本太低（v20.9.0", ins.web_prerequisite())
+        (self.bin / "node").unlink()
+        self.assertEqual("没有 node", ins.web_prerequisite())
+
+    def test_a_failed_build_or_prepare_is_only_said_and_the_service_is_still_registered(self):
+        self.build_code = 1
+        ins = self.web("--web")
+        ins.choose_web()
+        ins.finish_web()
+        text = "\n".join(ins.leftovers)
+        self.assertIn("没构建成功", text)
+        self.assertIn("build 日志 第二行", text)
+        self.assertIn("build.sh", text)
+        self.assertEqual(set(), self.switch_names(ins))
+        self.assertEqual([], self.prepared)
+        self.build_code, self.prepare_error = 0, ValueError("密钥文件写不了")
+        ins = self.web("--web")
+        ins.choose_web()
+        ins.finish_web()
+        self.assertIn("没能备好配置（密钥文件写不了）", "\n".join(ins.leftovers))
+        self.assertEqual(set(), self.switch_names(ins))
+        ran = self.register(ins)
+        self.assertEqual(["service-install", "bootstrap"], [n for n, _ in ran])
+
+    def register(self, ins):
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["claude"]
+        ran = []
+        with (mock.patch.object(installer.Installer, "run_logged", side_effect=lambda name, argv, **kw: (ran.append((name, argv)), (0, ""))[1]),
+              mock.patch.object(installer.Installer, "service_up", return_value=False),
+              mock.patch.object(installer.Installer, "precompile")):
+            ins.start_service(self.data / "harnesses.json")
+        return ran
+
+    def test_the_switches_are_in_the_environment_the_registration_runs_with(self):
+        ins = self.web("--web")
+        ins.choose_web()
+        ran = self.register(ins)  # start_service waits for the build, then registers.
+        self.assertEqual(1, len(self.prepared))
+        self.assertEqual("1", cenv.get("COVEY_WEB_SELFHOST", None, ins.env))
+        self.assertEqual(["service-install", "bootstrap"], [n for n, _ in ran])
+        self.assertIn("1", [v for k, v in ins.fingerprint(self.data / "harnesses.json")["settings"].items() if k.endswith("WEB_SELFHOST")])
+
+    def test_a_build_that_does_not_end_is_stopped_after_the_time_and_one_that_is_interrupted_is_stopped_as_a_group(self):
+        import signal
+        self.build_code = None
+        ins = self.web("--web")
+        ins.web_seconds = 0
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual([signal.SIGTERM], self.signalled)
+        self.assertIn("构建超过", "\n".join(ins.leftovers))
+        self.assertEqual([], self.prepared)
+        self.signalled.clear()
+        ins = self.web("--web")
+        with mock.patch.object(installer.Installer, "check_environment"), \
+                mock.patch.object(installer.Installer, "ensure_lark_cli", side_effect=KeyboardInterrupt):
+            ins.choose_web()  # In run() it comes after check_harnesses; here the build starts, then the run is interrupted.
+            self.assertEqual(130, ins.run())
+        self.assertEqual([signal.SIGTERM], self.signalled)
+
+    def test_a_rerun_keeps_a_page_the_service_has_on_and_asks_nothing_and_a_web_rerun_upgrades_it(self):
+        from covey.service.manager import register
+        (self.fake / "profile").touch()
+        state = self.data / "harness-cli_fake"
+        state.mkdir(parents=True)
+        register(self.data / "bridge-services", state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                 workdir=self.root, environment={"LARK_BRIDGE_WEB_SELFHOST": "1", "LARK_BRIDGE_WEB": "1"}, health_timeout=90)
+        ins = self.web(interactive=True)
+        ins.choose_web()
+        self.assertEqual([], self.asked + self.spawned)
+        ins = self.web("--web")
+        (self.folder()).mkdir(parents=True)
+        (self.folder() / installer.WEB_BUILD_MARK).touch()
+        ins.choose_web()
+        self.assertEqual("--restart", self.spawned[0][-1])
+        ins = self.web("--web")  # No build there yet: no --restart.
+        shutil.rmtree(self.folder())
+        ins.choose_web()
+        self.assertNotIn("--restart", self.spawned[1])
+
+    def test_a_service_registered_without_the_page_and_a_run_that_does_not_choose_it_stays_without(self):
+        from covey.service.manager import register
+        (self.fake / "profile").touch()
+        state = self.data / "harness-cli_fake"
+        state.mkdir(parents=True)
+        register(self.data / "bridge-services", state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                 workdir=self.root, environment={"LARK_BRIDGE_REVIEW": "1"}, health_timeout=90)
+        ins = self.web(interactive=False)
+        ins.choose_web()
+        ins.settle_switches()
+        self.assertEqual([], self.spawned)
+        self.assertEqual(set(), self.switch_names(ins))
+
+    def test_the_closing_lines_name_the_page_its_open_port_and_certificate_or_offer_it(self):
+        from covey.service.manager import register
+        state = self.data / "harness-cli_fake"
+        state.mkdir(parents=True)
+
+        def closing(environment, result=None):
+            register(self.data / "bridge-services", state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                     workdir=self.root, environment=environment, health_timeout=90)
+            ins = self.make()
+            ins.app_id, ins.workdir, ins.working, ins.web_result = "cli_fake", self.root / "work", ["claude"], result
+            with mock.patch.object(Path, "cwd", return_value=installer.REPO_ROOT):
+                return "\n".join(ins.closing_lines())
+
+        text = closing({"LARK_BRIDGE_REVIEW": "1"})
+        self.assertIn("./install --web", text)
+        self.assertNotIn("网页工作台：", text)
+        text = closing({"LARK_BRIDGE_WEB_SELFHOST": "1"}, {"page_url": "https://203.0.113.7:18443/", "open_ports": [18443],
+                                                          "fingerprint": "AB:CD:EF", "public": {"names": ["203.0.113.7"]}})
+        for words in ("网页工作台：https://203.0.113.7:18443/", "TCP 端口 18443", "指纹 AB:CD:EF", "点「允许」"):
+            self.assertIn(words, text)
+        self.assertRegex(text, "已经开着：.*网页工作台")
+        self.assertNotIn("./install --web", text)
+        text = closing({"LARK_BRIDGE_WEB_SELFHOST": "1"})  # Kept from an earlier run: no result, the default local address.
+        self.assertIn("网页工作台：http://127.0.0.1:18650/", text)
+        self.assertNotIn("防火墙", text)
+
+    def test_the_help_names_antigravity_and_the_web_options(self):
+        self.assertIn("Claude Code、Codex 或 Antigravity", installer.parser().description)
+        args = installer.parser().parse_args(["--web-public", "auto"])
+        self.assertEqual("auto", args.web_public)
+        self.assertFalse(args.web)
+
+
 class EntryTest(unittest.TestCase):
     def test_the_shell_entry_prints_the_options(self):
         done = subprocess.run([str(REPO / "install"), "--help"], capture_output=True, text=True, timeout=60)
         self.assertEqual(0, done.returncode, done.stderr)
         for flag in ("--reconfigure", "--skills", "--non-interactive", "--data-home", "--workdir", "--keep-login",
-                     "--no-browser"):
+                     "--no-browser", "--web", "--web-public"):
             self.assertIn(flag, done.stdout)
 
 

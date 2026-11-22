@@ -15,9 +15,10 @@ from covey.service.boot import boot_health, init_identity, manager_health
 from covey.feishu.connections import EventStatusUnavailable, event_status_apps
 from covey.core.paths import service_root
 from covey.core import claude_retention
+from covey.core import env as cenv
 from covey.core.ignored_env import loosened
 from covey.core.switches import shown as switches_set
-from covey.service import doctor_words
+from covey.service import doctor_words, web_selfhost
 
 
 def hosting_report(receipt, run=subprocess.run, root=None):
@@ -132,6 +133,20 @@ def devices_row(state_dir):
             'devices': rows, 'advice': 'a device that is not passed: covey_devices.py --state-dir <state> check <alias>'}
 
 
+def web_selfhost_row(manifest):
+    """The self-hosted page's check (service/web_selfhost.py ``check``) for a running service whose manifest has COVEY_WEB_SELFHOST=1;
+    None otherwise, so nothing is asked and the report is the same as before. Never makes the service degraded."""
+    environment = {'PATH': os.environ.get('PATH', ''), **(manifest.get('environment') or {})}
+    if not web_selfhost.enabled(environment):
+        return None
+    try:
+        from covey.core.paths import data_home
+        override = str(cenv.get('COVEY_DATA_HOME', '', environment)).strip()
+        return web_selfhost.check(environment, Path(override).expanduser() if override else data_home())
+    except Exception as exc:  # noqa: BLE001 - the report never fails on it
+        return {'status': 'degraded', 'problems': [{'what': f'自托管网页的体检出错了：{type(exc).__name__}', 'next': '', 'level': 'fault'}]}
+
+
 def claude_enabled(manifest):
     """Whether the Claude Harness is enabled for the service ``manifest``: its harnesses.json (the ``--harness-config`` of its
     command, else the data root's) has no ``enabled_harnesses`` or lists it; a file that cannot be read counts as enabled."""
@@ -194,6 +209,8 @@ def diagnose(root, *, check_events=True, probe=False):
         # own topics' trouble.
         if (found := devices_row(manifest['state_dir'])) is not None:
             row['devices'] = found
+        if (found := web_selfhost_row(manifest)) is not None:
+            row['web_selfhost'] = found  # Like devices: said, never makes the service degraded.
         if check_events and (health or {}).get('event_transport') == 'sdk':
             # COVEY_EVENT_TRANSPORT=sdk: there is no lark-cli bus; the Bridge's own consumers say whether they are up.
             consumers = (health or {}).get('consumers') or {}

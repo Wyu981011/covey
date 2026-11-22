@@ -8,6 +8,28 @@ function deny(res: Response, status: number, code: string, message: string): voi
   res.status(status).json({ error: { code, message, timestamp: Date.now() } });
 }
 
+/** 公网 HTTPS 监听上的请求：main.ts 在转给 Express 前标上 */
+export type PublicRequest = Request & { coveyPublic?: boolean };
+
+export const isHealthPath = (path: string): boolean => /^\/healthz\/?$/iu.test(path);
+
+/** 所有响应都带：不许被嵌进别的页面、不许猜内容类型、跨站不带来源。不加 HSTS：自签证书加了浏览器就不给“继续访问” */
+export const securityHeaders: RequestHandler = (_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  next();
+};
+
+/** 公网监听上：/openapi/* 一律 403（不论密钥），/healthz 当没有（404，不让它落到页面回退上） */
+export const publicGuard: RequestHandler = (req: Request, res: Response, next: NextFunction) => {
+  if (!(req as PublicRequest).coveyPublic) return next();
+  if (isOpenapiPath(req.path)) return deny(res, 403, 'FORBIDDEN', '开放接口不对公网开放');
+  if (isHealthPath(req.path)) return deny(res, 404, 'NOT_FOUND', '没有这个接口');
+  next();
+};
+
 /** 收到的 x-larkgw-* 一律丢掉：自托管的身份只认自己签的会话，平台注入的头谁都能伪造 */
 export const stripPlatformHeaders: RequestHandler = (req: Request, _res: Response, next: NextFunction) => {
   for (const name of Object.keys(req.headers)) {

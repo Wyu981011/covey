@@ -58,7 +58,7 @@
 | --- | --- | --- |
 | [代答](#代答) | 带发送器的扩展（核心没有发送器）、主人本人登录的 lark-cli profile | `COVEY_PROXY_PROFILE`，见[代答 · 前置条件与怎么开](proxy.md#前置条件与怎么开) |
 | 小模型判断走模型网关 | harnesses.json 里或扩展提供的模型网关，和你在这个网关上的密钥 | `COVEY_JUDGE_GATEWAY=<网关名>:<模型>`：整理专项、“我本来想找你的事”、同时做几件事这几个一问一答的判断都改走网关，Claude Code 开着也一样（见[小模型判断](#小模型判断)）。不设时有 Claude Code 问它，没有时问 Codex 或 Antigravity 自己的命令行；管家和专项负责人都不靠它 |
-| [网页工作台](web.md) | 一个配套的网页应用和它的开放接口密钥 | `COVEY_WEB=1`、`COVEY_WEB_CONFIG` |
+| [网页工作台](web.md) | 一个配套的网页应用和它的开放接口密钥 | `COVEY_WEB=1`、`COVEY_WEB_CONFIG`；自托管再加 `COVEY_WEB_SELFHOST=1`、`COVEY_WEB_SELFHOST_DIR`、`COVEY_WEB_SELFHOST_PORT`，公网直连再加 `COVEY_WEB_SELFHOST_PUBLIC`、`COVEY_WEB_SELFHOST_PUBLIC_PORT`、`COVEY_WEB_SELFHOST_BIND` |
 | [多设备](#多设备开发中默认关)（开发中） | 能 ssh 过去的其他机器、`devices.json` | `COVEY_DEVICES=1` |
 | [节点与机器状况](#节点与机器状况默认关) | 一个设备能连进来的监听地址 | `COVEY_NODE_LISTEN` |
 | [群聊免@](#群聊免) | 应用要有收群里全部消息的权限（要管理员审核） | `COVEY_GROUP_ALL_MESSAGES=1` |
@@ -430,7 +430,7 @@
 
 | 环境变量 | 谁读 | 默认 | 弃用 |
 | --- | --- | --- | --- |
-| `COVEY_DATA_HOME` | `core/paths.py`、`service/web_selfhost.py`（`wanted`：自托管网页的数据放它下面的 `web/`）、`core/devices.py`（找 `devices.json`）、`core/extensions.py`（找本部署启用、停用的扩展 `extensions/enabled`） | 按 [数据目录](operations.md#数据目录) 推算 | 否 |
+| `COVEY_DATA_HOME` | `core/paths.py`、`service/doctor.py`（体检里自托管网页的数据根）、`service/web_selfhost.py`（`wanted`：自托管网页的数据放它下面的 `web/`）、`core/devices.py`（找 `devices.json`）、`core/extensions.py`（找本部署启用、停用的扩展 `extensions/enabled`） | 按 [数据目录](operations.md#数据目录) 推算 | 否 |
 | `COVEY_SERVICE_ROOT` | `core/paths.py` | `<数据根>/bridge-services` | 否 |
 | `COVEY_REVIEW` | `app/review.py`（`enabled`，`buttons` 据此画按钮） | 关（`./install` 新装的服务写 `1`）；`1`：改了代码的答案卡和回带卡多「独立复核」 | 否 |
 | `COVEY_TURN_EXPORT` | `app/turn_export.py`（`enabled`，`attach_export_controls` 据此加按钮） | 关；`1`：结束的任务卡多「下载请求与结果」 | 否 |
@@ -516,11 +516,15 @@
 | `COVEY_PATROL_JUDGE_MINUTES` | `core/patrol.py`（`number`） | 30：小模型两次调用的间隔，分钟（1 到 1440）；试用时设 `1` | 否 |
 | `COVEY_PATROL_DAILY_CALLS` | `core/patrol.py`（`number`） | 48：小模型一天最多调几次（1 到 1000） | 否 |
 | `COVEY_PATROL_JUDGE_MS` | `core/patrol.py`（`number`） | 30000：小模型一次调用的硬上限，毫秒（1000 到 120000） | 否 |
-| `COVEY_WEB` | `core/web_sync.py`（`enabled`）、`app/web_sync.py`（`WebSync.threads`） | 空：关。`1`：开网页工作台同步，`web-push`、`web-inbox` 两条线程；要同时设 `COVEY_WEB_CONFIG` | 否 |
-| `COVEY_WEB_CONFIG` | `core/web_sync.py`（`load_config`） | 空。指向一个 JSON：`base_url`（`https://`，或本机回环的 `http://127.0.0.1:端口`、`http://localhost`、`http://[::1]` 供自托管用，其他 `http://` 拒绝）、`key_file`（只从这个文件读密钥）、`push_seconds`（默认 1）、`poll_seconds`（默认 0.5）；文件缺了或写错只记一行失败、退避重试 | 否 |
-| `COVEY_WEB_SELFHOST` | `service/web_selfhost.py`（`enabled`、`spec`、`wanted`）、`service/manager.py`（`Manager.ensure_selfhost`） | 空：关，Manager 不起线程、不起进程。`1`：Manager 拉起自托管网页进程 `node <COVEY_WEB_SELFHOST_DIR>/server/selfhost/main.js`（`node` 按服务清单的 `PATH` 找），只监听 `127.0.0.1`，挂了按服务的退避重启，Manager 退出时整组回收（Manager 被强杀时网页进程发现父进程不在了自己退出）；要同时设 `COVEY_WEB_SELFHOST_DIR`，Bridge 一侧另要 `COVEY_WEB=1` 和 `COVEY_WEB_CONFIG`（`python3 -B -m covey.service.web_selfhost` 一次备好） | 否 |
+| `COVEY_WEB` | `core/web_sync.py`（`enabled`）、`core/web_backup.py`（`snapshot`）、`app/web_sync.py`（`WebSync.threads`） | 空：关。`1`：开网页工作台同步，`web-push`、`web-inbox` 两条线程；要同时设 `COVEY_WEB_CONFIG` | 否 |
+| `COVEY_WEB_CONFIG` | `core/web_sync.py`（`load_config`）、`core/web_backup.py`（`snapshot`） | 空。指向一个 JSON：`base_url`（`https://`，或本机回环的 `http://127.0.0.1:端口`、`http://localhost`、`http://[::1]` 供自托管用，其他 `http://` 拒绝）、`key_file`（只从这个文件读密钥）、`push_seconds`（默认 1）、`poll_seconds`（默认 0.5）；文件缺了或写错只记一行失败、退避重试 | 否 |
+| `COVEY_WEB_SELFHOST` | `service/web_selfhost.py`（`enabled`、`spec`、`wanted`）、`service/doctor.py`（体检）、`core/web_backup.py`（`snapshot`）、`service/manager.py`（`Manager.ensure_selfhost`） | 空：关，Manager 不起线程、不起进程。`1`：Manager 拉起自托管网页进程 `node <COVEY_WEB_SELFHOST_DIR>/server/selfhost/main.js`（`node` 按服务清单的 `PATH` 找），只监听 `127.0.0.1`，挂了按服务的退避重启，Manager 退出时整组回收（Manager 被强杀时网页进程发现父进程不在了自己退出）；要同时设 `COVEY_WEB_SELFHOST_DIR`，Bridge 一侧另要 `COVEY_WEB=1` 和 `COVEY_WEB_CONFIG`（`python3 -B -m covey.service.web_selfhost` 一次备好） | 否 |
 | `COVEY_WEB_SELFHOST_DIR` | `service/web_selfhost.py`（`spec`） | 空。自托管网页的构建产物目录（`web/deploy/selfhost/build.sh` 打印的 `dist-selfhost`，`node_modules` 在它旁边），绝对路径，里面要有 `server/selfhost/main.js`；没设或不是绝对路径，开关开着也不起进程 | 否 |
 | `COVEY_WEB_SELFHOST_PORT` | `service/web_selfhost.py`（`port_of`） | 18650：自托管网页进程监听的本机端口（1 到 65535，其他值按默认）；`web.json` 的 `base_url` 要和它一致 | 否 |
+| `COVEY_WEB_SELFHOST_PUBLIC` | `service/web_selfhost.py`（`public_problem`、`public_names`、`spec`、`check`） | 空：不开公网。一个或几个地址（IPv4、IPv6 不带方括号、域名，逗号分隔；第一个写进 `page_url`）：网页进程在回环 HTTP 之外另开 HTTPS 监听（`COVEY_WEB_SELFHOST_PUBLIC_PORT`、`COVEY_WEB_SELFHOST_BIND`），证书是自签的或自己给的（`COVEY_WEB_SELFHOST_TLS_CERT`、`COVEY_WEB_SELFHOST_TLS_KEY`）；公网监听上 `/openapi` 一律拒绝，会话只在这个监听上带 `Secure`。有一个地址不合法就整项当没开，体检说原因（见[网页工作台 · 公网直连](web.md#公网直连自带-https)） | 否 |
+| `COVEY_WEB_SELFHOST_PUBLIC_PORT` | `service/web_selfhost.py`（`public_port_of`） | 18443：公网 HTTPS 端口（1 到 65535，其他值按默认），要在防火墙和安全组放行 | 否 |
+| `COVEY_WEB_SELFHOST_BIND` | `service/web_selfhost.py`（`bind_of`） | `0.0.0.0`：公网 HTTPS 监听的地址（IP；只在 IPv6 上听写 `::`；写不成 IP 按默认） | 否 |
+| `COVEY_WEB_SELFHOST_TLS_CERT`、`COVEY_WEB_SELFHOST_TLS_KEY` | `service/web_selfhost.py`（`own_tls`、`spec`） | 空：用网页进程生成的自签证书（`<数据根>/web/tls/`）。两个都写绝对路径（PEM 证书链和私钥）才用自己的证书，只给一个按没给；私钥权限要 600，体检只看权限、不读内容 | 否 |
 | `COVEY_PROJECT_TIDY` | `core/project_proposals.py`、`app/project_tidy.py`、`app/runs.py`、`core/butler.py`、`core/butler_tool_specs.py`、`app/web_sync.py`、`app/butler_panel.py` | 空或 `off`：关。`suggest`：只提议（能归进已有专项的直接归，新建要主人点）；`auto`：新建也直接做。`./install` 新装的服务写 `suggest`。见[整理专项](#整理专项) | 否 |
 | `COVEY_PROJECT_TIDY_MODEL` | `core/project_proposals.py`（`model`）、`app/project_sorter.py`（`ask`） | `sonnet`：补话题要点和整理判断用的 Claude Code 模型别名或 id；写错按默认 | 否 |
 | `COVEY_PROJECT_TIDY_DAYS` | `core/project_proposals.py`（`number`） | 7：整理看最近几天有过一轮的话题（专项里的话题不论多久都看） | 否 |
@@ -587,7 +591,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--root`、`--state-dir`、`--workdir`、`--profile`、`--interval`、`--health-timeout`、`--log`、`--dry-run`、`--preset` | `service/manager.py`（`bin/covey_service.py`；`--dry-run` 是 `set`、`unset` 的：只打印会改什么，见[改开关三步](#改开关三步)；`--preset showcase` 是 `set` 的：打开[演示套餐](#演示套餐)里清单没设或设成关的开关） | 见 `--help` | 否 |
 | `--root`、`--mode`、`--activate`、`--label`、`--status`、`--uninstall`、`--no-autostart` | `service/install.py` | 见 `--help`（`--mode` 有 `auto`、`systemd`、`launchd`、`cron`、`manager`，扩展可加；`auto` 在没有 systemd/launchd 时给 crontab 加一行 `@reboot`，`--no-autostart` 跳过；`--label` 是 launchd 标签，默认 `com.covey.manager`；公司托管模式的 `--persistent-virtio-pfs` 见扩展 README） | 否 |
 | `--root`、`--runtime-only`、`--skip-events`、`--probe-harnesses`、`--json`、`--summary` | `service/doctor.py`（`bin/covey_doctor.py`；`--json` 打完整的 JSON 报告，`--summary` 打中文摘要和每项的下一步，见[排障 · 健康诊断](troubleshooting.md#健康诊断)） | 都不给时：输出是终端就打中文摘要，管道和脚本照旧拿到 JSON | 否 |
-| `--data-root`、`--dir`、`--port`、`--page-url` | `service/web_selfhost.py`（`python3 -B -m covey.service.web_selfhost`，不另设 `bin/` 入口） | 准备自托管网页：写开放接口密钥文件（600，已有的不覆盖）和 `web.json`，打印要在服务清单里设的开关。`--data-root` 默认数据根，`--dir` 自托管构建产物目录（`dist-selfhost` 的绝对路径），`--port` 默认 18650，`--page-url` 写进 `web.json` 的 `page_url`（飞书卡片「打开网页」的地址，默认 `http://127.0.0.1:<端口>/`，已有的不给参数时保留） | 否 |
+| `--data-root`、`--dir`、`--port`、`--page-url`、`--public`、`--public-port`、`--bind`、`--tls-cert`、`--tls-key`、`--restore-db` | `service/web_selfhost.py`（`python3 -B -m covey.service.web_selfhost`，不另设 `bin/` 入口） | 准备自托管网页：写开放接口密钥文件（600，已有的不覆盖）和 `web.json`，打印要在服务清单里设的开关。`--data-root` 默认数据根，`--dir` 自托管构建产物目录（`dist-selfhost` 的绝对路径），`--port` 默认 18650，`--page-url` 写进 `web.json` 的 `page_url`（飞书卡片「打开网页」的地址，默认 `http://127.0.0.1:<端口>/`，已有的不给参数时保留）；`--public ADDR[,ADDR]` 开公网 HTTPS 直连（`auto` 在终端里用本机的公网地址问一次确认），`--public-port`（默认 18443）、`--bind`（默认 `0.0.0.0`）、`--tls-cert` 和 `--tls-key`（自己的证书，绝对路径、一起给），并打印要放行的端口、网页地址、证书指纹、第一次信任的步骤和飞书确认登录三步；`--restore-db PATH` 只做恢复：从每日备份包或 `pglite.tar.gz` 恢复网页数据库 | 否 |
 | `--state-dir`、`--app-id` | `service/pairing.py` | 见 `--help` | 否 |
 | `--config`、`--data-dir`、`--dry-run`、`--duration`、`--kill`、`--parent-pid`、`--target`、`--as-mib`、`--alert-levels-mib`、`--rg-guard`、`--search-kill-mib` | `service/memguard.py` | 见[内存看门狗](operations.md#内存看门狗) | 否 |
 | `--state-dir`、`--apply`、`--dry-run`、`--destination`、`--restore`、`--verify` | `core/maintenance.py` | 见 [备份、归档与维护](operations.md#备份归档与维护) | 否 |
@@ -600,7 +604,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--home`、`--start`、`--idle`、`--max`、`--dy` | `feishu/web_client.py`（`bin/covey_feishu_web.py`） | 见 [浏览器服务](testing.md#浏览器服务) | 否 |
 | `--app-id`、`--home`、`--plan`、`--login-from`、`--console`、`--login-seconds` | `feishu/app_console.py`（`bin/covey_app_console.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |
 | `--profile`、`--app-id`、`--review`、`--json`、`--python`、`--login-from`、`--work` | `service/app_check.py`（`bin/covey_app_setup.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |
-| `--reconfigure`、`--skills`、`--non-interactive`、`--data-home`、`--workdir`、`--keep-login`、`--no-browser`、`--no-autostart`、`--profile`、`--app-name`、`--no-start`、`--showcase`、`--browser-login-dir`（验收用，隐藏，见[运维](operations.md#服务托管)） | `service/installer.py`（`./install`、`bin/covey_install.py`） | 见[安装](install.md#选项)；`--showcase` 写[演示套餐](#演示套餐) | 否 |
+| `--reconfigure`、`--skills`、`--non-interactive`、`--data-home`、`--workdir`、`--keep-login`、`--no-browser`、`--no-autostart`、`--profile`、`--app-name`、`--no-start`、`--showcase`、`--web`、`--web-public`、`--browser-login-dir`（验收用，隐藏，见[运维](operations.md#服务托管)） | `service/installer.py`（`./install`、`bin/covey_install.py`） | 见[安装](install.md#选项)；`--showcase` 写[演示套餐](#演示套餐) | 否 |
 | `--home`、`--console`、`--shots` | `feishu/install_browser.py`（`bin/covey_install_browser.py`，`./install` 起的浏览器会话） | 见[安装](install.md#它做了什么) | 否 |
 
 ## 已下架项与旧配置

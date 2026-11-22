@@ -13,6 +13,7 @@ import tarfile
 import time
 from pathlib import Path
 
+from covey.core import web_backup
 from covey.core.state import DAY, read_json, read_object, write_json
 
 
@@ -163,8 +164,9 @@ def _backup_bytes(path):
     return data[:data.rfind(b"\n") + 1] if path.suffix == ".jsonl" else data
 
 
-def create_backup(state):
-    """Write a verified backup of ``state``; it takes no lock (see the module docstring)."""
+def create_backup(state, extra=()):
+    """Write a verified backup of ``state``; it takes no lock (see the module docstring). ``extra``: (member name, bytes) pairs
+    written into the package and its manifest besides the state's files (the self-hosted page's database, core/web_backup.py)."""
     folder = state / "backups"
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     base = folder / f"bridge-{time.time_ns()}"
@@ -177,6 +179,14 @@ def create_backup(state):
             if data is None:
                 continue
             rel = str(path.relative_to(state))
+            manifest[rel] = hashlib.sha256(data).hexdigest()
+            info = tarfile.TarInfo(rel)
+            info.size = len(data)
+            info.mode = 0o600
+            tar.addfile(info, io.BytesIO(data))
+        for rel, data in extra:
+            if Path(rel).is_absolute() or ".." in Path(rel).parts or rel in manifest:
+                raise ValueError("额外的备份成员名不安全")
             manifest[rel] = hashlib.sha256(data).hexdigest()
             info = tarfile.TarInfo(rel)
             info.size = len(data)
@@ -215,6 +225,8 @@ def restore_backup(archive, destination):
     destination.mkdir(parents=True, mode=0o700)
     with tarfile.open(archive, "r:gz") as tar:
         for member in tar.getmembers():
+            if member.name.startswith(web_backup.PREFIX):
+                continue  # The page's database: web_selfhost.restore_db puts it back, not a state directory's restore.
             target = destination / member.name
             target.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with target.open("wb") as output:
@@ -283,17 +295,28 @@ def remove_backup(name):
         (path.parent / (base + suffix)).unlink(missing_ok=True)
 
 
+def web_extra(now):
+    """(extra members for ``create_backup``, the ``web_backup`` entry of maintenance-status.json) of the self-hosted page's database
+    now: ((), None) with COVEY_WEB_SELFHOST off, nothing asked of anyone. A failure is only recorded: the state directory's backup
+    never depends on the page."""
+    name, data, info = web_backup.snapshot()
+    if not info:
+        return (), None
+    return ((((name, data),) if data is not None else ()), {"at": now, **info})
+
+
 def back_up(state, *, keep=BACKUP_KEEP, now=None):
     """Today's backup alone, jobs running or not: it reads the state and holds no lock (``create_backup``), and
     the oldest backups go as after any. ``last_backup`` in maintenance-status.json says when; the cleanup's
     ``last_completed`` and plan stay as they were."""
     state = state.resolve()
     now = time.time() if now is None else now
-    backup = create_backup(state)
+    extra, web = web_extra(now)
+    backup = create_backup(state, extra)
     for name in old_backups(state, keep, now=now):
         remove_backup(name)
     status = state / "maintenance-status.json"
-    write_json(status, {**read_object(status), "last_backup": now}, ensure_ascii=False)
+    write_json(status, {**read_object(status), "last_backup": now, **({"web_backup": web} if web else {})}, ensure_ascii=False)
     return backup
 
 

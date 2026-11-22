@@ -10,7 +10,24 @@ export interface SelfhostConfig {
   dbDir: string;
   staticDir: string;
   allowRemoteOpenapi: boolean;
+  /** 公网 HTTPS：地址列表空就不开 */
+  publicNames: string[];
+  publicPort: number;
+  publicHost: string;
+  tlsDir: string;
+  /** 自己的证书和私钥（两个一起给才算） */
+  tlsCert: string;
+  tlsKey: string;
+  /** /openapi/selfhost/backup 最多给多大 */
+  backupMaxBytes: number;
+  /** 多久看一次证书（秒）：自签的快过期就重建、自己的证书文件换了（如 certbot 续期）就地换上，不用重启 */
+  tlsCheckSeconds: number;
 }
+
+const portOf = (v: string | undefined, fallback: number): number => {
+  const n: number = Number(v || fallback);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : fallback;
+};
 
 /** DATABASE_URL；没设时读 COVEY_WEB_DATABASE_URL_FILE 指的文件（Manager 拉起时指 <数据根>/web/database-url，有这个文件就用外部库：连接串可能带密码，不放服务清单） */
 export function databaseUrlOf(env: NodeJS.ProcessEnv): string {
@@ -35,6 +52,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SelfhostConfig
     // 构建产物里本文件在 dist-selfhost/server/selfhost/，前端在 dist-selfhost/client（单测按 ESM 直接导入时没有 __dirname）
     staticDir: resolve(env.COVEY_WEB_STATIC_DIR || join(typeof __dirname === 'string' ? __dirname : process.cwd(), '..', '..', 'client')),
     allowRemoteOpenapi: env.COVEY_WEB_OPENAPI_ALLOW_REMOTE === '1',
+    publicNames: (env.COVEY_WEB_PUBLIC_NAMES || '').split(',').map((n) => n.trim()).filter(Boolean),
+    publicPort: portOf(env.COVEY_WEB_PUBLIC_PORT, 18443),
+    publicHost: env.COVEY_WEB_PUBLIC_HOST || '0.0.0.0',
+    tlsDir: resolve(env.COVEY_WEB_TLS_DIR || './data/tls'),
+    tlsCert: env.COVEY_WEB_TLS_CERT || '',
+    tlsKey: env.COVEY_WEB_TLS_KEY || '',
+    backupMaxBytes: Number(env.COVEY_WEB_BACKUP_MAX_BYTES) > 0 ? Number(env.COVEY_WEB_BACKUP_MAX_BYTES) : 256 * 1024 * 1024,
+    tlsCheckSeconds: Number(env.COVEY_WEB_TLS_CHECK_SECONDS) >= 1 ? Number(env.COVEY_WEB_TLS_CHECK_SECONDS) : 86400,
   };
 }
 

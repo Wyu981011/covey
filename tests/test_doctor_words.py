@@ -103,6 +103,42 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("covey_service_install.py --root /absolute/other --mode auto --activate", text)
         self.assertIn("python3 -B bin/covey_doctor.py --root /absolute/other --json", text)
 
+    def test_the_self_hosted_page_is_one_line_when_well_and_a_row_a_problem_otherwise(self):
+        plain = said(report())
+        self.assertNotIn("自托管", plain)  # Not on: nothing more than before.
+        ok = {"status": "ready", "url": "http://127.0.0.1:18650/", "problems": [],
+              "public": {"names": ["2001:db8::1"], "port": 18443, "tls": "self-signed", "not_after": "2027-12-01T00:00:00Z"}}
+        text = said(report(web_selfhost=ok))
+        self.assertIn("✓ 自托管网页在运行：本机 http://127.0.0.1:18650/，公网 https://[2001:db8::1]:18443/（自签证书到 2027-12-01）", text)
+        self.assertIn("结论：都正常", text)
+        local = said(report(web_selfhost={**ok, "public": None}))
+        self.assertIn("✓ 自托管网页在运行：本机 http://127.0.0.1:18650/\n", local)
+        bad = {"status": "degraded", "url": "u", "public": None, "problems": [
+            {"what": "node 不在服务的 PATH 里", "next": "装 Node.js 22 以上", "level": "fault"},
+            {"what": "证书 20 天后过期", "next": "重启网页进程", "level": "note"}]}
+        text = said(report(web_selfhost=bad))
+        self.assertIn("✗ node 不在服务的 PATH 里\n    下一步：装 Node.js 22 以上", text)
+        self.assertIn("! 证书 20 天后过期\n    下一步：重启网页进程", text)
+        self.assertNotIn("自托管网页在运行", text)
+        self.assertIn("结论：机器人在运行；有 1 项要看", text)
+        note_only = said(report(web_selfhost={**bad, "problems": bad["problems"][1:]}))
+        self.assertIn("✓ 自托管网页在运行", note_only)
+        self.assertIn("! 证书 20 天后过期", note_only)
+
+    def test_diagnose_has_the_page_row_only_for_a_running_service_that_asked(self):
+        asked = {"environment": {"COVEY_WEB_SELFHOST": "1", "COVEY_DATA_HOME": "/absolute/data"}}
+        with mock.patch.object(doctor.web_selfhost, "check", return_value={"status": "ready", "problems": []}) as check:
+            self.assertEqual(doctor.web_selfhost_row(asked), {"status": "ready", "problems": []})
+            self.assertEqual(check.call_args.args[1], Path("/absolute/data"))
+            check.reset_mock()
+            self.assertIsNone(doctor.web_selfhost_row({"environment": {"COVEY_WEB_SELFHOST": "0"}}))
+            self.assertIsNone(doctor.web_selfhost_row({}))
+            check.assert_not_called()  # Off: nothing asked of the page.
+        with mock.patch.object(doctor.web_selfhost, "check", side_effect=RuntimeError("x")):
+            found = doctor.web_selfhost_row(asked)
+        self.assertEqual(found["status"], "degraded")
+        self.assertIn("RuntimeError", found["problems"][0]["what"])
+
     def test_an_unreadable_configuration_says_where_to_point_it(self):
         text = "\n".join(doctor_words.unavailable_lines(Path("/absolute/root")))
         self.assertIn("结论：没查成", text)

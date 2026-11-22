@@ -153,6 +153,11 @@ export function isLoopback(addr: string | undefined): boolean {
   return a === '::1' || a === '127.0.0.1' || /^127\.\d+\.\d+\.\d+$/u.test(a) || /^::ffff:127\.\d+\.\d+\.\d+$/iu.test(a);
 }
 
+/** 会话和登录 cookie 要不要带 Secure：走 https（含本机反代传来的 X-Forwarded-Proto）或来自公网监听（它只有 HTTPS） */
+export function isSecureRequest(req: { secure?: boolean; coveyPublic?: boolean }): boolean {
+  return Boolean(req.secure || req.coveyPublic);
+}
+
 /** 存库和给主人看的来源 IP：去掉 IPv4 映射前缀（::ffff:127.0.0.1 → 127.0.0.1），最长 64 字 */
 export function plainIp(addr: string | undefined): string {
   return String(addr ?? '').replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/iu, '').slice(0, 64);
