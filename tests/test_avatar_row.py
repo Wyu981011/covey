@@ -230,17 +230,18 @@ class RelayTest(unittest.TestCase):
         # band, no fold (T638).
         self.assertEqual(["column_set", "markdown", "markdown"], [element["tag"] for element in short["body"]["elements"]])
         self.assertEqual("好了\n\n细节：改了两处。", short["body"]["elements"][1]["content"])
-        long, _ = relay_card("T623", DONE, text="## 结论\n好了。\n\n" + "细节很多。" * 80, ask=self.asked())
+        long, _ = relay_card("T623", DONE, text="## 结论\n好了。\n\n" + "细节很多。" * 160, ask=self.asked())
         _, opened, fold, _ = long["body"]["elements"]
         self.assertEqual(("collapsible_panel", False, "relay_reply"), (fold["tag"], fold["expanded"], fold["element_id"]))
         head = opened["content"]
         self.assertTrue(head.startswith("好了。\n\n细节很多。"))  # 犹抱琵琶半遮面: the first few hundred characters.
-        self.assertEqual("<font color='grey'>点开看全文 · 约 400 字</font>", fold["header"]["title"]["content"])
+        self.assertIn("<font color='blue'>**展开全文 · 还有约", fold["header"]["title"]["content"])  # Bold, framed.
+        self.assertEqual("blue", fold["border"]["color"])
         self.assertNotIn("结论", head)
         body = fold["elements"][0]["content"]
         self.assertNotIn("好了", body)  # Going on from where the opening stopped, nothing said twice.
-        self.assertEqual(80, head.count("细节很多。") + body.count("细节很多。"))
-        self.assertNotIn("border", fold)  # No frame: the opening reads as the reply it is.
+        self.assertEqual(160, head.count("细节很多。") + body.count("细节很多。"))
+        self.assertNotIn("border", long["body"]["elements"][1])  # The opening is the reply's own text, no frame.
 
     def test_the_fold_says_how_much_is_in_it(self):
         table = "| 项 | 结果 |\n| --- | --- |\n| 单测 | 通过 |"
@@ -309,7 +310,7 @@ class QuestionCopyTest(unittest.TestCase):
     ask = staticmethod(lambda: ask_block("选哪种样式", at="09:12", url=URL, who="T439 改看板", doing="waiting"))
 
     def test_the_output_comes_first_then_the_question(self):
-        built = mirror_card(question_record(), "T439", "上一轮写了很长很长的输出。" * 30, ask=self.ask())
+        built = mirror_card(question_record(), "T439", "上一轮写了很长很长的输出。" * 60, ask=self.ask())
         ids = [element.get("element_id") for element in built["body"]["elements"]]
         # The row, the turn's output (its opening, then the fold), then the band and the form (the owner, 2026-11-22).
         self.assertEqual(["speaker_row", "mirror_output_open", "mirror_output"], ids[:3])
@@ -317,8 +318,8 @@ class QuestionCopyTest(unittest.TestCase):
         opened, fold = built["body"]["elements"][1:3]
         head = opened["content"]
         self.assertTrue(head.startswith("<font color='grey'>这一轮输出</font> 上一轮写了很长很长的输出。"))
-        self.assertIn("<font color='grey'>点开看全文 · 约", fold["header"]["title"]["content"])
-        self.assertEqual(30, head.count("输出。") + fold["elements"][0]["content"].count("输出。"))
+        self.assertIn("**展开全文 · 还有约", fold["header"]["title"]["content"])
+        self.assertEqual(60, head.count("输出。") + fold["elements"][0]["content"].count("输出。"))
         short = mirror_card(question_record(), "T439", "只有一句", ask=self.ask())["body"]["elements"][1]
         self.assertEqual(("markdown", "<font color='grey'>这一轮输出</font> 只有一句"), (short["tag"], short["content"]))
         self.assertEqual(("等你", "orange"), tag(first(built)))

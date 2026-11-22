@@ -110,8 +110,9 @@ def after_lead(text: Any, lead: str) -> str:
 
 # 露一截 (cards/ui.py peek): how much of a long text's opening stays in view.
 # The owner, 2026-11-22 on a phone: two lines (twenty-odd characters) were too little to tell what a reply says, "起码几百字".
-PEEK_WIDTH = 600  # Display width (a CJK character two): about 300 汉字, eight lines on a computer, fifteen on a phone.
-PEEK_LINES = 12  # Lines at most: short lines (a list) fill the height before the width.
+# 11:02 the same day: more of the answer in view, the details under it folded (the answer is what the card is for).
+PEEK_WIDTH = 1000  # Display width (a CJK character two): about 500 汉字, a dozen lines on a computer.
+PEEK_LINES = 20  # Lines at most: short lines (a list) fill the height before the width.
 PEEK_FILL = 0.5  # An opening narrower than this share of the width takes the next line in too, cut to fit.
 PEEK_CUT = 0.4  # A line is cut at a sentence end, else a pause, no nearer its start than this share of the room left.
 # A line that never goes into an opening: a table's row, a code fence, a rule, an image.

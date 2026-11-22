@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-from covey.cards.answer_card import check_element, facts_element, tail as answer_tail
+from covey.cards.answer_card import ARTIFACTS_ID, check_element, facts_element, tail as answer_tail
 from covey.cards.elements import card, collapsible, grey, json_size, md, note
 from covey.cards.review import (ANSWER_CARD_BYTES, answer_lead, bold_minor_headings, drop_part_heading, fits,
                                 inline_one_line_code, opening)
@@ -68,8 +68,8 @@ def reply_fold(text):
 
 
 def whole_words(text) -> str:
-    """The title of the fold under a long text's opening: "点开看全文 · 约 1800 字 · 含 1 张表"."""
-    return "点开看全文 · " + size_words(text)
+    """The title of the fold under a long text's opening, ``text`` what it holds: "展开全文 · 还有约 1800 字 · 含 1 张表"."""
+    return "展开全文 · 还有" + size_words(text)
 
 
 def reply_peek(text, element_id=FOLD_ID, *, label="") -> list:
@@ -86,7 +86,29 @@ def reply_peek(text, element_id=FOLD_ID, *, label="") -> list:
             quiet=True, spacing="6px")]
     if not rest.strip():
         return [{**read_more(element_id, head, "", label=label)[0], "element_id": element_id}]
-    return read_more(element_id, head, rest, hint=whole_words(text), label=label)
+    return read_more(element_id, head, rest, hint=whole_words(rest), label=label)
+
+
+DETAILS_ID = "relay_details"
+# What a part under the answer is called in the 详情 fold's title (cards/answer_card.py element ids).
+DETAIL_WORDS = {"answer_acceptance": "验收说明", "answer_change_check": "提交号对不上", "answer_change": "改动",
+                "answer_criteria": "完成标准", "answer_review": "独立复核", "answer_memory": "记下的事"}
+
+
+def details(parts) -> list:
+    """The parts under a relay's answer (产物, 验收说明, a commit not found, 独立复核…) in one closed fold whose title
+    names them, so the answer stays what the card is for (the owner, 2026-11-22: 底下的东西占了太高); one part alone stays
+    as it is. The 输入/输出 lines stay outside, under it."""
+    parts = [part for part in parts if part]
+    if len(parts) < 2:
+        return parts
+    words = []
+    for part in parts:
+        title = ((part.get("header") or {}).get("title") or {}).get("content", "") if part.get("element_id") == ARTIFACTS_ID else ""
+        word = title or DETAIL_WORDS.get(str(part.get("element_id") or ""), "")
+        if word and word not in words:
+            words.append(word)
+    return [collapsible(DETAILS_ID, " · ".join(words or ["更多"]) + "（点开看）", parts, quiet=True, spacing="6px")]
 
 
 def foot(inputs, outputs, *, change=None, links=()):
@@ -153,9 +175,9 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         shown = drop_part_heading(body)  # Its first words say it: no "## 结论" row over them.
         reply = reply_peek(shown) if shown.strip() else []  # A reply that fits is all of it, a longer one its opening.
         ending = foot(inputs, outputs, change=line, links=links)
-        tail = [*answer_tail(files, (), (), change=None if line else shown_change, notes=notes),
-                *([check_element(shown_change)] if line and check_element(shown_change) else []),
-                *([ending] if ending else []), *(buttons or ())]
+        extra = [*answer_tail(files, (), (), change=None if line else shown_change, notes=notes),
+                 *([check_element(shown_change)] if line and check_element(shown_change) else []), *(buttons or ())]
+        tail = [*details(extra), *([ending] if ending else [])]
         built = banded(card([row, *reply, *tail], lead, update_multi=True, **style))
         # A long 改动 fold may take a card past its limit (as cards/review.py answer_card): the reply goes as
         # Markdown, its parts after it (app/relay_send.py send_once).

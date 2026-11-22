@@ -119,7 +119,7 @@ class CardTest(unittest.TestCase):
         self.assertEqual(("relay_reply", False), (fold["element_id"], fold["expanded"]))
         head = opened["content"]
         self.assertTrue(head.startswith("先说结论。\n\n细节。"))
-        self.assertIn("<font color='grey'>点开看全文 · 约", fold["header"]["title"]["content"])
+        self.assertIn("<font color='blue'>**展开全文 · 还有约", fold["header"]["title"]["content"])
         content = fold["elements"][0]["content"]
         self.assertTrue(content.startswith("细节。"))
         self.assertNotIn("先说结论", content)

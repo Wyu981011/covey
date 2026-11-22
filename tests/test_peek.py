@@ -34,12 +34,12 @@ class OpeningTest(unittest.TestCase):
         self.assertEqual(text, head + rest)  # Nothing lost, nothing twice.
 
     def test_without_a_sentence_end_the_cut_is_at_a_pause_then_anywhere_with_an_ellipsis(self):
-        text = "按新办法重排，每页把三组草图和参考图放在一起，先看每张草图的配色对不对，再看各组之间是否一致，最后写进文件，" * 8
+        text = "按新办法重排，每页把三组草图和参考图放在一起，先看每张草图的配色对不对，再看各组之间是否一致，最后写进文件，" * 12
         head, rest = opening(text)
         self.assertTrue(head.endswith("…"))
         self.assertEqual(text, head[:-1] + "，" + rest)  # The pause went for the "…".
-        head, rest = opening("字" * 400)
-        self.assertEqual(("字" * (PEEK_WIDTH // 2) + "…", "字" * (400 - PEEK_WIDTH // 2)), (head, rest))
+        head, rest = opening("字" * (PEEK_WIDTH // 2 + 200))
+        self.assertEqual(("字" * (PEEK_WIDTH // 2) + "…", "字" * 200), (head, rest))
 
     def test_a_cut_never_falls_inside_bold_code_or_a_link(self):
         text = ("前面先写一些铺垫的话把宽度用掉一些再说，" * 2 + "**这一段是加粗的重点内容不能切开**" + "，后面还有很多字"
@@ -85,16 +85,16 @@ class PeekTest(unittest.TestCase):
 
 class ReadMoreTest(unittest.TestCase):
     def test_the_opening_is_card_text_and_the_fold_under_it_goes_on(self):
-        opened, fold = read_more("relay_reply", "- 第一项\n- 第二项", "后面的内容", hint="点开看全文 · 约 900 字",
+        opened, fold = read_more("relay_reply", "- 第一项\n- 第二项", "后面的内容", hint="展开全文 · 还有约 900 字",
                                  label="这一轮输出")
         self.assertEqual(("markdown", "relay_reply_open"), (opened["tag"], opened["element_id"]))
         self.assertEqual("<font color='grey'>这一轮输出</font>\n- 第一项\n- 第二项", opened["content"])  # A list stays one.
         self.assertEqual(("collapsible_panel", "relay_reply", False), (fold["tag"], fold["element_id"], fold["expanded"]))
-        self.assertEqual("<font color='grey'>点开看全文 · 约 900 字</font>", fold["header"]["title"]["content"])
+        self.assertEqual("<font color='blue'>**展开全文 · 还有约 900 字**</font>", fold["header"]["title"]["content"])
         self.assertEqual([{"tag": "markdown", "content": "后面的内容"}], fold["elements"])
-        self.assertNotIn("border", fold)
+        self.assertEqual("blue", fold["border"]["color"])  # A framed bar, not a grey line read as the end.
         self.assertTrue(fits("短短一句。\n\n| a | b |\n| --- | --- |\n| 1 | 2 |"))  # A short reply with a table: whole.
-        self.assertFalse(fits("字" * 301))
+        self.assertFalse(fits("字" * (PEEK_WIDTH // 2 + 1)))
 
 
 class BadgeTest(unittest.TestCase):

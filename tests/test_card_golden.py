@@ -958,6 +958,11 @@ def answer_tail_cards():
                 "T53", DONE, text="看板的颜色还没换成：浅色那套换好了，深色那套还没有。" + "原因是深色模式下旧颜色的对比度不够。" * 12,
                 inputs=inputs, outputs=outputs, url=thread_url,
                 ask=ask_block("换看板颜色", at="01:41", who="T53 统一看板和卡片的配色", doing="done"))[0],
+            # 11:02: everything under the answer but 输入/输出 in one fold whose title names the parts.
+            "answer_relay_details": relay_card(
+                "T439", DONE, text=text, inputs=inputs, outputs=outputs, files=files, change=handed, url=thread_url,
+                notes=[acceptance_element({"what": "看板的按钮改成蓝色", "where": "", "how": "打开看板，点任一按钮"})],
+                buttons=[review_element("tf0439", 2906)])[0],
             "answer_card_butler": answer_card(text, "✅ 结论", tail(files, inputs, outputs),
                                               [ask_block("看板改成彩色块，字大一点，颜色用暖色，再把图例挪到右边去", at="12:31",
                                                          who="管家", avatar="img_v3_fake_butler")]),

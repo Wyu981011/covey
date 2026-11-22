@@ -228,14 +228,17 @@ def read_more(element_id, head, rest, *, hint="", label="", spacing="4px") -> li
     opening ``<element_id>_open``, the fold ``element_id``."""
     if label:
         head = grey(label) + ("\n" if _BLOCK_START.match(head) else " ") + head
+    # A framed bar in the link colour, bold: a grey line under the opening was read as the end of the answer (the owner).
     fold = {"tag": "collapsible_panel", "element_id": element_id, "expanded": False,
-            "header": {"title": {"tag": "markdown", "content": grey(hint or "点开看全文")}, "vertical_align": "center",
-                       "icon": chevron(), "icon_position": "follow_text", "icon_expanded_angle": -180},
-            "padding": "0px 0px 0px 0px", "vertical_spacing": spacing,
-            "elements": [md(rest)] if isinstance(rest, str) else list(rest)}
+            "header": {"title": {"tag": "markdown", "content": font("**" + (hint or "展开全文") + "**", READ_MORE)},
+                       "vertical_align": "center", "icon": chevron(READ_MORE), "icon_position": "right",
+                       "icon_expanded_angle": -180},
+            "border": {"color": READ_MORE, "corner_radius": "8px"}, "padding": "6px 12px 6px 12px",
+            "vertical_spacing": spacing, "elements": [md(rest)] if isinstance(rest, str) else list(rest)}
     return [md(head, element_id=f"{element_id}_open"), fold]
 
 
+READ_MORE = "blue"  # The colour of 展开全文: Feishu's link colour, what can be clicked.
 _BLOCK_START = re.compile(r" {0,3}(?:[-*+]\s|\d{1,9}[.)]\s|>|#{1,6}\s|\|)")
 
 
