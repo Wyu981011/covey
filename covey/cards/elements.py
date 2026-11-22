@@ -226,7 +226,7 @@ def collapsible(element_id, title, elements, *, expanded=False, boxed=False, qui
                 border=True, icon_position="right", padding=None, spacing=None):
     """A framed fold of ``elements`` under ``title``. ``boxed``: the task card's (本轮请求, 任务详情, 执行过程), white in
     a thin grey rounded border with a markdown title and a grey chevron ("E 白底细边框"). Else a grey border (none without ``border``) and a plain-text title of ``size``,
-    small and grey when ``quiet``: beside what the card says (怎么回答, 产物, a note's rest)."""
+    small and grey when ``quiet``: beside what the card says (产物, a note's rest)."""
     panel = {"tag": "collapsible_panel", "element_id": element_id, "expanded": expanded}
     if boxed:
         panel["border"] = {"color": "grey", "corner_radius": "8px"}
