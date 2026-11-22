@@ -24,8 +24,8 @@ from covey.core.state import ensure_private_dir
 from covey.backends.codex.sessions import rollout_root
 from covey.backends.codex import gateway as gateway_models
 from covey.backends.codex.appserver import run_appserver, sandbox_mode
-from covey.backends.codex.consult import ConsultHome
-from covey.core.harness import CONSULT, TOOL_LIMIT
+from covey.backends.codex.consult import ConsultHome, ReadingHome
+from covey.core.harness import CONSULT, READ, TOOL_LIMIT
 from covey.backends.gateway.catalog import turn_relay
 from covey.core import gateways
 
@@ -126,9 +126,18 @@ class CodexBackend(BackendRuntime):
         removed = retired_provider(ctx.model)
         if removed:  # A job queued on a removed provider's model before (core/providers.py RETIRED_PREFIXES).
             raise ValueError(retired_provider_notice(removed))
-        if ctx.options.get(TOOL_LIMIT) == CONSULT:
+        limit = ctx.options.get(TOOL_LIMIT)
+        if limit == CONSULT:
             # A 协作 ask: its app server in a CODEX_HOME of its own (backends/codex/consult.py), for this turn alone.
             with ConsultHome(ctx.state_dir, env) as env:
+                return self._run(request, ctx, env)
+        if limit == READ and request.session_id and not device_of(ctx):
+            # A group member's turn going on on the topic's thread: a home without the owner's exec-policy rules (an
+            # allow rule runs a command outside the sandbox), hooks, plugins and memories (ReadingHome). Only a resumed
+            # thread: one started or forked there is recorded under that home and never found again once it is gone
+            # (tests/test_collab_c8.py), so a LOOK turn (a topic's first) and a READ turn starting the thread run in the
+            # owner's home, with READING_FLAGS alone. A device's home is the device's.
+            with ReadingHome(ctx.state_dir, env) as env:
                 return self._run(request, ctx, env)
         return self._run(request, ctx, env)
 

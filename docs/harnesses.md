@@ -190,6 +190,9 @@ dsh 是 DeepSeek 开源的 Agent Harness（npm 包 `@deepseek-ai/dsh`，预览�
 
 - 权限每轮按服务的当前配置传入，重启后已有话题的下一轮也按新设置。收紧后不会请你确认，无人值守的任务可能因权限不足失败，先用小任务验证（[真实环境验证](testing.md#真实环境验证)）。
 - Codex `workspace-write`、`read-only` 下命令可能无法联网；`workspace-write` 下 `checkpoints/` 也可写；在设备上时可写根目录加上设备上的任务目录和检查点镜像目录。
+- Codex 的只读轮（只读群里群成员的一轮 `read`、管家判为只读的 `look`，[架构 · 一次运行](architecture.md#一次运行)）：app-server 关掉 apps（ChatGPT 应用的工具）、plugins、memories、hooks（`backends/codex/consult.py` 的 `READING_FLAGS`），提问和网页搜索照旧。
+  - `read` 续接话题原来的线程时，在私有 `CODEX_HOME`（`<state>/tmp/codex-read-*`，`ReadingHome`）里跑：真实 home 里除 `rules/`、`hooks*`、`plugins/`、`memories*` 外的条目都链接过去，`config.toml` 也照旧链接。执行规则里 `decision="allow"` 的命令本来能在沙箱外执行，在这里也出不了沙箱。
+  - `look` 总是话题的第一轮，`read` 也可能是开线程的那一轮。在私有 home 里开的线程记在那个 home 下，home 删掉后就续接不到（`tests/test_collab_c8.py` 实测），所以这两种留在真实 home 里。**执行规则里 allow 的命令这时仍在沙箱外执行**，Bridge 用的 `CODEX_HOME` 里别留宽泛的 allow 规则（如 `prefix_rule(pattern=["npm", "install", "-g"], decision="allow")`）。在设备上跑时用的是设备自己的 home，只有开关这一层。
 - 以前收紧权限的 `LARK_BRIDGE_CODEX_SANDBOX`、`LARK_CLAUDE_BRIDGE_SKIP_PERMISSIONS` 不再读取，设了非默认值时诊断和部署预检失败，见[权限变量让诊断或部署失败](troubleshooting.md#权限变量让诊断或部署失败)。
 
 ## 配置 Harness 参数

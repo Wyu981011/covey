@@ -127,8 +127,11 @@ def thread_params(ctx, session_id, instructions="", process=None):
 
 def server_flags(ctx) -> list:
     """The app server's -c switches after its thread limit: the non-blocking question on, as before; a CONSULT turn's
-    (backends/codex/consult.py FLAGS) instead: apps, plugins, memories, hooks and the question off."""
-    flags = consult.FLAGS if ctx.options.get(TOOL_LIMIT) == CONSULT else ("features.default_mode_request_user_input=true",)
+    (backends/codex/consult.py FLAGS) instead: apps, plugins, memories, hooks and the question off; a READ or LOOK turn's
+    (READING_FLAGS): apps, plugins, memories and hooks off, the question on."""
+    limit = ctx.options.get(TOOL_LIMIT)
+    flags = (consult.FLAGS if limit == CONSULT else consult.READING_FLAGS if limit in (READ, LOOK)
+             else ("features.default_mode_request_user_input=true",))
     return [part for flag in flags for part in ("-c", flag)]
 
 

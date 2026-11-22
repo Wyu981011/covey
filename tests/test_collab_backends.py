@@ -138,9 +138,7 @@ class CodexConsultTest(unittest.TestCase):
                     "features.image_generation", "features.default_mode_request_user_input"):
             self.assertEqual(pairs.get(key), "false", key)  # codex-cli 0.171.0 takes a key it does not know silently.
         self.assertEqual(pairs.get("web_search"), '"disabled"')
-        for options in ({}, {TOOL_LIMIT: READ}, {TOOL_LIMIT: LOOK}):
-            self.assertEqual(appserver.server_flags(self.ctx(**options)),
-                             ["-c", "features.default_mode_request_user_input=true"])  # As before.
+        self.assertEqual(appserver.server_flags(self.ctx()), ["-c", "features.default_mode_request_user_input=true"])  # As before.
 
     def test_an_asks_request_for_the_owners_input_is_refused(self):
         sent, events = [], []
@@ -208,6 +206,70 @@ class CodexConsultTest(unittest.TestCase):
         self.assertTrue(seen[0].startswith(str(state / "tmp" / "codex-consult-")))
         self.assertEqual(seen[1], tmp)
 
+
+
+class CodexReadingTest(unittest.TestCase):
+    """READ and LOOK turns on Codex (backends/codex/consult.py READING_FLAGS, ReadingHome; the real CLI in
+    tests/test_collab_c8.py)."""
+
+    def ctx(self, **options):
+        return make_context(Path("/x"), options=options)
+
+    def test_a_read_or_look_turn_turns_off_apps_plugins_memories_and_hooks_and_keeps_the_question(self):
+        for limit in (READ, LOOK):
+            flags = appserver.server_flags(self.ctx(**{TOOL_LIMIT: limit}))
+            pairs = dict(flags[i + 1].split("=", 1) for i in range(0, len(flags), 2))
+            for key in ("features.apps", "features.plugins", "features.remote_plugin", "features.memories",
+                        "memories.generate_memories", "memories.use_memories", "features.hooks"):
+                self.assertEqual(pairs.get(key), "false", (limit, key))
+            self.assertEqual(pairs.get("features.default_mode_request_user_input"), "true")  # Its question, as before.
+            self.assertNotIn("web_search", pairs)
+        self.assertEqual(appserver.server_flags(self.ctx(**{TOOL_LIMIT: PROXY})),
+                         ["-c", "features.default_mode_request_user_input=true"])  # A 代答 turn as before.
+
+    def test_the_reading_home_links_all_but_rules_hooks_plugins_and_memories_and_keeps_the_owners_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real, state = Path(tmp) / "real", Path(tmp) / "state"
+            real.mkdir()
+            for name in ("auth.json", "session_index.jsonl", "state_5.sqlite", "history.jsonl", "hooks.json",
+                         "memories_1.sqlite", "memories.lock", "AGENTS.md", "config.toml"):
+                (real / name).write_text("x")
+            for name in ("sessions", "rules", "hooks", "plugins", "skills", "memories"):
+                (real / name).mkdir()
+            with consult.ReadingHome(state, {"CODEX_HOME": str(real), "PATH": "/bin"}) as env:
+                home = Path(env["CODEX_HOME"])
+                self.assertEqual(env["PATH"], "/bin")
+                self.assertTrue(home.name.startswith("codex-read-") and home.parent == state / "tmp")
+                self.assertEqual(sorted(p.name for p in home.iterdir()),
+                                 ["AGENTS.md", "auth.json", "config.toml", "history.jsonl", "session_index.jsonl",
+                                  "sessions", "skills", "state_5.sqlite"])
+                self.assertTrue(all(p.is_symlink() for p in home.iterdir()))  # The owner's config.toml too, as it is.
+                self.assertEqual((home / "config.toml").resolve(), (real / "config.toml").resolve())
+            self.assertFalse(home.exists())
+            self.assertTrue((real / "rules").is_dir() and (real / "config.toml").exists())
+
+    def test_only_a_read_turn_resuming_its_thread_runs_in_the_reading_home(self):
+        seen = []
+
+        def run(request, env):
+            seen.append(env.get("CODEX_HOME"))
+            return "result"
+        backend = CodexBackend()
+        with tempfile.TemporaryDirectory() as tmp, mock.patch("covey.backends.codex.bridge.run_appserver", side_effect=run), \
+                mock.patch("covey.backends.codex.bridge.child_process_env", return_value={"CODEX_HOME": tmp}):
+            state = Path(tmp) / "state"
+            cases = [({TOOL_LIMIT: READ}, "thread-1", False), ({TOOL_LIMIT: READ}, None, False),
+                     ({TOOL_LIMIT: LOOK}, None, False), ({TOOL_LIMIT: LOOK}, "thread-1", False), ({}, "thread-1", False),
+                     ({TOOL_LIMIT: READ}, "thread-1", True)]
+            for options, session, on_device in cases:
+                ctx = make_context(Path(tmp), state_dir=state, model="gpt-x", options=options)
+                request = SimpleNamespace(context=ctx, check_cancelled=lambda: None, session_id=session)
+                with mock.patch("covey.backends.codex.bridge.device_of", return_value="gpu1" if on_device else ""):
+                    self.assertEqual(backend.run(request), "result")
+        self.assertTrue(seen[0].startswith(str(state / "tmp" / "codex-read-")))  # A group member's turn going on.
+        # Starting a thread (READ's first turn, every LOOK turn), an ordinary turn, a device's: the owner's home.
+        self.assertEqual(seen[1:], [tmp] * 5)
+        self.assertFalse(list((state / "tmp").glob("codex-read-*")))
 
 class CapabilityTest(unittest.TestCase):
     def test_claude_and_codex_declare_it_on_this_machine_and_not_on_a_device(self):

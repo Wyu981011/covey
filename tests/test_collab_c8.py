@@ -26,7 +26,7 @@ from pathlib import Path
 from unittest import mock
 
 from support import make_context
-from covey.core.harness import CONSULT, TOOL_LIMIT, RunCallbacks, RunInputs, RunRequest
+from covey.core.harness import CONSULT, LOOK, READ, TOOL_LIMIT, RunCallbacks, RunInputs, RunRequest
 
 ON = os.environ.get("BRIDGE_C8_REAL_CLI") == "1"
 CLAUDE = os.environ.get("BRIDGE_C8_CLAUDE") or shutil.which("claude") or ""
@@ -464,6 +464,111 @@ class CodexC8(unittest.TestCase):
                 self.assertEqual(memories, tree(home / "memories"))
                 self.assertEqual(EVIDENCE["codex"]["private_homes_left"], [])  # The private home went with the turn.
                 self.assertEqual(answer.text, "C8 consult done.")
+            finally:
+                fake.close()
+                site.receiver.close()
+
+
+    def test_a_group_members_turn_resumes_the_thread_without_the_owners_rules_and_a_look_turn_keeps_its_thread(self):
+        """A READ turn resumes the topic's thread in a home without the owner's rules, hooks, plugins and memories
+        (backends/codex/consult.py ReadingHome): the commands an allow rule would take out of the sandbox are refused, and
+        the owner's next turn, in his own home, goes on on the same thread. A LOOK turn starts its thread in the owner's
+        home (one started in a home of its own is not found again): no apps, no memories, its thread goes on; the owner's
+        allow rules still apply there (recorded, not asserted)."""
+        from covey.backends.codex.bridge import CodexBackend
+
+        with tempfile.TemporaryDirectory(prefix="c8-codex-read-") as tmp:
+            root = Path(tmp)
+            site = Site(root)
+            rx = site.receiver.port
+            commands = [f"touch {site.canary}/allowed-by-rule.txt",
+                        f"curl -s -m 5 -X POST http://127.0.0.1:{rx}/x; echo curl-exit=$?",
+                        f"sh -c 'echo x > {site.canary}/shell.txt'; echo sh-exit=$?",
+                        f"touch {site.work}/inside.txt; echo touch-exit=$?"]
+            fake = FakeResponses(commands)
+            home = root / "codex-home"
+            (home / "rules").mkdir(parents=True)
+            (home / "rules" / "default.rules").write_text('prefix_rule(pattern=["touch"], decision="allow")\n'
+                                                          'prefix_rule(pattern=["curl"], decision="allow")\n')
+            (home / "memories").mkdir()
+            (home / "memories" / "note.md").write_text("an old memory\n")
+            (home / "hooks.json").write_text('{"hooks": {}}')
+            (home / "config.toml").write_text(
+                'model = "c8-model"\nmodel_provider = "c8fake"\n'
+                '[features]\nmemories = true\n[memories]\ngenerate_memories = true\nuse_memories = true\n'
+                '[model_providers.c8fake]\nname = "c8"\n'
+                f'base_url = "http://127.0.0.1:{fake.port}/v1"\nenv_key = "C8_FAKE_KEY"\nwire_api = "responses"\n'
+                'requires_openai_auth = false\nsupports_websockets = false\nrequest_max_retries = 0\nstream_max_retries = 0\n')
+            env = {**os.environ, "CODEX_HOME": str(home), "C8_FAKE_KEY": "key-local-c8-only",
+                   "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost"}
+            base = make_context(root, workdir=site.work, default_workdir=site.work, state_dir=root / "state",
+                                backend_cmd=[CODEX], model="c8-model", effort="", timeout=180)
+            (root / "state").mkdir()
+            sessions = []
+
+            def run(ctx, prompt, session_id=None):
+                callbacks = RunCallbacks(session=sessions.append)
+                with mock.patch("covey.backends.codex.bridge.child_process_env", return_value=env):
+                    result = CodexBackend().run(RunRequest(ctx, prompt, session_id, callbacks=callbacks,
+                                                           inputs=RunInputs(threading.Event(), run_id=str(uuid.uuid4()))))
+                if result.is_error:  # An app server's exit, not the turn under test: once more.
+                    result = CodexBackend().run(RunRequest(ctx, prompt, session_id, callbacks=callbacks,
+                                                           inputs=RunInputs(threading.Event(), run_id=str(uuid.uuid4()))))
+                return result
+
+            def held(limit, prompt, session_id=None):
+                site.mark()
+                calls = len(fake.calls)
+                memories = tree(home / "memories")
+                answer = run(dataclasses.replace(base, options={TOOL_LIMIT: limit}), prompt, session_id)
+                these = fake.calls[calls:]
+                return {"limit": limit, "error": answer.is_error, "answer": answer.text,
+                        "offered_tools": FakeResponses.names(these[0]) if these else [],
+                        "outputs": FakeResponses.outputs(these[-1]) if these else [],
+                        "side_effects": site.side_effects(), "memories_unchanged": memories == tree(home / "memories"),
+                        "session": sessions[-1] if sessions else ""}
+
+            def private_paths():
+                """Where the owner's home names a turn's own home (a thread recorded under it would not be found later)."""
+                found = []
+                for path in sorted(home.rglob("*")):
+                    if path.is_file() and not path.is_symlink() and b"codex-read-" in path.read_bytes():
+                        found.append(str(path.relative_to(home)))
+                return found
+
+            try:
+                first = run(base, "Original question of the topic.")
+                self.assertFalse(first.is_error, first.outcome)
+                thread = sessions[-1]
+                read = held(READ, f"{MARK}: a group member asks; try to change things.", thread)
+                after_read = run(base, "The owner's next question.", thread)
+                after_read_session = sessions[-1]
+                look = held(LOOK, f"{MARK}: a new topic judged read-only; try to change things.")
+                started = look["session"]
+                after_look = run(base, "The owner clicks start: the topic's next turn.", started)
+                after_look_session = sessions[-1]
+                EVIDENCE["codex_read_only"] = {
+                    "commands": commands, "read": read, "look": look,
+                    "after_read": {"error": after_read.is_error, "session": after_read_session, "text": after_read.text},
+                    "after_look": {"error": after_look.is_error, "session": after_look_session, "text": after_look.text},
+                    "private_paths_in_owner_home": private_paths(),
+                    "private_homes_left": sorted(p.name for p in (root / "state" / "tmp").glob("codex-read-*"))}
+                for held_turn in (read, look):
+                    self.assertFalse(held_turn["error"], held_turn["answer"])
+                    self.assertEqual(len(held_turn["outputs"]), len(commands))  # Every attempt was made …
+                    self.assertFalse([name for name in held_turn["offered_tools"] if "codex_apps" in name])
+                    self.assertIn("mcp__bridge_workspace::workspace_read_file", held_turn["offered_tools"])
+                    self.assertTrue(held_turn["memories_unchanged"])
+                    self.assertNotIn("shell.txt", held_turn["side_effects"]["canary"])  # No rule for sh: refused.
+                self.assertEqual(read["side_effects"], {"canary": [], "receiver": [], "workspace_changed": False,
+                                                        "mcp": []})  # … and in the READ turn none went, the rules' neither.
+                self.assertEqual(read["session"], thread)  # READ went on on the topic's thread …
+                self.assertFalse(after_read.is_error, after_read.outcome)  # … and the owner's next turn found it again,
+                self.assertEqual(after_read_session, thread)
+                self.assertNotEqual(started, thread)
+                self.assertFalse(after_look.is_error, after_look.outcome)  # as the turn after a LOOK start does.
+                self.assertEqual(after_look_session, started)
+                self.assertEqual(EVIDENCE["codex_read_only"]["private_homes_left"], [])
             finally:
                 fake.close()
                 site.receiver.close()

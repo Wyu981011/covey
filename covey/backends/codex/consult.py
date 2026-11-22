@@ -13,6 +13,14 @@ the turn. Every other turn runs as before.
   (making and using), hooks, goals, image generation, web search and the non-blocking question off. backends/codex/appserver.py adds
   the read-only sandbox (its subagents inherit it) and leaves the Bridge's tools out (``bridge_servers``);
   backends/codex/turn.py refuses its every request for the owner's input (``rpc.no_questions``).
+
+A turn held to READ or LOOK (a group member's turn, the first turn of a topic the butler or a lead judged read-only) is
+read-only on the topic's own thread, so it gets less. ``READING_FLAGS`` turn off apps, plugins, memories and hooks and leave
+the rest as for every turn (the question, web search, skills). A READ turn that resumes the thread also runs in a
+``ReadingHome``: all but ``READING_LEFT_OUT`` (the rules, the hooks, the plugins and the memories) linked, the owner's
+config.toml among them. A thread started or forked in such a home is recorded under it and cannot be resumed once it is
+gone, so a LOOK turn (always a topic's first) and a READ turn that starts the thread stay in the owner's home, where an
+exec-policy allow rule still applies (backends/codex/bridge.py ``run``).
 """
 from __future__ import annotations
 
@@ -39,6 +47,12 @@ FLAGS = ("features.apps=false", "features.plugins=false", "features.remote_plugi
          "memories.generate_memories=false", "memories.use_memories=false", "features.hooks=false",
          "features.goals=false", "features.image_generation=false", "features.default_mode_request_user_input=false",
          'web_search="disabled"')
+# A READ or LOOK turn's: what runs outside the read-only sandbox (an exec-policy allow rule, a hook, a plugin's hook or MCP
+# server) or writes on its own across sessions (the memories); "memories" again covers its databases.
+READING_LEFT_OUT = ("rules", "hooks", "hooks.json", "plugins", "memories")
+READING_FLAGS = ("features.apps=false", "features.plugins=false", "features.remote_plugin=false", "features.memories=false",
+                 "memories.generate_memories=false", "memories.use_memories=false", "features.hooks=false",
+                 "features.default_mode_request_user_input=true")
 KEPT = ("model_provider", "model", "service_tier")  # Of the owner's config.toml, all a consult's own config keeps.
 BUILT_IN = frozenset({"openai", "oss", "ollama", "lmstudio"})  # Providers Codex knows without a table of the owner's.
 
@@ -108,14 +122,29 @@ class ConsultHome:
     """``with ConsultHome(state_dir, env) as turn_env``: ``env`` with CODEX_HOME the turn's own home, removed on the
     way out (its links are removed, never followed)."""
 
+    PREFIX = "codex-consult-"
+
     def __init__(self, state_dir, env):
         self.state_dir, self.env = Path(state_dir), dict(env or {})
         self.path = None
 
+    @staticmethod
+    def leaves_out(name: str) -> bool:
+        return left_out(name)
+
+    @staticmethod
+    def own_config(real: Path):
+        """The text of the home's own config.toml (``minimal_config`` of the owner's), or None to link the owner's."""
+        try:
+            text = (real / "config.toml").read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+        return minimal_config(text)
+
     def __enter__(self) -> dict:
         tmp = self.state_dir / "tmp"
         ensure_private_dir(tmp)
-        self.path = Path(tempfile.mkdtemp(prefix="codex-consult-", dir=str(tmp)))  # mkdtemp is 0700.
+        self.path = Path(tempfile.mkdtemp(prefix=self.PREFIX, dir=str(tmp)))  # mkdtemp is 0700.
         try:
             real = real_home(self.env)
             try:
@@ -123,15 +152,13 @@ class ConsultHome:
             except OSError:
                 entries = []
             for entry in entries:
-                if not left_out(entry.name):
+                if not self.leaves_out(entry.name):
                     os.symlink(entry.path, self.path / entry.name)
-            try:
-                text = (real / "config.toml").read_text(encoding="utf-8")
-            except OSError:
-                text = ""
-            descriptor = os.open(self.path / "config.toml", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                handle.write(minimal_config(text))
+            config = self.own_config(real)
+            if config is not None:
+                descriptor = os.open(self.path / "config.toml", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                    handle.write(config)
         except BaseException:
             self.__exit__(None, None, None)
             raise
@@ -141,3 +168,18 @@ class ConsultHome:
         if self.path is not None:
             shutil.rmtree(self.path, ignore_errors=True)
             self.path = None
+
+
+class ReadingHome(ConsultHome):
+    """``with ReadingHome(state_dir, env) as turn_env``: a READ or LOOK turn's home, <state>/tmp/codex-read-*: every entry
+    of the real CODEX_HOME linked but ``READING_LEFT_OUT``, the owner's config.toml among them; removed as a consult's."""
+
+    PREFIX = "codex-read-"
+
+    @staticmethod
+    def leaves_out(name: str) -> bool:
+        return name in READING_LEFT_OUT or name.startswith("memories")
+
+    @staticmethod
+    def own_config(real: Path):
+        return None
