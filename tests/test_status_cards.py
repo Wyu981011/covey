@@ -43,13 +43,27 @@ class Base(UnifiedCase):
 
 class CardTest(Base):
     def test_the_card_is_three_lines_shown_as_written(self):
-        card = status_card("T432 · 调研 <x>", "做完", "13:01 · 2 轮", "结论：*没找到*")
+        card = status_card("T432 · 调研 <x>", "result", "13:01 · 2 轮", "结论：*没找到*")
         contents = [e["content"] for e in card["body"]["elements"]]
         self.assertEqual(contents[0], "**T432 · 调研 &#60;x&#62;**")
-        self.assertIn("<text_tag color='green'>做完</text_tag>", contents[1])
+        self.assertIn("<text_tag color='green'>有结果</text_tag>", contents[1])
         self.assertEqual(card["body"]["elements"][2]["text_size"], "notation")
         self.assertNotIn("header", card)
-        self.assertEqual(len(status_card("T1", "在做", "第 1 轮", "")["body"]["elements"]), 2)
+        self.assertEqual(card["config"]["summary"]["content"], "T432 · 调研 <x> · 有结果")
+        self.assertEqual(len(status_card("T1", "running", "第 1 轮", "")["body"]["elements"]), 2)
+
+    def test_each_state_says_the_words_and_colours_every_card_says(self):
+        """P0-1 (T647): the tag is core/look.py STATES' word and colour, as the 看板 and 手上的事 say it: 停住了 red, the owner's
+        own stop 已停止 grey, a result not seen 有结果 green and one seen 做完 grey; a card an older release recorded with
+        its words (``shown``, redrawn by app/tidy_apply.py) reads the same."""
+        from covey.core import look
+        for key in ("waiting", "stopped", "stuck", "result", "running", "queued", "done", "cancelled"):
+            self.assertIn(f"<text_tag color='{look.STATES[key].color}'>{look.word(key)}</text_tag>",
+                          status_card("T1", key, "", "")["body"]["elements"][1]["content"])
+        for word, shown in (("做完", "<text_tag color='green'>有结果</text_tag>"), ("停住了", "<text_tag color='red'>停住了</text_tag>"),
+                            ("已停止", "<text_tag color='neutral'>已停止</text_tag>"), ("在做", "<text_tag color='blue'>在做</text_tag>"),
+                            ("旧词", "<text_tag color='neutral'>旧词</text_tag>")):
+            self.assertIn(shown, status_card("T1", word, "", "")["body"]["elements"][1]["content"])
 
 
 class LinesTest(Base):
@@ -83,27 +97,37 @@ class LinesTest(Base):
         done = {"topic_id": "tq", "job_id": 2, "status": "done", "final_text": "**没找到完全对口的实测**。其余略。",
                 "timings": {"backend_started": NOW - 349, "execution_finished": NOW - 10}}
         title, state, facts, line = lines(self.state, "oc_dm", self.row("result", done), NOW)
-        self.assertEqual((title, state), ("T432 · 调研 Mac mini 雷电5+RDMA 能做什么", "做完"))
+        self.assertEqual((title, state), ("T432 · 调研 Mac mini 雷电5+RDMA 能做什么", "result"))  # 有结果: not seen yet.
         self.assertIn("2 轮 · 用时 5分39秒", facts)
         self.assertEqual(line, "结论：没找到完全对口的实测")
+        self.assertEqual(lines(self.state, "oc_dm", {**self.row("result", done), "seen": NOW - 5}, NOW)[1], "done")  # 做完.
         failed = {**done, "status": "failed", "status_message": "后端调用失败"}
-        self.assertEqual(lines(self.state, "oc_dm", self.row("result", failed), NOW)[1:4:2], ("停住了", "原因：后端调用失败"))
-        stopped = {**done, "status": "cancelled", "status_message": "用户停止了任务"}
+        self.assertEqual(lines(self.state, "oc_dm", self.row("result", failed), NOW)[1:4:2], ("stopped", "原因：后端调用失败"))
+        stopped = {**done, "status": "cancelled", "status_message": "用户停止了任务", "cancel_requested_by": "card"}
         self.assertEqual(lines(self.state, "oc_dm", self.row("result", stopped), NOW)[1:4:2],
-                         ("已停止", "原因：用户停止了任务"))
+                         ("cancelled", "原因：用户停止了任务"))
+        # Stopped by the lead, or by no one known: 停住了 (docs/ui.md 10.6), not the owner's 已停止.
+        for by in ({"cancel_requested_by": "lead"}, {}):
+            record = {**done, "status": "cancelled", "status_message": "任务已停止", **by}
+            self.assertEqual(lines(self.state, "oc_dm", self.row("result", record), NOW)[1], "stopped")
         asked = {"topic_id": "tq", "job_id": 1, "created_at": NOW - 60,
                  "questions": [{"question": "要不要做？"}, {"question": "哪个仓库？"}]}
         _, state, facts, line = lines(self.state, "oc_dm", self.row("waiting", asked), NOW)
-        self.assertEqual((state, line), ("等你", "问题：要不要做？（共 2 题）"))
+        self.assertEqual((state, line), ("waiting", "问题：要不要做？（共 2 题）"))
         self.assertIn("第 1 轮", facts)
         point = self.state / "point.json"
         write_json(point, {"phase": "看图并用浏览器复现"})
         running = {"topic_id": "tq", "job_id": 3, "status": "running", "user_text": "再看看 Pin\n第二行",
                    "checkpoint_path": str(point), "timings": {"backend_started": NOW - 120}}
         _, state, facts, line = lines(self.state, "oc_dm", self.row("running", running), NOW)
-        self.assertEqual((state, line), ("在做", "这一轮：再看看 Pin"))
+        self.assertEqual((state, line), ("running", "这一轮：再看看 Pin"))
         self.assertIn("阶段：看图并用浏览器复现", facts)
-        self.assertEqual(lines(self.state, "oc_dm", self.row("running", {**running, "status": "queued"}), NOW)[1], "排队")
+        self.assertEqual(lines(self.state, "oc_dm", self.row("running", {**running, "status": "queued"}), NOW)[1], "queued")
+        # One that may be stuck (core/progress.py maybe_stuck): its tag says 可能卡住, its figures do not say it again.
+        quiet = {**running, "last_activity_at": NOW - 3 * 3600}
+        _, state, facts, _ = lines(self.state, "oc_dm", self.row("running", quiet), NOW)
+        self.assertEqual(state, "stuck")
+        self.assertNotIn("可能卡住", facts)
         # An answer form's turn: its words, not the heading before them.
         answered = {**running, "user_text": "用户补充回答：\n要不要现在开工？\n开工"}
         self.assertEqual(lines(self.state, "oc_dm", self.row("running", answered), NOW)[3], "这一轮：要不要现在开工？")
@@ -115,7 +139,7 @@ class LinesTest(Base):
                    "timings": {"received": NOW - 600}}
         row = {"topic": "tq", "group": "waiting", "record": waiting, "at": NOW - 600, "started": NOW - 600}
         _, state, facts, line = lines(self.state, "oc_dm", row, NOW)
-        self.assertEqual((state, line), ("等你", "等你在启动卡上点开始"))
+        self.assertEqual((state, line), ("waiting", "等你在启动卡上点开始"))
         self.assertIn("第 1 轮", facts)
         self.assertIn(status_cards.when(NOW - 600, NOW), facts)
 
@@ -192,7 +216,7 @@ class BoardPinsTheCardTest(Base):
         self.app.messenger.create_and_send_card = mock.Mock(side_effect=lambda profile, chat, card, key, **kwargs: (
             ("card_status", "om_status_t1") if kwargs.get("reply_to_message_id") else ("card1", "om_index1")))
         self.overview.tick(self.ctx, NOW)  # The rules start now (stopped_since).
-        self.job("run", 1, status="cancelled", topic="t1", answer_message_id="om_answer_t1",
+        self.job("run", 1, status="cancelled", topic="t1", answer_message_id="om_answer_t1", cancel_requested_by="card",
                  timings={"backend_started": NOW + 5, "execution_finished": NOW + 10})
         self.overview.tick(self.ctx, NOW + pins.GAP)
         self.assertEqual(self.feishu.order(), ["om_status_t1", "om_index1"])

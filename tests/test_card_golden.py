@@ -886,8 +886,8 @@ def answer_tail_cards():
             "dispatch_running": dispatch_card(work),
             "dispatch_running_no_job": dispatch_card(Dispatch(**{**work.__dict__, "job_id": "", "url": ""})),
             "dispatch_waiting": dispatch_card(Dispatch(**{**work.__dict__, "status": dc.WAITING,
-                                                          "body": "等你回答：推哪几个提交？"})),
-            "dispatch_done": dispatch_card(Dispatch(**{**work.__dict__, "status": dc.DONE, "body": "已完成",
+                                                          "body": "要你定：推哪几个提交？"})),
+            "dispatch_done": dispatch_card(Dispatch(**{**work.__dict__, "status": dc.DONE, "body": "做完了",
                                                        "outputs": ("**用时** 2分00秒",)})),
             "dispatch_failed": dispatch_card(Dispatch(**{**work.__dict__, "status": dc.FAILED, "body": "后端退出",
                                                          "outputs": ("**用时** 2分00秒",)})),
@@ -898,7 +898,7 @@ def answer_tail_cards():
             # In the thread of the owner's question (topic_send's, T636): no "你问" block, the topic heads it.
             "dispatch_thread_running": dispatch_card(Dispatch(**{**work.__dict__, "threaded": True})),
             "dispatch_thread_waiting": dispatch_card(Dispatch(**{**work.__dict__, "threaded": True, "status": dc.WAITING,
-                                                                 "body": "等你回答：推哪几个提交？"})),
+                                                                 "body": "要你定：推哪几个提交？"})),
             "dispatch_thread_line_done": settled_card(dc.DONE, asked_words, url=thread_url, label="T453", threaded=True,
                                                       title="比对公司主干和 GitHub 快照"),
             "answer_card_tail": answer_card(text, "✅ T439 · 结论", tail(files, inputs, outputs)),
@@ -1111,24 +1111,29 @@ def ended_box(job, snapshot, took):
 
 
 def status_cards_samples():
-    """The topic status card the pinned board pins (cards/status_card.py), one per state."""
+    """The topic status card the pinned board pins (cards/status_card.py), one per state: a core/look.py STATES key, its
+    word and colour as the 看板 and 手上的事 say it (P0-1, T647)."""
     from covey.cards.status_card import status_card
     return {
-        "running": status_card("T419 · 讨论 Pin 看板是否对前台话题关闭", "在做", "第 9 轮 · 14:25 开始 · 阶段：看图",
+        "running": status_card("T419 · 讨论 Pin 看板是否对前台话题关闭", "running", "第 9 轮 · 14:25 开始 · 阶段：看图",
                                "这一轮：这个 pin 显示上也有问题"),
-        "waiting": status_card("T404 · 排查群晖 Btrfs", "等你回答", "14:12 · 第 3 轮", "问题：把第三版说明发给 Codex？"),
-        "done": status_card("T432 · 调研 Mac mini <雷电5>", "做完", "13:01 · 2 轮 · 用时 5 分 49 秒", "结论：没找到 *完全* 对口的实测"),
-        "bare": status_card("T7", "排队", "第 1 轮", ""),
+        "waiting": status_card("T404 · 排查群晖 Btrfs", "waiting", "14:12 · 第 3 轮", "问题：把第三版说明发给 Codex？"),
+        # A result not seen yet (有结果, green), and once seen (做完, grey).
+        "done": status_card("T432 · 调研 Mac mini <雷电5>", "result", "13:01 · 2 轮 · 用时 5 分 49 秒", "结论：没找到 *完全* 对口的实测"),
+        "seen": status_card("T432 · 调研 Mac mini <雷电5>", "done", "13:01 · 2 轮 · 用时 5 分 49 秒", "结论：没找到 *完全* 对口的实测"),
+        # 停住了 (red: failed, interrupted, stopped by the lead) and the owner's own stop (已停止, grey).
+        "stopped": status_card("T433 · 迁库", "stopped", "13:05 · 3 轮 · 用时 9 分 2 秒", "原因：任务异常（transport_error）"),
+        "cancelled": status_card("T434 · 查日志", "cancelled", "13:07 · 1 轮 · 用时 40 秒", "原因：用户停止了任务"),
+        "bare": status_card("T7", "queued", "第 1 轮", ""),
         # The checkpoint's steps in place of its phase (app/status_cards.py lines).
-        "running_steps": status_card("T445 · 检查点里的步骤与交付进度", "在做", "第 2 轮 · 14:25 开始 · 第 3/5 步：改卡片",
+        "running_steps": status_card("T445 · 检查点里的步骤与交付进度", "running", "第 2 轮 · 14:25 开始 · 第 3/5 步：改卡片",
                                      "这一轮：长任务看得出走到第几步"),
-        # With its estimate as a time of day (core/progress.py finish_words), and one that may be stuck.
-        "running_estimate": status_card("T484 · 进度和预计时间", "在做",
+        # With its estimate as a time of day (core/progress.py finish_words), and one that may be stuck (可能卡住 in its tag).
+        "running_estimate": status_card("T484 · 进度和预计时间", "running",
                                         "第 3 轮 · 14:25 开始 · 第 3/5 步：改卡片 · 预计 15:20 左右做完", "这一轮：加上进度"),
-        "running_stuck": status_card("T484 · 进度和预计时间", "在做", "第 3 轮 · 14:25 开始 · 阶段：跑全量 · 可能卡住了",
-                                     "这一轮：加上进度"),
+        "running_stuck": status_card("T484 · 进度和预计时间", "stuck", "第 3 轮 · 14:25 开始 · 阶段：跑全量", "这一轮：加上进度"),
         # A long command still running: the row says the turn waits for it, in the running colour (core/progress.py board_words).
-        "running_command": status_card("T484 · 进度和预计时间", "在做", "第 3 轮 · 14:25 开始 · 阶段：跑全量 · 在等一条命令跑完",
+        "running_command": status_card("T484 · 进度和预计时间", "running", "第 3 轮 · 14:25 开始 · 阶段：跑全量 · 在等一条命令跑完",
                                        "这一轮：加上进度"),
     }
 
@@ -1387,17 +1392,26 @@ def about_tab_cards():
 def overview_cards():
     from covey.cards.overview import overview_card
 
-    board = {"counts": {"waiting": 2, "result": 3, "running": 11, "unseen": 2}, "pinned": 10,
+    # The board's index (P0-1, P0-2, T647): 要你处理 as the 看板 counts it (core/board_read.py Asks), 停住了 a part of its own,
+    # 可能卡住 right after it, the owner's own stop 已停止 apart from 有结果.
+    board = {"counts": {"waiting": 2, "stopped": 2, "stuck": 1, "result": 2, "running": 10}, "pinned": 10,
              "waiting": [{"label": "T396", "title": "你为啥没有pin？", "ask": "置顶汇总卡", "since": FROZEN - 180}],
-             "result": [{"label": "T394", "title": "群晖公钥", "status": "failed", "at": FROZEN - 600, "seen": False,
-                         "line": "测试没过：test_web_sync 2 个失败；停在：跑全量"},
-                        {"label": "T393", "title": "日志", "status": "cancelled", "at": FROZEN - 900, "seen": True,
-                         "line": "被停止了"}],
+             "stopped": [{"label": "T394", "title": "群晖公钥", "status": "failed", "at": FROZEN - 600, "tone": "stopped",
+                          "line": "测试没过：test_web_sync 2 个失败；停在：跑全量", "url": "https://applink.feishu.cn/t/394"},
+                         {"label": "专项「迁库」", "title": "", "topic": "lead", "project": "a1b2c3d4e5f6", "tone": "stopped",
+                          "at": FROZEN - 1200, "line": "token 用完了 · 在看板上点「继续」接着做"}],
+             "result": [{"label": "T392", "title": "看板", "status": "done", "at": FROZEN - 800, "seen": False,
+                         "tone": "result", "line": "改好了"}],
+             "cancelled": [{"label": "T393", "title": "日志", "status": "cancelled", "at": FROZEN - 900, "seen": True,
+                            "tone": "cancelled", "line": "被停止了"}],
              "running": [{"label": "T391", "title": "logid", "harness": "Codex", "workspace": "DataLab",
-                          "status": "queued", "started": None, "phase": ""},
+                          "status": "queued", "started": None, "phase": "", "stuck": False},
                          {"label": "T390", "title": "重构", "harness": "Claude Code", "workspace": "demo-app",
                           "status": "running", "started": FROZEN - 3900, "phase": "跑全量",
-                          "progress": ["预计 19:40 左右做完"]}],
+                          "progress": ["预计 19:40 左右做完"], "stuck": False},
+                         {"label": "T389", "title": "跑评测", "harness": "Codex", "workspace": "DataLab",
+                          "status": "running", "started": FROZEN - 7200, "phase": "跑评测", "progress": ["可能卡住了"],
+                          "stuck": True}],
              "stale": [{"label": f"T{n}", "title": "旧", "topic": f"topic-{n}", "ask": "补充信息",
                         "since": FROZEN - 2 * 86400} for n in (380, 381)],
              "dismissed": ["T401", "T402"]}
@@ -1409,12 +1423,22 @@ def overview_cards():
     butler_waiting = {"waiting": [{"label": "管家", "title": "", "ask": "现在部署吗？", "since": FROZEN - 60},
                                   {"label": "T396", "title": "你为啥没有pin？", "ask": "置顶汇总卡", "since": FROZEN - 180}],
                       "running": [], "ended": []}
-    # 刚结束 rows say why a task stopped or what its result was (core/board_read.py ended_line).
-    ended = {**view, "ended": [{"label": "T394", "title": "群晖公钥", "status": "failed", "at": FROZEN - 600,
-                                "line": "测试没过：test_web_sync 2 个失败；停在：跑全量"},
-                               {"label": "T395", "title": "重复的卡", "status": "done", "at": FROZEN - 300,
+    # 刚结束 rows say why a task stopped or what its result was (core/board_read.py ended_line); the owner's own stop 已停止.
+    ended = {**view, "ended": [{"label": "T394", "title": "群晖公钥", "status": "cancelled", "at": FROZEN - 600,
+                                "tone": "cancelled", "line": "被停止了"},
+                               {"label": "T395", "title": "重复的卡", "status": "done", "at": FROZEN - 300, "tone": "result",
                                 "line": "已经改好了，测试都过。" + "很长" * 40},
                                {"label": "T396", "title": "日志", "status": "done", "at": FROZEN - 200, "seen": True}]}
+    # Without the board: what stopped and what may be stuck, each a part of its own after 等你 (P0-1, P0-2, B4), and the
+    # band's grey line does not say nothing runs while something does (P0-10).
+    asking = {**view, "stopped": [{"label": "T397", "title": "迁库", "status": "failed", "at": FROZEN - 900, "tone": "stopped",
+                                   "line": "这一轮没有成功；可以接着做，或先看原因；停在：跑全量",
+                                   "url": "https://applink.feishu.cn/t/397"}],
+              "running": [{"label": "T398", "title": "跑评测", "harness": "Codex", "workspace": "DataLab", "status": "running",
+                           "started": FROZEN - 7200, "phase": "跑评测", "progress": ["可能卡住了"], "stuck": True},
+                          {"label": "T399", "title": "写文档", "harness": "Claude Code", "workspace": "covey",
+                           "status": "running", "started": FROZEN - 600, "phase": "改 README", "stuck": False}]}
+    calm = {**view, "running": asking["running"][1:]}
     return {"pinned_board": overview_card({**view, "board": board}, FROZEN, "14:40"),
             "overview_ended": overview_card(ended, FROZEN, "14:40"),
             "pinned_board_undo": overview_card({**view, "board": undo}, FROZEN, "14:40"),
@@ -1422,7 +1446,9 @@ def overview_cards():
             "pinned_board_empty": overview_card({**view, "board": empty}, FROZEN, "14:40"),
             # The owner never had a topic (T604 #53): both modes say what to do first.
             "overview_first_use": overview_card({**view, "first_use": True}, FROZEN, "14:40"),
-            "pinned_board_first_use": overview_card({**view, "board": empty, "first_use": True}, FROZEN, "14:40")}
+            "pinned_board_first_use": overview_card({**view, "board": empty, "first_use": True}, FROZEN, "14:40"),
+            "overview_stopped_stuck": overview_card(asking, FROZEN, "14:40"),
+            "overview_running_only": overview_card(calm, FROZEN, "14:40")}
 
 
 def digest_cards():
@@ -1499,7 +1525,7 @@ def digest_cards():
                                                 "at": FROZEN, "cleared": ["T370", "T371"],
                                                 "cleared_taken": {"t370": FROZEN + 60, "t371": FROZEN + 60}}, FROZEN + 120),
             "board_butler_waiting": board_card({"waiting": [{"topic": "m", "label": "管家", "title": "", "url": "",
-                                                             "line": "等你回答：现在部署吗？", "meta": ["等了 1分"]}],
+                                                             "line": "要你定：现在部署吗？", "meta": ["等了 1分"]}],
                                                 "stale": [], "running": [], "done": [], "stamp": "08:00"}),
             # Who stopped it (docs/ui.md 3): the lead's stop is 停住了, the owner's own 已停止 in the fold; a result seen.
             "board_stops": board_card({"waiting": [], "stale": [], "running": [], "stamp": "08:00", "done_since": "07:00",
@@ -1510,6 +1536,39 @@ def digest_cards():
                                                  "tone": "cancelled", "state": "已取消", "took": "用时 2分0秒"},
                                                 {"topic": "l", "label": "T533", "title": "看板", "status": "done",
                                                  "tone": "done", "state": "做完", "took": "用时 9分0秒", "seen": True}]}),
+            # A project a guard paused (P0-3, T647): 停住了 and why in red, 继续 on its block, counted among 要你处理; one the
+            # owner stopped 已停止; a stopped topic of a live project is listed under 停住了 too (it asks for him).
+            "board_halted_project": board_card({"waiting": [], "stale": [], "running": [], "stamp": "08:00",
+                                                "done": [{"topic": "pm", "label": "T541", "title": "改写大表", "status": "failed",
+                                                          "tone": "stopped", "line": "这一轮没有成功；可以接着做，或先看原因",
+                                                          "url": "https://applink.feishu.cn/t/541c", "card": "om_t541"}],
+                                                "projects": [{"id": "a1b2c3d4e5f6", "name": "把订单库迁到新集群", "goal": "周末前切完",
+                                                              "topics": ["pl", "pm"], "waiting": 0, "stopped": 1, "stuck": 0,
+                                                              "running": 0, "halted": "token 用完了",
+                                                              "url": "https://applink.feishu.cn/t/540"},
+                                                             {"id": "b2c3d4e5f6a7", "name": "整理周报", "goal": "", "topics": ["pw"],
+                                                              "waiting": 0, "stopped": 0, "stuck": 0, "running": 0,
+                                                              "cancelled": True, "url": "https://applink.feishu.cn/t/542"}]}),
+            # Many topics and projects at once (P0-10): fewer rows a group until the card is within what CardKit takes.
+            "board_crowded": board_card({
+                "waiting": [{"topic": f"w{n}", "label": f"T{700 + n}", "title": "等你定的事" * 3, "url": f"https://applink.feishu.cn/t/w{n}",
+                             "line": "要你定：" + "选哪一个方案" * 5, "meta": ["等了 5 分钟"]} for n in range(9)],
+                "stale": [{"topic": f"s{n}", "label": f"T{600 + n}", "title": "旧问题"} for n in range(3)], "dismissable": True,
+                "can_dismiss": True,
+                "running": [{"topic": f"r{n}", "label": f"T{720 + n}", "title": "在做的事" * 3, "url": f"https://applink.feishu.cn/t/r{n}",
+                             "card": f"om_r{n}", "line": "现在：" + "跑全量测试" * 5, "meta": ["3/7 步", "2 分钟前有动静"],
+                             "stuck": n % 2 == 0} for n in range(18)],
+                "done": [{"topic": f"d{n}", "label": f"T{740 + n}", "title": "结束的事" * 3, "url": f"https://applink.feishu.cn/t/d{n}",
+                          "card": f"om_d{n}", "status": ("failed", "done", "done", "cancelled")[n % 4],
+                          "tone": ("stopped", "result", "done", "cancelled")[n % 4], "line": "这一轮没有成功；可以接着做，或先看原因",
+                          "meta": ["20:31 停"], "state": "做完", "took": "用时 3分0秒"} for n in range(36)],
+                "projects": [*({"id": f"{n:012x}", "name": f"专项 {n}", "goal": "目标" * 10, "topics": [f"pt{n}"], "waiting": 1,
+                                "stopped": 1, "stuck": 0, "running": 1, "url": f"https://applink.feishu.cn/t/p{n}",
+                                **({"halted": "很久没有动静"} if n % 3 == 0 else {})} for n in range(14)),
+                             *({"id": f"f{n:011x}", "name": f"收起的专项 {n}", "goal": "", "topics": [f"pf{n}"], "waiting": 0,
+                                "stopped": 0, "stuck": 0, "running": 0, "folded": True, "url": f"https://applink.feishu.cn/t/f{n}"}
+                               for n in range(30))],
+                "tidy": {}, "stamp": "20:59", "done_since": "09:30"}),
             # 到点回来看 (COVEY_REVISIT=1, app/revisits.py): a topic waiting for its time with 取消, one being looked at now.
             "board_revisits": board_card({"waiting": [], "stale": [], "done": [], "stamp": "08:00",
                                           "running": [{"topic": "r", "label": "T42", "title": "跑全量", "line": "现在：在跑测试",
@@ -1599,8 +1658,8 @@ def project_cards():
     link = "https://applink.feishu.cn/client/thread/open?open_chat_id=oc_x&open_thread_id=omt_x"
     ask = "https://applink.feishu.cn/client/chat/open?openChatId=oc_x&position=76"
     threads = (pc.Member("a1b2c3" + "0" * 10, pc.RUNNING, "T501", "拆分 SQL 迁移脚本", "第 2/5 步：改写第 3 张表", "12分00秒", link),
-               pc.Member("b2c3d4" + "0" * 10, pc.DONE, "T502", "梳理旧表结构", "已完成", "8分00秒", link),
-               pc.Member("c3d4e5" + "0" * 10, pc.WAITING, "T503", "决定分区键", "等你回答：按日期还是按租户分区？", "3分00秒", link))
+               pc.Member("b2c3d4" + "0" * 10, pc.DONE, "T502", "梳理旧表结构", "做完了", "8分00秒", link),
+               pc.Member("c3d4e5" + "0" * 10, pc.WAITING, "T503", "决定分区键", "要你定：按日期还是按租户分区？", "3分00秒", link))
     work = pc.Project(
         project_id="a1b2c3d4e5f6", lead_topic="f" * 32, name="把订单库迁到新集群", status=pc.RUNNING,
         members=threads[:2], elapsed="2小时3分", tokens="33万", lead_state="在做 · 第 3/6 步：核对迁移结果",
@@ -1611,12 +1670,21 @@ def project_cards():
                          "memory": (("m1", "迁移窗口在周六凌晨"), ("m2", "旧集群只读到周日")),
                          "library": (("迁移方案.md",), ("表清单.csv",))})
     many = tuple(pc.Member(f"{index:02x}" * 3 + "0" * 10, pc.DONE if index % 3 else pc.RUNNING, f"T{600 + index}", f"话题 {index}",
-                           "已完成", "5分00秒") for index in range(11))
+                           "做完了", "5分00秒") for index in range(11))
+    # A member that failed (停住了, open, why), one the owner stopped (已停止), one that may be stuck (P0-1, T647).
+    ended = (pc.Member("d4e5f6" + "0" * 10, pc.STOPPED, "T504", "改写大表", "这一轮没有成功；可以接着做，或先看原因；停在：第 3 张表",
+                       "20分00秒", link),
+             pc.Member("e5f6a7" + "0" * 10, pc.CANCELLED, "T505", "导出旧数据", "被停止了", "1分00秒", link),
+             pc.Member("f6a7b8" + "0" * 10, pc.STUCK, "T506", "核对行数", "第 1/2 步：逐表比对", "40分00秒", link))
     return {"running": pc.project_card(work),
             "running_full": pc.project_card(full),
             "waiting": pc.project_card(pc.Project(**{**full.__dict__, "status": pc.WAITING, "members": threads,
                                                      "need": "T503 按日期还是按租户分区？", "need_url": ask})),
-            "paused": pc.project_card(pc.Project(**{**work.__dict__, "status": pc.PAUSED})),
+            # A guard's pause: 停住了 and why, red (P0-3); the owner's own stop: 已停止, grey.
+            "paused": pc.project_card(pc.Project(**{**work.__dict__, "status": pc.STOPPED, "reason": "token 用完了",
+                                                    "lead_state": "停住了 · token 用完了"})),
+            "stopped_by_owner": pc.project_card(pc.Project(**{**work.__dict__, "status": pc.CANCELLED, "lead_state": "待命"})),
+            "members_ended": pc.project_card(pc.Project(**{**work.__dict__, "members": threads[:1] + ended})),
             "many_threads": pc.project_card(pc.Project(**{**full.__dict__, "members": many})),
             "line_done": pc.settled_card("把订单库迁到新集群", url=link),
             "line_done_no_link": pc.settled_card("把订单库迁到新集群"),

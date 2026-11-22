@@ -10,7 +10,8 @@ own (cards/board.py LOOKS), so that it can move here without a change (tests/tes
   owner stopped himself is 已停止, background.
 - ``owner_stopped``: whether a cancelled record was stopped by the owner, from ``cancel_requested_by``
   (core/jobs.py STOP_SOURCES); one cancelled while queued is his. An older running one without it is not known to be.
-- ``pressing``: the most pressing state there is (``PRESSING``): what a summary leads with.
+- ``pressing``: the most pressing state there is (``PRESSING``): what a summary leads with; ``ACT_KEYS`` the states of
+  要你处理 (等你, 停住了, 可能卡住), the ones every card counts as asking for the owner.
 - ``BAND``, ``band_colors``: the conclusion band's background, a vertical gradient in steps too fine to see (no
   orb, no glow around the edge, no visible stripes). A Feishu container
   takes one solid colour, so the band is rows, each a step lighter than the one above, inside one thin line. The
@@ -54,6 +55,9 @@ GROUP_WORDS = {"result": "有结果没看"}
 PROJECT = Look("专项", BACK, "violet", "violet-50", "#A78BFA", "folder_outlined")
 # The most pressing state first: what a summary (the 看板's conclusion, the web page's first screen) leads with.
 PRESSING = ("waiting", "stopped", "stuck", "result", "running")
+# 要你处理 (docs/ui.md 1.2, 5.1): the states of group ACT, most pressing first. Every card that counts what asks for the
+# owner counts these (core/board_read.py Asks, act_count).
+ACT_KEYS = tuple(key for key in PRESSING if STATES[key].group == ACT)
 
 # The brand: the visual centre and what can be clicked. Cards in Feishu's colour names (light and dark mode are
 # Feishu's), the web page in its own colours.

@@ -32,7 +32,7 @@ from covey.cards.dispatch_card import (DONE, FAILED, RUNNING, STEER_KIND, STOP_K
 from covey.core import butler_opened
 from covey.core import dispatch_records as records
 from covey.core import env as cenv
-from covey.core import look, projects
+from covey.core import board_read, look, projects
 from covey.core.card_sequence import file_card, reserve
 from covey.core.checkpoint import checkpoint_steps
 from covey.core.jobs import find_job_record, topic_job_records
@@ -164,8 +164,14 @@ def question_words(state_dir, topic_id) -> str:
     return ask_words(rows[0]) if rows else ""
 
 
+ASK_WORDS = "要你定："  # Before a waiting job's question in the fold (docs/ui.md 5.2: 问题卡的“要你定：xxx”).
+
+
 def status_of(state_dir, record, job, now) -> tuple[str, str]:
-    """(the card's state word, what the fold says) of the dispatch ``record`` whose job is ``job``."""
+    """(the card's state word, what the fold says) of the dispatch ``record`` whose job is ``job``: the words of
+    core/look.py STATES (a job that failed, was interrupted or stopped by someone other than the owner 停住了, the
+    owner's own stop 已停止, core/look.py record_tone); why it stopped as the 看板 says it (core/board_read.py ended_line)
+    when its record has no status line."""
     if job is None:
         return (RUNNING, "排队中，还没开始") if record.get("starts") else (WAITING, "等你在话题里点启动卡上的开始")
     status, message = str(job.get("status") or ""), words(job.get("status_message"))
@@ -173,13 +179,13 @@ def status_of(state_dir, record, job, now) -> tuple[str, str]:
         return WAITING, "等你在话题里点启动卡上的开始"
     if status == "waiting_user":
         asked = question_words(state_dir, record.get("topic_id"))
-        return WAITING, "等你回答：" + asked if asked else message or "等你回答"
+        return WAITING, ASK_WORDS + asked if asked else message or "有问题要你定"
     if status == "done":
-        return DONE, message or "已完成"
-    if status in ("failed", "interrupted"):
-        return FAILED, message or ("执行失败" if status == "failed" else "任务中断")
-    if status == "cancelled":
-        return STOPPED, message or "已停止"
+        return DONE, message or "做完了"
+    if status in ("failed", "interrupted", "cancelled"):
+        owner = look.record_tone(job) == "cancelled"
+        return (STOPPED if owner else FAILED), message or board_read.ended_line(job, now) or look.word(
+            "cancelled" if owner else "stopped")
     # The step under way, as the butler's snapshot says it (app/butler.py snapshot_groups), else the phase.
     if status == "cancel_requested" or stopping(record.get("topic_id"), job, now):
         return RUNNING, "正在停止…"

@@ -117,6 +117,37 @@ class CardTests(unittest.TestCase):
         self.assertEqual(texts(overview_card({**view(waiting=[asking]), "first_use": True}, NOW)),
                          texts(overview_card(view(waiting=[asking]), NOW)))
 
+    def test_what_stopped_and_what_may_be_stuck_ask_for_him_after_what_waits(self):
+        """P0-1, P0-2 (T647): 停住了 (a topic's, a project a guard paused) and 可能卡住 are parts of their own after 等你, counted
+        among 要你处理 as the 看板 counts them; the owner's own stop under 刚结束 is 已停止, not counted."""
+        card = overview_card({**view(
+            running=[{"label": "T395", "title": "跑测试", "status": "running", "started": NOW - 3600, "phase": "全量",
+                      "progress": ["可能卡住了"], "stuck": True},
+                     {"label": "T396", "title": "写文档", "status": "running", "started": NOW - 60, "phase": "改", "stuck": False}],
+            ended=[{"label": "T397", "title": "查日志", "status": "cancelled", "at": NOW - 30, "tone": "cancelled"}]),
+            "stopped": [{"label": "T394", "title": "迁库", "status": "failed", "at": NOW - 600, "tone": "stopped",
+                         "line": "这一轮没有成功", "url": "https://x/t"},
+                        {"label": "专项「周报」", "title": "", "project": "a1b2c3d4e5f6", "tone": "stopped",
+                         "line": "token 用完了 · 在看板上点「继续」接着做"}]}, NOW)
+        lines = texts(card)
+        self.assertTrue(lines[0].startswith("要你处理 / 3 件事 / 先看：停住了 · T394 迁库 / "), lines[0])
+        self.assertEqual([line for line in lines if line in ("停住了 2", "可能卡住 1", "在做 1", "刚结束 1")],
+                         ["停住了 2", "可能卡住 1", "在做 1", "刚结束 1"])
+        self.assertIn(f"已停止 T397 查日志 / {hm(NOW - 30)}", lines)
+        self.assertIn("停住了 专项「周报」 / token 用完了 · 在看板上点「继续」接着做", lines)
+        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["2 停住了", "1 可能卡住", "1 在做"])
+        self.assertEqual(card["config"]["summary"]["content"], "手上的事 · 停住了 2 · 可能卡住 1 · 在做 1")
+
+    def test_with_nothing_asking_the_band_does_not_say_nothing_runs_while_something_does(self):
+        """P0-10 (T647): its grey line said 现在没有在做的任务 above the rows of what ran."""
+        running = {"label": "T396", "title": "写文档", "status": "running", "started": NOW - 60, "phase": "改"}
+        band = texts(overview_card(view(running=[running]), NOW))[0]
+        self.assertTrue(band.startswith("要你处理 / 都在掌握中 / 现在没有在等你的事 / "), band)
+        self.assertEqual(texts(overview_card(view(), NOW))[0], "要你处理 / 都在掌握中 / 现在没有在做的任务，也没有在等你的事")
+        # A first use that lists something is none (app/overview.py sets it only when nothing is listed).
+        self.assertNotIn("还没有话题", json.dumps(overview_card({**view(running=[running]), "first_use": True}, NOW),
+                                              ensure_ascii=False))
+
     def test_text_from_a_topic_is_escaped_and_cut_and_long_parts_are_counted(self):
         rows = [{"label": f"T{n}", "title": "a*b_<x>" + "长" * 40, "harness": "", "workspace": "",
                  "status": "cancel_requested", "started": NOW - 10, "phase": ""} for n in range(SHOWN + 3)]

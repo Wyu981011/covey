@@ -407,6 +407,44 @@ class PauseAskTest(Loop):
         self.assertEqual(len(self.queued), 1)
         self.assertEqual(self.reload()["state"], projects.ACTIVE)
 
+    def test_the_boards_continue_is_the_pause_cards_continue(self):
+        """P0-3 (T647): 继续 on the 看板's block of a project a guard paused (cards/board.py PROJECT_GO_KIND) answers the pause
+        put to the owner as the pause card's 继续 does: the choice kept (the card becomes "你选了继续"), the project on
+        again with a new budget after a tokens pause, the lead woken by the owner_choice receipt."""
+        self.paused("tokens", tokens_used=BUDGET + 3)
+        self.assertEqual(project_loop.resume(self.state, PID, CHAT), "ok")
+        record = self.reload()
+        self.assertEqual((record["state"], record["pause_ask"]["choice"], record["token_floor"]),
+                         (projects.ACTIVE, "continue", BUDGET + 3))
+        [item] = project_loop.unread(self.state, PID)
+        self.assertEqual(item["kind"], "owner_choice")
+        self.loop.tick(NOW + 5)
+        self.assertEqual(len(self.queued), 1)
+        self.assertEqual(project_loop.resume(self.state, PID, CHAT), "moved")  # Once: it is on already.
+
+    def test_the_boards_continue_without_a_pause_card_starts_it_as_the_owners_word(self):
+        """With COVEY_PROJECT_ASK off there is no pause card: 继续 is the owner's word (owner_spoke), and the lead hears of it
+        (owner_choice, which wakes it). A project in another chat, one not paused by a guard, none at all: nothing changes."""
+        self.update(state=projects.PAUSED, state_reason="wakes", wakes={"count": 30, "streak": 30, "last_at": NOW, "recent": [NOW]})
+        self.assertEqual(project_loop.resume(self.state, PID, "oc_elsewhere"), "none")
+        self.assertEqual(project_loop.resume(self.state, "0" * 12, CHAT), "none")
+        self.assertEqual(self.reload()["state"], projects.PAUSED)
+        self.assertEqual(project_loop.resume(self.state, PID, CHAT), "ok")
+        record = self.reload()
+        self.assertEqual((record["state"], record["state_reason"], record["wakes"]["streak"]), (projects.ACTIVE, "", 0))
+        self.assertIn("owner_at", record)
+        [item] = project_loop.unread(self.state, PID)
+        self.assertEqual(item["kind"], "owner_choice")
+        self.assertIn("连续唤醒次数到上限", item["text"])
+        self.update(state=projects.PAUSED, state_reason=projects.OWNER_STOP)  # The owner's own stop: not the 看板's 继续.
+        self.assertEqual(project_loop.resume(self.state, PID, CHAT), "moved")
+        self.assertEqual(self.reload()["state"], projects.PAUSED)
+        self.update(state=projects.ACTIVE, state_reason="")
+        self.update(state=projects.PAUSED, state_reason="budget_hours")  # A newer release's guard: his click starts it too.
+        self.assertTrue(projects.halted(self.reload()))
+        self.assertEqual(project_loop.resume(self.state, PID, CHAT), "ok")
+        self.assertEqual(self.reload()["state"], projects.ACTIVE)
+
     def test_finish_starts_it_again_and_asks_the_lead_for_the_summary(self):
         self.paused("stalled", stall={"at": NOW, "activity": NOW})
         self.assertEqual(project_loop.answer_pause(self.state, PID, "finish"), "ok")
@@ -875,9 +913,13 @@ class CardWordsTest(Loop):
     def test_a_paused_project_says_why(self):
         for reason, words in (("tokens", "token 用完了"), ("wakes", "连续唤醒次数到上限"), ("stalled", "很久没有动静")):
             self.update(state=projects.PAUSED, state_reason=reason)
-            self.assertEqual(facts(self.state, self.reload(), NOW).lead_state, f"停住 · {words}")
+            self.assertEqual(facts(self.state, self.reload(), NOW).lead_state, f"停住了 · {words}")
+            self.assertEqual(facts(self.state, self.reload(), NOW).status, "stopped")  # 停住了 · why, red (P0-3).
+            self.assertEqual(facts(self.state, self.reload(), NOW).reason, words)
         self.update(state=projects.PAUSED, state_reason="主人停止")
         self.assertEqual(facts(self.state, self.reload(), NOW).lead_state, "待命")
+        self.assertEqual((facts(self.state, self.reload(), NOW).status, facts(self.state, self.reload(), NOW).reason),
+                         ("cancelled", ""))  # 已停止: the owner's own stop.
         self.update(state=projects.ACTIVE, state_reason="tokens")
         self.assertEqual(projects.reason_words(self.reload()), "")
 

@@ -40,11 +40,11 @@ from covey.core import env as cenv
 from covey.app.card_lanes import after_ack
 from covey.app.pins import GROUPS, PinnedTopics, dismiss, kept, last_click, record_path, taken_off, undismiss
 from covey.app.topic_links import link_for
-from covey.cards.overview import DISMISS, DISMISS_MAX, UNDO, clock, overview_card, retired_card
+from covey.cards.overview import DISMISS, DISMISS_MAX, UNDO, clock, lists, overview_card, retired_card
 from covey.core.card_sequence import CardHandle, file_card, reserve
 from covey.core.jobs import job_path, read_job_record
 from covey.core.locks import resource_lock
-from covey.core import board_read, turn_words
+from covey.core import board_read, look, projects, turn_words
 from covey.core import progress as turn_progress
 from covey.core.loops import every
 from covey.core.state import read_object, write_json
@@ -66,6 +66,15 @@ LINK_RETRY = 600  # A 等我 card's link that could not be read: tried again thi
 TIMEOUT = 15  # Of one CardKit write; the loop is in no hurry.
 # The phase a running task shows before its model wrote one (core/turn_words.py): no phase yet.
 UNSET_PHASES = turn_words.UNSET_PHASES
+
+
+PROJECT_GO = "在看板上点「继续」接着做"  # What a project a guard paused waits for (cards/board.py PROJECT_GO_KIND).
+
+
+def board_row_tone(row, unseen) -> str:
+    """The core/look.py STATES key of a result ``row`` of the board (app/pins.py board): its record's tone, a done one
+    有结果 until the owner has seen it (``unseen``: the board's 有结果未看)."""
+    return look.record_tone(row.get("record") or {}, seen=row["topic"] not in unseen)
 
 
 def dismissable():
@@ -164,23 +173,29 @@ class Overview:
 
     def view(self, ctx, chat, now):
         state = ctx.state_dir
-        # The indexes read once (core/board_read.py): with the board on, the read its look judges too. The butler
+        board = self.pins.enabled()
+        # The indexes read once (core/board_read.py), and judged as the board judges them (PinnedTopics.look: with the
+        # board on, its record's rules, results and topics taken off; else its rules' defaults). The butler
         #  (app/butler.py) talks at the chat's top level: not listed; what it asks the owner waits under 等你 all the
         # same, under its speaker (board_read.top_questions, docs/ui.md 5.3).
-        read = board_read.read(state, chat, now, keep=kept(state, chat)) if self.pins.enabled() else None
+        read = board_read.read(state, chat, now, keep=kept(state, chat) if board else ())
+        self.profile = getattr(ctx, "profile", None)
+        looked = self.pins.look(state, chat, now, read, board=board)
+        off = self.pins.dismissed if board else {}
         # 等我 as every reader counts it (core/board_read.py waits), the latest first: the questions, the butler's and
         # the leads' too, and the tasks waiting for 开始; with the board on, its topics taken off left out (its look).
-        self.profile = getattr(ctx, "profile", None)
-        looked = self.pins.look(state, chat, now, read) if read is not None else None
-        found = board_read.waits(state, chat, now, off=self.pins.dismissed if read is not None else ())
-        jobs = sorted([record for record in read.jobs if record.get("status") in RUNNING] if read
-                      else board_read.running_jobs(state, chat), key=lambda record: int(record.get("job_id") or 0))
-        # The topics' earlier turns as the read has them, for the estimate (core/progress.py): none without the board.
+        found = board_read.waits(state, chat, now, off=off)
+        # 要你处理 as the 看板 counts it (core/board_read.py Asks): 等我, the results that stopped, what may be stuck.
+        asks = self.pins.asks(state, chat, found, now, off)
+        jobs = sorted([record for record in read.jobs if record.get("status") in RUNNING],
+                      key=lambda record: int(record.get("job_id") or 0))
+        # The topics' earlier turns as the read has them, for the estimate (core/progress.py).
         self.history = {}
-        for record in read.jobs if read else ():
+        for record in read.jobs:
             self.history.setdefault(record.get("topic_id") or "", []).append(record)
         self.now = now
-        running = {record.get("key") or str(record.get("job_id")): self.running_row(state, record) for record in jobs}
+        running = {record.get("key") or str(record.get("job_id")): self.running_row(state, record, asks)
+                   for record in jobs}
         for key, row in self.seen.items():
             if key not in running:
                 record = read_job_record(job_path(state, key)) or {}
@@ -188,20 +203,22 @@ class Overview:
                 if status in TERMINAL:
                     # Its line as the 看板 says it; no ``now``, so that the card changes with its content only.
                     self.ended[key] = {"label": row["label"], "title": row["title"], "topic": row["topic"],
-                                       "status": status, "at": now,
+                                       "status": status, "at": now, "tone": look.record_tone(record),
                                        "line": board_read.ended_line(record)}
         self.seen = running
         self.ended = {key: row for key, row in self.ended.items() if now - row["at"] < RECENT and key not in running}
         waiting = [self.waiting_row(state, wait) for wait in found.all]
-        # A topic that runs again or asks: its row there says enough.
-        busy = {row["topic"] for row in (*running.values(), *waiting)}
-        view = {"waiting": waiting, "running": list(running.values()),
+        stopped = self.stopped_rows(state, asks)
+        # A topic that runs again, asks or stopped: its row there says enough.
+        busy = {row["topic"] for row in (*running.values(), *waiting, *stopped)}
+        view = {"waiting": waiting, "stopped": stopped, "running": list(running.values()),
                 "ended": sorted((row for row in self.ended.values() if row["topic"] not in busy),
                                 key=lambda row: row["at"], reverse=True)}
-        if read is not None:
-            view["board"] = self.board(state, chat, found, looked)
-        if self.never_had is not False and not self.listed(view):
-            # Nothing to list: a first use (还没有话题) or a clear board (cards/ui.py empty_words).
+        if board:
+            view["board"] = self.board(state, chat, found, looked, asks, stopped)
+        if self.never_had is not False and not lists(view):
+            # Nothing to list: a first use (还没有话题) or a clear board (cards/ui.py empty_words). Once the chat had a
+            # topic it is no first use again.
             self.never_had = not board_read.has_topics(state, chat)
             if self.never_had:
                 view["first_use"] = True
@@ -209,40 +226,69 @@ class Overview:
 
     @staticmethod
     def listed(view) -> bool:
-        board = view.get("board") or {}
-        return bool(view["waiting"] or view["running"] or view["ended"] or any(
-            board.get(key) for key in ("waiting", "running", "result", "stale", "dismissed")))
+        """Whether ``view`` lists anything (cards/overview.py lists)."""
+        return lists(view)
 
-    def board(self, state, chat, found, looked):
-        """What the card shows over the pinned board: each group's count (``waiting`` 等我's, ``found``: core/board_read.py
-        waits), how many are pinned, the rows without a pin by group (under 等你回答 every 等我 whose card is not
-        pinned), and 等我 waiting too long to be on the board (newest first); ``looked``: the board's look (PinnedTopics.look
-        of the indexes as read for it)."""
+    def stopped_rows(self, state, asks):
+        """停住了 as 要你处理 counts it (core/board_read.py Asks): a row each topic whose result stopped (why, where; it opens
+        its task card, where 检查并继续 is) and each project a guard paused (why; it opens the project's card, where 继续
+        is, or the 看板's)."""
+        rows = []
+        for topic, record in sorted(asks.stopped.items(), key=lambda item: board_read.ended_at(item[1]), reverse=True):
+            label, title = self.topic(state, topic)
+            card = str(record.get("card_message_id") or "")
+            rows.append({"label": label, "title": title, "topic": topic, "status": record.get("status"),
+                         "at": board_read.ended_at(record), "tone": "stopped", "line": board_read.ended_line(record),
+                         "url": self.link(state, topic, card) if card else ""})
+        for record in asks.projects.values():
+            lead, card = str(record.get("lead_topic_id") or ""), projects.card_message(record)
+            rows.append({"label": f"专项「{record.get('name') or ''}」", "title": "", "topic": lead, "tone": "stopped",
+                         "project": str(record.get("id") or ""),
+                         "at": float(record.get("updated_at") or 0) or None,
+                         "line": " · ".join(part for part in (projects.stop_reason(record), PROJECT_GO) if part),
+                         "url": self.link(state, lead, card) if lead and card else ""})
+        return rows
+
+    def board(self, state, chat, found, looked, asks, stopped):
+        """What the card shows over the pinned board: each state's count (要你处理 as ``asks`` counts it, core/board_read.py
+        Asks; 有结果 the results on it not seen yet, 在做 the rest of what runs), how many are pinned, the rows without a pin
+        by state (under 等你 every 等我 whose card is not pinned; under 停住了 the results that stopped and the projects a
+        guard paused, ``stopped``; 已停止 the owner's own stops), and 等我 waiting too long to be on the board (newest
+        first); ``looked``: the board's look (PinnedTopics.look of the indexes as read for it)."""
         rows, held = looked
         off = self.pins.dismissed
         rows = [row for row in rows if row["topic"] not in off]
-        listed = {group: [self.board_row(state, row) for row in rows if row["group"] == group
+        listed = {group: [self.board_row(state, row, asks) for row in rows if row["group"] == group
                           and row["topic"] not in held] for group in GROUPS}
         pinned = {row["message_id"] for row in rows if row["group"] == "waiting" and row["topic"] in held}
         listed["waiting"] = [self.waiting_row(state, wait) for wait in found.live
                              if (wait.record.get("question_message_id") if wait.kind == "question" else wait.card) not in pinned]
         old = [self.waiting_row(state, wait) for wait in found.stale]
         gone = sorted(off, key=lambda topic: off[topic]["at"], reverse=True)
-        # 有结果未看 (core/board_read.py unseen): the results on it not seen yet, the topics taken off left out.
-        counts = {group: sum(row["group"] == group for row in rows) for group in GROUPS}
-        counts["waiting"] = found.count()  # 等我, the number every reader says (not the board's cells).
+        # A result by what it is (core/look.py record_tone): 已停止 is background, the rest 有结果; 停住了 is what 要你处理
+        # counts (``stopped``: a topic's, a project's), each whose topic (or its project's cell) has no pin.
+        results = listed.pop("result")
+        cells = self.pins.cells
+        listed.update(stopped=[row for row in stopped if row.get("project") or (
+                          row["topic"] not in held and cells.get(row["topic"]) not in held)],
+                      cancelled=[row for row in results if row["tone"] == "cancelled"],
+                      result=[row for row in results if row["tone"] not in ("stopped", "cancelled")])
+        tones = [board_row_tone(row, self.pins.unseen) for row in rows if row["group"] == "result"]
+        stuck = sum(row["group"] == "running" and (row.get("record") or {}).get("topic_id") in asks.stuck for row in rows)
+        counts = {**asks.counts(), "result": tones.count("result"),
+                  "running": sum(row["group"] == "running" for row in rows) - stuck}
         undo = last_click(off, self.now)  # 撤销最近一次: his latest 不管了 click, if still on.
-        return {"counts": {**counts, "unseen": len(self.pins.unseen)},
-                "pinned": sum(row["topic"] in held for row in rows), **listed, "stale": old,
+        return {"counts": counts, "pinned": sum(row["topic"] in held for row in rows), **listed, "stale": old,
                 "dismissed": [self.topic(state, topic)[0] for topic in gone], **({"undo": undo} if undo else {})}
 
-    def board_row(self, state, row):
+    def board_row(self, state, row, asks):
         record = row["record"]
         if row["group"] == "running":
-            return self.running_row(state, record)
+            return self.running_row(state, record, asks)
         label, title = self.topic(state, row["topic"])
         return {"label": label, "title": title, "topic": row["topic"], "status": record.get("status"),
-                "at": row["at"], "seen": row["topic"] not in self.pins.unseen, "line": board_read.ended_line(record)}
+                "at": row["at"], "seen": row["topic"] not in self.pins.unseen,
+                "tone": board_row_tone(row, self.pins.unseen), "line": board_read.ended_line(record)}
 
     def waiting_row(self, state, wait):
         """The row of ``wait`` (core/board_read.py Wait): who asks, what (or that it waits for 开始), since when, and
@@ -271,12 +317,15 @@ class Overview:
         self.links[card] = (url, time.monotonic())
         return url
 
-    def running_row(self, state, record):
+    def running_row(self, state, record, asks=None):
+        """A running (or queued) job's row; ``stuck`` when 要你处理 counts its topic as 可能卡住 (``asks``,
+        core/board_read.py Asks) and this is its job running."""
         label, title = self.topic(state, record.get("topic_id") or "")
         timings = timings_of(record)
         phase = str(record.get("phase") or "")
         harness = record.get("harness_id") or record.get("backend") or ""
-        return {"label": label, "title": title, "topic": record.get("topic_id") or "",
+        stuck = bool(asks is not None and record.get("status") == "running" and record.get("topic_id") in asks.stuck)
+        return {"label": label, "title": title, "topic": record.get("topic_id") or "", "stuck": stuck,
                 "harness": self.titles.get(harness, harness),
                 "workspace": record.get("workspace_name") or "", "status": record.get("status"),
                 "started": timings.get("backend_started") or timings.get("dispatched"),

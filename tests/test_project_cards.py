@@ -21,7 +21,7 @@ from covey.app import pins, project_cards, project_clicks, project_facts
 from covey.app.card_actions import ACTIONS
 from covey.cards import project_card as view
 from covey.cards.elements import CARD_BYTES, CARD_NODES, element_count, find_element, json_size
-from covey.core import board_read, projects
+from covey.core import board_read, look, projects
 from covey.core.jobs import upsert_job_record
 from covey.core.state import write_json
 from covey.core.topics import label_title, routed_topic, topic_file
@@ -73,8 +73,40 @@ class CardTest(UnifiedCase):
         plain = view.project_card(project(status=view.WAITING))["header"]
         self.assertEqual([tag["text"]["content"] for tag in plain["text_tag_list"]], ["等你"])
         self.assertEqual(plain["text_tag_list"][0]["color"], "orange")
-        for status in (view.RUNNING, view.WAITING, view.PAUSED, view.DONE):
-            self.assertEqual(view.project_card(project(status))["header"]["text_tag_list"][0]["text"]["content"], status)
+        for status in (view.RUNNING, view.WAITING, view.STOPPED, view.CANCELLED, view.DONE):
+            self.assertEqual(view.project_card(project(status))["header"]["text_tag_list"][0]["text"]["content"],
+                             look.word(status))
+
+    def test_a_guards_pause_is_停住了_in_red_with_why_and_the_owners_stop_is_已停止(self):
+        """P0-3 (T647, docs/ui.md 2.2): 护栏停住的专项是“停住了”的红, why after it in its tag; the owner's own stop is 已停止,
+        grey, as every other card says them (core/look.py STATES)."""
+        head = view.project_card(project(view.STOPPED, reason="token 用完了"))["header"]
+        tag = head["text_tag_list"][0]
+        self.assertEqual((tag["text"]["content"], tag["color"], head["icon"]["color"]), ("停住了 · token 用完了", "red", "red"))
+        mine = view.project_card(project(view.CANCELLED))["header"]
+        self.assertEqual((mine["text_tag_list"][0]["text"]["content"], mine["text_tag_list"][0]["color"]), ("已停止", "neutral"))
+        self.assertNotIn("icon", mine)
+        self.assertEqual(view.project_card(project(view.STOPPED, reason="token 用完了"))["config"]["summary"]["content"],
+                         "停住了 · token 用完了 · 把订单库迁到新集群")
+
+    def test_a_member_that_stopped_says_停住了_open_and_first_after_what_waits(self):
+        """P0-1 (T647): a member that failed, was interrupted or stopped by the lead is 停住了 (red, open, counted as such),
+        not 做完; one the owner stopped is 已停止, shut like one done."""
+        members = (thread(T1, view.DONE, label="T501"), thread(T2, view.STOPPED, label="T502", body="这一轮没有成功"),
+                   thread(T3, view.CANCELLED, label="T503"), thread("d4e5f6" + "0" * 10, view.WAITING, label="T504"),
+                   thread("e5f6a7" + "0" * 10, view.STUCK, label="T505"))
+        card = view.project_card(project(members=members))
+        folds = [element for element in card["body"]["elements"] if element.get("tag") == "collapsible_panel"
+                 and element["element_id"].startswith("pt_")]
+        self.assertEqual([(fold["element_id"], fold["expanded"]) for fold in folds],
+                         [("pt_d4e5f6_w", True), ("pt_b2c3d4_s", True), ("pt_e5f6a7_k", True), ("pt_a1b2c3_d", False),
+                          ("pt_c3d4e5_c", False)])
+        self.assertEqual([fold["header"]["title"]["content"].rsplit(" · ", 1)[-1] for fold in folds],
+                         ["等你", "停住了", "可能卡住", "做完", "已停止"])
+        stopped = find_element(card, "pb_b2c3d4_s")["content"]
+        self.assertIn("<font color='red'>**停住了**</font>", stopped)
+        self.assertIn("这一轮没有成功", stopped)
+        self.assertIn("话题 5（等你 1 · 停住了 1 · 可能卡住 1 · 做完 1 · 已停止 1）", find_element(card, "pj_meta")["content"])
 
     def test_the_elements_in_order_and_every_id_is_valid_and_there_is_no_input(self):
         card = view.project_card(project(need="T503 按日期还是按租户分区？", need_url=URL,
@@ -141,7 +173,8 @@ class CardTest(UnifiedCase):
             return [name for name in ("pj_steer", "pj_stop", "pj_down") if find_element(card, name)]
         self.assertEqual(names(view.RUNNING), ["pj_steer", "pj_stop", "pj_down"])
         self.assertEqual(names(view.WAITING), ["pj_steer", "pj_stop", "pj_down"])
-        self.assertEqual(names(view.PAUSED), ["pj_steer", "pj_down"])
+        self.assertEqual(names(view.STOPPED), ["pj_steer", "pj_down"])
+        self.assertEqual(names(view.CANCELLED), ["pj_steer", "pj_down"])
         self.assertEqual(names(view.DONE), [])
         card = view.project_card(project())
         self.assertEqual(find_element(card, "pj_stop")["value"], {"kind": "bridge_project_stop", "project_id": PID, "topic_id": LEAD})
@@ -219,11 +252,12 @@ class BudgetTest(unittest.TestCase):
 
     def card(self, rows, topics):
         text = "长" * 300
-        members = tuple(view.Member(topic_id=f"{n:032x}", status=("等你", "在做", "在做", "做完")[n % 4], label=f"T{400 + n}", title=text,
+        members = tuple(view.Member(topic_id=f"{n:032x}", status=(view.WAITING, view.RUNNING, view.RUNNING, view.DONE)[n % 4],
+                                    label=f"T{400 + n}", title=text,
                                     body=text, took="12 分钟", url="https://example.com/t/" + "u" * 60, harness="Claude Code")
                         for n in range(topics))
         return view.project_card(view.Project(
-            project_id="a1b2c3d4e5f6", lead_topic="f" * 32, name=text, status="等你", need=text, need_url="https://example.com/q",
+            project_id="a1b2c3d4e5f6", lead_topic="f" * 32, name=text, status=view.WAITING, need=text, need_url="https://example.com/q",
             members=members, elapsed="3 天 4 小时", tokens="1200 万", lead_state=text, lead_note=text,
             triage=tuple((text, "c" * 16) for _ in range(rows)), memory=tuple((f"{n:06x}", text) for n in range(rows)),
             library=tuple((text, f"{n:06x}") for n in range(rows)), inputs=("输入：" + text,), outputs=("输出：" + text,),
@@ -335,7 +369,7 @@ class RefreshTest(CardCase):
         self.tick(1015.0)
         self.assertEqual(self.put.call_count, 1)
 
-    def test_a_waiting_thread_makes_the_project_wait_for_the_owner_and_a_pause_shows_as_停住(self):
+    def test_a_waiting_thread_makes_the_project_wait_for_the_owner_and_the_owners_stop_shows_as_已停止(self):
         self.job(T1, 1, "waiting_user", status_message="等你回答：按日期还是按租户分区？")
         self.tick(1010.0)
         card = self.put.call_args.args[2]
@@ -343,8 +377,25 @@ class RefreshTest(CardCase):
         self.assertIn("按日期还是按租户分区", find_element(card, "pj_need")["content"])
         projects.set_state(self.state, PID, projects.PAUSED, "主人停止")
         self.tick(1020.0)
-        self.assertEqual(self.put.call_args.args[2]["header"]["text_tag_list"][0]["text"]["content"], "停住")
+        self.assertEqual(self.put.call_args.args[2]["header"]["text_tag_list"][0]["text"]["content"], "已停止")
         self.assertIsNone(find_element(self.put.call_args.args[2], "pj_stop"))
+        projects.set_state(self.state, PID, projects.ACTIVE)
+        projects.set_state(self.state, PID, projects.PAUSED, "wakes")  # A guard's: 停住了 and why, in red.
+        self.tick(1030.0)
+        tag = self.put.call_args.args[2]["header"]["text_tag_list"][0]
+        self.assertEqual((tag["text"]["content"], tag["color"]), ("停住了 · 连续唤醒次数到上限", "red"))
+
+    def test_a_thread_that_failed_or_was_stopped_by_the_lead_is_停住了_on_the_card(self):
+        self.job(T1, 1, "failed", status_message="任务异常（transport_error）")
+        self.tick(1010.0)
+        card = self.put.call_args.args[2]
+        self.assertIsNotNone(find_element(card, "pt_a1b2c3_s"))
+        self.assertIn("停住了", find_element(card, "pt_a1b2c3_s")["header"]["title"]["content"])
+        self.assertIn("停住了 1", find_element(card, "pj_meta")["content"])
+        self.job(T1, 2, "cancelled", cancel_requested_by="card")  # The owner's own stop.
+        self.tick(1020.0)
+        card = self.put.call_args.args[2]
+        self.assertIn("已停止", find_element(card, "pt_a1b2c3_c")["header"]["title"]["content"])
 
     def test_the_card_says_what_the_record_and_the_files_say(self):
         projects.update(self.state, PID, lambda record: record.update(direction="旧的方向", lead_note={"text": "先迁小表"},

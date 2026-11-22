@@ -1,14 +1,19 @@
 """The bot menu's 看板: what is going on in the owner's private chat now, in the 夜航 look (docs/ui.md 5.2: 菜单「看板」).
 
-The conclusion band first (cards/ui.py conclusion_band): 要你处理 N 件事 (等你, 停住了 and 可能卡住), the most pressing
-topic under it (core/look.py pressing), and how many of each state as a segment bar; 都在掌握中 when nothing asks for him.
-Then, most pressing first: 等你 → 停住了 → 有结果没看 → 在做 (可能卡住 in its colour) → 专项 (with 整理专项, the one place it
-is) → 做完 and 已停止 (folded). Each topic is a topic row (cards/ui.py topic_row): its state's dot and word, its title
-with ›, one line in words (what he is asked to decide, why it stopped, what it is doing now) and a grey line of figures;
-the whole row opens it (``url``; a topic without one is not a link). Buttons are real: 去回答 (opens the topic's
-question, the row's one primary button), 不管了 (a text button: takes a stopped topic off the board, app/overview.py
-DISMISS, ``from`` ORIGIN, app/digest.py redraws this card). A topic of a live project is not listed by itself: its
-project's block counts it.
+The conclusion band first (cards/ui.py conclusion_band): 要你处理 N 件事 (等你, 停住了 and 可能卡住: core/board_read.py ACT,
+counted by its act_count as 手上的事 counts them), the most pressing topic under it (core/look.py pressing), and how many
+of each state as a segment bar; 都在掌握中 when nothing asks for him. Then, most pressing first: 等你 → 停住了 → 可能卡住 →
+有结果没看 → 在做 → 专项 (with 整理专项, the one place it is) → 做完 and 已停止 (folded). Each topic is a topic row
+(cards/ui.py topic_row): its state's dot and word, its title with ›, one line in words (what he is asked to decide, why
+it stopped, what it is doing now) and a grey line of figures; the whole row opens it (``url``; a topic without one is not
+a link). Buttons are real: 去回答 (opens the topic's question, the row's one primary button), 不管了 (a text button: takes
+a stopped topic off the board, app/overview.py DISMISS, ``from`` ORIGIN, app/digest.py redraws this card). What asks for
+him (等你, 停住了, 可能卡住) is listed whoever's it is; a live project's other topics are not listed by themselves: its
+project's block counts them.
+
+A project a guard paused (core/projects.py halted: its token budget, its wake-ups, no progress) is 停住了 in red with
+why, counted among 要你处理, and its block has 继续 (PROJECT_GO_KIND, app/digest.py Digest.claim: app/project_loop.py
+resume, what the pause card's 继续 does); one the owner stopped is 已停止 (docs/ui.md 2.2, 3).
 
 With nothing listed it says which kind of empty it is (ui.empty_words, ``empty_state``): 还没有话题 for an owner who never had
 one (``first_use``), 某个时刻的记录 for a card redrawn from its saved view long after it was read (``at``, ``now``),
@@ -18,17 +23,21 @@ A cancelled topic is 停住了 unless the owner stopped it himself (core/look.py
 已停止, background, in the fold. A row's ``tone`` (app/digest.py collect) says which; a view without it reads by its
 status, as before.
 
-``view`` is app/digest.py collect's, with ``url`` on each row and, from board_view, ``projects`` [{name, goal, topics,
-waiting, stopped, running, folded}] (what asks for him first, folded away last: a block each for the first SHOWN on, the
-rest and the folded ones a line each in one fold), ``proposals`` (open proposal cards) and ``tidy`` (整理专项 on). 早晚汇总
-keeps its own card (cards/digest.py)."""
+``view`` is app/digest.py collect's, with ``url`` on each row and, from board_view, ``projects`` [{id, name, goal, topics,
+waiting, stopped, stuck, running, halted, cancelled, folded}] (what asks for him first, folded away last: a block each for
+the first SHOWN on, the rest and the folded ones a line each in one fold), ``proposals`` (open proposal cards) and ``tidy``
+(整理专项 on). 早晚汇总 keeps its own card (cards/digest.py).
+
+Many topics and projects (up to 50 on, folded ones piling up) would pass what CardKit takes in one card (cards/elements.py
+CARD_NODES, CARD_BYTES): ``board_card`` then shows fewer rows a group, step by step (FIT_SHOWN), the rest one line each."""
 from __future__ import annotations
 
 from covey.cards import ui
-from covey.cards.elements import collapsible, grey, item, md, note, plain, styled_panel, text_button
+from covey.cards.elements import (CARD_BYTES, CARD_NODES, collapsible, fits, grey, item, md, note, plain, styled_panel,
+                                  text_button)
 from covey.cards.overview import DISMISS, dismissed_line, stale_line
 from covey.cards.project_proposal import CREATE_KIND, DECLINE_KIND, START_KIND
-from covey.core import look
+from covey.core import board_read, look
 from covey.core.text import cut, literal as literal_text
 from covey.core.turn_words import TASK_CARD_ACT
 
@@ -40,22 +49,29 @@ STOPPED = frozenset({"failed", "cancelled", "interrupted"})
 # The five states the 看板 shows, as core/look.py STATES has them: (word, colour, block tint).
 LOOKS = {key: (look.STATES[key].word, look.STATES[key].color, look.STATES[key].tint)
          for key in ("waiting", "stopped", "result", "running", "stuck")}
-ACT = ("waiting", "stopped", "stuck")  # 要你处理: what the band counts.
+ACT = board_read.ACT  # 要你处理: what the band counts (core/board_read.py act_count), 手上的事's too.
 # The 看板's own buttons (app/digest.py Digest.claim, before topic routing): 刷新 redraws the card from a fresh view in
 # place (a second menu click folds it instead), 记为看过 takes a result off 有结果没看 (core/board_read.py mark_seen).
 REFRESH_KIND, SEEN_KIND = "bridge_board_refresh", "bridge_board_seen"
 # 取消 on a row of 到点回来看 (app/revisits.py, COVEY_REVISIT=1): that topic's revisit taken back (app/digest.py Digest.claim).
 REVISIT_KIND = "bridge_board_revisit_cancel"
+# 继续 on the block of a project a guard paused: it starts again as the pause card's 继续 starts it (app/project_loop.py
+# resume), and the card is redrawn (app/digest.py Digest.claim).
+PROJECT_GO_KIND = "bridge_board_project_go"
 ALL_SEEN = "全部记为看过"  # 记为看过 on every result row at once: SEEN_KIND with ``topics``, at most SEEN_MAX.
 SEEN_MAX = 30
 # 去看板 under an answered question (cards/question_cards.py others_row): a new 看板 card, as the bot menu's item sends one.
 OPEN_KIND = "bridge_board_open"
-KINDS = frozenset({REFRESH_KIND, SEEN_KIND, REVISIT_KIND, OPEN_KIND})
+KINDS = frozenset({REFRESH_KIND, SEEN_KIND, REVISIT_KIND, OPEN_KIND, PROJECT_GO_KIND})
 NO_LINK = "找不到它在私聊里的位置，打不开"  # A row whose topic has no link (app/digest.py board_view).
 LEAD = 30  # Characters of the most pressing topic's words on the band.
 GOAL_CHARS = 60  # Of a project's or a proposal's goal on its grey line.
 SHOWN = 8  # Blocks a group shows; the rest is one line.
 DONE_SHOWN = 12  # Rows in the folded 做完.
+FOLD_SHOWN = 20  # Projects past the blocks, or folded away, listed a line each in their fold; the rest one line.
+FIT_SHOWN = (SHOWN, 6, 4, 3, 2, 1)  # Blocks a group shows, tried in turn until the card fits (``board_card``).
+NODES, BYTES = CARD_NODES - 10, CARD_BYTES - 1500  # Room left under CardKit's limits for what CardKit adds.
+GO = "继续"
 
 
 def button(label, *, tone="", value=None, url=""):
@@ -108,11 +124,11 @@ def task_card_button(row):
     return [button(TASK_CARD_ACT, tone="primary", url=row["url"])] if row.get("card") and row.get("url") else []
 
 
-def blocks(kind, rows, buttons=lambda row: ()):
-    shown = [block("stuck" if kind == "running" and row.get("stuck") else kind, row, buttons(row)) for row in rows[:SHOWN]]
-    if len(rows) > SHOWN:
-        shown.append(note(f"另有 {len(rows) - SHOWN} 个：" + "、".join(row.get("label") or "话题" for row in rows[SHOWN:])))
-    return shown
+def blocks(kind, rows, buttons=lambda row: (), shown=SHOWN):
+    shown_rows = [block(kind, row, buttons(row)) for row in rows[:shown]]
+    if len(rows) > shown:
+        shown_rows.append(note(f"另有 {len(rows) - shown} 个：" + "、".join(row.get("label") or "话题" for row in rows[shown:])))
+    return shown_rows
 
 
 def tone(row) -> str:
@@ -126,20 +142,28 @@ def tone(row) -> str:
 
 
 def groups(view):
-    """{waiting, stale, stopped, result, running, seen}: the rows of each group, a live project's topics left out but
-    from 等你 (``waiting``, and ``stale`` the ones waiting over a day): what waits for him is listed whoever's it is,
-    so the count is the 早晚汇总's and 手上的事's (core/board_read.py waits)."""
+    """{waiting, stale, stopped, stuck, running, result, seen, cancelled}: the rows of each group. What asks for him
+    (等你 with ``stale`` the ones waiting over a day, 停住了, 可能卡住: ``ACT``) is listed whoever's it is, a live project's
+    topics too, so the count is the 早晚汇总's and 手上的事's (core/board_read.py waits, Asks); a live project's other
+    topics are left out (its block counts them)."""
     member = {topic for project in view.get("projects") or () for topic in project.get("topics") or ()}
 
     def mine(rows):
         return [row for row in rows or () if row.get("topic") not in member]
-    done = mine(view.get("done"))
+    done = list(view.get("done") or ())
+    running = list(view.get("running") or ())
     return {"waiting": list(view.get("waiting") or ()), "stale": list(view.get("stale") or ()),
-            "running": mine(view.get("running")),
             "stopped": [row for row in done if tone(row) == "stopped"],
-            "result": [row for row in done if tone(row) == "result"],
-            "seen": [row for row in done if tone(row) == "done"],
-            "cancelled": [row for row in done if tone(row) == "cancelled"]}
+            "stuck": [row for row in running if row.get("stuck")],
+            "running": [row for row in mine(running) if not row.get("stuck")],
+            "result": [row for row in mine(done) if tone(row) == "result"],
+            "seen": [row for row in mine(done) if tone(row) == "done"],
+            "cancelled": [row for row in mine(done) if tone(row) == "cancelled"]}
+
+
+def halted(view) -> list:
+    """The projects of ``view`` a guard paused (停住了 · why: app/digest.py projects_view ``halted``)."""
+    return [project for project in view.get("projects") or () if project.get("halted")]
 
 
 def waiting_count(found) -> int:
@@ -147,22 +171,28 @@ def waiting_count(found) -> int:
     return len(found["waiting"]) + len(found.get("stale") or ())
 
 
-def state_counts(found) -> dict:
-    """{state key: how many} in core/look.py PRESSING's order: the band's segment bar and its most pressing."""
-    stuck = sum(1 for row in found["running"] if row.get("stuck"))
-    return {"waiting": waiting_count(found), "stopped": len(found["stopped"]), "stuck": stuck,
-            "result": len(found["result"]), "running": len(found["running"]) - stuck}
+def state_counts(found, stopped_projects=()) -> dict:
+    """{state key: how many} in core/look.py PRESSING's order: the band's segment bar and its most pressing. A project a
+    guard paused is 停住了 as a topic that stopped is (core/board_read.py Asks.counts)."""
+    return {"waiting": waiting_count(found), "stopped": len(found["stopped"]) + len(stopped_projects),
+            "stuck": len(found["stuck"]), "result": len(found["result"]), "running": len(found["running"])}
 
 
-def band(found, empty=None):
-    """The conclusion band: how many things ask for him, the most pressing topic, every state's count as a bar; the
-    whole opens the most pressing topic."""
-    counts = state_counts(found)
-    asked = sum(counts[key] for key in ACT)
-    first = look.pressing(counts)
-    rows = ([row for row in found["running"] if row.get("stuck")] if first == "stuck" else
-            found["running"] if first == "running" else found.get(first) or
-            (found.get("stale") if first == "waiting" else None) or []) if first else []  # Only old 等你: the newest of them.
+def project_row(project) -> dict:
+    """A project a guard paused as the band's most pressing: 专项「名」, opening its card's topic."""
+    return {"label": f"专项「{project.get('name') or ''}」", "url": project.get("url") or ""}
+
+
+def band(found, empty=None, sizes=None, stopped_projects=()):
+    """The conclusion band: how many things ask for him (core/board_read.py act_count), the most pressing topic (or
+    project), every state's count as a bar; the whole opens the most pressing one. ``sizes``: state_counts, worked out
+    once by the caller."""
+    sizes = sizes if sizes is not None else state_counts(found, stopped_projects)
+    asked = board_read.act_count(sizes)
+    first = look.pressing(sizes)
+    leads = {**found, "stopped": [*found["stopped"], *(project_row(project) for project in stopped_projects)],
+             "waiting": found["waiting"] or found.get("stale") or []}  # Only old 等你: the newest of them.
+    rows = leads.get(first) or [] if first else []
     lead = rows[0] if rows else None
     line = ""
     if lead:
@@ -173,13 +203,13 @@ def band(found, empty=None):
     if empty and not asked:  # Not a clear board: no topic yet, or a record from some time ago (ui.empty_words).
         headline, quiet = empty[:2]
     return ui.conclusion_band("要你处理", headline, literal_text(line) if lead and not (empty and not asked) else quiet,
-                              below=ui.seg_bar(counts), url=(lead or {}).get("url") or "")
+                              below=ui.seg_bar(sizes), url=(lead or {}).get("url") or "")
 
 
-def counts(found, empty=None) -> list:
+def counts(found, empty=None, sizes=None):
     """The title bar's tags: (text, color) of the states that have someone, most pressing first, counted as the band
     counts them (state_counts: one that may be stuck is not also 在做)."""
-    sizes = state_counts(found)
+    sizes = sizes if sizes is not None else state_counts(found)
     tags = [(f"{sizes[key]} {look.word(key)}", look.STATES[key].color) for key in ("waiting", "stopped", "stuck", "running")
             if sizes[key]]
     return tags or [((empty[2], "neutral") if empty else ("都在掌握中", "green"))]
@@ -191,26 +221,46 @@ def one_line(text, limit=GOAL_CHARS) -> str:
     return literal_text(cut(text, limit))
 
 
+def stand_words(project) -> str:
+    """How a project's topics stand, in the state words: 1 个等你、1 个停住了、2 个在做."""
+    return "、".join(f"{n} 个{look.word(key)}" for key, n in (
+        ("waiting", project.get("waiting")), ("stopped", project.get("stopped")), ("stuck", project.get("stuck")),
+        ("running", project.get("running"))) if n)
+
+
+def project_state(project) -> str:
+    """A project's own state when it is not at work, in its colour: 停住了 · why for a guard's pause, 已停止 for the
+    owner's stop; '' otherwise (its topics' words say how it stands)."""
+    if project.get("halted"):
+        reason = project["halted"] if isinstance(project["halted"], str) else ""
+        return ui.state_word("stopped") + (grey(" · " + literal_text(reason)) if reason else "")
+    if project.get("cancelled"):
+        return ui.state_word("cancelled")
+    return ""
+
+
 def project_block(project):
-    """A live project: its name, its goal and how its topics stand."""
-    stand = "、".join(f"{n} 个{word}" for n, word in ((project.get("waiting"), "等你"), (project.get("stopped"), "停住"),
-                                                      (project.get("running"), "在做")) if n)
-    left = [md(f"**{literal_text(project.get('name') or '专项')}**" + (f"　{grey(stand)}" if stand else ""), size="normal_v2")]
+    """A live project: its name, its own state (``project_state``), its goal and how its topics stand; 继续 when a guard
+    paused it (PROJECT_GO_KIND)."""
+    stand, state = stand_words(project), project_state(project)
+    left = [md(f"**{literal_text(project.get('name') or '专项')}**" + (f"　{state}" if state else "")
+               + (f"　{grey(stand)}" if stand else ""), size="normal_v2")]
     if project.get("goal"):
         left.append(md(grey("目标：" + one_line(project["goal"])), size="notation"))
+    go = [button(GO, tone="primary", value={"kind": PROJECT_GO_KIND, "project": project["id"]})] \
+        if project.get("halted") and project.get("id") else []
     return {"tag": "interactive_container", "width": "fill", "padding": "8px 10px 8px 10px", "corner_radius": "8px",
             "background_style": "grey-50", "has_border": True, "border_color": "grey-200", "vertical_spacing": "2px",
-            "elements": [body(left, [])], **({"behaviors": [{"type": "open_url", "default_url": project["url"]}]}
+            "elements": [body(left, go)], **({"behaviors": [{"type": "open_url", "default_url": project["url"]}]}
                                              if project.get("url") else {})}
 
 
 def project_line(project):
-    """A project past the 看板's blocks, or folded away, in one line: its name (a link to it) and 收起, 停住 (a guard or the
-    owner stopped it) or how its topics stand."""
-    stand = "、".join(f"{n} 个{word}" for n, word in ((project.get("waiting"), "等你"), (project.get("stopped"), "停住"),
-                                                      (project.get("running"), "在做")) if n)
+    """A project past the 看板's blocks, or folded away, in one line: its name (a link to it) and 收起, 停住了 (a guard
+    paused it), 已停止 (the owner stopped it) or how its topics stand."""
     name = literal_text(project.get("name") or "专项")
-    word = "收起" if project.get("folded") else "停住" if project.get("paused") else stand or "在做"
+    word = ("收起" if project.get("folded") else look.word("stopped") if project.get("halted")
+            else look.word("cancelled") if project.get("cancelled") else stand_words(project) or look.word("running"))
     return md((f"[{name}]({project['url']})" if project.get("url") else name) + " " + grey("· " + word), size="normal_v2")
 
 
@@ -231,21 +281,21 @@ def proposal_block(item):
     return block_
 
 
-def revisit_blocks(rows):
+def revisit_blocks(rows, shown=SHOWN):
     """到点回来看 (app/revisits.py board_rows): each topic that asked to be looked at again, when and what, 取消 while it waits;
     one whose turn is queued already says it is being looked at."""
-    shown = [{"tag": "markdown", "content": f"**到点回来看**  <font color='grey'>{len(rows)}</font>", "text_size": "normal_v2",
+    drawn = [{"tag": "markdown", "content": f"**到点回来看**  <font color='grey'>{len(rows)}</font>", "text_size": "normal_v2",
               "icon": {"tag": "standard_icon", "token": "time_outlined", "color": "grey"}}]
-    for row in rows[:SHOWN]:
+    for row in rows[:shown]:
         what = f"：{row['look']}" if row.get("look") else ""
         line = f"正在回来看{what}" if row.get("fired") else f"{row.get('at') or ''} 回来看{what}"
         cancel = [] if row.get("fired") else [button("取消", tone="text", value={
             "kind": REVISIT_KIND, "topic": row.get("topic") or "", "set_at": row.get("set_at")})]
-        shown.append(ui.topic_row("running" if row.get("fired") else "queued", head_of(row), line, url=row.get("url") or "",
+        drawn.append(ui.topic_row("running" if row.get("fired") else "queued", head_of(row), line, url=row.get("url") or "",
                                   buttons=buttons_row(cancel)))
-    if len(rows) > SHOWN:
-        shown.append(note(f"另有 {len(rows) - SHOWN} 个：" + "、".join(row.get("label") or "话题" for row in rows[SHOWN:])))
-    return shown
+    if len(rows) > shown:
+        drawn.append(note(f"另有 {len(rows) - shown} 个：" + "、".join(row.get("label") or "话题" for row in rows[shown:])))
+    return drawn
 
 
 def empty_state(view, found, now=None):
@@ -260,15 +310,26 @@ def empty_state(view, found, now=None):
 
 def board_card(view, now=None):
     """The 看板 for ``view``; ``now``: given by a redraw from a saved view (not a fresh read), so that a card whose
-    figures are old says so when nothing asks (empty_state)."""
+    figures are old says so when nothing asks (empty_state). With many rows, fewer a group (FIT_SHOWN) until the card is
+    within what CardKit takes (cards/elements.py CARD_NODES, CARD_BYTES); the band counts them all the same."""
+    for shown in FIT_SHOWN:
+        card = _drawn(view, now, shown)
+        if fits(card, NODES, BYTES):
+            break
+    return card
+
+
+def _drawn(view, now, shown):
     found = groups(view)
     empty = empty_state(view, found, now)
-    elements = [band(found, empty)]
+    stopped_projects = halted(view)
+    sizes = state_counts(found, stopped_projects)
+    elements = [band(found, empty, sizes, stopped_projects)]
     waiting = found["waiting"]
     if waiting or view.get("stale") or view.get("cleared"):
         elements.append(heading("waiting", waiting_count(found)))
         elements += blocks("waiting", waiting, lambda row: [button(row.get("act") or "去回答", tone="primary", url=row["url"])]
-                           if row.get("url") else [])
+                           if row.get("url") else [], shown)
         if view.get("stale"):
             elements.append(stale_line(view["stale"], button=bool(view.get("dismissable")), origin=ORIGIN))
         elif view.get("cleared"):
@@ -276,7 +337,11 @@ def board_card(view, now=None):
     if found["stopped"]:
         elements.append(heading("stopped", len(found["stopped"])))
         elements += blocks("stopped", found["stopped"], lambda row: task_card_button(row) + ([button("不管了", tone="text", value={
-            "kind": DISMISS, "topics": [row["topic"]], "from": ORIGIN})] if view.get("can_dismiss") and row.get("topic") else []))
+            "kind": DISMISS, "topics": [row["topic"]], "from": ORIGIN})] if view.get("can_dismiss") and row.get("topic") else []),
+            shown)
+    if found["stuck"]:  # Right after 停住了 (docs/ui.md 5.1): what may be stuck is not left at the end of 在做.
+        elements.append(heading("stuck", len(found["stuck"])))
+        elements += blocks("stuck", found["stuck"], task_card_button, shown)
     if found["result"]:
         topics = [row["topic"] for row in found["result"] if row.get("topic")][:SEEN_MAX]
         # 全部记为看过: two or more results cleared with one click and one redraw.
@@ -284,12 +349,12 @@ def board_card(view, now=None):
             ALL_SEEN, tone="text", value={"kind": SEEN_KIND, "topics": topics})]) if len(topics) > 1
             else heading("result", len(found["result"])))
         elements += blocks("result", found["result"], lambda row: [button("记为看过", tone="text", value={
-            "kind": SEEN_KIND, "topic": row["topic"]})] if row.get("topic") else [])
+            "kind": SEEN_KIND, "topic": row["topic"]})] if row.get("topic") else [], shown)
     if found["running"]:
         elements.append(heading("running", len(found["running"])))
-        elements += blocks("running", found["running"], lambda row: task_card_button(row) if row.get("stuck") else [])
+        elements += blocks("running", found["running"], shown=shown)
     if view.get("revisits"):
-        elements += revisit_blocks(view["revisits"])
+        elements += revisit_blocks(view["revisits"], shown)
     if view.get("tidy") is not None or view.get("projects"):
         projects, pending = view.get("projects") or [], view.get("pending") or []
         # One count of each, said the same way as the 整理专项 card and the butler's projects_list: 专项 that exist, and
@@ -298,17 +363,23 @@ def board_card(view, now=None):
             f"　<text_tag color='violet'>{len(pending)} 个提议等你定</text_tag>" if pending else "")
         elements.append({"tag": "markdown", "content": content, "text_size": "normal_v2",
                          "icon": {"tag": "standard_icon", "token": "folder_outlined", "color": "grey"}})
-        # A block each for those on, the first SHOWN; the rest and the ones folded away one line each in a fold, as the
-        # list grows (app/project_loop.py: up to MAX_ACTIVE on, and folded ones pile up).
+        # A block each for those on, the first ``shown``; the rest and the ones folded away one line each in a fold, as
+        # the list grows (app/project_loop.py: up to MAX_ACTIVE on, and folded ones pile up), at most FOLD_SHOWN of them.
         on = [project for project in projects if not project.get("folded")]
-        elements += [project_block(project) for project in on[:SHOWN]]
-        rest, folded = on[SHOWN:], [project for project in projects if project.get("folded")]
+        elements += [project_block(project) for project in on[:shown]]
+        rest, folded = on[shown:], [project for project in projects if project.get("folded")]
         if rest or folded:
             title = " · ".join(part for part in (f"另有 {len(rest)} 个专项" if rest else "",
                                                  f"收起的专项 {len(folded)} 个" if folded else "") if part)
-            elements.append(collapsible("board_projects", title, [project_line(project) for project in rest + folded],
-                                        quiet=True))
-        elements += [proposal_block(item) for item in pending[:SHOWN]]
+            listed = rest + folded
+            limit = FOLD_SHOWN if shown == SHOWN else shown * 2
+            lines = [project_line(project) for project in listed[:limit]]
+            if len(listed) > limit:
+                lines.append(note(f"另有 {len(listed) - limit} 个，在私聊里找它们的专项卡"))
+            elements.append(collapsible("board_projects", title, lines, quiet=True))
+        elements += [proposal_block(item) for item in pending[:shown]]
+        if len(pending) > shown:
+            elements.append(note(f"另有 {len(pending) - shown} 个提议，在私聊里的提议卡上定"))
         if view.get("tidy") is not None:
             line = ("「建专项」按提议里的话题和名字建，建好后话题可以移出、名字可以改" if pending else
                     "还没有专项，点右边把最近 7 天动过的话题看一遍" if not projects else
@@ -316,13 +387,14 @@ def board_card(view, now=None):
             elements.append(body([md(grey(line), size="notation")], [button("整理专项", tone="primary", value={"kind": START_KIND})]))
     if found["seen"] or found["cancelled"]:
         rows = found["seen"] + found["cancelled"]
+        limit = DONE_SHOWN if shown == SHOWN else shown
         lines = [md((f"[{literal_text(row.get('label') or '话题')}]({row['url']})" if row.get("url")
                      else literal_text(row.get("label") or "话题")) + f" {literal_text(row.get('title') or '')} "
                     + grey("· " + " · ".join(part for part in (
                         look.word("cancelled") if tone(row) == "cancelled" else row.get("state"), row.get("took")) if part)))
-                 for row in rows[:DONE_SHOWN]]
-        if len(rows) > DONE_SHOWN:
-            lines.append(note(f"另有 {len(rows) - DONE_SHOWN} 个"))
+                 for row in rows[:limit]]
+        if len(rows) > limit:
+            lines.append(note(f"另有 {len(rows) - limit} 个"))
         since = f"{view['done_since']} 以来" if view.get("done_since") else ""
         title = (f"{since}做完的话题 {len(rows)} 个，都看过了" if not found["cancelled"] else
                  f"{since}做完 {len(found['seen'])} 个 · {look.word('cancelled')} {len(found['cancelled'])} 个")
@@ -330,11 +402,10 @@ def board_card(view, now=None):
     if view.get("stamp"):
         # 刷新 redraws it here; a second click on the menu's 看板 folds it (the owner wanted fresh figures, not a fold).
         elements.append(item(note(f"更新于 {view['stamp']}"), text_button("刷新", {"kind": REFRESH_KIND})))
-    tags = counts(found, empty)
+    tags = counts(found, empty, sizes)
     head = {"title": plain("看板"), "subtitle": plain("私聊里在推进的事"),
             "text_tag_list": [{"tag": "text_tag", "text": plain(text), "color": color} for text, color in tags[:3]],
             "template": "default", "icon": {"tag": "standard_icon", "token": ICON, "color": "blue"},
             "padding": "10px 14px 0px 14px"}
     summary = "看板 · " + " · ".join(text for text, _ in tags)
     return ui.styled(styled_panel(head, elements, summary, spacing="8px"))
-

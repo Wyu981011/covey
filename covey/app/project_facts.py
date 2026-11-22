@@ -12,9 +12,11 @@ from pathlib import Path
 
 from covey.cards import answer_card
 from covey.cards.facts import tile_count
-from covey.cards.project_card import CORRECTED, DONE, PAUSED, RUNNING, WAITING, Member, Project
+from covey.cards.project_card import (CANCELLED, CORRECTED, DONE, IDLE, RUNNING, STOPPED, STUCK, WAITING, Member,
+                                      Project)
 from covey.app.card_publish import clock, words
-from covey.core import board_read, project_library, project_memory, projects
+from covey.core import board_read, look, project_library, project_memory, projects
+from covey.core import progress as turn_progress
 from covey.core.jobs import topic_job_records
 from covey.core.metrics import run_seconds, timings_of
 from covey.core.state import epoch_seconds, read_object
@@ -54,6 +56,21 @@ def harness_of(state_dir, topic_id, job=None) -> str:
     return value if isinstance(value, str) else ""
 
 
+def member_state(job, status, now) -> str:
+    """A member's state (cards/project_card.py, a core/look.py STATES key) from its newest ``job`` and what the 派发卡 makes
+    of it (``status``, app/dispatch_cards.py status_of): 等你, 在做 or 可能卡住 (core/progress.py maybe_stuck) while it
+    runs, else its record's tone (core/look.py record_tone: 停住了, 已停止 the owner's own stop, 做完)."""
+    from covey.app import dispatch_cards as dc
+
+    if status == dc.WAITING:
+        return WAITING
+    if status == dc.RUNNING:
+        stuck = (job or {}).get("status") == "running" and turn_progress.progress(job, now=now).get("maybe_stuck")
+        return STUCK if stuck else RUNNING
+    tone = look.record_tone(job)
+    return tone if tone in (STOPPED, CANCELLED) else DONE
+
+
 def member_view(state_dir, topic_id, now, url="", titles=None) -> Member:
     from covey.app import dispatch_cards as dc
 
@@ -62,9 +79,9 @@ def member_view(state_dir, topic_id, now, url="", titles=None) -> Member:
     ended = status not in (dc.RUNNING, dc.WAITING)
     at = (epoch_seconds((job or {}).get("updated_at")) or now) if ended else now
     seconds = run_seconds(timings_of(job or {}), None, at) if job is not None else None
-    word = DONE if ended else (WAITING if status == dc.WAITING else RUNNING)
-    if status in (dc.FAILED, dc.STOPPED):
-        body = ("失败：" if status == dc.FAILED else "已停止：") + body
+    word = member_state(job, status, now)
+    if word in (STOPPED, CANCELLED):  # Why it stopped and where, as the 看板 says it (its state is the fold's word).
+        body = board_read.ended_line(job, now) or body
     return Member(topic_id=topic_id, status=word, label=topic_label(Path(state_dir), topic_id),
                   title=topic_title(Path(state_dir), topic_id), body=words(body), url=url,
                   took=dc.quantize(seconds) if seconds is not None else "",
@@ -173,12 +190,13 @@ def facts(state_dir, record, now, titles=None, links=None) -> Project:
     if state == projects.DONE:
         status = DONE
     elif state == projects.PAUSED:
-        status = PAUSED
+        # 停住了 (and why) for a guard's pause, 已停止 for the owner's stop (core/projects.py pause_tone).
+        status = {"stopped": STOPPED, "cancelled": CANCELLED}.get(projects.pause_tone(record), IDLE)
     else:
         status = WAITING if waiting or lead_state(state_dir, record, now).startswith("等你") else RUNNING
     need = ""
     if status == WAITING:
-        need = waiting.body.removeprefix("等你回答：") if waiting else lead_state(state_dir, record, now).removeprefix("等你 · ")
+        need = waiting.body.removeprefix(dc.ASK_WORDS) if waiting else lead_state(state_dir, record, now).removeprefix("等你 · ")
         need = " · ".join(part for part in (waiting.label if waiting else "", need) if part)
     began = float(record.get("created_at") or now)
     end = now if status != DONE else float(record.get("updated_at") or now)
@@ -200,7 +218,8 @@ def facts(state_dir, record, now, titles=None, links=None) -> Project:
         parts.append(answer_card.figure("token", tokens))
     ask = record.get("ask") if isinstance(record.get("ask"), dict) else {}
     return Project(project_id=pid, lead_topic=lead, name=str(record.get("name") or ""), status=status,
-                   need=need, need_url=str(links.get("need") or ""), members=members, elapsed=elapsed, tokens=tokens,
+                   reason=projects.stop_reason(record), need=need, need_url=str(links.get("need") or ""), members=members,
+                   elapsed=elapsed, tokens=tokens,
                    lead_state=projects.reason_words(record) or lead_state(state_dir, record, now), lead_note=lead_note(record),
                    triage=triage_lines(record), joins=join_lines(state_dir, record), memory=memory_rows(state_dir, record), library=library_rows(state_dir, pid),
                    inputs=inputs, outputs=tuple(answer_card.output_lines(parts, answer_card.RUNNING_LINES)),

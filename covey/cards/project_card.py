@@ -6,18 +6,22 @@ again each time that changes, and once more as a single line when the project is
 Top to bottom, element IDs (CardKit takes at most 20 characters, rule 9) in the order drawn:
 
 - ``answer_ask`` (only for a project the owner's own message started): the grey "你问" block;
-- the header: the project's name, its state as a tag (在做, 等你, 停住, 做完);
+- the header: the project's name, its state as a tag in its colour (core/look.py STATES: 在做, 等你, 停住了 and why for a
+  guard's pause, 已停止 for the owner's stop, 做完);
 - ``pj_need``: 需要你 and what waits, with › 打开问题卡 when the question card has a link;
 - ``pj_meta``: one grey line, member topics and how they stand, 用时, token;
 - ``pj_lead``: the lead as it is now and the last line it noted;
-- ``pt_<topic>_<s>``: one fold a member, open while it works or waits on the owner and closed once it ended; ``s`` is the
-  state's letter, so a member that moves from one to the other is a new element and the client draws the fold as
-  that state says (a changed ``expanded`` on the same id is kept as the owner left it); at most ``MAX_FOLDS``, the rest
-  one grey line ``pj_more``. Inside, ``pb_<topic>_<s>``, what it is doing and the link that opens its thread;
+- ``pt_<topic>_<s>``: one fold a member, its title saying its state in the words of core/look.py STATES (等你, 停住了,
+  可能卡住, 在做, 做完, 已停止: a member that failed, was interrupted or was stopped by the lead is 停住了, one the owner
+  stopped 已停止), open while it works or asks for the owner and closed once it ended otherwise; ``s`` is the state's
+  letter, so a member that moves from one to the other is a new element and the client draws the fold as that state
+  says (a changed ``expanded`` on the same id is kept as the owner left it); at most ``MAX_FOLDS``, the rest one grey
+  line ``pj_more``. Inside, ``pb_<topic>_<s>``, the state in its colour and what it is doing (why it stopped), and the
+  link that opens its thread;
 - ``pj_triage``, ``pj_mem``, ``pj_lib``: the 分流记录, 专项记忆 and 资料库 folds (closed), drawn only with rows; each row of
   the last two has a 删 button, and a row of the first that the lead answered for the owner a 不对 button (``triage_rows``);
 - ``pj_io``: the grey 输入/输出 box (cards/answer_card.py ``box``);
-- ``pj_btns``: 补充 (``pj_steer``), 停止专项 (``pj_stop``), 不要专项 (``pj_down``).
+- ``pj_btns``: 补充 (``pj_steer``), 停止专项 (``pj_stop``, while the project is at work), 不要专项 (``pj_down``).
 
 Two cards of the project's own more, with COVEY_PROJECT_ASK=1 (``ask_card``, ``asked_card``): the one a guard's pause sends the owner,
 a message of its own where the project's card is (``pa_why`` the reason in a sentence, ``pa_note``, ``pa_btns``: 继续 ``pa_go``,
@@ -30,13 +34,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from covey.cards import answer_card
+from covey.cards import answer_card, ui
 from covey.cards.answer_card import literal_text
 from covey.cards.elements import (CARD_BYTES, CARD_NODES, button_row, card, collapsible, fits, grey, item, md, note,
                                   panel_header, styled_panel, text_button, topic_button)
 from covey.core import look
 
 HEAD_CHARS = 30
+REASON_CHARS = 16  # Of a guard's reason in the header's tag (停住了 · token 用完了).
 MEMBER_TITLE = 36  # Of a topic's title on its fold's title line.
 MAX_FOLDS = 8  # Folds drawn; the older ones are one line.
 MAX_ROWS = 10  # Rows of the 分流记录, 专项记忆 and 资料库 folds.
@@ -50,18 +55,24 @@ TRIAGE_WRONG_KIND = "bridge_project_triage_wrong"
 # The pause card's buttons (choice -> kind): app/project_loop.py CHOICES.
 ASK_KINDS = {"continue": "bridge_project_ask_continue", "finish": "bridge_project_ask_finish", "stop": "bridge_project_ask_stop"}
 KINDS = frozenset({STEER_KIND, STOP_KIND, DOWN_KIND, MEM_DEL_KIND, LIB_DEL_KIND, TRIAGE_WRONG_KIND, "bridge_project_triage_fix", *ASK_KINDS.values()})
-RUNNING, WAITING, PAUSED, DONE = "在做", "等你", "停住", "做完"
-# state -> (tag colour, header icon: one the other cards use, '' for none).
-LOOKS = {RUNNING: ("blue", "waiting_outlined"), WAITING: ("orange", "chat_outlined"), PAUSED: ("neutral", ""),
-         DONE: ("green", "yes_outlined")}
-LETTER = {RUNNING: "r", WAITING: "w", PAUSED: "p", DONE: "d"}
-OPEN = frozenset({RUNNING, WAITING})  # The folds that are open.
+# A project's state and a member's, as core/look.py STATES keys: the words and colours are the table's (docs/ui.md 2.2,
+# 3). A project a guard paused is STOPPED (停住了 and why, ``Project.reason``), one the owner stopped CANCELLED (已停止);
+# a member STUCK may be stuck (core/progress.py maybe_stuck).
+RUNNING, WAITING, STOPPED, STUCK, CANCELLED, DONE = "running", "waiting", "stopped", "stuck", "cancelled", "done"
+IDLE = "idle"  # A project folded away (its card is ``idle_card``): 空闲.
+# state -> its header icon (one the other cards use, '' for none); the colour is the table's.
+ICONS = {RUNNING: "waiting_outlined", WAITING: "chat_outlined", STOPPED: "warning_outlined", DONE: "yes_outlined"}
+LETTER = {RUNNING: "r", WAITING: "w", STOPPED: "s", STUCK: "k", CANCELLED: "c", DONE: "d", IDLE: "i"}
+OPEN = frozenset({RUNNING, WAITING, STOPPED, STUCK})  # The folds that are open: at work, or asking for the owner.
+AT_WORK = frozenset({RUNNING, WAITING})  # A project 停止专项 can stop.
+RANK = {WAITING: 0, STOPPED: 1, STUCK: 2, RUNNING: 3, DONE: 4, CANCELLED: 4}  # The order of the folds (``ordered``).
 
 
 @dataclass(frozen=True)
 class Member:
-    """One member topic of the project. ``status`` is one of 在做, 等你, 做完 (a member that failed or was stopped is 做完
-    too, its ``body`` says what happened); ``url`` opens its thread ('' while it is not known)."""
+    """One member topic of the project. ``status``: its state, a core/look.py STATES key (RUNNING, WAITING, STUCK,
+    STOPPED, CANCELLED, DONE; ``body`` says what it does, or why it stopped); ``url`` opens its thread ('' while it is not
+    known)."""
     topic_id: str
     status: str
     label: str = ""
@@ -74,12 +85,14 @@ class Member:
 
 @dataclass(frozen=True)
 class Project:
-    """What one card says. ``rows`` of the three folds: ``triage`` lines, ``memory`` (id, text), ``library`` (label, entry id) or (file name,).
-    ``lead_topic`` and ``project_id`` go into the buttons' values."""
+    """What one card says. ``status``: its state, a core/look.py STATES key (RUNNING, WAITING, STOPPED with ``reason``,
+    CANCELLED, DONE). ``rows`` of the three folds: ``triage`` lines, ``memory`` (id, text), ``library`` (label, entry id)
+    or (file name,). ``lead_topic`` and ``project_id`` go into the buttons' values."""
     project_id: str
     lead_topic: str
     name: str
     status: str
+    reason: str = ""  # Why a guard paused it ("token 用完了", core/projects.py stop_reason): after 停住了 in its tag.
     need: str = ""
     need_url: str = ""
     members: tuple = ()
@@ -104,10 +117,19 @@ def clipped(text, limit) -> str:
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
 
+def state_words(project) -> str:
+    """The project's state as its tag says it: the word (core/look.py STATES; a state it does not know as it is), and
+    why for a guard's pause (停住了 · token 用完了)."""
+    word = look.word(project.status) if project.status in look.STATES else str(project.status or "")
+    return f"{word} · {clipped(project.reason, REASON_CHARS)}" if project.status == STOPPED and project.reason else word
+
+
 def header(project):
-    color, icon = LOOKS[project.status]
-    tags = [{"tag": "text_tag", "text": {"tag": "plain_text", "content": project.status}, "color": color}]
-    head = panel_header(icon or "waiting_outlined", clipped(project.name, HEAD_CHARS) or "专项", "", [(project.status, color)],
+    found = look.STATES.get(project.status)
+    color, icon = found.color if found else "neutral", ICONS.get(project.status, "")
+    words = state_words(project)
+    tags = [{"tag": "text_tag", "text": {"tag": "plain_text", "content": words}, "color": color}]
+    head = panel_header(icon or "waiting_outlined", clipped(project.name, HEAD_CHARS) or "专项", "", [(words, color)],
                         color=color)
     head["text_tag_list"] = tags
     if not icon:
@@ -120,10 +142,12 @@ def short(topic_id) -> str:
 
 
 def count_line(project) -> str:
+    """话题 N and how many of each state, what asks for the owner first, in the words of core/look.py STATES."""
     kinds = {}
     for member in project.members:
         kinds[member.status] = kinds.get(member.status, 0) + 1
-    parts = " · ".join(f"{word} {kinds[word]}" for word in (RUNNING, WAITING, DONE) if kinds.get(word))
+    parts = " · ".join(f"{look.word(key)} {kinds[key]}" for key in (WAITING, STOPPED, STUCK, RUNNING, DONE, CANCELLED)
+                       if kinds.get(key))
     return f"话题 {len(project.members)}" + (f"（{parts}）" if parts else "")
 
 
@@ -150,17 +174,20 @@ def need_element(project):
 
 
 def ordered(members) -> tuple:
-    """The members as the card lists them: the ones that wait for the owner, then the ones at work, then the ones that
-    ended; each in the order they came in (the record's)."""
-    rank = {WAITING: 0, RUNNING: 1, DONE: 2}
-    return tuple(sorted(members, key=lambda member: rank.get(member.status, 2)))
+    """The members as the card lists them: what asks for the owner first (等你, 停住了, 可能卡住: docs/ui.md 5.1), then
+    the ones at work, then the ones that ended; each in the order they came in (the record's)."""
+    return tuple(sorted(members, key=lambda member: RANK.get(member.status, RANK[DONE])))
 
 
 def member_fold(member):
     letter = LETTER.get(member.status, "d")
     key = f"{short(member.topic_id)}_{letter}"
-    title = " · ".join(part for part in (member.label, clipped(member.title, MEMBER_TITLE), member.status) if part)
-    body = [md(literal_text(clipped(member.body, 200)) if member.body else grey("—"), element_id=f"pb_{key}", size="normal_v2")]
+    known = member.status in look.STATES
+    title = " · ".join(part for part in (member.label, clipped(member.title, MEMBER_TITLE),
+                                         look.word(member.status) if known else member.status) if part)
+    what = literal_text(clipped(member.body, 200)) if member.body else grey("—")
+    # The state in its colour before what it does (the fold's title is plain text): 停住了 red, 等你 orange (docs/ui.md 2.2).
+    body = [md(f"{ui.state_word(member.status)}　{what}" if known else what, element_id=f"pb_{key}", size="normal_v2")]
     tail = " · ".join(part for part in (member.harness, f"用时 {member.took}" if member.took else "",
                                         f"[打开话题串 ›]({member.url})" if member.url else "") if part)
     if tail:
@@ -236,14 +263,14 @@ def buttons(project) -> list:
         return []
     value = {"project_id": project.project_id, "topic_id": project.lead_topic}
     row = [topic_button("补充", element_id="pj_steer", value={"kind": STEER_KIND, **value})]
-    if project.status != PAUSED:
+    if project.status in AT_WORK:
         row.append(topic_button("停止专项", element_id="pj_stop", tone="danger", value={"kind": STOP_KIND, **value}))
     row.append(topic_button("不要专项", element_id="pj_down", value={"kind": DOWN_KIND, **value}))
     return [button_row(row, "pj_btns")]
 
 
 def summary(project) -> str:
-    return f"{project.status} · {clipped(project.name, HEAD_CHARS)}"
+    return f"{state_words(project)} · {clipped(project.name, HEAD_CHARS)}"
 
 
 def project_elements(project, rows, folds) -> list:
@@ -286,7 +313,7 @@ def line_block(words, text, url=""):
 def settled_card(name, *, url="", reason=""):
     """What the card of a project that is done becomes: one grey line, "✅ 做完 · 结论在下方 ›" opening the conclusion at
     ``url``. ``reason``: said instead for a project that ended some other way (stopped, no longer a project); no link."""
-    words = f"✅ {DONE} · 结论在下方" + ("　›" if url else "") if not reason else f"⏹ {reason}"
+    words = f"✅ {look.word(DONE)} · 结论在下方" + ("　›" if url else "") if not reason else f"⏹ {reason}"
     text = clipped(name, HEAD_CHARS) or "专项"
     return line_block(words, text, url if not reason else "")
 

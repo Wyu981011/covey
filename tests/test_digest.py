@@ -530,6 +530,34 @@ class BoardTests(UnifiedCase):
         self.assertNotIn("T525", redrawn)
         self.assertIn("T526", redrawn)
 
+    def test_a_project_a_guard_paused_is_停住了_with_why_and_continue_starts_it_again(self):
+        """P0-3 (T647): 护栏停住的专项 on the 看板 is 停住了 in red with why (docs/ui.md 2.2), counted among 要你处理, and its
+        继续 starts it again as the pause card's would (app/project_loop.py resume); the card is redrawn in place."""
+        from covey.app import project_loop
+        from covey.cards.board import PROJECT_GO_KIND
+        from covey.core import projects
+        record = projects.new_record(chat_id=CHAT, name="把订单库迁到新集群", goal="周末前切完")
+        projects.create(self.state, {**record, "state": projects.PAUSED, "state_reason": "tokens"})
+        with mock.patch.dict(os.environ, {projects.ENV: "1"}), mock.patch("time.time", return_value=self.now):
+            self.press("ev1")
+            text = json.dumps(self.card(), ensure_ascii=False)
+            self.assertIn("<font color='red'>**停住了**</font><font color='grey'> · token 用完了</font>", text)
+            self.assertIn("**1**</font> **件事**", text)  # 要你处理: the project.
+            self.assertIn("先看：停住了 · 专项「把订单库迁到新集群」", text)
+            go, = [v for v in buttons(self.card()) if v.get("kind") == PROJECT_GO_KIND]
+            self.assertEqual(go, {"kind": PROJECT_GO_KIND, "project": record["id"]})
+            self.app.handle_card_action_event({"event_id": "c0", "operator_id": "someone", "chat_id": CHAT,
+                                                       "message_id": "om_board1", "action_value": go}, self.ctx)
+            self.assertEqual(projects.read_record(self.state, record["id"])["state"], projects.PAUSED)  # The owner's only.
+            self.app.handle_card_action_event({"event_id": "c1", "operator_id": "owner", "chat_id": CHAT,
+                                               "message_id": "om_board1", "action_value": go}, self.ctx)
+        now = projects.read_record(self.state, record["id"])
+        self.assertEqual((now["state"], now["state_reason"]), (projects.ACTIVE, ""))
+        self.assertEqual([item["kind"] for item in project_loop.unread(self.state, record["id"])], ["owner_choice"])
+        redrawn = json.dumps([c for cid, c, _ in self.puts if cid == "bcard"][-1], ensure_ascii=False)
+        self.assertNotIn("token 用完了", redrawn)
+        self.assertNotIn(PROJECT_GO_KIND, redrawn)
+
     def test_a_stopped_topic_opens_its_task_card_and_says_what_comes_next(self):
         """看板走查 1 and 3 (2026-11-19): 停住了 and 可能卡住 rows open their task card (去任务卡), where 检查并继续 and 看看 are;
         a lead's stop says who stopped it."""

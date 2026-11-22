@@ -9,6 +9,7 @@ import json
 import os
 import re
 import time
+import unittest
 from types import SimpleNamespace
 from unittest import mock
 
@@ -96,7 +97,7 @@ class CardTest(UnifiedCase):
     def test_the_fold_is_open_while_the_job_works_or_waits_and_shut_once_it_ended(self):
         opened = {status: find_element(view.dispatch_card(dispatch(status)), "dp_thread")["expanded"]
                   for status in (view.RUNNING, view.WAITING, view.DONE, view.FAILED, view.STOPPED)}
-        self.assertEqual(opened, {"在做": True, "等你": True, "做完": False, "失败": False, "已停": False})
+        self.assertEqual(opened, {"在做": True, "等你": True, "做完": False, "停住了": False, "已停止": False})
 
     def test_buttons_are_those_that_can_be_used_now(self):
         def buttons(**fields):
@@ -121,9 +122,9 @@ class CardTest(UnifiedCase):
         self.assertEqual(find_element(done, "dp_line")["behaviors"], [{"type": "open_url", "default_url": URL}])
         self.assertEqual(done["config"]["width_mode"], "compact")
         failed = view.settled_card(view.FAILED, ASK, reason="后端退出", label="T453")
-        self.assertIn("⚠️ 失败 · 后端退出", json.dumps(failed, ensure_ascii=False))
+        self.assertIn("⚠️ 停住了 · 后端退出", json.dumps(failed, ensure_ascii=False))
         self.assertNotIn("behaviors", find_element(failed, "dp_line"))
-        self.assertIn("⏹ 已停", json.dumps(view.settled_card(view.STOPPED, ASK), ensure_ascii=False))
+        self.assertIn("⏹ 已停止", json.dumps(view.settled_card(view.STOPPED, ASK), ensure_ascii=False))
         for built in (done, failed):
             self.assertNotIn("dp_thread", ids(built))
             self.assertNotIn("dp_btns", ids(built))
@@ -494,9 +495,9 @@ class RefreshTest(DispatchCase):
         dispatch_cards.stop_clicked(self.record()["topic_id"], str(number), now=self.base + 4)
         self.tick(self.base + 6)
         self.assertIn("正在停止", find_element(self.last_card(), "dp_body")["content"])
-        self.set_job(status="cancelled", status_message="用户停止了任务")
+        self.set_job(status="cancelled", status_message="用户停止了任务", cancel_requested_by="card")
         self.tick(self.base + 9)
-        self.assertEqual(self.last_card()["header"]["text_tag_list"][0]["text"]["content"], "已停")
+        self.assertEqual(self.last_card()["header"]["text_tag_list"][0]["text"]["content"], "已停止")
         self.assertFalse(dispatch_cards.stopping(self.record()["topic_id"], {"job_id": number},
                                                  self.base + 4 + dispatch_cards.STOP_SHOWN + 1))
 
@@ -569,13 +570,13 @@ class SettleTest(DispatchCase):
         self.set_job(status="failed", status_message="后端退出")
         self.settle(outcome="stopped")
         text = json.dumps(self.last_card(), ensure_ascii=False)
-        self.assertIn("⚠️ 失败 · 后端退出", text)
+        self.assertIn("⚠️ 停住了 · 后端退出", text)
         self.assertNotIn("behaviors", find_element(self.last_card(), "dp_line"))
 
     def test_a_job_the_owner_stopped_himself_settles_as_stopped(self):
         self.set_job(status="cancelled")
         self.settle(outcome="stopped", state="skipped", reason="owner_stop")
-        self.assertIn("⏹ 已停", json.dumps(self.last_card(), ensure_ascii=False))
+        self.assertIn("⏹ 已停止", json.dumps(self.last_card(), ensure_ascii=False))
         self.assertEqual(self.record()["state"], "settled")
 
     def test_a_relay_that_did_not_go_out_leaves_the_card_as_it_is(self):
@@ -737,3 +738,24 @@ class ClickTest(DispatchCase):
         self.job(37, running=True)
         forward, _ = self.click(view.STOP_KIND, "36")
         self.assertEqual(forward.call_args.args[3]["job_id"], "36")
+
+class StatusWordsTest(unittest.TestCase):
+    """B8 (T647): the card says the words of core/look.py STATES, as every card does (docs/glossary.md 状态词): no 失败, 已停,
+    已完成, 执行失败, 任务中断 or 等你回答; a stop the owner did not make himself is 停住了 (docs/ui.md 10.6)."""
+
+    def test_each_state_says_the_words_every_card_says(self):
+        from support.records import state_dir
+        state, now = state_dir(self), 1_800_000_000.0
+
+        def status(**job):
+            return dispatch_cards.status_of(state, {"topic_id": "t"}, {"job_id": 1, **job}, now)
+        self.assertEqual(status(status="done"), (view.DONE, "做完了"))
+        self.assertEqual(status(status="waiting_user"), (view.WAITING, "有问题要你定"))
+        for job in ({"status": "failed"}, {"status": "interrupted"}, {"status": "cancelled", "cancel_requested_by": "lead"},
+                    {"status": "cancelled"}):
+            word, why = status(**job)
+            self.assertEqual(word, "停住了", job)
+            self.assertTrue(why and why != "停住了", job)  # Why, as the 看板 says it (core/board_read.py ended_line).
+        self.assertEqual(status(status="cancelled", cancel_requested_by="card")[0], "已停止")
+        self.assertEqual(status(status="failed", status_message="后端退出"), ("停住了", "后端退出"))
+        self.assertEqual((view.FAILED, view.STOPPED), ("停住了", "已停止"))

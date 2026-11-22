@@ -329,7 +329,8 @@ class RoundTests(UnifiedCase):
         self.assertEqual(len(self.feishu.calls), calls)
         # The card redrawn as the index: counts, one line for the pins, the old question.
         card = json.dumps(self.last_card(), ensure_ascii=False)
-        self.assertIn("等你 2 · 在做 1 · 有结果 1", card)  # 等我: the pinned one and the old one (core/board_read.py waits).
+        self.assertIn('"content": "手上的事 · 等你 2 · 在做 1"', card)  # 等我: the pinned one and the old one (core/board_read.py waits).
+        self.assertIn("1 有结果", card)
         self.assertIn("Pin 着 3 个话题", card)  # Once, in the header.
         self.assertEqual(card.count("Pin 着 3 个话题"), 1)
         self.assertIn("在 Pin 页里点话题的卡片，直接打开那个话题", card)
@@ -562,7 +563,7 @@ class DismissTests(RoundTests):
         self.overview.tick(self.ctx, NOW + 20)
         self.assertEqual(self.feishu.order(), ["om_run", "om_index1"])
         card = json.dumps(self.last_card(), ensure_ascii=False)
-        self.assertIn("等你 0 · 在做 1 · 有结果 0", card)
+        self.assertIn('"content": "手上的事 · 在做 1"', card)  # Its preview: the states that have someone.
         self.assertIn("你撤下的 1 个：T403", card)
         self.assertNotIn("话题 403", card)
         self.question("q2", "t3", NOW + 30)  # A newer question: back, pinned at once.
@@ -733,7 +734,8 @@ class DismissTests(RoundTests):
                 self.tick(at)
             self.assertEqual(self.feishu.order(), [f"om_q{cycle}", "om_run4", "om_run3", "om_res", "om_index1"])
             card = json.dumps(self.last_card(), ensure_ascii=False)
-            self.assertIn("等你 0 · 在做 3 · 有结果 1", card)  # The counts are the real state.
+            self.assertIn('"content": "手上的事 · 在做 3"', card)  # The counts are the real state.
+            self.assertIn("1 有结果", card)
             self.job(f"loop{cycle}", 10 + cycle, status="waiting_user", topic="t1")
         self.assertLessEqual(len(self.feishu.calls), 2 * cycles, self.feishu.calls)
         # Running past DEMOTE, it goes down to 进行中 at last.
@@ -756,19 +758,31 @@ class CardTests(unittest.TestCase):
         (band,) = card["body"]["elements"]
         self.assertIn("都在掌握中", json.dumps(band, ensure_ascii=False))
         self.assertEqual(card["header"]["subtitle"]["content"], "私聊里在推进的事")
-        self.assertEqual(card["config"]["summary"]["content"], "手上的事 · 等你 0 · 在做 0 · 有结果 0")
+        self.assertEqual(card["config"]["summary"]["content"], "手上的事 · 都在掌握中")
 
-    def test_a_stopped_topic_without_a_pin_is_listed_with_the_results(self):
-        rows = [{"label": "T401", "title": "改看板", "topic": "t1", "status": "cancelled", "at": NOW - 60},
-                {"label": "T402", "title": "查日志", "topic": "t2", "status": "done", "at": NOW - 30}]
+    def test_a_stop_without_a_pin_is_listed_by_who_stopped_it_not_with_the_results(self):
+        """P0-1 (T647): 停住了 has a part of its own and counts among 要你处理; the owner's own stop is 已停止, background,
+        not 有结果."""
+        stopped = [{"label": "T400", "title": "迁库", "topic": "t0", "status": "failed", "at": NOW - 90, "tone": "stopped",
+                    "line": "这一轮没有成功；停在：跑全量"}]
+        mine = [{"label": "T401", "title": "改看板", "topic": "t1", "status": "cancelled", "at": NOW - 60, "tone": "cancelled"}]
+        rows = [{"label": "T402", "title": "查日志", "topic": "t2", "status": "done", "at": NOW - 30, "tone": "result"}]
         view = {"waiting": [], "running": [], "ended": [], "board": {
-            "counts": {"waiting": 0, "result": 2, "running": 0}, "pinned": 0, "waiting": [], "result": rows,
-            "running": [], "stale": []}}
-        card = json.dumps(overview_card(view, NOW), ensure_ascii=False)
-        self.assertIn("**有结果 · 未 Pin**  <font color='grey'>2</font>", card)
-        # Each row's state as the 看板 says it (cards/ui.py topic_row): the stop, the result not seen.
-        self.assertIn("<font color='grey'>**已停止**</font> **T401 改看板**", card)
-        self.assertIn("<font color='green'>**有结果**</font> **T402 查日志**", card)
+            "counts": {"waiting": 0, "stopped": 1, "stuck": 0, "result": 1, "running": 0}, "pinned": 0, "waiting": [],
+            "stopped": stopped, "result": rows, "cancelled": mine, "running": [], "stale": []}}
+        card = overview_card(view, NOW)
+        text = json.dumps(card, ensure_ascii=False)
+        self.assertIn("**1**</font> **件事**", text)  # 要你处理: the stop.
+        self.assertIn("**停住了 · 未 Pin**  <font color='grey'>1</font>", text)
+        self.assertIn("<font color='red'>**停住了**</font> **T400 迁库**", text)
+        self.assertIn("**有结果 · 未 Pin**  <font color='grey'>1</font>", text)
+        self.assertIn("<font color='green'>**有结果**</font> **T402 查日志**", text)
+        self.assertIn("**已停止 · 未 Pin**  <font color='grey'>1</font>", text)
+        self.assertIn("<font color='grey'>**已停止**</font> **T401 改看板**", text)
+        order = [element["content"].split("**")[1] for element in card["body"]["elements"]
+                 if element.get("tag") == "markdown" and element.get("icon")]
+        self.assertEqual(order, ["停住了 · 未 Pin", "有结果 · 未 Pin", "已停止 · 未 Pin"])
+        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["1 停住了"])
 
 
 if __name__ == "__main__":

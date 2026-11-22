@@ -1,8 +1,10 @@
 """Topic status cards (话题状态卡, cards/status_card.py): what the pinned board (app/pins.py) pins for a topic with a
 thread in the owner's private chat, in place of its task or question card, whose top (all the Pin panel shows) is the
 round's request, its configuration and its tiles. Each says the
-topic's number and title, its state (在做 / 排队 / 等你回答 / 做完 / 已停止 / 失败 / 中断) with when and which round, and
-one small line: this round's request, the question, the conclusion's lead or why it stopped. Only where the
+topic's number and title, its state with when and which round, and one small line: this round's request, the question,
+the conclusion's lead or why it stopped. The state is a core/look.py STATES key, as the 看板 and 手上的事 say it (``tone``):
+等你, 停住了 (failed, interrupted, stopped by someone other than the owner: core/look.py record_tone), 可能卡住, 有结果
+(a result not seen yet) or 做完 (seen), 在做, 排队, 已停止 (the owner's own stop). Only where the
 placement table says so (core/placement.py Row.status_card: 纯话题): a 话题区's topic is pinned by its turn's own
 cards in its thread (app/pins.py aimed), and the status cards sent before stay in their
 threads, their records readable (``card_message``), never written again.
@@ -34,8 +36,9 @@ from covey.core.butler import traits
 from covey.core.state import keyed_json_path, read_object, write_json
 from covey.core.text import cut
 from covey.core.topics import remember_topic_message, topic_file, topic_label, topic_title
+from covey.core import look
 from covey.core.board_read import START
-from covey.core.turn_words import BLANK_PHASES, BOARD, START_LINE, STATES, request_line
+from covey.core.turn_words import BLANK_PHASES, START_LINE, request_line
 
 FOLDER = "status-cards"
 SCHEMA = 1
@@ -78,8 +81,9 @@ def ended(record):
 
 
 def lines(state_dir, chat, row, now):
-    """(title, state, facts, line) a board ``row`` (app/pins.py board) shows on its topic's card: ``at`` when its
-    result ended or its run started (as the board has them), ``started`` when the run started."""
+    """(title, state, facts, line) a board ``row`` (app/pins.py board) shows on its topic's card: ``state`` a core/look.py
+    STATES key; ``at`` when its result ended or its run started (as the board has them), ``seen`` when the owner first saw
+    a result (None: not yet), ``started`` when the run started."""
     topic, record = row["topic"], row.get("record") or {}
     jobs = topic_job_records(Path(state_dir), topic, chat_id=chat)
     job_id = int(record.get("job_id") or 0)
@@ -88,16 +92,15 @@ def lines(state_dir, chat, row, now):
     if row["group"] == "waiting" and record.get("status") == START:
         # Its task waits for 开始 on its launch card (core/board_read.py starts): no question, what it waits for.
         facts = " · ".join(part for part in (when(row.get("at"), now), f"第 {turn} 轮") if part)
-        return title, BOARD["waiting"], facts, START_LINE
+        return title, "waiting", facts, START_LINE
     if row["group"] == "waiting":
         asked = [q for q in record.get("questions") or [] if isinstance(q, dict)]
         words = next((str(q.get("question") or q.get("header") or "") for q in asked
                       if q.get("question") or q.get("header")), "")
         more = f"（共 {len(asked)} 题）" if len(asked) > 1 else ""
         facts = " · ".join(part for part in (when(record.get("created_at"), now), f"第 {turn} 轮") if part)
-        return title, BOARD["waiting"], facts, cut(f"问题：{words}", LINE_CHARS) + more if words else ""
+        return title, "waiting", facts, cut(f"问题：{words}", LINE_CHARS) + more if words else ""
     if row["group"] == "result":
-        status = str(record.get("status") or "")
         end, start = row.get("at"), row.get("started")
         # The turn's 用时 as its task card and answer card say it (core/metrics.py run_seconds, ``ended`` at its
         # execution's end); a record without those timings by the board's times.
@@ -106,14 +109,15 @@ def lines(state_dir, chat, row, now):
             took = end - start if end and start and end >= start else None
         facts = " · ".join(part for part in (when(end, now), f"{turn} 轮",
                                              f"用时 {took_text(took)}" if took is not None else "") if part)
-        if status == "done":
+        tone = look.record_tone(record, seen=row.get("seen") is not None)
+        if tone in ("result", "done"):
             lead = answer_lead(record.get("final_text") or "", LINE_CHARS)
-            return title, STATES["done"], facts, f"结论：{lead}" if lead else ""
+            return title, tone, facts, f"结论：{lead}" if lead else ""
         why = cut(record.get("status_message") or "", LINE_CHARS)
-        return title, STATES.get(status, STATES["done"]), facts, f"原因：{why}" if why else ""
+        return title, tone, facts, f"原因：{why}" if why else ""
     request = request_line(record.get("user_text"))
     if record.get("status") == "queued":
-        return title, BOARD["queued"], f"第 {turn} 轮", cut(f"这一轮：{request}", LINE_CHARS) if request else ""
+        return title, "queued", f"第 {turn} 轮", cut(f"这一轮：{request}", LINE_CHARS) if request else ""
     point = read_checkpoint(Path(record["checkpoint_path"])) if record.get("checkpoint_path") else {}
     phase = str(point.get("phase") or "").strip()
     start = row.get("started") or row.get("at")
@@ -124,9 +128,11 @@ def lines(state_dir, chat, row, now):
     # Its estimate as a time of day, or that it may be stuck (core/progress.py): the card changes only when they do.
     found = turn_progress.progress(record, checkpoint=point, history=turn_progress.turn_seconds(jobs, exclude=job_id),
                                    now=now)
+    # One that may be stuck says so in its tag (可能卡住, orange), not again in its figures.
+    stuck = bool(found.get("maybe_stuck"))
     facts = " · ".join(part for part in (f"第 {turn} 轮", f"{when(start, now)} 开始" if when(start, now) else "",
-                                         at, *turn_progress.board_words(found, now, clock=True)) if part)
-    return title, BOARD["running"], facts, cut(f"这一轮：{request}", LINE_CHARS) if request else ""
+                                         at, *([] if stuck else turn_progress.board_words(found, now, clock=True))) if part)
+    return title, "stuck" if stuck else "running", facts, cut(f"这一轮：{request}", LINE_CHARS) if request else ""
 
 
 class StatusCards:

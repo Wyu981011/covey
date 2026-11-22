@@ -11,7 +11,7 @@ Top to bottom, element IDs (CardKit takes at most 20 characters, rule 9) in the 
 - ``answer_ask``, at the top level only: the grey "你问 · 12:31 ›" block (cards/answer_card.py ``ask_block``) with the
   owner's words, opening his message at its place in the chat (a card at the top level is no reply to his message);
 - the header: the owner's request (in the thread: the topic's T number and title), its first ``HEAD_CHARS`` characters,
-  and the state as a tag (在做, 等你, 做完, 失败, 已停);
+  and the state as a tag (在做, 等你, 做完, 停住了, 已停止: core/look.py STATES' words);
 - ``dp_meta``: one grey line, "T53 · 12:41 起 · 用时 2分05秒" (in the thread without the T number, which heads the card);
 - ``dp_thread``: the fold 话题 (open while the job works or waits on the owner, closed once it ended), its title line the
   topic's T number, title and workspace (in the thread: 进度 and the workspace); inside it ``dp_body`` (the stage or step
@@ -30,11 +30,15 @@ from covey.cards import answer_card
 from covey.cards.answer_card import literal_text
 from covey.cards.elements import (button_row, card, collapsible, grey, md, note, panel_header, styled_panel,
                                   topic_button)
+from covey.core import look
 
 HEAD_CHARS = 30
 TOPIC_TITLE = 40  # Of the topic's title on the fold's title line.
 STEER_KIND, STOP_KIND = "bridge_dispatch_steer", "bridge_dispatch_stop"
-RUNNING, WAITING, DONE, FAILED, STOPPED = "在做", "等你", "做完", "失败", "已停"
+# The words of core/look.py STATES: FAILED is 停住了 (failed, interrupted, stopped by someone other than the owner),
+# STOPPED the owner's own stop, 已停止.
+RUNNING, WAITING, DONE, FAILED, STOPPED = (look.word("running"), look.word("waiting"), look.word("done"),
+                                           look.word("stopped"), look.word("cancelled"))
 # status -> (tag colour, header icon: one the other cards use, '' for none, whether the 话题 fold is open).
 LOOKS = {RUNNING: ("blue", "waiting_outlined", True), WAITING: ("orange", "chat_outlined", True),
          DONE: ("green", "yes_outlined", False), FAILED: ("red", "", False), STOPPED: ("neutral", "", False)}
@@ -143,8 +147,8 @@ def dispatch_card(dispatch):
 def settled_card(status, request, *, url="", reason="", label="", threaded=False, title=""):
     """What a card becomes once its conclusion went out (docs/butler-internals.md 派发卡 · 结论沉底): one grey line,
     "✅ 做完 · 结论在下方 ›" opening the conclusion at ``url`` (in the owner's question's thread, ``threaded``: "看结论 ›",
-    the conclusion being at the chat's top level, and the topic's ``title`` in place of his request); for 失败 and 已停 the
-    line says why (``reason``) and opens nothing. No fold, no buttons."""
+    the conclusion being at the chat's top level, and the topic's ``title`` in place of his request); for 停住了 and 已停止
+    the line says why (``reason``) and opens nothing. No fold, no buttons."""
     mark = LINE_MARKS.get(status, "")
     if status == DONE:
         words = f"{mark} {status} · " + ("看结论" if threaded else "结论在下方") + ("　›" if url else "")

@@ -510,9 +510,29 @@ def own_message(message_id) -> bool:
     return isinstance(message_id, str) and message_id.startswith((WAKE_PREFIX, LEAD_ALIAS_PREFIX))
 
 
-def reason_words(record) -> str:
-    """What the card says of a project a guard paused ('' for any other record): the guard's words."""
+def pause_tone(record) -> str:
+    """The core/look.py STATES key of a paused project's own state, '' for one not paused: ``idle`` folded away for want
+    of work (收起), ``cancelled`` stopped by the owner (已停止: 停止专项, 停 on the pause card), ``stopped`` (停住了) a
+    guard's pause (GUARD_REASONS), and a reason this release does not know, which is not known to be the owner's (as
+    core/look.py tone reads a stop without its source)."""
     if not isinstance(record, dict) or record.get("state") != PAUSED:
         return ""
-    words = REASON_WORDS.get(record.get("state_reason"))
-    return f"停住 · {words}" if words else ""
+    reason = record.get("state_reason")
+    return "idle" if reason == IDLE else "cancelled" if reason == OWNER_STOP else "stopped"
+
+
+def halted(record) -> bool:
+    """Whether ``record`` is a project paused as 停住了 (``pause_tone``: a guard's pause, ``GUARD_REASONS``): what asks for
+    the owner (docs/ui.md 2.2: 护栏停住的专项是“停住了”的红) and what 继续 starts again (app/project_loop.py resume)."""
+    return pause_tone(record) == "stopped"
+
+
+def stop_reason(record) -> str:
+    """Why a guard paused ``record``, in the owner's words ("token 用完了"); '' for any other record."""
+    return REASON_WORDS.get(record.get("state_reason"), "") if halted(record) else ""
+
+
+def reason_words(record) -> str:
+    """What the card says of a project a guard paused ('' for any other record): 停住了 and the guard's words."""
+    words = stop_reason(record)
+    return f"停住了 · {words}" if words else ""

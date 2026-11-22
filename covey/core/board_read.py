@@ -9,6 +9,14 @@ What waits for the owner (等我) is one count too, ``waits``: every reader abov
 the project card (``asks``) and the web page (app/web_sync.py) take it, and each 等我 carries the card it is acted on
 (the question card, the launch card), so whatever lists it can open it, and every reader counts the same.
 
+要你处理 (docs/ui.md 1.2: 等你, 停住了, 可能卡住, ``ACT``) is one count over it, ``Asks`` (``asking``): 等我 as ``waits``
+has it, the topics whose result as the board keeps one (``groups``, read topic by topic, and however long before the
+board was on it ended: app/pins.py PinnedTopics.look) stopped (core/look.py record_tone 停住了: failed, interrupted,
+timed out, refused, or stopped by someone other than the owner), the topics running that may be stuck
+(core/progress.py maybe_stuck) and the projects a guard paused (core/projects.py halted). The 看板 and 手上的事 (the
+pinned one too) take it from the same read with the same rules (app/pins.py PinnedTopics.asks), list what it names
+under those words, and count with ``act_count``: the same number on every card at the same time.
+
 A reader that also needs the board's ``taken off`` reads once with the board record's ``keep`` (app/pins.py kept)
 and hands the read to the board's look; the jobs it judges itself are those ``fresh`` picks, as read without it. So
 a butler turn reads jobs/ once (not three times, 手上的事's running ones, the board's, and its own
@@ -40,6 +48,7 @@ from pathlib import Path
 
 from covey.core.jobs import jobs_dir, select_job_records, topic_job_records
 from covey.core import avatars, look, projects, turn_words
+from covey.core import progress as turn_progress
 from covey.core.butler import is_butler_topic, traits
 from covey.core.collab import is_channel
 from covey.core.failure import failure_view
@@ -573,3 +582,62 @@ def unseen(found: Groups, off=()) -> dict:
     """有结果未看: topic -> the job record of its result the owner has not seen (``found``'s results first seen
     never), not a topic in ``off`` (taken off the board: app/pins.py dismissed). The one rule of all its readers."""
     return {topic: record for topic, (record, _, first) in found.results.items() if first is None and topic not in off}
+
+
+ACT = look.ACT_KEYS  # 要你处理: 等你, 停住了, 可能卡住 (core/look.py), the states every card counts as asking for the owner.
+
+
+def act_count(counts) -> int:
+    """要你处理: how many of ``counts`` ({core/look.py STATES key: how many}) ask for the owner (``ACT``), the number every
+    card's conclusion band says."""
+    return sum(int((counts or {}).get(key) or 0) for key in ACT)
+
+
+@dataclasses.dataclass(frozen=True)
+class Asks:
+    """要你处理 of a chat now (``asking``). ``waiting``: the topics of 等我 (``waits``, live and stale, newest first);
+    ``stopped``: topic -> the job record of its result that stopped (停住了); ``stuck``: topic -> its running job that
+    may be stuck; ``projects``: project id -> the record of a project a guard paused (停住了 too)."""
+    waiting: tuple = ()
+    stopped: dict = dataclasses.field(default_factory=dict)
+    stuck: dict = dataclasses.field(default_factory=dict)
+    projects: dict = dataclasses.field(default_factory=dict)
+
+    def counts(self) -> dict:
+        """{state key: how many} of ``ACT``: a project a guard paused is 停住了 as a topic that stopped is."""
+        return {"waiting": len(self.waiting), "stopped": len(self.stopped) + len(self.projects), "stuck": len(self.stuck)}
+
+    def count(self) -> int:
+        """The number of 要你处理 every card says (``act_count``)."""
+        return act_count(self.counts())
+
+
+def stopped_results(found: Groups, off=()) -> dict:
+    """停住了 among ``found``'s results: topic -> the job record of a result that stopped (core/look.py record_tone: failed,
+    interrupted, or stopped by someone other than the owner), seen or not, not a topic in ``off``. The owner's own stop is
+    已停止, background: not in it."""
+    return {topic: record for topic, (record, _, _) in found.results.items()
+            if topic not in off and look.record_tone(record) == "stopped"}
+
+
+def stuck_running(found: Groups, now, off=()) -> dict:
+    """可能卡住 among ``found``'s running: topic -> the job running that may be stuck (core/progress.py maybe_stuck, from its
+    record: no last activity for COVEY_PROGRESS_STUCK_MINUTES, not waiting for a command), not a topic in ``off``."""
+    return {topic: record for topic, record in found.running.items()
+            if topic not in off and record.get("status") == "running"
+            and turn_progress.progress(record, now=now).get("maybe_stuck")}
+
+
+def halted_projects(state, chat) -> dict:
+    """project id -> the record of each of ``chat``'s projects a guard paused (core/projects.py halted), {} with 专项 off."""
+    if not projects.enabled():
+        return {}
+    return {str(record.get("id")): record for record in projects.records(state, chat) if projects.halted(record)}
+
+
+def asking(found_waits: Waits, found: Groups, now, off=(), halted=None) -> Asks:
+    """要你处理 now: 等我 (``found_waits``, the topics ``waits`` found), the results that stopped and the running that may be
+    stuck of ``found`` (``groups`` of a ``read``, topic by topic: no ``cells``, a project's topics counted each), the
+    topics in ``off`` (taken off the board) left out, and the projects ``halted`` names (``halted_projects``)."""
+    return Asks(tuple(wait.topic for wait in found_waits.all), stopped_results(found, off), stuck_running(found, now, off),
+                dict(halted or {}))

@@ -419,6 +419,45 @@ def pause_receipt(state_dir, project_id, choice, ask) -> None:
     project_lead.add_receipt(state_dir, project_id, "owner_choice", text)
 
 
+def resume(state_dir, project_id, chat_id="") -> str:
+    """继续 from outside the pause card (the 看板's block of a project a guard paused, cards/board.py PROJECT_GO_KIND): what the
+    pause card's 继续 does. With the pause put to the owner and not answered (``pause_ask``, COVEY_PROJECT_ASK=1) it is that
+    answer (``answer_pause``: the card then becomes "你选了继续"), else the owner's word (``owner_spoke``: active again, the
+    wake-ups counted afresh, a ``tokens`` pause with a new budget); either way the lead's ``owner_choice`` receipt wakes it.
+    'ok', else why not: 'none' (no such project in ``chat_id``), 'moved' (no guard's pause to go on from any more: the owner's
+    own turn, the lead or a stop got there first)."""
+    record = projects.read_record(state_dir, str(project_id or ""))
+    if not record or (chat_id and record.get("chat_id") != chat_id):
+        return "none"
+    if not projects.halted(record):
+        return "moved"
+    ask = record.get("pause_ask") if isinstance(record.get("pause_ask"), dict) else None
+    try:
+        if ask is not None and not ask.get("choice") and ask.get("reason") == record.get("state_reason"):
+            outcome = answer_pause(state_dir, project_id, "continue")
+            if outcome == "ok":
+                pause_receipt(state_dir, project_id, "continue",
+                              (projects.read_record(state_dir, project_id) or {}).get("pause_ask") or ask)
+            return outcome if outcome in ("ok", "none") else "moved"
+        reason, moved = str(record.get("state_reason") or ""), []
+
+        def change(data):
+            if not projects.halted(data):
+                return moved.append(True)
+            owner_spoke(data)
+            if data.get("state") == projects.PAUSED:  # A reason ``reopen`` does not know (a newer release's guard): his click.
+                data["state"], data["state_reason"] = projects.ACTIVE, ""
+        projects.update(state_dir, project_id, change)
+    except KeyError:  # Gone since it was read.
+        return "none"
+    except ValueError:  # Moved on to a state its pause cannot go on from.
+        return "moved"
+    if moved:
+        return "moved"
+    pause_receipt(state_dir, project_id, "continue", {"reason": reason, "why": projects.REASON_WORDS.get(reason, reason)})
+    return "ok"
+
+
 def idle_words(seconds) -> str:
     seconds = max(0, int(seconds))
     return f"{seconds // 60} 分钟" if seconds >= 120 else f"{seconds} 秒"

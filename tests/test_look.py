@@ -146,6 +146,23 @@ class PartsTest(unittest.TestCase):
         self.assertNotIn("text_size", ui.receipt("⚠️ 没有保存"))
 
 
+def buttons_of(card):
+    """The callback values of every button in ``card``."""
+    found = []
+
+    def walk(node):
+        if isinstance(node, dict):
+            if node.get("tag") == "button":
+                found.extend(b.get("value") for b in node.get("behaviors") or () if b.get("type") == "callback")
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value)
+    walk(card)
+    return found
+
+
 class BoardTest(unittest.TestCase):
     def test_a_stop_is_grouped_by_who_stopped_it(self):
         """The 看板: the lead's stop is 停住了, the owner's own 已停止 in the fold; a row without ``tone`` reads as before."""
@@ -175,6 +192,83 @@ class BoardTest(unittest.TestCase):
         self.assertIn("[T2](https://x/2)", text)
         self.assertIn(board.NO_LINK, text)
         self.assertIn("去任务卡", text)  # The one that may be stuck.
+
+    def test_what_may_be_stuck_comes_right_after_what_stopped(self):
+        """B4 (T647): 可能卡住 is a group of its own right after 停住了 (docs/ui.md 5.1), not the end of 在做. What asks for him is
+        listed whoever's it is (a live project's topic that stopped or may be stuck too); its other topics are not."""
+        view = {"waiting": [], "stale": [],
+                "running": [{"topic": "r", "label": "T2", "title": "在跑"},
+                            {"topic": "s", "label": "T3", "title": "卡住", "stuck": True, "card": "om_s", "url": "https://x/s"},
+                            {"topic": "m", "label": "T5", "title": "专项里卡住", "stuck": True},
+                            {"topic": "n", "label": "T6", "title": "专项里在跑"}],
+                "done": [{"topic": "f", "label": "T1", "status": "failed", "tone": "stopped"},
+                         {"topic": "p", "label": "T7", "status": "failed", "tone": "stopped"},
+                         {"topic": "d", "label": "T4", "status": "done", "tone": "result"}],
+                "projects": [{"name": "迁库", "topics": ["m", "n", "p"], "running": 1, "stuck": 1, "stopped": 1}]}
+        card = board.board_card(view)
+        headings = [element["content"].split("**")[1] for element in card["body"]["elements"]
+                    if element.get("tag") == "markdown" and element.get("icon")]
+        self.assertEqual(headings, ["停住了", "可能卡住", "有结果没看", "在做", "专项"])
+        text = json.dumps(card, ensure_ascii=False)
+        for listed in ("**T1**", "**T7**", "T3 卡住", "T5 专项里卡住", "T2 在跑"):
+            self.assertIn(listed, text)
+        self.assertNotIn("T6", text)  # A live project's topic at work: its block counts it.
+        self.assertIn("1 个停住了、1 个可能卡住、1 个在做", text)
+        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["2 停住了", "2 可能卡住", "1 在做"])
+        self.assertIn("**4**</font> **件事**", text)
+
+    def test_a_project_a_guard_paused_asks_for_him_and_one_he_stopped_does_not(self):
+        """P0-3 (T647): 停住了 and why in red, 继续 on its block, counted among 要你处理 and led with when nothing else asks; the
+        owner's own stop is 已停止, background; a folded one 收起."""
+        view = {"projects": [{"id": "a1b2c3d4e5f6", "name": "迁库", "topics": [], "halted": "token 用完了", "url": "https://x/p"},
+                             {"id": "b2c3d4e5f6a7", "name": "周报", "topics": [], "cancelled": True},
+                             {"id": "c3d4e5f6a7b8", "name": "旧的", "topics": [], "folded": True}]}
+        card = board.board_card(view)
+        text = json.dumps(card, ensure_ascii=False)
+        self.assertIn("**1**</font> **件事**", text)
+        self.assertIn("先看：停住了 · 专项「迁库」", text)
+        self.assertIn("<font color='red'>**停住了**</font><font color='grey'> · token 用完了</font>", text)
+        self.assertIn("<font color='grey'>**已停止**</font>", text)
+        go = [button for button in buttons_of(card) if button.get("kind") == board.PROJECT_GO_KIND]
+        self.assertEqual(go, [{"kind": board.PROJECT_GO_KIND, "project": "a1b2c3d4e5f6"}])
+        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["1 停住了"])
+        self.assertIn("旧的", text)
+        self.assertIn("收起", text)
+
+    def test_a_crowded_board_fits_what_cardkit_takes_and_still_counts_everything(self):
+        """P0-10 (T647): with every group full (50 projects on, folded ones piling up), the card shows fewer rows a group
+        (board.FIT_SHOWN) until CardKit takes it (cards/elements.py CARD_NODES, CARD_BYTES); the band counts them all."""
+        from covey.cards.elements import CARD_BYTES, CARD_NODES, element_count, json_size
+        long = "很长的标题" * 6
+
+        def rows(prefix, count, **fields):
+            return [{"topic": f"{prefix}{n}", "label": f"T{n}", "title": long, "url": f"https://x/{prefix}{n}",
+                     "card": f"om_{prefix}{n}", "line": "现在：" + long, "meta": ["3/7 步", "2 分钟前有动静"], **fields}
+                    for n in range(count)]
+        view = {"waiting": rows("w", 12), "stale": rows("s", 5), "dismissable": True, "can_dismiss": True,
+                "running": rows("r", 12) + rows("k", 12, stuck=True),
+                "done": rows("f", 12, status="failed", tone="stopped") + rows("d", 12, status="done", tone="result")
+                + rows("c", 20, status="cancelled", tone="cancelled", state="已停止"),
+                "revisits": [{"topic": f"v{n}", "label": f"T{n}", "title": long, "at": "15:30", "look": long, "set_at": n}
+                             for n in range(12)],
+                "projects": [{"id": f"{n:012x}", "name": long, "goal": long, "topics": [], "waiting": 1, "running": 2,
+                              **({"halted": "很久没有动静"} if n % 5 == 0 else {})} for n in range(50)]
+                + [{"id": f"f{n:011x}", "name": long, "topics": [], "folded": True} for n in range(60)],
+                "pending": [{"id": f"p{n}", "name": long, "goal": long, "rows": rows("pr", 3)} for n in range(12)],
+                "tidy": {}, "stamp": "20:59"}
+        card = board.board_card(view)
+        self.assertLessEqual(element_count(card), CARD_NODES)
+        self.assertLessEqual(json_size(card), CARD_BYTES)
+        text = json.dumps(card, ensure_ascii=False)
+        # 等你 17 (12 + the 5 old), 停住了 12 and the 10 projects a guard paused, 可能卡住 12.
+        self.assertIn("**51**</font> **件事**", text)
+        self.assertEqual([tag["text"]["content"] for tag in card["header"]["text_tag_list"]], ["17 等你", "22 停住了", "12 可能卡住"])
+        self.assertIn("另有", text)  # What is left out is said in one line.
+        # A board that fits is drawn whole as before: every group's first SHOWN rows.
+        few = {"waiting": rows("w", board.SHOWN), "running": rows("k", board.SHOWN, stuck=True), "done": [], "stale": []}
+        drawn = json.dumps(board.board_card(few), ensure_ascii=False)
+        self.assertNotIn("另有", drawn)
+        self.assertEqual(drawn.count("去任务卡"), board.SHOWN)
 
     def test_a_goal_in_paragraphs_is_one_line_on_the_board(self):
         """T545's dark screenshot (2026-11-19): a goal with blank lines read \\n\\n on the 看板."""

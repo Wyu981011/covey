@@ -58,13 +58,14 @@ from concurrent import futures as concurrent_futures
 from covey.core import env as cenv
 from covey.app import memory_candidates, weekly_usage
 from covey.app.overview import dismissable
-from covey.app.pins import board_results, kept, laid, record_path, taken_off as taken_off_now
-from covey.app import revisits, topic_links
+from covey.app.pins import board_look, kept, laid, record_path, taken_off as taken_off_now
+from covey.app import project_loop, revisits, topic_links
 from covey.app.topic_links import link_for, linkify
 from covey.app.form_cards import settle
 from covey.app.menu_panel import MenuPanel
 from covey.app.card_lanes import after_ack
-from covey.cards.board import KINDS as BOARD_KINDS, OPEN_KIND, REVISIT_KIND, SEEN_KIND, SEEN_MAX, board_card
+from covey.cards.board import (KINDS as BOARD_KINDS, OPEN_KIND, PROJECT_GO_KIND, REVISIT_KIND, SEEN_KIND, SEEN_MAX,
+                               board_card)
 from covey.cards.digest import ORIGIN, REMEMBER_KIND, digest_card, digest_text, folded_board
 from covey.core import app_manifest, board_read, knowledge, look, memory, patrol, projects, turn_words
 from covey.core import project_proposals
@@ -213,20 +214,25 @@ def topic_label(state, topic_id):
     return label_title(state, topic_id, "（话题未知）")
 
 
-def collect(state, chat, slot, since, now, *, board=False):
+def collect(state, chat, slot, since, now, *, board=False, asked=False):
     """The three parts' rows for ``chat`` (``view`` of cards/digest.py without links): {label, title, state,
     took, seen, topic}, a 等你 row's ``kind`` and ``card`` too, ``older`` (the 做完 rows of results not seen that ended
     before ``since``), and ``stale``, 等我 waiting over QUESTION_AGE (core/board_read.py waits); ``board``: 手上的事
-    and the board are on (overview.dismissable), the topics taken off left out and the stale line's button shown."""
+    and the board are on (overview.dismissable), the topics taken off left out and the stale line's button shown.
+    ``asked``: for the 看板, which lists 要你处理 as 手上的事 counts it (core/board_read.py Asks): every topic whose result
+    stopped however long ago it ended and no stop besides, and as 可能卡住 the running ones it names, so its band counts
+    what 手上的事's says."""
     # One read of the indexes (core/board_read.py): with the board, the one its look judges too; the jobs judged
     # here are those read without the board's ``keep``.
     read = board_read.read(state, chat, now, keep=kept(state, chat) if laid() else ())
-    unseen, off = board_results(state, chat, now, read)  # 有结果未看, as the board has it (core/board_read.py).
+    looked = board_look(state, chat, now, read)  # 有结果未看, as the board has it (core/board_read.py), and 要你处理.
+    unseen, off = looked.unseen, looked.dismissed
     off = off if board else {}
     jobs = [record for record in read.jobs if board_read.fresh(record, now) and record.get("topic_id") not in off]
     # 等你: 等我 as every reader counts it (core/board_read.py waits): the questions, the butler's and the leads' too,
     # and the tasks waiting for 开始, each with the card it is acted on; those waiting over QUESTION_AGE one line.
     found = board_read.waits(state, chat, now, off=off)
+    asks = looked.asks(state, chat, found, now, off) if asked else None
 
     def named(topic):
         """(label, title) of ``topic``: the butler or a lead asking at the top level by its speaker, no T number."""
@@ -265,7 +271,7 @@ def collect(state, chat, slot, since, now, *, board=False):
                         "kind": "question", "card": wait.card,
                         # The 看板's words (cards/board.py): what he is asked to decide, then how long it waited.
                         "line": f"要你定：{phase_of(newest.get(topic))}" if phase_of(newest.get(topic)) else
-                        (f"等你回答：{ask}" if ask else "等你回答"), "meta": [waited]})
+                        (f"要你定：{ask}" if ask else "有问题要你定"), "meta": [waited]})
     busy = {wait.topic for wait in found.live}
 
     running = {}
@@ -302,7 +308,7 @@ def collect(state, chat, slot, since, now, *, board=False):
                                       f"已跑 {turn_words.wait_words(ran)}" if ran is not None else ""],
                              # Its task card: the 看板's row of one that may be stuck opens it (看看 is there).
                              "card": str(record.get("card_message_id") or ""),
-                             "stuck": bool(found.get("maybe_stuck"))})
+                             "stuck": topic in asks.stuck if asks is not None else bool(found.get("maybe_stuck"))})
     busy |= set(running)
 
     ended = {}
@@ -317,6 +323,12 @@ def collect(state, chat, slot, since, now, *, board=False):
     unseen = {topic: record for topic, record in unseen.items() if ended_at(record) <= slot}  # As of its time.
     older = sum(ended_at(record) <= since for record in unseen.values())
     ended.update(unseen)
+    if asks is not None:
+        # 停住了 on the 看板 is what 要你处理 counts (core/board_read.py Asks): each topic whose result on the board stopped,
+        # however long ago it ended; a stop it does not count (seen long ago, before the board, no task card) is not one.
+        ended = {topic: record for topic, record in ended.items()
+                 if look.record_tone(record) != "stopped" or topic in asks.stopped}
+        ended.update({topic: record for topic, record in asks.stopped.items() if topic not in busy})
     done = []
     for topic, record in sorted(ended.items(), key=lambda item: ended_at(item[1]), reverse=True):
         took = run_seconds(record.get("timings"), now=ended_at(record))
@@ -460,7 +472,7 @@ class Digest:
         lock."""
         now = time.time() if now is None else now
         last = read_object(record_path(ctx.state_dir, chat, RECORD)).get("last_slot")
-        view = collect(ctx.state_dir, chat, now, board_since(self.times(), now, last), now, board=dismissable())
+        view = collect(ctx.state_dir, chat, now, board_since(self.times(), now, last), now, board=dismissable(), asked=True)
         view.pop("wanted", None)  # 我本来想找你的事 is the 早晚汇总's, not the 看板's.
         # Each block of the 看板 opens its topic (cards/board.py): the topic's applink, read outside any lock.
         # A 等你 row's opens the card it is acted on (core/board_read.py waits): the question card, the launch card.
@@ -518,23 +530,31 @@ class Digest:
         and how many proposal cards wait (整理专项 on); nothing in a group's 看板 or with 专项 off."""
         if self.where(chat) or not projects.enabled():
             return {}
-        rows = {key: {row.get("topic") for row in view.get(key) or ()} for key in ("waiting", "running")}
-        stopped = {row.get("topic") for row in view.get("done") or () if row.get("tone") == "stopped"}
+        rows = {"waiting": {row.get("topic") for row in view.get("waiting") or ()},
+                "running": {row.get("topic") for row in view.get("running") or () if not row.get("stuck")},
+                "stuck": {row.get("topic") for row in view.get("running") or () if row.get("stuck")},
+                "stopped": {row.get("topic") for row in view.get("done") or () if row.get("tone") == "stopped"}}
         found = []
         for record in projects.records(ctx.state_dir, chat):
             if record.get("state") not in (projects.ACTIVE, projects.PAUSED):
                 continue
             topics = [topic for topic in (record.get("lead_topic_id"), *(record.get("threads") or ())) if topic]
-            found.append({"name": record.get("name") or "", "goal": record.get("goal") or "", "topics": topics,
-                          "waiting": len(rows["waiting"] & set(topics)), "running": len(rows["running"] & set(topics)),
-                          "stopped": len(stopped & set(topics)), "lead": record.get("lead_topic_id") or "",
-                          **({"folded": True} if projects.folded(record) else
-                             {"paused": True} if record.get("state") == projects.PAUSED else {}),
+            # Its own state when it is not at work (core/projects.py pause_tone): 停住了 and why for a guard's pause (继续 on
+            # its block), 已停止 for the owner's stop, 收起 for one folded away.
+            paused = projects.pause_tone(record)
+            found.append({"id": str(record.get("id") or ""), "name": record.get("name") or "",
+                          "goal": record.get("goal") or "", "topics": topics,
+                          **{key: len(rows[key] & set(topics)) for key in ("waiting", "stopped", "stuck", "running")},
+                          "lead": record.get("lead_topic_id") or "",
+                          **({"folded": True} if paused == "idle" else
+                             {"halted": projects.stop_reason(record) or True} if paused == "stopped" else
+                             {"cancelled": True} if paused == "cancelled" else {}),
                           "_at": float(record.get("updated_at") or 0)})
-        # What asks for him first (等你, 停住, 在做), then the rest, each the most recently changed first; folded away last
-        # (cards/board.py puts those and what is past its SHOWN blocks in one fold).
-        found.sort(key=lambda entry: (bool(entry.get("folded")), not entry["waiting"], not entry["stopped"],
-                                      not entry["running"], -entry["_at"]))
+        # What asks for him first (等你, the project's own 停住了, its topics' 停住了 and 可能卡住), then the ones at work, then
+        # the rest, each the most recently changed first; folded away last (cards/board.py puts those and what is past its
+        # SHOWN blocks in one fold).
+        found.sort(key=lambda entry: (bool(entry.get("folded")), not entry["waiting"], not entry.get("halted"),
+                                      not entry["stopped"], not entry["stuck"], not entry["running"], -entry["_at"]))
         for entry in found:
             entry.pop("_at")
         # The proposals waiting for him, each with its topics, to decide right on the 看板, not by
@@ -589,8 +609,9 @@ class Digest:
         return isinstance(raw, dict) and (raw.get("kind") in BOARD_KINDS or raw.get("kind") == REMEMBER_KIND)
 
     def claim(self, ctx, event, raw, owner):
-        """刷新 or 记为看过 on a 看板 card, or 去看板 under an answered question (cards/board.py KINDS; app/unified.py PANELS),
-        else None: the owner's only; the card redrawn from a fresh view once the click is acknowledged, or the 看板 sent."""
+        """刷新, 记为看过 or a project's 继续 on a 看板 card, or 去看板 under an answered question (cards/board.py KINDS;
+        app/unified.py PANELS), else None: the owner's only; the card redrawn from a fresh view once the click is
+        acknowledged, or the 看板 sent."""
         if not self.matches(raw):
             return None
         kind = raw["kind"]
@@ -616,6 +637,13 @@ class Digest:
                 return "board_revisit_ignored"
             gone = revisits.records.cancel(ctx.state_dir, topic, set_at)
             self.runtime.log(f"revisit cancelled topic={topic[-8:]} gone={gone}")
+        elif kind == PROJECT_GO_KIND:
+            # 继续 on the block of a project a guard paused: what the pause card's 继续 does (app/project_loop.py resume).
+            chat, project = self.fixed or self.runtime.access.notify_chat(), raw.get("project")
+            if not chat or not isinstance(project, str) or not projects.valid_id(project):
+                return "board_project_go_ignored"
+            outcome = project_loop.resume(ctx.state_dir, project, chat)
+            self.runtime.log(f"digest board project go project={project[:8]} outcome={outcome}")
         elif kind == SEEN_KIND:
             # One row's 记为看过 names its ``topic``; 全部记为看过 names them all (``topics``, cards/board.py SEEN_MAX).
             chat = self.fixed or self.runtime.access.notify_chat()
@@ -629,7 +657,8 @@ class Digest:
                 self.runtime.log(f"digest board seen topic={topic[-8:]} fresh={fresh}")
         if message:
             after_ack(lambda: self.board_refresh(ctx, message))
-        return {SEEN_KIND: "board_seen", REVISIT_KIND: "board_revisit_cancel"}.get(kind, "board_refresh")
+        return {SEEN_KIND: "board_seen", REVISIT_KIND: "board_revisit_cancel",
+                PROJECT_GO_KIND: "board_project_go"}.get(kind, "board_refresh")
 
     def remember(self, ctx, event, raw):
         """「记下」 or 「不用」 on one of 你反复说的 (the owner's): decided and the card redrawn once acknowledged."""

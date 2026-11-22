@@ -207,6 +207,9 @@ ACTIONS = {
     "bridge_board_open": CardAction("打开看板"),
     # 取消 on the 看板's 到点回来看 (cards/board.py REVISIT_KIND, COVEY_REVISIT=1): only the topic's revisit record goes.
     "bridge_board_revisit_cancel": CardAction("取消到点回来看"),
+    # 继续 on the 看板's block of a project a guard paused (cards/board.py PROJECT_GO_KIND, app/digest.py Digest.claim): the
+    # project starts again as the pause card's 继续 starts it (app/project_loop.py resume), which wakes its lead: bot_only.
+    "bridge_board_project_go": CardAction("在看板上继续专项", bot_only=True),
     # 你反复说的 on the evening digest (cards/digest.py REMEMBER_KIND, COVEY_MEMORY=1): 记下 writes a principle (app/digest.py).
     "bridge_digest_remember": CardAction("记下或不用汇总里的候选"),
     # 飞书应用待补 (cards/app_setup.py): the owner's, in the private chat (app/app_setup.py).

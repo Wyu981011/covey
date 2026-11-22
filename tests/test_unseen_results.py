@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import unittest
 from pathlib import Path
@@ -83,8 +84,9 @@ class OneSetTest(unittest.TestCase):
         return self.numbers(row["topic"] for row in rows if row["group"] == "result" and row["seen"] is None)
 
     def overview(self):
+        # The results not seen: 有结果 and 停住了 (its own part, P0-1: what 要你处理 counts) of the board's index.
         view = overview.Overview(None, None, None, {}).view(SimpleNamespace(state_dir=self.state), CHAT, self.now)
-        return self.numbers(row["topic"] for row in view["board"]["result"] if not row.get("seen"))
+        return self.numbers(row["topic"] for key in ("stopped", "result") for row in view["board"][key] if not row.get("seen"))
 
     def digest(self):
         view = digest.collect(self.state, CHAT, self.now, self.now - HOUR, self.now, board=True)
@@ -135,6 +137,89 @@ class OneSetTest(unittest.TestCase):
             unseen, off = pins.board_results(self.state, CHAT, self.now)
         self.assertNotIn(self.topics[6], unseen)
         self.assertIn(self.topics[6], off)
+
+class AsksTest(unittest.TestCase):
+    """要你处理 is one count (P0-2, T647: the 看板 counted 等你, 停住了 and 可能卡住, 手上的事 only 等你): the 看板, 手上的事 and
+    its index over the pinned board say the same number at the same time, from core/board_read.py Asks, and list what it
+    names: 等你, what stopped (not the owner's own stop: 已停止, background), what may be stuck, a project a guard paused."""
+
+    def setUp(self):
+        from covey.core import projects
+        self.state = Path(state_dir(self))
+        self.now = now = time.time()
+        self.topics = {}
+        for number, status, fields in ((11, "waiting_user", {}),
+                                       (12, "failed", {}),
+                                       (13, "cancelled", {"cancel_requested_by": "lead"}),
+                                       (14, "cancelled", {"cancel_requested_by": "card"}),  # The owner's: not counted.
+                                       (15, "running", {"last_activity_at": now - 3 * HOUR}),  # Quiet three hours.
+                                       (16, "running", {"last_activity_at": now - 60}),
+                                       (17, "done", {})):
+            topic = f"{number:02d}" * 16
+            self.topics[number] = topic
+            write_topic(self.state, topic_id=topic, chat_id=CHAT, topic_number=number, harness_id="claude",
+                        root_id=f"om_r{number}")
+            ended = {} if status in ("running", "waiting_user") else {"execution_finished": now - 1200}
+            write_job(self.state, f"om_j{number}-{number}", chat_id=CHAT, topic_id=topic, job_id=number, status=status,
+                      card_message_id=f"om_card{number}", harness_id="claude",
+                      timings={"backend_started": now - 2 * HOUR, **ended}, **fields)
+        write_json(self.state / "questions" / "q11.json", {
+            "token": "q11", "topic_id": self.topics[11], "chat_id": CHAT, "job_id": 11, "status": "pending",
+            "created_at": now - 300, "question_message_id": "om_q11", "questions": [{"question": "推哪几个？"}]})
+        long_ago = now - 30 * DAY  # The board has been on for a while (its rules hold since then).
+        write_json(self.state / pins.RECORD, {"schema_version": 1, "chat_id": CHAT, "since": long_ago, "keep_since": long_ago,
+                                              "stopped_since": long_ago, "pins": [], "dismissed": {}, "results": {}})
+        record = projects.new_record(chat_id=CHAT, name="迁库", goal="周末前切完")
+        self.project = record["id"]
+        projects.create(self.state, {**record, "state": projects.PAUSED, "state_reason": "tokens"})
+
+    def counted(self, card):
+        """The band's 要你处理 and the title bar's tags of ``card``."""
+        found = re.search(r"\*\*(\d+)\*\*</font> \*\*件事\*\*", json.dumps(card, ensure_ascii=False))
+        return (int(found.group(1)) if found else 0), [tag["text"]["content"] for tag in card["header"]["text_tag_list"]]
+
+    def board(self):
+        from covey.cards.board import board_card
+        runtime = SimpleNamespace(access=SimpleNamespace(agent_groups=(), notify_chat=lambda: CHAT), log=lambda line: None)
+        reader = digest.Digest(runtime, None, None)
+        reader.url = lambda ctx, topic, card="": ""
+        view = reader.board_view(SimpleNamespace(state_dir=self.state, profile=None), CHAT, self.now)
+        return view, board_card(view)
+
+    def overview(self):
+        from covey.cards.overview import overview_card
+        reader = overview.Overview(None, None, None, {})
+        reader.link = lambda state, topic, card: ""
+        view = reader.view(SimpleNamespace(state_dir=self.state), CHAT, self.now)
+        return view, overview_card(view, self.now)
+
+    def test_the_board_and_both_overviews_count_the_same_and_list_it(self):
+        from covey.core import board_read, projects
+        number = {topic: n for n, topic in self.topics.items()}
+        tags = ["1 等你", "3 停住了", "1 可能卡住"]
+        for switches in ({}, ON):
+            with self.subTest(board=bool(switches)), mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1",
+                                                                                  **switches}):
+                asks = pins.board_look(self.state, CHAT, self.now).asks(
+                    self.state, CHAT, board_read.waits(self.state, CHAT, self.now), self.now)
+                self.assertEqual(asks.counts(), {"waiting": 1, "stopped": 3, "stuck": 1})  # T12, T13 and the project.
+                self.assertEqual(asks.count(), 5)
+                self.assertEqual(sorted(number[topic] for topic in asks.stopped), [12, 13])
+                self.assertEqual(list(asks.projects), [self.project])
+                self.assertEqual([number[topic] for topic in asks.stuck], [15])
+                view, card = self.board()
+                self.assertEqual(self.counted(card), (5, tags))
+                self.assertEqual(sorted(number[row["topic"]] for row in view["done"] if row.get("tone") == "stopped"), [12, 13])
+                self.assertEqual([number[row["topic"]] for row in view["running"] if row.get("stuck")], [15])
+                self.assertIn("token 用完了", json.dumps(card, ensure_ascii=False))  # The project's block: 停住了 and why.
+                shown, drawn = self.overview()
+                self.assertEqual(self.counted(drawn), (5, tags))
+                listed = shown["board"]["stopped"] if switches else shown["stopped"]
+                self.assertEqual(sorted(number.get(row["topic"], 0) for row in listed if not row.get("project")), [12, 13])
+                self.assertEqual([row["project"] for row in listed if row.get("project")], [self.project])
+                if switches:  # The owner's own stop: 已停止, apart from 有结果, not counted.
+                    self.assertEqual([number[row["topic"]] for row in shown["board"]["cancelled"]], [14])
+                    self.assertEqual(shown["board"]["counts"]["stopped"], 3)
 
 
 if __name__ == "__main__":

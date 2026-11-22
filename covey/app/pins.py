@@ -79,6 +79,7 @@ order differs, at most once every GAP seconds, longer after rounds that failed.
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
 import time
 from pathlib import Path
@@ -381,6 +382,10 @@ class PinnedTopics:
         self.dismissed = {}  # The last look's topics taken off, {topic: {group, at}}.
         self.asking = frozenset()  # The last look's topics with a pending question.
         self.unseen = {}  # The last look's 有结果未看, topic -> job record (core/board_read.py unseen).
+        # The last look's groups topic by topic (no cells: a project's topics each), for 要你处理 (``asks``), and its cells
+        # (core/board_read.py Read.cells: a project's topic -> its lead's, the cell its pin is).
+        self.topics = board_read.Groups({}, {}, {})
+        self.cells = {}
         self.priority = {}
         self.read = {}  # The record's dismissed as the round read it: what ``dismiss`` wrote since is kept.
 
@@ -405,10 +410,14 @@ class PinnedTopics:
         if read is None or read.keep != frozenset(table):
             read = board_read.read(state, chat, now, keep=table)
         questions, self.priority = read.questions, read.priority
-        found = board_read.groups(questions, read.jobs, read.seen, now, board_read.Rules(
-            self.since, self.keep_since, self.stopped_since, table, top_read(read.seen, chat),
-            functools.partial(butler_relay.relayed, state), functools.partial(butler_relay.inline_at, state)), read.cells,
-            read.starts)
+        rules = board_read.Rules(self.since, self.keep_since, self.stopped_since, table, top_read(read.seen, chat),
+                                 functools.partial(butler_relay.relayed, state), functools.partial(butler_relay.inline_at, state))
+        found = board_read.groups(questions, read.jobs, read.seen, now, rules, read.cells, read.starts)
+        # 要你处理's groups (``asks``): topic by topic, and a stop counts however long before the board it ended (``since``,
+        # ``stopped_since`` are what the board pins, not what asks for the owner); seen or not as the board has it.
+        self.topics = board_read.groups(questions, read.jobs, read.seen, now, dataclasses.replace(
+            rules, since=0.0, stopped_since=None), None, read.starts)
+        self.cells = read.cells
         self.rows = [aimed(state, chat, row) for row in rows_of(found, self.priority)]
         self.results = {row["topic"]: {"at": row["at"], "seen": row["seen"]} for row in self.rows
                         if row["group"] == "result"}
@@ -418,6 +427,13 @@ class PinnedTopics:
         self.unseen = board_read.unseen(found, self.dismissed)
         pins = record.get("pins") if ours and isinstance(record.get("pins"), list) else []
         return self.rows, {pin.get("topic_id") for pin in pins if isinstance(pin, dict) and pin.get("message_id")}
+
+    def asks(self, state, chat, waits, now, off=None):
+        """要你处理 of ``chat`` as the last ``look`` found it (core/board_read.py asking): ``waits`` (core/board_read.py waits,
+        as the caller read it), its results that stopped and its running that may be stuck, the projects a guard paused;
+        the topics taken off (``off``, else the look's ``dismissed``) left out. What 手上的事 and the 看板 both count."""
+        return board_read.asking(waits, self.topics, now, self.dismissed if off is None else off,
+                                 board_read.halted_projects(state, chat))
 
     def tick(self, ctx, chat, index, now):
         """One round toward the board ``look`` found, once 手上的事 (``index``, its record) is pinned in ``chat``."""
@@ -544,14 +560,21 @@ class PinnedTopics:
             write_json(path, record)
 
 
-def board_results(state, chat, now, read=None):
-    """(有结果未看 of ``chat`` now, topic -> job record; the topics the owner took off the board, {topic: {group,
-    at}}), as the board's own look finds them (PinnedTopics.look: the same record, rules and ``active_dismissed``;
-    ``read`` as there), for a reader without the board's loop (app/overview.py, app/digest.py, app/butler.py,
-    app/butler_tools.py). Without the board's loop (``laid``) its rules' defaults. Only reads: no Feishu call, no
-    write."""
+def board_look(state, chat, now, read=None):
+    """The board's own look of ``chat`` now, for a reader without the board's loop (app/digest.py, ``board_results``): a
+    PinnedTopics that looked (``look``: the same record, rules and ``active_dismissed``; ``read`` as there), its
+    ``unseen``, ``dismissed`` and ``asks``. Without the board's loop (``laid``) its rules' defaults. Only reads: no
+    Feishu call, no write."""
     looked = PinnedTopics(None, None)
     looked.look(state, chat, now, read, board=laid())
+    return looked
+
+
+def board_results(state, chat, now, read=None):
+    """(有结果未看 of ``chat`` now, topic -> job record; the topics the owner took off the board, {topic: {group,
+    at}}), as the board's own look finds them (``board_look``), for a reader without the board's loop (app/butler.py,
+    app/butler_tools.py)."""
+    looked = board_look(state, chat, now, read)
     return looked.unseen, looked.dismissed
 
 

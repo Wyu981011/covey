@@ -28,7 +28,7 @@ from unittest import mock
 
 from covey.app import butler_handoff, butler_projects, butler_tracks, project_lead, project_loop
 from covey.app import prompts
-from covey.core import butler_tool_specs, track_ledger
+from covey.core import butler_tool_specs, look, track_ledger
 
 REPO = Path(__file__).resolve().parent.parent
 GOLDEN = REPO / "tests" / "golden" / "cards.json"
@@ -38,6 +38,19 @@ PACKED = GOLDEN.with_name("cards.json.xz")
 # the Bridge's own threads, which the docs call 后台线程 and the interface never mentions. ``一路`` and ``多路`` are not words
 # of a path (同一路径, 多路径).
 RETIRED = re.compile("主线程|线程|话题区|长活|快事|路在做|一路(?!径)|多路(?!径)|Personal Agent|由快事升级|派发活卡片|专项整理|话题摘要")
+
+# The status words docs/glossary.md 状态词 retired (要换掉的说法, core/look.py RETIRED), each as a word of its own: not inside a
+# longer one (完成标准, 发送失败, 打断). Not every module is clean of them yet (docs/glossary.md: the 执行过程 panel's 进行中,
+# the recovery card's 已完成：), so they are checked where the global cards say a state (T647 P0-1, B8): the 看板,
+# 手上的事, the 专项卡, the status card and the 派发卡, their golden samples and the code that draws them.
+STATUS_WORDS = sorted({re.sub(r"[^一-鿿]", "", word) for words in look.RETIRED.values() for word in words} - {""},
+                      key=len, reverse=True)
+STATUS_RETIRED = re.compile(r"(?<![一-鿿])(" + "|".join(STATUS_WORDS) + r")(?![一-鿿])")
+STATUS_MODULES = ("covey/cards/board.py", "covey/cards/overview.py", "covey/cards/project_card.py", "covey/cards/status_card.py",
+                  "covey/cards/dispatch_card.py", "covey/app/digest.py", "covey/app/overview.py", "covey/app/pins.py",
+                  "covey/app/project_facts.py", "covey/app/status_cards.py", "covey/app/dispatch_cards.py",
+                  "covey/core/board_read.py")
+STATUS_SAMPLES = ("digest.board", "overview.", "project.", "status_card.", "task.dispatch_")
 
 # (path, the literal as it is written, why it keeps the old word)
 ALLOWED = (
@@ -255,6 +268,23 @@ class RetiredWordsTest(unittest.TestCase):
                     found.append(f"{relative}:{line}: {match.group()!r} in {text[:60]!r}")
         self.assertEqual(found, [], "string literals with words docs/glossary.md retired (docstrings and comments are not checked)")
         self.assertEqual({entry[:2] for entry in ALLOWED}, used, "an ALLOWED entry no longer matches anything: remove it")
+
+    def test_the_global_cards_say_no_retired_status_word(self):
+        """B8 (T647): the 看板, 手上的事, the 专项卡, the status card and the 派发卡 say a state in core/look.py STATES' words
+        (停住了, 已停止, 做完, 等你, 在做 ...), in what they show (the golden samples) and in the code that draws them."""
+        for word in ("失败", "已完成", "执行失败", "等你回答：推哪几个？", "进行中", "已中断。", "⚠️ 失败 · 后端退出"):
+            self.assertIsNotNone(STATUS_RETIRED.search(word), word)
+        for word in ("完成标准", "发送失败", "停住了", "已停止", "做完", "等你", "要你定：推哪几个？", "被停止了", "重启打断"):
+            self.assertIsNone(STATUS_RETIRED.search(word), word)
+        text = GOLDEN.read_text(encoding="utf-8") if GOLDEN.exists() else lzma.decompress(PACKED.read_bytes()).decode("utf-8")
+        samples = {name: card for name, card in json.loads(text).items() if name.startswith(STATUS_SAMPLES)}
+        self.assertGreater(len(samples), 40)
+        found = [f"{name}: {match.group()!r} in {text[max(0, match.start() - 20):match.end() + 20]!r}"
+                 for name, card in samples.items() for text in strings(card) for match in STATUS_RETIRED.finditer(text)]
+        self.assertEqual(found, [], "golden samples of the global cards with a status word docs/glossary.md retired")
+        found = [f"{relative}:{line}: {match.group()!r} in {text[:60]!r}" for relative in STATUS_MODULES
+                 for line, text in literals(REPO / relative) for match in STATUS_RETIRED.finditer(text)]
+        self.assertEqual(found, [], "string literals of the global cards with a status word docs/glossary.md retired")
 
     def test_the_glossary_is_in_the_repo_and_the_agents_file_points_to_it(self):
         self.assertTrue((REPO / "docs" / "glossary.md").is_file())
