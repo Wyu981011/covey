@@ -118,9 +118,33 @@ class DshTests(unittest.TestCase):
         self.assertEqual(result.outcome.error_code, "protocol_error")
         self.assertEqual(replies, [])
 
+    def test_a_stopped_turn_is_never_a_limit_or_a_fault(self):
+        """The stop's own end (dsh cut off mid-stream) says cancelled, never what app/auto_retry.py would retry."""
+        from types import SimpleNamespace
+        from covey.backends.dsh.bridge import headless_outcome
+        stopped, running = threading.Event(), threading.Event()
+        stopped.set()
+        for native, code in (("STREAM_CLOSED", "server_fault"), ("TRANSPORT", "server_fault"), ("RATE_LIMIT", "rate_limited")):
+            with self.subTest(native=native):
+                rows = SimpleNamespace(reason={"kind": "error", "error": {"code": native, "message": "x"}}, invalid=False,
+                                       final="", sid=SID, started=True, driver_error=None)
+                self.assertEqual(headless_outcome(rows, 1, stopped), ("cancelled", "cancelled"))
+                self.assertEqual(headless_outcome(rows, 1, running), ("failed", code))
+        for native, code in (("CONTENT_REFUSED", "root_failed"), ("EMPTY_RESPONSE", "root_failed"),
+                             ("INVALID_REQUEST", "root_failed"), ("ACCOUNT_SIGN_IN_REQUIRED", "authentication_error"),
+                             ("ACCOUNT_QUOTA", "quota_exhausted")):
+            with self.subTest(native=native):
+                rows = SimpleNamespace(reason={"kind": "error", "error": {"code": native, "message": "x"}}, invalid=False,
+                                       final="", sid=SID, started=True, driver_error=None)
+                self.assertEqual(headless_outcome(rows, 1, running), ("failed", code))
+
     def test_failures_map_to_bridge_codes_without_native_text(self):
         for scenario, code in (("missing-credential", "authentication_error"), ("usage-error", "process_exit"),
-                               ("garbage", "protocol_error"), ("busy", "rate_limited")):
+                               ("garbage", "protocol_error"), ("busy", "rate_limited"),
+                               # dsh's QUOTA is a spent balance, never retried; a 5xx or a dropped stream is a fault.
+                               ("quota", "quota_exhausted"), ("server", "server_fault"), ("transport", "server_fault"),
+                               ("auth", "authentication_error"), ("auth-quota", "quota_exhausted"),
+                               ("unknown-model", "root_failed")):
             with self.subTest(scenario=scenario):
                 result, _events, replies, _sessions, _record = self.run_dsh(scenario)
                 self.assertTrue(result.is_error)

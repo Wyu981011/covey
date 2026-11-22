@@ -57,9 +57,25 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 STDERR_LINES = 40
 MODELS_SECONDS = 60  # How long ``agy models`` may take for the launch catalog.
 # What agy's error says when the turn failed for the account, not the task (its own words, matched loosely).
-AUTH_RE = re.compile(r"authenticat|sign(ed)? ?in|log ?in|unauthori[sz]ed|\b401\b|credential", re.I)
+AUTH_RE = re.compile(r"authenticat|sign(ed)? ?in|log(ged)? ?in|unauthori[sz]ed|\b401\b|credential", re.I)
 LIMIT_RE = re.compile(r"\b429\b|rate.?limit|resource.?exhausted|too many requests", re.I)
 QUOTA_RE = re.compile(r"quota|credits?\b.*(exhausted|insufficient|out)|out of credits|usage limit", re.I)
+# A quota that comes back by itself, as Google words one ("Your quota will reset after 2h31m10s", "… per minute", "model
+# … is out of quota until <time>"): a limit, retried like one, not a spent one.
+WINDOW_RE = re.compile(r"\b(?:reset|refresh)\w*\s+(?:after|in|at|on)\b|\btry again (?:in|after|at)\b|"
+                       r"\bretry (?:after|in)\b|per minute|\buntil\s+\d", re.I)
+# A passing server fault: Google's status names as agy prints them ("UNAVAILABLE (code 503): …"; upper case only, so
+# "internal" in a sentence is none), and the words of an overload or a dropped connection (agy's own "There was a
+# network issue connecting to the server, please try again." among them).
+FAULT_CODES = re.compile(r"\b(?:UNAVAILABLE|INTERNAL|DEADLINE_EXCEEDED)\b|\(code 50[0234]\)")
+FAULT_RE = re.compile(r"\b50[0234] (?:internal|bad gateway|service unavailable|gateway time-?out)|overloaded|"
+                      r"high demand|temporarily unavailable|service unavailable|connection reset|\beconnreset\b|"
+                      r"broken pipe|unexpected eof|\bgoaway\b|i/o timeout|tls handshake timeout|deadline exceeded|"
+                      r"stream (?:error|closed|disconnected|ended)|network (?:issue|error)", re.I)
+# A safety block (Gemini's finish reasons and policy words): never a limit or a fault, whatever else the error says.
+POLICY_RE = re.compile(r"\bsafety\b|prohibited.?content|blocklist|recitation|\bspii\b|violat|usage polic|"
+                       r"content polic|acceptable use|flagged", re.I)
+RETRIED = ("rate_limited", "server_fault")  # What app/auto_retry.py retries, of what error_code says.
 NOT_LOGGED_IN = ("Antigravity 还没有登录：在运行机器人的账号下执行一次 agy，选 Google OAuth 登录"
                  "（远程机器上打开它给的链接、把授权码贴回终端），再重试本轮。")
 
@@ -234,8 +250,10 @@ class AntigravityBackend(BackendRuntime):
     def capabilities(self, ctx):
         # A supplement stops agy with SIGINT and looks for what it left in this machine's process tree (AgyControl): on a
         # device, whose program passes on TERM and KILL only, a running turn takes none (the next turn takes the words).
+        # rate_limit_retry, fault_retry: what stream_outcome tells apart in agy's error.
         here = not device_of(ctx)
-        return for_device(HarnessCapabilities(steering=here, steer_reads=here, bridge_tools=True), ctx)
+        return for_device(HarnessCapabilities(steering=here, steer_reads=here, bridge_tools=True, rate_limit_retry=True,
+                                              fault_retry=True), ctx)
 
     def environment(self, ctx):
         return child_process_env(ctx.workdir, device=process_device(ctx))
@@ -408,6 +426,23 @@ class StreamRows:
             pass  # Observability never decides the outcome.
 
 
+def error_code(error):
+    """The failure code agy's ``result.error`` names, '' for none of these: a login (never retried), a safety block
+    ('': never retried), a spent quota (never retried), a limit or a quota that resets by itself (``rate_limited``), a
+    passing server fault (``server_fault``); the last two are what app/auto_retry.py retries."""
+    if AUTH_RE.search(error):
+        return "authentication_error"
+    if POLICY_RE.search(error):
+        return ""
+    if QUOTA_RE.search(error) and not WINDOW_RE.search(error):
+        return "quota_exhausted"
+    if LIMIT_RE.search(error) or QUOTA_RE.search(error):
+        return "rate_limited"
+    if FAULT_CODES.search(error) or FAULT_RE.search(error):
+        return "server_fault"
+    return ""
+
+
 def stream_outcome(rows, rc, cancel_event):
     """(status, code) of a run whose output the reader has drained; ("completed", "") when the result's
     ``response`` is the reply."""
@@ -416,12 +451,11 @@ def stream_outcome(rows, rc, cancel_event):
     if rows.invalid:
         return "failed", "protocol_error"
     if status == "ERROR" or (rows.result is None and type(rc) is int and rc != 0):
-        if AUTH_RE.search(error):
-            return "failed", "authentication_error"
-        if QUOTA_RE.search(error):
-            return "failed", "quota_exhausted"
-        if LIMIT_RE.search(error):
-            return "failed", "rate_limited"
+        code = error_code(error)
+        if code in RETRIED and cancel_event is not None and cancel_event.is_set():
+            return "cancelled", "cancelled"  # The stop's own end (a cut stream, a closed connection): no fault.
+        if code:
+            return "failed", code
     if status in ("CANCELED", "INTERRUPTED") and cancel_event is not None and cancel_event.is_set():
         return "cancelled", "cancelled"
     if type(rc) is not int or rc != 0:

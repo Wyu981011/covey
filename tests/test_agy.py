@@ -177,7 +177,8 @@ class AntigravityTests(unittest.TestCase):
     def test_failures_map_to_bridge_codes_without_native_text(self):
         for scenario, code in (("logged-out", "authentication_error"), ("garbage", "protocol_error"),
                                ("busy", "rate_limited"), ("error", "root_failed"),
-                               ("exit-after-result", "root_failed")):
+                               ("exit-after-result", "root_failed"), ("unavailable", "server_fault"),
+                               ("quota-window", "rate_limited"), ("quota", "quota_exhausted")):
             with self.subTest(scenario=scenario):
                 result, events, replies, _sessions, _record = self.run_agy(scenario)
                 self.assertTrue(result.is_error)
@@ -189,6 +190,50 @@ class AntigravityTests(unittest.TestCase):
                     self.assertEqual(result.text, NOT_LOGGED_IN)
                     failure = [d for k, d in events if k == "backend_failure"][-1]
                     self.assertFalse([line for line in failure["stderr"] if "oauth2" in line])
+
+    def test_a_limit_and_a_passing_fault_are_told_from_what_no_retry_gets_past(self):
+        """agy's ``result.error`` read for app/auto_retry.py: a limit or a quota that resets by itself (retried), a
+        passing server fault (retried), and a login, a spent quota or anything else (never)."""
+        from covey.backends.agy.bridge import error_code
+        cases = {
+            "rate_limited": ("429 Too Many Requests", "RESOURCE_EXHAUSTED (code 429): rate limit exceeded",
+                             "Quota exceeded for quota metric 'Generate Content API requests per minute'",
+                             "Your quota will reset after 4h12m. You have exhausted your capacity on this model."),
+            "server_fault": ("UNAVAILABLE (code 503): The model is overloaded.", "INTERNAL (code 500): oops",
+                             "DEADLINE_EXCEEDED (code 504)", "stream error: stream ID 7; INTERNAL_ERROR",
+                             'Post "https://example.invalid/v1": read: connection reset by peer',
+                             "The model API is currently overloaded and may experience intermittent errors.",
+                             "unexpected EOF", "context deadline exceeded",
+                             "There was a network issue connecting to the server, please try again."),
+            "quota_exhausted": ("you are out of credits", "Quota exhausted for this account", "usage limit reached"),
+            "authentication_error": ("You are not logged into Antigravity.", "401 Unauthorized",
+                                     "authentication failed or timed out"),
+            "": ("PRIVATE_DETAIL internal", "PERMISSION_DENIED (code 403): Your location is not eligible",
+                 "INVALID_ARGUMENT (code 400): bad request", "model not found", "tool run_command failed", "",
+                 # A safety block is never a limit or a fault, whatever else it says.
+                 "INTERNAL (code 500): response blocked by SAFETY", "429: content violates the usage policy",
+                 "UNAVAILABLE: PROHIBITED_CONTENT"),
+        }
+        cases["rate_limited"] += ("model gemini-3.1-pro is out of quota until 2026-11-23T08:00:00Z",)
+        for code, errors in cases.items():
+            for error in errors:
+                with self.subTest(error=error):
+                    self.assertEqual(error_code(error), code)
+
+    def test_a_stopped_turn_is_never_a_limit_or_a_fault(self):
+        """The stop's own end (agy cut off mid-stream) says cancelled, never what app/auto_retry.py would retry."""
+        from types import SimpleNamespace
+        from covey.backends.agy.bridge import stream_outcome
+        stopped, running = threading.Event(), threading.Event()
+        stopped.set()
+        for error in ("UNAVAILABLE (code 503): stream closed", "429 Too Many Requests"):
+            with self.subTest(error=error):
+                rows = SimpleNamespace(result={"status": "ERROR", "error": error}, invalid=False, sid=SID)
+                self.assertEqual(stream_outcome(rows, 1, stopped), ("cancelled", "cancelled"))
+                self.assertIn(stream_outcome(rows, 1, running)[1], ("server_fault", "rate_limited"))
+        # A login that failed is still said as one.
+        rows = SimpleNamespace(result={"status": "ERROR", "error": "401 Unauthorized"}, invalid=False, sid=SID)
+        self.assertEqual(stream_outcome(rows, 1, stopped), ("failed", "authentication_error"))
 
     def test_stop_ends_the_process_and_is_not_resumable(self):
         cancel = threading.Event()

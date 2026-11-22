@@ -14,6 +14,8 @@ beside it.
 """
 from __future__ import annotations
 
+import re
+
 from covey.core import gateways
 from covey.core.protocol import retry_note, retry_reason
 from covey.core.steps import AnswerNotes, Steps
@@ -41,19 +43,51 @@ def message_texts(message):
     return "".join(final or [c["text"] for c in parts])
 
 
+# A limit no retry gets past until the account is paid for or upgraded: pi 1.6.0's own
+# NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN (which it never retries), read before the limits below.
+SPENT = re.compile(r"gousagelimiterror|freeusagelimiterror|monthly usage limit reached|available balance|"
+                   r"insufficient_quota|out of budget|quota exceeded|billing|subscription_sharing_[a-z_]*usage_limit_exceeded")
+# A passing server fault, after pi's own retries (home.py RETRIES) ran out: pi 1.6.0's RETRYABLE_PROVIDER_ERROR_PATTERN
+# without its limits (read before). A message that starts with a 4xx status other than 408 is the request refused, never
+# one of these, whatever words follow.
+FAULT = re.compile(
+    r"overloaded|server_busy|servers are currently busy|currently experiencing high demand|model is at capacity|"
+    r"(?<![a-z0-9])(?:500|502|503|504|520|524|529)(?![a-z0-9])|service.?(?:is.?)?(?:temporarily.?)?unavailable|"
+    r"server.?error|internal.?error|provider.?returned.?(?:an.?)?error|unable to forward upstream|"
+    r"upstream.?request.?failed|upstream_stream_read_error|upstream.?connect|stream was interrupted|http/?2 stream failed|"
+    r"network.?error|connection.?(?:error|refused|lost|closed|reset)|other side closed|fetch failed|getaddrinfo|"
+    r"(?<![a-z0-9_])(?:econnreset|econnaborted|econnrefused|etimedout|epipe|enotfound|eai_again)(?![a-z0-9_])|"
+    r"reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|"
+    r"websocket.?(?:closed|error)|ended without|stream ended before|did not get a response|"
+    r"stream disconnected before completion|cut short after the reply had begun|pending stream has been canceled|"
+    r"you can retry your request|try your request again|please retry your request")
+REFUSED = re.compile(r"4(?!08|29)\d\d(?![0-9])")
+# A safety refusal (OpenAI's "flagged for potentially high-risk cyber activity", a usage or content policy, a content
+# filter): never a limit or a fault, whatever else its words say.
+POLICY = re.compile(r"flagged|cyber|usage polic|content polic|safety|violat|content.?filter|_policy|\brefusal\b")
+
+
 def failure_code(message):
-    """The bridge code for an assistant message that ended with ``stopReason: "error"``."""
+    """The bridge code for an assistant message that ended with ``stopReason: "error"`` (or pi's refusal of the prompt):
+    ``rate_limited`` and ``server_fault`` are what app/auto_retry.py retries; a refused key, a spent quota, a safety
+    refusal or anything else never is."""
     text = str(message or "")
     head = text[:200].lower()
     if gateways.quota_text(head):
         return "quota_exhausted"
     if head.startswith(("401", "403")) or "unauthorized" in head or "invalid api key" in head or "no api key" in head:
         return "authentication_error"
+    if SPENT.search(head):
+        return "quota_exhausted"
+    if POLICY.search(head):
+        return "root_failed"
     # Acme's upstream also says it inside a 200 stream: "Requests have exceeded the throughput limit on your
     # Provisioned-Managed deployment", which neither the relay nor pi retries.
     if (head.startswith("429") or "rate limit" in head or "usage limit" in head or "too many requests" in head
             or "throughput limit" in head):
         return "rate_limited"
+    if not REFUSED.match(head) and FAULT.search(head):
+        return "server_fault"
     return "root_failed"
 
 

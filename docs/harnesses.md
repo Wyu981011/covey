@@ -27,7 +27,9 @@ Harness 是执行任务的 Agent 程序。本篇按上手顺序写：有哪些�
 - **原生问答**：Claude 的问题在原任务里等回答；Codex 必须回答的问题先结束本轮，回答排成续接任务。所有 Harness 都能经检查点提问（[回答模型的问题](usage.md#回答模型的问题)）。
 - **原生图片**：不支持时只给本地路径。Claude、Pi 单张超过 5 MiB，或 Claude 合计超出 8 MiB 帧时，放不下的只给路径（`app/runs.py` 的 `_fit_images`）。
 - **分叉**：管家分叉出的话题（[开话题、转交、分叉](butler.md#开话题转交分叉)）复制原话题的原生会话；不支持或原话题正在执行时改用已完成的对话记录。**换配置**除只改脱敏外都开新会话。
-- **只有 Claude Code 有的**：[敏感词脱敏](usage.md#敏感词脱敏)、[回退一步](usage.md#回退一步)、限流（429）后[自动重试](reference.md#自动重试)、轮前压缩。“下载请求与结果”只有 Claude Code 和 Codex 有。
+- **只有 Claude Code 有的**：[敏感词脱敏](usage.md#敏感词脱敏)、[回退一步](usage.md#回退一步)、本轮未全部完成后自动继续、轮前压缩。“下载请求与结果”只有 Claude Code 和 Codex 有。
+- **每个内置 Harness 都有的**：限流（429）和临时故障（过载、5xx、连接断开）后[自动重试](reference.md#自动重试)（`rate_limit_retry`、`fault_retry`）。各家怎么认出这两类写在下面各自的“失败”一行；登录失效、额度用完、模型不存在、请求被拒、安全拒绝和停止不重试。
+- **交接摘要**（[换配置之后](reference.md#换配置之后)）：Claude Code、Codex、Pi 在原会话的分叉上写；Antigravity 和 dsh 的命令行只能续接会话（`--conversation`、`--session-id`），续接会把摘要这一轮留在原会话里，所以不写，新模型拿最近 3 轮原文。
 
 ## 安装和登录 Harness
 
@@ -78,6 +80,8 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **本轮结果**：thread 和 turn 双重绑定，只用当前 turn 的完整 items（不完整时按 ID 回读），取 `final_answer` 阶段的 agentMessage。下载请求与结果从 rollout 还原，不记的部分列在 `not_recorded`。
 - **执行指标**：token 取 `thread/tokenUsage/updated` 的累计减本轮基线（`CodexTurnUsage`），子 Agent 会话各自减基线；生成时间从 `turn/start` 计，扣除工具和提问区间（重试也算在内，token/s 会偏低）；TTFT `codex_item`、`codex_delta`。
 - **管家的工具**：管家跑在 Codex 上时（设置卡「配置」页的“管家”一段的 Harness），它那一轮的线程另挂 Bridge 工具服务 `bridge`（`backends/codex/appserver.py` 的 `bridge_servers`），工具等待上限 `tool_timeout_sec` 150 秒，比服务自己的 120 秒长。`approvalPolicy: never` 下调用不弹审批（0.167.2 实测）。
+- **失败**（`backends/codex/turn.py` 的 `codex_failure_code`，按 `codexErrorInfo` 分，不看原文）：`usageLimitExceeded`、`rateLimitExceeded` 或 429 记 `rate_limited`，原文说 quota exceeded、billing、要升级套餐的记 `quota_exhausted`；`serverOverloaded`、`internalServerError`、`flexUnavailable`，以及连接失败或中断（`httpConnectionFailed`、`responseStream*`、`responseTooManyFailedAttempts`）没有状态码或是 500、502、503、504、529 的记 `server_fault`；带别的状态码的连接错误还是 `transport_error`；`unauthorized` 和 401、403 记 `authentication_error`（网关每日额度的 403 记 `quota_exhausted`）；模型不存在、请求错误、上下文超长、各类策略拦截和其余的记 `root_failed`。
+- **交接摘要**（`backends/codex/handoff.py`）：在原会话的 `thread/fork`（`ephemeral`，不写 rollout，原会话不动）上请原模型写，单独起一个 app-server，`CODEX_HOME` 用协作同款的私有目录（只链登录和会话，不带主人的 MCP、hook、规则、插件、记忆），只读沙箱、不审批，关掉两种 shell（`shell_tool`、`unified_exec`）、子 Agent、网页搜索、浏览器和看图等工具，不挂 Bridge 工具和工作区只读工具，服务端发来的审批或提问一律拒绝；最多 180 秒，超时或停止时关掉 app-server 并停它的进程组。网关模型同样经一个本轮的中继。
 - **参数**写在 bootstrap 命令上，不进 `harnesses.json`（[常用参数](#常用参数)）；网关模型见[模型网关](#模型网关codexpi-与-dsh)。
 
 ## Claude Code
@@ -108,6 +112,8 @@ Pi 是 pi（npm 包 `@earendil-works/pi-coding-agent`，不是另一个工具 `@
 - **本轮结束**：`agent_end` 后再 `get_state` 确认 `isStreaming:false`、`isCompacting:false`；正文取最后一条 `stopReason:"stop"` 的助手消息。
 - **补充**：`steer` 成功即“后端已接收”，pi 开始这条用户消息即“模型已读取”；以 `/` 开头的前加“用户补充：”。
 - **执行指标**：输入是 `input + cacheRead + cacheWrite`；快过 1000 token/s 的请求不计时；TTFT `pi_delta`。
+- **失败**（`backends/pi/events.py` 的 `failure_code`，读错误消息的前 200 字）：网关的每日额度、pi 自己不重试的额度用完（`insufficient_quota`、billing、monthly usage limit 等）记 `quota_exhausted`；401、403、密钥无效记 `authentication_error`；带 flagged、usage/content policy、safety、cyber 等安全拒绝字样的记 `root_failed`；429、rate limit、usage limit、吞吐上限记 `rate_limited`；pi 自己的重试用完后仍是过载、5xx、超时、连接断开的记 `server_fault`（以 408、429 之外的 4xx 开头的除外）；其余 `root_failed`。
+- **交接摘要**（`backends/pi/handoff.py`）：一次 `pi --mode json -p --fork <会话文件> --session-dir <状态目录>/tmp/pi-handoff-*`，加 `--no-tools --no-mcp --no-extensions --no-skills --no-prompt-templates --no-context-files`，私有目录、模型、档位和令牌同一轮；分叉出的会话文件用完删掉，原会话只读不写。最多 180 秒，超时或停止时停掉 pi 的进程组。
 - 读工作目录及上级的 `AGENTS.md`、`CLAUDE.md` 和 `.agents/skills`，不读 `~/.pi/agent`。没有原生问答、子 Agent、脱敏、回退一步、下载请求与结果。
 
 ## Antigravity
@@ -120,10 +126,10 @@ Antigravity 是 Google 的 Agent 开发平台，这里用它的命令行 `agy`�
 - **本轮结果**：最后一行 `result` 的 `status` 为 `SUCCESS`、零退出码。正文取最后一个工具、子 Agent 或系统步骤之后模型写的字（`result.response` 把这一轮的字全拼在一起，取出的不是它的结尾时退回整个 `response`）；子 Agent 的步骤不算本轮正文。
 - **事件与用量**：文字增量是正文和进展说明，工具步骤按名字显示；工具输出和思考不上卡片。用量取每个 `agent_response` 步骤的 `usage`（`input_tokens` 不含缓存读取，`output_tokens` 含思考），没有时才用 `result.usage`。
 - **模型和档位**：启动卡的预算就是 `--effort`；模型目录（`launch-models/agy.json`）说没有这个档位时不启动，没有档位的模型不传 `--effort`。
-- **失败**：`result.error` 像登录失败记 `authentication_error`、像额度用完记 `quota_exhausted`、像 429 记 `rate_limited`，其余 `root_failed`。agy 的原文不上卡片，stderr 最后几行（去掉登录链接、隐藏凭据）只进 `bridge.log`。
+- **失败**（`backends/agy/bridge.py` 的 `error_code`）：`result.error` 像登录失败记 `authentication_error`；带安全拦截字样（SAFETY、PROHIBITED_CONTENT、违反政策等）的记 `root_failed`；像额度用完、又没说什么时候恢复的记 `quota_exhausted`；像 429、限流，或额度说了恢复时间（reset after、per minute、until 某时）的记 `rate_limited`；`UNAVAILABLE`、`INTERNAL`、`DEADLINE_EXCEEDED`、50x、过载、连接重置或断开、“network issue” 记 `server_fault`；其余 `root_failed`。点了停止后 agy 以错误收尾的，限流和故障都按停止记。agy 的原文不上卡片，stderr 最后几行（去掉登录链接、隐藏凭据）只进 `bridge.log`。
 - **补充**是“停下再接着做”（`AgyControl`）：agy 运行中不收新消息，收下补充即“后端已接收”，给 agy 发 SIGINT，它以 `interrupted` 结束并保留已做的部分；它还在跑的命令先 TERM、5 秒后 KILL；然后同一会话起新进程，消息是补充，这时算“模型已读取”。和 Claude 不同，正在执行的那一步会被打断。
 - **管家的工具**：agy 只从 `~/.gemini/config/mcp_config.json`（和插件）读 MCP 服务，`--settings` 不收 `mcpServers`。管家跑在 agy 上时，那一轮的 `HOME` 换成 `<state>/tmp/agy-home-*`（`backends/agy/home.py`）：真实主目录的每一项、`.gemini` 和它的 `config` 里的每一项都是指回原处的符号链接，只有 `mcp_config.json` 是这一轮自己的：主人原有的服务（文件是纯 JSON 时；带注释的读不了，这一轮就不带，`bridge.log` 记一行）加上 Bridge 的 `bridge`。每个工具标 `tools.<名字>.eager`（开跑前问一次服务的 `tools/list`），不然 agy 只给模型一个工具说明文件、要先读再调；`timeoutSeconds` 150。登录、会话、日志都经链接写回原处；这一轮在主目录顶层新建的文件随私有目录一起删掉。agy 会在 `~/.gemini/antigravity-cli/mcp/bridge/` 留工具说明的缓存。
-- 没有原生问答、原生图片（只给路径，它用自带的 `read_file` 打开）、原生分叉、脱敏、回退一步、下载请求与结果；不能在设备上跑。
+- 没有原生问答、原生图片（只给路径，它用自带的 `read_file` 打开）、原生分叉（所以换配置时不写交接摘要）、脱敏、回退一步、下载请求与结果；在设备上的差别见[在设备上运行](#在设备上运行)。
 
 ## 模型网关（Codex、Pi 与 dsh）
 
@@ -165,7 +171,8 @@ dsh 是 DeepSeek 开源的 Agent Harness（npm 包 `@deepseek-ai/dsh`，预览�
 - **安装**：`npm install -g @deepseek-ai/dsh`，按 `0.2.1-rc.2` 验证，升级后跑[真实环境验证](testing.md#真实环境验证)。任务开始前只检查可执行文件和网关密钥。`--model` 的默认值是某一家网关的模型名，你的网关目录里没有它时改成有的，否则启动卡预选不到。
 - **运行方式**：每轮一个 `dsh --profile headless --patch <补丁> --json [--session-id <会话>] -`，正文从 stdin 传。补丁是本轮私有的临时文件：声明以网关名命名的 provider、设模型和档位（`output_config.effort`）、关闭起标题的请求。环境 `DSH_PERMISSION_MODE=danger-full-access`、`DSH_TELEMETRY_MODE=DISABLED`。
 - **本轮结果**：首行 `session` 一致、有 `turn_start`、最后 `turn_end` 为 `completed`、零退出码，正文取无截断的 `final`。事件每步完成才发出，没有 TTFT。续接用 `--session-id`，只能在创建会话时的工作目录。
-- 没有原生问答、执行中补充、原生图片、原生分叉；网页搜索要 `DEEPSEEK_API_KEY`。
+- **失败**（`backends/dsh/bridge.py` 的 `headless_outcome`，按 `turn_end` 里 dsh 自己的错误码）：`RATE_LIMIT` 记 `rate_limited`，`SERVER`、`TIMEOUT`、`TRANSPORT`、`STREAM_CLOSED` 记 `server_fault`；`QUOTA`、`ACCOUNT_QUOTA`（dsh 说的余额或额度用完）和网关每日额度的 403 记 `quota_exhausted`；`AUTH`、`MISSING_CREDENTIAL`、`INVALID_CREDENTIAL`、`ACCOUNT_SIGN_IN_REQUIRED`、`ACCOUNT_TOKEN_INVALID` 记 `authentication_error`；`CONTENT_REFUSED`（安全拒绝）、`UNKNOWN_MODEL`、`INVALID_REQUEST` 和其余的记 `root_failed`。点了停止后以限流或故障收尾的按停止记。
+- 没有原生问答、执行中补充、原生图片、原生分叉（所以换配置时不写交接摘要）；网页搜索要 `DEEPSEEK_API_KEY`。
 
 ## 在设备上运行
 

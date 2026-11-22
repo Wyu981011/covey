@@ -9,7 +9,7 @@ import os
 import time
 import uuid
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest import mock
 
 from support.fake_lark import FakeCardKit
@@ -24,6 +24,9 @@ from support.world import UnifiedCase
 
 from support import requires_extension
 from covey.core.jobs import context_for_job
+from covey.core.harness import backend_capabilities
+from covey.backends.codex.bridge import CodexBackend
+from covey.backends.pi.bridge import PiBackend
 from covey.app import harness_switch as hs
 from covey.app import switch_handoff
 from covey.app import model_usage
@@ -49,6 +52,7 @@ from covey.core.store import invalidate_directory
 from covey.core.topics import read_topic, remember_topic_message
 from covey.core.workspaces import load_config, resolve_selection
 
+REAL_CODEX_SUMMARY = CodexBackend.handoff_summary  # Before any test patches it.
 setUpModule, tearDownModule = leftover_check()
 
 
@@ -58,6 +62,12 @@ class HarnessSwitchTests(UnifiedCase):
         patcher = mock.patch.dict(os.environ, {"CODEX_HOME": str(self.root / "codex-home")})
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Leaving setUp's Codex topic asks Codex's own 交接摘要 now (T668), which starts the real CLI: here it answers
+        # none unless a test says what it answers (on the backend of the app it routes to).
+        for backend in (CodexBackend, PiBackend):
+            patcher = mock.patch.object(backend, 'handoff_summary', autospec=True, return_value=('', '测试里不写'))
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.receive('src', 'first question')
         _, self.source = self.route('src')
         data = read_topic(self.source)
@@ -1144,11 +1154,53 @@ class HarnessSwitchTests(UnifiedCase):
         self.assertNotIn('交接摘要', note)
         self.assertEqual(sum(r['role'] == 'assistant' for r in rows), 3)
 
-    def test_no_summary_without_a_claude_session_or_a_redaction_record(self):
-        # From Codex (setUp's topic): its backend has no handoff_summary.
+    def test_leaving_codex_its_model_hands_over_a_summary_too(self):
+        """Codex and Pi write one as Claude does (T668): asked with the old binding's model, budget, workdir and session."""
+        self.switch_to()  # From setUp's Codex topic, which has a session.
+        calls = []
+
+        def summary(ctx, session_id, prompt, *, redact, cancel=None, run_id=''):
+            calls.append((ctx.model, ctx.effort, str(ctx.workdir), session_id, redact, run_id))
+            return '目标：修好 X。下一步：跑测试。', '写好了'
+        app, ctx = self.route('src')
+        with mock.patch.object(self.app.apps['codex'].backend, 'handoff_summary', side_effect=summary):
+            rows, note = app.switch.switch_handoff(ctx, [])
+        self.assertEqual(calls, [('codex-model', 'high', str(self.work), self.session, False,
+                                  f"handoff-r{self.topic()['binding_revision']}")])
+        self.assertIn('目标：修好 X。下一步：跑测试。', note)
+        self.assertEqual(sum(r['role'] == 'assistant' for r in rows), switch_handoff.SUMMARY_ROUNDS)
+
+    def test_a_codex_summary_that_fails_falls_back_to_the_last_rounds_and_the_new_model_starts(self):
+        """Codex's real handoff_summary over an app server that gives no fork: the outcome on the card, three rounds in
+        plain text, the new Harness's turn runs."""
+        from covey.backends.codex import handoff
+        from support.fake_backends import FakeRpc
+        self.switch_to()
+        backend = self.app.apps['codex'].backend
+        rpc = FakeRpc([])
+        app, ctx = self.route('src')
+        with mock.patch.object(backend, 'handoff_summary', MethodType(REAL_CODEX_SUMMARY, backend)), \
+                mock.patch.object(handoff, 'AppServer', return_value=rpc) as server:
+            rows, note = app.switch.switch_handoff(ctx, [])
+        server.assert_called_once()
+        self.assertEqual([method for method, _ in rpc.requests], ['initialize', 'thread/fork'])
+        self.assertEqual(rpc.requests[1][1]['threadId'], self.session)
+        self.assertTrue(rpc.closed)
+        self.assertNotIn('交接摘要', note)
+        self.assertEqual(sum(r['role'] == 'assistant' for r in rows), 3)
+        self.assertTrue(any('switch summary topic=' in line and 'Codex 没有给出分叉' in line for line in self.logs))
+        self.assertEqual(list((self.ctx.state_dir / 'tmp').glob('codex-handoff-*')), [])
+
+    def test_no_summary_from_a_harness_that_cannot_fork_or_without_a_redaction_record(self):
+        # Antigravity and dsh have no handoff_summary: their CLIs only resume a session, never fork one, and a resumed
+        # session would keep the summary's turn.
+        for name in ('agy', 'dsh'):
+            self.assertFalse(hasattr(self.app.apps[name].backend, 'handoff_summary'), name)
+            self.assertFalse(backend_capabilities(self.app.apps[name].backend, self.ctx).native_fork, name)
         self.switch_to()
         app, ctx = self.route('src')
-        rows, note = app.switch.switch_handoff(ctx, [])
+        with mock.patch.object(self.app.apps['codex'].harness, 'backend', self.app.apps['agy'].backend):
+            rows, note = app.switch.switch_handoff(ctx, [])
         self.assertNotIn('交接摘要', note)
         self.assertEqual(sum(r['role'] == 'assistant' for r in rows), 3)
         self.assertTrue(any('switch summary skipped' in line and 'not supported' in line for line in self.logs))

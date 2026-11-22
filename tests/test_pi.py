@@ -227,7 +227,87 @@ class PiTests(unittest.TestCase):
         self.assertEqual(failure_code("You have hit your ChatGPT usage limit (pro plan)"), "rate_limited")
         self.assertEqual(failure_code("Requests have exceeded the throughput limit on your Provisioned-Managed deployment."),
                          "rate_limited")
-        self.assertEqual(failure_code("500 internal error"), "root_failed")
+
+    def test_a_limit_and_a_passing_fault_are_told_from_what_no_retry_gets_past(self):
+        """What app/auto_retry.py retries (pi 1.6.0's own retry patterns, after its retries ran out) and what it never
+        does: a refused key, a spent quota (pi's NON_RETRYABLE words), a request the provider refused."""
+        cases = {
+            "rate_limited": ("429 Too Many Requests", "Rate limit reached for gpt-6",
+                             "You have hit your ChatGPT usage limit (plus plan). Try again in ~42 min."),
+            "server_fault": ("500 internal error", "503 Service Unavailable", "502 Bad Gateway", "overloaded_error",
+                             "fetch failed", "terminated", "socket hang up", "Connection error.", "Request timed out.",
+                             "read ECONNRESET", "stream disconnected before completion: response.failed",
+                             "408 Request Timeout", "The server had an error processing your request. Please retry your request."),
+            "quota_exhausted": ("insufficient_quota: check your billing", "Monthly usage limit reached",
+                                "You exceeded your current quota: quota exceeded", "GoUsageLimitError: out"),
+            "authentication_error": ("401 Unauthorized", "403 Forbidden", "Invalid API key provided",
+                                     "No API key found for openai-codex"),
+            "root_failed": ("400 Bad Request: invalid value for timeout", "404 model not found",
+                            "This request has been flagged for potentially high-risk cyber activity",
+                            "Your input exceeds the context window of this model", "",
+                            # A safety refusal is never a limit or a fault, whatever else it says.
+                            "500 the response was flagged by the content filter",
+                            "Request timed out: blocked by the usage policy", "429 cyber_policy: try again later"),
+        }
+        for code, messages in cases.items():
+            for message in messages:
+                with self.subTest(message=message):
+                    self.assertEqual(failure_code(message), code)
+
+    def test_the_handoff_summary_forks_the_session_with_no_tool_and_leaves_it_as_it_was(self):
+        from covey.backends.pi import handoff
+        from covey.backends.pi.bridge import NOT_REDACTED, account_catalog
+        ctx = dataclasses.replace(self.ctx, backend_cmd=[sys.executable, "-I", str(FIXTURES / "harness/pi_print.py")])
+        root = sessions_root(ctx)
+        root.mkdir(parents=True, exist_ok=True)
+        source = root / f"2026-11-04T00-00-00-000Z_{SID}.jsonl"
+        source.write_text('{"type":"session"}\n{"type":"message"}\n')
+        os.environ["FAKE_PI_SCENARIO"] = "ok"
+        text, outcome = self.backend.handoff_summary(ctx, SID, "写交接摘要", redact=False)
+        self.assertEqual((text, outcome), ("### 目标\n交接测试\n\n### 当前状态\n做完了", "写好了"))
+        record = self.record()
+        argv = record["argv"]
+        self.assertEqual(argv[:2], ["--mode", "json"])
+        self.assertEqual(argv[argv.index("--fork") + 1], str(source))
+        for flag in handoff.QUIET:
+            self.assertIn(flag, argv)
+        self.assertEqual(argv[-3:], ["-p", "--", "写交接摘要"])
+        self.assertEqual(argv[argv.index("--model") + 1], ctx.model)
+        folder = Path(argv[argv.index("--session-dir") + 1])
+        self.assertEqual((folder.parent, folder.name[:len("pi-handoff-")]), (ctx.state_dir / "tmp", "pi-handoff-"))
+        self.assertFalse(folder.exists())  # The fork went into its own directory, removed afterwards.
+        self.assertEqual(sorted(p.name for p in root.iterdir()), [source.name])
+        self.assertEqual(source.read_text(), '{"type":"session"}\n{"type":"message"}\n')
+        self.assertEqual(record["env"]["PI_CODEX_ACCESS_TOKEN"], self.token)
+        self.assertIsNone(record["env"]["ACME_API_KEY"])
+        for scenario, said in (("error", "Pi 报告失败"), ("empty", "回答为空")):
+            os.environ["FAKE_PI_SCENARIO"] = scenario
+            self.assertEqual(self.backend.handoff_summary(ctx, SID, "写交接摘要", redact=False), ("", said))
+        os.environ["FAKE_PI_SCENARIO"] = "slow"
+        started = time.monotonic()
+        self.assertEqual(handoff.summarize(ctx, source, "写交接摘要", account_catalog(), "", self.token, seconds=1),
+                         ("", "超过 1 秒"))
+        stop = threading.Event()
+        threading.Timer(0.5, stop.set).start()
+        self.assertEqual(self.backend.handoff_summary(ctx, SID, "写交接摘要", redact=False, cancel=stop), ("", "已停止"))
+        self.assertLess(time.monotonic() - started, 15)
+        self.assertEqual(list((ctx.state_dir / "tmp").glob("pi-handoff-*")), [])
+        # Never sent: the topic redacts (Pi cannot), the session's file is gone, the login runs out within the summary.
+        (self.root / "record.json").unlink()
+        self.assertEqual(self.backend.handoff_summary(ctx, SID, "写交接摘要", redact=True), ("", NOT_REDACTED))
+        self.assertEqual(self.backend.handoff_summary(ctx, "01a1a21e-0000-7000-8000-000000000000", "写交接摘要",
+                                                      redact=False), ("", "找不到原会话的文件"))
+        self.write_codex(jwt(int(time.time()) + 120))
+        text, outcome = self.backend.handoff_summary(ctx, SID, "写交接摘要", redact=False)
+        self.assertEqual(text, "")
+        self.assertRegex(outcome, r"^出错（Codex 登录的访问令牌将在 .* 过期）$")
+        self.assertEqual(self.record(), {})
+        # A gateway model: its provider and its bare model, as a turn's.
+        gateway = acme_gateway()
+        argv = handoff.summary_argv(dataclasses.replace(ctx, model=gateway.prefix + "gpt-6.1-sol", effort="high"),
+                                    source, folder, "写交接摘要")
+        self.assertEqual((argv[argv.index("--provider") + 1], argv[argv.index("--model") + 1]),
+                         (gateway.name, "gpt-6.1-sol"))
 
     def test_an_expiring_codex_token_stops_the_turn_before_pi_starts(self):
         self.write_codex(jwt(int(time.time()) + 600))

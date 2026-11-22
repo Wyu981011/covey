@@ -5,15 +5,29 @@ controls and process closed afterwards (close_turn)."""
 from __future__ import annotations
 
 import queue
+import re
 import subprocess
 import time
 
 from covey.backends.codex.rpc import RpcError, failed, request_identifier
 from covey.core.harness import JobCancelled
 from covey.core import gateways
+from covey.core.limit_reset import FAULT_STATUSES
 from covey.core.protocol import retry_note, retry_reason
 from covey.core.result import MAX_REPLY_BYTES, is_identifier
 from covey.core.ttft import FirstToken
+
+# codexErrorInfo's variants (codex-cli 0.171.0's app-server schema), as ``codex_failure_code`` names them: lower case,
+# no "_". A limit: the plan's usage window or a rate limit.
+LIMITED = frozenset({"usagelimitexceeded", "ratelimitexceeded"})
+# A passing server fault Codex says by name: overloaded, a 5xx it was told of, or the flex tier out of capacity for now.
+FAULTED = frozenset({"serveroverloaded", "internalservererror", "flexunavailable"})
+# The model's connection failed or dropped, or Codex's own retries of one ran out; a status, when it has one, says more.
+CONNECTION = frozenset({"httpconnectionfailed", "responsestreamconnectionfailed", "responsestreamdisconnected",
+                        "responsetoomanyfailedattempts"})
+# A limit's words that say no retry helps until someone pays or upgrades: Codex's QuotaExceeded ("Quota exceeded. Check
+# your plan and billing details.") and UsageNotIncluded ("… upgrade to Plus …") come as usageLimitExceeded too.
+SPENT = re.compile(r"quota exceeded|billing details|insufficient_quota|upgrade to plus", re.I)
 
 
 def context_of(usage):
@@ -31,7 +45,11 @@ def context_of(usage):
 
 
 def codex_failure_code(error):
-    """Classify known failures without publishing backend text or request data."""
+    """Classify known failures without publishing backend text or request data. A limit (``rate_limited``) and a
+    passing server fault (``server_fault``: overloaded, a 500/502/503/504/529, a connection that failed or dropped with
+    no status) are what app/auto_retry.py retries; a refused login, a spent quota, a missing model, a bad request, a
+    policy block and every other variant never are. A connection that failed with another status stays
+    ``transport_error``, as before."""
     if not isinstance(error, dict):
         return "root_failed"
     if error.get("message") == "workspace routing discovery timed out":
@@ -42,15 +60,17 @@ def codex_failure_code(error):
     details = info.get(variant) if isinstance(info, dict) else None
     status = details.get("httpStatusCode") if isinstance(details, dict) else None
     status = status if type(status) is int else None
-    if status == 403 and gateways.quota_text(error.get("message") or ""):
+    message = str(error.get("message") or "")
+    if status == 403 and gateways.quota_text(message):
         # A gateway's spent daily quota.
         return "quota_exhausted"
     if name == "unauthorized" or status in {401, 403}:
         return "authentication_error"
-    if name == "usagelimitexceeded" or status == 429:
-        return "rate_limited"
-    if name in {"httpconnectionfailed", "responsestreamconnectionfailed", "responsestreamdisconnected",
-                "responsetoomanyfailedattempts"}:
+    if name in LIMITED or status == 429:
+        return "quota_exhausted" if SPENT.search(message) else "rate_limited"
+    if name in FAULTED or (name in CONNECTION and (status is None or status in FAULT_STATUSES)):
+        return "server_fault"
+    if name in CONNECTION:
         return "transport_error"
     return "root_failed"
 

@@ -557,6 +557,7 @@
 | `backends/codex/events.py` | Codex App Server items as public Harness events |
 | `backends/codex/export.py` | One turn's model requests and responses, from Codex's own rollout (the 下载请求与结果 button) |
 | `backends/codex/gateway.py` | A model gateway's OpenAI Responses models inside the regular Codex Harness |
+| `backends/codex/handoff.py` | A handoff summary from a Codex thread the topic is leaving, as backends/claude/handoff.py writes Claude Code's |
 | `backends/codex/rpc.py` | The Codex App Server process and its JSON-RPC over stdio (AppServer) |
 | `backends/codex/sessions.py` | Codex rollout session store for the Lark bridge |
 | `backends/codex/turn.py` | One Codex turn read to its end (read_turn) |
@@ -583,6 +584,7 @@
 | --- | --- |
 | `backends/pi/bridge.py` | Pi: GPT models from the Codex login or from a model gateway |
 | `backends/pi/events.py` | pi's RPC event rows to public Harness events |
+| `backends/pi/handoff.py` | A handoff summary from a Pi session the topic is leaving, as backends/claude/handoff.py writes Claude Code's |
 | `backends/pi/home.py` | Pi's private home for one turn, and how its models reach it |
 | `backends/pi/rpc.py` | One Pi turn over `pi --mode rpc`: a process per turn, JSONL both ways |
 

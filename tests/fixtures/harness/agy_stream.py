@@ -90,6 +90,13 @@ if scenario == "busy":
     result("ERROR", error="429 RESOURCE_EXHAUSTED: PRIVATE_DETAIL"); sys.exit(3)
 if scenario == "error":
     result("ERROR", error="PRIVATE_DETAIL internal"); sys.exit(3)
+if scenario == "unavailable":
+    result("ERROR", error="UNAVAILABLE (code 503): The model is overloaded. PRIVATE_DETAIL"); sys.exit(3)
+if scenario == "quota-window":
+    result("ERROR", error="RESOURCE_EXHAUSTED (code 429): You have exhausted your capacity on this model. "
+                          "Your quota will reset after 1h2m3s. PRIVATE_DETAIL"); sys.exit(3)
+if scenario == "quota":
+    result("ERROR", error="PRIVATE_DETAIL: you are out of credits"); sys.exit(3)
 if scenario == "waits":
     # A subagent sent in the background, a line while it runs, its return as a system message (T588 #5298).
     step(3, "DONE", "subagent", tool_name="invoke_subagent", subagent_info={"subagents": [{"role": "Counter"}]})

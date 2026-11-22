@@ -104,6 +104,7 @@ FAILURES = {
     "workspace_routing_timeout": "{label} 连接模型服务超时：工作区路由发现失败，请检查服务网络或代理配置。",
     "authentication_error": "{label} 模型服务拒绝了当前身份或权限，请检查授权。",
     "rate_limited": "{label} 模型服务限流或当前用量额度不足。",
+    "server_fault": "{label} 模型服务临时故障（过载、服务端错误或连接中断），与任务内容无关。",
     "quota_exhausted": "{label} 模型服务的用量额度已用完，与任务内容无关。",
     "root_incomplete": "{label} 本轮完整回复无法确认，原生会话不可续接。",
     "output_missing": "{label} 未返回本轮有效正文，原生会话不可续接。",

@@ -193,6 +193,7 @@ python3 -B scripts/cross_release.py compare /absolute/runs/cross-<提交>   # �
 
 - Claude CLI 契约：`CLAUDE_BRIDGE_REAL_CLI=1 python3 -B -m unittest discover -s tests -p test_claude.py -k InstalledClaudeContractTests`，本机 `claude` 连本地模拟接口，配置隔离。升级 Claude Code 后跑一次。
 - 扩展的 EXT `--check-runtime`：解释器、固定 revision、关键接口；不加载模型。
+- 交接摘要（Codex、Pi，`backends/<名字>/handoff.py`）：升级 `codex` 或 `pi` 后，在单独的 `CODEX_HOME`（只链登录和 `config.toml`）里用后端跑一轮带 shell 调用的小任务，再对这个会话调后端的 `handoff_summary`：要写出摘要；提示词让它执行命令时没有工具执行、不生成文件；超时和停止几秒内返回空；源会话文件、会话目录和 Codex 的状态库（`state_5.sqlite` 的 threads、`thread_history_1.sqlite`）都不变，没有残留目录和进程。`codex features list` 里要还有 `backends/codex/handoff.py` 的 `FLAGS` 关掉的每个功能（它不认识的键会忽略）。
 - 部署或重启后在 Bridge 的实际环境里发一次无副作用的真实模型请求（[健康诊断](troubleshooting.md#健康诊断)），终端里成功不能代替。
 
 ## 飞书客户端验收

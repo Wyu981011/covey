@@ -21,7 +21,8 @@ import time
 from covey.core import env as cenv
 from covey.backends.gateway import connection
 from covey.core import gateways
-from covey.core.harness import BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessSpec, JobCancelled
+from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
+                                JobCancelled)
 from covey.core.process import stop_group, stream_subprocess_lines
 from covey.core.process_env import child_process_env
 from covey.core.reply_state import ReplyState
@@ -34,9 +35,16 @@ from covey.core.usage import TurnTokens
 SESSION_RE = re.compile(r"session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # The dsh provider route is the gateway's name; dsh's own routes are deepseek-official and the pi-ai catalog.
 NO_GATEWAY = "没有配置给 dsh 用的模型网关（扩展的 GATEWAYS 或 harnesses.json 的 gateways），DeepSeek Harness 不可用"
-# Native error codes the model service reports in turn_end.
-AUTH_CODES = frozenset({"MISSING_CREDENTIAL", "INVALID_CREDENTIAL"})
-LIMIT_CODES = frozenset({"QUOTA", "RATE_LIMIT"})
+# Native error codes the model service reports in turn_end (dsh 0.2.2's LLM_FAILURE_CODES, @deepseek-ai/dsh-llm). A
+# 401 or 403 is AUTH there, a gateway's spent daily quota too (headless_outcome tells that one by its words).
+AUTH_CODES = frozenset({"MISSING_CREDENTIAL", "INVALID_CREDENTIAL", "AUTH", "ACCOUNT_SIGN_IN_REQUIRED",
+                        "ACCOUNT_TOKEN_INVALID"})
+# QUOTA is dsh's "exhausted account quota or balance" (terminal wording only, isQuotaExceededError): no retry helps.
+SPENT_CODES = frozenset({"QUOTA", "ACCOUNT_QUOTA"})
+LIMIT_CODES = frozenset({"RATE_LIMIT"})
+# A passing server fault: a 5xx, a timeout, a dropped stream or connection (dsh offers each to its retry policy).
+# CONTENT_REFUSED (a safety refusal), UNKNOWN_MODEL, INVALID_REQUEST and the rest are none: never retried.
+FAULT_CODES = frozenset({"SERVER", "TIMEOUT", "TRANSPORT", "STREAM_CLOSED"})
 
 
 def native_home():
@@ -138,6 +146,11 @@ class DshBackend(BackendRuntime):
     def build_config(self, args):
         return BackendConfig(args.model, args.reasoning_effort, args.dsh_timeout, shlex.split(args.dsh_cmd), True,
                              {"harness_id": "dsh"})
+
+    def capabilities(self, ctx):
+        # What headless_outcome tells apart. No native_fork: ``--session-id`` only goes on with a session (so no
+        # 交接摘要 either, app/switch_handoff.py).
+        return HarnessCapabilities(rate_limit_retry=True, fault_retry=True)
 
     @staticmethod
     def gateway():
@@ -265,15 +278,21 @@ class HeadlessRows:
 
 def headless_outcome(rows, rc, cancel_event):
     """(status, code) of a run whose output the reader has drained; ("completed", "") when
-    ``rows.final`` is the reply."""
+    ``rows.final`` is the reply. ``rate_limited`` and ``server_fault`` are what app/auto_retry.py retries."""
     error = (rows.reason or {}).get("error")
     native = error.get("code") if isinstance(error, dict) else None
     if rows.invalid:
         return "failed", "protocol_error"
+    if native in SPENT_CODES or (native in AUTH_CODES and gateways.quota_text(str(error.get("message") or ""))):
+        return "failed", "quota_exhausted"
     if native in AUTH_CODES:
         return "failed", "authentication_error"
+    if (native in LIMIT_CODES or native in FAULT_CODES) and cancel_event is not None and cancel_event.is_set():
+        return "cancelled", "cancelled"  # The stop's own end (a cut stream, a closed connection): no fault.
     if native in LIMIT_CODES:
         return "failed", "rate_limited"
+    if native in FAULT_CODES:
+        return "failed", "server_fault"
     if type(rc) is not int or rc != 0 or rows.driver_error:
         return "failed", "process_exit" if rows.reason is None else "root_failed"
     if not (rows.sid and rows.started and rows.reason is not None and rows.final is not None):

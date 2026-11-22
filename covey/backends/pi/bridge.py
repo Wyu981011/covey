@@ -20,7 +20,7 @@ from covey.core import gateways
 from covey.backends.pi import home
 from covey.backends.pi.rpc import run_rpc
 from covey.core.harness import (BackendConfig, BackendRuntime, HarnessCapabilities, HARNESS_REGISTRY,
-                                         HarnessSpec, UUID_RE)
+                                         HarnessSpec, RunRequest, UUID_RE)
 from covey.core.attachments import MAX_IMAGE_BYTES
 from covey.core.paths import component_dir
 from covey.core.process_env import child_process_env
@@ -40,6 +40,8 @@ PI_SPEC = HarnessSpec(
 # The failure card's detail where the shared words would mislead.
 AUTH_TEXT = ("ChatGPT 拒绝了 Codex 登录的访问令牌（401/403）。Pi 只借用这个令牌，不会刷新它：在 Codex Harness "
              "跑一轮任意任务刷新登录，再重试本轮。")
+# A 交接摘要 not asked for: the old model would read the old session again without the term relay.
+NOT_REDACTED = "本话题开着敏感词脱敏，Pi 没法脱敏，没有发送"
 
 
 def busy_text(gateway):
@@ -117,8 +119,9 @@ class PiBackend(BackendRuntime):
                              {"harness_id": "pi"})
 
     def capabilities(self, ctx):
+        # rate_limit_retry, fault_retry: what backends/pi/events.py failure_code tells apart.
         return HarnessCapabilities(image_bytes=MAX_IMAGE_BYTES, steering=True, native_fork=True, model_requests=True,
-                                   steer_reads=True)
+                                   steer_reads=True, rate_limit_retry=True, fault_retry=True)
 
     def model_catalog(self, ctx):
         return {**account_catalog(), **gateway_models(ctx, connection.cached_catalog)}
@@ -178,6 +181,32 @@ class PiBackend(BackendRuntime):
         with catalog.turn_relay(request, gateway, ctx.state_dir) as relay:
             return self.turn(request, argv, account, relay.base_url, "", {"rate_limited": busy_text(gateway)},
                              f"Pi ({gateway.display})")
+
+    def handoff_summary(self, ctx, session_id, prompt, *, redact, cancel=None, run_id=""):
+        """(text, outcome) of a handoff summary on a fork of ``session_id``'s file with no tool (backends/pi/handoff.py),
+        for the first run after 🔁 换配置 away from this session (app/switch_handoff.py). ``redact``: the topic has
+        敏感词脱敏 on, or its old turns went through the term relay; Pi cannot redact, so nothing is sent then. A gateway
+        model's summary goes through a relay of its own, as a turn does. ``run_id``: unused (no relay counts here)."""
+        from covey.backends.pi.handoff import SUMMARY_SECONDS, summarize
+        if redact:
+            return "", NOT_REDACTED
+        source = session_file(sessions_root(ctx), session_id)
+        if source is None:
+            return "", "找不到原会话的文件"
+        try:
+            account = account_catalog()
+            self.check(ctx, account)
+            gateway = gateways.for_model("pi", ctx.model)
+            if gateway is None:
+                # The token need only outlast the summary: the turn after it runs on another Harness.
+                token = home.access_token(margin=SUMMARY_SECONDS + 60)
+                return summarize(ctx, source, prompt, account, "", token, cancel=cancel)
+            with catalog.turn_relay(RunRequest(ctx, prompt), gateway, ctx.state_dir) as relay:
+                return summarize(ctx, source, prompt, account, relay.base_url, "", cancel=cancel)
+        except ValueError as exc:  # The model, its budget or the login, in the owner's words: their first sentence.
+            return "", "出错（" + str(exc).split("；")[0].split("。")[0][:60] + "）"
+        except (OSError, RuntimeError) as exc:
+            return "", f"出错（{type(exc).__name__}）"
 
     def turn(self, request, argv, account, relay_url, token, texts, label):
         ctx = request.context

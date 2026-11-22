@@ -74,7 +74,7 @@ class Kind:
 KINDS = {
     RATE_LIMITED: Kind(("failed", "rate_limited"), "rate_limit_retry", "auto_retry", (60, 180, 600, 1800, 3600, 3600),
                        "模型服务限流", "自动重试", STATUS_MESSAGES["rate_limited"], "限流后自动重试", False, (60, 180)),
-    # A 529, a 5xx or a dropped connection that Claude Code gave up on: gone in minutes, if at all.
+    # A 529, a 5xx or a dropped connection the Harness's own retries gave up on: gone in minutes, if at all.
     SERVER_FAULT: Kind(("failed", "server_fault"), "fault_retry", "auto_fault", (30, 120, 300), "模型服务临时故障",
                        "自动重试", STATUS_MESSAGES["server_fault"], "临时故障后自动重试"),
     # Claude's main task ended while subtasks or later work had not: 10 of 31 failures in 9 days (2026-10).

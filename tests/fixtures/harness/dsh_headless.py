@@ -24,6 +24,15 @@ if scenario == "busy":
     emit({"type": "status", "phase": "turn_end", "turn": 1, "reason": {"kind": "error", "error": {
         "code": "RATE_LIMIT", "message": "429 业务申请资源不足"}}})
     emit({"type": "final", "text": ""}); sys.exit(1)
+ERRORS = {"quota": ("QUOTA", "insufficient balance PRIVATE_DETAIL"), "server": ("SERVER", "503 PRIVATE_DETAIL"),
+          "transport": ("TRANSPORT", "fetch failed PRIVATE_DETAIL"), "unknown-model": ("UNKNOWN_MODEL", "PRIVATE_DETAIL"),
+          "auth-quota": ("AUTH", "403 Forbidden: quota exceeded: Daily Limits exceeded. Resets at 2026-11-03T16:00:00Z."),
+          "auth": ("AUTH", "401 PRIVATE_DETAIL")}
+if scenario in ERRORS:
+    code, message = ERRORS[scenario]
+    emit({"type": "status", "phase": "turn_end", "turn": 1, "reason": {"kind": "error", "error": {
+        "code": code, "message": message}}})
+    emit({"type": "final", "text": ""}); sys.exit(1)
 if scenario == "missing-credential":
     emit({"type": "status", "phase": "turn_end", "turn": 1, "reason": {"kind": "error", "error": {
         "code": "MISSING_CREDENTIAL", "message": "PRIVATE_DETAIL ACME_API_KEY"}}})

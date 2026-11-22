@@ -262,11 +262,52 @@ class AutoRetryTest(UnifiedCase):
         self.claude.harness.backend = Failing(retry=False)
         self.assertNotIn('auto_retry_state', self.failed_job('undeclared'))
         self.assertFalse(any('auto_retry_state' in r for r in list_job_records(self.ctx.state_dir, limit=0)))
-        real, _ = self.bridge()  # Every Harness's own backend; only Claude declares it.
-        for name in NAMES:
+        real, _ = self.bridge()  # Every Harness's own backend: each tells a limit and a passing fault apart (T668);
+        for name in NAMES:      # only Claude ends a turn incomplete (settle_timeout).
             with self.subTest(harness=name):
                 declared = backend_capabilities(real.harnesses[name].backend, self.ctx)
-                self.assertEqual((declared.rate_limit_retry, declared.incomplete_retry), (name == 'claude',) * 2)
+                self.assertEqual((declared.rate_limit_retry, declared.fault_retry, declared.incomplete_retry),
+                                 (True, True, name == 'claude'))
+
+    def test_a_codex_turn_that_hit_a_limit_or_a_passing_fault_is_retried_and_a_refused_one_is_not(self):
+        """The real Codex backend over its app server: what codex_failure_code tells apart reaches the schedule."""
+        from support.fake_backends import FakeRpc, codex_server, finished, turn
+        codex = self.app.apps['codex']
+        codex.cards.update_record_elements = mock.Mock(return_value=True)
+
+        def failed(number, info, message='PRIVATE'):
+            mid = f'codex-failed-{number}'
+            # A thread of its own: one an earlier turn here claimed is protected (core/session_guard.py).
+            sid = f'22222222-2222-4222-8222-{number:012d}'
+            self.receive(mid, 'initial')
+            _, ctx = self.route(mid)
+            self.app.topics.select_harness(ctx, 'chat', 'codex')
+            app, ctx = self.route(mid)
+            app.submission.start_workspace(ctx, 'chat', ctx.workspace_name)
+            job = self.app.runtime.jobs.queue.get_nowait()
+            error = {'message': message, 'codexErrorInfo': info}
+            with codex_server(FakeRpc([finished(turn(status='failed', items=[], error=error), threadId=sid)],
+                                      start_sid=sid)):
+                app.process_reply_job(job, app.harness.context)
+            return find_job_record(self.ctx.state_dir, job.message_id)
+
+        cases = (('rateLimitExceeded', 'PRIVATE', 'rate_limited'), ('usageLimitExceeded', 'PRIVATE', 'rate_limited'),
+                 ('serverOverloaded', 'PRIVATE', 'server_fault'),
+                 ({'responseStreamDisconnected': {'httpStatusCode': None}}, 'PRIVATE', 'server_fault'),
+                 # Never retried: each fails as what it is, not as an error of the Bridge's.
+                 ('unauthorized', 'PRIVATE', 'authentication_error'), ('modelNotFound', 'PRIVATE', 'root_failed'),
+                 ('badRequest', 'PRIVATE', 'root_failed'), ('cyberPolicy', 'PRIVATE', 'root_failed'),
+                 ('usageLimitExceeded', 'Quota exceeded. Check your plan and billing details.', 'quota_exhausted'),
+                 ({'httpConnectionFailed': {'httpStatusCode': 400}}, 'PRIVATE', 'transport_error'))
+        for number, (info, message, code) in enumerate(cases):
+            with self.subTest(info=info, message=message):
+                record = failed(number, info, message)
+                self.assertEqual((record['backend'], record['status'], record['failure_code']), ('codex', 'failed', code))
+                if code in auto_retry.LONG_KINDS:
+                    self.assertEqual((record['auto_retry_state'], record['auto_retry_kind']), ('pending', code))
+                else:
+                    self.assertNotIn('auto_retry_state', record)
+                self.assertNotIn('PRIVATE', record.get('final_text') or '')
 
     def test_a_turn_whose_answer_was_withdrawn_is_retried(self):
         """Claude answered, a background task woke it, then it was rate-limited or ended incomplete: the

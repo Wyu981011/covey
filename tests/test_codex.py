@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import queue
 import subprocess
 import sys
 import tempfile
@@ -59,22 +60,46 @@ class CodexVerifiedReplyTests(CodexRunCase):
                          "2026-11-03T16:00:00Z.", "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 403}}},
              "quota_exhausted"),
             ({"message": SECRET, "codexErrorInfo": "usageLimitExceeded"}, "rate_limited"),
+            ({"message": SECRET, "codexErrorInfo": "rateLimitExceeded"}, "rate_limited"),
             ({"message": SECRET, "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 429}}},
              "rate_limited"),
-            ({"message": SECRET, "codexErrorInfo": "responseStreamConnectionFailed"}, "transport_error"),
-            ({"message": SECRET, "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 502}}},
+            # Codex's QuotaExceeded and UsageNotIncluded come as usageLimitExceeded: no retry helps those.
+            ({"message": "Quota exceeded. Check your plan and billing details.", "codexErrorInfo": "usageLimitExceeded"},
+             "quota_exhausted"),
+            ({"message": "To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.",
+              "codexErrorInfo": "usageLimitExceeded"}, "quota_exhausted"),
+            # A passing server fault: by name, by a 5xx, or a connection that failed or dropped with no status.
+            ({"message": SECRET, "codexErrorInfo": "serverOverloaded"}, "server_fault"),
+            ({"message": SECRET, "codexErrorInfo": "internalServerError"}, "server_fault"),
+            ({"message": SECRET, "codexErrorInfo": "flexUnavailable"}, "server_fault"),
+            ({"message": SECRET, "codexErrorInfo": "responseStreamConnectionFailed"}, "server_fault"),
+            ({"message": SECRET, "codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": None}}},
+             "server_fault"),
+            ({"message": SECRET, "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 502}}}, "server_fault"),
+            ({"message": SECRET, "codexErrorInfo": {"responseTooManyFailedAttempts": {"httpStatusCode": 529}}},
+             "server_fault"),
+            # Any other status is the request refused: never retried.
+            ({"message": SECRET, "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 400}}}, "transport_error"),
+            ({"message": SECRET, "codexErrorInfo": {"responseStreamConnectionFailed": {"httpStatusCode": 404}}},
              "transport_error"),
             ({"message": SECRET, "codexErrorInfo": "other"}, "root_failed"),
             ({"message": "workspace routing discovery timed out " + SECRET}, "root_failed"),
-        ]
+        ] + [({"message": SECRET, "codexErrorInfo": name}, "root_failed") for name in (
+            "modelNotFound", "badRequest", "contextWindowExceeded", "sessionBudgetExceeded", "cyberPolicy", "bioPolicy",
+            "misalignmentPolicyViolation", "policyCapacityUnavailable", "tooManyDenials", "inferenceHookDenied",
+            "sandboxError", "threadRollbackFailed")]
         for error, code in cases:
-            with self.subTest(code=code):
+            with self.subTest(code=code, error=error.get("codexErrorInfo")):
                 result = self.run_rpc(FakeRpc([finished(turn(status="failed", error=error, items=[]))]))
                 self.assertTrue(result.is_error)
                 self.assertEqual(result.outcome.error_code, code)
                 self.assertFalse(result.outcome.resume_allowed)
                 self.assertIsNone(result.public_reply)
                 self.assertNotIn(SECRET, result.text + result.outcome.summary())
+        # The fault's own words, not transport_error's 通信失败 they fell back to.
+        result = self.run_rpc(FakeRpc([finished(turn(status="failed", error={"codexErrorInfo": "serverOverloaded"},
+                                                     items=[]))]))
+        self.assertIn("临时故障", result.text)
 
     def test_appserver_full_runtime_flow_multiple_finals(self):
         rpc = FakeRpc([finished(turn([agent("c", "comment", "commentary"),
@@ -933,3 +958,134 @@ class CodexTurnExportTests(unittest.TestCase):
                                                    self.epoch(11))["main"]["requests"]
         self.assertEqual(request["request"]["input"][0]["content"], [image])  # Sent with its detail.
         self.assertIn("工具定义", request["not_recorded"][0])
+
+
+FORK = "44444444-4444-4444-8444-444444444444"
+
+
+class ForkRpc(FakeRpc):
+    """An app server that forks ``SID`` into ``FORK`` and plays ``rows`` (the fork's turn) once asked."""
+
+    def request(self, method, params, timeout=30):
+        self.requests.append((method, params))
+        if method == "thread/fork":
+            return {"thread": {"id": self.start_sid}}
+        if method == "turn/start":
+            return {"turn": {"id": TURN}}
+        return {}
+
+
+def fork_item(mid, text, phase="final_answer"):
+    return {"method": "item/completed", "params": {"threadId": FORK, "turnId": TURN, "item": agent(mid, text, phase)}}
+
+
+def fork_done(status="completed", **extra):
+    return {"method": "turn/completed", "params": {"threadId": FORK, "turn": {
+        "id": TURN, "status": status, "error": None, "itemsView": "notLoaded", "items": [], **extra}}}
+
+
+class CodexHandoffSummaryTests(unittest.TestCase):
+    """CodexBackend.handoff_summary (backends/codex/handoff.py): an ephemeral fork of the old thread in a home of its own,
+    read-only and with no tool, never longer than its limit, never raising."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        home = self.root / "codex-home"
+        home.mkdir()
+        (home / "config.toml").write_text('model = "gpt-6-astra"\n[mcp_servers.owner]\ncommand = "never"\n')
+        (home / "auth.json").write_text("{}")
+        patcher = mock.patch.dict(os.environ, {"CODEX_HOME": str(home)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.ctx = dataclasses.replace(codex_context(self.root, "app-server"), effort="high")
+        self.started = []
+
+    def summarize(self, rows, *, start_sid=FORK, **kwargs):
+        from covey.backends.codex import handoff
+        rpc = ForkRpc(rows, start_sid=start_sid)
+
+        def factory(argv, cwd, env):
+            home = Path(env["CODEX_HOME"])
+            self.started.append({"argv": argv, "cwd": cwd, "home": home, "linked": sorted(p.name for p in home.iterdir()),
+                                 "config": (home / "config.toml").read_text()})
+            return rpc
+        with mock.patch.object(handoff, "AppServer", side_effect=factory):
+            if kwargs.pop("direct", False):
+                with handoff.HandoffHome(self.ctx.state_dir, dict(os.environ)) as env:
+                    result = handoff.summarize(self.ctx, SID, "写交接摘要", env, **kwargs)
+            else:
+                result = CodexBackend().handoff_summary(self.ctx, SID, "写交接摘要", redact=False, **kwargs)
+        return result, rpc
+
+    def test_the_summary_is_an_ephemeral_read_only_fork_with_no_tool(self):
+        from covey.backends.codex import handoff
+        approval = {"id": 7, "method": "item/commandExecution/requestApproval",
+                    "params": {"threadId": FORK, "turnId": TURN, "itemId": "x"}}
+        (text, outcome), rpc = self.summarize([fork_item("c", "我先看看", "commentary"), approval,
+                                               fork_item("f", "### 目标\n交接"), fork_done()])
+        self.assertEqual((text, outcome), ("### 目标\n交接", "写好了"))
+        methods = [method for method, _ in rpc.requests]
+        self.assertEqual(methods, ["initialize", "thread/fork", "turn/start"])
+        fork = rpc.requests[1][1]
+        self.assertEqual({key: fork[key] for key in ("threadId", "ephemeral", "sandbox", "approvalPolicy", "model")},
+                         {"threadId": SID, "ephemeral": True, "sandbox": "read-only", "approvalPolicy": "never",
+                          "model": "fixture-model"})
+        self.assertEqual(fork["config"], {"model_reasoning_effort": "high"})  # No MCP server, not even the reader.
+        self.assertNotIn("developerInstructions", fork)
+        start = rpc.requests[2][1]
+        self.assertEqual((start["threadId"], start["sandboxPolicy"], start["effort"]), (FORK, {"type": "readOnly"}, "high"))
+        self.assertEqual(rpc.sent, [{"method": "initialized"},
+                                    {"id": 7, "error": {"code": -32601, "message": handoff.DENIED}}])
+        self.assertTrue(rpc.closed)
+        [started] = self.started
+        flags = started["argv"][started["argv"].index("--stdio") + 1:]
+        self.assertEqual(flags, [part for flag in handoff.FLAGS for part in ("-c", flag)])
+        for flag in ("features.shell_tool=false", "features.unified_exec=false", "features.multi_agent=false",
+                     'web_search="disabled"', "features.apps=false", "features.hooks=false"):
+            self.assertIn(flag, flags)
+        # A home of its own: the login linked, the owner's config (and its MCP server) not, removed afterwards.
+        self.assertEqual((started["home"].parent, started["home"].name[:len(handoff.HandoffHome.PREFIX)]),
+                         (self.ctx.state_dir / "tmp", handoff.HandoffHome.PREFIX))
+        self.assertEqual(started["linked"], ["auth.json", "config.toml"])
+        self.assertEqual(started["config"], 'model = "gpt-6-astra"\n')
+        self.assertFalse(started["home"].exists())
+        # The turn's own items, when it gives them in full, are the answer.
+        (text, _), _ = self.summarize([fork_item("f", "旧的"), fork_done(itemsView="full", items=[agent("g", "全的")])])
+        self.assertEqual(text, "全的")
+
+    def test_no_summary_without_a_clean_end_and_never_past_the_limit(self):
+        failed = fork_done("failed", error={"codexErrorInfo": "serverOverloaded", "message": SECRET})
+        cases = [([failed], "Codex 报告失败"), ([fork_item("c", "想想", "commentary"), fork_done()], "回答为空"),
+                 ([], "Codex 进程提前结束")]
+        for rows, said in cases:
+            with self.subTest(said=said):
+                (text, outcome), rpc = self.summarize(rows)
+                self.assertEqual((text, outcome), ("", said))
+                self.assertTrue(rpc.closed)
+        (text, outcome), _ = self.summarize([fork_done()], start_sid=SID)
+        self.assertEqual(outcome, "Codex 没有给出分叉")
+        # Past its limit with nothing come, or stopped: the app server closed either way.
+        rpc = ForkRpc([], start_sid=FORK)
+        rpc.events = queue.Queue()  # Nothing comes, not even its end.
+        from covey.backends.codex import handoff
+        with mock.patch.object(handoff, "AppServer", return_value=rpc):
+            started = time.monotonic()
+            self.assertEqual(handoff.summarize(self.ctx, SID, "写", dict(os.environ), seconds=0.5), ("", "超过 0.5 秒"))
+            self.assertLess(time.monotonic() - started, 5)
+            stop = threading.Event()
+            stop.set()
+            self.assertEqual(handoff.summarize(self.ctx, SID, "写", dict(os.environ), cancel=stop), ("", "已停止"))
+        self.assertIn(("turn/interrupt", {"threadId": FORK, "turnId": TURN}), rpc.requests)
+        self.assertTrue(rpc.closed)
+        self.assertEqual(list((self.ctx.state_dir / "tmp").glob("codex-handoff-*")), [])
+
+    def test_a_redacted_topic_or_a_session_that_is_no_thread_sends_nothing(self):
+        from covey.backends.codex import handoff
+        from covey.backends.codex.bridge import NOT_REDACTED
+        with mock.patch.object(handoff, "AppServer") as server:
+            self.assertEqual(CodexBackend().handoff_summary(self.ctx, SID, "写", redact=True), ("", NOT_REDACTED))
+            self.assertEqual(CodexBackend().handoff_summary(self.ctx, "not-a-thread", "写", redact=False),
+                             ("", "原会话标识不对"))
+        server.assert_not_called()
