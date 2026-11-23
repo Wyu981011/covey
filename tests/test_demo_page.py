@@ -23,11 +23,14 @@ class DemoPageTest(unittest.TestCase):
         self.assertEqual(sorted(re.findall(r'data-answer="([^"]+)"', page)),
                          sorted(option["label"] for option in sketches.OPTIONS))
         self.assertNotRegex(page, r"<(script|link|img)[^>]+(src|href)=")  # One file: no script, style or font from elsewhere.
+        self.assertIn(sketches.DEMO_JS.strip(), page)  # Its buttons work: the script is the real one.
+        self.assertNotRegex(page, r"\{[A-Z][A-Z_]*\}")  # No name left unfilled where an f-string was meant.
 
     def test_the_committed_page_is_the_one_the_readme_links(self):
         committed = sketches.DEMO_PAGE.read_text(encoding="utf-8")
         for words in (*sketches.STEPS, sketches.DEMO_NOTE):
             self.assertIn(words, committed)
+        self.assertNotRegex(committed, r"\{[A-Z][A-Z_]*\}")
         self.assertIn("(docs/demo/index.html)", (REPO / "README.md").read_text(encoding="utf-8"))
         self.assertIn("(docs/demo/index.html)", (REPO / "README.en.md").read_text(encoding="utf-8"))
 

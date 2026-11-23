@@ -32,6 +32,8 @@ SHOTS_DIR = REPO / "docs" / "media" / "screenshots"
 DEMO_PAGE = REPO / "docs" / "demo" / "index.html"
 DEMO_NOTE = ("演示数据：这一页由 Covey 的卡片 JSON 和一组演示数据画成，不连飞书、不用账号；按钮只在这一页里切换，"
              "卡片的样子以飞书里为准。")
+DEMO_NOTE_EN = ("Demo data: these cards are drawn from Covey's card JSON and a set of sample data. Nothing here talks to Feishu "
+                "or needs an account, and the buttons only switch within this page. The cards are in Chinese, as in the product.")
 STEPS = ("派到话题", "回答一道题", "看答案和产物")
 FROZEN = 1795154760.0  # 2026-11-20 14:06 at UTC+8: the demo's clock.
 ZONE = "CST-8"
@@ -632,24 +634,33 @@ def demo_page():
                       f'<div class="page">{body}</div>{go}</section>')
     return ("<!doctype html><html lang=zh-CN><meta charset=utf-8><meta name=viewport content=\"width=device-width\">"
             "<title>Covey 演示：派到话题、回答一道题、看答案和产物</title><style>" + CSS + DEMO_CSS + "</style>"
-            '<div class="demo"><h1>Covey 演示</h1>'
-            f'<div class="banner">{escape(DEMO_NOTE)}</div><nav class="tabs">{"".join(tabs)}</nav>{"".join(stages)}'
-            f'<div class="cap">{CAPTION}</div></div><script>{DEMO_JS}</script></html>\n')
+            '<div class="demo"><header><h1>Covey<span>演示 · Demo</span></h1>'
+            '<p class="tag">在飞书里带一支编程 Agent 小队　·　Run a small team of coding agents from Feishu</p></header>'
+            f'<div class="banner">{escape(DEMO_NOTE)}<br><span class="en">{escape(DEMO_NOTE_EN)}</span></div><nav class="tabs">{"".join(tabs)}</nav>{"".join(stages)}'
+            f'<div class="cap">{CAPTION}</div>'
+            f'<footer><a href="https://github.com/ericxk/covey">github.com/ericxk/covey</a></footer></div><script>{DEMO_JS}</script></html>\n')
 
 
 DEMO_CSS = """
-body{background:#f7f8fa}.demo{max-width:660px;margin:0 auto;padding:18px 10px 30px}
-h1{font-size:20px;margin:0 0 10px 10px}
-.banner{margin:0 10px 12px;padding:9px 12px;border-radius:8px;background:#fff5eb;border:1px solid #ffd8a8;color:#8a4b00;
-font-size:13px;line-height:1.5}
-.tabs{display:flex;gap:6px;margin:0 10px 6px;flex-wrap:wrap}
-.tab,.next{font:inherit;font-size:13px;border-radius:16px;padding:5px 12px;border:1px solid #d0d3d6;background:#fff;
-cursor:pointer;color:#1f2329}
-.tab.on{background:#4b52e0;border-color:#4b52e0;color:#fff}
+body{background:#07080b;color:#d0d3da}.demo{max-width:680px;margin:0 auto;padding:28px 10px 36px}
+header{margin:0 10px 16px}
+h1{font-size:22px;font-weight:600;margin:0;color:#edeef1;letter-spacing:.01em}
+h1 span{margin-left:10px;font-size:13px;font-weight:400;color:#7a7f8c}
+.tag{margin:4px 0 0;font-size:13px;color:#7a7f8c}
+.banner{margin:0 10px 14px;padding:10px 13px;border-radius:8px;background:#0c0e13;border:1px solid #171a21;
+border-left:2px solid #7c83ff;color:#b3b7c1;font-size:13px;line-height:1.6}
+.banner .en{color:#7a7f8c;font-size:12px}
+.tabs{display:flex;gap:6px;margin:0 10px 8px;flex-wrap:wrap}
+.tab,.next{font:inherit;font-size:13px;border-radius:16px;padding:5px 13px;border:1px solid #232733;background:#12141b;
+cursor:pointer;color:#b3b7c1}
+.tab:hover,.next:hover{border-color:#7c83ff;color:#edeef1}
+.tab.on{background:#7c83ff;border-color:#7c83ff;color:#07080b;font-weight:500}
 .stage{display:none}.stage.on{display:block}
-.what{margin:6px 10px 0;font-size:14px;line-height:1.6;color:#373c43}
-.page{width:auto;max-width:620px}
-.next{margin:2px 0 0 20px;border-color:#4b52e0;color:#4b52e0}
+.what{margin:8px 10px 10px;font-size:14px;line-height:1.7;color:#b3b7c1}
+.page{width:auto;max-width:640px;color:#1f2329;background:#f2f3f5;border-radius:12px;padding:20px 14px 8px}
+.next{margin:12px 0 0 10px;border-color:#7c83ff;color:#7c83ff;background:transparent}
+.cap{margin:14px 10px 0;font-size:12px;color:#4e535f;text-align:left}
+footer{margin:6px 10px 0;font-size:12px}footer a{color:#7a7f8c;text-decoration:none}footer a:hover{color:#7c83ff}
 #ask-open .btn.pick{cursor:pointer;box-shadow:0 0 0 2px #c9cdfa}#ask-open .btn.pick:hover{filter:brightness(.95)}
 """
 DEMO_JS = """

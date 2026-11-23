@@ -122,6 +122,20 @@ python3 -B scripts/web_shots.py --out /absolute/shots --install                 
 - 构建目录放在检出之外：检出里留着 `web/dist*` 会让隐私检查报错。
 - 只用演示数据，改数据改脚本里的 `demo_state`；换了图同样核对两份 README 的图注。
 
+### 门面素材
+
+README 顶部的横幅、工作流图，仓库的分享封面和 README 里的流程动图都从仓库里重新生成，只用演示数据：
+
+```bash
+python3 -B scripts/brand_svgs.py                                       # 标志、横幅、工作流图（中英 × 深浅）写进 docs/media/brand
+/absolute/venv/bin/python -B scripts/brand_assets.py social --out /absolute/covey/docs/media [--browser /absolute/headless_shell]
+python3 -B scripts/brand_assets.py demo --out /absolute/covey/docs/media [--font /absolute/NotoSansCJK-Regular.ttc]
+```
+
+- SVG 不手改：每张图的中英、深浅四份要一致，改 `scripts/brand_svgs.py` 里的字或颜色再生成。字是读者系统字体的 SVG 文本，不引用字体文件和外部资源，GitHub 用 `<img>` 显示它们。
+- 封面（1280×640）和动图用 `docs/media/screenshots/` 的卡片示意图拼成，重渲示意图后一起重新生成。动图四步之间经空白页过渡，不让两张卡叠在一起；调色板取自全部场景，等你的橙色、有结果的绿色不会被压掉。
+- 封面要在仓库的 Settings → Social preview 手动上传，README 不引用它。
+
 ### 支持包与后端契约
 
 `tests/support/` 不会被发现为测试。常用的：
