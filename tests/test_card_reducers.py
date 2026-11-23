@@ -1,5 +1,5 @@
 """The launch card's and 换配置's click reducers, pinned as they are. Both turn a choice on the card into its record
-and a redraw; they are not merged (batch 5 of misc-tasks/runs/20261105-bridge-refactor-4a385b86/survey/plan.md),
+and a redraw; they are not merged (batch 5 of the 2026-11-05 refactoring plan),
 and where they differ is the owner's to decide: what a workspace may be, whether the current option chosen again
 redraws the card, what turning 敏感词脱敏 on does to a model that cannot redact, and the budget another model starts
 from (DifferencesTest). Each row is one click on a fresh record: the fields it changed in the saved record (None

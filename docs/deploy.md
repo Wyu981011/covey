@@ -128,7 +128,7 @@ release 目录已存在时不重新打包，只重新注册，所以回滚很快
 核心在 `covey/` 检出，扩展在各自的库里（扩展库根下每个含 manifest 文件的目录是一个扩展包）。加 `--ext-repo <扩展检出>` 和 `--ext-commit <提交>`（默认 `HEAD`），都可重复，按先后配对（有几个扩展库就加几对）。`--repo`/`--commit` 仍是核心。release 的 `extensions/enabled` 列每个扩展检出根目录 `enabled` 文件里的包（没有这个文件就列它所有的包）；检出里没列的包随 release 带着但默认不启用，用 `covey_plugins.py enable` 打开（见[运维 · 扩展的装和卸](operations.md#扩展的装和卸)）。
 
 ```bash
-scripts/deploy_bridge.sh --workdir <目录> --profile <profile> --repo /absolute/covey --ext-repo /absolute/covey-internal --check-only
+scripts/deploy_bridge.sh --workdir <目录> --profile <profile> --repo /absolute/covey --ext-repo /absolute/extension --check-only
 ```
 
 - 打包由 `scripts/assemble_release.py` 做：核心 `git archive` 到 release，每个扩展包 `git archive` 到 `release/extensions/<包名>/`，去掉包里的 `standalone/`，包的 `bin/*.py` 入口（如扩展自己的运行时脚本）放进 `release/bin/` 盖掉核心里的转发脚本，写 `extensions/enabled`（按 `--ext-repo` 的顺序列出所有包名）和 `RELEASE_MANIFEST`（各检出的完整提交号），再重写 `AGENTS.md` 的模块表。形状和单仓库的 release 相同，服务清单、`runs/<任务键>/` 协议、回滚都不变。拼装按提交取，不看检出的工作区。

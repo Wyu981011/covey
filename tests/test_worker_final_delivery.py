@@ -241,7 +241,7 @@ class ChatFinalDeliveryTest(unittest.TestCase):
         # One line, its parts apart by a grey bar (the owner, 2026-11-09 13:48).
         self.assertFalse(shown.startswith("<font color='grey'>"), shown)
         self.assertNotIn("\n", shown)
-        self.assertEqual(re.sub(r"<[^>]*>", "", shown), "— ｜ — ｜ Opus 5 ｜ 思考 max ｜ 脱敏关 ｜ algo\u2011agent\u2011devskills")
+        self.assertEqual(re.sub(r"<[^>]*>", "", shown), "— ｜ — ｜ Opus 5 ｜ 思考 max ｜ 脱敏关 ｜ demo\u2011app")
         self.assertEqual((texts[1]["element_id"], texts[1]["content"]), ("task_figures", "<font color='grey'>—</font>"))
         for panel in card["body"]["elements"][4:5]:  # White, in a thin grey border (the "E 白底细边框" pick).
             self.assertNotIn("background_color", panel)

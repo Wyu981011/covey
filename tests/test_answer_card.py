@@ -41,11 +41,11 @@ class AnswerCardTests(unittest.TestCase):
         self.assertIsNone(answer_card(fits + "字" * 200, "✅ T1 · 字"))
 
     def test_a_one_line_code_block_is_inline_code_as_a_card_numbers_a_block_s_lines(self):
-        # The 2026-11-02 review read "1 misc-tasks/runs/…/repo-audit-01/" under 记录在：.
-        text = "记录在：\n```\nmisc-tasks/runs/a/\n```\n```bash\na\nb\n```\n~~~sh\nrun\n~~~\n```\nhas `tick`\n```\n```\nopen"
-        self.assertEqual(inline_one_line_code(text), "记录在：\n`misc-tasks/runs/a/`\n```bash\na\nb\n```\n`run`\n"
+        # The 2026-11-02 review read "1 notes/runs/…/audit-01/" under 记录在：.
+        text = "记录在：\n```\nnotes/runs/a/\n```\n```bash\na\nb\n```\n~~~sh\nrun\n~~~\n```\nhas `tick`\n```\n```\nopen"
+        self.assertEqual(inline_one_line_code(text), "记录在：\n`notes/runs/a/`\n```bash\na\nb\n```\n`run`\n"
                                                      "```\nhas `tick`\n```\n```\nopen")
-        self.assertIn("`misc-tasks/runs/a/`", answer_card(text, "✅ T1 · x")["body"]["elements"][0]["content"])
+        self.assertIn("`notes/runs/a/`", answer_card(text, "✅ T1 · x")["body"]["elements"][0]["content"])
 
     def test_the_task_card_s_preview_is_the_outcome_and_time_the_answer_card_s_the_lead(self):
         # Both read "✅ T325 · 1102 回流" under the topic in the chat (2026-11-02 review).

@@ -125,7 +125,7 @@ class LinesTest(unittest.TestCase):
         box = facts_element(input_parts("Claude Code", "Claude 自带", "Opus 5.5", "xhigh", True, "demo-app"),
                             output_parts(SNAPSHOT, 760), link="T439")
         given, made = self.rows(box)
-        self.assertEqual(given, "Claude Code ｜ Claude 自带 ｜ Opus 5.5 ｜ 思考 xhigh ｜ 脱敏开 ｜ algo\u2011agent\u2011devskills")
+        self.assertEqual(given, "Claude Code ｜ Claude 自带 ｜ Opus 5.5 ｜ 思考 xhigh ｜ 脱敏开 ｜ demo\u2011app")
         self.assertNotIn("\n", made)
         self.assertRegex(made, r"^用时 12分40秒 ｜ 41 token/s ｜ token 76万 ｜ 缓存命中 92% ｜ T439 ›$")
 

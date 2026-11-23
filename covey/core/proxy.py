@@ -12,7 +12,7 @@ each batch in a topic of the proxy group and sends the answer as the owner with 
 - contacts/<sha>.json: one whitelisted chat. ``kind`` p2p|group, ``target`` (the person's ou_ or
   the group's oc_, in the user profile's app), ``name`` (the chat's title on Feishu web), ``chat_id``,
   ``paused``, ``since`` (nothing older is taken in), ``seen`` (recent message ids), ``root_id`` /
-  ``topic_id`` of its topic and ``session_dir`` (its notes under misc-tasks). A person added with
+  ``topic_id`` of its topic and ``session_dir`` (its notes: notes_dir). A person added with
   all members of a group has ``source`` {``chat_id``, ``name``} of that group: the members as they
   were then, nobody who joins later.
 - batches/<id>.json: the messages one reply answers. Status moves only along BATCH_TRANSITIONS.

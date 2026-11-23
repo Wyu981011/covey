@@ -18,7 +18,7 @@ from covey.core.jobs import upsert_job_record
 
 OWNER = 'ou_me'
 PERSON = {'key': 'p2p:ou_zhang', 'kind': 'p2p', 'target': 'ou_zhang', 'name': '张三', 'chat_id': 'oc_p2p',
-          'paused': False, 'since': 0, 'added_at': 1, 'seen': [], 'session_dir': '/x/misc-tasks/sessions/s'}
+          'paused': False, 'since': 0, 'added_at': 1, 'seen': [], 'session_dir': '/x/notes/sessions/s'}
 GROUP = {'key': 'group:oc_g', 'kind': 'group', 'target': 'oc_g', 'name': '项目群', 'chat_id': 'oc_g',
          'paused': False, 'since': 0, 'added_at': 2, 'seen': []}
 SENT = {'id': 'om_sent', 'time': time.strftime('%Y-%m-%d 09:41')}  # The owner's message a send is read back as.

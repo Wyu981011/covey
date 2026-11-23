@@ -3,6 +3,7 @@ chats' messages, one topic per chat, and sending each answer as the owner exactl
 重新发送 card are in test_proxy_panel, the send tool's side in test_proxy_send."""
 import contextlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -361,14 +362,15 @@ class FlowTests(ProxyCase):
     def test_a_proxy_tasks_artifacts_leave_out_its_contacts_notes(self):
         # #1060, #1070, #1121 (2026-10-27): each 代答 card offered the contact's README.md, uploaded again each
         # turn; since the move to Codex the run data beside it too (#1151: six chat dumps).
+        from covey.app import artifact_policy
         from covey.app.artifacts import drive_paths
         self.take_in(item('m1', '接口文档在哪'))
         [batch] = self.batches()
         self.proxy.submit(self.ctx, self.settings(), records.read_contacts(self.state)[0], batch)
         _, _, target = self.proxy.contact_topics.topic_context(self.ctx, self.settings(), records.read_contacts(self.state)[0], 'om_mirror')
-        notes = self.work / 'misc-tasks' / 'sessions' / '20261027-proxy-p2p-cbfe23dc'
-        runs = self.work / 'misc-tasks' / 'runs' / '20261027-proxy-p2p-cbfe23dc' / '20261028-013342-9ffa' / 'inputs'
-        report = self.work / 'misc-tasks' / 'runs' / '20261021-rl-trial-status-32280270' / 'rl-trial-links.md'
+        notes = self.work / 'notes' / 'sessions' / '20261027-proxy-p2p-0a1b2c3d'
+        runs = self.work / 'notes' / 'runs' / '20261027-proxy-p2p-0a1b2c3d' / '20261028-013342-9ffa' / 'inputs'
+        report = self.work / 'notes' / 'runs' / '20261021-weekly-report-0a1b2c3d' / 'report.md'
         for path in (notes / 'README.md', runs / 'latest_chat.json', report):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('x')
@@ -376,9 +378,12 @@ class FlowTests(ProxyCase):
         checkpoint.write_text(json.dumps({'artifacts': [str(notes / 'README.md'), str(runs / 'latest_chat.json'), str(report)]}))
         record = {'job_id': 1, 'workdir': str(self.work), 'checkpoint_path': str(checkpoint),
                   'history_path': str(target.history_path)}
-        self.assertEqual(drive_paths(record), [str(report)])
-        plain = self.route('m-plain')[1]  # Any other task keeps them.
-        self.assertEqual(len(drive_paths({**record, 'history_path': str(plain.history_path)})), 3)
+        # Where a deployment keeps a contact's notes is its extension's ``contact_notes`` setting; one such layout here.
+        layout = re.compile(r'/notes/(?:sessions|runs)/\d{8}-proxy-(?:p2p|group)-[0-9a-f]{8}(?:/|$)')
+        with mock.patch.object(artifact_policy, 'CONTACT_NOTES', layout):
+            self.assertEqual(drive_paths(record), [str(report)])
+            plain = self.route('m-plain')[1]  # Any other task keeps them.
+            self.assertEqual(len(drive_paths({**record, 'history_path': str(plain.history_path)})), 3)
 
     def test_a_proxy_topic_s_cards_offer_the_model_switch_before_its_group_was_ever_activated(self):
         # #1060 (2026-10-27 16:4x) had 🔀 分叉 and 💬 侧聊 (off every card since 2026-11-08): the proxy group got its

@@ -16,7 +16,7 @@ from covey.core import butler_requests, butler
 from covey.core.history_storage import append_history
 
 CHAT = "oc_dm"
-TOKEN = "HEJEwHDlgiFNKoklXtjcr3SBnPf"
+TOKEN = "WikiTokenForTheTest00000000"
 LINK = f"https://example.feishu.cn/wiki/{TOKEN}?from=im"
 ARTIFACT = "/absolute/data/run-1/closeread/REPORT.md"
 
@@ -80,7 +80,7 @@ class SearchTest(Fixture, unittest.TestCase):
         self.assertRegex(text, r"#1 · [^\n]* · 结果里也有 · 结果：画好了：")
         self.assertRegex(text, r"#4 · [^\n]* · 结果里也有 · 结果：文档写好了：")
         # Written shortened: a partial match, in a later turn of a topic that had it.
-        self.assertRegex(text, r"#5 · [^\n]* · 后续沿用（部分匹配） · 结果：流程文档（wiki HEJEwHDl…）")
+        self.assertRegex(text, r"#5 · [^\n]* · 后续沿用（部分匹配） · 结果：流程文档（wiki WikiToke…）")
         self.assertRegex(text, r"#6 · [^\n]* · 只是提到 · 主人的话：这是之前话题给的")
         self.assertNotIn("没找到", text)  # The butler's turn.
         self.assertNotIn("d4" * 16, text)
@@ -138,8 +138,8 @@ class SearchTest(Fixture, unittest.TestCase):
 
     def test_clues(self):
         self.assertEqual(butler_search.clue(f"<{LINK}>"), butler_search.Clue(f"{LINK}", "token", TOKEN))
-        self.assertEqual(butler_search.clue("https://x.feishu.cn/docx/BpcvdCq1ZoPlftxMbw4cYfrhnGc").needle,
-                         "BpcvdCq1ZoPlftxMbw4cYfrhnGc")
+        self.assertEqual(butler_search.clue("https://x.feishu.cn/docx/DocxTokenForTheTest00000000").needle,
+                         "DocxTokenForTheTest00000000")
         self.assertEqual(butler_search.clue(TOKEN).kind, "token")
         self.assertEqual(butler_search.clue("abcdefghijklmnopqrst").kind, "keyword")  # No digit: a word.
         path = butler_search.clue("/a/b/c/REPORT.md/")

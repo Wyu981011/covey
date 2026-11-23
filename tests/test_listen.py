@@ -18,7 +18,7 @@ class BindAndLinkTests(unittest.TestCase):
         self.assertEqual(parse_bind("10601"), ("::", 10601))
         self.assertEqual(parse_bind("[::]:10601"), ("::", 10601))
         self.assertEqual(parse_bind("0.0.0.0:10601"), ("0.0.0.0", 10601))
-        self.assertEqual(parse_bind("[fdbd::1]:80"), ("fdbd::1", 80))
+        self.assertEqual(parse_bind("[2001:db8::1]:80"), ("2001:db8::1", 80))
         for wrong in ("::1:80", "[::]", "host:", "host:0", "host:70000", ":80", "abc"):
             self.assertRaises(ValueError, parse_bind, wrong)
         with self.assertRaisesRegex(ValueError, "^COVEY_NODE_LISTEN 要写成"):  # The error names the setting it read.
@@ -47,7 +47,7 @@ class BindAndLinkTests(unittest.TestCase):
             with mock.patch.object(listen, "resolves", return_value=False):
                 self.assertEqual((link_host("::"), link_host("0.0.0.0")), ("localhost", "localhost"))
         self.assertEqual(link_host("192.0.2.5"), "192.0.2.5")
-        self.assertEqual(link_host("fdbd::2"), "[fdbd::2]")
+        self.assertEqual(link_host("2001:db8::2"), "[2001:db8::2]")
 
     def test_the_ipv6_address_is_the_default_routes(self):
         with tempfile.TemporaryDirectory() as tmp:

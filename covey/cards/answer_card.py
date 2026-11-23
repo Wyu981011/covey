@@ -164,7 +164,7 @@ def output_lines(parts, lines=ENDED_LINES) -> list:
 
 def input_lines(parts) -> list:
     """The parts of 输入 (``input_parts``: Harness ｜ 供应商 ｜ 模型 ｜ 思考 ｜ 脱敏 ｜ 工作区) as one line
-    (``joined``), the workspace's hyphens no-break ones (U+2011: "algo-" / "app" in a topic's side
+    (``joined``), the workspace's hyphens no-break ones (U+2011: "demo-" / "app" in a topic's side
     panel). A part saved by an older release (a job's ``input_parts``, a relay's record) says 推理 <budget>: shown as
     思考 <budget>."""
     parts = [BUDGET_WORD + part[len(OLD_BUDGET_WORD):] if part.startswith(OLD_BUDGET_WORD + " ") else part
