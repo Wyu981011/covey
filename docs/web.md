@@ -6,14 +6,19 @@
 
 ## 怎么打开
 
-默认关，飞书里的功能不靠它。打开要三样东西，前两样问给你部署网页应用的人要：
+默认关，飞书里的功能不靠它。网页的源码在仓库的 `web/`，有三种用法：
 
-- **网页应用**：Covey 不带网页，只按下文的[数据契约](#数据契约)把数据推给一个网页应用、从它那里取操作。网页应用要实现契约里的 `/sync/upsert`、`/sync/inbox` 等接口，可以自己按契约写，也可以用团队里已经搭好的（公司同事看扩展库 README 里有没有现成的地址）。每个主人一份网页应用，不和别人共用。
+- **一键部署到飞书的全栈应用平台**：飞书企业开通了能建全栈应用的平台时用，网址、https 和飞书登录都由平台提供。一条命令建应用、建表、发布，并写好下面的 `web.json`；命令、步骤和出错处理见 [web/README.md 的「部署」](../web/README.md#部署)。
+- **自托管**：没有这样的平台，或想让数据只留在自己机器上时用。网页是本机的一个 Node 进程，由 Manager 拉起；装机时加 `./install --web`（公网直连加 `./install --web-public ADDR`，见[安装](install.md#网页工作台可选)），或照下面的[自托管](#自托管本机上跑网页默认关)手动装。
+- **自己写网页应用**：按下文的[数据契约](#数据契约)，另写一个实现 `/sync/upsert`、`/sync/inbox` 等接口的网页应用，每个主人一份，不和别人共用。
+
+前两种由部署脚本或安装器写好配置，只需照所在小节设开关。自己写的网页应用，要准备：
+
 - **接口地址和密钥**：网页应用开放接口的根地址（形如 `https://<域名>/app/<应用 id>/openapi`）和调用它的密钥。
 - **这台机器能访问那个地址**：Covey 不对外开端口，只主动去请求网页应用，所以机器上要能连上它（需要代理时和模型一样设在服务清单里）。
 - **脱敏词表的原词会进网页应用的库**：这是有意的取舍，为的是能在网页设置页上批量编辑词表（替身词不推；飞书卡上只显示首字和字数），所以网页应用要部署在只有你能访问的地方，做不到就别开网页工作台。
 
-步骤：
+步骤（一键部署和自托管已经做完第 1 步，从第 2 步开始）：
 
 1. 把密钥写进一个只有你能读的文件，再在数据根里写一个 JSON（路径随意，例如 `/absolute/path/to/web.json`）：
 
@@ -45,7 +50,7 @@
 3. 服务清单里设打印出来的 `COVEY_WEB=1`、`COVEY_WEB_CONFIG`、`COVEY_WEB_SELFHOST=1`、`COVEY_WEB_SELFHOST_DIR`（端口不是默认的再设 `COVEY_WEB_SELFHOST_PORT`），重新注册服务。
 4. Manager 之后拉起 `node <COVEY_WEB_SELFHOST_DIR>/server/selfhost/main.js`（`node` 按服务清单的 `PATH` 找），环境变量 `COVEY_WEB_HOST=127.0.0.1`、`COVEY_WEB_PORT`、`COVEY_WEB_DB_DIR=<数据根>/web/db`、`COVEY_WEB_KEY_FILE=<数据根>/web/web-openapi.key`；挂了按服务的退避（5 秒到 5 分钟）重启，Manager 退出时整组回收（Manager 被强杀时，网页进程发现父进程不在了几秒内自己退出，不占着端口），日志在 `<数据根>/web/logs/selfhost.log`（超过 10 MB 轮转）。机器上要有 `node`，找不到只在 `manager.log` 记一次、之后照退避重试。
 
-`base_url` 只接受 `https://`，唯一的例外是本机回环的 `http://127.0.0.1`、`http://localhost`、`http://[::1]`（可带端口）；其他 `http://` 一律拒绝，密钥不会走明文发到别的机器（早先的版本也收任意 `http://`；升级后这种配置读不进来，同步停住、日志里写明原因，改成 `https://` 即可）。要从别的设备访问，在前面放自己的反向代理并用 `https://`，写在 `page_url` 里；回环端口本身不要对外开。没设 `COVEY_WEB_SELFHOST` 时 Manager 不起线程、不起进程。
+`base_url` 只接受 `https://`，唯一的例外是本机回环的 `http://127.0.0.1`、`http://localhost`、`http://[::1]`（可带端口）；其他 `http://` 一律拒绝，密钥不会走明文发到别的机器（早先的版本也收任意 `http://`；升级后这种配置读不进来，同步停住、日志里写明原因，改成 `https://` 即可）。要从别的设备访问，用下一节的公网直连，或在前面放自己的反向代理（也可以用 ssh 转发、Tailscale）并用 `https://`，写在 `page_url` 里；回环端口本身不要对外开。没设 `COVEY_WEB_SELFHOST` 时 Manager 不起线程、不起进程。
 
 ### 公网直连（自带 HTTPS）
 
@@ -352,7 +357,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 ### 协作与三层记忆（契约，开发中）
 
-本节已实现（数据约定 v31；标题沿用旧名，architecture.md 的链接按它），开关 `COVEY_COLLAB`（规则见[多参与者协作](architecture.md#多参与者协作开发中默认关)）。旧网页不认的字段和条目忽略；没带这些字段的操作和 v30 一样。**开关没开时**：不读 `collab/`，不推 `collab` 条目，一轮不带 `collab`，已推过的 `collab` 条目在下一次全量对时删掉；`say` 带了新字段也照单目标处理，要多选或引用协作的回 failed“协作没有打开（COVEY_COLLAB）”，`stop` 带了 `collab` 回 failed，**绝不**退成普通停止（那会停掉汇总方在跑的任务）。
+本节已实现（数据约定 v31），开关 `COVEY_COLLAB`（规则见[多参与者协作](architecture.md#多参与者协作开发中默认关)）。旧网页不认的字段和条目忽略；没带这些字段的操作和 v30 一样。**开关没开时**：不读 `collab/`，不推 `collab` 条目，一轮不带 `collab`，已推过的 `collab` 条目在下一次全量对时删掉；`say` 带了新字段也照单目标处理，要多选或引用协作的回 failed“协作没有打开（COVEY_COLLAB）”，`stop` 带了 `collab` 回 failed，**绝不**退成普通停止（那会停掉汇总方在跑的任务）。
 
 - **`say` 的三个可选字段**：
   - `payload.to`：点到的参与者（管家、负责人、话题的 `key`）的列表，按点的顺序；网页不从正文里的 @ 或 T 号猜收件人。
@@ -387,7 +392,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - 汇总方续接轮（消息 id `collab-<协作 id>-reply-<n>`，`core/collab.py` 的 `reply_message`）的主人行和回答行带 `role: "integrator"`。主人行是 Bridge 拼的长提示，`body` 和 `display` 都只推“（协作的答复到齐，接着汇总）”。正在跑、停了的续接轮也带。
   - 协助方话题多一行 `role: "event"`、`collab: {key, role: "helper"}` 的回执，“已协助 T3（看这次协作）”；咨询还排着队或在跑时是“正在协助 T3（…）”、`status` 为 `running`，没有一次答复时是“没能协助 T3（…）”；协助方没接手的（未接手）没有这一行。它的 `key` 是 `<话题>:collab-<协作 id>`，`seq` 是那时（这次协作发起或最后一次咨询结束时）协助方最近一轮的 `seq`，不超过这次推的 `last_seq`，所以不会被“删掉 `seq > last_seq` 的轮次”收走，也不和真实轮次的 key 冲突。它不改协助方的 `unseen`、`tone`、`board`、`round`、`last_seq` 和最近交付。管家的话题没有这一行。
 - **回复这次协作**：引用协作里的一句、或点回执上的“回复这次协作”时带 `quote.collab`，话进那次协作，由它的汇总方接；在协助方的话题里不带引用另说一句，仍是对那个话题自己工作的话。
-- **三层记忆**（包 B，专项条目的 `memory` 每条，`memory_version` 是一轮读到的记忆的版本，没有记忆时是空串）：
+- **三层记忆**（专项条目的 `memory` 每条，`memory_version` 是一轮读到的记忆的版本，没有记忆时是空串）：
   - `layer`：`rule`（长期约定）、`decision`（当前决定）、`history`（历史记录；风格行是 `rule`、`kind` 为 `style`）。面板按这三层分组。
   - `part`：一轮带它的那一段，`rule`、`decision`、`reference`（待核对参考）；历史记录和风格行是 `null`。
   - `asserted_by`、`recorded_by`、`level`，含义同[来源](architecture.md#参与者交付与来源)；`said_by`（你说的、它总结的）和 `by`（`owner` 或 `lead`）只作来源标签。

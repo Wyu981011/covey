@@ -1,6 +1,6 @@
 # 五分钟上手
 
-Covey 是飞书里的个人 Agent：你在飞书私聊自己的机器人说一句话，它在你自己的机器上调用 Claude Code 或 Codex 去做，做完把结论和产物发回飞书。每件事是一个话题，可以接着追问；任务在自己的进程里跑，机器人重启也不打断。
+Covey 是飞书里的个人 Agent：你在飞书私聊自己的机器人说一句话，它在你自己的机器上调用 Claude Code、Codex 或 Antigravity 去做，做完把结论和产物发回飞书。每件事是一个话题，可以接着追问；任务在自己的进程里跑，机器人重启也不打断。
 
 这一页写给刚装好、想知道怎么用的人，你问管家“看板在哪”“怎么开记忆”时，它也先读这一页。每个功能的细节在[使用指南](usage.md)。
 
@@ -75,6 +75,10 @@ git clone https://github.com/ericxk/covey.git && cd covey
 - 先看你的消息上有没有表情、话题里有没有卡：有就是收到了，在做。
 - 在服务运行的代码目录里查服务在不在：`python3 -B bin/covey_service.py status --state-dir <状态目录>`。状态目录在哪见[数据目录](operations.md#数据目录)。
 - 日志是状态目录里的 `bridge.log`，被挡下的消息各有一行 `ignored message … reason=…`。按现象查见[排障](troubleshooting.md)。
+
+### 怎么升级
+
+`./install` 装的机器人，在 clone 下来的仓库里运行 `scripts/upgrade.sh`（先加 `--dry-run` 看看）：它取上游的新提交、做部署前检查，再重启机器人，在跑的任务不中断。步骤和手工部署见[升级与部署](deploy.md#日常升级)。
 
 ### 怎么重启
 

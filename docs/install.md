@@ -86,7 +86,7 @@ bash web/deploy/selfhost/build.sh <数据根>/web/app && python3 -B -m covey.ser
 | `--no-start` | 只准备到飞书应用为止，不注册、不启动服务 |
 | `--web` | 在这台机器上自托管网页工作台（要 Node 22 以上和 npm）：后台构建，注册服务前等它，见[网页工作台](#网页工作台可选)；不加时终端里没开过网页的机器问一次 |
 | `--web-public ADDR` | 隐含 `--web`，同时开公网 HTTPS 直连：IP 或域名（逗号分隔），`auto` 用本机出网网卡的公网地址 |
-| `--showcase` | 演示套餐：默认开的之外，再开协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡，见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动；只有 Codex 时不含专项和整理专项。已经装好的服务：清单里已有的设置照旧，只打开套餐里清单没有或关着的开关（效果同 `covey_service.py set --preset showcase`） |
+| `--showcase` | 演示套餐：默认开的之外，再开协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡，见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动；没有 Claude Code 时也开整套。已经装好的服务：清单里已有的设置照旧，只打开套餐里清单没有或关着的开关（效果同 `covey_service.py set --preset showcase`） |
 
 ## 第一个回答
 

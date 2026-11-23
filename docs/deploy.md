@@ -79,7 +79,7 @@ scripts/upgrade.sh              # 部署：机器人重启一次，成功后检�
 
 ## 升级与回滚
 
-升级的做法只有一种：用 `scripts/deploy_bridge.sh` 把要部署的提交导出成 `$COVEY_DATA_HOME/releases/<id>/` 下的固定 release，再让服务从它运行。不要在服务运行的检出里 `git pull` 了事：`./install` 装的服务直接从检出运行，拉代码之后新开的任务进程立刻用新代码，Bridge 却还是旧的，直到下次重启。固定 release 不会被之后的 `git pull` 改动，旧 release 留着就能回滚。
+升级底下的做法只有一种（`scripts/upgrade.sh` 也是这样做）：用 `scripts/deploy_bridge.sh` 把要部署的提交导出成 `$COVEY_DATA_HOME/releases/<id>/` 下的固定 release，再让服务从它运行。不要在服务运行的检出里 `git pull` 了事：`./install` 装的服务直接从检出运行，拉代码之后新开的任务进程立刻用新代码，Bridge 却还是旧的，直到下次重启。固定 release 不会被之后的 `git pull` 改动，旧 release 留着就能回滚。
 
 **升级**（第一次也一样，服务从 `./install` 的检出换到 release）：
 

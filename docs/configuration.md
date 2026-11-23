@@ -58,7 +58,7 @@
 | --- | --- | --- |
 | [代答](#代答) | 带发送器的扩展（核心没有发送器）、主人本人登录的 lark-cli profile | `COVEY_PROXY_PROFILE`，见[代答 · 前置条件与怎么开](proxy.md#前置条件与怎么开) |
 | 小模型判断走模型网关 | harnesses.json 里或扩展提供的模型网关，和你在这个网关上的密钥 | `COVEY_JUDGE_GATEWAY=<网关名>:<模型>`：整理专项、“我本来想找你的事”、同时做几件事这几个一问一答的判断都改走网关，Claude Code 开着也一样（见[小模型判断](#小模型判断)）。不设时有 Claude Code 问它，没有时问 Codex 或 Antigravity 自己的命令行；管家和专项负责人都不靠它 |
-| [网页工作台](web.md) | 一个配套的网页应用和它的开放接口密钥 | `COVEY_WEB=1`、`COVEY_WEB_CONFIG`；自托管再加 `COVEY_WEB_SELFHOST=1`、`COVEY_WEB_SELFHOST_DIR`、`COVEY_WEB_SELFHOST_PORT`，公网直连再加 `COVEY_WEB_SELFHOST_PUBLIC`、`COVEY_WEB_SELFHOST_PUBLIC_PORT`、`COVEY_WEB_SELFHOST_BIND` |
+| [网页工作台](web.md) | 自托管：Node 22 以上和 npm，装的时候加 `./install --web`（[安装 · 网页工作台](install.md#网页工作台可选)）；或一个配套的网页应用和它的开放接口密钥 | `COVEY_WEB=1`、`COVEY_WEB_CONFIG`；自托管再加 `COVEY_WEB_SELFHOST=1`、`COVEY_WEB_SELFHOST_DIR`、`COVEY_WEB_SELFHOST_PORT`，公网直连再加 `COVEY_WEB_SELFHOST_PUBLIC`、`COVEY_WEB_SELFHOST_PUBLIC_PORT`、`COVEY_WEB_SELFHOST_BIND` |
 | [多设备](#多设备开发中默认关)（开发中） | 能 ssh 过去的其他机器、`devices.json` | `COVEY_DEVICES=1` |
 | [节点与机器状况](#节点与机器状况默认关) | 一个设备能连进来的监听地址 | `COVEY_NODE_LISTEN` |
 | [群聊免@](#群聊免) | 应用要有收群里全部消息的权限（要管理员审核） | `COVEY_GROUP_ALL_MESSAGES=1` |
@@ -83,7 +83,7 @@
 | [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` |
 
 - **新装**：`./install --showcase`。和安装器写的别的开关一样，终端里已经设了的（新名旧名都算）不动；没有 Claude Code 时也是整套。已经装好的服务再跑一次 `./install --showcase` 也行：服务清单里已有的设置照旧，只打开套餐里清单没有或关着的开关，效果和下一条一样。
-- **已经装好的**：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" --preset showcase`，先加 `--dry-run` 看会改什么（见[改开关三步](#改开关三步)）。它打开套餐里服务清单还没设、或设成关闭值（空、`0`、`off`、`false`、`no`）的开关，安装器写的那些也算在内，所以装这个版本之前注册的服务一条命令就补齐；设了别的值的不动（比如你自己的汇总时间、`COVEY_PROJECT_TIDY=auto`）；同一条命令里另写的 `KEY=VALUE` 盖过套餐。只有 Codex 能用的机器不要用 `--preset`：它照样打开专项和整理专项（`covey_service.py` 不看哪个 Harness 能调通），用 `./install --showcase`，或安装器最后几行给的那条不含专项的命令。
+- **已经装好的**：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" --preset showcase`，先加 `--dry-run` 看会改什么（见[改开关三步](#改开关三步)）。它打开套餐里服务清单还没设、或设成关闭值（空、`0`、`off`、`false`、`no`）的开关，安装器写的那些也算在内，所以装这个版本之前注册的服务一条命令就补齐；设了别的值的不动（比如你自己的汇总时间、`COVEY_PROJECT_TIDY=auto`）；同一条命令里另写的 `KEY=VALUE` 盖过套餐。管家和专项负责人在 Codex、Antigravity 上也能跑，所以只有它们能用的机器也照用（安装器最后几行给的就是这条命令）。
 - 置顶和自动 Pin 要应用有置顶权限和“消息已读”事件，「飞书应用待补」卡会提示；汇总的两个时间也是[夜里不打扰](usage.md#早晚汇总)的时段（没设 `COVEY_QUIET_HOURS` 时）。
 - 套餐没有一键关：不要哪一项，照[改开关三步](#改开关三步)把它设成关闭值。
 

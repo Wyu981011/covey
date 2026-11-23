@@ -1,7 +1,7 @@
 <!-- privacy: allow-file 测试文档里讲扩展 Harness 的测试夹具与命令 -->
 # 测试与验收
 
-没有自动流水线，下面的检查都在本地手动跑。
+下面的检查在本地手动跑；推到 GitHub 的 `main` 和 PR 上时，CI 也会跑一遍 Python 这部分（见[GitHub 上的 CI](#github-上的-ci)）。
 
 ## 本地测试
 
@@ -11,7 +11,7 @@
 
 ```bash
 python3 -B scripts/test_map.py run --why "<原因>" [路径 ...]   # 未提交改动（或给定路径）影响的模块
-python3 -B scripts/test_map.py run --why "<原因>" --diff master  # 与 master 的全部差异
+python3 -B scripts/test_map.py run --why "<原因>" --diff main    # 与 main 的全部差异（REV..REV2 比两个提交）
 python3 -B scripts/test_map.py build --why "<原因>"              # 阶段末、地图过期时：全部用例含慢速档，重建地图
 python3 -B scripts/test_map.py run --why "<原因>" --full         # 阶段末、地图没过期时：默认档全量
 python3 -B scripts/test_map.py select [--diff REV] [路径 ...]     # 只打印要跑的 unittest 命令
@@ -94,7 +94,7 @@ git diff --stat tests/golden/cards.json
 
 ### 卡片示意图
 
-README（中英文）和[使用说明](usage.md#第一次使用)里的 5 张图在 `docs/media/screenshots/`，由 `scripts/card_sketches.py` 画：用真实的卡片构造函数和一组演示数据（话题 T7「给 demo-app 加登录页」）拼出卡片 JSON，再用脚本自带的小渲染器画成 HTML，无头 Chromium 截图。不连飞书、不用任何账号，图里没有水印。卡片样式变了（`tests/golden/cards.json` 有大的 diff，或 [UI 规范](ui.md)换了样子）时重渲一次：
+README（中英文）和[使用说明](usage.md#第一次使用)里的卡片图（`docs/media/screenshots/` 的 `01` 到 `09`：私聊、任务卡、答案卡、启动卡、设置卡的脱敏页、问题卡、停住了、换配置、看板）由 `scripts/card_sketches.py` 画：用真实的卡片构造函数和一组演示数据（话题 T7「给 demo-app 加登录页」）拼出卡片 JSON，再用脚本自带的小渲染器画成 HTML，无头 Chromium 截图。不连飞书、不用任何账号，图里没有水印。卡片样式变了（`tests/golden/cards.json` 有大的 diff，或 [UI 规范](ui.md)换了样子）时重渲一次：
 
 ```bash
 python3 -B scripts/card_sketches.py --out /absolute/sketches                    # 只出 HTML，先在浏览器里看
@@ -108,6 +108,20 @@ python3 -B scripts/card_sketches.py --out /absolute/sketches --install          
 - 只用演示数据：不写真名、内部名、群名、open_id 和本机路径。换数据改脚本里的 `ASK`、`TITLE`、`INPUTS` 和各 `*_sketch` 函数。
 - 换了图要核对 README、`README.en.md` 和使用说明里的图注还对得上。
 - README 链着的三步演示页 `docs/demo/index.html`（派到话题、回答一道题、看答案和产物）是同一批卡片和演示数据拼成的一个静态网页，页头写明是演示数据，不引用别处的脚本和字体。卡片变了和重渲示意图时一起重新生成：`python3 -B scripts/card_sketches.py --demo`（只要标准库和本仓库，不要浏览器）。
+
+### 网页截图
+
+README 里网页工作台的 4 张图（`docs/media/screenshots/` 的 `10` 到 `13`：看板、专项页、大厅、手机上的看板）由 `scripts/web_shots.py` 拍：在 127.0.0.1 上起一个自托管版的网页（一次性的库和密钥），用一个只有演示数据的状态目录（话题 T7「给 demo-app 加登录页」等几个话题、专项「demo-app 账号体系」和它的负责人、记忆）经 Covey 自己的同步推上去，照网页的登录流程拿到会话，再用无头 Chromium 把看板、专项、大厅和一个话题页按桌面、手机，深色、浅色各拍一张；拍完连同进程组停掉服务。网页样子变了（`web/client/` 改过页面）时重拍一次：
+
+```bash
+bash web/deploy/selfhost/build.sh /absolute/covey-web                                        # 先构建自托管版，要 Node 22+
+/absolute/venv/bin/python -B scripts/web_shots.py --build /absolute/covey-web --out /absolute/shots [--browser /absolute/headless_shell]
+python3 -B scripts/web_shots.py --out /absolute/shots --install                               # 挑 4 张缩小、压成调色板 PNG 放进 docs/media/screenshots
+```
+
+- 拍要装了 Playwright 的 Python（演示数据用的是本仓库和 `tests/support`，不要别的包）；`--install` 要 Pillow，按八叉树压成 256 色（中位切分会把等你的橙色压成停住了的红色），每张不到 100 KB。
+- 构建目录放在检出之外：检出里留着 `web/dist*` 会让隐私检查报错。
+- 只用演示数据，改数据改脚本里的 `demo_state`；换了图同样核对两份 README 的图注。
 
 ### 支持包与后端契约
 
@@ -140,7 +154,7 @@ python3 -B scripts/card_sketches.py --out /absolute/sketches --install          
 新旧 release 的 Bridge 和任务进程只经 `runs/<任务键>/` 和任务记录交流（AGENTS.md 规则 10，协议见[排队与任务进程](architecture.md#排队与任务进程)）。两道检查：
 
 - `test_run_dir_golden`：调用 `core/run_dir.py`，以及 `app/runner_spawn.py`、`app/runner_ipc.py`、`app/detached.py` 经它写的 handoff.json、runner.json、wake.json、`queued/`，固定时间和随机数，把文件名、JSON 键、权限、op 格式、消息格式和两侧的回执语义（补充、回答、点击、续接请求）和 `tests/golden/run_dir.json` 比。有意改协议时用 `GOLDEN_RUN_DIR=update python3 -B -m unittest discover -s tests -p test_run_dir_golden.py` 重新生成，看 diff，再跑跨版本检查。
-- `scripts/cross_release.py`：改公共核心（锁、记录与状态、调度、投递、服务管理）或 runs/ 协议之前，对现网 release 跑一次（AGENTS.md 多人部署第 5 条）。它用 git archive 导出旧提交，真起进程跑交接、唤醒、补充回执、请求与回复、Bridge 重启后接管、done 与 exit、SIGTERM、SIGKILL、部署与回滚；组合是新 Bridge + 旧任务进程、旧 Bridge + 新任务进程和两个同版本基线。环境清空，HOME 和状态目录在输出目录里，飞书调用全换成记录，非回环连接一律拒绝。新版本是本检出的工作区（含未提交的改动）。
+- `scripts/cross_release.py`：改公共核心（锁、记录与状态、调度、投递、服务管理）或 runs/ 协议之前，对现网 release 跑一次（AGENTS.md 合并约定第 5 条）。它用 git archive 导出旧提交，真起进程跑交接、唤醒、补充回执、请求与回复、Bridge 重启后接管、done 与 exit、SIGTERM、SIGKILL、部署与回滚；组合是新 Bridge + 旧任务进程、旧 Bridge + 新任务进程和两个同版本基线。环境清空，HOME 和状态目录在输出目录里，飞书调用全换成记录，非回环连接一律拒绝。新版本是本检出的工作区（含未提交的改动）。
 
 ```bash
 python3 -B scripts/cross_release.py run --old <现网 release 的提交> --out /absolute/runs/cross-<提交> --jobs 6
@@ -152,9 +166,27 @@ python3 -B scripts/cross_release.py compare /absolute/runs/cross-<提交>   # �
 - 有差异时先看 `base-new vs base-old`：两个 release 本来就不同的地方，跨版本组合也会出现。
 - 多设备（[架构：设备](architecture.md#设备多设备默认关)）有两个只给它的场景。`devices-empty-new`：新 release 开着 `COVEY_DEVICES=1`、`devices.json` 里没有设备，把每个变体再跑一遍，要同 `base-new`、`base-old` 一样（开关开着但没有设备，行为同关着）。`device-rollback`（变体 `device_rollback`、`device_rollback_on`）：新 Bridge 建一个设备话题（`topic.json` 存 `gpu1:/home/user/proj`），旧 Bridge 和旧任务进程收到该话题的下一条消息；这一轮必须被拒绝（任务进程里没有 `backend.run`、记录是 `failed`），`compare` 打印旧 release 的说法，在本机跑了就退出 1。后一个变体是旧进程仍带着 `COVEY_DEVICES=1` 和同一份 `devices.json`。
 
+### 网页工作台的测试
+
+网页源码在 `web/`（[网页工作台](web.md)，部署见 `web/README.md`），要 Node 22 及以上。在 `web/` 下：
+
+```bash
+npm ci
+npm run lint                  # eslint、类型检查、stylelint
+npm run test:collab           # 单测，scripts/*.test.mjs；package.json 里 test: 开头的每组一条命令
+npm run build:server          # 网页平台版服务端构建
+WEBPLATFORM_APP_TYPE=3 npm run build:client   # 网页平台版前端构建
+npm run build:selfhost        # 自托管版构建
+```
+
+- 单测用 `node --test`，不连飞书、不连网页平台。`test:selfhost-tls`、`test:selfhost-api` 会先构建自托管服务端，后者再起真服务，走完密钥、登录、会话和公网 HTTPS。
+- 网页平台版的一键部署脚本有自己的测试（假的 `lark-cli` 和本机 git 仓库）：在仓库根目录 `python3 -B -m unittest discover -s web/deploy/webplatform/tests`。
+- 数据契约两头对着：Covey 一侧是 `core/web_sync.py`，网页一侧是 `web/shared/`；改了契约（字段、操作、版本）两边一起改，并更新 [网页工作台 · 版本一览](web.md#版本一览)。`look.json` 由 `scripts/export_look.py` 导出，词和颜色变了要重新导出。
+- CI 不跑 `web/` 的命令：改了网页，本地把 `lint`、相关的 `test:*` 和三种构建跑过。
+
 ### 静态检查
 
-- `pyflakes covey bin tests extensions`：只允许 2 条有意的未使用导入，都在公司扩展里：它的 EXT 后端模块再导出的 `MasoSessionStore` 和 `CompletionBudget`（扩展不在时没有这两条）。
+- `pyflakes covey bin tests scripts extensions`：只允许 2 条有意的未使用导入，都在公司扩展里：它的 EXT 后端模块再导出的 `MasoSessionStore` 和 `CompletionBudget`（扩展不在时没有这两条）。CI 跑的是不带 `extensions` 的那一份。
 - `bash -n scripts/*.sh`；装了 ruff 时加 `ruff check --select F821`。
 - `python3 -B scripts/code_map.py --check`：`AGENTS.md` 的模块表和各模块 docstring 一致。加、删、搬模块或改了 docstring 首句后跑 `--write`（`test_structure` 的 `CodeMapTest` 也查）。
 - 文档引用：`test_structure.DocReferenceTest` 每次都跑，检查 `AGENTS.md`、`README.md` 和 `docs/*.md`（不含 `docs/history/`）。反引号里的仓库路径（代码地图里相对 `covey/` 的也算）和相对链接（含 `#标题`）必须存在；有意不在仓库里的路径列在 `DOC_UNTRACKED_PATHS`。代码里找不到的反引号名字只打印，外来的名字列在 `DOC_EXTERNAL_NAMES`。

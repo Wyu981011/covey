@@ -7,7 +7,7 @@ Covey 的配套网页应用：私聊里的专项、话题、每一轮和等你�
 | 你的情况 | 怎么部署 |
 | --- | --- |
 | 飞书企业开通了妙搭（能建全栈应用） | **一键部署到你自己的妙搭**（推荐）：网址、加密、飞书登录都由妙搭提供，人在外面用手机飞书点开就能用。见 [deploy/miaoda/README.md](deploy/miaoda/README.md) |
-| 没有妙搭（个人版飞书、Lark 国际版），或想让数据只留在自己机器上 | **自托管**：网页和 Covey 跑在同一台机器上，由 Covey 的 Manager 看护，飞书私聊里点「允许」登录。本机直接打开，别的设备经 ssh 转发、Tailscale 或自己的 https 反向代理打开。见 [deploy/selfhost/README.md](deploy/selfhost/README.md) |
+| 没有妙搭（个人版飞书、Lark 国际版），或想让数据只留在自己机器上 | **自托管**：网页和 Covey 跑在同一台机器上，由 Covey 的 Manager 看护，飞书私聊里点「允许」登录。本机直接打开；别的设备可以让网页进程直接开公网 HTTPS（自签证书或自己的域名和证书，`./install --web-public`），也可以经 ssh 转发、Tailscale 或自己的 https 反向代理打开。见 [deploy/selfhost/README.md](deploy/selfhost/README.md) |
 
 一键部署到妙搭（先只看不做，确认后真做）：
 
@@ -16,7 +16,7 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --yes
 ```
 
-自托管（构建、备好密钥和配置，再按打印的开关改 Covey 的服务清单）：
+自托管：装 Covey 时加 `./install --web`（要公网直连加 `./install --web-public <IP或域名>`）一步做完；也可以手动构建、备好密钥和配置，再按打印的开关改 Covey 的服务清单：
 
 ```bash
 bash web/deploy/selfhost/build.sh /absolute/path/to/covey-web
@@ -42,7 +42,7 @@ MIAODA_APP_TYPE=3 npm run build:client   # 妙搭版前端（Vite + React）构�
 npm run build:selfhost           # 自托管版：服务端和前端构建到 dist-selfhost/
 ```
 
-单测一共 22 组 223 条：工作台 19 组 175 条（`test:graph` 到 `test:v34`），自托管 3 组 48 条（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
+单测一共 22 组：工作台 19 组（`test:graph` 到 `test:v34`），自托管 3 组（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
 
 部署脚本的测试（不连飞书，用假的 lark-cli 和本机 git 仓库），在 covey 仓库根目录：
 
