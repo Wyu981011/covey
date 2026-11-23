@@ -92,6 +92,9 @@ RETIRED = {
     "running": ("进行中",),
     "result": ("有结果未看", "做完没看"),
     "stopped": ("失败", "执行失败", "❌ 失败", "⚠️ 失败", "⚠️ 执行失败", "中断", "已中断"),
+    # Not a state: how a revisit's rows read before (the page and the 看板): they did not say who looks, and "约好回来看" read as the
+    # owner's to do. Now "Covey 将于 21:40 自动回看" (docs/glossary.md 到点回来看).
+    "revisit": ("约好回来看", "该回来看了"),
 }
 
 STOPPED = frozenset({"failed", "interrupted"})

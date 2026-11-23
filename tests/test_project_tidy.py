@@ -835,6 +835,20 @@ class FollowTest(TidyCase):
             self.assertIn(word, card)
         self.assertEqual(self.tidy.proposal_cards.follow(self.ctx, CHAT), 0)  # Nothing new: the card is not written again.
 
+    def test_a_topic_that_joins_a_project_loses_its_revisit_and_the_log_says_so(self):
+        """T675, 2026-11-23: 约好的回看留在已归进专项的话题上，页面上一直挂着。"""
+        from covey.core import revisits as book
+        said = []
+        with mock.patch.dict(os.environ, {book.SWITCH: "1"}):
+            book.change(self.state, self.trio[2], lambda data: book.armed(self.trio[2], CHAT, {"minutes": 10, "look": "看 CI"},
+                                                                        by="job", round_=1))
+            members.join_topic(self.state, self.pid, self.trio[2], by="lead", log=said.append)
+            self.assertEqual(book.read(self.state, self.trio[2]), {})
+            self.assertEqual(len(said), 1)
+            self.assertIn("joined a project", said[0])
+            members.join_topic(self.state, self.pid, self.trio[2], by="lead", log=said.append)  # Again: nothing to remove, nothing said.
+            self.assertEqual(len(said), 1)
+
     def test_too_few_left_ends_it_off_the_board_the_list_and_the_tidy_card(self):
         record = self.open_card((1, 2), "Covey开发机重启后自启修复")
         members.join_topic(self.state, self.pid, self.trio[1], by="tidy")

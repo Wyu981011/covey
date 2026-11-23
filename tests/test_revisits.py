@@ -18,11 +18,13 @@ from covey.app import revisits
 from covey.app.runs import Runs
 from covey.app.turn_delivery import TurnDelivery
 from covey.cards.board import REVISIT_KIND, board_card
+from covey.core import projects
 from covey.core import revisits as records
 from covey.core.board_read import ended_at
 from covey.core.jobs import find_job_record, job_key, upsert_job_record
 from covey.core.state import write_json
 from covey.core.topic_seen import read_seen, record_reads
+from covey.core.topics import set_topic_project
 
 ON = {records.SWITCH: "1"}
 MINUTE = 60
@@ -185,7 +187,10 @@ class FlowTest(RevisitCase):
         [row] = view["revisits"]
         self.assertEqual((row["topic"], row["look"], row["fired"]), (self.topic, "看 CI", False))
         card = json.dumps(board_card(view), ensure_ascii=False)
-        self.assertIn("到点回来看", card)
+        self.assertIn("Covey 定时回看", card)
+        self.assertIn("Covey 将于", card)
+        self.assertIn("自动回看：看 CI", card)
+        self.assertNotIn("约好回来看", card)
         self.assertIn(REVISIT_KIND, card)
         raw = {"kind": REVISIT_KIND, "topic": self.topic, "set_at": row["set_at"]}
         self.assertEqual(self.app.digest.claim(self.ctx, {"chat_id": "chat"}, raw, False), "owner_only")
@@ -193,6 +198,82 @@ class FlowTest(RevisitCase):
         self.assertEqual(self.app.digest.claim(self.ctx, {"chat_id": "chat"}, raw, True), "board_revisit_cancel")
         self.assertEqual(self.record(), {})
         self.assertNotIn("revisits", self.app.digest.board_view(self.ctx, "chat"))
+
+    def test_a_topic_that_became_a_projects_loses_its_revisit_at_the_next_look_and_is_not_shown_meanwhile(self):
+        """The owner, 2026-11-23: T675 asked for a look at 14:48, was taken into a project at 15:23, and "该回来看了" hung on the page
+        for good: the record was never removed and nothing filtered on ``ordinary``."""
+        self.end(self.first, revisit={"minutes": 5, "look": "看 CI"})
+        self.assertEqual(len(revisits.board_rows(self.state, "chat", str)), 1)
+        set_topic_project(self.state, self.topic, "abc123def456", projects.MEMBER)
+        self.assertEqual(revisits.board_rows(self.state, "chat", str), [])  # Hidden before anything removes it.
+        self.assertNotEqual(self.record(), {})
+        self.tick(after=6 * MINUTE)
+        self.assertTrue(self.app.runtime.jobs.queue.empty())  # Never woken as an ordinary topic.
+        self.assertEqual(self.record(), {})
+        self.assertIn("revisit removed topic=", "\n".join(self.logs))
+
+    def test_a_project_topics_fired_record_is_removed_too_and_an_ordinary_topics_stays(self):
+        self.end(self.first, revisit={"minutes": 5})
+        records.change(self.state, self.topic, lambda data: {**data, "state": records.FIRED, "fired_at": time.time()})
+        self.tick(after=MINUTE)
+        self.assertEqual(self.record()["state"], records.FIRED)
+        set_topic_project(self.state, self.topic, "abc123def456", projects.MEMBER)
+        self.tick(after=MINUTE)
+        self.assertEqual(self.record(), {})
+
+    def test_dropping_for_a_project_removes_the_record_once_says_so_and_does_nothing_with_the_switch_off(self):
+        self.end(self.first, revisit={"minutes": 5})
+        said = []
+        with mock.patch.dict(os.environ, {records.SWITCH: ""}):
+            self.assertFalse(revisits.drop_for_project(self.state, self.topic, said.append))
+        self.assertNotEqual(self.record(), {})
+        self.assertTrue(revisits.drop_for_project(self.state, self.topic, said.append))
+        self.assertFalse(revisits.drop_for_project(self.state, self.topic, said.append))
+        self.assertEqual(self.record(), {})
+        self.assertEqual(len(said), 1)
+        self.assertIn("joined a project", said[0])
+
+    def owner_turn(self):
+        self.owner_turns = getattr(self, "owner_turns", 0) + 1
+        self.receive(f"next{self.owner_turns}", "顺便问一句", root="src")
+        return self.app.runtime.jobs.queue.get_nowait()
+
+    def test_the_owner_moving_on_past_the_time_clears_the_revisit_only_for_a_turn_that_ended_done(self):
+        """The line between 保留 and 清除: its time has passed, the owner went through the topic himself since (a turn that ended done and
+        asked for none), and the revisit was still pending. Before its time it stays: what it waits on is outside the topic."""
+        self.end(self.first, revisit={"minutes": 5, "look": "看 CI"})
+        records.change(self.state, self.topic, lambda data: {**data, "set_at": data["set_at"] - 600, "due_at": time.time() - 60})
+        self.end(self.owner_turn(), status="failed")  # Not a round he finished: it stays.
+        self.assertEqual(self.record()["state"], records.PENDING)
+        self.end(self.owner_turn(), status="cancelled")
+        self.assertNotEqual(self.record(), {})
+        self.end(self.owner_turn())
+        self.assertEqual(self.record(), {})
+        self.assertIn("the owner moved on past its time", "\n".join(self.logs))
+
+    def test_a_revisit_that_is_not_due_stays_when_the_owner_moves_on_and_a_new_one_replaces_an_overdue_one(self):
+        self.end(self.first, revisit={"minutes": 30, "look": "看训练"})
+        self.end(self.owner_turn())
+        self.assertEqual(self.record()["look"], "看训练")
+        records.change(self.state, self.topic, lambda data: {**data, "set_at": data["set_at"] - 600, "due_at": time.time() - 60})
+        self.end(self.owner_turn(), revisit={"minutes": 10, "look": "换成看 CI"})
+        self.assertEqual((self.record()["look"], self.record()["state"]), ("换成看 CI", records.PENDING))
+
+    def test_a_fired_revisit_stays_when_the_owner_moves_on_and_a_turn_from_before_it_was_set_does_not_clear_it(self):
+        self.end(self.first, revisit={"minutes": 5})
+        records.change(self.state, self.topic, lambda data: {**data, "state": records.FIRED, "due_at": time.time() - 60})
+        self.end(self.owner_turn())
+        self.assertEqual(self.record()["state"], records.FIRED)  # Its turn is out: that turn's end settles it.
+        records.change(self.state, self.topic, lambda data: {**data, "state": records.PENDING, "set_at": time.time() + 3600})
+        self.end(self.owner_turn())
+        self.assertNotEqual(self.record(), {})  # Set after that turn ended.
+
+    def test_a_project_topics_turn_that_ends_removes_what_an_older_release_left(self):
+        self.end(self.first, revisit={"minutes": 5})
+        set_topic_project(self.state, self.topic, "abc123def456", projects.MEMBER)
+        self.end(self.owner_turn())
+        self.assertEqual(self.record(), {})
+
 
     def test_only_an_ordinary_topics_turns_have_the_rule(self):
         job = make_job(topic_id=self.topic, chat_id="chat")

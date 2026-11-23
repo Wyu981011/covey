@@ -43,7 +43,7 @@ class Applier:
 
         state, topic, pid = Path(ctx.state_dir), made["topics"][0], made["project"]
         try:
-            record = join_topic(state, pid, topic, why=made.get("why") or "", by=by)
+            record = join_topic(state, pid, topic, why=made.get("why") or "", by=by, log=self.runtime.log)
         except (ValueError, KeyError) as exc:
             self.runtime.log(f"project tidy join skipped topic={topic[:12]}: {exc}")
             return False

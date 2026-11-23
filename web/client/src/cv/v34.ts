@@ -1,4 +1,4 @@
-/* 数据约定 v34 的几样在网页上怎么说（纯函数，单测在 scripts/v34.test.mjs）：到点回来看、代发草稿、完成标准与改动两行（和飞书答案卡同义）、
+/* 数据约定 v34 的几样在网页上怎么说（纯函数，单测在 scripts/v34.test.mjs）：Covey 定时回看、代发草稿、完成标准与改动两行（和飞书答案卡同义）、
  * 这个 Covey 认不认某个网页操作。 */
 import type { OwnerSendDraft, TopicRevisit, TurnCriterion, TurnDelivery } from '@shared/api.interface';
 
@@ -10,12 +10,21 @@ const clock = (sec: number): string =>
 const day = (sec: number): string =>
   new Date(sec * 1000).toLocaleDateString('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit' }).replace(/\//gu, '-');
 
-/** “约好 21:40 回来看：CI 跑完没有”；不是今天的写上日期；时间过了还没回来写“该回来看了” */
+/** 主语是 Covey（回看是 Covey 到点自己去做的，不是等你回来看）：“Covey 将于 21:40 自动回看：CI 跑完没有”；不是今天的写上日期；
+ * 时间过了还没排出去写“已到点，Covey 即将自动回看”；Covey 已经在回看（running）写“Covey 正在自动回看” */
 export function revisitWords(r: TopicRevisit, now: number): string {
   const when: string = day(r.at) === day(now) ? clock(r.at) : `${day(r.at)} ${clock(r.at)}`;
   const what: string = r.what ? `：${r.what}` : '';
-  return r.at <= now ? `约好 ${when} 回来看，该回来看了${what}` : `约好 ${when} 回来看${what}`;
+  if (r.running) return `Covey 正在自动回看${what}`;
+  return r.at <= now ? `已到点，Covey 即将自动回看${what}` : `Covey 将于 ${when} 自动回看${what}`;
 }
+
+/** 这条定时回看页面上能不能取消：Covey 认 revisit_cancel（settings.ops）、带 set_at（v35）、Covey 还没开始回看 */
+export const canCancelRevisit = (ops: readonly string[] | null | undefined, r: TopicRevisit | undefined): boolean =>
+  canDo(ops, 'revisit_cancel') && !!r && typeof r.set_at === 'number' && r.set_at > 0 && !r.running;
+
+/** 页面上刚取消掉的定时回看的标识（话题 + 预约时刻）：Covey 办好后再推新数据之前也不画它 */
+export const revisitMark = (topicKey: string, setAt: number | undefined): string => `${topicKey}@${setAt ?? ''}`;
 
 /** 一条代发草稿的那句话：“→ 张三：周报已更新…”，没发出去的说一声 */
 export function draftWords(d: OwnerSendDraft): string {

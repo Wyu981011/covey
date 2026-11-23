@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from covey.app import project_clicks, project_facts, project_lead
+from covey.app import project_clicks, project_facts, project_lead, revisits
 from covey.app.butler_env import arg_text
 from covey.app.project_clicks import topic_ctx
 from covey.core import projects
@@ -74,11 +74,12 @@ JOINED, LEFT = "joined", "left"  # The receipts the lead gets.
 BY_WORDS = {"start": "建专项时", "tidy": "整理专项", "rule": "整理专项", "lead": "负责人加话时", "butler": "管家"}
 
 
-def join_topic(state, pid, topic, *, why="", by="tidy") -> dict:
+def join_topic(state, pid, topic, *, why="", by="tidy", log=None) -> dict:
     """An ordinary topic becomes a topic of project ``pid``: ``project`` {id, role thread} in its topic.json (under its topic lock),
     in the record's ``threads`` (so the board and the Pins show it in the project's cell, core/projects.py cells), a line of
     its ``joins`` (the card's 归入记录, ``by`` who took it in) and a ``joined`` receipt in the lead's inbox; a project folded
-    away opens again (app/project_loop.py reopen). Its running turn goes on and a question waiting for the owner stays his.
+    away opens again (app/project_loop.py reopen). Its running turn goes on and a question waiting for the owner stays his; its
+    到点回来看 is dropped (app/revisits.py: a project's topic has none), told to ``log`` when there is one.
     The record; ValueError when the project is over or the topic is a lead's or another project's."""
     from covey.app import project_loop
 
@@ -91,6 +92,7 @@ def join_topic(state, pid, topic, *, why="", by="tidy") -> dict:
     if found is None:
         with topic_lock(topic_ctx(state, topic)):
             set_topic_project(state, topic, pid, projects.MEMBER)
+    revisits.drop_for_project(state, topic, log)
     if topic not in (record.get("threads") or ()):
         projects.add_member(state, pid, topic)
         record = projects.log_join(state, pid, topic, by, why)

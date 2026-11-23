@@ -65,6 +65,8 @@ KINDS) as the owner's own and says (state, message) for the ack.
   (a member topic running or waiting, the 目标检查表) checked first and their reason said, nothing done.
 - ``memory_undo`` (data contract v34): 不对 on a turn's "记下了" line as on its answer card (app/memory_collect.py take_back); a line taken
   back already says so, ``done``.
+- ``revisit_cancel`` (data contract v35): 取消 on a topic's 定时回看, ``payload.set_at`` the time it was asked for (core/revisits.py cancel);
+  gone already says so, ``done``; one Covey is looking at now, or a newer one that replaced it, is ``failed`` and stays.
 The topic or project has to be the owner's private chat's, known and not over; anything else is ``failed`` with the reason.
 
 Rules (AGENTS.md): nothing is sent from under a record's lock; a write to a task is not replayed (the ledger, core/web_sync.py, keeps an
@@ -84,7 +86,7 @@ from covey.app.runtime import job_stage, supplement_target_of
 from covey.app import web_files
 from covey.app.web_settings import WebSettings
 from covey.app.web_turns import STOP_AUTO_RETRY
-from covey.core import board_read, collab, collab_records, failure, project_memory, projects, triage, turn_source, web_sync
+from covey.core import board_read, collab, collab_records, failure, project_memory, projects, revisits, triage, turn_source, web_sync
 from covey.core.attachments import message_words
 from covey.core.butler import is_butler_root
 from covey.core.history_storage import append_history
@@ -138,7 +140,7 @@ class Ops:
                        "dismiss": self.dismiss, "tidy_decide": self.tidy_decide, "launch": self.launch,
                        "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover,
                        "login": self.login, "project_finish": self.project_finish, "project_stop": self.project_stop,
-                       "memory_undo": self.memory_undo}.get(kind)
+                       "memory_undo": self.memory_undo, "revisit_cancel": self.revisit_cancel}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -814,6 +816,33 @@ class Ops:
         except Exception as exc:  # noqa: BLE001 - taken back all the same; the card's lines follow on its next redraw
             self.runtime.log(f"web memory_undo card not redrawn: {type(exc).__name__}")
         return "已撤销：" + " ".join(str(note.get("text") or "").split())[:40]
+
+    # -- 定时回看的「取消」 (data contract v35) ------------------------------------------------------------------------------
+
+    def revisit_cancel(self, state, chat, row, payload) -> str:
+        """取消 on a topic's 定时回看 (the 看板's 取消, core/revisits.py cancel): the record asked for at ``payload.set_at`` is removed, a newer one
+        stays. Done when it is gone already (taken back or run); ValueError, nothing removed, when Covey is looking at it now (FIRED) or
+        a newer one replaced it. The owner's, on a topic of his private chat. The collector looks at the topic at once (web_sync.py)."""
+        topic = str(row.get("topic_key") or "")
+        if not TOPIC_ID.fullmatch(topic):
+            raise ValueError("没有话题编号")
+        set_at = payload.get("set_at")
+        if isinstance(set_at, bool) or not isinstance(set_at, (int, float)) or set_at != set_at or set_at <= 0:
+            raise ValueError("没有预约时刻 set_at")
+        if self.runtime.access.is_owner(self.runtime.owner_open_id or "") is not True:
+            raise ValueError("只有主人能取消定时回看")
+        self.topic(state, chat, topic)
+        found = revisits.read(state, topic) if revisits.enabled() else {}
+        if not found or found.get("chat_id") != chat:
+            return "这条定时回看已经没有了（已经回看过，或已取消）"
+        if abs(float(found.get("set_at") or 0) - float(set_at)) >= 0.001:
+            raise ValueError("这条定时回看已经换成了新的，没有取消，请看页面上最新的")
+        if found.get("state") == revisits.FIRED:
+            raise ValueError("Covey 已经在回看了，这一次取消不了")
+        if not revisits.cancel(state, topic, set_at):
+            return "这条定时回看已经没有了（已经回看过，或已取消）"
+        self.runtime.log(f"revisit cancelled from the page topic={topic[-8:]}")
+        return "已取消定时回看"
 
     def reopen(self, state, chat, row, payload) -> str:
         pid = str(row.get("project_key") or "")

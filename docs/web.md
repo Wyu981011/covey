@@ -123,7 +123,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - 「收尾」叫负责人总结做完了什么、还有什么没做完，再结束专项。有话题在做或等你、目标检查表还有没满足的项或没处理的协作缺口时，Covey 照负责人收尾的规矩拒绝，网页原地写它说的原因。
   - 「停止」先问一句再停：专项停住（灰色“已停止”），负责人和各话题排着、在跑的任务都请停；同一处随即出「继续」（`reopen`），点了专项接着做。
   - 只在专项的状态允许时画：在做、等你的有收尾和停止，你停住的有继续和收尾，护栏停住、收起的只有收尾，做完、取消的都没有。旧 Covey 不认 `project_finish`、`project_stop` 时不画收尾和停止。
-- **到点回来看、代发草稿**（v34）：话题约好了几点回来看（[到点回来看](usage.md#到点回来看)）时，看板和话题总览写“约好 21:40 回来看：CI 跑完没有”。话题写好了等你确认的[代发](usage.md#话题以你的身份发消息代发)草稿时，同样两处列出发给谁、写了什么，带「去飞书确认」。网页只读：确认、改正文和发出都在飞书话题的草稿卡上，**网页不对外发送任何消息**。
+- **Covey 定时回看、代发草稿**（v34、v35）：话题有 Covey 的[定时回看](usage.md#到点回来看)时，看板的「Covey 定时回看」一组和话题总览写“Covey 将于 21:40 自动回看：CI 跑完没有”：回看是 Covey 到点自己去做的，不是等你回来看；时间过了还没排出去写“已到点，Covey 即将自动回看”，已经在回看写“Covey 正在自动回看”。Covey 认 `revisit_cancel`（`settings.ops`）、预约带 `set_at` 且 Covey 还没开始回看时，这一行后面有「取消」（v35，只取消这一条；点了有“发送中”和回执，办好后这一行消失；旧 Covey 不画按钮）。话题写好了等你确认的[代发](usage.md#话题以你的身份发消息代发)草稿时，同样两处列出发给谁、写了什么，带「去飞书确认」。网页上的代发只读：确认、改正文和发出都在飞书话题的草稿卡上，**网页不对外发送任何消息**。
 - **完成标准、改动**（v34）：回答下面的输入、输出两行之后，和飞书答案卡一样多两行：“完成标准 2/3 满足 · 1 条没满足”（点开看每一条和证据）、“改动 提交 a1b2c3d · 已部署：第 9 代 · 已自检”；没有就不画。
 - **记忆的「不对」**（v34）：这一轮“记下了”的那条后面有「不对」，和答案卡上的「不对」一样撤销它；旧 Covey 上只写一行“记错了在飞书答案卡上点「不对」”。
 - **看用量**：看板右栏的「本周用量」是最近 7 天（含今天）的合计，下面每天一根柱子，鼠标停上去（手机上点一下）看那天的 token、任务、话题和缓存命中。点「明细」是用量页：选最近 7、30 或 90 天，每天一根柱子、各 Harness 的占比和每天一行的表。算法和菜单「用量」卡相同，只是按自然日切开：卡片的“最近 7 天”是往前 7×24 小时，所以和看板的数差不到一天。
@@ -169,7 +169,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **最后一轮的编号**（v12）：`last_seq` 是这次推的各轮里最大的 `seq`（没有轮次为 0）。网页收到后删掉这个话题 `seq` 比它大的轮次：在跑的一轮按“已有轮数 + 1”推，回答进来后编号可能落在更前面，原来那条“在跑”就再也不会被覆盖。收尾中的任务（回答已写进历史、记录还是“在跑”）不判“没发出去”，也不再画一条“在跑”的轮。
 - **什么时候进的专项**（v13）：专项的成员话题带 `joined_at`（秒）。专项报告只算这个话题加入以后结束的轮次，和专项卡的 token 同一个口径。
 - **话题要点**：开了[整理专项](projects.md#整理专项)时带 `gist`：`{essence, goal, involves, related, changed, updated_at}`，没有要点就没有这个字段。网页把 `goal` 当“目标”显示。
-- **约好回来看**（v34，`app/web_collect.py` 的 `later_and_drafts`）：开了[到点回来看](usage.md#到点回来看)（`COVEY_REVISIT=1`）、话题有一条还没到点的约定（`core/revisits.py` 的记录是 pending）时，普通话题带 `revisit`：`{at, what}`，`at` 是约好的时刻（秒），`what` 是到点要看什么（一行，最多 200 字）。到点排了那一轮、取消了、开关关着时没有这个字段。
+- **Covey 定时回看**（v34，v35 加字段，`app/web_collect.py` 的 `later_and_drafts`）：开了[到点回来看](usage.md#到点回来看)（`COVEY_REVISIT=1`）、话题有一条预约时，普通话题带 `revisit`：`{at, what, set_at, running}`，`at` 是约定的时刻（秒），`what` 是到点要看什么（一行，最多 200 字），`set_at`（v35）是这条预约约下的时刻（秒，带小数，「取消」带着它，防止误删换过的新预约），`running`（v35）为 true 表示 Covey 已经排出回看那一轮、正在回看（这时取消不了），还没到点或已到点没排出去的是 false。只有普通话题有：话题归进了专项、成了专项负责人或管家的话题，旧的预约不再推（Covey 在话题归进专项时删掉它，存量的由 `revisits` 线程下一次看到时删）。取消了、回看那一轮结束了、开关关着时没有这个字段。
 - **等你确认的代发草稿**（v34，同上）：部署有代答发送器、没关 `COVEY_OWNER_SEND` 时，普通话题带 `owner_send`：等你在飞书草稿卡上确认的草稿（`core/owner_send.py` 的 drafted，和发不出去、要在卡上再点一次的 unsent），最新的在前，最多 5 条，每条 `{id, to, state, preview, created_at}`：`to` 是发给谁（最多 60 字），`state` 是 `waiting`（等你确认）或 `failed`（没发出去），`preview` 是正文开头（一行，最多 120 字）。没有这样的草稿就没有这个字段。网页只读，「去飞书确认」打开飞书（`settings.feishu`）；**网页没有发送代发的操作**，确认和发出只在飞书原卡上。
 - **当前配置**（v21）：普通话题带 `config`：`{model, effort, work_mode, workspace, run_mode, redaction}`，`model` 和 `settings.launch.models` 的 `key` 是同一套（绑的是预算预设的，换算成那个模型加预设的预算），`run_mode` 是 `direct` 或 `worktree`，`redaction` 是 `on`/`off`（`app/web_switch.py` 的 `topic_config`，只读 topic.json）。网页的换配置面板从它开始选；`model` 不在目录里时要重选模型。管家、负责人不带。
 - **从没开工的话题**：任务都没跑过、最后一个没开工就取消了（启动卡被停掉收起），推成“已停止”（`tone: cancelled`），全图归到折起来的做完组，不算空闲。
@@ -259,7 +259,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - 设备每台带 `dot`（ok、tight、down、never，网页画色点）和去掉名字的那一行，另带 `joins`（网页发起的添加：安装中、失败及原因，30 分钟后不再列）和 `can_add`（v15）。
   - 管家的“私聊顶层的消息”行带 `confirm`（改成“每条直接开一个话题”前网页要问的那句话）（v15）。
   - 部署有代答发送器时多一页 `proxy`（v15）：开关、网页登录、发不出去的原因、模型的几行、白名单（名字、私聊或群 @我、暂停没有、来自哪个群）。名字会进网页应用的库。
-  - `ops`（v34）：这个 Covey 收的网页操作（`core/web_sync.py` 的 `KINDS`，就是下面操作表里的那些）。网页只在列着某个操作时才画它的按钮（专项的「收尾」「停止」、记忆的「不对」）；旧 Covey 不推 `ops`，这些按钮就不画，不会点了才回“不认识的操作”。
+  - `ops`（v34）：这个 Covey 收的网页操作（`core/web_sync.py` 的 `KINDS`，就是下面操作表里的那些）。网页只在列着某个操作时才画它的按钮（专项的「收尾」「停止」、记忆的「不对」、定时回看的「取消」）；旧 Covey 不推 `ops`，这些按钮就不画，不会点了才回“不认识的操作”。
 - **`launch`**（v17）：`settings` 条目另带的启动卡选项，用启动卡同一套函数读（`app/web_launch.py` 的 `catalog`）。
   - `models[]` 按启动卡的菜单顺序，每个带 `key`、`harness`、`harness_title`、`provider`、`provider_title`、`label`、`budgets[]`（各档按名字，和设置卡一样没有“推荐”“模型原生默认”，`app/web_launch.py` 用 `plain_budgets`；`default_budget`、`start_budget`、`preselect.effort` 是其中说得出名字的一档，开始任务和换配置的检查仍认启动卡的整张表，是它的超集）、`default_budget`、`start_budget`（选到这个模型时卡上预选哪一档）、`redaction`（能不能脱敏）、`work_modes` 和 `work_mode_texts`。
   - `workspaces[]`（最近用过的在前，设备上的带 `device` 和那台设备声明的 `harnesses`）、`run_modes[]`、`preselect`（现在开一张启动卡会预选的）。
@@ -297,6 +297,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | `recover`（v33） | 没成功的一轮上的按钮，见下 |
 | `project_finish`（v34） | `project_key`：专项的「收尾」，同停住卡的“收尾”，见下 |
 | `project_stop`（v34） | `project_key`：专项的「停止」，同专项卡的“停止专项”、停住卡的“停”，见下 |
+| `revisit_cancel`（v35） | `topic_key`，`payload` 是 `{set_at}`：取消话题的 Covey 定时回看，同飞书看板的「取消」，见下 |
 | `memory_undo`（v34） | `topic_key`，`payload` 是 `{job_id, entry_id}`：撤销这一轮刚记下的一条记忆，同答案卡上的「不对」，见下 |
 | `login` | 自托管网页的“用飞书登录”：`op_id` 是 `login-<request_id>`，`payload` 是 `{request_id, code, browser, os, ip, at}`；Covey 在私聊发确认卡（[网页登录确认](#网页登录确认)），回执只说卡发出了；主人的决定由 Covey 推 `type` 为 `login` 的条目（`key` 是 `request_id`，`data` 是 `{decision: approved \| denied, decided_at}`）告诉网页 |
 
@@ -332,6 +333,8 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 - `project_stop`：在做的专项（`active`）同专项卡的“停止专项”：停住，原因是“主人停止”（看板上灰色“已停止”，不是红色“停住了”）。护栏停住、停住卡还在等你选的，同停住卡上点“停”（`project_loop.answer_pause`）。然后负责人和各成员话题排着、在跑的任务都请停（`project_clicks.stop_tasks`，停止来源是 `web`），回 done“已停住专项「X」，已请 N 个任务停下……要继续，点「继续」”。已经做完、停住（停住卡也选过了）的回 failed“……没有要停的”；刚被负责人、护栏或卡片改了状态的回 failed，请你刷新再看。
 - `project_finish`：先过负责人收尾的两道闸，不过就回 failed、什么都不改，原因原样写出：还有成员话题在做或等你（`project_lead.live_members`，写出是哪几个话题）；目标检查表有没满足的项或没处理的协作缺口（`project_tools.checklist_gate`，去掉只说给负责人的那几步）。过了：护栏停住、停住卡在等你选的，同停住卡上点“收尾”（`answer_pause` 和给负责人的回执 `pause_receipt`）；其余（在做、你停的、收起的）当作你说了话（`owner_spoke`：收起的重新展开）并给负责人一条“主人在网页上选了收尾”的回执，由负责人总结做完了什么、还有什么没做完，再调它自己的 `project_finish`（它的闸照样管着）。回 done“已请负责人收尾专项「X」……”。已经做完或取消的回 failed。
+
+**`revisit_cancel`**（v35，`app/web_ops.py`）：`topic_key` 是话题，`payload.set_at` 是话题的 `revisit.set_at`（这条预约约下的时刻）。只认主人（`app/access.py` 的 `is_owner`），话题要在主人私聊里。照 `core/revisits.py` 的 `cancel` 取消：时刻对得上才删，换了新预约不误删。回执：办好回 done“已取消定时回看”；已经没有了（回看过、取消过）回 done“这条定时回看已经没有了”；预约已换成新的回 failed“这条定时回看已经换成了新的，没有取消”，页面等下一次推送换上新的；Covey 已经在回看（`running`）回 failed“Covey 已经在回看了，这一次取消不了”。办完 Covey 马上重看这个话题（`Collector.touch`），页面不用等下一轮补扫。
 
 **`memory_undo`**（v34）：`topic_key` 是那一轮的话题，`payload.job_id` 是那一轮的任务号（一轮条目的 `job_id`），`payload.entry_id` 是 `notes` 里那条“记下了”的 `entry_id`。和答案卡上点「不对」是同一个调用（`app/memory_collect.py` 的 `take_back`）：那条记忆作废，任务记录里那条 note 改成 `undone`，答案卡的那几行原地重画；回 done“已撤销：<前 40 字>”。已经撤销过的回 done“这条记忆已经撤销过了”，什么都不改。不是主人、话题里没有这个任务、这一轮没记下这条的回 failed。
 
@@ -440,3 +443,4 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v32 | 回答那一轮的 `artifacts`：文件名、`link`、`size`、`error`、`uploading`（以前一直是空数组） |
 | v33 | 一轮 `failure` 的 `labels`、`how`、`auto_retry`；`recover` 操作（检查并继续、看原因、拆小再试、停止自动重试，同任务卡的按钮） |
 | v34 | `project_finish`、`project_stop`、`memory_undo` 操作；话题的 `revisit`、`owner_send`（`COVEY_REVISIT`、代发关着时没有）；回答那一轮的 `criteria`、`delivery`；`settings` 的 `ops` 和 `asks` 条目；`look.json` 的 `retired` |
+| v35 | `revisit_cancel` 操作（网页上取消 Covey 定时回看）；话题 `revisit` 加 `set_at`、`running`（正在回看的也推了）；网页上的说法改成“Covey 将于 … 自动回看” |

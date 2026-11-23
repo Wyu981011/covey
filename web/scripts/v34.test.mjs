@@ -14,7 +14,7 @@ const CV = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src', 
 const NOW = Date.parse('2026-11-23T10:00:00+08:00') / 1000;
 
 test('新操作和新的设置条目网页认得：收尾、停止、记忆的不对，settings 的 asks', () => {
-  for (const k of ['project_finish', 'project_stop', 'memory_undo']) assert.ok(OUTBOX_KINDS.includes(k), k);
+  for (const k of ['project_finish', 'project_stop', 'memory_undo', 'revisit_cancel']) assert.ok(OUTBOX_KINDS.includes(k), k);
   assert.ok(SETTINGS_KEYS.includes('asks'));
 });
 
@@ -43,10 +43,45 @@ test('要你处理以 Covey 算好的为准，没推或形状不对时自己数'
   for (const f of ['Board.tsx', 'Shell.tsx']) assert.match(readFileSync(join(CV, f), 'utf8'), /askNumbers\(/u, f);
 });
 
-test('到点回来看：今天的只写时刻，过了时间说该回来看了', () => {
-  assert.equal(V.revisitWords({ at: NOW + 3600, what: 'CI 跑完没有' }, NOW), '约好 11:00 回来看：CI 跑完没有');
-  assert.equal(V.revisitWords({ at: NOW - 60, what: '' }, NOW), '约好 09:59 回来看，该回来看了');
-  assert.equal(V.revisitWords({ at: NOW + 86400, what: '复查' }, NOW), '约好 11-24 10:00 回来看：复查');
+test('Covey 定时回看：主语是 Covey，今天的只写时刻，过了时间说已到点，正在回看单独一句', () => {
+  assert.equal(V.revisitWords({ at: NOW + 3600, what: 'CI 跑完没有' }, NOW), 'Covey 将于 11:00 自动回看：CI 跑完没有');
+  assert.equal(V.revisitWords({ at: NOW - 60, what: '' }, NOW), '已到点，Covey 即将自动回看');
+  assert.equal(V.revisitWords({ at: NOW + 86400, what: '复查' }, NOW), 'Covey 将于 11-24 10:00 自动回看：复查');
+  assert.equal(V.revisitWords({ at: NOW - 60, what: '看 CI', running: true }, NOW), 'Covey 正在自动回看：看 CI');
+  // 不再说“约好回来看”“该回来看了”：读着像等你回来看（T675、T611 挂在页面上被当成待办）
+  for (const r of [{ at: NOW + 60, what: 'x' }, { at: NOW - 60, what: 'x' }, { at: NOW, what: 'x', running: true }]) {
+    assert.doesNotMatch(V.revisitWords(r, NOW), /约好|该回来看/u);
+  }
+});
+
+test('定时回看的「取消」：Covey 认 revisit_cancel、带 set_at、还没开始回看才给；旧 Covey 一律不画', () => {
+  const r = { at: NOW + 60, what: 'x', set_at: 1800000000.5 };
+  assert.equal(V.canCancelRevisit(['say', 'revisit_cancel'], r), true);
+  assert.equal(V.canCancelRevisit(['say'], r), false);
+  assert.equal(V.canCancelRevisit(undefined, r), false);
+  assert.equal(V.canCancelRevisit(['revisit_cancel'], { at: NOW + 60, what: 'x' }), false); // 旧 Covey 的数据没有 set_at
+  assert.equal(V.canCancelRevisit(['revisit_cancel'], { ...r, running: true }), false); // 正在回看，取消不了这一次
+  assert.equal(V.canCancelRevisit(['revisit_cancel'], undefined), false);
+  assert.notEqual(V.revisitMark('t1', 1.5), V.revisitMark('t1', 2.5)); // 换了新的预约，不跟着隐藏
+  const bits = readFileSync(join(CV, 'V34Bits.tsx'), 'utf8');
+  const later = bits.slice(bits.indexOf('export const LaterLine'), bits.indexOf('export const DraftLines'));
+  assert.match(later, /canCancelRevisit\(ops, r\)/u);
+  assert.match(later, /kind: 'revisit_cancel'.*payload: \{ set_at: r\.set_at \}/u);
+  assert.match(later, /useOutboxOp\(\)/u); // 点击有反馈（发送中 / 回执）
+  assert.match(later, /putCancelled\(/u); // 办好后这一条消失
+  assert.match(bits, /Covey 定时回看<em>/u);
+  assert.doesNotMatch(bits.slice(bits.indexOf('export const LaterPanel')), /<Link className="nb-row[^>]*>[^]*?<LaterLine/u); // 按钮不放在链接里
+});
+
+test('后端推的定时回看：认 set_at 和 running，形状不对就当没有；取消的形状只认 topic_key 和 set_at', () => {
+  assert.deepEqual(S.revisitOf({ at: 1800000000, what: '看 CI', set_at: 1799999000.25, running: true }), { at: 1800000000, what: '看 CI', set_at: 1799999000.25, running: true });
+  assert.deepEqual(S.revisitOf({ at: 1800000000, what: '看 CI' }), { at: 1800000000, what: '看 CI' });
+  assert.deepEqual(S.revisitOf({ at: 1800000000, what: '', set_at: -1, running: 'yes' }), { at: 1800000000, what: '' });
+  assert.equal(S.revisitOf({ at: 0, what: 'x' }), undefined);
+  assert.deepEqual(S.revisitCancelShape({ set_at: 1799999000.25 }, 'topic1', ''), { set_at: 1799999000.25 });
+  for (const [payload, topic, project] of [[{}, 'topic1', ''], [{ set_at: 'x' }, 'topic1', ''], [{ set_at: 5, extra: 1 }, 'topic1', ''], [{ set_at: 5 }, '', ''], [{ set_at: 5 }, 'topic1', 'p1'], [{ set_at: -3 }, 'topic1', '']]) {
+    assert.ok('error' in S.revisitCancelShape(payload, topic, project), JSON.stringify([payload, topic, project]));
+  }
 });
 
 test('代发草稿只读：一句话说给谁、写了什么，没发出去的说要在卡上再点', () => {

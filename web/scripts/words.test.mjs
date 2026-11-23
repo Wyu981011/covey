@@ -135,7 +135,7 @@ test('页面代码里给人看的字没有退役的状态词（covey look.RETIRE
 });
 
 test('退役词来自 look.json（covey look.RETIRED 的导出），不是网页自己抄的一份', () => {
-  assert.deepEqual(Object.keys(RETIRED).sort(), ['done', 'result', 'running', 'stopped', 'waiting']);
+  assert.deepEqual(Object.keys(RETIRED).sort(), ['done', 'result', 'revisit', 'running', 'stopped', 'waiting']);
   assert.ok(RETIRED.stopped.includes('执行失败') && RETIRED.waiting.includes('等你回答') && RETIRED.running.includes('进行中'));
 });
 

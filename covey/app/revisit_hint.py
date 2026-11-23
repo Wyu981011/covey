@@ -3,7 +3,7 @@
 When an ordinary topic's turn ends done, its reply puts something off ("稍后", "等下", the words of core/turn_words.py
 ``defers``), its checkpoint has no ``revisit`` and none of its subtasks is still running, the answer card gets one grey line,
 "这一轮结束后没有人会回来看" (cards/answer_card.py ``revisit_hint_element``), and with 到点回来看 on (COVEY_REVISIT=1, core/revisits.py) a
-button 约 30 分钟后回来看. The saved reply, the history and each redelivery stay as the model wrote them (rule 5): only the card's
+button 让 Covey 30 分钟后回看. The saved reply, the history and each redelivery stay as the model wrote them (rule 5): only the card's
 tail says it, and a redelivery sends the tail the first send kept (app/saved_send.py).
 
 The click (``click``, owner only, TaskControls.revisit_hint) writes that topic's revisit record the way a checkpoint's ``revisit``
@@ -60,7 +60,7 @@ def elements(state_dir, *, topic_id, chat_id, job_id, text, done, checkpoint_pat
 
 
 def click(host, ctx, event) -> bool:
-    """約 30 分钟后回来看 on the hint (``host``: the TaskControls): the topic's revisit set, then said in the topic."""
+    """让 Covey 30 分钟后回看 on the hint (``host``: the TaskControls): the topic's revisit set, then said in the topic."""
     raw = action_value(event)
     if not ctx.topic_id or raw.get("topic_id") != ctx.topic_id:
         return True
@@ -82,7 +82,7 @@ def click(host, ctx, event) -> bool:
             return records.armed(topic, chat, {"minutes": MINUTES, "look": LOOK}, by=f"hint-{raw.get('job_id')}", round_=1, now=now)
         found = records.change(state, topic, edit)
         due = time.strftime("%H:%M", time.localtime(float((found or {}).get("due_at") or now)))
-        text = (f"好，约 {MINUTES} 分钟后（{due}）回来看。" if made else f"这个话题已经约好 {due} 回来看。")
+        text = (f"好，Covey 约 {MINUTES} 分钟后（{due}）自动回看。" if made else f"这个话题已经定了 {due} 由 Covey 自动回看。")
         host.runtime.log(f"revisit hint topic={topic[-8:]} set={bool(made)}")
     after_ack(lambda: host.messenger.reply(ctx, chat, text, host.voice.key("revisit-hint", click_id), voice=host.voice))
     return True

@@ -508,7 +508,7 @@ const Board: React.FC = () => {
               <div className="nb-rows">{unseen.slice(0, 12).map((t: SnapshotTopic) => <ResultRow key={t.key} t={t} />)}</div>
             </>
           ) : null}
-          {/* v34：约好回来看的话题、等你在飞书确认的代发草稿 */}
+          {/* v34：Covey 定时回看的话题、等你在飞书确认的代发草稿 */}
           <LaterPanel topics={topics} />
           {!desktop ? <div className="nb-mrail">{rail}</div> : null}
           {!topics.length ? (

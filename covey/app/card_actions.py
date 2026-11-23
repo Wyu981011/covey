@@ -67,9 +67,9 @@ ACTIONS = {
     "bridge_memory_wrong": CardAction("撤销刚记下的记忆", handler="controls.memory_wrong"),  # COVEY_MEMORY=1: starts no task.
     # 升为全局 beside it (T647 E4): the line becomes one of the owner's principles; starts no task.
     "bridge_memory_promote": CardAction("把记忆升为全局", handler="controls.memory_promote"),
-    # 约 30 分钟后回来看 under an ordinary topic's answer that put something off (cards/answer_card.py revisit_hint_element, COVEY_REVISIT=1):
+    # 让 Covey 30 分钟后回看 under an ordinary topic's answer that put something off (cards/answer_card.py revisit_hint_element, COVEY_REVISIT=1):
     # the owner's; sets that topic's revisit (app/revisit_hint.py), starts no task.
-    "bridge_revisit_hint": CardAction("约 30 分钟后回来看", handler="controls.revisit_hint"),
+    "bridge_revisit_hint": CardAction("让 Covey 30 分钟后回看", handler="controls.revisit_hint"),
     # The 专项卡's buttons (cards/project_card.py): the card's message routes to the project's lead topic, so a click is
     # that topic's. Not bot_only: none starts a task (补充 opens the form of the lead's running turn, and says so when it has
     # none), and the value names a project, not a job, so the Bridge takes it in any case (runner_ipc.forward_card_action).

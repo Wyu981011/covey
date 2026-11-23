@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import owner_send, pins, project_lead, project_loop, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
+from covey.app import owner_send, pins, project_lead, project_loop, revisits as revisit_rules, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
 from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, revisits, store, turn_source, web_sync
 from covey.core import owner_send as owner_send_records
 from covey.core import memory as core_memory
@@ -1337,15 +1337,18 @@ def never_started(records) -> bool:
 
 
 def later_and_drafts(state, topic) -> dict:
-    """A topic's ``revisit`` {at, what}: its 到点回来看 that is due (core/revisits.py, COVEY_REVISIT=1, state pending), and its
+    """A topic's ``revisit`` {at, what, set_at, running}: its 定时回看 (core/revisits.py, COVEY_REVISIT=1, state pending or, ``running``, fired: Covey's turn is out), and its
     ``owner_send``: the 代发 drafts that wait for the owner on their card in Feishu (core/owner_send.py drafted, or unsent and to be
     sent again; COVEY_OWNER_SEND, with a 代答 sender), each {id, to, state, preview, created_at}, newest first, at most
     DRAFTS_SHOWN. The page shows them and sends nobody anything: a draft goes out only from its card. {} for neither."""
     out = {}
     if revisits.enabled():
         found = revisits.read(state, topic)
-        if found.get("state") == revisits.PENDING and isinstance(found.get("due_at"), (int, float)):
-            out["revisit"] = {"at": round(found["due_at"]), "what": " ".join(str(found.get("look") or "").split())[:200]}
+        # An ordinary topic's only (a record left from before the topic joined a project is not shown; the Bridge's thread removes it).
+        if (found.get("state") in (revisits.PENDING, revisits.FIRED) and isinstance(found.get("due_at"), (int, float))
+                and revisit_rules.ordinary(state, topic, str(found.get("chat_id") or ""))):
+            out["revisit"] = {"at": round(found["due_at"]), "what": " ".join(str(found.get("look") or "").split())[:200],
+                              "set_at": found.get("set_at"), "running": found.get("state") == revisits.FIRED}
     if owner_send.enabled():
         drafts = [row for row in owner_send_records.topic_records(state, topic) if row.get("status") in DRAFT_WAITS]
         if drafts:

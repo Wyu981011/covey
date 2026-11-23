@@ -37,7 +37,7 @@ PACKED = GOLDEN.with_name("cards.json.xz")
 # What is not said any more (docs/glossary.md 名词 · 不再用). ``线程`` covers every sense: the butler, a project's topic and
 # the Bridge's own threads, which the docs call 后台线程 and the interface never mentions. ``一路`` and ``多路`` are not words
 # of a path (同一路径, 多路径).
-RETIRED = re.compile("主线程|线程|话题区|长活|快事|路在做|一路(?!径)|多路(?!径)|Personal Agent|由快事升级|派发活卡片|专项整理|话题摘要")
+RETIRED = re.compile("主线程|线程|话题区|长活|快事|路在做|一路(?!径)|多路(?!径)|Personal Agent|由快事升级|派发活卡片|专项整理|话题摘要|约好回来看|该回来看了")
 
 # The status words docs/glossary.md 状态词 retired (要换掉的说法, core/look.py RETIRED), each as a word of its own: not inside a
 # longer one (完成标准, 发送失败, 打断). They are checked where a state is said and the module is clean of them: the global

@@ -208,7 +208,7 @@ def take_topics(env, chat, record, raw) -> tuple:
     for topic in joins:
         label = topic_label(state, topic) or topic[:8]
         try:
-            join_topic(state, record["id"], topic, why="主人让管家收进来", by="butler")
+            join_topic(state, record["id"], topic, why="主人让管家收进来", by="butler", log=env.runtime.log)
         except (ValueError, KeyError) as exc:
             unjoined.append(f"{label}，{exc}")
             continue

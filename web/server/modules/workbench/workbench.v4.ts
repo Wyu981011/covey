@@ -194,13 +194,14 @@ export function recoverShape(payload: Record<string, unknown>, topicKey: string,
 /* ---- v34：到点回来看、代发草稿、完成标准与改动；形状不对就当没有 ---- */
 const clip = (v: unknown, n: number): string => Array.from(str(v).trim()).slice(0, n).join('');
 
-/** 话题约好的到点回来看 {at, what}：at 是正数秒 */
+/** 话题的定时回看 {at, what, set_at?, running?}：at 是正数秒；set_at 是正数秒（v35，取消时核对）；running 只认 true（Covey 正在回看） */
 export function revisitOf(v: unknown): TopicRevisit | undefined {
   if (!isObj(v)) return undefined;
   const d: Record<string, unknown> = obj(v);
   const at: number | undefined = finite(d.at);
   if (at === undefined || at <= 0) return undefined;
-  return { at, what: clip(d.what, 200) };
+  const setAt: number | undefined = finite(d.set_at);
+  return { at, what: clip(d.what, 200), ...(setAt !== undefined && setAt > 0 ? { set_at: setAt } : {}), ...(d.running === true ? { running: true } : {}) };
 }
 
 /** 等你确认的代发草稿：只留认得的字段，链接只认 https；最多 5 条 */
@@ -265,6 +266,15 @@ export function memoryUndoShape(payload: Record<string, unknown>, topicKey: stri
   const entry: string = str(payload.entry_id).trim();
   if (!/^[A-Za-z0-9_.:-]{1,64}$/u.test(entry)) return { error: 'memory_undo 要 entry_id' };
   return { job_id: job, entry_id: entry };
+}
+
+/** v35：取消一条定时回看：要 topic_key、不带 project_key，payload 只有 set_at（正数秒，Covey 核对是同一条才取消） */
+export function revisitCancelShape(payload: Record<string, unknown>, topicKey: string, projectKey: string): { set_at: number } | { error: string } {
+  if (!topicKey || projectKey) return { error: 'revisit_cancel 要 topic_key、不带 project_key' };
+  if (Object.keys(payload).some((k: string) => k !== 'set_at')) return { error: 'revisit_cancel 只有 set_at' };
+  const at: number | undefined = finite(payload.set_at);
+  if (at === undefined || at <= 0) return { error: 'revisit_cancel 要预约时刻 set_at' };
+  return { set_at: at };
 }
 
 /** v34：Covey 算好的要你处理 {waiting, stopped, stuck}（settings 类条目 asks）：三个都是非负整数才认 */

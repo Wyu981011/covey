@@ -284,11 +284,11 @@ def project_line(project):
 def revisit_blocks(rows, shown=SHOWN):
     """到点回来看 (app/revisits.py board_rows): each topic that asked to be looked at again, when and what, 取消 while it waits;
     one whose turn is queued already says it is being looked at."""
-    drawn = [{"tag": "markdown", "content": f"**到点回来看**  <font color='grey'>{len(rows)}</font>", "text_size": "normal_v2",
+    drawn = [{"tag": "markdown", "content": f"**Covey 定时回看**  <font color='grey'>{len(rows)}</font>", "text_size": "normal_v2",
               "icon": {"tag": "standard_icon", "token": "time_outlined", "color": "grey"}}]
     for row in rows[:shown]:
         what = f"：{row['look']}" if row.get("look") else ""
-        line = f"正在回来看{what}" if row.get("fired") else f"{row.get('at') or ''} 回来看{what}"
+        line = f"Covey 正在自动回看{what}" if row.get("fired") else f"Covey 将于 {row.get('at') or ''} 自动回看{what}"
         cancel = [] if row.get("fired") else [button("取消", tone="text", value={
             "kind": REVISIT_KIND, "topic": row.get("topic") or "", "set_at": row.get("set_at")})]
         drawn.append(ui.topic_row("running" if row.get("fired") else "queued", head_of(row), line, url=row.get("url") or "",

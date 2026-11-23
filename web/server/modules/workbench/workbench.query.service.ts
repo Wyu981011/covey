@@ -53,7 +53,7 @@ import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
 import {
-  answersOf, asksOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectOpShape, recoverShape, revisitOf,
+  answersOf, asksOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectOpShape, recoverShape, revisitCancelShape, revisitOf,
 } from './workbench.v4';
 
 interface TopicRow {
@@ -1196,6 +1196,13 @@ export class WorkbenchQueryService {
       if ('error' in shape) throw new BadRequestException(shape.error);
       payload.job_id = shape.job_id;
       payload.entry_id = shape.entry_id;
+      return;
+    }
+    if (kind === 'revisit_cancel') {
+      // v35：取消话题的定时回看；set_at 是约下它的时刻，Covey 只取消同一条
+      const shape = revisitCancelShape(payload, str(req.topic_key), str(req.project_key));
+      if ('error' in shape) throw new BadRequestException(shape.error);
+      payload.set_at = shape.set_at;
       return;
     }
     if (kind === 'recover') {

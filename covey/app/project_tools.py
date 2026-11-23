@@ -192,7 +192,7 @@ def take_in(env, chat, pid, topic, text) -> str:
     if proposals.never_auto(state, topic):
         return f"{label} 被主人移出过专项，不能从这里收进来；要它做事，请主人自己决定。"
     try:
-        join_topic(state, pid, topic, why=f"负责人给它加话：{' '.join(str(text or '').split())[:60]}", by="lead")
+        join_topic(state, pid, topic, why=f"负责人给它加话：{' '.join(str(text or '').split())[:60]}", by="lead", log=env.runtime.log)
     except (ValueError, KeyError) as exc:
         return f"{label} 收不进这个专项：{exc}。"
     tidy = getattr(env, "tidy", None)

@@ -173,14 +173,15 @@ class CheckedTest(WebCase):
 
 class LaterAndDraftsTest(WebCase):
     def test_a_due_revisit_and_the_drafts_that_wait_go_with_the_topic_when_their_switches_are_on(self):
-        pending = {"state": revisits.PENDING, "due_at": 1800000000.4, "look": "CI 跑完没有\n再看一眼"}
+        pending = {"state": revisits.PENDING, "due_at": 1800000000.4, "set_at": 1799999000.25, "look": "CI 跑完没有\n再看一眼"}
         drafts = [{"id": "d1", "status": "drafted", "to_label": "张三", "text": "周报已更新，\n请看", "created_at": 1700000000.6},
                   {"id": "d2", "status": "sent", "to": "李四", "text": "旧的"}, {"id": "d3", "status": "unsent", "to": "王五", "text": "重发"}]
         with mock.patch.object(revisits, "enabled", return_value=True), mock.patch.object(revisits, "read", return_value=pending), \
+                mock.patch.object(web_collect.revisit_rules, "ordinary", return_value=True), \
                 mock.patch.object(web_collect.owner_send, "enabled", return_value=True), \
                 mock.patch.object(web_collect.owner_send_records, "topic_records", return_value=drafts):
             out = web_collect.later_and_drafts(self.state, TOPIC)
-        self.assertEqual(out["revisit"], {"at": 1800000000, "what": "CI 跑完没有 再看一眼"})
+        self.assertEqual(out["revisit"], {"at": 1800000000, "what": "CI 跑完没有 再看一眼", "set_at": 1799999000.25, "running": False})
         self.assertEqual([(d["id"], d["to"], d["state"], d["preview"]) for d in out["owner_send"]],
                          [("d1", "张三", "waiting", "周报已更新， 请看"), ("d3", "王五", "failed", "重发")])
         self.assertEqual(out["owner_send"][0]["created_at"], 1700000001)
@@ -189,10 +190,76 @@ class LaterAndDraftsTest(WebCase):
         with mock.patch.object(revisits, "enabled", return_value=False), mock.patch.object(web_collect.owner_send, "enabled", return_value=False):
             self.assertEqual(web_collect.later_and_drafts(self.state, TOPIC), {})
         with mock.patch.object(revisits, "enabled", return_value=True), \
-                mock.patch.object(revisits, "read", return_value={"state": revisits.FIRED, "due_at": 1.0}), \
+                mock.patch.object(revisits, "read", return_value={"state": "gone", "due_at": 1.0}), \
+                mock.patch.object(web_collect.revisit_rules, "ordinary", return_value=True), \
                 mock.patch.object(web_collect.owner_send, "enabled", return_value=True), \
                 mock.patch.object(web_collect.owner_send_records, "topic_records", return_value=[{"id": "d2", "status": "sent"}]):
             self.assertEqual(web_collect.later_and_drafts(self.state, TOPIC), {})
+
+    def test_a_fired_revisit_is_running_and_a_project_topics_left_over_one_is_not_shown(self):
+        fired = {"state": revisits.FIRED, "due_at": 1800000000.0, "set_at": 1799999000.0, "look": "看 CI"}
+        with mock.patch.object(revisits, "enabled", return_value=True), mock.patch.object(revisits, "read", return_value=fired), \
+                mock.patch.object(web_collect.owner_send, "enabled", return_value=False):
+            with mock.patch.object(web_collect.revisit_rules, "ordinary", return_value=True):
+                out = web_collect.later_and_drafts(self.state, TOPIC)
+            self.assertEqual(out["revisit"], {"at": 1800000000, "what": "看 CI", "set_at": 1799999000.0, "running": True})
+            with mock.patch.object(web_collect.revisit_rules, "ordinary", return_value=False):  # A project's topic now.
+                self.assertEqual(web_collect.later_and_drafts(self.state, TOPIC), {})
+
+
+class RevisitCancelTest(V34Case):
+    """取消 on the page's 定时回看 (data contract v35, ``revisit_cancel``): the 看板's 取消 with the same ``set_at`` guard."""
+
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.dict("os.environ", {revisits.SWITCH: "1"})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.set_at = 1800000000.5
+
+    def arm(self, **extra):
+        revisits.change(self.state, TOPIC, lambda data: {**revisits.armed(TOPIC, CHAT, {"minutes": 30, "look": "看 CI"}, by="job", round_=1,
+                                                                        now=self.set_at), **extra})
+
+    def test_the_kind_is_one_the_page_may_send(self):
+        self.assertIn("revisit_cancel", web_sync.KINDS)  # The settings item's ``ops`` is this list (app/web_settings.py).
+
+    def test_the_owner_cancels_the_revisit_and_the_topic_is_looked_at_again_at_once(self):
+        self.arm()
+        touched = []
+        self.sync.collector.touch = touched.append
+        ack = self.run_op("revisit_cancel", "op-r1", topic=TOPIC, set_at=self.set_at)
+        self.assertEqual((ack["state"], ack["message"]), ("done", "已取消定时回看"), ack)
+        self.assertEqual(revisits.read(self.state, TOPIC), {})
+        self.assertIn(TOPIC, touched)
+        self.assertTrue(any("revisit cancelled from the page" in line for line in self.logs))
+
+    def test_one_gone_says_so_and_one_replaced_stays_and_says_so(self):
+        ack = self.run_op("revisit_cancel", "op-r2", topic=TOPIC, set_at=self.set_at)
+        self.assertEqual(ack["state"], "done", ack)
+        self.assertIn("已经没有了", ack["message"])
+        self.arm()
+        ack = self.run_op("revisit_cancel", "op-r3", topic=TOPIC, set_at=self.set_at - 100)  # The page's row was an older one.
+        self.assertEqual(ack["state"], "failed", ack)
+        self.assertIn("换成了新的", ack["message"])
+        self.assertEqual(revisits.read(self.state, TOPIC)["set_at"], self.set_at)
+
+    def test_one_covey_is_looking_at_now_stays(self):
+        self.arm(state=revisits.FIRED)
+        ack = self.run_op("revisit_cancel", "op-r4", topic=TOPIC, set_at=self.set_at)
+        self.assertEqual(ack["state"], "failed", ack)
+        self.assertIn("已经在回看了", ack["message"])
+        self.assertEqual(revisits.read(self.state, TOPIC)["state"], revisits.FIRED)
+
+    def test_only_the_owner_on_a_topic_of_his_chat_with_a_time_cancels(self):
+        self.arm()
+        self.runtime.access.is_owner = lambda open_id: False
+        self.assertEqual(self.run_op("revisit_cancel", "op-r5", topic=TOPIC, set_at=self.set_at)["state"], "failed")
+        self.runtime.access.is_owner = lambda open_id: open_id == "ou_owner"
+        self.assertEqual(self.run_op("revisit_cancel", "op-r6", topic="f" * 32, set_at=self.set_at)["state"], "failed")
+        self.assertEqual(self.run_op("revisit_cancel", "op-r7", topic=TOPIC)["state"], "failed")
+        self.assertEqual(self.run_op("revisit_cancel", "op-r8", topic=TOPIC, set_at="x")["state"], "failed")
+        self.assertEqual(revisits.read(self.state, TOPIC)["set_at"], self.set_at)
 
 
 class AsksPushTest(WebCase):

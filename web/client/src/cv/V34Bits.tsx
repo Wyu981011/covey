@@ -10,7 +10,7 @@ import { canFinish, canStop, isHalted } from './projectData';
 import { TopicBadge } from './RoleAvatar';
 import { useOutboxOp, type OpResult, type OutboxOp } from './sendOp';
 import { useTick } from './ui';
-import { canDo, draftWords, revisitWords } from './v34';
+import { canCancelRevisit, canDo, draftWords, revisitMark, revisitWords } from './v34';
 import './v34.css';
 
 /* 数据约定 v34 在网页上的几样：专项的收尾、停止，到点回来看，等你在飞书确认的代发草稿，记忆的「不对」。
@@ -123,11 +123,51 @@ export const ProjectOps: React.FC<{ p: SnapshotProject; finishOnly?: boolean; cl
   return wrap ? <div className="pj-opsbar">{body}</div> : body;
 };
 
-/** 约好到点回来看（话题总览、看板的一行）：“约好 21:40 回来看：CI 跑完没有” */
-export const LaterLine: React.FC<{ t: Pick<SnapshotTopic, 'revisit'> }> = ({ t }) => {
+/* 页面上取消办好的定时回看（内存，这一页）：Covey 回执前已推了新数据，但页面的快照下一次取到才换；这之前不画它，免得“取消了”还挂着 */
+let cancelledRevisits: ReadonlySet<string> = new Set<string>();
+const cancelListeners = new Set<() => void>();
+function putCancelled(mark: string): void {
+  cancelledRevisits = new Set<string>([...cancelledRevisits, mark]);
+  cancelListeners.forEach((l: () => void) => l());
+}
+function useCancelled(): ReadonlySet<string> {
+  return useSyncExternalStore(
+    (cb: () => void) => {
+      cancelListeners.add(cb);
+      return () => cancelListeners.delete(cb);
+    },
+    () => cancelledRevisits,
+  );
+}
+type LaterTopic = Pick<SnapshotTopic, 'key' | 'revisit'>;
+const stillLater = (t: LaterTopic, gone: ReadonlySet<string>): boolean => !!t.revisit && !gone.has(revisitMark(t.key, t.revisit.set_at));
+
+/** Covey 定时回看（话题总览、看板的一行）：“Covey 将于 21:40 自动回看：CI 跑完没有”，后面有「取消」（Covey 认 revisit_cancel、还没开始回看时）。
+ * 取消的是这一条（带 set_at）：已经回看过、取消过或换了新的，Covey 回明确的话，页面照回执写；办好后这一行消失 */
+export const LaterLine: React.FC<{ t: LaterTopic }> = ({ t }) => {
   const now: number = useTick(30000);
-  if (!t.revisit) return null;
-  return <span className="v34-later"><CalendarClock />{revisitWords(t.revisit, now)}</span>;
+  const ops = useOps();
+  const op = useOutboxOp();
+  const gone: ReadonlySet<string> = useCancelled();
+  if (!stillLater(t, gone) || !t.revisit) return null;
+  const r = t.revisit;
+  return (
+    <span className="v34-later">
+      <CalendarClock />
+      <span className="v34-lt">{revisitWords(r, now)}</span>
+      {canCancelRevisit(ops, r) && op.phase !== 'done' ? (
+        <button type="button" className="btn sm txt v34-cancel" disabled={op.busy} title="不让 Covey 到点自动回看这个话题"
+          onClick={() => {
+            void op.run({ op_id: newOpId(), kind: 'revisit_cancel', topic_key: t.key, payload: { set_at: r.set_at } }).then((res: OpResult) => {
+              if (res.phase === 'done') putCancelled(revisitMark(t.key, r.set_at));
+            });
+          }}>
+          取消
+        </button>
+      ) : null}
+      {op.line && op.phase !== 'done' ? <span className={`t3 v34-said${op.phase === 'failed' || op.phase === 'unsent' ? ' bad' : ''}`} role="status">{op.line}</span> : null}
+    </span>
+  );
 };
 
 /** 等你在飞书卡上确认的代发草稿：网页只读，确认（可改正文）和发出都在飞书原卡上，这里只给去飞书的入口 */
@@ -149,13 +189,14 @@ export const DraftLines: React.FC<{ drafts: OwnerSendDraft[] | undefined }> = ({
   );
 };
 
-/** 看板上的“稍后”：约好回来看的话题和等你确认的代发草稿，各一行；都没有就不画 */
+/** 看板上的“稍后”：Covey 定时回看的话题和等你确认的代发草稿，各一行；都没有就不画 */
 export const LaterPanel: React.FC<{ topics: SnapshotTopic[] }> = ({ topics }) => {
-  const later: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => !!t.revisit).sort((a, b) => (a.revisit?.at ?? 0) - (b.revisit?.at ?? 0));
+  const gone: ReadonlySet<string> = useCancelled();
+  const later: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => stillLater(t, gone)).sort((a, b) => (a.revisit?.at ?? 0) - (b.revisit?.at ?? 0));
   const drafting: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => !!t.owner_send?.length);
   if (!later.length && !drafting.length) return null;
   return (
-    <section className="v34-panel" aria-label="约好回来看和代发草稿">
+    <section className="v34-panel" aria-label="Covey 定时回看和代发草稿">
       {drafting.length ? (
         <>
           <h2 className="nb-sh">等你在飞书确认的代发<em>{drafting.reduce((n: number, t: SnapshotTopic) => n + (t.owner_send?.length ?? 0), 0)}</em></h2>
@@ -172,14 +213,14 @@ export const LaterPanel: React.FC<{ topics: SnapshotTopic[] }> = ({ topics }) =>
       ) : null}
       {later.length ? (
         <>
-          <h2 className="nb-sh">约好回来看<em>{later.length}</em></h2>
+          <h2 className="nb-sh">Covey 定时回看<em>{later.length}</em></h2>
           <div className="nb-rows">
             {later.map((t: SnapshotTopic) => (
-              <Link className="nb-row v34-row" key={`r-${t.key}`} to={`/topics/${encodeURIComponent(t.key)}`}>
+              <div className="nb-row v34-row" key={`r-${t.key}`}>
                 <TopicBadge number={t.number} />
-                <span className="v34-tt">{t.title}</span>
+                <Link className="v34-tt" to={`/topics/${encodeURIComponent(t.key)}`}>{t.title}</Link>
                 <LaterLine t={t} />
-              </Link>
+              </div>
             ))}
           </div>
         </>

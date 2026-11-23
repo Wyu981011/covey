@@ -23,6 +23,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 
 ### Fixed 修复
 
+- 定时回看（到点回来看）：话题归进专项（或升级成专项）时删掉它已有的预约；`revisits` 线程、看板和网页不再处理、展示不是普通话题的预约，并顺手删掉存量的；你亲自推进了一轮、约定的时间已过且没再约新的，旧预约也自动撤掉（时间没到的保留）。
+- 网页工作台数据约定 v35：话题的 `revisit` 加 `set_at`、`running`，新操作 `revisit_cancel`；网页看板和话题总览的「Covey 定时回看」一行主语改成 Covey，带「取消」。飞书看板同样改成“Covey 将于 … 自动回看”。
 - Python 3.13：产物路径是符号链接环时，仍按“无法解析”处理（3.13 的 `Path.resolve()` 不再抛错）。
 - 网络盘上一个话题的 `topic.json` 读挂住时，不再挡住所有卡片点击和私聊消息：路由读 `topic.json`、别名和工作区列表不再持全局锁，话题编号读过一次就不再读盘（[docs/architecture.md](docs/architecture.md#主要记录与锁)）。
 
@@ -44,5 +46,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 
 ### Fixed (English)
 
+- 定时回看 (到点回来看): a topic that joins or becomes a project loses its revisit; the `revisits` thread, the 看板 and the web page no longer handle or show one of a topic that is not ordinary, and remove the ones already left; an owner's turn that ended done and set no new one also clears a revisit whose time has passed (one not yet due stays).
+- Web data contract v35: a topic's `revisit` gains `set_at` and `running`, and a new `revisit_cancel` operation; the page's rows now say who looks ("Covey 将于 … 自动回看") and have a 取消 button; the Feishu 看板 says the same.
 - Python 3.13: an artifact path that is a symlink loop is still reported as one that cannot be resolved (3.13's `Path.resolve()` no longer raises).
 - A read of one topic's `topic.json` that hangs on the network disk no longer holds up every card click and private message: routes read `topic.json`, the aliases and the workspace list without a process-wide lock, and a topic's number is read from disk once ([docs/architecture.md](docs/architecture.md#主要记录与锁)).

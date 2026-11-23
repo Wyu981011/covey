@@ -362,7 +362,7 @@ class TaskControls(Redelivery):
         return memory_collect.promote(self, ctx, event)
 
     def revisit_hint(self, ctx, event):
-        """约 30 分钟后回来看 under an answer that put something off (app/revisit_hint.py): the topic's revisit is set."""
+        """让 Covey 30 分钟后回看 under an answer that put something off (app/revisit_hint.py): the topic's revisit is set."""
         from covey.app import revisit_hint
         return revisit_hint.click(self, ctx, event)
 

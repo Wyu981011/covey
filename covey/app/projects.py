@@ -28,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import butler_harness, dispatch_cards, project_cards, project_facts, project_lead, project_loop
+from covey.app import butler_harness, dispatch_cards, project_cards, project_facts, project_lead, project_loop, revisits
 from covey.app.project_clicks import topic_ctx
 from covey.app.project_members import GATHERED_NOTE, topic_line, wanted_topics
 from covey.app.butler_env import arg_text, reply
@@ -305,6 +305,7 @@ class Projects:
         state, topic = Path(self.env.state_dir), record["origin"]["topic_id"]
         with topic_lock(topic_ctx(state, topic)):
             set_topic_project(state, topic, record["id"], projects.MEMBER)
+        revisits.drop_for_project(state, topic, self.env.runtime.log)
         projects.add_member(state, record["id"], topic)
         return True
 
@@ -422,6 +423,7 @@ class Projects:
                 continue  # Another project's since it was proposed: left there.
             with topic_lock(topic_ctx(state, topic)):
                 set_topic_project(state, topic, pid, projects.MEMBER)
+            revisits.drop_for_project(state, topic, self.env.runtime.log)
             logged = projects.add_member(state, pid, topic).get("joins") or ()
             if not any(isinstance(item, dict) and item.get("topic") == topic for item in logged):
                 direct = (record.get("origin") or {}).get("kind") == "direct"

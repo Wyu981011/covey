@@ -1,10 +1,14 @@
-/* 数据约定 v34（V34Bits.tsx）：专项的收尾、停止，到点回来看，代发草稿，完成标准与改动两行，记忆的「不对」 */
+/* 数据约定 v34（V34Bits.tsx）：专项的收尾、停止，Covey 定时回看，代发草稿，完成标准与改动两行，记忆的「不对」 */
 .cv .pj-ops{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0}
 .cv .pj-confirm{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px}
 .cv .pj-cq{font-size:12.5px;color:var(--t1)}
 .cv .pj-opsbar{display:flex;justify-content:flex-end;margin:6px 16px 0}
 .cv.m .pj-opsbar{margin:6px 12px 0;justify-content:flex-start}
 .cv .v34-later{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:var(--t2);min-width:0}
+.cv .v34-lt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .v34-cancel{flex:none}
+.cv .v34-said{flex:none}
+.cv .v34-said.bad{color:var(--fail)}
 .cv .v34-later svg,.cv .v34-draft svg{width:13px;height:13px;flex:none;color:var(--t3)}
 .cv .v34-drafts{display:flex;flex-direction:column;gap:4px;min-width:0}
 .cv .v34-draft{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--t2);min-width:0}

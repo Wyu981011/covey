@@ -22,6 +22,14 @@ thread, no record, nothing read.
   answer card, no relay to the top level), its task card shows its first sentence, and the 看板 keeps the topic as seen
   when its result before was (``keep_seen``). The look that ends the watch (no next ``revisit``, or MAX_ROUND reached)
   always reports.
+- Not a revisit's any more (``drop_for_project``, ``purge``): a topic that joins or becomes a project (app/project_members.py
+  join_topic, app/projects.py) loses its record then, with one log line; whatever is left of an earlier one (a record the
+  Bridge before this rule wrote) is removed by the thread's next look and by ``settle``, and the 看板 and the web page never
+  show a record of a topic that is not ordinary (``board_rows``, app/web_collect.py later_and_drafts).
+- The owner moved on (``settle``): an owner's turn that ended done and set no revisit takes the pending record of its topic
+  away when its time has passed (``due_at`` <= now) and the turn ran after it was set: the owner looked at it himself and
+  the wake-up would only repeat him. Before its time the record stays: what it waits for (a training, CI) is outside the
+  topic, a chat about something else does not end it, and the 取消 on the 看板 and the page takes it back.
 - Seen and taken back (the 看板, cards/board.py REVISIT_KIND, app/digest.py claim): each record of the chat is a row
   (``board_rows``) with 取消, the owner's only (``cancel``).
 """
@@ -49,7 +57,7 @@ RETRY = 60  # Seconds before a turn that could not be queued is tried again.
 LOST = 120  # Seconds a FIRED record's turn may have no job record before it is queued again.
 MAX_TRIES = 5  # Turns of one revisit queued (each lost or refused one tried again) before it is given up.
 # The turn's message: what it is and what to do, the look the turn before asked for in it.
-WAKE = ("[Bridge 叫醒] 到了上一轮约好回来看的时间，要看的是：{look}\n"
+WAKE = ("[Bridge 叫醒] 到了上一轮约定的回看时间，要看的是：{look}\n"
         "先看现在的状态。和上次比没有变化：检查点写 \"unchanged\": true，回复一句话。有变化：照常回复。"
         "还要接着等，就再写 revisit。")
 # Put after the checkpoint file in an ordinary topic's turns (app/runs.py _revisit_note), only with the switch on.
@@ -66,6 +74,42 @@ def ordinary(state_dir, topic_id, chat_id) -> bool:
         return not load_topic(Path(state_dir), topic_id).get("proxy")
     except (OSError, ValueError):
         return False
+
+
+def drop_for_project(state_dir, topic_id, log=None) -> bool:
+    """The topic's revisit removed because it is a project's now (``ordinary`` says no): whether there was one. Called outside the
+    topic's lock; the record's own lock is a leaf (core/revisits.py change). Never raises."""
+    try:
+        if not records.enabled() or not state_dir or not records.read(state_dir, topic_id):
+            return False
+        records.change(state_dir, topic_id, lambda data: None)
+    except Exception:  # noqa: BLE001 - the join does not depend on it; the thread's look removes it later
+        return False
+    if log is not None:
+        log(f"revisit dropped topic={str(topic_id)[-8:]}: the topic joined a project")
+    return True
+
+
+def purge(state_dir, record, log=None) -> bool:
+    """``record`` (core/revisits.py) removed when its topic is not an ordinary topic any more: a project's, the butler's, 代答's, which
+    nothing reads it for (``settle`` and ``ordinary``). Whether it was. Never raises."""
+    topic, chat = str(record.get("topic_id") or ""), str(record.get("chat_id") or "")
+    removed = []
+
+    def edit(data):
+        if data and data.get("set_at") == record.get("set_at"):
+            removed.append(True)
+            return None
+        return data or None  # Replaced meanwhile, or already gone.
+    try:
+        if ordinary(state_dir, topic, chat):
+            return False
+        records.change(state_dir, topic, edit)
+    except Exception:  # noqa: BLE001
+        return False
+    if removed and log is not None:
+        log(f"revisit removed topic={topic[-8:]}: not an ordinary topic")
+    return bool(removed)
 
 
 def after_runner(log, state_dir, job) -> None:
@@ -119,7 +163,12 @@ def settle(log, state, record, now=None) -> None:
         return  # A retry of a revisit turn that failed is to come: the watch waits for it.
     topic, chat = str(record.get("topic_id") or ""), str(record.get("chat_id") or "")
     status = str(record.get("status") or "")
-    if not topic or status not in ENDED or not ordinary(state, topic, chat):
+    if not topic or status not in ENDED:
+        return
+    if not ordinary(state, topic, chat):
+        existing = records.read(state, topic) if records.enabled() else {}
+        if existing:
+            purge(state, existing, log)  # Left from before the topic became a project's.
         return
     revisit_turn = records.is_revisit(message)
     checkpoint = read_checkpoint(Path(record["checkpoint_path"])) if record.get("checkpoint_path") else {}
@@ -137,7 +186,11 @@ def settle(log, state, record, now=None) -> None:
             quiet.extend([True] if mine and records.unchanged(checkpoint) else [])  # The turn ``silent`` kept back.
             return records.armed(topic, chat, want, by=job_key(message, record.get("job_id")), round_=round_, now=now)
         if not mine:
-            return data or None  # An owner's turn that asked for none: the revisit set before stays.
+            if (data and status == "done" and data.get("state") == records.PENDING and float(data.get("due_at") or 0) <= now
+                    and ended_at(record) > float(data.get("set_at") or 0)):
+                said.append(f"revisit dropped topic={topic[-8:]}: the owner moved on past its time")
+                return None  # Its time passed and the owner has been through the topic himself since: nothing is left to wake.
+            return data or None  # An owner's turn that asked for none: the revisit set before stays (its time is to come).
         said.append(f"revisit ended topic={topic[-8:]} status={status} round={round_ - 1}"
                     + (" (the last one in a row)" if want is not None else ""))
         return None
@@ -186,7 +239,7 @@ def board_rows(state_dir, chat_id, clock) -> list:
         return []
     rows = []
     for record in records.records(state_dir):
-        if record.get("chat_id") != chat_id:
+        if record.get("chat_id") != chat_id or not ordinary(state_dir, record["topic_id"], chat_id):
             continue
         label, title = label_title(state_dir, record["topic_id"], "（话题未知）")
         rows.append({"topic": record["topic_id"], "label": label, "title": title, "at": clock(float(record["due_at"])),
@@ -219,6 +272,9 @@ class Revisits:
         state = Path(ctx.state_dir)
         for record in records.records(state):
             try:
+                if not ordinary(state, str(record.get("topic_id") or ""), str(record.get("chat_id") or "")):
+                    purge(state, record, self.runtime.log)  # A project's topic now: nothing is queued for it.
+                    continue
                 self.look(state, record, now)
             except Exception as exc:  # noqa: BLE001 - the others are looked at all the same
                 self.runtime.log(f"revisit failed topic={str(record.get('topic_id'))[-8:]}: {type(exc).__name__}")

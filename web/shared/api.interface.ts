@@ -7,7 +7,7 @@ export const TOPIC_STATES = ['等你', '在做', '做完', '已停止', '失败'
 export type TopicState = (typeof TOPIC_STATES)[number];
 
 /** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload */
-export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo'] as const;
+export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo', 'revisit_cancel'] as const;
 export type OutboxKind = (typeof OUTBOX_KINDS)[number];
 export const isOutboxKind = (v: string): v is OutboxKind =>
   (OUTBOX_KINDS as readonly string[]).includes(v);
@@ -560,7 +560,7 @@ export interface SnapshotTopic {
   joined_at?: number;
   /** v20：话题现在的配置（只有 kind=topic、Covey 读得到模型目录时才有）。有它且设置里有 launch 时，输入框下的配置栏能点开换配置 */
   config?: TopicConfig;
-  /** v34：约好到点回来看（开了到点回来看、有待执行的预约才有）：几点（秒）、看什么 */
+  /** v34：Covey 的定时回看（开了到点回来看、有预约才有）：几点（秒）、看什么；v35 起带 set_at（取消时核对）和 running（Covey 正在回看） */
   revisit?: TopicRevisit;
   /** v34：等你在飞书卡上确认的代发草稿（开了代发、有草稿才有）；网页只读，确认和发送都在飞书原卡上 */
   owner_send?: OwnerSendDraft[];
@@ -1083,7 +1083,7 @@ export interface SettingsData {
   asks?: SettingsAsks;
   tabs: SettingsTab[];
   feishu: string;
-  /** v34：这个 Covey 认的网页操作；有 project_finish、project_stop、memory_undo 才画收尾、停止和记忆的「不对」 */
+  /** v34：这个 Covey 认的网页操作；有 project_finish、project_stop、memory_undo 才画收尾、停止和记忆的「不对」，有 revisit_cancel（v35）才画定时回看的「取消」 */
   ops?: string[];
   config?: SettingsConfigPage | SettingsError;
   /** v21 及以前：新话题、管家两页（v22 起并进 config） */
@@ -1165,6 +1165,10 @@ export interface TopicRevisit {
   at: number;
   /** 到点要看什么（一句话） */
   what: string;
+  /** v35：这条预约是几点约下的（秒，带小数）；「取消」带上它，Covey 只取消同一条，换了新的不误删。旧 Covey 没有，就不画「取消」 */
+  set_at?: number;
+  /** v35：Covey 已经排出回看那一轮、正在回看（这时取消不了） */
+  running?: boolean;
 }
 export interface OwnerSendDraft {
   id: string;
