@@ -83,7 +83,7 @@ feishu/events.py consume：每个订阅一个 lark-cli 消费者，逐行交给�
  → 后端事件 → Interaction.structured_harness_event → core/trace.py → cards/trace_view.py → Cards → app/task_card.py
  → RunResult → app/turn_settle.py settle_turn：保存 → 会话保护 → 授权
  → TurnDelivery.deliver：答案卡；管家回带挂钩 after_turn；失败留给 app/outbox.py
- → done.json、exit.json → Bridge 的 finish_detached 收尾，未结束的记录标 interrupted，原卡换恢复卡
+ → done.json、exit.json → Bridge 的 finish_detached 收尾，未结束的记录标 interrupted，原卡换恢复卡；再跑这一轮的收尾 after_job
 ```
 
 ### 谁被服务
@@ -154,7 +154,9 @@ continued、done、failed、cancelled、interrupted：终态
 
 - 每条消息是原子写入的一个 JSON 文件，读方按文件名顺序取一条删一条。
 - 预先拉起：接着就运行的任务在建任务卡之前由 `prestart_runner` 先起任务进程，它预热后等写明同一随机串的 `handoff.json`，30 秒没等到就退出。
-- 任务进程从不自己建任务，续答经 `RunnerLink.enqueue` 请 Bridge 入队。`runner_argv()` 把路径改成绝对路径，`runner_env()` 清理 `PYTHONPATH`。
+- 任务进程从不自己建任务，续答经 `RunnerLink.enqueue` 请 Bridge 入队。`runner_argv()` 把路径改成绝对路径，`runner_env()` 清理 `PYTHONPATH`。任务进程里的 `enqueue_chat_job`、`reserve_submission`、`TaskControls.requeue` 一开头就拒绝（`Runtime.refuse_new_job`，`任务进程不新建任务`），什么记录都不写、什么也不发。
+- 一轮的收尾只在 Bridge 跑（`app/detached.py` 的 `after_job`：知识条目、记忆、代发草稿、话题转交管家、协作、回带里的话题卡归属和专项回执、到点回来看）：任务进程退出后 `finish_detached` 跑一次；任务就在 Bridge 进程里跑时（没有任务进程，如测试），`JobDispatch` 在这一轮之后跑。任务进程也经 `JobDispatch._process_reply_job` 跑这一轮（它的 `runtime.detached()` 为假），`after_job` 在那里什么都不做：这些写的是别的记录、发的是别处的消息，转交管家还要排管家的一轮，任务进程只改本任务的卡和记录。在任务进程里跑过一遍时，转交管家发出了顶层消息，管家那一轮按任务进程自己的编号（#1）记成 `queued` 后被拒，没人排，部署一直等它。交给任务进程时 Bridge 记一笔 `turn-ends/<任务键>.json`（`end_due`），收尾做完删掉（`end_done`）；任务进程在没有 Bridge 看着时退出的（部署、重启的空档），下次启动在认领和中断标记之后补做（`end_stranded`，从 `handoff.json` 取任务），还活着的等它退出，Harness 已下架的或任务进程结束超过 `ENDS_KEPT`（24 小时）的丢弃不做。
+- 入队失败：记录已经写成 `queued` 而 `enqueue_reply_job` 抛错时（`publish_submission`、`requeue`），`TaskControls.not_queued` 把记录改成 `failed`（`没排上队，没有执行：<错误类型>`），卡换恢复卡（发不出卡就在话题里说一句），错误照旧抛给调用方；不留没人排的 `queued`（`restart_blockers` 会一直等它）。
 - 停止不只靠这一轮的线程：`cancel_reply_job_from_card` 设好 `cancel_event` 后、写卡和记录之前先 `hard_stop_later`，`HARD_STOP_AFTER`（5 秒）后后端进程还在就给它的进程组发 SIGTERM。平时这一轮的线程一两秒内自己看到停止、先关掉后端，这一下什么也不做；盘卡住时那条线程可能在记录锁上等几分钟，后端照样停。停止之后、后端还没做完时后端抛什么都按停止结算（`worker._turn_from_exception`）。
 - `SIGTERM` 是中断，不是停止（`app/runner.py` 的 `interrupt`）：没做完的一轮不结算（`leave_interrupted`），记录留在 `running`，退出后由 Bridge 标 `interrupted`；已做完的结果照常投递。
 - 没起来：退出时仍是 `queued` 且无 `exit.json` 时 `relaunch_unstarted` 再起一次；`start_runner` 抛错时 `not_started` 把记录写成 `failed`（`runner_start_failed`）并出恢复卡。
@@ -169,7 +171,7 @@ continued、done、failed、cancelled、interrupted：终态
 
 1. `recover_question_delivery` 核对问题记录；`recover_worktree_launches` 把建 worktree 时被打断的启动卡换回表单。
 2. `adopt_runners` 按 `handoff.json` 认领存活任务进程，往 inbox 写 `bridge_restarted`；再排上 `queued/` 里的任务。
-3. `recover_stale_jobs` 把其余未结束记录标 `interrupted`；`close_retired_jobs`；`release_started_launches` 排上已绑定话题里还在 `waiting_workspace` 的消息。
+3. `recover_stale_jobs` 把其余未结束记录标 `interrupted`；`close_retired_jobs`；`release_started_launches` 排上已绑定话题里还在 `waiting_workspace` 的消息；`queue_stranded` 排上任务进程留下的补充；`end_stranded` 补做 `turn-ends/` 里任务进程在没有 Bridge 看着时退出的那几轮的收尾（`after_job`，日志 `turn end run at start job=#N`），只读这一个通常为空的目录。
 
 这三步做完才起后台线程和事件消费者：认领、标中断和核对问题都要在处理第一个点击或消息之前。所以这几步的耗时，就是重启后点卡片没反应（lark-cli 收事件）或先收下、稍后才处理（SDK 收事件）的时间。为让它在几秒内，这几步遵守：
 

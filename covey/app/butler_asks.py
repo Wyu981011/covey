@@ -9,18 +9,21 @@ there already.
   a wake-up, a revisit, an answer's continuation, an automatic retry, a 协作 turn) of an ordinary topic or a project's
   topic in a chat with a butler; not the butler's family (its leads too), not a 代答 topic. The topic writes
   ``ask_butler`` ({ask, why}, ``wanted``) into its checkpoint and says in its reply that it is handed on.
-- Handed on (``collect``, the Bridge once the turn's runner is gone: app/detached.py, app/job_dispatch.py): a turn that
-  ended well (done or waiting_user, its reply authorized: rule 5) with ``ask_butler`` is handed on once (its record
-  <state>/butler-asks/<key>.json is written before anything is sent, rule 1; the same words of the same topic within
-  SAME_DAYS days are not handed again, a later turn copying its checkpoint): a text message of the bot's at the top level
-  of the chat (``message_text``: "↪ T12 转给管家", the owner's words in the topic, the topic's reading of them), then a
-  turn of the butler's on that message, queued (never a 补充 of a running one) with the turn source ``handover``
-  (core/turn_source.py: the owner asserted it, the Bridge recorded it, its origin the topic and the owner's message).
-  The butler answers it as any of his turns (its rule: app/prompts.py ASKED_RULE), its answer under that message.
+- Handed on (``collect``, the Bridge once the turn's runner is gone: app/detached.py after_job, never in a task runner,
+  which queues no job): a turn that ended well (done or waiting_user, its reply authorized: rule 5) with ``ask_butler``
+  is handed on once (its record <state>/butler-asks/<key>.json is written before anything is sent, rule 1; the same
+  words of the same topic within SAME_DAYS days are not handed again, a later turn copying its checkpoint): a text
+  message of the bot's at the top level of the chat (``message_text``: "↪ T12 转给管家", the owner's words in the topic,
+  the topic's reading of them), then a turn of the butler's on that message, queued (never a 补充 of a running one) with
+  the turn source ``handover`` (core/turn_source.py: the owner asserted it, the Bridge recorded it, its origin the topic
+  and the owner's message). The butler answers it as any of his turns (its rule: app/prompts.py ASKED_RULE), its answer
+  under that message.
 - Not handed on: no butler can take it (the butler off, its Harness not available), the message did not go out (a send
   that may have gone is never sent again, rule 1) or the butler's turn could not be queued: a line in the topic's thread
-  says so (``NOT_HANDED``) and the owner says it to the butler himself. An automatic retry's ask is not handed on either,
-  and its thread says so (the rule is not in such a turn; a copied checkpoint would else be taken as handed on).
+  says so (``NOT_HANDED``) and the owner says it to the butler himself. A step that raises counts as what it left (the
+  message not sent, perhaps sent, or the turn not queued): never ``sending`` or ``sent`` with nothing said. An automatic
+  retry's ask is not handed on either, and its thread says so (the rule is not in such a turn; a copied checkpoint would
+  else be taken as handed on).
 """
 from __future__ import annotations
 
@@ -176,7 +179,10 @@ def message_text(label, ask, words) -> str:
 
 
 def collect(gateway, job, ctx) -> None:
-    """After a task's runner exited: its ``ask_butler`` handed on, as the module says. Never raises."""
+    """After a task's runner exited: its ``ask_butler`` handed on, as the module says. Never raises. Nothing in a task
+    runner (app/detached.py after_job calls none there): a runner queues no job; its Bridge hands it on once it exits."""
+    if getattr(gateway.runtime, "in_runner", False):
+        return
     try:
         if not enabled():
             return
@@ -220,23 +226,37 @@ def hand_on(gateway, job, ctx, record, ask) -> None:
     owner = gateway.runtime.owner_open_id or ""
     event = {"chat_id": chat, "chat_type": "group" if group else "p2p", "sender_id": owner, "sender_type": "user",
              "message_type": "text"}
-    app = gateway.butler.app_for(base, event, True)
-    if app is None:
-        return settle(gateway, job, ctx, record, path, mine, "no_butler", label)
     from covey.feishu.transport import last_failure
 
-    message = gateway.messenger.send_text(base.profile, chat, text, gateway.voice.safe_key(f"butler-ask-{path.stem[:24]}"))
-    if not message:
-        failure = last_failure()
-        return settle(gateway, job, ctx, record, path, mine,
-                      "failed" if failure is not None and not failure.ambiguous else "uncertain", label)
-    mine = {**mine, "message_id": message, "sent_at": time.time()}
-    write_json(path, {**mine, "state": "sent"}, ensure_ascii=False, indent=2)
-    queued = queue_turn(gateway, base, app, chat, message, text, owner, topic, str(record.get("message_id") or ""))
-    if queued is None:
-        return settle(gateway, job, ctx, record, path, mine, "not_queued", label)
+    # What it settles as when a step raises: the message not sent, perhaps sent (never sent again, rule 1), sent with no
+    # turn of the butler's; never left "sending" or "sent" with nothing to come of it and nothing said (T688).
+    outcome, stage, queued = "", "failed", None
+    try:
+        app = gateway.butler.app_for(base, event, True)
+        if app is None:
+            outcome = "no_butler"
+        else:
+            stage = "uncertain"
+            message = gateway.messenger.send_text(base.profile, chat, text,
+                                                  gateway.voice.safe_key(f"butler-ask-{path.stem[:24]}"))
+            if not message:
+                failure = last_failure()
+                outcome = "failed" if failure is not None and not failure.ambiguous else "uncertain"
+            else:
+                stage, mine = "not_queued", {**mine, "message_id": message, "sent_at": time.time()}
+                write_json(path, {**mine, "state": "sent"}, ensure_ascii=False, indent=2)
+                queued = queue_turn(gateway, base, app, chat, message, text, owner, topic,
+                                    str(record.get("message_id") or ""))
+                outcome = "" if queued is not None else "not_queued"
+    except Exception as exc:  # noqa: BLE001 - said in the topic as what became of it
+        gateway.runtime.log(f"butler ask raised job=#{record.get('job_id')} as {stage}: "
+                            f"{type(exc).__name__}: {str(exc)[:200]}")
+        outcome = stage
+    if outcome:
+        return settle(gateway, job, ctx, record, path, mine, outcome, label)
     write_json(path, {**mine, "state": "sent", "butler_job": queued}, ensure_ascii=False, indent=2)
-    gateway.runtime.log(f"butler ask handed on job=#{record.get('job_id')} topic={topic[-8:]} message={message[-8:]}")
+    gateway.runtime.log(f"butler ask handed on job=#{record.get('job_id')} topic={topic[-8:]} "
+                        f"message={mine['message_id'][-8:]}")
 
 
 def queue_turn(gateway, base, app, chat, message, text, owner, topic, said) -> str | None:

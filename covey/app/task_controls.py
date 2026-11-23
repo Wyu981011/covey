@@ -14,13 +14,15 @@ from covey.core.butler import traits, worded
 from covey.core.checkpoint import read_checkpoint
 from covey.core.harness import BridgeContext
 from covey.core.jobs import BridgeReplyJob as ReplyJob
-from covey.core.jobs import RECALLED, STOP_SOURCES, carry_device, context_for_job, parse_job_stop_action_value, upsert_job_record
+from covey.core.jobs import (RECALLED, STOP_SOURCES, carry_device, context_for_job, find_job_record,
+                             parse_job_stop_action_value, upsert_job_record)
 from covey.core.model_settings import recorded_work_mode, strict_recorded_model_settings
 from covey.core.model_policy import retried_line
 from covey.core.process import signal_group
 from covey.core.state import utc_now_iso
 from covey.core.history_storage import recent_history
 from covey.core.topics import RETIRED_TEXT as TOPIC_RETIRED, remember_topic_message, retired_topic
+from covey.core.turn_words import retry_hint
 from covey.app.answers import ASK_PREFIX
 from covey.app.card_actions import RETIRED_TEXT, action_value
 from covey.app.card_lanes import after_ack
@@ -52,6 +54,7 @@ HARD_STOP_AFTER = 5.0
 
 
 RECALLED_QUEUED = "原消息已撤回，未执行"  # The record of a queued task whose message the owner recalled.
+NOT_QUEUED = "没排上队，没有执行"  # The record of a task whose enqueue raised once it was recorded queued (not_queued).
 
 def hard_stop_later(job, log, after=None):
     """Arm the stop that does not wait for the turn's thread: ``after`` seconds on, the backend process this process
@@ -128,6 +131,25 @@ class TaskControls(Redelivery):
         self.models = models
         self.steering = steering
         self.record_job_state = record_job_state
+
+    def not_queued(self, ctx, job, exc) -> None:
+        """``job``'s record was written queued, then ``enqueue_reply_job`` raised ``exc`` (a submission's, a retry's):
+        no queue holds it and nothing will run it. Its record ends failed with what happened (a queued record no queue
+        holds would wait for ever, and every restart's check with it: core/run_dir.py restart_blockers), and its card,
+        else a line in its topic, says it did not run, with 检查并继续, as a runner that could not start
+        (app/detached.py not_started). Never raises: the caller raises ``exc``."""
+        reason = type(exc).__name__
+        self.runtime.log(f"job #{job.job_id} not queued: {reason}: {str(exc)[:200]}")
+        try:
+            self.record_job_state(ctx, job, "failed", f"{NOT_QUEUED}：{reason}", execution_status="failed")
+            record = find_job_record(ctx.state_dir, job.message_id)
+            if record and record.get("status") == "failed":
+                self.report_unfinished(ctx, record, f"任务 #{job.job_id} 没排上队（{reason}），没有执行。"
+                                                    f"在原话题{retry_hint()} 检查后继续。",
+                                       self.voice.key("not-queued", job.message_id), keep_question_forms=False,
+                                       restart=False)
+        except Exception as error:  # noqa: BLE001 - the enqueue's own error is what its caller hears
+            self.runtime.log(f"job #{job.job_id} not queued, not settled: {type(error).__name__}")
 
     def asked_card(self, ctx, record, card):
         """``card`` with the 你问 block of ``record`` on top when its card is one of a quiet butler turn's at the
@@ -539,6 +561,7 @@ class TaskControls(Redelivery):
         current binding (a click on a stale card was refused before this). ``fallback``: a retry after a safety
         refusal (app/policy_retry.py; {"of", "category", "model", "name"}): the same request on that model, as a new
         turn, not 检查并继续: no recovery context, the refused turn left out of the recent conversation."""
+        self.runtime.refuse_new_job()  # Not in a task runner (its retries are bot_only): before anything is written.
         history = recent_history(ctx.history_path)
         kind = auto_retry.kind_of(record) if automatic else ""
         counts = auto_retry.chain_counts(record, automatic)
@@ -597,6 +620,7 @@ class TaskControls(Redelivery):
         job.binding_revision = int(ctx.options.get("binding_revision") or 0)
         with LOCK:
             self.runtime.jobs.register(job)  # Idle maintenance sees it before its card is sent.
+        recorded = False
         try:
             job.progress = None if quiet else self.cards.create_streaming_reply(
                 ctx, job, self.cards.render_stream_status(job, queued))
@@ -605,9 +629,12 @@ class TaskControls(Redelivery):
             self.record_job_state(ctx, job, "queued", queued, retry_of=record["key"],
                                   **({"reaction_message": job.reaction_message} if quiet else {}),
                                   **{name: count for name, count in counts.items() if count})
+            recorded = True
             self.runtime.enqueue_reply_job(job, self.harness.name)
-        except BaseException:
+        except BaseException as exc:
             self.runtime.unregister_reply_job(job)
+            if recorded and isinstance(exc, Exception):
+                self.not_queued(ctx, job, exc)  # Its record does not stay queued with nothing to run it.
             raise
         upsert_job_record(ctx.state_dir, record["key"], retried_by=job.message_id)
         if quiet:

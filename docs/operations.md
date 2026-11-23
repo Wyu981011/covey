@@ -138,6 +138,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ topics/aliases/              消息和卡片 → 话题的别名
 │  ├─ jobs/、queued/               任务记录；存盘的排队任务，交给任务进程时删除
 │  ├─ runs/<任务键>/                任务进程的运行目录，见“任务进程”一节
+│  ├─ turn-ends/                   交给任务进程、Bridge 还没做收尾的任务（任务进程退出时没有 Bridge 在看的，下次启动补做）
 │  ├─ traces/<任务键>.jsonl        执行过程记录
 │  ├─ checkpoints/                 每个任务的检查点（模型写）
 │  ├─ questions/、held-notes/      待答问题；多题待答时暂存的补充
@@ -340,7 +341,7 @@ Bridge 的 maintenance 后台线程每小时检查一次（`core/maintenance.py`
 | 检查点 | 不在活跃状态、30 天未更新的压缩为 `.json.gz`，仍可用于“检查并继续” |
 | 执行过程 `traces/<任务键>.jsonl` | 任务已结束、30 天未更新、任务进程也不在的压缩为 `.jsonl.gz`，不删除；先写好并落盘 `.gz` 再删原文件 |
 | 任务记录 | 已结束的删掉没有代码再读的字段，其他字段和 `updated_at` 不变（`records_slimmed=`）；`jobs/`、`questions/`、`held-notes/` 的 `.journal` 超过 1 MiB 时删掉重来 |
-| `tmp/`、`artifact-upload/`、`inbound-messages/`、`stranger-replies/`、`event-spool/`、`proxy/shots/`、`main-thread/opened/`、`main-thread/relays/`、`main-thread/dispatch/`、`main-thread/tracks/` | 7 天内没有改动、也没有进程用着的整个删除 |
+| `tmp/`、`artifact-upload/`、`inbound-messages/`、`stranger-replies/`、`event-spool/`、`turn-ends/`、`proxy/shots/`、`main-thread/opened/`、`main-thread/relays/`、`main-thread/dispatch/`、`main-thread/tracks/` | 7 天内没有改动、也没有进程用着的整个删除 |
 | 同时做几件事里这些事用过的 Claude 会话文件 | 按 `main-thread/tracks/` 账本里的 `session_id`，那一轮结束满 3 天、文件 3 天没改没读的删（`remove_track_sessions`）；不在账本里的不动 |
 | `runs/` 运行目录 | 任务进程已不在、最新文件早于 7 天的删除；任务记录和执行过程保留 |
 | 代答批次 `proxy/batches/` | 只删已结束且 30 天没改动的 |

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import importlib
 import inspect
 import json
@@ -16,7 +17,7 @@ from covey.app.app import BridgeApp
 from covey.app.harnesses import components
 from covey.core.ignored_env import IGNORED_ENV
 from covey.core.roster import HARNESSES
-from covey.core.jobs import find_job_record
+from covey.core.jobs import BridgeReplyJob, find_job_record, upsert_job_record
 from covey.core.model_settings import settings_path
 from covey.core.topics import read_topic, remember_topic_message
 from covey.service.pairing import issue
@@ -176,6 +177,110 @@ class UnifiedTests(UnifiedCase):
                 self.app.process_reply_job(job, self.ctx)
             self.assertEqual((check.call_count, process.call_count), (checks, 1))
         self.app.runtime.runner = None
+
+    def queued_job(self, mid):
+        """The claude topic of message ``mid`` started: its queued job, taken off the scheduler's queue."""
+        self.receive(mid, 'initial')
+        _, ctx = self.route(mid)
+        self.app.topics.select_harness(ctx, 'chat', 'claude')
+        app, ctx = self.route(mid)
+        app.submission.start_workspace(ctx, 'chat', ctx.workspace_name)
+        return app, ctx, self.app.runtime.jobs.queue.get_nowait()
+
+    def test_a_turns_end_is_the_bridges_and_never_runs_in_a_task_runner(self):
+        # T688: a task runner runs its job through process_reply_job too (runtime.detached() is False there), and the
+        # Bridge's end of a turn (knowledge, memory, 代发草稿, 转交管家, 协作, the relay's receipts) ran there before its
+        # Bridge ran it again in finish_detached. Run in the Bridge's own process the turn still ends with each once.
+        _, _, job = self.queued_job('ended')
+        hooks = ('covey.app.knowledge_collect.collect', 'covey.app.memory_collect.collect',
+                 'covey.app.owner_send.collect', 'covey.app.butler_asks.collect', 'covey.app.detached.collab_after',
+                 'covey.app.butler_relay.after_runner')
+        for runner, calls in ((object(), 0), (None, 1)):
+            self.app.runtime.runner = runner
+            try:
+                with contextlib.ExitStack() as stack:
+                    patched = [stack.enter_context(mock.patch(name)) for name in hooks]
+                    stack.enter_context(mock.patch('covey.app.job_dispatch.check_or_raise'))
+                    process = stack.enter_context(mock.patch.object(BridgeApp, 'process_reply_job', autospec=True))
+                    self.app.process_reply_job(job, self.ctx)
+            finally:
+                self.app.runtime.runner = None
+            self.assertEqual(process.call_count, 1)
+            self.assertEqual({name: hook.call_count for name, hook in zip(hooks, patched)},
+                             dict.fromkeys(hooks, calls), 'in a task runner' if runner else 'in the Bridge')
+
+    def test_a_task_runner_submits_no_job_and_leaves_no_record_or_message(self):
+        # T688: a hand-on to the butler from a runner wrote its job #1 queued, then enqueue_reply_job refused it; the
+        # record waited for ever and the next deploy with it (core/run_dir.py restart_blockers).
+        from covey.app.detached import restart_blockers
+
+        app, ctx, _ = self.queued_job('first')
+        self.app.runtime.jobs.unregister(_)
+        upsert_job_record(self.ctx.state_dir, 'first', status='done')
+        counter, said = self.app.runtime.jobs.counter, len(self.said())
+        history = ctx.history_path.read_text(encoding='utf-8')
+        self.app.runtime.runner = object()
+        try:
+            with self.assertRaisesRegex(RuntimeError, '任务进程不新建任务'):
+                app.submission.enqueue_chat_job(ctx, 'hand on', 'chat', 'om_from_runner', prompt_content='hand on')
+            job = BridgeReplyJob(job_id=99, user_text='queued', chat_id='chat', message_id='om_submitted', timeout=60,
+                                 topic_id=ctx.topic_id, history_path=ctx.history_path)
+            with self.assertRaisesRegex(RuntimeError, '任务进程不新建任务'):
+                app.submission.submit_topic_job(ctx, job)  # Each way in: refused before the job is registered.
+            self.assertIsNone(find_job_record(self.ctx.state_dir, 'om_submitted'))
+        finally:
+            self.app.runtime.runner = None
+        self.assertIsNone(find_job_record(self.ctx.state_dir, 'om_from_runner'))
+        self.assertEqual(restart_blockers(self.ctx.state_dir), [])
+        self.assertEqual((self.app.runtime.jobs.counter, len(self.said())), (counter, said))
+        self.assertEqual(ctx.history_path.read_text(encoding='utf-8'), history)
+        self.assertFalse(self.app.runtime.jobs.busy())
+
+    def test_a_job_whose_enqueue_raised_is_not_left_queued(self):
+        # Its record written queued, enqueue_reply_job raised (here a disk error saving queued/<key>.json): no queue
+        # holds it, so it ends failed, says so on its card, and holds up no restart; the error still reaches the caller.
+        from covey.app.detached import restart_blockers
+
+        app, ctx, first = self.queued_job('first')
+        self.app.runtime.jobs.unregister(first)
+        upsert_job_record(self.ctx.state_dir, 'first', status='done')
+        with mock.patch.object(self.app.runtime, 'enqueue_reply_job', side_effect=OSError('disk')), \
+                mock.patch.object(app.controls, 'report_unfinished') as report:
+            with self.assertRaises(OSError):
+                app.submission.enqueue_chat_job(ctx, 'next', 'chat', 'om_next', prompt_content='next')
+        record = find_job_record(self.ctx.state_dir, 'om_next')
+        self.assertEqual((record['status'], record.get('execution_status')), ('failed', 'failed'))
+        self.assertTrue(record['status_message'].startswith('没排上队，没有执行'), record['status_message'])
+        self.assertEqual(restart_blockers(self.ctx.state_dir), [])
+        self.assertFalse(self.app.runtime.jobs.busy())
+        (_, shown, notice, _), kwargs = report.call_args
+        self.assertEqual((shown['key'], kwargs['restart'], kwargs['keep_question_forms']), ('om_next', False, False))
+        self.assertIn('没排上队（OSError），没有执行', notice)
+        self.assertTrue(any('not queued: OSError' in line for line in self.logs))
+
+    def test_a_retry_whose_enqueue_raised_is_not_left_queued(self):
+        from covey.app.detached import restart_blockers
+
+        app, ctx, first = self.queued_job('first')
+        self.app.runtime.jobs.unregister(first)
+        record = upsert_job_record(self.ctx.state_dir, 'first', status='failed', execution_status='failed',
+                                   model='claude-model', effort='high', model_settings_snapshot=True)
+        with mock.patch.object(self.app.runtime, 'enqueue_reply_job', side_effect=OSError('disk')), \
+                mock.patch.object(app.controls, 'report_unfinished') as report:
+            with self.assertRaises(OSError):
+                app.controls.requeue(ctx, 'chat', 'retry-first', record)
+        again = find_job_record(self.ctx.state_dir, 'retry-first')
+        self.assertEqual((again['status'], again['retry_of']), ('failed', 'first'))
+        self.assertEqual(restart_blockers(self.ctx.state_dir), [])
+        self.assertEqual(report.call_args.args[1]['key'], 'retry-first')
+        self.assertNotIn('retried_by', find_job_record(self.ctx.state_dir, 'first'))
+        self.app.runtime.runner = object()  # Its retries are bot_only; were one to reach a task runner, it writes nothing.
+        try:
+            with self.assertRaisesRegex(RuntimeError, '任务进程不新建任务'):
+                app.controls.requeue(ctx, 'chat', 'retry-in-runner', record)
+        finally:
+            self.app.runtime.runner = None
+        self.assertIsNone(find_job_record(self.ctx.state_dir, 'retry-in-runner'))
 
     def test_only_a_job_that_runs_next_has_its_task_runner_started_before_its_card(self):
         with mock.patch('covey.app.submission.prestart_runner') as prestart:

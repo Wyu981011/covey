@@ -17,6 +17,8 @@ from covey.core.jobs import job_key
 from covey.core.scheduler import topic_key
 from covey.core.source_book import SourceBook
 
+NO_NEW_JOBS = "任务进程不新建任务"  # Runtime.refuse_new_job's error, in a task runner.
+
 
 def print_log(message: str) -> None:
     # Milliseconds: the timing lines (core/timing.py) and a flow's other lines line up.
@@ -232,11 +234,17 @@ class Runtime:
         """Jobs run in their own task runner process: the live Bridge, not a runner or a test app."""
         return bool(self.cli_argv) and not self.in_runner
 
+    def refuse_new_job(self) -> None:
+        """RuntimeError in a task runner, which never starts a job (a continuation it needs is queued by its Bridge:
+        app/runner_ipc.py RunnerLink.enqueue); a submission asks first, before anything of the job is written or sent
+        (app/submission.py), so a refused one leaves no queued record that nothing will run."""
+        if self.in_runner:
+            raise RuntimeError(NO_NEW_JOBS)
+
     def enqueue_reply_job(self, job, harness: str) -> None:
         """Queue ``job`` for the scheduler as a job of ``harness``. The live Bridge saves it first,
         so a restart while it waits queues it again; a task runner never starts jobs."""
-        if self.in_runner:
-            raise RuntimeError("任务进程不新建任务")
+        self.refuse_new_job()
         if not job.harness_id:
             job.harness_id = harness
         if self.detached() and job.detached_run_dir is None:

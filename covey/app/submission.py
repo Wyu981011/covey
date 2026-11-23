@@ -261,6 +261,7 @@ class Submission:
         """What this submission does, decided under LOCK. A queued job is registered here, so a
         binding switch or idle maintenance sees the topic busy before its card exists. ``steer``: as
         ``submit_topic_job`` says; the plan's ``steer`` is whether it goes into the task before it."""
+        self.runtime.refuse_new_job()  # Not in a task runner: before the job is registered or any record written.
         data = read_topic(ctx)
         if data.get('harness_id') != self.harness.spec.name:
             raise HarnessChanged('话题 Harness 已改变，请在当前选择下重新提交')
@@ -310,6 +311,7 @@ class Submission:
         if not ahead and not capacity_full and not held:
             # It runs next: its task runner starts while its card and record are written (S35).
             prestart_runner(self.runtime, job, ctx)
+        recorded = False
         try:
             # A butler turn of the 话题区 layout (core/placement.py Row.quiet): none yet either; its task runner
             # sends it once the turn has run CARD_AFTER seconds (Cards.reveal), the owner's message gets OnIt below.
@@ -336,14 +338,17 @@ class Submission:
             answered = self.controls.acknowledge_waiting_answer(ctx, job)
             # Not its history_snapshot: a restart rebuilds a queued job from queued/<key>.json (S41).
             self.record_job_state(ctx, job, "queued", status)
+            recorded = True
             timing.mark("recorded")
             # Read before it is queued: a task runner may take the job, and its card, at once (S37: the
             # card was gone by the time the answered card was repainted, and a text notice went out).
             carded = job.progress is not None or job.card_deferred
             self.runtime.enqueue_reply_job(job, self.harness.name)
             timing.outcome("queued_card" if carded else "queued_text")
-        except BaseException:
+        except BaseException as exc:
             self.runtime.unregister_reply_job(job)  # Never queued: it must not keep the topic busy.
+            if recorded and isinstance(exc, Exception):
+                self.controls.not_queued(ctx, job, exc)  # Nor may its record stay queued with nothing to run it.
             raise
         if answered is not None:
             # The answered task's card, once the continuation is queued, beside what its caller does next: the
@@ -476,7 +481,9 @@ class Submission:
         (core/turn_source.py make), none for the owner's and every message as before; a source whose words are not the
         owner's starts no owner turn of a lead and never goes into a running task. ``top``: the message whose reactions
         say how the job stands, because its card is not under it (app/butler_reactions.py top_message: a message
-        quoted from outside the topic's thread, or the answer, held note or supplement of one)."""
+        quoted from outside the topic's thread, or the answer, held note or supplement of one). In a task runner it
+        raises RuntimeError before anything is written or sent (Runtime.refuse_new_job): a runner never starts a job."""
+        self.runtime.refuse_new_job()
         try:
             ctx = self.models.prepare_submission_context(ctx)
         except (ValueError, OSError, RuntimeError) as exc:

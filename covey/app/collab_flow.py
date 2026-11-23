@@ -562,8 +562,8 @@ class Collaboration:
         """The Bridge, once ``job``'s runner is gone (app/detached.py collab_after: its finish_detached, and
         app/job_dispatch.py for a run here): an ask's turn settles its ask; an integrator's continuation is settled and may
         clarify; the owner's own turn of a topic may start a collaboration (``collab_ask`` in its checkpoint). Never
-        raises; nothing with the switch off, and nothing in a task runner (app/job_dispatch.py runs the same hooks there
-        after its turn): only the Bridge writes a collaboration's record and queues its turns (a runner queues none)."""
+        raises; nothing with the switch off, and nothing in a task runner (app/detached.py after_job calls none there):
+        only the Bridge writes a collaboration's record and queues its turns (a runner queues none)."""
         if not enabled() or self.runtime.in_runner:
             return
         try:

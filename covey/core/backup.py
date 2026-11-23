@@ -94,6 +94,7 @@ NOT_BACKED_UP = {
     "runs": "task runners' run directories: a restore starts no task",
     "inbound-messages": "marks against Feishu delivering a message twice, kept 7 days",
     "event-spool": "events taken in and not handled yet, which the next start hands over: a restore hands none over",
+    "turn-ends": "turns handed to a task runner whose end the next start runs: a restore runs none",
     "revisits": "到点回来看's turns to queue: a restore starts no task",
     "limit-notices": "the once-only record of a notice already sent: a restore sends nothing again",
     "stranger-replies": "marks of the one line a day a person who is not the owner got, kept 7 days",

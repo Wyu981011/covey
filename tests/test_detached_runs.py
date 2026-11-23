@@ -622,6 +622,93 @@ class BridgeSideTests(UnifiedCase):
         self.assertEqual([(e["text"], e["by"], e["source"]["job_key"]) for e in knowledge.entries(ctx.state_dir)],
                          [("rg 会扫 NAS", "topic", "task-7")])
 
+    def stranded(self, **exit_fields):
+        """A turn that ended (done) in a runner this Bridge handed it to, the runner gone while no Bridge watched it
+        (exit.json written, its process ended): its end still due (turn-ends/). The app, context and run directory."""
+        app, ctx, directory, stub = self.running_job(status="done")
+        job = runner_spawn.load_job(json.loads((directory / rd.HANDOFF).read_text())["job"])
+        detached.end_due(ctx.state_dir, job, self.logs.append)
+        run_files(directory, exit={"status": "finished", "finished_at": time.time(), **exit_fields})
+        stub.stop()
+        return app, ctx, directory
+
+    def test_a_turn_whose_runner_exits_in_a_restarts_gap_has_its_end_run_by_the_next_bridge_once(self):
+        # T688: the Bridge alone runs a turn's end (after_job), once its runner has exited. A runner that exits in a
+        # deploy's or a restart's gap, no Bridge watching it, would lose it (知识条目, 记忆, 代发草稿, 转交管家, a
+        # project's receipt), which the runner used to run itself.
+        from covey.core import knowledge
+        app, ctx, job = self.unstarted_job()
+        checkpoint = Path(self.work) / "cp.json"
+        checkpoint.write_text(json.dumps({"remember": [{"kind": "pitfall", "text": "rg 会扫 NAS", "scope": "owner"}]}))
+        upsert_job_record(ctx.state_dir, "task-7", checkpoint_path=str(checkpoint), user_text="这个坑记一下",
+                          sender_id="ou_owner")
+        runners = []
+
+        def start(runtime, name, job, ctx):
+            directory = rd.run_dir(ctx.state_dir, job.message_id)
+            run_files(directory, handoff={"harness": name, "job": runner_spawn.dump_job(job)})
+            runners.append(RunnerProcess(directory, job.message_id))
+            self.addCleanup(runners[-1].stop)
+            return directory
+        with mock.patch.object(detached, "start_runner", start), \
+                mock.patch.object(self.app.runtime.shutdown, "wait", return_value=True):  # The Bridge stops meanwhile.
+            detached.run_detached(self.app, app, job, self.app.harnesses[app.spec.name].context)
+        directory = rd.run_dir(ctx.state_dir, "task-7")
+        upsert_job_record(ctx.state_dir, "task-7", status="done")  # Its turn ends; its runner exits, no Bridge up.
+        run_files(directory, exit={"status": "finished", "finished_at": time.time()})
+        runners[0].stop()
+        bridge, start_ctx = self.bridge()  # The next Bridge starts.
+        with mock.patch.dict(os.environ, {knowledge.ENV: "1"}), \
+                mock.patch.object(bridge.runtime.access, "owner_turn", return_value=True):
+            bridge.notify_stale_jobs(start_ctx)
+            bridge.notify_stale_jobs(start_ctx)  # And the one after it: once.
+        self.assertEqual([(e["text"], e["source"]["job_key"]) for e in knowledge.entries(ctx.state_dir)],
+                         [("rg 会扫 NAS", "task-7")])
+        self.assertEqual(sum("turn end run at start job=#7" in line for line in self.logs), 1)
+        self.assertEqual(list((ctx.state_dir / detached.ENDS).glob("*.json")), [])
+
+    def test_a_bridge_that_watched_its_runner_end_runs_the_end_and_no_start_runs_it_again(self):
+        app, ctx, directory = self.stranded()
+        job = runner_spawn.load_job(json.loads((directory / rd.HANDOFF).read_text())["job"])
+        with mock.patch.object(detached, "after_job") as ended:
+            detached.finish_detached(self.app, app, job, ctx, directory)
+            self.assertFalse(detached.end_path(ctx.state_dir, "task-7").exists())
+            self.app.notify_stale_jobs(self.ctx)
+        ended.assert_called_once()
+
+    def test_a_live_runners_end_waits_for_it_and_an_unknown_or_old_ones_is_dropped_unrun(self):
+        app, ctx, directory, stub = self.running_job(status="running")
+        job = runner_spawn.load_job(json.loads((directory / rd.HANDOFF).read_text())["job"])
+        detached.end_due(ctx.state_dir, job, self.logs.append)
+        old = BridgeReplyJob(job_id=8, user_text="x", chat_id="chat", message_id="old-8", timeout=0, topic_id=ctx.topic_id)
+        run_files(ctx.state_dir, "old-8", handoff={"harness": app.spec.name, "job": runner_spawn.dump_job(old)},
+                  exit={"status": "finished", "finished_at": time.time() - detached.ENDS_KEPT - 60})
+        gone = BridgeReplyJob(job_id=9, user_text="x", chat_id="chat", message_id="gone-9", timeout=0, topic_id=ctx.topic_id)
+        run_files(ctx.state_dir, "gone-9", handoff={"harness": "retired-harness", "job": runner_spawn.dump_job(gone)},
+                  exit={"status": "finished", "finished_at": time.time()})
+        for each in (old, gone):
+            detached.end_due(ctx.state_dir, each, self.logs.append)
+        detached.end_due(ctx.state_dir, BridgeReplyJob(job_id=10, user_text="x", chat_id="chat", message_id="lost-10",
+                                                       timeout=0), self.logs.append)  # Its run directory is gone.
+        with mock.patch.object(detached, "after_job") as ended:
+            self.app.notify_stale_jobs(self.ctx)
+        ended.assert_not_called()
+        self.assertTrue(detached.end_path(ctx.state_dir, "task-7").exists())  # Adopted: finish_detached ends it.
+        self.assertEqual(sorted(p.name for p in (ctx.state_dir / detached.ENDS).iterdir()),
+                         [detached.end_path(ctx.state_dir, "task-7").name])
+        self.assertTrue(any("turn end dropped job=#8: its runner ended too long ago" in line for line in self.logs))
+        self.assertTrue(any("turn end dropped job=#9: its Harness is not in the roster" in line for line in self.logs))
+        self.assertTrue(any("turn end not run at start job=#10: FileNotFoundError" in line for line in self.logs))
+
+    def test_a_handed_job_keeps_its_end_due_until_the_bridge_has_run_it(self):
+        app, ctx, job = self.unstarted_job()
+        due = []
+        with mock.patch.object(detached, "after_job",
+                               side_effect=lambda *a: due.append(detached.end_path(ctx.state_dir, "task-7").exists())):
+            handoffs, recovery, record = self.launches(app, ctx, job, "done")
+        self.assertEqual((len(handoffs), record["status"], due), (1, "done", [True]))
+        self.assertFalse(detached.end_path(ctx.state_dir, "task-7").exists())
+
     def test_a_job_whose_runner_fails_to_start_twice_says_nothing_ran(self):
         from covey.app.recovery_cards import recovery_card
         app, ctx, job = self.unstarted_job()

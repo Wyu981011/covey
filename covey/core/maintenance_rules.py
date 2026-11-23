@@ -393,9 +393,12 @@ class Temporary(Rule):
     # TrackSessions); answer-cards: the cards an answer went out on, kept until their 产物 are uploaded (app/answer_cards.py);
     # stranger-replies: the day's marks of the one line a person who is not the owner got (app/strangers.py);
     # event-spool: events the SDK connection took in that no start handed over (feishu/event_spool.py; a start drops
-    # the ones past their REPLAY_SECONDS itself, so only what no SDK-mode start read again stays this long).
+    # the ones past their REPLAY_SECONDS itself, so only what no SDK-mode start read again stays this long);
+    # turn-ends: turns handed to a task runner whose end no Bridge ran yet (app/detached.py end_due; the next start runs
+    # or drops each, so only one of a runner that outlives this stays this long).
     folders = ("tmp", "artifact-upload", "inbound-messages", "proxy/shots", "main-thread/opened", "main-thread/relays",
-               "main-thread/dispatch", "main-thread/tracks", "answer-cards", "stranger-replies", "event-spool")
+               "main-thread/dispatch", "main-thread/tracks", "answer-cards", "stranger-replies", "event-spool",
+               "turn-ends")
     title = "删除 tmp/、artifact-upload/、proxy/shots/ 条目"
 
     def select(self, run):

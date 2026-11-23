@@ -20,7 +20,10 @@ job and the bridge arguments), runner.json (process identity), runner.log, inbox
 (bridge to runner), requests/ and replies/ (runner to bridge) and exit.json.
 A queued job is kept in ``<state>/queued/<job>.json`` until it is handed off. A job about
 to run gets its runner before its card and record are written (``prestart_runner``); it waits
-for the handoff that names it.
+for the handoff that names it. A job handed off is kept in ``<state>/turn-ends/<job>.json`` until
+a Bridge has run its end (``after_job``): the runner's own Bridge once it exits, else the next
+Bridge's start (``end_stranded``), so a runner that exits while no Bridge watches it (a deploy's
+or a restart's gap) still has its end run, once.
 """
 from __future__ import annotations
 
@@ -42,13 +45,15 @@ from covey.core.butler import traits_of
 from covey.core.deliveries import lost, topic_steer
 from covey.core.statuses import RUNNING
 from covey.core.run_dir import (DONE, EXIT, HANDOFF, INBOX, QUEUED, ack, live_dirs, live_keys as _live_keys,
-                                         queued_path, read_exit, restart_blockers as _restart_blockers,
+                                         queued_path, read_exit, restart_blockers as _restart_blockers, run_dir,
                                          runner_alive as alive, runner_info, take)
 from covey.app.policy_guard import requested
 from covey.app.runner_ipc import remote_control, serve_requests, write_inbox
 from covey.app.runner_spawn import compaction_launch, dump_job, load_job, start_runner
 
 RELAUNCH_DELAY = 2.0
+ENDS = "turn-ends"  # <state>/turn-ends/<job>.json: a job handed to a task runner whose end no Bridge has run yet.
+ENDS_KEPT = 24 * 3600  # A runner that ended longer ago than this at a start has its end dropped, not run.
 
 
 def live_keys(state_dir: Path) -> set:
@@ -76,6 +81,30 @@ def forget_queued(state_dir: Path, key: str) -> None:
     queued_path(state_dir, key).unlink(missing_ok=True)
 
 
+def end_path(state_dir: Path, key: str) -> Path:
+    return Path(state_dir) / ENDS / queued_path(state_dir, key).name
+
+
+def end_due(state_dir: Path, job, log) -> None:
+    """``job`` is handed to a task runner: a Bridge runs its end once the runner has exited (``after_job``), this one
+    in finish_detached or, should the runner exit while no Bridge watches it, the next one at its start
+    (``end_stranded``). A write that fails leaves it to this Bridge alone, as before."""
+    try:
+        write_json(end_path(state_dir, job.message_id),
+                   {"schema_version": 1, "key": job.message_id, "job_id": job.job_id, "at": time.time()},
+                   ensure_ascii=False)
+    except OSError as exc:
+        log(f"turn end not kept job=#{job.job_id}: {type(exc).__name__}")
+
+
+def end_done(state_dir: Path, key: str) -> None:
+    """A Bridge has run the end of job ``key`` (or the policy guard owns it): no start runs it again."""
+    try:
+        end_path(state_dir, key).unlink(missing_ok=True)
+    except OSError:
+        pass  # The next start runs the end again; its parts keep records of what they did of a turn.
+
+
 def restart_blockers(state_dir: Path) -> list:
     """What a restart would interrupt now (core.run_dir.restart_blockers), with the live runners
     from this module's live_keys and alive."""
@@ -101,6 +130,7 @@ def run_detached(gateway, app, job, ctx) -> None:
                 return
         timing.mark("spawned")
         timing.end_current("job_start")  # Its line: from the scheduler taking the job to this spawn.
+        end_due(ctx.state_dir, job, app.runtime.log)  # Outside the job's lock and its start's timing: one small write.
         app.runtime.log(f"task runner started job=#{job.job_id} pid={(runner_info(directory) or {}).get('pid')} dir={directory}")
     progress, job.progress = job.progress, None  # The runner owns the card now; nothing here may write to it.
     if job.backend_control is None:
@@ -229,6 +259,7 @@ def finish_detached(gateway, app, job, ctx, directory: Path) -> None:
         queue_lost(app, job, ctx)
         collab_after(gateway, job, ctx)  # A 协作 turn the guard stopped: its record settles it.
         butler_relay.after_runner(gateway, job, ctx)
+        end_done(ctx.state_dir, job.message_id)
         return  # The guard owns the stopped runner's final card and notice.
     try:
         record = find_job_record(ctx.state_dir, job.message_id)
@@ -266,13 +297,68 @@ def finish_detached(gateway, app, job, ctx, directory: Path) -> None:
         elif kind == "answer":
             ack(directory, payload["id"], False, local=True)
     queue_lost(app, job, ctx)
+    after_job(gateway, app, job, ctx)
+    end_done(ctx.state_dir, job.message_id)
+    _compact_when_idle(gateway, app, job, ctx)
+
+
+def after_job(gateway, app, job, ctx) -> None:
+    """What the Bridge does once ``job``'s turn has ended and its record is settled, in this order: the records and
+    messages of other places a turn may lead to, which rule 8 keeps from a task runner (a task process changes only its
+    own task's card and record). ``finish_detached`` calls it once the runner has exited; app/job_dispatch.py after a
+    turn run in the Bridge's own process (no task runners: a test app). Nothing in a task runner, which runs the turn
+    through app/job_dispatch.py too: there it would hand the butler a turn it cannot queue (app/butler_asks.py), and its
+    Bridge does all of it again once the runner has exited."""
+    if getattr(gateway.runtime, "in_runner", False):
+        return
     knowledge_collect.collect(gateway.runtime, job, ctx)  # The owner's 记一下 in a topic's turn (off without COVEY_KNOWLEDGE).
     memory_collect.collect(gateway.runtime, getattr(app, "messenger", None), job, ctx)  # The owner's 以后 / 别再 … (off without COVEY_MEMORY).
     owner_send.collect(gateway, job, ctx)  # The turn's send_as_owner drafts: 代发草稿 cards (off without a 代答 sender).
     butler_asks.collect(gateway, job, ctx)  # The turn's ask_butler: handed to the butler (off without COVEY_PROJECTS=1).
     collab_after(gateway, job, ctx)  # 协作: an ask settled, a continuation's end, a turn's collab_ask (COVEY_COLLAB=1).
-    butler_relay.after_runner(gateway, job, ctx)
-    _compact_when_idle(gateway, app, job, ctx)
+    butler_relay.after_runner(gateway, job, ctx)  # A butler card's quote, a project's receipt, 到点回来看.
+
+
+def end_stranded(gateway, ctx) -> None:
+    """At start, after ``adopt_runners`` and the apps' stale jobs (a dead runner's unfinished record is interrupted by
+    then, as finish_detached would first): the jobs whose task runner exited while no Bridge watched it have their end
+    run now, once (``after_job``, from the job in its handoff). A live runner's waits for its exit (finish_detached);
+    one of a Harness no longer in the roster, or of a runner that ended over ENDS_KEPT ago, is dropped unrun. Each is
+    tried once: what fails is logged and dropped. Never raises."""
+    folder = Path(ctx.state_dir) / ENDS
+    try:
+        paths = sorted(folder.glob("*.json")) if folder.is_dir() else []
+        adopted = set(getattr(gateway.runtime, "adopted_keys", None) or ())
+        running = adopted | live_keys(ctx.state_dir) if paths else set()
+    except Exception as exc:  # noqa: BLE001 - the ends wait for the next start; this one goes on
+        gateway.runtime.log(f"turn ends not run at start: {type(exc).__name__}")
+        return
+    now = time.time()
+    for path in paths:
+        saved = {}
+        try:
+            saved = read_json(path)
+            saved = saved if isinstance(saved, dict) else {}
+            key = str(saved["key"])
+            if key in running:
+                continue  # Its runner lives: its own end (finish_detached) comes once it exits.
+            directory = run_dir(ctx.state_dir, key)
+            handoff = read_json(directory / HANDOFF)
+            app = gateway.apps.get(handoff.get("harness"))
+            ended = read_exit(directory).get("finished_at") or saved.get("at") or 0
+            if app is None or now - float(ended) > ENDS_KEPT:
+                why = "its Harness is not in the roster" if app is None else "its runner ended too long ago"
+                gateway.runtime.log(f"turn end dropped job=#{saved.get('job_id')}: {why}")
+            else:
+                after_job(gateway, app, load_job(handoff["job"]), app.harness.context)
+                gateway.runtime.log(f"turn end run at start job=#{saved.get('job_id')}: "
+                                    "its runner exited while no Bridge watched it")
+        except Exception as exc:  # noqa: BLE001 - one turn's end never holds up the start or the others
+            gateway.runtime.log(f"turn end not run at start job=#{saved.get('job_id', '?')}: {type(exc).__name__}")
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass  # Tried again at the next start; its parts keep records of what they did of a turn.
 
 
 def collab_after(gateway, job, ctx) -> None:

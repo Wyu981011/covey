@@ -4,7 +4,7 @@ jobs, the butler's lost supplements). JobDispatch is a part of app/unified.py's 
 and runtime it reads."""
 from __future__ import annotations
 
-from covey.app import butler_asks, butler_harness, detached, knowledge_collect, memory_collect, butler_relay, owner_send
+from covey.app import butler_harness, detached
 from covey.app.availability import check_or_raise
 from covey.app.launch_submit import recover_worktree_launches
 from covey.app.topics import retired_notice, topic_target
@@ -80,12 +80,9 @@ class JobDispatch:
             # The task runs to the end in its own process; restarts and deploys leave it running.
             return detached.run_detached(self, app, job, app.harness.context)
         app.process_reply_job(job, app.harness.context)
-        knowledge_collect.collect(self.runtime, job, ctx)
-        memory_collect.collect(self.runtime, getattr(app, "messenger", None), job, ctx)
-        owner_send.collect(self, job, ctx)
-        butler_asks.collect(self, job, ctx)
-        detached.collab_after(self, job, ctx)  # 协作 (app/collab_flow.py), as a runner's end does.
-        butler_relay.after_runner(self, job, ctx)
+        # The Bridge's end of a turn run here, as a runner's exit has it (finish_detached). A task runner comes here
+        # too (its runtime.detached() is False), and after_job does nothing there: its Bridge does it once it exits.
+        detached.after_job(self, app, job, ctx)
         if not job.progress:
             # A text fallback must still offer topic-scoped recovery now that
             # slash commands are retired. Never infer or rerun a failed send.
@@ -124,6 +121,8 @@ class JobDispatch:
         app = (butler.harness_app(ctx.state_dir)[1] if butler is not None else None) \
             or self.apps.get(butler_harness.default_name(self.apps))
         detached.queue_stranded(self, ctx, app)
+        # The ends (after_job) of turns whose task runner exited while no Bridge watched it: a deploy's, a restart's gap.
+        detached.end_stranded(self, ctx)
 
     def release_started_launches(self, ctx):
         """A restart between 开始任务's acknowledgement and its follow-up left a bound topic's
