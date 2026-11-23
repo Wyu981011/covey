@@ -8,6 +8,9 @@ is on only such models. Each select records its choice and redraws the card; 确
 The look: the topic's current choice in one grey line, then the settings
 list (cards/launch_config.py setting_row), a row whose choice differs from the topic's with its label blue
 and bold. A row's options open under it, as on the launch card (no select).
+
+A project's lead's card (the record's ``lead``, opened from its 专项卡, app/harness_switch.py) has no workspace or run mode
+rows, names the project in its subtitle and says what the lead's next turn gets (LEAD_NOTE).
 """
 from __future__ import annotations
 
@@ -35,6 +38,11 @@ PAGE = "bridge_switch_page"  # A row's tap on a card sent with options pages (84
 SWITCH_NOTE = ("换 Harness、模型、预算、工作区或运行方式会开新会话，上下文不断：新会话拿到交接摘要和最近的问答，完整记录放在文件里，"
                "需要时自己去读；交接了什么写在下一张任务卡上。旧会话没答的问题会取消。只改敏感词脱敏时会话不变。")
 SWITCH_GIST = "换了以后：开新会话接着做，上下文不断"  # SWITCH_NOTE's one line under the buttons, which opens on it.
+# A lead's card (``lead``): what the switch does to the lead, and its one line.
+LEAD_NOTE = ("换 Harness、模型或预算后，负责人下一轮开新会话：重新读一遍专项的状态（目标、话题、回执、记忆），最近几轮对话一起带上；"
+             "它在哪个 Harness 上都只读，只用 Bridge 工具派话题。这里只列能当负责人的模型（能接 Bridge 工具）；工作区不变。")
+LEAD_GIST = "换了以后：负责人开新会话，重读专项的状态"
+LEAD_BUSY = "负责人还有一轮在排队或在做：等它做完再点确认更换，这张卡一直有效。"
 NOTE_ID = "switch_note"
 HANDOFF_ID = "switch_handoff"  # The 交接 block of the first task card after a switch (``handoff_block``).
 HANDOFF_SUMMARY_CHARS = 6000  # Of the old model's summary the block opens on; its file keeps it whole.
@@ -111,6 +119,8 @@ def switch_settings(form):
     # switch-forms record lacks selected_workspace (compat_report: switch-form-fields)
     workspace = form.get("selected_workspace") or form.get("workspace") or ""
     names = form.get("workspaces") or [workspace]
+    if form.get("lead"):
+        return settings  # A project's lead stays where it reads.
     settings += [workspace_setting("workspace", WORKSPACE, workspace, names),
                  run_mode_setting("run_mode", RUN_MODE, form.get("selected_run_mode") or "direct")]
     return settings
@@ -123,8 +133,10 @@ def build_switch_card(form):
     choices = offered(form)
     changed = changes(form)
     settings = switch_settings(form)
-    subtitle = (f"话题 {form['topic']} · " if form.get("topic") else "") + (
-        TOP_SUBTITLE if form.get("top_level") else "下一条消息起生效")
+    lead = form.get("lead") or {}
+    subtitle = (f"专项「{lead.get('name') or '专项'}」的负责人 · 确认后负责人下一轮起生效" if lead
+                else (f"话题 {form['topic']} · " if form.get("topic") else "") + (
+                    TOP_SUBTITLE if form.get("top_level") else "下一条消息起生效"))
     elements = [note(current_line(form))]
     if not choices or model not in choices:
         elements.append(md("模型目录准备中，请稍后重新打开换配置。"))
@@ -135,7 +147,7 @@ def build_switch_card(form):
     if form["current"].get("redaction") and form.get("selected_redaction") == "off" and not choice_redacts(form):
         elements.append(note(AUTO_OFF_NOTE))
     if form.get("active_task"):
-        elements.append(note("任务还在排队或执行时不能更换：先在任务卡上停止，停止完成后再确认。"))
+        elements.append(note(LEAD_BUSY if lead else "任务还在排队或执行时不能更换：先在任务卡上停止，停止完成后再确认。"))
     if form.get("notice"):
         elements.append(md(form["notice"]))
     elif unchanged(form):
@@ -150,7 +162,8 @@ def build_switch_card(form):
                                                        width="fill"), 1)))
     # What a switch does, one grey line under the buttons that opens on it: its four lines sat between the choices and
     # the buttons (the owner, 2026-11-23, of the same on a question card: 不再横亘在正文和按钮中间).
-    elements.append(fold(NOTE_ID, md(grey(SWITCH_GIST), size="notation"), [md(SWITCH_NOTE, size="notation")],
+    elements.append(fold(NOTE_ID, md(grey(LEAD_GIST if lead else SWITCH_GIST), size="notation"),
+                         [md(LEAD_NOTE if lead else SWITCH_NOTE, size="notation")],
                          title_padding="0px 0px 0px 0px", icon_position="follow_text", spacing="4px"))
     return styled_panel(panel_header("switch", "换配置", subtitle), elements, "换配置 · Harness、模型、工作区、脱敏")
 

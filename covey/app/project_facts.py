@@ -56,6 +56,17 @@ def harness_of(state_dir, topic_id, job=None) -> str:
     return value if isinstance(value, str) else ""
 
 
+def rebound(topic, job) -> bool:
+    """Whether ``topic`` (a topic.json) was bound anew after ``job`` (its newest job record) ran: a 换配置 is on record
+    (``switches``) and ``job`` did not run on the binding it made (``binding_revision``), so what the topic runs with from
+    now on is its own, not the job's. A topic never switched: never (its jobs ran on the one binding there is)."""
+    switches, revision = topic.get("switches"), job.get("binding_revision")
+    if not (isinstance(switches, list) and switches and topic.get("harness_id")):
+        return False
+    current = topic.get("binding_revision")
+    return not (type(revision) is int and type(current) is int and revision >= current)
+
+
 def member_state(job, status, now) -> str:
     """A member's state (cards/project_card.py, a core/look.py STATES key) from its newest ``job`` and what the 派发卡 makes
     of it (``status``, app/dispatch_cards.py status_of): 等你, 在做 or 可能卡住 (core/progress.py maybe_stuck) while it
@@ -204,11 +215,11 @@ def facts(state_dir, record, now, titles=None, links=None, avatar="") -> Project
     elapsed = dc.quantize(max(0.0, end - began))
     used = record.get("tokens_used")
     tokens = tile_count(used) if type(used) is int and used > 0 else ""
-    # The box is the lead's own: its newest job, else what its topic.json binds it to (not a member's, which has its own
-    # Harness: the card lists it in its fold).
-    job = newest_job(state_dir, lead)
-    if job is None:
-        job = read_object(topic_file(Path(state_dir), lead))
+    # The box is the lead's own: its newest job, else (no job yet, or 换配置 bound it anew since) what its topic.json binds it
+    # to (not a member's, which has its own Harness: the card lists it in its fold).
+    job, bound = newest_job(state_dir, lead), read_object(topic_file(Path(state_dir), lead))
+    if job is None or rebound(bound, job):
+        job = bound
     harness = harness_of(state_dir, lead, job)
     model = str(job.get("model") or "").rsplit(" · ", 1)[-1]
     effort = str(job.get("effort") or "").strip()

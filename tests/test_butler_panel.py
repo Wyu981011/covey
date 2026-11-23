@@ -3,7 +3,9 @@
 settings_panel sending it."""
 from __future__ import annotations
 
+import dataclasses
 import json
+import os
 import re
 import time
 import unittest
@@ -353,17 +355,57 @@ class ButlerPanelTests(UnifiedCase):
         # rows, the butler's (its Harness and 工作区 too, T614) and the mode, 独立复核's; 子 Agent always.
         current = settings.Settings(model='claude-model', topic_defaults=current.topic_defaults,
                                     review=settings.ReviewModel(harness='claude', model='claude-model'))
+        current = dataclasses.replace(current, lead=settings.LeadModel(harness='codex', model='codex-model'))
         keys = {'topic': ('t_harness', 't_provider', 't_model', 't_effort', 't_space', 't_run_mode', 't_redact'),
                 'butler': ('harness', 'provider', 'model', 'effort', 'space', 'redact', 'compact', 'mode'),
-                'review': ('r_harness', 'r_provider', 'r_model', 'r_effort')}
+                'review': ('r_harness', 'r_provider', 'r_model', 'r_effort'),
+                'lead': ('l_harness', 'l_provider', 'l_model', 'l_effort')}
         for page in (panel_card.CONFIG, 'main'):
             for part, shown in keys.items():
                 card = panel_card.butler_panel_card('a' * 24, {'revision': 9999, 'open': part}, current,
                                                          available_models(self.app.topics, self.ctx), ["project"],
-                                                         page=page, review_on=True)
+                                                         page=page, review_on=True, lead_on=True)
                 folds = [p['element_id'] for p in walk_panels(card)]
                 self.assertEqual(folds, [f'set_{key}_r9999' for key in (*shown, 'subagent')])
                 self.assertEqual([f for f in folds if len(f) > 20], [])
+
+    def test_the_lead_section_with_projects_on_saves_what_a_new_lead_runs_on(self):
+        """T700: 专项负责人 is a section of 配置 only with COVEY_PROJECTS=1; its Harness row offers 跟管家一样 and the Harnesses
+        that take the Bridge's tools; a choice saves the settings' ``lead`` (its first model and that model's budget), and ''
+        follows the butler again. A card drawn while projects were on changes nothing once they are off."""
+        self.ask()
+        self.assertNotIn('**专项负责人**', self.text())
+        self.assertEqual(self.values(panel_card.LEAD_HARNESS), [])
+        with mock.patch.dict(os.environ, {'COVEY_PROJECTS': '1'}):
+            self.ask('r2')
+            self.part('lead')
+            text = self.text()
+            self.assertIn('**专项负责人**', text)
+            self.assertIn(panel_card.LEAD_NOTE, text)
+            self.assertIn('负责人 跟管家', self.cards[-1]['header']['subtitle']['content'])
+            self.assertEqual([v['option'] for v in self.values(panel_card.LEAD_HARNESS)], ['', 'claude', 'codex', 'agy'])
+            self.click(self.option(panel_card.LEAD_HARNESS, 'codex'), event_id='lead1',
+                       message=f'om_panel{self.app.messenger.create_and_send_card.call_count}')
+            lead = self.settings().lead
+            self.assertEqual((lead.harness, lead.model), ('codex', 'codex-model'))
+            self.assertIn(panel.SAVED[panel.LEAD], self.text())
+            self.assertEqual([v['option'] for v in self.values(panel_card.LEAD_MODEL)], ['codex-model'])
+            self.click(self.option(panel_card.LEAD_HARNESS, ''), event_id='lead2',
+                       message=f'om_panel{self.app.messenger.create_and_send_card.call_count}')
+            self.assertEqual(self.settings().lead, settings.LeadModel())
+            lead_card = self.cards[-1]
+        self.assertIsNone(panel.ButlerPanel(self.app.topics).changes(
+            self.ctx, {}, {'kind': panel_card.LEAD_HARNESS, 'option': 'codex', 'token': 't', 'revision': 1}))
+        self.assertIn('**专项负责人**', json.dumps(lead_card, ensure_ascii=False))
+
+    def test_the_lead_section_lists_only_harnesses_that_redact_while_the_butler_redacts(self):
+        settings.update(self.ctx.state_dir, redaction=True)
+        rows = panel_card.lead_setting_list(self.settings(), available_models(self.app.topics, self.ctx), 12)
+        self.assertEqual([option for option, _ in rows[0].options], ['', 'claude'])
+        rows = panel.Rows('', '', '', False, lambda: None, lambda entry, option: option, lambda **fields: fields)
+        choices = available_models(self.app.topics, self.ctx)
+        self.assertIsNone(panel.pick_lead_harness(rows, choices, 'codex', self.ctx.state_dir))
+        self.assertEqual(panel.pick_lead_harness(rows, choices, 'claude', self.ctx.state_dir)['harness'], 'claude')
 
     def test_switches_the_mode_and_notes_and_the_retired_buttons_change_nothing(self):
         settings.update(self.ctx.state_dir, workspace_notes=(('docs', '文档'), ('gone', '已删的工作区')))

@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowDown, ChevronRight, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CollabView, OutboxView, SayFile, SnapshotTopic, TurnView } from '@shared/api.interface';
@@ -566,10 +566,24 @@ export const Conversation: React.FC<{
 
   const stop = (): void =>
     send.mutate({ op_id: newOpId(), kind: 'stop', topic_key: topicKey, payload: {} }, { onError: (e: Error) => toast.error(opWords('unsent', errorText(e))) });
-  // 专项页里点开的成员话题也有配置栏（话题页由 TopicPage 给）：和话题页一样能换配置
+  // 专项页里点开的成员话题也有配置栏（话题页由 TopicPage 给）：和话题页一样能换配置。
+  // v36：专项页里只看这位负责人的那部分也有负责人的配置栏（同飞书专项卡上的「换配置」）；忙不忙只看负责人自己（这一路里还有专项话题的轮次）
+  const leadBusy: boolean = (!!topic && (isRunning(topic) || toneOf(topic) === 'queued'))
+    || roomTurns.some((t: RoomTurn) => t.topic_key === topicKey && t.status === 'running');
   const ownConfig: React.ReactNode = mode === 'topic' && !butler && topic?.kind === 'topic'
     ? <ConfigBar topic={topic} workspace={data?.topic.workspace ?? ''} busy={running || toneOf(topic) === 'queued'} />
-    : undefined;
+    : room?.lead && !butler && topic?.kind === 'lead'
+      ? <ConfigBar topic={topic} workspace={tq.data?.topic.workspace ?? ''} busy={leadBusy} />
+      : undefined;
+  // 大厅里负责人停住的那一轮点「换个模型」（v36 how=switch）：这一页没有它的配置栏，就去它的专项页展开（?switch=1）。
+  // 已经在这位负责人的对话里还打不开（设置里还没有模型目录），就照旧说去飞书（专项卡上的「换配置」）
+  const nav = useNavigate();
+  const leadSwitch = (key: string): (() => void) | undefined => {
+    const t: SnapshotTopic | undefined = turnTopic(key);
+    if (room?.lead || t?.kind !== 'lead' || !t.project_key) return undefined;
+    const to: string = `/projects/${encodeURIComponent(t.project_key)}?switch=1`;
+    return () => { void nav(to); };
+  };
   const stopPending: boolean = outbox.some((o: OutboxView) => o.kind === 'stop' && o.state === 'new');
 
   if (isError && !data) {
@@ -717,6 +731,7 @@ export const Conversation: React.FC<{
                             actionable={roomLast.get(rt.topic_key) === rt.key && !busyTopic(rt.topic_key)}
                             pressing={false}
                             canSwitch={false}
+                            onSwitch={leadSwitch(rt.topic_key)}
                           />
                         ) : undefined}
                       />

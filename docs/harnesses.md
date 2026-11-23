@@ -28,7 +28,7 @@ Harness 是执行任务的 Agent 程序。本篇按上手顺序写：有哪些�
 - **原生图片**：不支持时只给本地路径。Claude、Pi 单张超过 5 MiB，或 Claude 合计超出 8 MiB 帧时，放不下的只给路径（`app/runs.py` 的 `_fit_images`）。
 - **分叉**：管家分叉出的话题（[开话题、转交、分叉](butler.md#开话题转交分叉)）复制原话题的原生会话；不支持或原话题正在执行时改用已完成的对话记录。**换配置**除只改脱敏外都开新会话。
 - **只有 Claude Code 有的**：[敏感词脱敏](usage.md#敏感词脱敏)、[回退一步](usage.md#回退一步)、本轮未全部完成后自动继续、轮前压缩。“下载请求与结果”只有 Claude Code 和 Codex 有。
-- **管家、专项负责人和小模型判断**：管家和专项负责人跑在能接 Bridge 工具的 Harness 上，核心里是 Claude Code、Codex 和 Antigravity（`HarnessCapabilities.bridge_tools`）；设置卡没指定时先用 Claude Code，没有就依次找 Codex、Antigravity（`app/butler_harness.py`）。负责人只读：Claude Code 只给读和搜索的工具，Codex 跑只读轮（见[执行权限](#执行权限)），Antigravity 用本轮的拒绝规则。小模型判断不跟管家换：设了模型网关就问网关，否则问 Claude Code，再否则问 Codex、Antigravity 自己的命令行（`ask_once`，[配置 · 小模型判断](configuration.md#小模型判断)）。dsh 和 Pi 都不能当管家、负责人。
+- **管家、专项负责人和小模型判断**：管家和专项负责人跑在能接 Bridge 工具的 Harness 上，核心里是 Claude Code、Codex 和 Antigravity（`HarnessCapabilities.bridge_tools`）；设置卡没指定时先用 Claude Code，没有就依次找 Codex、Antigravity（`app/butler_harness.py`）。负责人可以和管家不同：设置卡“专项负责人”一段、专项卡的「换配置」（[专项 · 负责人用哪个 Harness](projects.md#负责人用哪个-harness)）。负责人只读：Claude Code 只给读和搜索的工具，Codex 跑只读轮（见[执行权限](#执行权限)），Antigravity 用本轮的拒绝规则。小模型判断不跟管家换：设了模型网关就问网关，否则问 Claude Code，再否则问 Codex、Antigravity 自己的命令行（`ask_once`，[配置 · 小模型判断](configuration.md#小模型判断)）。dsh 和 Pi 都不能当管家、负责人。
 - **每个内置 Harness 都有的**：限流（429）和临时故障（过载、5xx、连接断开）后[自动重试](reference.md#自动重试)（`rate_limit_retry`、`fault_retry`）。各家怎么认出这两类写在下面各自的“失败”一行；登录失效、额度用完、模型不存在、请求被拒、安全拒绝和停止不重试。
 - **交接摘要**（[换配置之后](reference.md#换配置之后)）：Claude Code、Codex、Pi 在原会话的分叉上写；Antigravity 和 dsh 的命令行只能续接会话（`--conversation`、`--session-id`），续接会把摘要这一轮留在原会话里，所以不写，新模型拿最近 3 轮原文。
 

@@ -32,7 +32,7 @@ from pathlib import Path
 from covey.app import auto_retry
 from covey.cards import facts
 from covey.core import criteria, failure
-from covey.core.butler import traits_of
+from covey.core.butler import LEAD, LEAD_OFF, traits_of
 from covey.core.checkpoint import artifact_key, artifact_paths, checkpoint_delivery, checkpoint_steps, read_checkpoint, shows_change, upload_ledger
 from covey.core.look import WAITS
 from covey.core.metrics import run_seconds, timings_of
@@ -244,8 +244,8 @@ def ended_figures(state, record) -> dict:
 
 
 # How the page carries out each next step (data contract v33): RECOVER is its ``recover`` operation (app/web_ops.py: the task card's
-# own click), SWITCH its own 换配置 (the ``switch`` operation over the topic's ``config``), FEISHU what only Feishu does (换个模型 of the
-# butler and a project's lead, whose configuration is not changed on the page).
+# own click), SWITCH its own 换配置 (the ``switch`` operation over the topic's ``config``; a project's lead's too since v36), FEISHU
+# what only Feishu does (换个模型 of the butler, whose model is on the 设置 card).
 RECOVER, SWITCH, FEISHU = "recover", "switch", "feishu"
 STOP_AUTO_RETRY = "stop_auto_retry"  # 停止自动重试, the ``recover`` action that cancels a pending automatic retry.
 
@@ -261,7 +261,8 @@ def failure_of(record) -> dict | None:
     if view is None:
         return None
     actions = list(view["actions"])
-    switch = SWITCH if traits_of(record).switch_config else FEISHU
+    seat = traits_of(record)
+    switch = SWITCH if seat.switch_config or seat in (LEAD, LEAD_OFF) else FEISHU
     how = {name: switch if name == failure.SWITCH_MODEL else RECOVER for name in actions}
     labels = {name: failure.label(record, name) for name in actions}
     out = {**view, "labels": labels, "how": how}

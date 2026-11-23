@@ -182,7 +182,7 @@ const Choice: React.FC<{ row: SettingsRow; busy: boolean; onPick: (v: string) =>
 };
 
 /** 字长的项：手机上占整行 */
-const WIDE: Set<string> = new Set(['t_model', 'model', 'r_model', 't_space', 'space', 'mode', 'subagent']);
+const WIDE: Set<string> = new Set(['t_model', 'model', 'r_model', 'l_model', 't_space', 'space', 'mode', 'subagent']);
 
 const RowView: React.FC<{ row: SettingsRow; ops: Ops; feishu: string; mk?: (row: SettingsRow, option: string) => Record<string, unknown>; cell?: boolean; stale?: boolean }> = ({ row, ops, feishu, mk, cell, stale }) => {
   const s: Phase | undefined = ops.st[row.key];
@@ -246,7 +246,7 @@ const Rows: React.FC<{ rows: SettingsRow[]; ops: Ops; feishu: string; head?: Rea
 );
 
 /** 联动：Harness → 供应商 → 模型 → 思考预算。同一组里前面的项正在保存，后面的项在新快照到来前显示“更新中…” */
-const LINK = /^(?:t_|r_)?(harness|provider|model|effort)$/;
+const LINK = /^(?:t_|r_|l_)?(harness|provider|model|effort)$/;
 const LINK_ORDER: string[] = ['harness', 'provider', 'model', 'effort'];
 const linked = (g: SettingsRow[], i: number, ops: Ops): boolean => {
   const me: number = LINK_ORDER.indexOf(LINK.exec(g[i].key)?.[1] ?? '');
@@ -279,6 +279,8 @@ const Grid: React.FC<{ rows: SettingsRow[]; layout: string[][]; ops: Ops; feishu
 const TOPIC_LAYOUT: string[][] = [['t_harness', 't_provider', 't_model', 't_effort'], ['t_space', 't_run_mode', 't_redact']];
 const MAIN_LAYOUT: string[][] = [['harness', 'provider', 'model', 'effort'], ['space', 'redact', 'compact'], ['mode']];
 const REVIEW_LAYOUT: string[][] = [['r_harness', 'r_provider', 'r_model', 'r_effort']];
+/** v36 专项负责人：新建的专项，负责人用的 Harness、模型、思考预算（开了专项才有这一段） */
+const LEAD_LAYOUT: string[][] = [['l_harness', 'l_provider', 'l_model', 'l_effort']];
 const MORE_LAYOUT: string[][] = [['subagent']];
 
 const Note: React.FC<{ text?: string }> = ({ text }) => (text ? <p className="st-note">{text}</p> : null);
@@ -369,6 +371,13 @@ const ConfigTab: React.FC<{ p: SettingsConfigPage; ops: Ops; feishu: string }> =
         <h3 className="st-h">{p.review.title}</h3>
         <Grid rows={p.review.rows} layout={REVIEW_LAYOUT} ops={ops} feishu={feishu} />
         <Note text={p.review.note} />
+      </section>
+    ) : null}
+    {p.lead ? (
+      <section className="st-sec">
+        <h3 className="st-h">{p.lead.title}</h3>
+        <Grid rows={p.lead.rows} layout={LEAD_LAYOUT} ops={ops} feishu={feishu} />
+        <Note text={p.lead.note} />
       </section>
     ) : null}
     {p.more.length ? (

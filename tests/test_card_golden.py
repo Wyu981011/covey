@@ -710,6 +710,13 @@ def switch_cards():
         # T669: opened from a relay card at the private chat's top level: there, its subtitle naming the topic and where a
         # reply goes (app/harness_switch.py).
         "card_top": build_switch_card({**form, "top_level": True}),
+        # T700: a project's lead's, opened from its 专项卡: only the models a lead can run on, no workspace or run mode
+        # rows, the project named, what the lead's next turn gets; and while the lead has a turn going.
+        "card_lead": build_switch_card({**form, "models": {key: CHOICES[key] for key in ("codex:gpt-6-astra", "claude:opus")},
+                                        "lead": {"project_id": "a1b2c3d4e5f6", "name": "迁移订单库"}}),
+        "card_lead_busy": build_switch_card({**form, "models": {key: CHOICES[key] for key in ("codex:gpt-6-astra", "claude:opus")},
+                                             "selected_model": "claude:opus", "selected_effort": "high", "active_task": True,
+                                             "lead": {"project_id": "a1b2c3d4e5f6", "name": "迁移订单库"}}),
         "closed": notice_card("**🔁 已换配置**", "已换配置"),
         "panel_on_task_card": switch_panel(TOPIC, 431, "codex", 2),
         # T647 E1: the 交接 block above the first task card's answer after a switch (app/switch_handoff.py).
@@ -1217,6 +1224,8 @@ BUTLER_CHOICES = {"claude:claude-opus-5-5": {"harness": "claude", "model": "clau
                "codex:acme/gpt-6-astra": {"harness": "codex", "model": "acme/gpt-6-astra", "title": "Codex",
                                             "provider": "acme", "provider_title": "Acme",
                                             "display_name": "GPT-6 Astra", "levels": ["high"]}}
+# The same menu as the Bridge marks it (app/launch_models.py): Claude Code's and Codex's models take the Bridge's tools.
+LEAD_CHOICES = {key: {**entry, "bridge_tools": True} for key, entry in BUTLER_CHOICES.items()}
 
 
 def butler_panels():
@@ -1275,7 +1284,7 @@ def settings_cards():
     from covey.cards.redaction_panel import redaction_card
     from covey.cards.settings_hub import folded_hub, tab_row
     from covey.cards.workspace_manager import manager_card
-    from covey.core.butler_settings import ReviewModel, Settings
+    from covey.core.butler_settings import LeadModel, ReviewModel, Settings
 
     tabs = ["config", "workspace", "redaction", "groups"]
 
@@ -1306,6 +1315,14 @@ def settings_cards():
             "c" * 24, {**view, "open": "review"},
             Settings(review=ReviewModel(harness="codex", model="gpt-6-astra", effort="high")),
             BUTLER_CHOICES, ["bridge", "docs"], top=row("config"), page="config", review_on=True),
+        # T700: 专项负责人 with COVEY_PROJECTS=1, following the butler or a model chosen for it; its Harness row lists the
+        # Harnesses whose models take the Bridge's tools.
+        "config_lead": butler_panel_card("c" * 24, {**view, "open": "lead"}, Settings(), LEAD_CHOICES,
+                                         ["bridge", "docs"], top=row("config"), page="config", lead_on=True),
+        "config_lead_chosen": butler_panel_card(
+            "c" * 24, {**view, "open": "lead"},
+            Settings(lead=LeadModel(harness="codex", model="gpt-6", effort="high")),
+            LEAD_CHOICES, ["bridge", "docs"], top=row("config"), page="config", lead_on=True),
         "config_confirm": butler_panel_card("c" * 24, {**view, "confirm": True}, Settings(), BUTLER_CHOICES,
                                             ["bridge", "docs"], top=row("config"), page="config"),
         "config_topics": butler_panel_card("c" * 24, {**view, "open": "butler"}, Settings(enabled=False), BUTLER_CHOICES,

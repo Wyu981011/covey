@@ -96,7 +96,7 @@ def refusal(ctx, capabilities, title) -> str:
         return f"{title} 还不能做只读咨询，这一轮没有启动。"
     if found == LEAD and not capabilities.bridge_tools:
         return (f"{title} 不能当专项负责人（用不了 Bridge 工具，也守不住只读），这一轮没有启动。"
-                "可以在「设置」→「配置」的管家一段换成 Claude Code、Codex 或 Antigravity。")
+                "可以点专项卡上的「换配置」换成 Claude Code、Codex 或 Antigravity。")
     if found != READ or capabilities.read_only:
         return ""
     return (f"这个群设成了群成员只读，{title} 做不到只读，这一轮没有启动。"

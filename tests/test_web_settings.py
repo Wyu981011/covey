@@ -107,6 +107,25 @@ class WebSettingsTest(UnifiedCase):
             self.assertEqual(self.op(what="row", kind=cards.REVIEW_HARNESS, option="")[0], "done")
             self.assertEqual(settings.load(self.ctx.state_dir).review, settings.ReviewModel())
 
+    def test_the_lead_section_is_the_cards_and_its_model_changes_on_the_page(self):
+        """T700: with COVEY_PROJECTS=1 配置 has 专项负责人 as the card does (data contract v36 ``lead``), changed on the page
+        through the card's code; without it there is none."""
+        self.assertNotIn("lead", self.snap()["config"])
+        with mock.patch.dict(os.environ, {"COVEY_PROJECTS": "1"}):
+            lead = self.snap()["config"]["lead"]
+            self.assertEqual((lead["title"], lead["note"]), ("专项负责人", cards.LEAD_NOTE))
+            harness, = lead["rows"]  # Following the butler: the Harness row alone.
+            self.assertEqual((harness["kind"], harness["current"], harness["editable"]), (cards.LEAD_HARNESS, "", True))
+            self.assertEqual([o["value"] for o in harness["options"]], ["", "claude", "codex", "agy"])
+            self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="agy"),
+                             ("done", butler_panel.SAVED[butler_panel.LEAD]))
+            self.assertEqual(settings.load(self.ctx.state_dir).lead.harness, "agy")
+            self.assertEqual([r["kind"] for r in self.snap()["config"]["lead"]["rows"]],
+                             [cards.LEAD_HARNESS, cards.LEAD_PROVIDER, cards.LEAD_MODEL, cards.LEAD_EFFORT])
+            self.assertIn("负责人 ", self.snap()["config"]["summary"])
+            self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="pi"), ("failed", web_settings.GONE))
+        self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="claude"), ("failed", web_settings.GONE))
+
     def test_a_row_changed_on_the_page_is_the_cards_change_and_shows_on_both(self):
         state, words = self.op(what="row", kind=cards.TOPIC_RUN_MODE, option="worktree")
         self.assertEqual((state, words), ("done", "已保存：之后新开的话题照这个来。"))

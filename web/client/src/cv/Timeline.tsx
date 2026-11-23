@@ -25,7 +25,9 @@ export const FailBox: React.FC<{
   pressing?: boolean;
   /** 旧数据（没有 how）时换个模型能不能在网页上换：普通话题能 */
   canSwitch?: boolean;
-}> = ({ failure, turn, topicKey, actionable, pressing = true, canSwitch = true }) => {
+  /** 这一页没有这个话题的换配置面板时「换个模型」怎么办（大厅里负责人的：去它的专项页展开）；不给就说去飞书 */
+  onSwitch?: () => void;
+}> = ({ failure, turn, topicKey, actionable, pressing = true, canSwitch = true, onSwitch }) => {
   const board: boolean = useBoardOn();
   // 点过检查并继续、新的一轮已经开了：这一轮不再给按钮，点的结果还写在这里
   const said = useRecentSaid(topicKey, turn.job_id);
@@ -59,6 +61,7 @@ export const FailBox: React.FC<{
           topicKey={topicKey}
           jobId={turn.job_id}
           canSwitch={canSwitch}
+          onSwitch={onSwitch}
           extra={pressing && board ? <DismissButton topicKey={topicKey} className="btn sm a-ghost" /> : null}
         />
       ) : said && !actionable ? (

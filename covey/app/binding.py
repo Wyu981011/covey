@@ -13,6 +13,7 @@ from pathlib import Path
 from covey.app.launch_submit import launch_in_progress
 from covey.cards.switch_form import UNCHANGED
 from covey.cards.topic_actions import SWITCH_OPEN
+from covey.core import projects
 from covey.core.checkpoint import release_user_wait
 from covey.core.harness import backend_capabilities
 from covey.core.jobs import upsert_job_record
@@ -79,10 +80,13 @@ def active_task(topics, state_dir, topic_id):
 
 
 def busy_reason(topics, ctx, chat, action="确认更换"):
-    """Why this topic cannot change its binding (or ``action`` it) now, or ''."""
+    """Why this topic cannot change its binding (or ``action`` it) now, or ''. A project's lead has no task card to stop
+    its turn on (its turns are short, and its wake-ups come by themselves): it is waited for."""
     if launch_in_progress(ctx):
         return "本话题正在创建独立 worktree，完成后再" + action
     if active_task(topics, ctx.state_dir, ctx.topic_id):
+        if projects.is_lead_topic(Path(ctx.state_dir), ctx.topic_id, chat or None):
+            return "负责人还有一轮在排队或在做，等它做完再" + action
         return "本话题还有任务在排队或执行，请先在任务卡上停止，停止完成后再" + action
     for _, record in directory_store(ctx.state_dir / "questions").query(topic_id=ctx.topic_id):
         if record.get("status") in {"submitting", "uncertain"}:

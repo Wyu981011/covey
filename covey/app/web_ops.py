@@ -332,8 +332,8 @@ class Ops:
     def switch(self, state, chat, row, payload) -> str:
         from covey.app import web_switch
         topic = str(row.get("topic_key") or "")
-        if is_butler_root(topic, chat) or projects.lead_record(state, topic, chat):
-            raise ValueError("管家和负责人的配置不在网页上换")
+        if is_butler_root(topic, chat):
+            raise ValueError("管家的配置在设置的「配置」里改")
         if not self.runtime.access.is_owner(self.runtime.owner_open_id or ""):
             raise ValueError("只有主人能换配置")
         return web_switch.switch(self.env, row.get("op_id"), chat, topic, payload)

@@ -3,7 +3,8 @@ draws (``snapshot``), and the few changes the page may make (``change``, app/web
 itself draws and writes with. Nothing here is a second copy of a rule.
 
 - What is pushed: the tabs ``hub_tabs`` shows (app/menu_panel.py): 配置 as the card has it (v22 ``config``: its sections 新话题,
-  管家 unless COVEY_BUTLER=0, 独立复核 with COVEY_REVIEW=1, and 更多, all open: the page has no card's size), 工作区, 脱敏, 群聊, 设备 with
+  管家 unless COVEY_BUTLER=0, 独立复核 with COVEY_REVIEW=1, 专项负责人 with COVEY_PROJECTS=1 (v36 ``lead``), and 更多, all open: the
+  page has no card's size), 工作区, 脱敏, 群聊, 设备 with
   COVEY_NODE_LISTEN; not 记忆, 能做什么 and 诊断, the card's alone: CARD_ONLY, each with the rows the card draws (cards/butler_panel.py ``topic_settings``, ``butler_setting_list``, ``mode_setting``, ``subagent_setting``: label, kind, the chosen option and every option offered), the workspaces with their tags and 用途
   (cards/workspace_manager.py ``list_entries``, ``tag_words``), 脱敏's figures, the topics it is on in, its two switches (app/redaction_panel.py
   ``facts``) and its terms as they are (the page edits the list, so the terms go into the page's database;
@@ -39,7 +40,7 @@ from covey.cards.settings_hub import (ABOUT, CONFIG, DOCTOR, GROUPS, LABELS, MEM
 from covey.cards.workspace_manager import list_entries, tag_words, tail
 from covey.app import web_launch, web_panels
 from covey.app.access import free_talk_on
-from covey.core import butler, butler_settings, web_sync
+from covey.core import butler, butler_settings, projects, web_sync
 from covey.core.workspaces import add_workspace, load_config, missing_workspaces, remove_workspaces
 
 LIMIT = 60  # The most options a row lists (the card cuts to fit its size; the page need not).
@@ -49,7 +50,8 @@ NOTE_LENGTH = cards.NOTE_LENGTH
 EDITABLE = frozenset({cards.TOPIC_HARNESS, cards.TOPIC_PROVIDER, cards.TOPIC_MODEL, cards.TOPIC_EFFORT, cards.TOPIC_RUN_MODE,
                       cards.TOPIC_REDACTION, cards.TOPIC_WORKSPACE, cards.SUBAGENTS,
                       cards.HARNESS, cards.PROVIDER, cards.MODEL, cards.EFFORT, cards.COMPACT, cards.REDACTION, cards.SPACE,
-                      cards.MODE, cards.REVIEW_HARNESS, cards.REVIEW_PROVIDER, cards.REVIEW_MODEL, cards.REVIEW_EFFORT})
+                      cards.MODE, cards.REVIEW_HARNESS, cards.REVIEW_PROVIDER, cards.REVIEW_MODEL, cards.REVIEW_EFFORT,
+                      cards.LEAD_HARNESS, cards.LEAD_PROVIDER, cards.LEAD_MODEL, cards.LEAD_EFFORT})
 BUTLER_KINDS = frozenset({cards.HARNESS, cards.PROVIDER, cards.MODEL, cards.EFFORT, cards.COMPACT, cards.REDACTION,
                           cards.SPACE})
 CHANGES = ("row", "untrust", "note", "redaction", "terms", "group", "free", "workspace_add", "workspace_remove", "workspace_prune",
@@ -195,17 +197,21 @@ class WebSettings:
 
     def config(self, ctx, settings, choices, chat) -> dict:
         """配置 (v22), as the card's page (cards/butler_panel.py config_page) with every section open: ``topic`` (新话题), ``main``
-        (管家, unless COVEY_BUTLER=0), ``review`` (独立复核, with COVEY_REVIEW=1), each with its ``title``; under 更多 (``more``) 子
-        Agent; ``summary`` the card's title bar."""
+        (管家, unless COVEY_BUTLER=0), ``review`` (独立复核, with COVEY_REVIEW=1), ``lead`` (专项负责人, with COVEY_PROJECTS=1, v36),
+        each with its ``title``; under 更多 (``more``) 子 Agent; ``summary`` the card's title bar."""
         from covey.app import review
         on = butler.available() and settings.enabled
-        found = {"summary": cards.config_subtitle(settings, choices, on, review.enabled(), butler.available()),
+        found = {"summary": cards.config_subtitle(settings, choices, on, review.enabled(), butler.available(),
+                                                  projects.enabled()),
                  "topic": {"title": cards.SECTIONS[cards.TOPIC_PART], **self.topic(ctx, settings, choices, chat)}}
         if butler.available():
             found["main"] = {"title": cards.SECTIONS[cards.BUTLER_PART], **self.butler(ctx, settings, choices)}
         if review.enabled():
             found["review"] = {"title": cards.SECTIONS[cards.REVIEW_PART], "note": cards.REVIEW_NOTE,
                                "rows": rows_of(cards.review_setting_list(settings, choices, LIMIT))}
+        if projects.enabled():
+            found["lead"] = {"title": cards.SECTIONS[cards.LEAD_PART], "note": cards.LEAD_NOTE,
+                             "rows": rows_of(cards.lead_setting_list(settings, choices, LIMIT))}
         return {**found, "more": rows_of([cards.subagent_setting(settings)]), "more_note": cards.SUBAGENT_NOTE,
                 "locked": cards.LOCKED if on else ""}
 

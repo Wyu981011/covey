@@ -258,7 +258,8 @@ function v4Topic(r: SnapTopicRow): Partial<SnapshotTopic> {
   if (r.tone) out.tone = r.tone;
   if (typeof r.board === 'string') out.board = r.board;
   if (r.joined_at !== null && r.joined_at !== undefined && Number(r.joined_at) > 0) out.joined_at = Number(r.joined_at);
-  const config = r.kind === 'topic' || !r.kind ? configOf(r.config) : undefined;
+  // v20 话题现在的配置；v36 起负责人也带（它的换配置）。管家的不在这里换
+  const config = r.kind === 'topic' || r.kind === 'lead' || !r.kind ? configOf(r.config) : undefined;
   if (config) out.config = config;
   // v34：约好到点回来看、等你确认的代发草稿（Covey 开关关着或没有时不推，这里也就没有）
   const revisit = revisitOf(r.revisit);

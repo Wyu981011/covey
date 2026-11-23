@@ -235,7 +235,7 @@
 
 ### 设置卡配置页的格子版式
 
-配置页一段里的各项排成格子（`cards/butler_panel.py` 的 `tile_lines`、`cards/launch_config.py` 的 `setting_line`），顺序不变：新话题 Harness、供应商、模型、思考预算 / 工作区、运行方式、脱敏；管家 Harness、供应商、模型、思考预算 / 工作区、脱敏、压缩阈值、私聊顶层的消息；独立复核四项；更多是子 Agent。（网页设置页读的 `lines` 仍是原来的三行分法，没变。）
+配置页一段里的各项排成格子（`cards/butler_panel.py` 的 `tile_lines`、`cards/launch_config.py` 的 `setting_line`），顺序不变：新话题 Harness、供应商、模型、思考预算 / 工作区、运行方式、脱敏；管家 Harness、供应商、模型、思考预算 / 工作区、脱敏、压缩阈值、私聊顶层的消息；独立复核四项；专项负责人四项；更多是子 Agent。（网页设置页读的 `lines` 仍是原来的三行分法，没变。）
 
 - 每项还是原来的折叠行 `setting_row`（`cell=True`：灰色标签后面跟当前值，同一行，格子只有一行高），点开列选项，点一个选项照旧记下并整卡重画，现在是一个带细边框（`TILE_BORDER`，灰色、圆角 8px）的格子，下拉箭头都在格子右缘；去掉了原来整块灰底。不用下拉框（`select`）的原因不变：iOS 飞书的 select 是全屏选择器，取消按钮在状态栏下面（见 `cards/launch_config.py` 的模块说明）。
 - 两格一行，`column_set` 的 `flex_mode` 取 `LINE_FLEX`（`stretch`），两个等宽（`weighted`）的 `column`：卡片宽时左右并排，窄（话题侧栏约 250–300px，手机）时自动上下叠成单列，所以不会把“Claude 自带”折成“Claude 自 / 带”。选的值很长的项（显示宽度超过 `WIDE`，如工作区、子 Agent）单独一行占满；落单的一项占半行（另一半放空的 `column`），格子不错位。`bisect`（任何宽度都两列，窄屏会断词）和 `flow` + `auto`（宽度参差）都试过，不用。

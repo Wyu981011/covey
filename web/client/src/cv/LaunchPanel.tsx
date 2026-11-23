@@ -37,8 +37,9 @@ const Pick: React.FC<{
   );
 };
 
-/** 面板只用到的那几样：开新话题的 LaunchBox 是，话题页换配置（v20）也拼得出 */
-export type PanelBox = Pick<LaunchBox, 'data' | 'sel' | 'edit' | 'setRedaction'>;
+/** 面板只用到的那几样：开新话题的 LaunchBox 是，话题页换配置（v20）也拼得出。
+ *  fixedPlace（v36，负责人的换配置）：不画工作区、运行方式两行，选择里照带原值（负责人留在它读的地方） */
+export type PanelBox = Pick<LaunchBox, 'data' | 'sel' | 'edit' | 'setRedaction'> & { fixedPlace?: boolean };
 
 /** 配置面板：飞书启动卡的各行，A 版展开时、B 版一直在；话题页换配置也用它（v20） */
 export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: React.ReactNode }> = ({ box, className, foot }) => {
@@ -46,6 +47,7 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
   const m: LaunchModel | undefined = data.models.find((x: LaunchModel) => x.key === sel.model);
   const modes: SettingsOption[] = (m?.work_modes ?? []).map((v: string) => ({ value: v, text: m?.work_mode_texts?.[v] ?? v }));
   const device: boolean = onDevice(data, sel);
+  const place: boolean = !box.fixedPlace;
   const row = (label: string, body: React.ReactNode, note?: string): React.ReactNode => (
     <div className={`lx-r st-cell${['模型', '工作区'].includes(label) ? ' wd' : ''}`}>
       <div className="lx-l st-l">{label}</div>
@@ -63,9 +65,10 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
       {row('模型', <Pick label="模型" options={modelOptions(data, m?.harness ?? '', m?.provider ?? '')} value={sel.model} onPick={(v: string) => box.edit((d, s) => pickModel(d, s, v))} />)}
       {row('思考预算', <Pick label="思考预算" options={m?.budgets ?? []} value={sel.effort} onPick={(v: string) => box.edit((_d, s) => ({ ...s, effort: v }))} />)}
       </div>
+      {modes.length || place || m?.redaction ? (
       <div className="st-gr cfg">
       {modes.length ? row('工作模式', <Pick label="工作模式" options={modes} value={sel.work_mode} onPick={(v: string) => box.edit((_d, s) => ({ ...s, work_mode: v }))} />) : null}
-      {row(
+      {place ? row(
         '工作区',
         <Pick
           label="工作区"
@@ -73,12 +76,12 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
           value={sel.workspace}
           onPick={(v: string) => box.edit((d, s) => pickWorkspace(d, s, v))}
         />,
-      )}
-      {row(
+      ) : null}
+      {place ? row(
         '运行方式',
         <Pick label="运行方式" options={data.run_modes} value={device ? 'direct' : sel.run_mode} onPick={(v: string) => box.edit((_d, s) => ({ ...s, run_mode: v }))} disabled={(v: string) => (device && v === 'worktree' ? '设备上只能原目录' : '')} />,
         device ? '设备上只能原目录' : undefined,
-      )}
+      ) : null}
       {m?.redaction
         ? row(
             '脱敏',
@@ -86,6 +89,7 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
           )
         : null}
       </div>
+      ) : null}
       {foot}
     </div>
   );

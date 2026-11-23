@@ -9,6 +9,9 @@
   the inbox thread does not wait); then the rebind of the switch card (app/binding.py switch_topic: refused while a task is queued or runs, and
   for nothing changed). The model's choice is kept in the chat's usage as the card keeps it, and the topic's thread in Feishu gets the
   card's 已换配置 words, so Feishu shows the switch the page made. The receipt says from what to what.
+- A project's lead (data contract v36): its ``config`` is pushed too, and ``switch`` changes it as the 专项卡's 换配置 does
+  (app/harness_switch.py): only a model a lead can run on (app/lead_harness.py ``can_lead``), its workspace and run mode as they
+  are; the 已换配置 words go as a reply to the 专项卡.
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from types import SimpleNamespace
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 
 WORKTREE_ON_CARD = "新建独立 worktree 要在飞书的换配置卡上做"
+LEAD_PLACE = "负责人的工作区和运行方式不能换：只能换 Harness、模型、思考预算和脱敏"
 
 
 def _worktree_prefix() -> str:
@@ -76,7 +80,7 @@ def _place(env, ctx, chat, current, workspace, mode, harness, choice):
     return {"workspace": name, "workdir": str(binding.workdir), "run_mode": "direct", "branch": ""}
 
 
-def _receipt(apps, before, after, redaction, was) -> str:
+def _receipt(apps, before, after, redaction, was, lead=False) -> str:
     from covey.core.model_names import model_name
 
     def named(side):
@@ -90,12 +94,12 @@ def _receipt(apps, before, after, redaction, was) -> str:
         parts.append(f"工作区 {before.get('workspace') or '?'} → {after.get('workspace') or '?'}")
     if redaction != was:
         parts.append("脱敏 " + ("关 → 开" if redaction else "开 → 关"))
-    return "已换配置：" + "；".join(parts or ["已更新"]) + "，下一句话起由新会话接着做"
+    return "已换配置：" + "；".join(parts or ["已更新"]) + ("，负责人下一轮起由新会话接着做" if lead else "，下一句话起由新会话接着做")
 
 
 def switch(env, op_id, chat, topic_id, payload) -> str:
     """Change the topic's configuration (see the module's docstring); the receipt the page shows. ValueError says why nothing changed."""
-    from covey.app import model_usage
+    from covey.app import lead_harness, model_usage
     from covey.app.binding import busy_reason, switch_topic
     from covey.app.harness_switch import done_text
     from covey.app.launch_models import available_models, run_choice
@@ -104,7 +108,8 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     from covey.core.menu_choice import chosen_work_mode
     from covey.core.topics import topic_label
     state = Path(env.state_dir)
-    found = env.topics.target(state, str(topic_id or ""), chat)
+    lead = lead_harness.target(env.topics, state, str(topic_id or ""), chat)  # A project's lead (v36), else None.
+    found = lead[:3] if lead else env.topics.target(state, str(topic_id or ""), chat)
     if found is None:
         raise ValueError("这个话题不认识，或不在你的私聊里，或已经结束")
     app, target, topic = found
@@ -114,7 +119,14 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     current = topic_config(topic, choices)
     harness, key, choice, budget, mode, redaction = model_choice(env, ctx, payload)
     workspace = str(payload.get("workspace") or current["workspace"])
-    place = _place(env, ctx, chat, current, workspace, str(payload.get("run_mode") or current["run_mode"]), harness, choice)
+    if lead:
+        if (workspace, str(payload.get("run_mode") or current["run_mode"])) != (current["workspace"], current["run_mode"]):
+            raise ValueError(LEAD_PLACE)
+        if not lead_harness.can_lead(choice):
+            raise ValueError(lead_harness.CANNOT_LEAD)
+        place = None
+    else:
+        place = _place(env, ctx, chat, current, workspace, str(payload.get("run_mode") or current["run_mode"]), harness, choice)
     if (key, budget, mode, redaction, place) == (current["model"], current["effort"], current["work_mode"],
                                                  current["redaction"] == "on", None):
         raise ValueError("配置没有变化")
@@ -135,7 +147,8 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     form = {"harness_id": topic["harness_id"], "binding_revision": topic.get("binding_revision", 1), "job_id": None}
     record = {"topic": topic_label(state, target.topic_id), "workspace": current["workspace"],
               "current": {"label": _label(app, choices, current["model"], topic), "work_mode": current["work_mode"],
-                          "workspace": current["workspace"], "run_mode": current["run_mode"], "workdir": str(topic.get("workdir") or "")}}
+                          "workspace": current["workspace"], "run_mode": current["run_mode"], "workdir": str(topic.get("workdir") or "")},
+              **({"lead": lead_harness.named(lead[3])} if lead else {})}
     switched = switch_topic(env.topics, target, chat, form, harness, model, effort, work_mode, place=place, redaction=redaction)
     if switched is not None:
         try:
@@ -150,4 +163,4 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
         env.runtime.log(f"web switch note not sent topic={str(topic_id)[:12]}: {type(exc).__name__}")
     if switched is None:
         return "已打开脱敏，会话不变" if redaction else "已关闭脱敏，会话不变"
-    return _receipt(env.topics.apps, *switched, redaction, was)
+    return _receipt(env.topics.apps, *switched, redaction, was, lead=bool(lead))

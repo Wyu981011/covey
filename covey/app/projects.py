@@ -28,7 +28,8 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import butler_harness, dispatch_cards, project_cards, project_facts, project_lead, project_loop, revisits
+from covey.app import (butler_harness, dispatch_cards, lead_harness, project_cards, project_facts, project_lead, project_loop,
+                       revisits)
 from covey.app.project_clicks import topic_ctx
 from covey.app.project_members import GATHERED_NOTE, topic_line, wanted_topics
 from covey.app.butler_env import arg_text, reply
@@ -108,6 +109,20 @@ def steps_of(record):
 
 _busy: set = set()  # Project ids whose steps this process is working through right now.
 _busy_lock = threading.Lock()
+
+
+def lead_wanted(env, args, plan, redacting):
+    """What topic_start with ``project`` true named for the project's lead: {harness, model, effort} as ``plan``
+    (app/butler_topics.py plan_start) resolved them when the call named a ``harness`` or ``model``, {} when it named neither
+    (the lead then takes the settings' 专项负责人, else the butler's: app/lead_harness.py binding). A str saying why not when
+    that Harness cannot run a lead here (``redacting``: the butler's 脱敏, which the lead keeps)."""
+    if not (arg_text(args.get("harness")) or arg_text(args.get("model"))):
+        return {}
+    why = lead_harness.refusal(env.topics.apps, plan["harness"], redacting)
+    if why:
+        return (f"{why}；这次没开专项。harness、model 在开专项时是负责人用的：负责人照默认就不填；"
+                "主人要专项的话题用哪个模型，写进 prompt，负责人开话题时照办。")
+    return {"harness": plan["harness"], "model": plan["model"], "effort": plan["effort"]}
 
 
 class Projects:
@@ -268,8 +283,9 @@ class Projects:
         return True  # Written when the project was made; the tick is part of that write.
 
     def step_lead(self, record) -> bool:
-        """The lead's topic: topic.json with ``project`` {id, role lead}, the butler's own model settings (its Harness, model
-        and budget, from the butler's topic.json, else as its first message would write them), the workspace of the topic the
+        """The lead's topic: topic.json with ``project`` {id, role lead}; its Harness, model and budget as app/lead_harness.py
+        ``binding`` picks them (what the butler's call named for it, else the settings' 专项负责人, else the butler's own, from
+        the butler's topic.json or as its first message would write them), the butler's 脱敏; the workspace of the topic the
         project grew from (else the one the direct start chose, else the butler's), locked."""
         state, chat, pid = Path(self.env.state_dir), str(record["chat_id"]), record["id"]
         lead, origin = record["lead_topic_id"], record.get("origin") or {}
@@ -286,6 +302,10 @@ class Projects:
                 raise RuntimeError("no enabled Harness can run the lead: none takes the Bridge tools")
         source = read_object(topic_file(state, origin["topic_id"])) if origin.get("topic_id") else {}
         data = {key: value for key, value in root.items() if key not in LEAD_DROPS}
+        chosen = lead_harness.binding(self.env.topics.apps, root, origin.get("lead"), butler_settings.load(state).lead)
+        if (chosen["harness_id"], chosen["model"]) != (root.get("harness_id"), root.get("model")):
+            data.pop("work_mode", None)  # The butler's model's own mode, if any: not the lead's model's.
+        data.update(harness_id=chosen["harness_id"], model=chosen["model"], effort=chosen["effort"])
         name = source.get("workspace_name") or origin.get("workspace") or root.get("workspace_name") or ""
         workdir = source.get("workdir") or origin.get("workdir") or root.get("workdir") or ""
         if devices.is_device_value(workdir):
@@ -297,6 +317,7 @@ class Projects:
                     workspace_name=name, workdir=workdir)
         with LOCK:
             write_json(path, {**read_object(path), **data}, ensure_ascii=False, indent=2)
+        self.env.runtime.log(f"project lead bound project={pid[:8]} harness={chosen['harness_id']} from={chosen['source']}")
         return True
 
     def step_thread(self, record) -> bool:
@@ -530,9 +551,13 @@ class Projects:
         pid = project_id("direct", butler_opened.request_token(request))
         record, room = projects.read_record(state, pid), project_loop.Room(True, "", "")
         if not record:
-            plan = butler_topics.plan_start(env, args, butler_settings.load(state))
+            settings = butler_settings.load(state)
+            plan = butler_topics.plan_start(env, args, settings)
             if isinstance(plan, str):
                 return reply(False, plan)
+            lead = lead_wanted(env, args, plan, settings.redaction)
+            if isinstance(lead, str):
+                return reply(False, lead)
             room = project_loop.make_room(state, env.runtime.log)
             if not room.ok:
                 return reply(False, room.words + "。这次没开；也可以把这件事当普通话题开（topic_start 不带 project）。")
@@ -543,7 +568,8 @@ class Projects:
                 chat_id=chat, name=title, goal=prompt, project_id=pid,
                 origin={"kind": "direct", "request": request.id, "job_key": request.job_key, "workspace": plan["workspace"],
                         "workdir": plan["workdir"], "why": arg_text(args.get("why"), 200), "text": words or prompt,
-                        **({"topics": joins} if joins else {}), **({"refused": refused} if refused else {})})
+                        **({"topics": joins} if joins else {}), **({"refused": refused} if refused else {}),
+                        **({"lead": lead} if lead else {})})
             made["steps"] = {"record": round(time.time(), 3)}
             ask = dispatch_cards.ask_of(env, state, request.job_key)
             asked = dispatch_cards.request_words(state, request.job_key)

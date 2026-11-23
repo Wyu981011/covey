@@ -133,7 +133,7 @@ class CardTest(UnifiedCase):
                                          library=(("方案.md",),), ask_text="迁库", ask_at="09:10", ask_url=URL))
         found = ids(card["body"]["elements"])
         self.assertEqual(found, ["speaker_row", "answer_words", "pj_need", "pj_meta", "pj_lead", "pt_a1b2c3_r", "pj_triage",
-                                 "pj_mem", "pj_lib", "pj_io", "pj_btns", "pj_steer", "pj_stop", "pj_down"])
+                                 "pj_mem", "pj_lib", "pj_io", "pj_btns", "pj_steer", "pj_switch", "pj_stop", "pj_down"])
         self.assertEqual(len(found), len(set(found)))
         self.assertTrue(all(ELEMENT_ID.match(name) for name in found), found)
         self.assertNotIn('"tag": "input"', text(card))
@@ -197,14 +197,19 @@ class CardTest(UnifiedCase):
     def test_buttons_follow_the_state(self):
         def names(status):
             card = view.project_card(project(status))
-            return [name for name in ("pj_steer", "pj_stop", "pj_down") if find_element(card, name)]
-        self.assertEqual(names(view.RUNNING), ["pj_steer", "pj_stop", "pj_down"])
-        self.assertEqual(names(view.WAITING), ["pj_steer", "pj_stop", "pj_down"])
-        self.assertEqual(names(view.STOPPED), ["pj_steer", "pj_down"])
-        self.assertEqual(names(view.CANCELLED), ["pj_steer", "pj_down"])
+            return [name for name in ("pj_steer", "pj_switch", "pj_stop", "pj_down") if find_element(card, name)]
+        self.assertEqual(names(view.RUNNING), ["pj_steer", "pj_switch", "pj_stop", "pj_down"])
+        self.assertEqual(names(view.WAITING), ["pj_steer", "pj_switch", "pj_stop", "pj_down"])
+        # A paused project's lead can be switched too: a lead stopped on a limit goes on, on another model, once 继续 is clicked.
+        self.assertEqual(names(view.STOPPED), ["pj_steer", "pj_switch", "pj_down"])
+        self.assertEqual(names(view.CANCELLED), ["pj_steer", "pj_switch", "pj_down"])
         self.assertEqual(names(view.DONE), [])
         card = view.project_card(project())
         self.assertEqual(find_element(card, "pj_stop")["value"], {"kind": "bridge_project_stop", "project_id": PID, "topic_id": LEAD})
+        # 换配置 is the 换配置 card's own kind (app/harness_switch.py, matched before the card table), the project named.
+        self.assertEqual(find_element(card, "pj_switch")["value"],
+                         {"kind": "bridge_switch_open", "topic_id": LEAD, "project_id": PID})
+        self.assertEqual(find_element(card, "pj_switch")["text"]["content"], "换配置")
 
     def test_the_lines_a_card_shrinks_to(self):
         done = view.settled_card("迁库", url=URL)

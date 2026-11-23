@@ -187,6 +187,11 @@ ACTIONS = {
     "bridge_main_review_provider": CardAction("选择独立复核供应商"),
     "bridge_main_review_model": CardAction("选择独立复核模型"),
     "bridge_main_review_effort": CardAction("选择独立复核思考预算"),
+    # 专项负责人 (COVEY_PROJECTS=1): what a new project's lead runs on (core/butler_settings.py LeadModel).
+    "bridge_main_lead_harness": CardAction("选择专项负责人 Harness"),
+    "bridge_main_lead_provider": CardAction("选择专项负责人供应商"),
+    "bridge_main_lead_model": CardAction("选择专项负责人模型"),
+    "bridge_main_lead_effort": CardAction("选择专项负责人思考预算"),
     "bridge_main_section": CardAction("展开设置的一段"),
     "bridge_main_start": CardAction("直接开工（已下线）"),
     "bridge_main_untrust": CardAction("记住的工作区（已下线）"),

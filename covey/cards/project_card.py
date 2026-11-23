@@ -24,7 +24,8 @@ lead's speaker row, as the lead's answers have (cards/ui.py speaker_row, docs/ui
 - ``pj_triage``, ``pj_mem``, ``pj_lib``: the 分流记录, 专项记忆 and 资料库 folds (closed), drawn only with rows; each row of
   the last two has a 删 button, and a row of the first that the lead answered for the owner a 不对 button (``triage_rows``);
 - ``pj_io``: the grey 输入/输出 box (cards/answer_card.py ``box``);
-- ``pj_btns``: 补充 (``pj_steer``), 停止专项 (``pj_stop``, while the project is at work), 不要专项 (``pj_down``).
+- ``pj_btns``: 补充 (``pj_steer``), 换配置 (``pj_switch``: the lead's Harness, model and budget, app/harness_switch.py's card
+  with the project named, ``SWITCH_LEAD``), 停止专项 (``pj_stop``, while the project is at work), 不要专项 (``pj_down``).
 
 Two cards of the project's own more, with COVEY_PROJECT_ASK=1 (``ask_card``, ``asked_card``): the one a guard's pause sends the owner,
 a message of its own where the project's card is (``pa_why`` the reason in a sentence, ``pa_note``, ``pa_btns``: 继续 ``pa_go``,
@@ -39,6 +40,7 @@ from dataclasses import dataclass
 
 from covey.cards import answer_card, ui
 from covey.cards.answer_card import literal_text
+from covey.cards.topic_actions import SWITCH_OPEN
 from covey.cards.elements import (CARD_BYTES, CARD_NODES, button_row, card, collapsible, fits, grey, item, md, note,
                                   panel_header, styled_panel, text_button, topic_button)
 from covey.core import look
@@ -56,6 +58,7 @@ CORRECTED = "（已纠正）"  # The end of a 分流记录 line the owner correc
 STEER_KIND, STOP_KIND, DOWN_KIND = "bridge_project_steer", "bridge_project_stop", "bridge_project_downgrade"
 MEM_DEL_KIND, LIB_DEL_KIND = "bridge_project_mem_del", "bridge_project_lib_del"
 TRIAGE_WRONG_KIND = "bridge_project_triage_wrong"
+SWITCH_LEAD = "project_id"  # In 换配置's value (app/harness_switch.py LEAD): the project whose lead it changes.
 # The pause card's buttons (choice -> kind): app/project_loop.py CHOICES.
 ASK_KINDS = {"continue": "bridge_project_ask_continue", "finish": "bridge_project_ask_finish", "stop": "bridge_project_ask_stop"}
 KINDS = frozenset({STEER_KIND, STOP_KIND, DOWN_KIND, MEM_DEL_KIND, LIB_DEL_KIND, TRIAGE_WRONG_KIND, "bridge_project_triage_fix", *ASK_KINDS.values()})
@@ -284,12 +287,15 @@ def library_rows(project) -> list:
 
 
 def buttons(project) -> list:
-    """补充 and 停止专项 while the project is on, 不要专项 until it is done: the lead's topic id and the project's id are
-    what a click carries (the click routes to the lead's topic, which the card's message belongs to)."""
+    """补充 and 换配置 (the lead's Harness, model and budget: 换配置's own kind, the project named, SWITCH_LEAD) until the project
+    is done, 停止专项 while it is at work, 不要专项 until it is done: the lead's topic id and the project's id are what a click
+    carries (the click routes to the lead's topic, which the card's message belongs to)."""
     if project.status == DONE:
         return []
     value = {"project_id": project.project_id, "topic_id": project.lead_topic}
-    row = [topic_button("补充", element_id="pj_steer", value={"kind": STEER_KIND, **value})]
+    row = [topic_button("补充", element_id="pj_steer", value={"kind": STEER_KIND, **value}),
+           topic_button("换配置", element_id="pj_switch", value={"kind": SWITCH_OPEN, "topic_id": project.lead_topic,
+                                                                 SWITCH_LEAD: project.project_id})]
     if project.status in AT_WORK:
         row.append(topic_button("停止专项", element_id="pj_stop", tone="danger", value={"kind": STOP_KIND, **value}))
     row.append(topic_button("不要专项", element_id="pj_down", value={"kind": DOWN_KIND, **value}))

@@ -650,9 +650,9 @@ class Collector:
         body["tone"] = self.tone(records, latest, questions, body["unseen"], body.get("progress"), starts)
         if self.board is not None and not (butler or project):
             body["board"] = self.board.get(topic, "")
-        # What it runs with, for 换配置 on the page (data contract v21, app/web_switch.py); none while it waits for 开始, its
-        # launch card's to choose (a switch now would bind it to what the card is about to replace).
-        if not (butler or project or starts):
+        # What it runs with, for 换配置 on the page (data contract v21, app/web_switch.py; a project's lead's too, v36); none while
+        # it waits for 开始, its launch card's to choose (a switch now would bind it to what the card is about to replace).
+        if not (butler or starts):
             config = web_switch.topic_config(data, self.menu())
             if config:
                 body["config"] = config

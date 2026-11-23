@@ -103,6 +103,8 @@ def catalog(env, ctx, chat) -> dict:
                        "label": str(entry.get("display_name") or entry.get("label") or key.partition(":")[2]),
                        "budgets": [{"value": value, "text": text} for value, text in options], "default_budget": default,
                        "start_budget": start, "redaction": bool(entry.get("redaction")),
+                       # v36: a project's lead can run on it (its Harness takes the Bridge's tools, app/lead_harness.py).
+                       "bridge_tools": bool(entry.get("bridge_tools")),
                        "work_modes": list(entry.get("work_modes") or ()),
                        # The card's words for each mode (core/defaults.py WORK_MODES: name（what it does）).
                        "work_mode_texts": {mode: "{}（{}）".format(*WORK_MODES[mode]) if mode in WORK_MODES else mode

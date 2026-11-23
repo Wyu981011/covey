@@ -15,6 +15,13 @@ whose quote goes to it; whatever it answers goes there too, and the card closes 
 card is redrawn once its 换个模型 switched the topic (app/relay_stops.py switched), or when it meets a card from before the
 topic's latest switch.
 
+A project's lead (COVEY_PROJECTS=1) has no thread and no task card of its own: its 换配置 is on the 专项卡 (cards/project_card.py
+``buttons``, the value naming the project, ``LEAD``). Its card is a reply to the 专项卡 at the chat's top level (a reply to
+either is the lead's), lists only the models a lead can run on (app/lead_harness.py ``can_lead``: the Bridge's tools),
+has no workspace or run mode rows (the lead stays where it reads), and always acts on the lead's binding as it is now; the
+record says so (``lead``: the project's id and name). The rebind is a topic's (a new session, the handoff, the old
+binding's questions void); the lead's next turn reads the project's state pack whole, as on any new session.
+
 This module keeps the card's record and handles its clicks; the rebind itself and its checks are in
 app/binding.py, and the next run's handoff (recent rounds and a transcript file) in app/switch_handoff.py.
 """
@@ -29,6 +36,7 @@ from covey.app.card_queue import CardActionQueue
 from covey.app.switch_handoff import tagged
 from covey.cards import switch_form
 from covey.cards.elements import notice_card
+from covey.cards.project_card import SWITCH_LEAD
 from covey.cards.launch_config import PAGES
 from covey.core.menu_choice import budget_effort, chosen_work_mode, effort_options, parse_budget, tier_pick
 from covey.cards.switch_form import (BUDGET, CANCEL, CONFIRM, HARNESS, MODEL, PAGE, PROVIDER, REDACTION,
@@ -44,7 +52,8 @@ from covey.app.card_actions import action_value
 from covey.cards.topic_actions import PREFER_OTHER, RELAY, SWITCH_OPEN
 from covey.app.launch_models import available_models, catalog_changed, run_choice
 from covey.app.preselection import switch_selection
-from covey.app import model_usage
+from covey.app import lead_harness, model_usage
+from covey.core import projects
 from covey.core.topics import route_message, topic_label
 from covey.app.form_cards import click_token, publish_form, refused, replace_form_card
 
@@ -58,6 +67,11 @@ REBUILD_FAILED = "选项没有刷新成功，卡片上的选项可能还是之�
 NO_OTHER_HARNESS = "现在没有别的 Harness 能接着做（没启用、刚报过限流或额度用完，或者这个话题开着脱敏）；可以稍后再试，或点「换个模型」。"
 # What a switch confirmed at the top level says comes next: a top-level message is the butler's, a reply to this card the topic's.
 TOP_NEXT = "回复这张卡说一句，就由新会话接着做"
+LEAD = SWITCH_LEAD  # In a 换配置 click from a 专项卡: the project whose lead it changes (cards/project_card.py ``buttons``).
+# What a lead's switch says comes next: its next turn (a wake-up, or the owner's words) starts a new session.
+LEAD_NEXT = ("负责人下一轮起由新会话接着做：它重新读一遍专项的状态，最近几轮对话一起带上，仍然只读。"
+             "引用专项卡或这张卡回复，就是对负责人说。")
+NO_LEAD_MODEL = "现在没有能当负责人的模型：要能接 Bridge 工具（Claude Code、Codex 或 Antigravity），在 harnesses.json 里启用一个。"
 
 
 def other_harness_key(topics, state_dir, sel, topic) -> str:
@@ -84,15 +98,18 @@ def other_harness_key(topics, state_dir, sel, topic) -> str:
 def done_text(record, choice, effort, mode, place, redaction, was, switched):
     """The 已换配置 card: each change, from what to what, and what the next message gets (a card at the private chat's top
     level, ``top_level``: a reply to it, as a top-level message is the butler's)."""
-    current = record["current"]
-    lines = ["**🔁 已换配置**" + (f" · 话题 {record['topic']}" if record.get("topic") else "")]
+    current, lead = record["current"], record.get("lead") or {}
+    lines = ["**🔁 已换配置**" + (f" · 专项「{lead.get('name') or '专项'}」的负责人" if lead
+                                  else f" · 话题 {record['topic']}" if record.get("topic") else "")]
     if switched:
         before, after = switched
         if [before[k] for k in ("harness_id", "model", "effort", "work_mode")] != [
                 after[k] for k in ("harness_id", "model", "effort", "work_mode")]:
             lines.append(f"模型：{current['label']}{tagged(current.get('work_mode'))} → "
                          f"{choice['label']} · 思考预算 {effort or '模型默认'}{tagged(mode)}")
-        if place:
+        if lead:
+            pass  # The lead stays where it reads (no workspace row on its card).
+        elif place:
             lines.append(f"工作区：{switch_form.place(current['workspace'], current['run_mode'])} → "
                          f"{switch_form.place(place['workspace'], place['run_mode'])}"
                          + (f"，分支 {place['branch']}" if place.get("branch") else ""))
@@ -103,6 +120,9 @@ def done_text(record, choice, effort, mode, place, redaction, was, switched):
     if redaction != was:
         lines.append("敏感词脱敏：关 → 开（之前各轮已经原样发出过）" if redaction else "敏感词脱敏：开 → 关")
     top = bool(record.get("top_level"))
+    if lead:
+        lines.append(LEAD_NEXT if switched else "会话不变，负责人下一轮起生效。")
+        return "\n".join(lines)
     lines.append(((TOP_NEXT if top else "下一条消息由新会话接手") + "，上下文不断：它拿到交接摘要和最近的问答，"
                   "完整记录放在文件里，需要时自己去读；交接了什么写在下一张任务卡上。"
                   "更换前的任务卡只能查看，不能再重试、回退或换配置。") if switched
@@ -135,9 +155,18 @@ class HarnessSwitch(CardActionQueue):
     def save(path, record):
         write_json(path, record, ensure_ascii=False)
 
-    def topic_context(self, ctx, topic_id, chat):
-        """The topic's current app, context and topic.json; Nones when it cannot be routed."""
+    def topic_context(self, ctx, topic_id, chat, project=""):
+        """The topic's current app, context and topic.json; Nones when it cannot be routed. ``project``: the topic is that
+        project's lead (``lead_context``)."""
+        if project:
+            return self.lead_context(ctx, topic_id, chat, project)
         return self.topics.target(ctx.state_dir, topic_id, chat) or (None, None, None)
+
+    def lead_context(self, ctx, topic_id, chat, project):
+        """(app, context, topic.json) of project ``project``'s lead ``topic_id`` in ``chat`` (app/lead_harness.py ``target``:
+        the context that of the 专项卡's message); Nones when it is not that project's lead in this chat."""
+        found = lead_harness.target(self.topics, ctx.state_dir, topic_id, chat, str(project))
+        return found[:3] if found else (None, None, None)
 
     @staticmethod
     def here(target, top):
@@ -149,16 +178,16 @@ class HarnessSwitch(CardActionQueue):
     def tell(app, target, chat, text, tag, click, top=False):
         app.messenger.reply(HarnessSwitch.here(target, top), chat, text, app.key("switch-" + tag, click), voice=app.voice)
 
-    def tell_topic(self, ctx, topic_id, chat, text, tag, click, top=False):
-        app, target, _ = self.topic_context(ctx, topic_id, chat)
+    def tell_topic(self, ctx, topic_id, chat, text, tag, click, top=False, project=""):
+        app, target, _ = self.topic_context(ctx, topic_id, chat, project)
         if app is not None:
             self.tell(app, target, chat, text, tag, click, top)
 
-    def dropped(self, ctx, event, topic_id, text, top=False):
+    def dropped(self, ctx, event, topic_id, text, top=False, project=""):
         """A click the full queue dropped still gets an answer, never silence."""
         chat = str(event.get("chat_id") or "")
         self.tell_topic(ctx, topic_id, chat, text, "dropped", str(event.get("event_id") or event.get("message_id") or ""),
-                        top)
+                        top, project)
 
     def dispatch(self, ctx, event):
         raw, chat = self.action(event), str(event.get("chat_id") or "")
@@ -166,7 +195,7 @@ class HarnessSwitch(CardActionQueue):
         if kind == OPEN:
             if not self.submit("switch card not opened", self.open, ctx, event, raw):
                 self.dropped(ctx, event, raw.get("topic_id"), "换配置卡片暂时没有打开（处理队列已满），请稍后再点一次“换配置”。",
-                             bool(raw.get(RELAY)))
+                             bool(raw.get(RELAY)), str(raw.get(LEAD) or ""))
             return
         token = raw.get("token")
         if not valid_token(token):
@@ -220,7 +249,7 @@ class HarnessSwitch(CardActionQueue):
                                                else self.effort_for(record, key)), selected_model=key)
                 self.save(path, record)
             if not self.submit("switch card model not updated", self.rebuild, ctx, path, revision):
-                self.dropped(ctx, event, record["topic_id"], REBUILD_FAILED, bool(record.get("top_level")))
+                self.dropped(ctx, event, record["topic_id"], REBUILD_FAILED, bool(record.get("top_level")), lead_of(record))
         elif kind in (CONFIRM, CANCEL):
             if not self.submit("switch not confirmed", self.finish, ctx, event, path, kind == CONFIRM):
                 try:
@@ -228,7 +257,7 @@ class HarnessSwitch(CardActionQueue):
                 except (OSError, ValueError):
                     return
                 self.dropped(ctx, event, record.get("topic_id"), "这次点击没有处理（处理队列已满），话题配置没有改变，请稍后再点一次。",
-                             bool(record.get("top_level")))
+                             bool(record.get("top_level")), lead_of(record))
 
     @staticmethod
     def record_choice(record, kind, option):
@@ -291,11 +320,17 @@ class HarnessSwitch(CardActionQueue):
 
     def open(self, ctx, event, raw):
         chat, click = str(event.get("chat_id") or ""), str(event.get("event_id") or event.get("message_id") or "")
-        app, target, topic = self.topic_context(ctx, raw.get("topic_id"), chat)
+        project = str(raw.get(LEAD) or "")  # A 专项卡's 换配置: its project's lead, as it is now (no binding to check).
+        app, target, topic = self.topic_context(ctx, raw.get("topic_id"), chat, project)
         if app is None:
+            if project:  # Not this chat's lead, projects off, no card, or the lead's Harness is not enabled here.
+                self.topics.runtime.log(f"lead switch not opened project={project[:8]}: no lead to switch here")
             return
         top = bool(raw.get(RELAY))  # A relay card's, at the private chat's top level: answered there.
-        if not current_binding_card(ctx.state_dir, topic, raw, chat):
+        if project and not self.topics.runtime.access.is_owner(str(event.get("operator_id") or "")):
+            self.tell(app, target, chat, "只有主人能换专项负责人的配置。", "owner", click)
+            return
+        if not project and not current_binding_card(ctx.state_dir, topic, raw, chat):
             # A 停住了 relay's 换个模型 says so on its own card, redrawn (as its 检查并继续, app/card_routing.py job_route).
             if not (top and self.relay_redrawn(ctx, app, raw, chat)):
                 self.tell(app, target, chat, STALE_CARD, "stale", click, top)
@@ -311,13 +346,20 @@ class HarnessSwitch(CardActionQueue):
             if not choices:
                 self.tell(app, target, chat, "模型目录准备中，请稍后再点换配置。", "catalog", click, top)
                 return
-            try:
-                config = load_config(ctx.state_dir, ctx.default_workdir)
-                # A device's workspaces only where its ``spaces`` say (app/access.py allows_device).
-                config = visible_workspaces(config, lambda alias: self.topics.runtime.access.allows_device(chat, alias))
-                names = sorted(config["workspaces"], key=lambda name: -config.get("recent", {}).get(name, 0))
-            except (OSError, ValueError):
-                names = []
+            if project:  # Only the models a lead can run on; the workspace it reads in stays.
+                choices = lead_harness.lead_choices(choices)
+                if not choices:
+                    self.tell(app, target, chat, NO_LEAD_MODEL, "no-lead-model", click)
+                    return
+                names = [str(topic.get("workspace_name") or "")]
+            else:
+                try:
+                    config = load_config(ctx.state_dir, ctx.default_workdir)
+                    # A device's workspaces only where its ``spaces`` say (app/access.py allows_device).
+                    config = visible_workspaces(config, lambda alias: self.topics.runtime.access.allows_device(chat, alias))
+                    names = sorted(config["workspaces"], key=lambda name: -config.get("recent", {}).get(name, 0))
+                except (OSError, ValueError):
+                    names = []
             sel = switch_selection(choices, model_usage.recent(ctx.state_dir, chat), topic, names)
             # 换个 Harness on a limit's failure (cards/recovery.py OTHER_HARNESS, #36), and a 停住了 relay's 换个模型
             # (PREFER_OTHER), which opens on the topic's own model when no other Harness can take it now.
@@ -346,14 +388,16 @@ class HarnessSwitch(CardActionQueue):
                       "workspace": sel.workspace, "topic": topic_label(ctx.state_dir, target.topic_id),
                       "active_task": active_task(self.topics, ctx.state_dir, target.topic_id),
                       # Opened from a relay card at the top level: it goes there, and so does what it answers.
-                      **({"top_level": True} if top else {})}
+                      **({"top_level": True} if top else {}),
+                      # Opened from a 专项卡: the project's lead (no workspace rows; its words name the project).
+                      **({"lead": lead_harness.named(projects.read_record(ctx.state_dir, project))} if project else {})}
             _, mid = publish_form(path, record, lambda: app.messenger.create_and_send_card(
                 ctx.profile, chat, build_switch_card(record), app.key("switch-card", token),
                 reply_to_message_id=self.here(target, top).reply_to_message_id, voice=app.voice),
                 topic=(ctx.state_dir, target.topic_id, chat))
-            if mid and top:
+            if mid and (top or project):
                 # The topic's message at the top level, as its relay is (app/relay_send.py remember_sent): a quote of it
-                # goes to the topic, so a reply to its 已换配置 card is the topic's next turn.
+                # goes to the topic, so a reply to its 已换配置 card is the topic's next turn (a lead's: as a reply to the 专项卡).
                 route_message(ctx.state_dir, chat, mid, target.topic_id)
             if not mid:
                 self.tell(app, target, chat, "换配置卡片暂未送达，话题配置没有改变；请稍后再点。", "undelivered", click, top)
@@ -385,7 +429,7 @@ class HarnessSwitch(CardActionQueue):
                 self.topics.runtime.log(f"switch card model update failed token={path.stem}")
                 # Choosing the model again retries; say so instead of leaving 确认 refused with no way out.
                 self.tell_topic(ctx, record["topic_id"], record["chat_id"], REBUILD_FAILED,
-                                "rebuild", f"{path.stem}-{revision}", bool(record.get("top_level")))
+                                "rebuild", f"{path.stem}-{revision}", bool(record.get("top_level")), lead_of(record))
 
     def finish(self, ctx, event, path, confirm):
         chat, click = str(event.get("chat_id") or ""), str(event.get("event_id") or event.get("message_id") or "")
@@ -396,12 +440,13 @@ class HarnessSwitch(CardActionQueue):
                 return
             if record.get("chat_id") != chat or record.get("message_id") != event.get("message_id"):
                 return
-            app, target, topic = self.topic_context(ctx, record["topic_id"], chat)
+            app, target, topic = self.topic_context(ctx, record["topic_id"], chat, lead_of(record))
             if app is None or record.get("status") != "ready":
                 return
             if not confirm:
                 current = record["current"]  # Named as the card's 当前 line names it.
-                text = (f"已取消换配置，话题继续使用 {current['label']} · 思考预算 {current.get('effort') or '模型默认'}"
+                text = (f"已取消换配置，{'负责人' if lead_of(record) else '话题'}继续使用 {current['label']} · 思考预算 "
+                        f"{current.get('effort') or '模型默认'}"
                         f"{tagged(current.get('work_mode'))}。")
                 self.replace(ctx, path, record, {**record, "status": "cancelled"}, notice_card(text, "已取消换配置"),
                              "switch-cancel")
@@ -424,7 +469,9 @@ class HarnessSwitch(CardActionQueue):
                 redaction = record["selected_redaction"] == "on" if "selected_redaction" in record else was
                 if redaction and not choice.get("redaction"):
                     raise ValueError(REDACTION_ONLY)
-                place = self.place(target, record)
+                if lead_of(record) and not lead_harness.can_lead(choice):
+                    raise ValueError(lead_harness.CANNOT_LEAD)
+                place = None if lead_of(record) else self.place(target, record)  # A lead stays where it reads.
                 if isinstance(place, dict) and "top" in place:
                     record = self.make_worktree(ctx, path, record, place)
                     place = self.place(target, record)
@@ -441,7 +488,10 @@ class HarnessSwitch(CardActionQueue):
                 switched = switch_topic(self.topics, target, chat, record, name, model, effort, mode, place=place,
                                         redaction=redaction)
             except ValueError as exc:
-                self.refuse(ctx, path, record, app, target, chat, click, str(exc))
+                reason = str(exc)
+                if lead_of(record):  # A lead has no task card: its 换配置 is on the 专项卡.
+                    reason = reason.replace("请在最新的任务卡上重新打开换配置", "请在专项卡上重新点「换配置」")
+                self.refuse(ctx, path, record, app, target, chat, click, reason)
                 return
             if switched is not None:
                 try:
@@ -455,7 +505,7 @@ class HarnessSwitch(CardActionQueue):
                 # With the sequence that write reserved (record holds it), never the one before it (rule 3).
                 self.save(path, {**done, "sequence": record["sequence"]})
                 self.tell(self.topics.apps[name], target, chat, text, "done", click, bool(record.get("top_level")))
-        if switched is not None and record.get("top_level"):
+        if switched is not None and record.get("top_level") and not lead_of(record):
             # A 停住了 relay whose 换个模型 opened this card: its buttons become one line (outside the form's lock).
             from covey.app import relay_stops
 
@@ -518,3 +568,9 @@ class HarnessSwitch(CardActionQueue):
         if effort and effort not in choice["levels"]:
             raise ValueError("该模型不支持此思考预算")
         return (choice["harness"], *run_choice(choice, effort), choice)
+
+
+def lead_of(record) -> str:
+    """The project whose lead a switch record changes ('' for an ordinary topic's)."""
+    lead = record.get("lead") if isinstance(record, dict) else None
+    return str(lead.get("project_id") or "") if isinstance(lead, dict) else ""

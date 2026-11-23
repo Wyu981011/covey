@@ -10,7 +10,7 @@ import { engineText } from './lib';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 import { onOpenSwitch } from './switchOpen';
-import { changedFields, fromConfig, switchBlock, type SwitchSel } from './switchConfig';
+import { changedFields, fromConfig, leadData, switchBlock, type SwitchSel } from './switchConfig';
 import './launch.css';
 import './composer.css';
 
@@ -19,15 +19,24 @@ const FIELD_WORD: Record<string, string> = {
 };
 type Phase = 'idle' | 'sending' | 'failed';
 
+/** 负责人改了配置以后怎样（Covey 只改脱敏时会话不变，别的都开新会话、重读专项的状态） */
+const leadNext = (changed: string[]): string =>
+  changed.every((k: string) => k === 'redaction') ? '从负责人下一轮起生效，会话不变' : '从负责人下一轮起按新配置做（开新会话，重新读一遍专项的状态）';
+
 /**
  * 话题页输入框下沿的配置栏（截图红框那行，T616）：“工作区 covey · Claude Code · Opus”。
  * 话题带 config（Covey v20）且设置里有开新话题的目录（launch）时，点开是和启动卡同样各行的面板，初值是话题现在的配置，
  * 「确认更换」发 switch，同飞书 🔁 换配置的确认；旧数据没有 config 时只是一行字。
+ * 专项负责人（kind=lead，Covey v36 起带 config）也用它，同飞书专项卡上的「换配置」：只列能当负责人的模型（bridge_tools），
+ * 不画工作区、运行方式（payload 照带现在的值），从负责人下一轮起生效。管家不用它（管家的配置在设置的「配置」里）。
  */
 export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: string; busy: boolean }> = ({ topic, workspace, busy }) => {
   const { data: settings } = useSettings();
-  const data: LaunchData | undefined = settings?.data?.launch;
-  const config = topic?.kind === 'topic' ? topic.config : undefined;
+  const all: LaunchData | undefined = settings?.data?.launch;
+  const lead: boolean = topic?.kind === 'lead';
+  const config = topic?.kind === 'topic' || lead ? topic?.config : undefined;
+  // 面板的目录：负责人只列能当负责人的模型（Harness、供应商、模型几行和联动都从它出）；普通话题原样
+  const data: LaunchData | undefined = useMemo(() => (all && lead ? leadData(all) : all), [all, lead]);
   const qc = useQueryClient();
   const [open, setOpen] = useState<boolean>(false);
   const [sel, setSel] = useState<SwitchSel | null>(null);
@@ -41,7 +50,8 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
       alive.current = false;
     };
   }, []);
-  const base: SwitchSel | null = useMemo(() => (data && config ? fromConfig(data, config) : null), [data, config]);
+  // 初值按整个目录补（负责人现在的模型不在负责人能用的里面时也认得出它，下面说清为什么不能确认）
+  const base: SwitchSel | null = useMemo(() => (all && config ? fromConfig(all, config) : null), [all, config]);
   // 没成功的一轮上的「换个模型」（v33 how=switch）直接展开这里，不再让你去飞书点「换配置」；
   // 从看板点过来的带 ?switch=1，面板能用了就展开一次
   const live: boolean = !!base && !!topic;
@@ -84,21 +94,22 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
     };
   }, [open, phase]);
 
-  const model: LaunchModel | undefined = data && config ? data.models.find((m: LaunchModel) => m.key === config.model) : undefined;
+  const model: LaunchModel | undefined = all && config ? all.models.find((m: LaunchModel) => m.key === config.model) : undefined;
   const label: string = [
     (config?.workspace ?? workspace) ? `工作区 ${config?.workspace ?? workspace}` : '',
     model ? `${model.harness_title} · ${topic?.model_name || model.label}` : engineText(topic),
   ].filter(Boolean).join(' · ');
-  if (!data || !config || !base) return <span className="t3 cfg-ro" style={{ fontSize: 12 }}>{label}</span>;
+  if (!all || !data || !config || !base) return <span className="t3 cfg-ro" style={{ fontSize: 12 }}>{label}</span>;
 
   const cur: SwitchSel = sel ?? base;
   const changed: string[] = changedFields(base, cur);
-  const blocked: string = switchBlock(data, base, cur, busy);
+  const blocked: string = switchBlock(all, base, cur, busy, lead);
   const box: PanelBox = {
     data,
     sel: cur,
     edit: (f) => setSel(f(data, cur)),
     setRedaction: (v: 'on' | 'off') => setSel({ ...cur, redaction: v }),
+    ...(lead ? { fixedPlace: true } : {}),
   };
   const toggle = (): void => {
     if (!open) {
@@ -144,9 +155,9 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
         ) : blocked ? (
           <span className={busy ? 'warn' : 'bad'}>{blocked}</span>
         ) : changed.length ? (
-          <span>改了{changed.map((k: string) => FIELD_WORD[k] ?? k).join('、')}：从下一句话起按新配置做（模型、工作区变了会开新会话，带上最近几轮）</span>
+          <span>改了{changed.map((k: string) => FIELD_WORD[k] ?? k).join('、')}：{lead ? leadNext(changed) : '从下一句话起按新配置做（模型、工作区变了会开新会话，带上最近几轮）'}</span>
         ) : (
-          <span>这是话题现在的配置，改哪项点哪项</span>
+          <span>{lead ? '这是负责人现在的配置，改哪项点哪项' : '这是话题现在的配置，改哪项点哪项'}</span>
         )}
       </div>
       <button type="button" className="btn sm" onClick={() => setOpen(false)} disabled={phase === 'sending'}>取消</button>
@@ -163,15 +174,15 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
   );
   return (
     <span className="cfg" ref={wrap}>
-      <button type="button" className={`cfg-btn${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open} title="换配置：Harness、模型、思考预算、工作区…" data-testid="config-bar">
+      <button type="button" className={`cfg-btn${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open} title={lead ? '换负责人的配置：Harness、模型、思考预算' : '换配置：Harness、模型、思考预算、工作区…'} data-testid="config-bar">
         <span className="cfg-tx">{label}</span>
         {open ? <ChevronUp /> : <ChevronDown />}
       </button>
       {open ? (
-        <div className="cfg-pop" role="dialog" aria-label="换配置">
+        <div className="cfg-pop" role="dialog" aria-label={lead ? '换负责人的配置' : '换配置'}>
           <div className="cfg-head">
-            <b>换配置</b>
-            <span className="t3">同飞书话题里的「换配置」</span>
+            <b>{lead ? '换负责人的配置' : '换配置'}</b>
+            <span className="t3">{lead ? '同飞书专项卡上的「换配置」' : '同飞书话题里的「换配置」'}</span>
           </div>
           <LaunchPanel box={box} className="flat" foot={foot} />
         </div>

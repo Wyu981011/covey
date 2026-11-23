@@ -42,3 +42,35 @@ test('换不了的情况', () => {
   const gone = { ...base, model: 'gone:x' };
   assert.match(S.switchBlock(D, gone, gone, false), /重选模型/u);
 });
+
+// v36：专项负责人的换配置（同飞书专项卡上的「换配置」）：只列能当负责人的模型（bridge_tools），不查 worktree，在做时等它做完
+const L = {
+  ...D,
+  models: [m('claude:opus', { bridge_tools: true }), m('codex:gpt', { redaction: false, bridge_tools: true }), m('pi:gpt')],
+};
+
+test('负责人的目录只留能当负责人的模型', () => {
+  assert.deepEqual(S.leadData(L).models.map((x) => x.key), ['claude:opus', 'codex:gpt']);
+  assert.deepEqual(S.leadData(D).models, []);
+  // 别的字段原样（面板的工作区、运行方式等照旧从它取）
+  assert.equal(S.leadData(L).workspaces, L.workspaces);
+  assert.equal(L.models.length, 3);
+});
+
+test('负责人换不了的情况', () => {
+  const base = S.fromConfig(L, C);
+  assert.equal(S.switchBlock(L, base, { ...base, effort: 'low' }, false, true), '');
+  assert.equal(S.switchBlock(L, base, { ...base, model: 'codex:gpt' }, false, true), '');
+  assert.equal(S.switchBlock(L, base, { ...base, effort: 'low' }, true, true), '负责人在做时不能换，等它做完');
+  assert.equal(S.switchBlock(L, base, { ...base, model: 'pi:gpt' }, false, true), S.LEAD_ONLY);
+  // 负责人现在的模型不能当负责人（Harness 换过能力）：没改也说清为什么
+  const pi = S.fromConfig(L, { ...C, model: 'pi:gpt' });
+  assert.equal(S.switchBlock(L, pi, pi, false, true), S.LEAD_ONLY);
+  assert.match(S.switchBlock(L, base, { ...base, model: 'gone:x' }, false, true), /重选模型/u);
+  // 工作区、运行方式面板上不画，不查 worktree（Covey 那边拒绝换）
+  const wt = { ...base, run_mode: 'worktree' };
+  assert.equal(S.switchBlock(L, wt, { ...wt, effort: 'low' }, false, true), '');
+  // 普通话题照旧：不看 bridge_tools
+  assert.equal(S.switchBlock(L, base, { ...base, model: 'pi:gpt' }, false), '');
+  assert.equal(S.switchBlock(L, base, { ...base, model: 'pi:gpt' }, false, false), '');
+});

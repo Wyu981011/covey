@@ -558,7 +558,8 @@ export interface SnapshotTopic {
   board?: string;
   /** v13：成员话题什么时候进的专项（秒）。专项报告只算它进来以后结束的轮次，和专项卡的 token 同一个口径；没有就从专项开始算 */
   joined_at?: number;
-  /** v20：话题现在的配置（只有 kind=topic、Covey 读得到模型目录时才有）。有它且设置里有 launch 时，输入框下的配置栏能点开换配置 */
+  /** v20：话题现在的配置（只有 kind=topic、Covey 读得到模型目录时才有）。有它且设置里有 launch 时，输入框下的配置栏能点开换配置。
+   * v36 起专项负责人（kind=lead）也带：同一个面板只列 bridge_tools 的模型、不画工作区和运行方式（负责人留在它读的地方） */
   config?: TopicConfig;
   /** v34：Covey 的定时回看（开了到点回来看、有预约才有）：几点（秒）、看什么；v35 起带 set_at（取消时核对）和 running（Covey 正在回看） */
   revisit?: TopicRevisit;
@@ -854,7 +855,8 @@ export interface SettingsMainPage {
   note?: string;
   locked?: string;
 }
-/** 配置（v22，T619）：飞书设置卡的「配置」一页，分段：新话题、管家（部署允许管家时）、独立复核（开了 COVEY_REVIEW 时）、更多。网页上各段都展开 */
+/** 配置（v22，T619）：飞书设置卡的「配置」一页，分段：新话题、管家（部署允许管家时）、独立复核（开了 COVEY_REVIEW 时）、
+ * 专项负责人（v36，开了 COVEY_PROJECTS 时）、更多。网页上各段都展开 */
 export interface SettingsConfigSection {
   title: string;
   rows: SettingsRow[];
@@ -873,6 +875,9 @@ export interface SettingsConfigPage {
   topic: SettingsConfigTopic;
   main?: SettingsConfigMain;
   review?: SettingsConfigSection;
+  /** v36：专项负责人（开了 COVEY_PROJECTS 才有）：新建的专项，负责人用这里选的 Harness、模型、思考预算；行的 key 是 l_harness、l_provider、l_model、l_effort，
+   * 改行同独立复核（settings 的 row）。已有专项的负责人在它自己的配置栏换（话题条目 kind=lead 的 config） */
+  lead?: SettingsConfigSection;
   more: SettingsRow[];
   more_note: string;
   locked: string;
@@ -964,6 +969,8 @@ export interface LaunchModel {
   work_modes: string[];
   /** 卡上对每个工作模式的叫法（Covey v16 后补的字段，旧 Covey 没有） */
   work_mode_texts?: Record<string, string>;
+  /** v36：这个模型能当专项负责人（它的 Harness 能接 Bridge 工具：Claude Code、Codex、Antigravity）。负责人的换配置只列这些；旧 Covey 没有 */
+  bridge_tools?: boolean;
 }
 export interface LaunchWorkspace {
   name: string;
