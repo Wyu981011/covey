@@ -12,7 +12,7 @@ tests/test_map.json 是生成的测试地图，不扫。
 
 公司域名和内部名词的清单不进仓库：环境变量 COVEY_PRIVACY_DENYLIST 指向一个文本文件，
 每行一个词（不分大小写，按单词边界匹配），# 开头是注释。词后可写 ` | skip=前缀,前缀`，
-表示这些相对路径前缀下不查这个词（例：`ext | skip=tests/`，核心测试把扩展的 Harness id 当夹具样本）。
+表示这些相对路径前缀下不查这个词（例：`acme | skip=tests/`，核心测试拿扩展的 Harness id 当夹具样本）。
 没设置时只跑通用规则。
 
 行内豁免：同一行写 `privacy: allow <原因>`，原因必须写。
