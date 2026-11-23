@@ -64,3 +64,13 @@ pnpm-lock.yaml
 .agent/
 dist-selfhost/
 /data/
+
+# Environment files and keys: keep examples only.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Copied from covey/assets/avatars/ by scripts/sync-avatars.mjs
+client/src/cv/avatars/

@@ -12,7 +12,8 @@ process.chdir(PROJECT_ROOT);
 
 // ── Load .env ─────────────────────────────────────────────────────────────────
 function loadEnv() {
-  const envPath = path.join(PROJECT_ROOT, '.env');
+  let envPath = path.join(PROJECT_ROOT, '.env');
+  if (!fs.existsSync(envPath)) envPath = path.join(PROJECT_ROOT, '.env.example'); // 提交的是 .env.example，.env 是各人本机的
   if (!fs.existsSync(envPath)) return;
   const lines = fs.readFileSync(envPath, 'utf8').split('\n');
   for (const line of lines) {

@@ -10,3 +10,28 @@ __pycache__/
 node_modules/
 *.orig
 *.rej
+
+# Environment files and keys: keep examples only.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+web-openapi.key
+
+# Build output and packaging.
+*.egg-info/
+build/
+dist/
+dist-selfhost/
+
+# Tool caches.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editors and OS files.
+.idea/
+.vscode/
+*.swp
+Thumbs.db

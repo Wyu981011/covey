@@ -29,6 +29,7 @@ const ROOT_DIR = path.resolve(__dirname, '..');
 // 加载提交的 .env，供读取构建期配置（如 MIAODA_RUNTIME_ENTRIES）。dotenv 不一定安装 → 静默降级。
 try {
   require('dotenv').config({ path: path.join(ROOT_DIR, '.env') });
+  require('dotenv').config({ path: path.join(ROOT_DIR, '.env.example') }); // .env 里没有的用提交的默认值
 } catch {
   // dotenv 未安装：跳过；MIAODA_RUNTIME_ENTRIES 仍可来自真实环境变量
 }

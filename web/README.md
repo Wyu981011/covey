@@ -27,7 +27,7 @@ python3 -B -m covey.service.web_selfhost --dir /absolute/path/to/covey-web/dist-
 
 - 网页只给主人用。妙搭版：表从建好那一刻起就只有主人能读（发件和附件只有主人能写），应用的可见范围设成只有你。自托管版：页面接口都要会话，会话只能靠飞书私聊里点「允许」换来，伪造的平台身份头一律丢掉。
 - Covey 推数据、取发件箱走开放接口，密钥只存在本机的密钥文件里（权限 600），不进日志和配置以外的地方。自托管版的开放接口只收本机直接来的请求。
-- 日志默认不记请求体和返回体（`.env` 的 `LOG_REQUEST_BODY`、`LOG_RESPONSE_BODY`），对话内容不进日志。
+- 日志默认不记请求体和返回体（`.env.example` 的 `LOG_REQUEST_BODY`、`LOG_RESPONSE_BODY`），对话内容不进日志。
 
 ## 本地开发和检查
 
@@ -41,6 +41,11 @@ npm run build:server             # 妙搭版服务端（NestJS）构建到 dist/
 MIAODA_APP_TYPE=3 npm run build:client   # 妙搭版前端（Vite + React）构建到 dist/client，和妙搭上的构建一致
 npm run build:selfhost           # 自托管版：服务端和前端构建到 dist-selfhost/
 ```
+
+**`.env` 和头像**
+
+- 仓库里提交的是 `.env.example`（三行日志配置，没有密钥）；`.env` 在 `.gitignore` 里，各人本机的覆盖写在那里。`npm run dev` 和 `prune-smart` 先读 `.env`，没有的项用 `.env.example`；`scripts/build.sh` 和自托管的 `build.sh` 构建时，没有 `.env` 就用 `.env.example` 生成，妙搭一键部署把 `.env.example` 当成应用仓库的 `.env`。所以不用手动建 `.env`，行为和原来提交 `.env` 时一样。
+- 头像只有一份，在核心的 `covey/assets/avatars/`（核心运行时从那里读，上传给飞书）。`client/src/cv/avatars/` 是 `scripts/sync-avatars.mjs` 从它拷来的，在 `.gitignore` 里，不要手改。`npm run dev`、`dev:client`、`build`、`build:client`、`build:selfhost:client` 的 `pre` 钩子、自托管的 `build.sh` 和妙搭的 `deploy.py` 都会先拷一遍；只拷 `web/` 出去（没有 `covey/`）时，目录已经在就不动，不在就报错。第一次在新检出里直接跑 `vite` 或 `tsc` 之前，先 `npm run sync:avatars`。
 
 单测一共 22 组：工作台 19 组（`test:graph` 到 `test:v34`），自托管 3 组（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
 
@@ -61,6 +66,7 @@ python3 -B -m unittest discover -s web/deploy/miaoda/tests
 | `deploy/miaoda/` | 一键部署到妙搭：`deploy.py`、建表 `schema.sql`、测试 |
 | `deploy/selfhost/` | 自托管：构建脚本 `build.sh` 和说明；服务端入口在 `server/selfhost/`，前端的登录页和垫片在 `client/src/selfhost/` |
 | `licenses/` | 字体等第三方许可 |
+| `.env.example` | 日志配置的默认值（见上面的「`.env` 和头像」） |
 
 ## 许可
 

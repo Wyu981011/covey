@@ -8,3 +8,5 @@
 | `G-*.png` | 专项负责人（6 个） | DiceBear「Moods」，CC0 |
 | `M-*.png` | 专项负责人（6 个） | DiceBear「Clay」，CC0 |
 | `sea-*.png` | 专项负责人（8 个） | 自绘原创，随本仓库的许可 |
+
+网页复用同一套图片（`web/scripts/sync-avatars.mjs` 把这个目录拷进 `web/client/src/cv/avatars/`，那份不入库）；专项使用同步条目里的 `avatar` 名称，不在浏览器重新分配。

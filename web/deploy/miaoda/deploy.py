@@ -41,6 +41,8 @@ KEY_NAME = "covey-sync"
 TABLES = ("projects", "topics", "turns", "questions", "outbox", "sync_state", "images", "uploads", "upload_parts", "collabs")
 # 覆盖进应用仓库时不带的：部署脚本自己、依赖和构建产物
 OVERLAY_SKIP = ("deploy", "node_modules", "dist", "README.md", "licenses")
+# 头像和 .env：.gitignore 把它们挡在 git 之外（头像从核心拷来，.env 从 .env.example 生成），但应用仓库里要有，所以强制 add
+FORCED = ("client/src/cv/avatars", ".env")
 # 这几个目录是网页自己的代码，应用仓库里多出来的文件（模板残留）删掉；其余目录只覆盖不删，平台的文件留着
 MIRROR_DIRS = ("client", "server", "shared")
 RELEASE_WAIT_SECONDS = 900
@@ -240,8 +242,10 @@ def step_code(ctx: Ctx) -> None:
         cli(ctx, "apps", "+init", "--app-id", app, "--dir", app, write=True, cwd=work)
     git(repo, "checkout", BRANCH)
     git(repo, "pull", "--ff-only", "origin", BRANCH, retry_credentials=ctx)
+    sync_avatars()
     overlay(WEB, repo)
     git(repo, "add", "-A")
+    git(repo, "add", "-f", "--", *FORCED)
     if git(repo, "status", "--porcelain").strip():
         # 应用仓库自带的提交前检查用的是模板装的依赖（+init 只装模板的），我们多出来的依赖（@tiptap 等）会被当成找不到而误报；
         # 同样的 lint、类型检查和单测已在 web/ 上跑过，所以这里跳过它。妙搭构建时会按我们的 package.json 装全依赖。
@@ -281,8 +285,16 @@ def git(repo: Path, *argv: str, retry_credentials: Ctx | None = None) -> str:
     return proc.stdout
 
 
+def sync_avatars() -> None:
+    """头像只有核心 covey/assets/avatars/ 一份，web/client/src/cv/avatars/ 是从它拷来的；覆盖进应用仓库前先拷一遍。"""
+    proc = subprocess.run(["node", str(WEB / "scripts" / "sync-avatars.mjs")], text=True, capture_output=True)
+    if proc.returncode != 0:
+        raise StepFailed(f"拷头像失败：{(proc.stderr or proc.stdout).strip()[-400:]}（要在 covey 仓库里的 web/ 跑本脚本）", 2)
+
+
 def overlay(src: Path, repo: Path) -> None:
-    """把 web/ 覆盖进应用仓库：client、server、shared 三个目录照 web/ 镜像（删模板残留），其余只覆盖不删。"""
+    """把 web/ 覆盖进应用仓库：client、server、shared 三个目录照 web/ 镜像（删模板残留），其余只覆盖不删。
+    .env 不拷 web/ 里的（本机的 .env 是各人自己的），用 .env.example 生成应用仓库的 .env。"""
     for top in MIRROR_DIRS:
         ours = {p.relative_to(src).as_posix() for p in (src / top).rglob("*") if p.is_file()}
         theirs = [p for p in (repo / top).rglob("*") if p.is_file()] if (repo / top).is_dir() else []
@@ -291,11 +303,16 @@ def overlay(src: Path, repo: Path) -> None:
                 p.unlink()
     for path in sorted(src.rglob("*")):
         rel = path.relative_to(src)
-        if rel.parts[0] in OVERLAY_SKIP or not path.is_file():
+        if rel.parts[0] in OVERLAY_SKIP or rel.parts[0].startswith("dist") or not path.is_file():
+            continue
+        if rel.parts[0].startswith(".env"):
             continue
         dst = repo / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, dst)
+    example = src / ".env.example"
+    if example.is_file():
+        shutil.copy2(example, repo / ".env")
     for top in MIRROR_DIRS:
         for d in sorted((p for p in (repo / top).rglob("*") if p.is_dir()), key=lambda p: -len(p.parts)):
             if not any(d.iterdir()):

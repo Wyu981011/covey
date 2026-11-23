@@ -178,9 +178,11 @@ else
   # 拷贝 run.sh 到 dist/（prod 从 dist/ 启动，确保 cwd 一致性）
   cp "$ROOT_DIR/scripts/run.sh" "$DIST_DIR/"
 
-  # 拷贝 .env 文件（如果存在）
+  # 拷贝 .env 文件（如果存在；没有就用提交的 .env.example）
   if [ -f "$ROOT_DIR/.env" ]; then
     cp "$ROOT_DIR/.env" "$DIST_DIR/"
+  elif [ -f "$ROOT_DIR/.env.example" ]; then
+    cp "$ROOT_DIR/.env.example" "$DIST_DIR/.env"
   fi
 fi
 

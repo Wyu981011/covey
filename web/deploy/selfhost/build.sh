@@ -37,11 +37,15 @@ if [ -d "$TARGET" ] && [ -n "$(ls -A "$TARGET")" ] && [ ! -f "$TARGET/$MARK" ]; 
 fi
 mkdir -p "$TARGET"
 say "1. 拷源码：$WEB → $TARGET"
+# 头像只有核心 covey/assets/avatars/ 一份：先拷进 web/（在 .gitignore 里），下面的 tar 才带得走
+node "$WEB/scripts/sync-avatars.mjs" || die "拷头像失败（要用 covey 仓库里的 web/）"
 # 目标目录里除 node_modules 外全部换成这份源码（升级时旧文件、旧构建产物都清掉）。
 # data/、logs/ 不动：手工 npm run start:selfhost、没设 COVEY_WEB_DB_DIR 时库就在 data/db（Manager 拉起时库在 Covey 数据根的 web/db，不在这里）
 find "$TARGET" -mindepth 1 -maxdepth 1 ! -name node_modules ! -name "$MARK" ! -name data ! -name logs -exec rm -rf {} +
 (cd "$WEB" && tar --exclude=./node_modules --exclude='./dist' --exclude='./dist-*' --exclude=./data --exclude=./logs \
-  --exclude=./.env.local -cf - .) | (cd "$TARGET" && tar -xf -)
+  --exclude=./.env --exclude=./.env.local -cf - .) | (cd "$TARGET" && tar -xf -)
+# .env 由 .env.example 生成（本机的 .env 不带过去）
+[ -f "$TARGET/.env.example" ] && cp "$TARGET/.env.example" "$TARGET/.env"
 printf '%s\n' "covey web selfhost build; source $WEB" > "$TARGET/$MARK"
 
 STAMP="$TARGET/node_modules/.covey-lock.sha256"

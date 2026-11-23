@@ -81,6 +81,7 @@ console.log('[dev-local] (4/5) loading .env / .env.local...');
 const dotenv = require('dotenv');
 dotenv.config({ path: '.env.local' });
 dotenv.config({ path: '.env' });
+dotenv.config({ path: '.env.example' }); // 提交的默认值，.env 里没有的才用它
 
 // SUDA_WEBUSER 适配（详见文件头注释）
 if (process.env.SUDA_WEBUSER) {
