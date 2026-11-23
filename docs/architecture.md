@@ -219,7 +219,7 @@ continued、done、failed、cancelled、interrupted：终态
 | 表单目录（`launch-forms/` 等）、`cards/.locks/` | 卡的 card_id、sequence、表单状态；卡片锁文件 | 发卡的进程 | 卡片锁 |
 | `groups/` | 群记录 | Bridge | `group`，进程内 |
 
-- **索引**：`core/store.py` 的 `JsonDirectoryStore` 给 `jobs/`、`questions/`、`held-notes/` 建内存索引，读目录的 `.journal` 追变化，定期列目录兜底；查询字段（`INDEXED`）常驻，整条记录被选中才读；`.index` 让新进程快速起步；`CARRIED`（`updated_at`）随 `.index` 一起存、不建索引项，查询的 `narrow` 在读记录之前先用它筛（管家快照、手上的事等的 `board_read.read` 靠它只读三天内的记录），旧 release 写的 `.index` 没有这一项时，记录自己决定，结果不变。手工改记录后调 `invalidate_directory`。一条消息、一次点击在 `one_scan()` 内处理。
+- **索引**：`core/store.py` 的 `JsonDirectoryStore` 给 `jobs/`、`questions/`、`held-notes/` 建内存索引，读目录的 `.journal` 追变化，定期列目录兜底；查询字段（`INDEXED`）常驻，整条记录被选中才读；`.index` 让新进程快速起步；`CARRIED`（`updated_at`）随 `.index` 一起存、不建索引项，查询的 `narrow` 在读记录之前先用它筛（管家快照、手上的事等的 `board_read.read` 靠它只读三天内的记录），旧 release 写的 `.index` 没有这一项时，记录自己决定，结果不变。手工改记录后调 `invalidate_directory`。一条消息、一次点击在 `one_scan()` 内处理。读盘（`.journal`、列目录、读记录、`.index`）都不持内存锁 `lock`，NFS 打开 `.journal` 卡过几分钟，所有读写记录的线程曾跟着等：同一时刻只有一个线程追（`refreshing`），别的线程等它至多到它开始后 `PATIENCE`（1 秒）；更久的当作卡住，照上一次追到的回答，本进程刚写的记录按名字重读。写记录和 `invalidate_directory` 从不等读盘。还没追完过一次（新进程起步）、要读只知道字段的记录、或有说不出名字的写入时照旧等它，`bounded` 内等超时抛 `Busy`。几个线程差不多同时读同一个文件、读到的不一样时，以后开始的那次为准，分不出先后就再读一次。
 - **资源锁**：`core/locks.py` 的 `resource_lock(namespace, key)`。`record`、`question`、`answer-cards`、`card` 跨进程（进程内锁加 flock），其他命名空间只在进程内。
 - **持记录锁不发网络请求**（规则 1）：锁内写意图（`submitting`）并存内容，锁外发送，返回后再转状态，不确定转 `uncertain`、从不自动重发。例外：实时问题的回答在后端的 `control_lock` 内核对并发送。问题表单在每个问题一把的 `question_card_lock` 内发送。
 - **`LOCK` 和话题锁**（规则 2）：`LOCK` 只保护工作区配置、`topic.json` 改写和要看所有话题的检查，从不跨飞书调用持有。同话题的提交、启动、重试、换配置由 `topic_lock(ctx)` 排队：先话题锁、再短暂拿 `LOCK`，反过来直接报错。

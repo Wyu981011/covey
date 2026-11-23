@@ -11,6 +11,7 @@ import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -21,6 +22,7 @@ from covey.app.runtime import JobRegistry
 from covey.core.jobs import job_file, upsert_job_record
 from covey.core.state import write_private_text
 from covey.core.history_storage import recent_history
+from covey.core import store as store_module
 from covey.core.store import directory_store, invalidate_directory, one_scan
 from covey.core.topics import workspace_locked
 
@@ -472,3 +474,274 @@ class IndexedStorageTest(unittest.TestCase):
                     self.assertEqual(future.result(1)[0]['content'], 'B')
                 finally:
                     reader.close()
+
+
+def statuses(rows):
+    """{file name: status} of a query's rows."""
+    return {path.name: record.get('status') for path, record in rows}
+
+
+class StuckDiskTest(unittest.TestCase):
+    """T677: an NFS open of jobs/.journal hung 1-5 minutes under the store's lock, and every reader and writer of the
+    records waited with it (T673: a lead's topic_read 113 s, several web pushes behind it). Now no read of the disk
+    holds that lock: one thread catches up, the others answer from its last catch-up and this process's writes,
+    a write is never held up, and once the stuck read ends nothing is lost and nothing older comes back."""
+
+    def setUp(self):
+        root = Path(tempfile.mkdtemp(prefix='store-stuck-'))
+        self.addCleanup(shutil.rmtree, root, True)
+        self.root, self.path, self.threads = root, root / 'jobs', []
+        self.addCleanup(lambda: [thread.join(10) for thread in self.threads])
+        # Each query tries to catch up: a directory's time may not show a write within its tick (tmpfs, NFS). A catch-up
+        # under way is stuck once it is 0.2 s old.
+        for name, value in (('FRESH_SECONDS', 0.0), ('PATIENCE', 0.2)):
+            patched = mock.patch.object(store_module, name, value, create=True)  # PATIENCE: none before T677.
+            patched.start()
+            self.addCleanup(patched.stop)
+
+    def write(self, name, path=None, **record):
+        """This process's write (write_private_text tells the store, invalidate_directory)."""
+        write_private_text((path or self.path) / name, json.dumps(record))
+
+    def elsewhere(self, name, path=None, **record):
+        """Another process's write: noted in the journal of a journaled folder, not told to this process's store."""
+        folder = path or self.path
+        temp = folder / f'.{name}.tmp'
+        temp.write_text(json.dumps(record))
+        temp.replace(folder / name)
+        store_module.note_change(folder, name)
+
+    def background(self, target, into=None):
+        """(thread, its result list): ``target`` running on a thread of its own, put in ``into`` before it starts."""
+        result = []
+        thread = threading.Thread(target=lambda: result.append(target()), daemon=True)
+        for each in (self.threads, into if into is not None else []):
+            each.append(thread)
+        thread.start()
+        return thread, result
+
+    def promptly(self, target, seconds=3):
+        """``target()``, which must be done within ``seconds``: before T677 it waited for the stuck read."""
+        thread, result = self.background(target)
+        thread.join(seconds)
+        self.assertFalse(thread.is_alive(), 'held up behind a read stuck on the disk')
+        return result[0]
+
+    @contextmanager
+    def stuck_journal(self):
+        """(entered, release): each open of a journal blocks until ``release`` is set, as the live NFS open did."""
+        entered, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+        real = open
+
+        def slow(file, *args, **kwargs):
+            if Path(file).name == store_module.JOURNAL:
+                entered.set()
+                release.wait(20)
+            return real(file, *args, **kwargs)
+        with mock.patch('covey.core.store.open', slow, create=True):
+            yield entered, release
+        release.set()
+
+    def held(self, method, threads, name=None, first=False):
+        """(held, release, asked, patch): ``method`` (``_read`` or ``_list``) of the stores does its read, then on one of
+        ``threads`` (for ``_read``, of file ``name`` only) blocks until ``release``: a read slow to come back (``first``:
+        slow to begin). ``asked`` lists the files ``_read`` was asked for."""
+        held, release, asked = threading.Event(), threading.Event(), []
+        self.addCleanup(release.set)
+        real = getattr(store_module.JsonDirectoryStore, method)
+
+        def slow(store, *args):
+            asked.extend(each.name for each in args)
+            mine = threading.current_thread() in threads and (name is None or args[0].name == name)
+            found = None if first else real(store, *args)
+            if mine:
+                held.set()
+                release.wait(20)
+            return real(store, *args) if first else found
+        return held, release, asked, mock.patch.object(store_module.JsonDirectoryStore, method, slow)
+
+    def test_readers_and_writers_go_on_while_a_catch_up_is_stuck_on_the_journal(self):
+        self.write('a.json', topic_id='t', status='running', job_id=1)
+        store = directory_store(self.path)
+        self.assertEqual(statuses(store.query(topic_id='t')), {'a.json': 'running'})
+        self.elsewhere('b.json', topic_id='t', status='queued', job_id=2)  # The next catch-up reads it from the journal.
+        with self.stuck_journal() as (entered, release):
+            leader, found = self.background(lambda: store.query(topic_id='t'))
+            self.assertTrue(entered.wait(5))
+            # Others answer from the last catch-up, which b.json is not in yet.
+            self.assertEqual(statuses(self.promptly(lambda: store.query(topic_id='t'))), {'a.json': 'running'})
+            self.assertEqual(self.promptly(lambda: store.count(topic_id='t')), 1)
+            self.assertEqual(self.promptly(lambda: store.max_field('job_id')), 1)
+            # This process's writes are not held up, and are read back at once, by name.
+            self.promptly(lambda: self.write('a.json', topic_id='t', status='done', job_id=1))
+            self.promptly(lambda: self.write('c.json', topic_id='t', status='running', job_id=3))
+            self.assertEqual(statuses(self.promptly(lambda: store.query(topic_id='t'))),
+                             {'a.json': 'done', 'c.json': 'running'})
+            self.assertEqual(self.promptly(lambda: store.max_field('job_id')), 3)
+            self.assertEqual([p.name for p, _ in self.promptly(lambda: store.query(status='running'))], ['c.json'])
+            with one_scan():
+                self.assertEqual(statuses(self.promptly(lambda: store.query(status='done'))), {'a.json': 'done'})
+            self.assertTrue(leader.is_alive())
+            release.set()
+            leader.join(5)
+        self.assertFalse(leader.is_alive())
+        everything = {'a.json': 'done', 'b.json': 'queued', 'c.json': 'running'}
+        self.assertEqual(statuses(found[0]), everything)  # Its catch-up kept what was read while it was stuck.
+        self.assertEqual(statuses(store.query(topic_id='t')), everything)
+        self.assertEqual([p.name for p, _ in store.query(status='running')], ['c.json'])
+
+    def test_a_reader_waits_for_a_young_catch_up_and_leaves_a_stuck_one_behind(self):
+        self.write('a.json', topic_id='t')
+        store = directory_store(self.path)
+        store.query()
+        self.elsewhere('b.json', topic_id='t')
+        with mock.patch.object(store_module, 'PATIENCE', 1.0, create=True), self.stuck_journal() as (entered, release):
+            leader, _ = self.background(store.query)
+            self.assertTrue(entered.wait(5))
+            waiting, found = self.background(lambda: store.query(topic_id='t'))
+            waiting.join(0.1)
+            self.assertTrue(waiting.is_alive())  # A catch-up a moment old: waited for, as before.
+            release.set()
+            waiting.join(5)
+            leader.join(5)
+        self.assertEqual([p.name for p, _ in found[0]], ['a.json', 'b.json'])  # What that catch-up found.
+        self.elsewhere('c.json', topic_id='t')
+        with self.stuck_journal() as (entered, release):
+            leader, _ = self.background(store.query)
+            self.assertTrue(entered.wait(5))
+            time.sleep(0.3)  # Older than PATIENCE: stuck.
+            began = time.monotonic()
+            self.assertEqual([p.name for p, _ in self.promptly(lambda: store.query(topic_id='t'))], ['a.json', 'b.json'])
+            self.assertLess(time.monotonic() - began, 1)
+            release.set()
+            leader.join(5)
+        self.assertEqual([p.name for p, _ in store.query(topic_id='t')], ['a.json', 'b.json', 'c.json'])
+
+    def test_one_thread_reads_the_journal_while_the_others_answer_from_the_last_catch_up(self):
+        self.write('a.json', topic_id='t')
+        store = directory_store(self.path)
+        store.query()
+        self.elsewhere('b.json', topic_id='t')
+        calls, real = [], store_module.JsonDirectoryStore._from_journal
+
+        def counted(store, *args):
+            calls.append(threading.current_thread().name)
+            return real(store, *args)
+        with mock.patch.object(store_module.JsonDirectoryStore, '_from_journal', counted), \
+                self.stuck_journal() as (entered, release):
+            leader, _ = self.background(store.query)
+            self.assertTrue(entered.wait(5))
+            readers = [self.background(lambda: store.query(topic_id='t')) for _ in range(8)]
+            for thread, found in readers:
+                thread.join(3)
+                self.assertFalse(thread.is_alive(), 'held up behind a read stuck on the disk')
+                self.assertEqual([p.name for p, _ in found[0]], ['a.json'])
+            self.assertEqual(len(calls), 1)  # None of them piled up behind it on the same open.
+            release.set()
+            leader.join(5)
+        self.assertEqual([p.name for p, _ in store.query(topic_id='t')], ['a.json', 'b.json'])
+
+    def test_a_slow_read_of_an_older_version_never_puts_it_back(self):
+        self.write('a.json', topic_id='t', status='running', n=1)
+        store = directory_store(self.path)
+        store.query()
+        self.elsewhere('a.json', topic_id='t', status='running', n=2)  # The next catch-up reads it, from the journal.
+        leaders = []
+        held, release, _, patched = self.held('_read', leaders, 'a.json')
+        with patched:
+            leader, found = self.background(lambda: store.query(topic_id='t'), leaders)
+            self.assertTrue(held.wait(5))  # It has read n=2 and is not back yet.
+            self.promptly(lambda: self.write('a.json', topic_id='t', status='done', n=3))
+            self.assertEqual([r['n'] for _, r in self.promptly(lambda: store.query(topic_id='t'))], [3])
+            release.set()
+            leader.join(5)
+        self.assertFalse(leader.is_alive())
+        self.assertEqual([r['n'] for _, r in found[0]], [3])  # Its own answer, after its catch-up: not n=2 again.
+        self.assertEqual([r['n'] for _, r in store.query(topic_id='t')], [3])
+        self.assertEqual([p.name for p, _ in store.query(status='done')], ['a.json'])
+        self.assertEqual(store.query(status='running'), [])
+
+    def test_two_reads_at_about_the_same_time_that_disagree_are_read_again(self):
+        self.write('a.json', topic_id='t', status='running', n=1)
+        store = directory_store(self.path)
+        store.query()
+        self.write('a.json', topic_id='t', status='running', n=2)  # Read back by name, and in the journal.
+        leaders = []
+        held, release, _, patched = self.held('_read', leaders, 'a.json', first=True)
+        with patched:
+            leader, found = self.background(lambda: store.query(topic_id='t'), leaders)
+            self.assertTrue(held.wait(5))  # Its read of a.json has begun, and has not opened the file yet.
+            self.assertEqual([r['n'] for _, r in self.promptly(lambda: store.query(topic_id='t'))], [2])
+            self.elsewhere('a.json', topic_id='t', status='done', n=3)  # What the slow read then finds.
+            release.set()
+            leader.join(5)
+        self.assertFalse(leader.is_alive())
+        # The slow read began first and saw the newer file: neither read can tell, so the file was read again.
+        self.assertEqual([r['n'] for _, r in found[0]], [3])
+        self.assertEqual(store.fields['a.json']['status'], 'done')
+
+    def test_a_write_made_while_a_listing_is_under_way_is_not_dropped_by_it(self):
+        path = self.root / 'records'  # Not journaled: each catch-up lists it.
+        self.write('a.json', path, topic_id='t')
+        store = directory_store(path)
+        store.query()
+        self.elsewhere('b.json', path, topic_id='t')
+        leaders = []
+        listed, release, _, patched = self.held('_list', leaders)
+        with patched:
+            leader, found = self.background(lambda: store.query(topic_id='t'), leaders)
+            self.assertTrue(listed.wait(5))  # It listed a.json and b.json, and is not back yet.
+            self.promptly(lambda: self.write('c.json', path, topic_id='t'))
+            self.assertEqual([p.name for p, _ in self.promptly(lambda: store.query(topic_id='t'))], ['a.json', 'c.json'])
+            release.set()
+            leader.join(5)
+        self.assertFalse(leader.is_alive())
+        self.assertEqual([p.name for p, _ in found[0]], ['a.json', 'b.json', 'c.json'])  # Its listing missed c.json.
+        self.assertIn('c.json', store.fields)
+
+    def test_while_the_start_reads_every_record_a_count_answers_and_a_query_waits_for_the_records(self):
+        for number in (1, 2, 3):
+            self.write(f'{number}.json', topic_id='t', job_id=number)
+        bridge = store_module.JsonDirectoryStore(self.path)  # Not directory_store: each one is another process.
+        bridge.query()
+        self.assertTrue(bridge.save_index(every=0))
+        started, warmers = store_module.JsonDirectoryStore(self.path), []
+        held, release, asked, patched = self.held('_read', warmers, '1.json')
+        with patched:
+            warm, _ = self.background(started.warm, warmers)  # app/unified.py warm_records
+            self.assertTrue(held.wait(5))
+            # Its fields came from .index: a count needs no record and does not wait.
+            self.assertEqual(self.promptly(lambda: started.count(topic_id='t')), 3)
+            self.assertEqual(self.promptly(lambda: started.max_field('job_id')), 3)
+            waiting, found = self.background(lambda: started.query(topic_id='t'))
+            waiting.join(0.3)
+            self.assertTrue(waiting.is_alive())  # The records are being read: it waits for them, as before.
+            release.set()
+            waiting.join(5)
+            warm.join(5)
+        self.assertEqual(sorted(r['job_id'] for _, r in found[0]), [1, 2, 3])
+        self.assertEqual(sorted(asked), ['1.json', '2.json', '3.json'])  # Each read once, by the start alone.
+
+    def test_a_new_process_waits_for_its_first_catch_up_and_a_bounded_query_gives_up(self):
+        for number in (1, 2, 3):
+            self.write(f'{number}.json', topic_id='t', job_id=number)
+        bridge = store_module.JsonDirectoryStore(self.path)
+        bridge.query()
+        self.assertTrue(bridge.save_index(every=0))
+        self.elsewhere('4.json', topic_id='t', job_id=4)
+        runner = store_module.JsonDirectoryStore(self.path)  # Another process: nothing to answer from yet.
+        with self.stuck_journal() as (entered, release):
+            warm, _ = self.background(runner.catch_up)  # app/runner.py warm_records
+            self.assertTrue(entered.wait(5))
+            with store_module.bounded(0.2), self.assertRaises(store_module.Busy):
+                runner.query(topic_id='t')
+            with store_module.bounded(0.2), self.assertRaises(store_module.Busy):
+                runner.count(topic_id='t')
+            waiting, found = self.background(lambda: runner.query(topic_id='t'))
+            waiting.join(0.3)
+            self.assertTrue(waiting.is_alive())  # It waits for the first catch-up, as before.
+            release.set()
+            waiting.join(5)
+            warm.join(5)
+        self.assertEqual(sorted(r['job_id'] for _, r in found[0]), [1, 2, 3, 4])
