@@ -417,16 +417,14 @@ class Intake:
         steps = {'creds': time.monotonic() - began}
         _skip_pkg_resources()
         from lark_oapi.core.enum import LogLevel
-        from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
-        from lark_oapi.ws import client as ws_client
+        ws_client = _ws_client()
         steps['import'] = time.monotonic() - began - steps['creds']
         waited = time.monotonic()
         while not self.go.wait(.2):  # Imported (prepare): connect once the Bridge has checked the app's identity.
             if self.shutdown.is_set():
                 return
         steps['wait'] = time.monotonic() - waited
-        handler = EventDispatcherHandler.builder('', '').build()
-        handler._do_without_validation = self.on_payload  # The raw envelope: no typed models, no validation.
+        handler = _Handler(self.on_payload)  # The raw envelope: no typed models, no validation.
         client = ws_client.Client(creds.config.app_id, creds.config.app_secret, log_level=LogLevel.ERROR,
                                   event_handler=handler, domain=creds.config.domain)
         with self.lock:
@@ -498,6 +496,35 @@ def _skip_pkg_resources() -> None:
     package = types.ModuleType(name)
     package.__path__, package.__package__ = [folder], name
     sys.modules[name] = package
+
+
+class _Handler:
+    """All lark-oapi 1.7.4's ws Client asks of its event handler: ``_do_without_validation(payload)``, its answer."""
+
+    def __init__(self, handle):
+        self._do_without_validation = handle
+
+
+def _ws_client():
+    """lark_oapi.ws.client, imported with a stand-in for lark_oapi.event.dispatcher_handler: the client names
+    EventDispatcherHandler only in annotations, and that module imports every API's event processors, 1.5 s of the 2.3 s
+    the connection's imports took without pkg_resources, 8 s while the Bridge's start ran beside it (live start 503, T648).
+    The stand-in is gone again once the client is imported: a later import of the module gets the real one."""
+    import sys
+    import types
+    name = 'lark_oapi.event.dispatcher_handler'
+    if 'lark_oapi.ws.client' not in sys.modules and name not in sys.modules:
+        stand_in = types.ModuleType(name)
+        stand_in.EventDispatcherHandler = _Handler
+        sys.modules[name] = stand_in
+        try:
+            from lark_oapi.ws import client
+        finally:
+            if sys.modules.get(name) is stand_in:
+                del sys.modules[name]
+        return client
+    from lark_oapi.ws import client
+    return client
 
 
 _intake: Intake | None = None

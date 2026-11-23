@@ -500,9 +500,14 @@ class SdkContractTest(unittest.TestCase):
     def test_the_connection_modules_import_without_pkg_resources(self):
         # lark_oapi/ws/pb/google declares a pkg_resources namespace: importing pkg_resources scanned every installed
         # distribution, 3.4 s of the connection's start.
+        # Nor every API's event processors (lark_oapi.event.dispatcher_handler, which the client names in annotations only);
+        # a later import of that module still gets the real one.
         code = ("import sys; from covey.feishu import sdk, ws_intake; sdk._core(); ws_intake._skip_pkg_resources(); "
-                "from lark_oapi.ws import client; from lark_oapi.ws.pb.pbbp2_pb2 import Frame; "
-                "assert 'pkg_resources' not in sys.modules; print(Frame.__name__)")
+                "client = ws_intake._ws_client(); from lark_oapi.ws.pb.pbbp2_pb2 import Frame; "
+                "assert 'pkg_resources' not in sys.modules; "
+                "assert 'lark_oapi.event.dispatcher_handler' not in sys.modules and hasattr(client, 'Client'); "
+                "from lark_oapi.event.dispatcher_handler import EventDispatcherHandler; "
+                "assert hasattr(EventDispatcherHandler, 'builder'); print(Frame.__name__)")
         env = {k: v for k, v in os.environ.items() if k not in ('COVEY_EVENT_TRANSPORT', 'LARK_BRIDGE_EVENT_TRANSPORT')}
         proc = subprocess.run([sys.executable, '-B', '-W', 'ignore', '-c', code], cwd=ROOT,
                               env={**env, 'PYTHONPATH': str(ROOT)}, capture_output=True, text=True, timeout=120)
