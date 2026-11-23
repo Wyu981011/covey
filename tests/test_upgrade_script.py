@@ -136,7 +136,7 @@ class UpgradeTests(UpgradeCase):
         code, out = self.upgrade()
         self.assertEqual(code, 0, out)
         self.assertEqual([("--check-only" in call["argv"]) for call in self.calls()], [True, False])
-        self.assertIn("部署中：机器人会重启", out)
+        self.assertIn("部署中：机器人会重启，几秒内收不到消息和卡片点击", out)  # Not tens of seconds since the restart is quick.
         self.assertIn(f"升级好了：机器人第 8 代，从 release {self.newer[:8]} 运行。", out)
         self.assertIn("不要再用 ./install 改", out)  # It ran from the checkout until now.
         self.assertIn(f"检出已快进到 {self.newer[:8]}", out)
