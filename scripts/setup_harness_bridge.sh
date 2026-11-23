@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
+# 已弃用 / DEPRECATED: 已不推荐，用 ./install (not recommended any more; use ./install).
+# 只在要手工控制每一步时才用，见 docs/manual-install.md。
 set -euo pipefail
+
+echo "setup_harness_bridge.sh is deprecated and no longer recommended: use ./install (已不推荐，用 ./install)." >&2
 
 usage() {
   cat <<'USAGE'

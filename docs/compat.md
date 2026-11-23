@@ -13,7 +13,7 @@
 | `bin/lark_harness_bridge.py`、`lark_task_runner.py`、`bridge_service.py`、`bridge_service_install.py`、`bridge_doctor.py`、`bridge_memguard.py`、`bridge_pairing.py`、`bridge_main_mcp.py`、`covey_main_mcp.py`（原来的入口，也成了转发壳）、`bridge_app_setup.py`、`lark_bridge_paths.py`、`lark_bridge_maintenance.py`、`lark_bridge_workspaces.py`、`lark_app_console.py`、`lark_feishu_web.py`、`lark_install_browser.py`、`lark_workspace_reader.py`（扩展的入口见扩展 README，同样留了旧名转发壳） | `bin/covey_bridge.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_doctor.py`、`covey_memguard.py`、`covey_pairing.py`、`covey_butler_mcp.py`、`covey_app_setup.py`、`covey_paths.py`、`covey_maintenance.py`、`covey_workspaces.py`、`covey_app_console.py`、`covey_feishu_web.py`、`covey_install_browser.py`、`covey_workspace_reader.py`（`covey_install.py` 本来就是新名） | 旧名留作两行转发壳（`runpy.run_path` 新名），服务清单、开机钩子、crontab、systemd 单元、各部署的脚本里写死的旧路径继续有效；新注册（bootstrap、installer、`bridge_service_install` 写的单元和 crontab 行）用新名 |
 | `lark-bridge-manager.service` | `covey-manager.service` | 新装用新名；已装旧单元的机器继续用旧单元名（`unit_name()` 看 `~/.config/systemd/user/` 里有没有旧文件），不停不换；单元里的 `ExecStart` 下次装时改成新入口 |
 | 抽象套接字 `\0lark-bridge-…`、`~/.config/lark-bridge-service/`、`~/.local/libexec/lark-bridge/memguard.py`、crontab 标记 | 不变 | 新旧 Manager、看门狗要互相认得，数据和注册位置都不改名 |
-| `scripts/setup_harness_bridge.sh`、`scripts/bootstrap_harness_bridge.sh` | 不变 | `./install` 和 `deploy_bridge.sh` 都调 bootstrap；旧安装脚本 setup 仍可用，不再推荐 |
+| `scripts/setup_harness_bridge.sh`、`scripts/bootstrap_harness_bridge.sh` | 不变 | `./install` 和 `deploy_bridge.sh` 都调 bootstrap；旧安装脚本 setup 仍可用，已弃用（文件头注明，运行时往 stderr 打一行提示改用 `./install`） |
 
 数据目录（`COVEY_DATA_HOME`/`LARK_BRIDGE_DATA_HOME` 指的目录、`harness-<APP_ID>` 状态目录、`releases/`、`bridge-services/`、`runs/<任务键>/` 里的文件名）一个都没改；状态目录里的 `main-thread.json`、`main-thread/` 也沿用旧名。`deploy_bridge.sh` 比的是清单里的命令参数，不比入口脚本的路径，所以现网清单写着旧入口时不会因为命令变了而拦。
 
@@ -45,4 +45,4 @@
 - **同一应用升级为统一机器人**：先停掉旧服务，避免同一应用有两套消费者；再显式用原目录作 `--state-dir`。旧话题默认归属 Codex。换新应用时必须用新的状态目录和 owner。
 - **没有自动迁移**：任务、检查点和后端原生记录里有绝对路径。要搬状态目录时先停服务和任务，保留备份和旧路径，验证后再切换。
 - **旧 Skill**：`scripts/install_skills.sh` 发现仍装着旧名的 Skill（`lark-<名字>-bridge` 这类）或别的已停用 Skill 时给警告，不自动删除。
-- **旧安装脚本**：`scripts/setup_harness_bridge.sh` 仍可用、不再推荐，见[手工安装](manual-install.md)。
+- **旧安装脚本**：`scripts/setup_harness_bridge.sh` 仍可用，已弃用：运行时往 stderr 提示改用 `./install`。见[手工安装](manual-install.md)。
