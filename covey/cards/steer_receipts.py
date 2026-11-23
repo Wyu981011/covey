@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 
-from covey.cards.elements import button_row, card, markdown_panel, md, topic_button
+from covey.cards.elements import button_row, card, fold, grey, md, topic_button
 from covey.core.deliveries import (CHECK, INTERRUPT, REQUEUE, WITHDRAW, offers, on_arrival, shown_text,
                                    unread as unread_now)
 from covey.cards.ui import font
@@ -204,7 +204,11 @@ def receipt_card(record, *, source=""):
             todo = "先查送达状态，不会自动重发"
     line = {"tag": "markdown", "element_id": "steer_receipt_line", "content": head + stage}
     asks = [md(f"{font('**' + TODO_LABEL + '**', look.STATES['waiting'].color)}　{literal(worded(todo, record))}")] if todo else []
-    elements = [line, *asks, markdown_panel("steer_receipt", "查看详情", "\n\n".join(details))]
+    # 查看详情 as one grey line that opens, as 怎么回答 under a question (the owner, 2026-11-23: a framed box taller than
+    # the receipt's own line on every supplement he sends).
+    more = fold("steer_receipt", md(grey("查看详情"), size="notation"), [md("\n\n".join(details), size="notation")],
+                title_padding="0px 0px 0px 0px", icon_position="follow_text", spacing="4px")
+    elements = [line, *asks, more]
     offered = offers(record) - ({REQUEUE} if handled else set())  # Queued by itself: no click to queue it.
     buttons = [(label, kind, tone) for offer, label, kind, tone in BUTTONS if offer in offered]
     if buttons:
