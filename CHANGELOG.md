@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - `web/.env` 改名为 `web/.env.example`，构建和部署时按它生成 `.env`。
 - 根目录和 `web/` 的 `.gitignore` 补上环境文件、密钥、构建产物和编辑器缓存。
 - README 的快速开始补上 Node.js 和 npm 的前提。
+- 网页工作台同步：全量补扫只重建输入变了、或网页还没收下的话题（任务和问题记录、话题自己的文件、看板分组、加入的专项、协作、回带、到点回来看、代发草稿），没变的不再整份重读；每个话题最迟 15–30 分钟仍重建一次兜底。传完的产物只在上传账本变了（重新上传）时重读（[docs/web.md](docs/web.md#推)）。
 
 ### Fixed 修复
 
@@ -38,6 +39,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - `web/.env` is now `web/.env.example`; builds and deploys generate `.env` from it.
 - `.gitignore` (root and `web/`) now covers environment files, keys, build output and editor caches.
 - The README quick start lists Node.js and npm as requirements.
+- Web workbench sync: the full pass builds again only a topic whose inputs changed (its job and question records, its own files, its board group, the projects it joined, collaborations, relays, 到点回来看 and drafts) or whose items the page has not taken; one that did not change is not read again, and every topic is still built again within 15-30 minutes. A settled upload's artifacts are read again only when its ledger changed (重新上传) ([docs/web.md](docs/web.md#推)).
 
 ### Fixed (English)
 

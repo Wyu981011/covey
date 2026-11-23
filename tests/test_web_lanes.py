@@ -184,6 +184,9 @@ class CacheTest(LanesCase):
         self.topic()
         self.sync.push_once(T0)
         self.sync.start_over()
+        # Renamed: the pass builds again only a topic whose inputs changed (T678), and its ended turn is as it was.
+        write_topic(self.state, topic_id=TOPIC, chat_id=CHAT, harness_id="claude", topic_number=7, origin={"title": "整理账单（二）"},
+                    workspace_name="ws1")
         with mock.patch.object(web_turns, "extras", wraps=web_turns.extras) as extras, \
                 mock.patch.object(web_turns, "ended_figures", wraps=web_turns.ended_figures) as figures, \
                 mock.patch.object(Collector, "topic_items", autospec=True, side_effect=Collector.topic_items) as built:

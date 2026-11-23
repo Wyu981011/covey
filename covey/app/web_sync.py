@@ -13,7 +13,10 @@ there is no thread and no request.
   records they name; core/board_read.py starts), plus the topics that stopped running a moment ago or that the page just acted on, and the
   projects that changed; FULL_SECONDS after the last pass ended a full pass of all topics of the last TOPIC_DAYS days, PASS_SLICE of them a
   step in its own thread (2026-11-23 T673: in the one push thread a pass's read stuck on the network disk held the hot topics up a minute at
-  a time), the deletions once it ends. Each topic's read has a seq: a read older than what the page has of a topic is never sent after it.
+  a time), the deletions once it ends. The pass builds only a topic whose inputs changed since its last build or whose items the page does
+  not have, and each at the latest REBUILD_SECONDS after its last build (app/web_collect.py Collector.inputs, unchanged; 2026-11-23 T678:
+  every pass built the 598 live topics again, 44-83 s and up to 277 thousand file calls warm). Each topic's read has a seq: a read older
+  than what the page has of a topic is never sent after it.
   A topic's state and "做完没看" are the board's reading (core/board_read.py, app/pins.py
   board_results), not a scan of every job record each second. The butler's conversation (core/butler.py butler_topic_id; the other tracks
   of the family and the leads are not) is one more topic item, ``kind`` "butler", number 0, title 管家, no project, never unseen: its
@@ -335,7 +338,11 @@ class WebSync:
                 sent.clear()  # A day on: everything once more, a step's worth at a time behind the hot topics.
                 self.sent_changed = True
             self.sent_since = now
-        items, deleted = passer.collect_pass(chat, now, full, skip=self.collector.hot | self.collector.dirty)
+        # ``sent``: a topic whose inputs did not change is left unbuilt when the page has what its last build made (Collector.unchanged);
+        # emptied (a new day above, a new process) it has nothing, and every topic is built again. One scan of each index a second
+        # (core/store.py one_scan), not one per topic: the step queries the jobs and the questions of each of its PASS_SLICE topics.
+        with store.one_scan():
+            items, deleted = passer.collect_pass(chat, now, full, skip=self.collector.hot | self.collector.dirty, sent=sent)
         if passer is not self.passer:
             return 0  # Left behind while it looked: what it read is old, and must not wait in the backlog either.
         put = 0

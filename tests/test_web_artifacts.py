@@ -59,7 +59,7 @@ class ArtifactsTest(WebCase):
         self.assertGreater(web_sync.FULL_SECONDS, app_collect.FILES_GOING)
         self.assertEqual(self.pushed(T0 + web_sync.FULL_SECONDS + 1)[f"{TOPIC}:2"]["artifacts"], [{"name": "REPORT.md", "link": LINK, "size": 3400}])
 
-    def test_a_settled_upload_is_read_again_only_after_a_while(self):
+    def test_a_settled_upload_is_read_again_only_after_a_while_and_only_when_its_ledger_changed(self):
         record = self.answered(artifacts=(REPORT,))
         self.ledger(record, status="done", files={artifact_key(REPORT): {"name": "REPORT.md", "size": 3400, "url": LINK}}, errors={})
         collector = self.sync.collector
@@ -69,8 +69,15 @@ class ArtifactsTest(WebCase):
             collector.now = T0 + app_collect.FILES_SETTLED - 1
             self.assertIs(collector.artifacts(self.state, record), first)
             self.assertEqual(read.call_count, 1)
-            collector.now = T0 + app_collect.FILES_SETTLED + 1  # 重新上传 on a card rewrites the ledger alone: it is read again.
-            collector.artifacts(self.state, record)
+            # Its ledger as it was: what it lists is not read again (T678: every 产物's paths resolved again every FILES_SETTLED were
+            # 197 thousand lstats a pass of the live topics).
+            collector.now = T0 + app_collect.FILES_SETTLED + 1
+            self.assertIs(collector.artifacts(self.state, record), first)
+            self.assertEqual(read.call_count, 1)
+            again = LINK + "-again"
+            self.ledger(record, status="done", files={artifact_key(REPORT): {"name": "REPORT.md", "size": 3400, "url": again}}, errors={})
+            collector.now = T0 + 2 * app_collect.FILES_SETTLED + 2  # 重新上传 on a card rewrites the ledger alone: it is read again.
+            self.assertEqual(collector.artifacts(self.state, record), [{"name": "REPORT.md", "link": again, "size": 3400}])
             self.assertEqual(read.call_count, 2)
 
     def test_without_a_ledger_a_file_is_uploading_only_just_after_its_turn(self):

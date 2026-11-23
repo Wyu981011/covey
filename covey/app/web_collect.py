@@ -3,8 +3,10 @@ the page is sent. Reading only: it sends nothing and holds no lock (rule 1, AGEN
 
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
+import math
 import re
 import threading
 import time
@@ -17,17 +19,23 @@ from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
 from covey.core.history_storage import history_lines
 from covey.core.butler import butler_topic_id
+from covey.core.checkpoint import upload_ledger
 from covey.core.jobs import job_key, select_job_records, topic_job_records
 from covey.core.model_names import model_name
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 from covey.core.state import epoch_seconds, read_object
-from covey.core.statuses import RUNNING
+from covey.core.statuses import ENDED, OPEN_QUESTIONS, RUNNING
 from covey.core.store import directory_store
 from covey.core.topics import topic_file
 from covey.core.trace_store import load_trace
 
 PASS_SLICE = 25  # Topics of a full pass looked at per step of the pass thread (a pass is many steps, never one long look).
 TOPIC_DAYS = 30  # A full look takes the topics with a job written within this many days.
+# A topic the pass leaves unbuilt because its inputs did not change (Collector.unchanged) is built again all the same at the latest
+# this long after its last build, for what its inputs cannot say (``limit``: each topic's own, between half of it and all of it): an
+# upload's ledger 重新上传 rewrote, an image another topic sent up, one gone with its message after KEEP_DAYS.
+REBUILD_SECONDS = 1800.0
+FOLDER_SECONDS = 60.0  # A folder the pass reads whole (Collector.folder) is listed again at least this often, changed or not.
 MENU_SECONDS = 60.0  # How long the model menu a topic's ``config`` reads is kept (Collector.menu).
 TURNS_KEPT = 100  # The newest turns of a topic that are pushed.
 STATE_WORDS = {"done": "做完", "waiting_user": "等你", "cancelled": "已停止", "failed": "失败", "interrupted": "失败"}
@@ -88,6 +96,9 @@ class Shared:
         self.stuck = {}  # topic id -> the left-behind thread stuck reading it: looks leave the topic out while that thread lives.
         self.dirty = set()  # The topics the next quick look builds whatever the indexes say (Collector.touch).
         self.unbuilt = {}  # topic id -> the error its build raised, as last logged (Collector.build_each).
+        # topic id -> (its inputs as the pass's last build of it read them, ((type, key), rev) of each item that build made, when it
+        # is built again whatever its inputs say): Collector.unchanged. Only the pass's thread writes it.
+        self.prints = {}
 
     def next_seq(self) -> int:
         return next(self.seq)
@@ -160,6 +171,10 @@ class Collector:
         self.collab_cache, self.collab_primed = {}, False  # name -> ((mtime_ns, size), record) of <state>/collab/ (read_collabs).
         self.collab_now, self.collab_helpers, self.collab_topics = {}, {}, set()  # This look's: id -> record (the chat's), helper topic -> records, topics in any.
         self.menu_at, self.menu_models = -MENU_SECONDS, {}  # The model menu (available_models) a topic's ``config`` reads, read again after MENU_SECONDS.
+        self.due = math.inf  # When the items of the topic being built change by themselves (``files_due``): it is built again by then.
+        # What this look of the pass read for every topic's inputs (``look_inputs``): its share of them (a hash), the 到点回来看 by topic
+        # and the 代发 drafts by topic (``folder``: path -> (the folder's stamp, when listed, what was made of it)).
+        self.look_rev, self.later, self.drafts, self.folders = "", {}, {}, {}
 
     # What the two collectors share, as attributes of each.
     stuck = property(lambda self: self.shared.stuck, lambda self, value: setattr(self.shared, "stuck", value))
@@ -226,24 +241,34 @@ class Collector:
 
     board_due = True  # The quick look reads the board before its first build (a pass reads it when it starts).
 
-    def build(self, state, chat, topic, now) -> tuple:
-        """(seq, items) of ``topic``: its records read now, after the seq is taken (``Shared.next_seq``)."""
+    def build(self, state, chat, topic, now, sent=None) -> tuple:
+        """(seq, items) of ``topic``: its records read now, after the seq is taken (``Shared.next_seq``). ``sent`` (the pass's: what the
+        page has, (type, key) -> rev): its inputs are read first (``inputs``), before anything the build reads, and when they are those of
+        its last build and the page has what that build made (``unchanged``), nothing is built: (seq, None)."""
         seq = self.shared.next_seq()
         self.doing = f"topic {topic[:12]}"
         records = sorted(topic_job_records(state, topic, chat_id=chat), key=board_read.job_number)
         self.at = topic
+        inputs = self.inputs(state, chat, topic, records) if sent is not None else None
+        if sent is not None and self.unchanged(topic, inputs, now, sent):
+            self.moved = time.monotonic()
+            return seq, None
+        self.due = math.inf
         items = self.topic_items(state, chat, topic, records, now)
+        if sent is not None:
+            self.keep_inputs(topic, inputs, items, now)
         self.moved = time.monotonic()
         return seq, items
 
-    def build_each(self, state, chat, topics, now) -> tuple:
-        """([(topic, seq, items)], the topics whose build raised) of ``topics``, one at a time. One that raises (a record of a shape
-        the build does not know, a read that failed) is left out of this look and logged once per topic and error; the others go
-        on. A busy index (core/store.py Busy) ends the look: nothing of it is sent."""
-        groups, failed = [], []
+    def build_each(self, state, chat, topics, now, sent=None, always=()) -> tuple:
+        """([(topic, seq, items)], the topics whose build raised, the topics left unbuilt) of ``topics``, one at a time. One that raises
+        (a record of a shape the build does not know, a read that failed) is left out of this look and logged once per topic and error;
+        the others go on. A busy index (core/store.py Busy) ends the look: nothing of it is sent. ``sent``: the pass's (``build``); the
+        topics in ``always`` are built whatever their inputs (the butler's and the leads' conversations read other topics' files)."""
+        groups, failed, kept = [], [], []
         for topic in topics:
             try:
-                seq, mine = self.build(state, chat, topic, now)
+                seq, mine = self.build(state, chat, topic, now, None if topic in always else sent)
             except store.Busy:
                 raise
             except Exception as exc:  # noqa: BLE001 - one topic must not hold up the others
@@ -254,10 +279,13 @@ class Collector:
                     if self.log is not None:
                         self.log(f"web sync topic {topic[:12]} not built: {why}")
                 continue
+            if mine is None:
+                kept.append(topic)
+                continue
             self.shared.unbuilt.pop(topic, None)
             groups.append((topic, seq, mine))
         self.at = ""
-        return groups, failed
+        return groups, failed, kept
 
     def collect_hot(self, chat, now) -> list:
         """The quick look (WebSync.push_hot, every push_seconds and when this process wrote a job or a question): the topics that
@@ -282,7 +310,7 @@ class Collector:
             self.read_board(state, chat, now)
         quick = [topic for topic in hot | self.hot | touched if topic not in family and topic not in out]
         looked = [topic for topic in family if (topic in hot or topic in self.hot or topic in touched) and topic not in out]
-        groups, _ = self.build_each(state, chat, [*quick, *looked], now)
+        groups, _, _ = self.build_each(state, chat, [*quick, *looked], now)
         self.shared.built([topic for topic, _, mine in groups if topic in quick or mine])
         self.mark("projects")
         seq = self.shared.next_seq()
@@ -301,12 +329,14 @@ class Collector:
         self.mark("")
         return items
 
-    def collect_pass(self, chat, now, full, skip=()) -> tuple:
+    def collect_pass(self, chat, now, full, skip=(), sent=None) -> tuple:
         """One step of the full pass (WebSync.pass_once, its own thread: a slow read here holds up no quick look). When ``full`` and
         none is under way a pass starts: the board read again, every topic with a job written in the last TOPIC_DAYS days, the
-        butler's and the leads' conversations. Each step builds the next PASS_SLICE topics; those in ``skip`` (the quick look builds
-        them every step) are left to it. (items, deleted): ``deleted`` once the pass ended, the topics and collaborations pushed
-        before that it did not see. Nothing to do: ([], [])."""
+        butler's and the leads' conversations. Each step looks at the next PASS_SLICE topics; those in ``skip`` (the quick look builds
+        them every step) are left to it. With ``sent`` (what the page has, (type, key) -> rev) a topic whose inputs are those of its
+        last build is left unbuilt when the page has what that build made (``unchanged``): it is seen all the same, never deleted.
+        (items, deleted): ``deleted`` once the pass ended, the topics and collaborations pushed before that it did not see. Nothing
+        to do: ([], [])."""
         start = full and not self.pass_left  # A new pass only once the last one has ended (``full``: one is due).
         self.pass_done, self.groups, self.urgent = False, [], 0
         if not start and not self.pass_left:
@@ -317,6 +347,8 @@ class Collector:
         skip = set(skip)
         self.mark("indexes")
         records, family = self.read_projects(state, chat)
+        if sent is not None:
+            self.look_inputs(state)
         if start:
             self.mark("board")
             self.read_board(state, chat, now)
@@ -337,8 +369,9 @@ class Collector:
             else:
                 slice_.append(topic)
         looked = [topic for topic in family if topic not in out and topic not in skip] if start else []
-        groups, failed = self.build_each(state, chat, [*slice_, *looked], now)
-        self.shared.built([topic for topic, _, mine in groups if topic in slice_ or mine])
+        groups, failed, kept = self.build_each(state, chat, [*slice_, *looked], now, sent=sent, always=set(family))
+        # Built, or left unbuilt as the page has it: the page has them, and this pass has seen them.
+        self.shared.built([topic for topic, _, mine in groups if topic in slice_ or mine] + kept)
         with self.shared.lock:  # Left to the quick look, stuck, or its build raised: still on the page, not deleted at the pass's end.
             self.shared.pass_seen |= {("topic", topic) for topic in left | set(failed)}
         self.pass_done = not self.pass_left
@@ -349,6 +382,8 @@ class Collector:
                 seen = self.shared.pass_seen | {("topic", topic) for topic in out | skip}
                 deleted += [{"type": kind, "key": key} for kind, key in sorted(self.shared.pushed_topics - seen)]
                 self.shared.pushed_topics = seen - self.backfill_extra
+                for topic in [topic for topic in self.shared.prints if ("topic", topic) not in self.shared.pushed_topics]:
+                    del self.shared.prints[topic]  # Deleted, or only a backfill looked at it: its next build is a whole one.
                 current = set(self.collab_now)
                 deleted += [{"type": "collab", "key": key} for key in sorted(self.shared.pushed_collabs - current)]
                 self.shared.pushed_collabs = current
@@ -358,6 +393,79 @@ class Collector:
         self.groups = groups
         self.mark("")
         return [each for _, _, mine in groups for each in mine], deleted
+
+    # -- what a topic is built from (the pass leaves one unbuilt whose inputs did not change) -------------------------------------
+
+    def look_inputs(self, state) -> None:
+        """What this look of the pass reads once for every topic's ``inputs``: the switches a build reads and the model menu (its share,
+        ``look_rev``), the 到点回来看 by topic and the 代发 drafts by topic (``folder``: each folder listed again only when it changed)."""
+        from covey.core import project_proposals
+
+        self.look_rev = web_sync.rev([projects.enabled(), project_proposals.enabled(), revisits.enabled(), owner_send.enabled(),
+                                      turn_source.enabled(), pins.laid(), self.images is not None, self.menu()])
+        self.later = self.folder(Path(state) / revisits.FOLDER, stamps_by_name) if revisits.enabled() else {}
+        self.drafts = self.folder(owner_send_records.folder(state), drafts_by_topic) if owner_send.enabled() else {}
+
+    def folder(self, path, make) -> dict:
+        """``make(the folder's *.json files)``, made again only when the folder changed or FOLDER_SECONDS after it was last made (every
+        writer of these renames a whole new file in, so the folder's stamp moves with each write; the time is for a stamp that did not)."""
+        stamp = file_stamp(path)
+        kept = self.folders.get(str(path))
+        if kept is not None and kept[0] == stamp and self.now - kept[1] < FOLDER_SECONDS:
+            return kept[2]
+        try:
+            files = sorted(Path(path).glob("*.json")) if stamp is not None else []
+        except OSError:
+            files = []
+        made = make(files)
+        self.folders[str(path)] = (stamp, self.now, made)
+        return made
+
+    def inputs(self, state, chat, topic, records):
+        """What ``topic``'s items are built from (``topic_items``), as cheaply as it can be read: its job and question records as the
+        stores hold them (no file read), a stat of each file of its own the build reads (history.jsonl, topic.json, gist.json), and what
+        this look read already: its board group and whether its result is unseen, the projects it joined and when, the collaborations it
+        is in, the relays of its turns, its 到点回来看 and 代发 drafts, the look's share (``look_inputs``). A hash; None while its items
+        change by themselves (a task not ended: queued, running, waiting for an answer or for 开始; a question still open): such a topic
+        is built every time. Read before anything the build reads, so a change in between is a change at the next look."""
+        if any(record.get("status") not in ENDED for record in records):
+            return None
+        questions = [row for _, row in directory_store(state / "questions").query(chat_id=chat, topic_id=topic)]
+        if any(row.get("status", "pending") in OPEN_QUESTIONS for row in questions):
+            return None
+        from covey.core import project_proposals, topic_gist
+
+        files = [file_stamp(state / "topics" / topic / "history.jsonl"), file_stamp(topic_file(state, topic))]
+        if project_proposals.enabled():
+            files.append(file_stamp(topic_gist.path(state, topic)))
+        involved = sorted((cid, web_sync.rev(record)) for cid, record in self.collab_now.items()
+                          if topic in parties(record)) if topic in self.collab_topics else []
+        joined = sorted((pid, projects.joined_at(record, topic)) for pid, record in self.projects.items() if projects.joined_at(record, topic))
+        return web_sync.rev([records, questions, files, involved, joined, [self.room.relayed_at(record) for record in records],
+                             self.board.get(topic, "") if self.board is not None else None, topic in self.unseen,
+                             self.later.get(topic), self.drafts.get(topic), self.look_rev])
+
+    def unchanged(self, topic, inputs, now, sent) -> bool:
+        """Whether the pass leaves ``topic`` unbuilt: its ``inputs`` (not None) are those of its last build, that build is not due again
+        (``limit``, or sooner: 产物 still going up, ``files_due``), and the page has every item it made (``sent``). One
+        whose items never got there (left behind, refused, still waiting to go) or of which a quick look sent another reading since is
+        built again, and so is every topic once ``sent`` starts empty (a new day, a new process)."""
+        kept = self.shared.prints.get(topic)
+        return (inputs is not None and kept is not None and kept[0] == inputs and now < kept[2]
+                and all(sent.get(name) == rev for name, rev in kept[1]))
+
+    def keep_inputs(self, topic, inputs, items, now) -> None:
+        """The pass built ``topic`` from ``inputs`` into ``items``: kept for ``unchanged``, with when it is due again (``limit``, or the
+        build's own ``due``). Nothing of a topic whose items change by themselves (``inputs`` None), and nothing from a collector left
+        behind (one that comes back late read what is old)."""
+        if self.retired:
+            return
+        with self.shared.lock:
+            if inputs is None:
+                self.shared.prints.pop(topic, None)
+            else:
+                self.shared.prints[topic] = (inputs, tuple(((each["type"], each["key"]), each["rev"]) for each in items),
+                                             min(self.due, now + limit(topic)))
 
     # -- collaborations (COVEY_COLLAB=1) ---------------------------------------------------------------------------------------
 
@@ -393,14 +501,13 @@ class Collector:
         self.collab_cache, self.collab_primed, self.collab_now = seen, True, mine
         self.collab_helpers, self.collab_topics = {}, set()
         for record in sorted(mine.values(), key=lambda each: float(each.get("created_at") or 0)):
-            integrator = str((record.get("integrator") or {}).get("key") or "")
-            self.collab_topics |= {integrator, *(str(ask.get("to")) for ask in record.get("asks") or ())} - {""}
+            self.collab_topics |= parties(record)
             for helper in dict.fromkeys(str(ask.get("to")) for ask in record.get("asks") or ()):
                 self.collab_helpers.setdefault(helper, []).append(record)
         for topic in [topic for topic in list(self.job_seqs) if topic not in self.collab_topics]:
             self.job_seqs.pop(topic, None)
         for record in changed:
-            for topic in {str((record.get("integrator") or {}).get("key") or ""), *(str(ask.get("to")) for ask in record.get("asks") or ())} - {""}:
+            for topic in parties(record):
                 self.touch(topic)
 
     def collab_items(self) -> list:
@@ -952,18 +1059,35 @@ class Collector:
 
     def artifacts(self, state, job) -> list:
         """The 产物 of an answer turn (web_turns.artifacts_of, data contract v32), read again only while they can still change: after
-        FILES_GOING seconds while one goes up, after FILES_SETTLED once settled (重新上传 on a card rewrites the upload's ledger, not the
-        job's record); a turn without any is read once."""
+        FILES_GOING seconds while one goes up; once settled, FILES_SETTLED after, only when its upload's ledger changed (重新上传 on a
+        card rewrites the ledger, not the job's record; the files and what may be published of them are the job's, which has ended:
+        2026-11-23 T678, the paths of every 产物 resolved again every 300 s were 197 thousand lstats a pass of the live topics); a
+        turn without any is read once."""
         key = (job_key(job.get("message_id"), job.get("job_id")), str(job.get("updated_at")))
         now = self.now or time.time()
         hit = self.shared.recall(self.files, key)
         if hit is not None:
-            at, items = hit
-            if not items or now - at < (FILES_GOING if any(item.get("uploading") for item in items) else FILES_SETTLED):
+            at, items, ledger = hit
+            going = any(item.get("uploading") for item in items)
+            if not items or now - at < (FILES_GOING if going else FILES_SETTLED):
+                self.files_due(at, items)
+                return items
+            if not going and ledger is not None and ledger == ledger_rev(state, job):
+                self.shared.keep(self.files, key, (now, items, ledger), FIGURES_KEPT)
                 return items
         items = web_turns.artifacts_of(state, job, now)
-        self.shared.keep(self.files, key, (now, items), FIGURES_KEPT)
+        # Read after them: an upload that changes the ledger in between went through "uploading", which is read again whole.
+        self.shared.keep(self.files, key, (now, items, ledger_rev(state, job) if items else None), FIGURES_KEPT)
+        self.files_due(now, items)
         return items
+
+    def files_due(self, at, items) -> None:
+        """The topic being built is built again (``due``) when these 产物, read at ``at``, are read again while one of them goes up
+        (FILES_GOING after): its link comes with the upload's ledger, not with the job's record. One that could not go up waits for its
+        topic's ``limit`` (重新上传 is a click on a card; 154 of the live 2471 ledgers keep an error for good: a file too large, a
+        configuration path)."""
+        if any(item.get("uploading") for item in items):
+            self.due = min(self.due, at + FILES_GOING)
 
     def ended_extras(self, state, job) -> dict:
         """The process, plan and figures of an ended turn, read once (they do not change once it has ended)."""
@@ -1119,6 +1243,51 @@ class Collector:
         if any(self.states.get(topic) == "等你" for topic in topics):
             return "等你", "有问题等你回答"
         return "在做", ""
+
+
+def file_stamp(path):
+    """(inode, mtime, size) of the file or folder at ``path``, None when there is none: every writer of a record replaces it whole (the
+    inode moves), history.jsonl grows."""
+    try:
+        stat = Path(path).stat()
+    except OSError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns, stat.st_size
+
+
+def limit(topic) -> float:
+    """How long after its last build the pass builds ``topic`` again whatever its inputs say: REBUILD_SECONDS less up to half of it, by
+    the topic's id, so the topics of a big chat built in one pass do not all come due in the same pass again."""
+    share = int(hashlib.sha1(str(topic).encode()).hexdigest()[:8], 16) / 0xFFFFFFFF
+    return REBUILD_SECONDS * (1 - share / 2)
+
+
+def ledger_rev(state, job):
+    """A hash of the upload ledger of ``job``'s 产物 (core/checkpoint.py upload_ledger: one file), None when it cannot be read."""
+    try:
+        return web_sync.rev(upload_ledger(state, job["key"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def stamps_by_name(files) -> dict:
+    """{file stem: its stamp}: <state>/revisits/<topic id>.json by topic (core/revisits.py path)."""
+    return {file.stem: file_stamp(file) for file in files}
+
+
+def drafts_by_topic(files) -> dict:
+    """{topic id: a hash of its drafts' records} of <state>/owner-send/ (core/owner_send.py), every status: what ``later_and_drafts`` shows of
+    them changes only with one of these."""
+    found = {}
+    for file in files:
+        record = read_object(file)
+        found.setdefault(str(record.get("topic_id") or ""), []).append([file.name, record])
+    return {topic: web_sync.rev(rows) for topic, rows in found.items()}
+
+
+def parties(record) -> set:
+    """The topics of a collaboration record: its integrator's and those it asked (Collector.read_collabs)."""
+    return {str((record.get("integrator") or {}).get("key") or ""), *(str(ask.get("to")) for ask in record.get("asks") or ())} - {""}
 
 
 def project_stamp(state, pid) -> tuple:
