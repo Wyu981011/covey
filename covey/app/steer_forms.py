@@ -77,7 +77,7 @@ class SteerForms:
     def steer_form_card(self, job, raw, *, text="", notice=""):
         """The 补充 form names the task it feeds; it is replaced by a receipt or closed when the task ends. It says
         where a longer message goes: into the task as it arrives (COVEY_TOPIC_STEER; the butler's always)."""
-        return steer_form(job.job_id, " · ".join(x for x in (job.topic_label, f"#{job.job_id}") if x), raw,
+        return steer_form(job.job_id, job.topic_label or "", raw,  # No task number: its task card shows none.
                           text=text, notice=notice, arrives=topic_steer() or traits_of(job).lists_supplements)
 
     def merge_target(self, ctx, chat, queued, mid, form="", *, arrival=False):

@@ -41,8 +41,15 @@ class HeldNoteCardLookTest(unittest.TestCase):
                 "waiting": waiting_for(pending)}
         card = note_card(note)
         self.assertEqual(card["body"]["elements"][0]["content"],
-                         "📝 **这条消息还没发给模型**：#1106（20:24）的 3 道题、#1084（20:24）的提问还没答，提交回答时会一起带上")
-        row = card["body"]["elements"][-1]
+                         "📝 **这条消息还没发给模型**：20:24 的 3 道题、20:24 的提问还没答，提交回答时会一起带上")  # No task numbers (T666).
+        # What its buttons do: one grey line under them that opens on it, not a line between the note and the buttons.
+        from covey.cards.held_note import ANSWER_GIST, ANSWER_REQUIRED
+        help_line = card["body"]["elements"][-1]
+        self.assertEqual((help_line["tag"], help_line["element_id"]), ("collapsible_panel", "note_help"))
+        self.assertEqual(help_line["header"]["title"]["content"], f"<font color='grey'>{ANSWER_GIST}</font>")
+        self.assertEqual(help_line["elements"][0]["content"], ANSWER_REQUIRED)
+        self.assertEqual(card["body"]["elements"][1]["element_id"], "note_text")  # 查看内容, a grey line too.
+        row = card["body"]["elements"][-2]  # The buttons, right above that line.
         self.assertEqual(row["flex_mode"], "flow")  # Wraps in the side panel instead of cutting the labels.
         buttons = [c["elements"][0] for c in row["columns"]]
         self.assertEqual([(b["text"]["content"], b["value"]["verb"], b["type"]) for b in buttons],
@@ -50,8 +57,8 @@ class HeldNoteCardLookTest(unittest.TestCase):
                           ("撤回", "withdraw", "default")])
         self.assertEqual({b["value"]["kind"] for b in buttons}, {"bridge_note"})
         later = note_card({**note, "status": "next_round"})
-        self.assertIn("↪ **留作下一轮**：#1106（20:24）的 3 道题、#1084（20:24）的提问回答后单独排队执行", text_of(later))
-        self.assertEqual([c["elements"][0]["value"]["verb"] for c in later["body"]["elements"][-1]["columns"]],
+        self.assertIn("↪ **留作下一轮**：20:24 的 3 道题、20:24 的提问回答后单独排队执行", text_of(later))
+        self.assertEqual([c["elements"][0]["value"]["verb"] for c in later["body"]["elements"][-2]["columns"]],
                          ["feedback", "attach", "withdraw"])
         # A note held before it kept what it waits for.
         self.assertIn("话题里的问题还没答", text_of(note_card({k: v for k, v in note.items() if k != "waiting"})))

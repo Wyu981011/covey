@@ -107,14 +107,14 @@ def _lost_head(record, job_id, unread) -> str:
     """The receipt's line for a supplement queued again as a round of its own: what became of it in the task it was for."""
     status = record.get("status")
     if unread:
-        return f"**#{job_id} 结束前没有读到这条补充**"
+        return "**上一轮结束前没有读到这条补充**"
     if status == "refused":
-        return f"**#{job_id} 没有收到这条补充**"
+        return "**上一轮没有收到这条补充**"
     if status == "withdrawn":
-        return f"**已撤回**，这条补充没有发给 #{job_id}"
+        return "**已撤回**，这条补充没有发出"
     if status == "uncertain":
-        return f"**补充 #{job_id} 送达未确认**"
-    return f"**补充 #{job_id}**"  # No other status is queued again (core/deliveries.py offers): nothing it did not say.
+        return "**补充送达未确认**"
+    return "**补充**"  # No other status is queued again (core/deliveries.py offers): nothing it did not say.
 
 
 def receipt_card(record, *, source=""):
@@ -133,26 +133,26 @@ def receipt_card(record, *, source=""):
     again = record.get("requeued_job_id")
     handled = bool(again) or (arrived and (unread or status == "refused") and requeuing(record))
     if handled:
-        head = _lost_head(record, job_id, unread) + (f"，已排成新一轮 #{again}" if again else "，正在排成新一轮")
-        summary = f"补充 #{job_id} 已排成新一轮" if again else f"补充 #{job_id} 正在排成新一轮"
+        head = _lost_head(record, job_id, unread) + ("，已排成新一轮" if again else "，正在排成新一轮")
+        summary = "补充已排成新一轮" if again else "补充正在排成新一轮"
     elif unread:
-        head = f"**任务 #{job_id} 已结束，模型没有读到这条补充**"
-        summary = f"补充 #{job_id} 未被读取"
+        head = "**这一轮已结束，模型没有读到这条补充**"
+        summary = "补充未被读取"
     elif status in {"sent", "read"}:
-        head = f"**已补充到 #{job_id}**" + ("，不另开一轮" if arrived else "，不再单独排队" if source else "")
-        summary = f"已补充到 #{job_id}"
+        head = "**已补充到这一轮**" + ("，不另开一轮" if arrived else "，不再单独排队" if source else "")
+        summary = "已补充到这一轮"
     elif status == "refused":
-        head = f"**没有补充到 #{job_id}**：{record.get('error') or '任务当前不能接收补充'}"
-        summary = f"没有补充到 #{job_id}"
+        head = f"**没有补充进去**：{record.get('error') or '任务当前不能接收补充'}"
+        summary = "补充没有送进去"
     elif status == "held":
-        head = f"**已保存，尚未送达 #{job_id}**：{record.get('error') or '任务刚开始'}，准备好后自动送入"
-        summary = f"补充 #{job_id} 已保存，尚未送达"
+        head = f"**已保存，尚未送达**：{record.get('error') or '任务刚开始'}，准备好后自动送入"
+        summary = "补充已保存，尚未送达"
     elif status == "withdrawn":
-        head = f"**已撤回**，这条补充没有发给 #{job_id}"
-        summary = f"补充 #{job_id} 已撤回"
+        head = "**已撤回**，这条补充没有发出"
+        summary = "补充已撤回"
     else:
-        head = f"**补充 #{job_id} 送达未确认**" + (f"：{record['error']}" if record.get("error") else "")
-        summary = f"补充 #{job_id} 送达未确认"
+        head = "**补充送达未确认**" + (f"：{record['error']}" if record.get("error") else "")
+        summary = "补充送达未确认"
     stage = " · " + STAGE[status] if status in {"sent", "read"} and not unread else ""
     if unread_now(record):
         stage = " · " + unread_line(record)

@@ -69,7 +69,7 @@ class TopicTitleTest(unittest.TestCase):
         job = sample_job(job_id=3310, topic_label="T446", title="验收T444:睡75秒报时间", execution_started=True)
         card = build_stream_card("执行中", job.title, runtime, job=job)
         head = card["body"]["elements"][0]  # The title row (no title bar since 2026-11-22).
-        self.assertEqual(head["columns"][1]["elements"][0]["content"], f"**{title}** <font color='grey'>#3310</font>")
+        self.assertEqual(head["columns"][1]["elements"][0]["content"], f"**{title}**")  # No task number (T666).
         self.assertEqual(head["columns"][0]["elements"][0]["elements"][0]["content"], "<font color='white'>**T446**</font>")
         self.assertIn(title, card["config"]["summary"]["content"])
         self.assertEqual(card_title_for_question(job.title, runtime), title)  # The running preview's.

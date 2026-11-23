@@ -44,7 +44,7 @@ class UnifiedTests(UnifiedCase):
         job = SimpleNamespace(job_id=196, user_text='看下这个转发', topic_label='T1', model='m', effort='', timeout=0)
         card = build_stream_card('处理中', job.user_text, runtime, job=job)
         head = card['body']['elements'][0]  # The title row (no title bar since 2026-11-22).
-        self.assertEqual(head['columns'][1]['elements'][0]['content'], "**看下这个转发** <font color='grey'>#196</font>")
+        self.assertEqual(head['columns'][1]['elements'][0]['content'], "**看下这个转发**")  # No task number (T666).
         self.assertNotIn('任务编号', json.dumps(card, ensure_ascii=False))  # The title has both (2026-11-04 15:07).
 
     def test_every_card_click_is_logged_with_its_outcome(self):

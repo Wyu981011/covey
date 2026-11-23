@@ -221,7 +221,7 @@ class ChatFinalDeliveryTest(unittest.TestCase):
         self.assertEqual("task_head", head["element_id"])
         badge, title, status = (column["elements"][0] for column in head["columns"])
         self.assertEqual(("<font color='white'>**T372**</font>", "auto"), (badge["elements"][0]["content"], badge["width"]))
-        self.assertEqual("**统计行数** <font color='grey'>#7</font>", title["content"])
+        self.assertEqual("**统计行数**", title["content"])  # No grey task number after it (T666).
         self.assertEqual(("activity", "等待处理"), (status["element_id"], status["content"]))
         self.assertIn(badge["background_style"], card["config"]["style"]["color"])  # The badge's colour is the card's.
         self.assertEqual(("10px 12px 10px 12px", "6px"), (card["body"]["padding"], card["body"]["vertical_spacing"]))

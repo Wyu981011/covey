@@ -13,20 +13,20 @@ def steer_form(job_id, label, raw, *, text="", notice="", arrives=True):
     # in the topic, which goes into the task as it arrives (or by its queued card's 现在补给 #N).
     field = {"tag": "input", "name": "supplement", "input_type": "multiline_text", "required": True,
              "rows": 6, "auto_resize": True, "max_rows": 15, "width": "fill", "max_length": 1000,
-             "placeholder": plain(f"补充任务 #{job_id} 的要求")}
+             "placeholder": plain("补充这一轮的要求")}
     if text:
         field["default_value"] = text
-    head = f"**补充任务 {label}**" + (f"\n{notice}" if notice else "")
-    longer = "它会补充给这个任务" if arrives else f"再点那条消息卡上的“现在补给 #{job_id}”"
+    head = f"**补充任务{' ' + label if label else ''}**" + (f"\n{notice}" if notice else "")
+    # One grey line (the owner, 2026-11-23: two lines of how it works over the box): what the box cannot take.
+    longer = "直接在话题里发" if arrives else f"在话题里发，再点它卡上的“现在补给 #{job_id}”"
     return card([
         md(head),
-        md("<font color='grey'>提交后送入正在执行的任务；任务结束后这张卡失效。最多 1000 字；更长的内容或附件，"
-           f"直接在本话题发消息，{longer}。</font>", size="notation"),
+        md(f"<font color='grey'>最多 1000 字；更长的或带附件的{longer}</font>", size="notation"),
         {"tag": "form", "name": "steer", "elements": [field, {
             "tag": "button", "name": "submit", "form_action_type": "submit", "type": "primary",
-            "text": plain(f"提交补充到 #{job_id}"),
+            "text": plain("提交补充"),
             # Open only while the task runs (closed when it ends): the topic list's preview says so.
-            "behaviors": [{"type": "callback", "value": raw}]}]}], f"{label} 在做 · 补充表单")
+            "behaviors": [{"type": "callback", "value": raw}]}]}], f"{label + ' ' if label else ''}在做 · 补充表单")
 
 
 def closed_card(text, summary, *, unsent=None):

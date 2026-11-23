@@ -82,14 +82,15 @@ HEAD_ID = "task_head"
 
 def task_head(job: Any, heading: str, status: str) -> dict[str, Any]:
     """The task card's first row, as the answer card's (cards/ui.py speaker_row; the owner, 2026-11-22: 整体按答案卡片弄):
-    the topic's T number as its badge, the turn's title bold with its task number grey, and the status line
+    the topic's T number as its badge, the turn's title bold, and the status line
     (ACTIVITY_ELEMENT_ID, cards/task_status.py status_markdown: the state a coloured tag, 14:41 结束 grey) at its
     right, written by its own ID as before. It took the white title bar's place: a sent card's title bar never
     changes, this row's state does. Without a T number the title alone leads."""
     label = str(getattr(job, "topic_label", "") or "")
     badge = topic_badge(label) if label else None
-    number = f"#{job.job_id}" if getattr(job, "job_id", None) else ""
-    title = md(f"**{literal(heading)}**" + (" " + grey(number) if number else ""), size="normal_v2")
+    # No grey task number after the title (the owner, 2026-11-23: #6047 said nothing to him); the cards that named a
+    # task by it (补充, 回执, 暂存的消息) say 这一轮 instead.
+    title = md(f"**{literal(heading)}**", size="normal_v2")
     columns = ([{"tag": "column", "width": "auto", "vertical_align": "center", "elements": [badge]}] if badge else []) + [
         {"tag": "column", "width": "weighted", "weight": 1, "vertical_align": "center", "elements": [title]},
         {"tag": "column", "width": "auto", "vertical_align": "center", "elements": [activity_element(status)]}]

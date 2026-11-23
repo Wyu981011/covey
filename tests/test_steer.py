@@ -222,7 +222,7 @@ class ReceiptCardTest(unittest.TestCase):
         record = {"status": "sent", "job_id": 1190, "text": "x", "saved_at": 1.0, "sent_at": 2.0,
                   "topic_id": "t", "token": "a" * 64}
         card = text_of(receipt_card(record))
-        self.assertIn("**已补充到 #1190** · 后端已接收 · 当前一步结束后读到", card)
+        self.assertIn("**已补充到这一轮** · 后端已接收 · 当前一步结束后读到", card)
         self.assertIn("一个子任务）结束后才读到它", card)
         read = text_of(receipt_card({**record, "status": "read", "read_at": 3.0}))
         self.assertIn("· 模型已读取", read)
@@ -232,7 +232,7 @@ class ReceiptCardTest(unittest.TestCase):
         record = {"status": "sent", "job_id": 252, "text": "第一行\n第二行", "saved_at": 1.0, "sent_at": 2.0,
                   "topic_id": "t", "token": "a" * 64}
         card = receipt_card(record, source="来源：#253 排队的消息")
-        self.assertIn("**已补充到 #252**，不再单独排队", text_of(card))
+        self.assertIn("**已补充到这一轮**，不再单独排队", text_of(card))
         self.assertIn("后端已接收", text_of(card))
         self.assertNotIn(CHECK_KIND, text_of(card))
         self.assertNotIn("排队中", text_of(card))
@@ -246,7 +246,7 @@ class ReceiptCardTest(unittest.TestCase):
         record = {"status": "sent", "job_id": 1773, "text": "x", "saved_at": 1.0, "sent_at": 2.0, "ended_at": 3.0,
                   "target_ended": True, "topic_id": "t", "token": "a" * 64, "requeue": {"text": "x"}}
         card = text_of(receipt_card(record))
-        self.assertIn("任务 #1773 已结束，模型没有读到这条补充", card)
+        self.assertIn("这一轮已结束，模型没有读到这条补充", card)
         self.assertNotIn("已补充到", card)
         self.assertIn("任务结束，模型未读取", card)
         self.assertIn(REQUEUE_KIND, card)
@@ -293,18 +293,18 @@ class ReceiptCardTest(unittest.TestCase):
         # 2026-11-22 (T651): after a click on 重新排队 the receipt kept its band (停住了, 要你做 在话题里再发一次) above
         # 已重新排队为任务 #433; only a message that went in as it arrived lost it once queued.
         again = {"requeue": {"text": "x"}, "requeue_state": "queued", "requeued_job_id": 433}
-        cases = (({"status": "refused", "error": "任务已结束"}, "**#431 没有收到这条补充**"),
-                 (self.UNREAD, "**#431 结束前没有读到这条补充**"),
-                 ({"status": "withdrawn", "withdrawn_at": 2.0}, "**已撤回**，这条补充没有发给 #431"),
+        cases = (({"status": "refused", "error": "任务已结束"}, "**上一轮没有收到这条补充**"),
+                 (self.UNREAD, "**上一轮结束前没有读到这条补充**"),
+                 ({"status": "withdrawn", "withdrawn_at": 2.0}, "**已撤回**，这条补充没有发出"),
                  ({"status": "uncertain", "target_ended": True, "error": "任务 #431 已结束，无法确认是否收到这条补充"},
-                  "**补充 #431 送达未确认**"))
+                  "**补充送达未确认**"))
         for fields, lead in cases:
             with self.subTest(fields["status"]):
                 card = receipt_card({**self.BASE, **fields, **again})
                 line = next(e for e in card["body"]["elements"] if e.get("element_id") == "steer_receipt_line")
                 self.assertEqual(line, {"tag": "markdown", "element_id": "steer_receipt_line",
-                                        "content": lead + "，已排成新一轮 #433"})  # The line leads: no band above it.
-                self.assertEqual(card["config"]["summary"]["content"], "补充 #431 已排成新一轮")
+                                        "content": lead + "，已排成新一轮"})  # The line leads: no band above it.
+                self.assertEqual(card["config"]["summary"]["content"], "补充已排成新一轮")
                 self.assertNotIn("style", card["config"])  # Not styled: there is no band.
                 shown = text_of(card)
                 self.assertIn("已重新排队为任务 #433。", shown)
@@ -318,14 +318,14 @@ class ReceiptCardTest(unittest.TestCase):
         from covey.core.text import literal
         refused = {"status": "refused", "error": "任务已结束"}
         offered = {"requeue": {"text": "x"}}
-        cases = ((self.UNREAD, "**任务 #431 已结束，模型没有读到这条补充**", "在话题里再发一次"),
-                 ({**self.UNREAD, **offered}, "**任务 #431 已结束，模型没有读到这条补充**", "重新排队，或在话题里再发一次"),
-                 (refused, "**没有补充到 #431**：任务已结束", "在话题里再发一次"),
-                 ({**refused, **offered}, "**没有补充到 #431**：任务已结束", "重新排队，或在话题里再发一次"),
-                 ({"status": "uncertain", "error": "飞书超时"}, "**补充 #431 送达未确认**：飞书超时", "先查送达状态，不会自动重发"),
+        cases = ((self.UNREAD, "**这一轮已结束，模型没有读到这条补充**", "在话题里再发一次"),
+                 ({**self.UNREAD, **offered}, "**这一轮已结束，模型没有读到这条补充**", "重新排队，或在话题里再发一次"),
+                 (refused, "**没有补充进去**：任务已结束", "在话题里再发一次"),
+                 ({**refused, **offered}, "**没有补充进去**：任务已结束", "重新排队，或在话题里再发一次"),
+                 ({"status": "uncertain", "error": "飞书超时"}, "**补充送达未确认**：飞书超时", "先查送达状态，不会自动重发"),
                  # 重新排队 was clicked and its result is not known: not 再发一次 blindly, it might run twice.
                  ({**refused, **offered, "requeue_state": "uncertain"},
-                  "**没有补充到 #431**：任务已结束；重新排队结果未确认，不会重复排队", "看话题里有没有新任务，没有再发一次"))
+                  "**没有补充进去**：任务已结束；重新排队结果未确认，不会重复排队", "看话题里有没有新任务，没有再发一次"))
         for fields, said, todo in cases:
             with self.subTest(said, todo=todo):
                 card = receipt_card({**self.BASE, **fields})
@@ -394,11 +394,11 @@ class FormSteerTest(TopicFixture, unittest.TestCase):
         self.assertTrue(call.kwargs["update_only"])
         self.assertIn("没有发出", card)
         self.assertIn('"default_value": "加一节对比"', card)
-        self.assertIn(f"提交补充到 #{self.job.job_id}", card)
+        self.assertIn("提交补充", card)
         path = delivery_path(self.ctx_topic.state_dir, self.ctx_topic.topic_id, "steer-form-form-card")
         self.assertEqual(read_delivery(path)["status"], "refused")
         card = text_of(self.submit("e2").args[3])
-        self.assertIn(f"已补充到 #{self.job.job_id}", card)
+        self.assertIn("已补充到这一轮", card)
         self.assertNotIn('"tag": "form"', card)
         self.assertEqual(self.control.steer.call_count, 2)
         self.assertEqual(read_delivery(path)["status"], "sent")
@@ -415,7 +415,7 @@ class FormSteerTest(TopicFixture, unittest.TestCase):
         self.job.backend_control = None
         self.app.runtime.runner = RunnerLink(self.root / "run")  # This process is a task runner.
         self.app.interaction.interaction_action(self.ctx_topic, {"chat_id": "oc_chat", "event_id": "open", "action_value": self.value})
-        self.assertIn(f"提交补充到 #{self.job.job_id}", text_of(self.app.messenger.publish_card.call_args.args[3]))
+        self.assertIn("提交补充", text_of(self.app.messenger.publish_card.call_args.args[3]))
         # Its worker has not read the request yet: the supplement joins it.
         self.assertIn("任务开始前收到，已并入本轮请求", text_of(self.submit("e1").args[3]))
         self.assertEqual(self.status(), "sent")
@@ -426,9 +426,9 @@ class FormSteerTest(TopicFixture, unittest.TestCase):
         self.job.execution_started = False
         self.job.backend_control = None
         self.app.interaction.interaction_action(self.ctx_topic, {"chat_id": "oc_chat", "event_id": "open", "action_value": self.value})
-        self.assertIn(f"提交补充到 #{self.job.job_id}", text_of(self.app.messenger.publish_card.call_args.args[3]))
+        self.assertIn("提交补充", text_of(self.app.messenger.publish_card.call_args.args[3]))
         card = text_of(self.submit("e1").args[3])
-        self.assertIn(f"已补充到 #{self.job.job_id}", card)
+        self.assertIn("已补充到这一轮", card)
         self.assertIn("并入本轮请求", card)
         self.assertIn("加一节对比", self.job.prompt_text)
         self.assertIn("加一节对比", find_job_record(self.ctx_topic.state_dir, self.job.message_id)["prompt_text"])
@@ -484,7 +484,7 @@ class FormSteerTest(TopicFixture, unittest.TestCase):
         record = read_delivery(self.path)
         self.assertEqual(record["status"], "refused")
         self.assertIn("没有发出", record["error"])
-        self.assertIn("没有补充到", text_of(receipt_card(record)))
+        self.assertIn("没有补充进去", text_of(receipt_card(record)))
         # A topic's keeps its receipt and 重新排队执行; only the butler's queue by themselves (requeue_auto).
         self.assertNotIn("requeue_auto", record)
         self.assertEqual(self.app.runtime.jobs.topic_jobs(self.job.topic_id, self.job.chat_id), [self.job])
@@ -730,7 +730,7 @@ class QueuedReceiptTest(MergeFormClicks, TopicFixture, unittest.TestCase):
         self.assertIn("/x/a.json", self.running.backend_control.steer.call_args.args[0])
         record, card = self.app.cards.replace_record_card.call_args.args[1:]
         self.assertEqual(record["card_id"], "card-om_next")
-        self.assertIn(f"已补充到 #{self.running.job_id}**，不再单独排队", text_of(card))
+        self.assertIn("已补充到这一轮**，不再单独排队", text_of(card))
         self.assertNotIn("排队中", text_of(card))
         self.assertNotIn("current_question", text_of(card))
         self.assertEqual(self.repaints, [])  # No form.
@@ -749,7 +749,7 @@ class QueuedReceiptTest(MergeFormClicks, TopicFixture, unittest.TestCase):
         self.running.backend_control.steer.assert_called_once_with("改过的补充", "queued-steer-om_next")
         self.assertTrue(self.queued.cancelled_before_start)
         self.assertEqual(self.repaints[-1][0], "form-press")
-        self.assertIn(f"已补充到 #{self.running.job_id}", self.repaints[-1][1])
+        self.assertIn("已补充到这一轮", self.repaints[-1][1])
 
     def test_the_receipt_shows_what_the_user_wrote_not_the_topic_background(self):
         self.queued.prompt_text = self.queued.user_text + "\n\n话题起始消息（背景参考）：\n- parent_id: `om_run`"
@@ -929,7 +929,7 @@ class RunningTaskFormTest(QuestionFixture, unittest.TestCase):
         self.app.messenger.publish_card = mock.Mock()
         self.app.interaction.interaction_action(self.ctx_topic, {"chat_id": "oc_chat", "action_value": value})
         card = self.app.messenger.publish_card.call_args.args[-1]
-        self.assertIn(f"补充任务 #{self.job.job_id}", json.dumps(card, ensure_ascii=False))  # It names its task.
+        self.assertNotIn(f"#{self.job.job_id}", text_of(card))  # Its task card shows no number (T666): the form neither.
         box, submit = next(e for e in card["body"]["elements"] if e.get("tag") == "form")["elements"]
         # A box that shows a long supplement (the owner, 2026-10-31: the old one was a few lines), at Feishu's limit.
         self.assertEqual((box["rows"], box["max_rows"], box["max_length"], box["width"]), (6, 15, 1000, "fill"))
@@ -1279,7 +1279,7 @@ class ArrivalSteerTest(TopicFixture, unittest.TestCase):
         self.assertEqual(self.drawn["om_next"][1], f"正在补充到 #{self.running.job_id}")
         self.assertNotIn("现在补给", self.drawn["om_next"][0])
         receipt = self.receipt()
-        self.assertIn(f"已补充到 #{self.running.job_id}**，不另开一轮", receipt)
+        self.assertIn("已补充到这一轮**，不另开一轮", receipt)
         self.assertIn(f"来源：#{self.running.job_id} 在做时发到话题里的消息，自动作为补充交给它", receipt)
         record = find_job_record(self.ctx_topic.state_dir, "om_next")
         self.assertEqual((record["status"], record["merged_into_job_id"]), ("cancelled", self.running.job_id))
@@ -1411,7 +1411,7 @@ class ArrivalSteerTest(TopicFixture, unittest.TestCase):
         delivery = self.delivery("om_next")
         self.assertEqual((delivery["requeue_state"], delivery["requeued_job_id"]), ("queued", again.job_id))
         receipt = self.receipt()
-        self.assertIn(f"#{self.running.job_id} 结束前没有读到这条补充**，已排成新一轮 #{again.job_id}", receipt)
+        self.assertIn("上一轮结束前没有读到这条补充**，已排成新一轮", receipt)
         self.assertNotIn(REQUEUE_KIND, receipt)
         # Once: the end again, the Bridge after a runner, a restart, a click queue nothing more.
         self.ended()
@@ -1441,7 +1441,7 @@ class ArrivalSteerTest(TopicFixture, unittest.TestCase):
         again, = self.others()
         self.assertEqual(again.user_text, "先别动配置")
         self.assertEqual(self.delivery("om_next")["requeued_job_id"], again.job_id)
-        self.assertIn(f"#{self.running.job_id} 没有收到这条补充**，已排成新一轮 #{again.job_id}", self.receipt())
+        self.assertIn("上一轮没有收到这条补充**，已排成新一轮", self.receipt())
 
     def test_a_task_runner_marks_it_and_its_bridge_queues_it(self):
         self.say("om_next", "等一下")

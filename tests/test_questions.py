@@ -1244,7 +1244,7 @@ class QuestionCardLifecycleTest(TopicFixture, unittest.TestCase):
         cards = [call.card for call in put.calls]
         self.assertEqual(len(cards), 2)
         self.assertNotIn('"tag": "form"', json.dumps(cards))
-        self.assertIn('已补充到 #7', json.dumps(cards, ensure_ascii=False))
+        self.assertIn('已补充到这一轮', json.dumps(cards, ensure_ascii=False))  # Its task card shows no number (T666).
         self.assertTrue(self.app.runtime.jobs.queue.empty())
 
     def test_artifact_panel_attaches_once_and_pages_only_registered_paths(self):
@@ -1733,8 +1733,8 @@ class FoldOlderQuestionTest(TopicFixture, unittest.TestCase):
         self.assertEqual(source, 'om_note_card')
         new, old = clock(self.new['created_at']), clock(self.old['created_at'])
         self.assertEqual([e['content'] for e in card['body']['elements'][:2]], [
-            f'📝 **这条消息还没发给模型**：#1106（{new}）的 2 道题还没答，提交回答时会一起带上',
-            f'#1105（{old}）的提问已收起，改等 #1106（{new}）的 2 道题。'])
+            f'📝 **这条消息还没发给模型**：{new} 的 2 道题还没答，提交回答时会一起带上',
+            f'{old} 的提问已收起，改等 {new} 的 2 道题。'])  # By the time they were asked, no task numbers (T666).
         # Its buttons act on #1106's questions: 作为问题反馈发送 sends it as their feedback.
         with mock.patch.object(self.app.questions, 'submit_question_feedback') as feedback:
             self.app.questions.note_action(self.ctx, 'oc_chat', {'token': note['token'], 'verb': 'feedback'}, 'om_fb')

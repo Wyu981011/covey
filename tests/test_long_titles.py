@@ -32,12 +32,12 @@ class StatusLineTest(unittest.TestCase):
         job = sample_job(title=LONG, user_text=LONG)
         card = build_stream_card(render_stream_status(job, "已入队"), job.title, stream_runtime(), job=job,
                                  include_stop_action=True)
-        # The title row (no title bar since 2026-11-22): the T number's badge, the title cut, its task number grey.
+        # The title row (no title bar since 2026-11-22): the T number's badge and the title cut, no task number (T666).
         badge, title, _ = (column["elements"][0] for column in card["body"]["elements"][0]["columns"])
         self.assertEqual("<font color='white'>**T70**</font>", badge["elements"][0]["content"])
         heading = re.sub(r"<[^>]*>|\*\*", "", title["content"])
-        self.assertTrue(heading.endswith(" #431"))
-        self.assertLessEqual(len(heading), 24 + len(" #431"))
+        self.assertNotIn("#431", heading)
+        self.assertLessEqual(len(heading), 24)
         for line, word in (("在做 · 已运行 12 秒\n现在：核对行数", "在做"), (outcome_line("done") + " · 用时 3分39秒", "有结果"),
                            (outcome_line("failed") + " · 用时 5秒", "停住了"), ("可能卡住 · 已运行 40 分钟", "可能卡住"),
                            (outcome_line("waiting_user"), "等你")):

@@ -2,7 +2,7 @@
 (app/held_notes.py keeps the record and handles its buttons)."""
 from __future__ import annotations
 
-from covey.cards.elements import button_look, callback_button, card, markdown_panel, md, plain, row
+from covey.cards.elements import button_look, callback_button, card, fold, grey, md, plain, row
 from covey.cards.trace_view import clock
 
 NOTE_KIND = "bridge_note"
@@ -13,10 +13,12 @@ LABEL = {
 }
 ANSWER_REQUIRED = "要模型现在就看到它，点“作为问题反馈发送”（问题交回模型重新考虑）；这条消息不算问题的回答。"
 FEEDBACK_LABEL = "作为问题反馈发送"
+# ANSWER_REQUIRED's one grey line under the buttons, which opens on it (``note_card``).
+ANSWER_GIST = f"怎么处理：要模型现在就看到它，点“{FEEDBACK_LABEL}”"
 
 
 def waiting_text(record):
-    """The questions a held note waits for, as its card says them: ``#16（20:24）的 2 道题``. A
+    """The questions a held note waits for, as its card says them: ``20:24 的 2 道题`` (no task number). A
     note card that did not say it had the owner send the same message again. A note
     saved before this was kept says only 话题里的问题."""
     groups = [g for g in record.get("waiting") or [] if isinstance(g, dict) and g.get("job_id")]
@@ -25,7 +27,7 @@ def waiting_text(record):
     def one(group):
         when = clock(group["created_at"]) if isinstance(group.get("created_at"), (int, float)) else ""
         count = group.get("count") or 0
-        return f"#{group['job_id']}" + (f"（{when}）" if when else "") + ("的提问" if count <= 1 else f"的 {count} 道题")
+        return (f"{when} " if when else "话题里") + ("的提问" if count <= 1 else f"的 {count} 道题")  # No task number (T666).
     return "、".join(map(one, groups))
 
 
@@ -38,29 +40,35 @@ def note_parts(note):
     return text, str(note.get("attachments") or "")
 
 
+def quiet_fold(element_id, title, content):
+    """``title`` as one small grey line that opens on ``content`` (cards/question_cards.py answer_help's look)."""
+    return fold(element_id, md(grey(title), size="notation"), [md(content, size="notation")],
+                title_padding="0px 0px 0px 0px", icon_position="follow_text", spacing="4px")
+
+
 def note_card(record):
     status = record.get("status", "held")
     if status == "attached":
         kind = "问题反馈" if record.get("response_kind") == "feedback" else "回答"
         # Without a job the answer that took it is still being sent, or its delivery is unconfirmed.
-        head = (f"✓ **已随{kind}一起提交**（任务 #{record.get('job_id')}）" if record.get("job_id")
+        head = (f"✓ **已随{kind}一起提交**" if record.get("job_id")
                 else f"⏳ **已随{kind}一起发送**，送达状态见问题卡片；不会重复发送")
     elif status == "queued":
-        head = (f"✓ **已排队为任务 #{record.get('job_id')}**，在回答之后执行" if record.get("job_id")
+        head = ("✓ **已排成下一轮**，在回答之后执行" if record.get("job_id")
                 else "⏳ **已提交单独排队**，送达未确认；不会重复发送")
     elif status == "steered":
-        head = (f"⏳ **已作为补充送入 #{record.get('job_id')}**，送达未确认" if record.get("unconfirmed")
-                else f"✓ **已补充到 #{record.get('job_id')}**，紧跟在回答之后")
+        head = ("⏳ **已作为补充送入这一轮**，送达未确认" if record.get("unconfirmed")
+                else "✓ **已补充到这一轮**，紧跟在回答之后")
     else:
         head = LABEL.get(status, status).replace("{waiting}", waiting_text(record))
     shown = note_parts(record)[0]
-    elements = [md(head),
-                markdown_panel("note_text", "查看内容", "\n".join(
-                    "> " + line for line in str(shown).splitlines()[:40]) or "（空）")]
+    # 查看内容 and what the buttons do as grey lines that open (the owner, 2026-11-23: no framed box over the buttons,
+    # no line of how to use them between the note and its buttons), as a supplement's receipt has them.
+    quoted = "\n".join("> " + line for line in str(shown).splitlines()[:40]) or "（空）"
+    elements = [md(head), quiet_fold("note_text", "查看内容", quoted)]
     if status in {"held", "next_round"}:
         if record.get("folded"):  # It waited for questions folded under newer ones (HeldNotes.wait_instead).
             elements.insert(1, md(f"{waiting_text({'waiting': record['folded']})}已收起，改等 {waiting_text(record)}。"))
-        elements.append(md(ANSWER_REQUIRED))
         # Sending it as feedback first: the one that gets it to the model now (P4 of the UI review).
         # The row wraps (flow): in a topic's side panel the labels were cut to 作为问题反馈… and 留作下….
         buttons = [(FEEDBACK_LABEL, "feedback")]
@@ -70,6 +78,7 @@ def note_card(record):
                                 "value": {"kind": NOTE_KIND, "topic_id": record["topic_id"],
                                                            "token": record["token"], "verb": verb}}, None)
                               for label, verb in buttons), flex="flow"))
+        elements.append(quiet_fold("note_help", ANSWER_GIST, ANSWER_REQUIRED))
     summary = {"held": "补充已保存，随回答提交", "next_round": "补充留作下一轮"}.get(status, "补充")
     return card(elements, summary, update_multi=True)
 
