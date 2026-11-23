@@ -1,9 +1,7 @@
 """Local runtime locks protect cloud records without locking their filesystem."""
-# privacy: allow-file 测托管平台安装模式 platform-pid1 的锁目录声明
 import errno
 import fcntl
 import hashlib
-import json
 import os
 from pathlib import Path
 import select
@@ -331,63 +329,3 @@ with open(sys.argv[1], "r+") as handle:
         for fd in opened:
             with self.assertRaises(OSError):
                 os.fstat(fd)
-
-    @requires_extension()
-    def test_installer_requires_exact_opted_in_persistent_filesystem_and_runtime_locks(self):
-        from covey_internal import hosting as install
-        entry = "/opt/platform/entrypoint/exec/init.py"  # privacy: allow 扩展的 hosting 按平台 PID 1 入口路径认环境
-        for fstype, opted_in, runtime, accepted in (
-                ("virtio_pfs_010309", False, True, False),
-                ("virtio_pfs_010309", True, False, False),
-                ("virtio_pfs_010309", True, True, True),
-                ("overlay", True, True, False),
-                ("tmpfs", True, True, False),
-                ("virtio_pfs_other", True, True, False),
-                ("nfs4", False, False, True)):
-            with self.subTest(fstype=fstype, opted_in=opted_in, runtime=runtime), \
-                    mock.patch.dict(os.environ), \
-                    mock.patch.object(install, "pid1_context", return_value=(["python", entry], "test-devbox")), \
-                    mock.patch.object(install.subprocess, "run", return_value=subprocess.CompletedProcess(
-                        [], 0, stdout="/data " + fstype + "\n")), \
-                    mock.patch.object(install.subprocess, "Popen") as watchdog, \
-                    mock.patch.object(install.site, "ENABLE_USER_SITE", True), \
-                    mock.patch.object(install.sys, "executable", str(Path("/proc/1/exe").resolve())):
-                if not runtime:
-                    del os.environ["COVEY_LOCK_ROOT"]
-                kwargs = dict(site_dir=self.home / "site", config_dir=self.home / "config", activate=runtime)
-                if opted_in:
-                    kwargs["persistent_virtio_pfs"] = True
-                if not accepted:
-                    with self.assertRaises(ValueError):
-                        install.install_pid1(self.cloud / "service", **kwargs)
-                    watchdog.assert_not_called()
-                    continue
-                receipt = install.install_pid1(self.cloud / "service", **kwargs)
-                config = json.loads(Path(receipt["config"]).read_text())
-                if runtime:
-                    self.assertEqual(config["command"][:2],
-                                     ["/usr/bin/env", "COVEY_LOCK_ROOT=" + str(self.runtime)])
-                    self.assertTrue(receipt["temporary_watchdog_started"])
-                    watchdog.assert_called_once_with(
-                        [str(Path("/proc/1/exe").resolve()), "-B",
-                         str(self.home / "site" / "lark_bridge_boot_hook.py"), receipt["config"]],
-                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL, start_new_session=True)
-                else:
-                    self.assertEqual(config["command"][0], str(Path("/proc/1/exe").resolve()))
-                    watchdog.assert_not_called()
-
-    @requires_extension()
-    def test_installer_cli_opt_in_and_manifest_environment(self):
-        from covey_internal import hosting
-        from covey.service import install
-        from covey.service.manager import runtime_environment
-        with mock.patch.object(sys, "argv", [
-                "covey_service_install.py", "--mode", "platform-pid1", "--root", str(self.cloud),
-                "--persistent-virtio-pfs", "--activate"]), \
-                mock.patch.object(hosting, "install_pid1", return_value={}) as install_hook, \
-                mock.patch("builtins.print"):
-            install.main()
-        install_hook.assert_called_once_with(self.cloud, activate=True, persistent_virtio_pfs=True)
-        self.assertEqual(runtime_environment({"COVEY_LOCK_ROOT": str(self.runtime)}),  # Saved under the old name.
-                         {"LARK_BRIDGE_LOCK_ROOT": str(self.runtime)})

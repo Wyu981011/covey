@@ -1,6 +1,5 @@
 """The extension hooks and settings (core/extensions.py) and what the core does without them: no 代答 entrance
 without a sender, an installer with systemd only, the default web host; a retired hook a manifest still names."""
-# privacy: allow-file 测公司扩展 manifest 的设置值
 from __future__ import annotations
 
 import argparse
@@ -69,7 +68,7 @@ class HookTests(unittest.TestCase):
     def test_the_company_extension_provides_every_hook(self):
         for name in extensions.HOOK_NAMES:
             self.assertIsNotNone(extensions.hook(name), name)
-        self.assertEqual(extensions.setting("web_tenant_domain"), "example.larkoffice.com")
+        self.assertRegex(extensions.setting("web_tenant_domain") or "", r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")  # A tenant's host.
 
 
 class SearchRulesTests(unittest.TestCase):

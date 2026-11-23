@@ -486,7 +486,7 @@ python3 -B bin/covey_service_install.py --mode auto --uninstall   # 删掉单元
 
 开机自启见上一节「服务托管」。扩展提供的托管方式的说明在扩展自己的 README。确认开机自启注册好了：`covey_doctor.py` 的摘要写“开机会自动拉起”（`--json` 报告的 `boot` 段 `status` 为 `ready`）；systemd、launchd、cron 也可以用 `python3 -B bin/covey_service_install.py --mode auto --status` 看注册。
 
-**扩展提供的模式**（`--mode` 的其他取值）：守护 `service/boot.py` 在核心：每轮等待配置的挂载盘就绪，再通过本地 socket 检查 Manager；Manager 不存在就拉起；控制循环延迟超过 120 秒或失去响应时，只向核对过身份的 Manager 发 SIGTERM，20 秒后仍在就 SIGKILL。Manager 在挂载恢复前不启动任何服务。
+**扩展提供的模式**（`--mode` 的其他取值）：守护 `service/boot.py` 在核心：每轮等待配置的挂载盘就绪，再通过本地 socket 检查 Manager；Manager 不存在就拉起；控制循环延迟超过 120 秒或失去响应时，只向核对过身份的 Manager 发 SIGTERM，20 秒后仍在就 SIGKILL。Manager 在挂载恢复前不启动任何服务。守护只在配置（扩展写的 `boot.json`）对得上的 PID 1 里起：入口是 `pid1_entrypoint`，`host_env` 指名的环境变量的值是 `devbox_id`；没写 `host_env` 的配置不起守护。
 
 **整机重启验收**：`<root>/boot-installation.json` 里的 `reboot_verified` 总是 `false`，代码不会把它改成 `true`。本地进程退出、Manager 重建的测试不能代替整机重启：只有真实重启后核对 Manager、服务进程、事件连接、应用身份和会话完整性，才算通过（见[发布记录要求](testing.md#发布记录要求)）。任务进程会随整机重启结束，重启后这些任务显示为中断，并自动检查并继续一次。
 

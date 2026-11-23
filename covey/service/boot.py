@@ -21,8 +21,11 @@ import time
 
 
 def eligible(config, pid, argv, env):
+    """Whether this process is the PID 1 the boot config was installed for: its entry point, and the dev machine's id in
+    the environment variable the hosting extension that wrote the config names (``host_env``; none, never)."""
+    name = config.get("host_env")
     return (pid == 1 and bool(argv) and argv[0] == config.get("pid1_entrypoint")
-            and env.get("HOST_JOB_ID") == config.get("devbox_id") # privacy: allow HOST_JOB_ID 是托管平台自带的环境变量，按它认开发机
+            and isinstance(name, str) and bool(name) and env.get(name) == config.get("devbox_id")
             and bool(config.get("devbox_id")) and config.get("enabled") is True)
 
 
@@ -215,7 +218,7 @@ def watch(config_path, *, stop=None, interval=10):
                 cfg = json.loads(Path(config_path).read_text())
                 if not cfg.get('enabled'):
                     return
-                current_job = hosting_job()
+                current_job = hosting_job(cfg.get('host_env'))
                 if current_job != cfg['devbox_id']:
                     return
                 if not mounted(cfg['root'], cfg['mountpoint']):
@@ -232,13 +235,17 @@ def watch(config_path, *, stop=None, interval=10):
         singleton.close()
 
 
-def hosting_job():
-    """The hosting platform job id of the host this watchdog runs on, read from PID 1's environment. In PID 1 itself,
-    self is authoritative even inside a PID namespace whose /proc mount belongs to its parent namespace.
+def hosting_job(name):
+    """The hosting platform's job id of the host this watchdog runs on: PID 1's environment variable ``name`` (the boot
+    config's ``host_env``), '' without a name or the variable. In PID 1 itself, self is authoritative even inside a PID
+    namespace whose /proc mount belongs to its parent namespace.
     Raises OSError when PID 1's environment cannot be read (another user's init): the host is then unknown."""
+    if not isinstance(name, str) or not name:
+        return ''
     env_path = '/proc/self/environ' if os.getpid() == 1 else '/proc/1/environ'
+    prefix = name.encode() + b'='
     raw = Path(env_path).read_bytes().split(b'\0')
-    return next((x.split(b'=', 1)[1].decode() for x in raw if x.startswith(b'HOST_JOB_ID=')), '')  # privacy: allow 同上，读 PID 1 的环境
+    return next((x[len(prefix):].decode() for x in raw if x.startswith(prefix)), '')
 
 
 def supervise(config_path, *, stop=None, interval=10):

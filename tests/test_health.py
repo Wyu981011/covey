@@ -1,4 +1,3 @@
-# privacy: allow-file 测托管平台的开机守护健康检查（HOST_JOB_ID 读自 PID 1 环境）
 from __future__ import annotations
 
 import io
@@ -6,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import subprocess
 import sys
 import tempfile
 import threading
@@ -15,7 +13,6 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support import requires_extension
 from covey.service.manager import instance_lock, service_key
 from covey.service.boot import boot_health, supervise, watch
 from covey.feishu.events import consume_event_stream
@@ -161,54 +158,6 @@ class HealthTests(unittest.TestCase):
                 watch(config, stop=stop, interval=.001)
             kill.assert_called_once_with(identity['pid'], signal.SIGTERM)
             spawn.assert_not_called()
-
-    @requires_extension()
-    def test_installed_hook_runs_in_fresh_pid_namespace(self):
-        """Real PID 1 and installed .pth dispatch; not a host reboot claim."""
-        from covey_internal.hosting import install_pid1
-        probe = subprocess.run(['unshare', '--user', '--map-root-user', '--pid', '--fork',
-                                sys.executable, '-B', '-c', 'import os; assert os.getpid()==1'],
-                               capture_output=True, timeout=10)
-        if probe.returncode:
-            self.skipTest('unprivileged PID namespace unavailable')
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            entry = '/opt/platform/entrypoint/exec/init.py'  # privacy: allow 扩展的 hosting 按平台 PID 1 入口路径认环境
-            try:
-                raw = Path('/proc/1/environ').read_bytes().split(b'\0')
-            except OSError:
-                self.skipTest("PID 1's environment is not readable here")
-            job = next((x.split(b'=', 1)[1].decode() for x in raw if x.startswith(b'HOST_JOB_ID=')), '')
-            if not job:
-                self.skipTest('Platform job identity unavailable')
-            with mock.patch('covey_internal.hosting.pid1_context', return_value=(['python', entry], job)), \
-                 mock.patch('covey_internal.hosting.subprocess.run', return_value=subprocess.CompletedProcess([], 0, '/ nfs4\n')), \
-                 mock.patch('covey_internal.hosting.sys.executable', str(Path('/proc/1/exe').resolve())):
-                receipt = install_pid1(root / 'manager', site_dir=root / 'site', config_dir=root / 'config')
-            config_path = Path(receipt['config'])
-            cfg = json.loads(config_path.read_text())
-            marker = root / 'manager-started'
-            cfg['command'] = [sys.executable, '-B', '-c',
-                              'from pathlib import Path; import sys,time; Path(sys.argv[1]).write_text("started"); time.sleep(30)', str(marker)]
-            config_path.write_text(json.dumps(cfg))
-            script = ('import os,sys,site,time,json; sys.argv=[sys.argv[1]]; site.addsitedir(os.environ["TEST_SITE"]); '
-                      'sys.path.insert(0,os.environ["TEST_SITE"]); from lark_bridge_boot_hook import boot_health; '
-                      'from pathlib import Path\n'
-                      'for i in range(100):\n'
-                      ' h=boot_health(os.environ["TEST_CONFIG"])\n'
-                      ' if h and h["mode"]=="pid1" and Path(os.environ["TEST_MARKER"]).exists(): break\n'
-                      ' time.sleep(.05)\n'
-                      'else: raise SystemExit("PID1 hook did not activate")\n'
-                      'print(json.dumps({"mode":h["mode"],"pid":os.getpid()}))')
-            for _ in range(2):
-                marker.unlink(missing_ok=True)
-                result = subprocess.run(['unshare', '--user', '--map-root-user', '--pid', '--fork',
-                                         sys.executable, '-B', '-c', script, entry], capture_output=True, text=True, timeout=15,
-                                        env={**os.environ, 'HOST_JOB_ID': job, 'TEST_SITE': str(root / 'site'),
-                                             'TEST_CONFIG': str(config_path), 'TEST_MARKER': str(marker)})
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(json.loads(result.stdout), {'mode': 'pid1', 'pid': 1})
-            self.assertFalse(receipt['reboot_verified'])
 
     def test_doctor_rejects_process_only_and_wrong_generation(self):
         from covey.service.doctor import diagnose

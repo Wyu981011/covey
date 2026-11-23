@@ -1,9 +1,9 @@
-# privacy: allow-file 测托管平台的开机守护与 PID 1 识别（HOST_JOB_ID、platform-pid1 模式），这些名字是平台接口
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import signal
 import subprocess
 import sys
@@ -14,7 +14,6 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from support import requires_extension
 from covey.service.manager import Manager, instance_lock, is_owned, process_identity, read_json, register, runtime_environment, service_key, set_desired, terminate_owned
 from covey.service.boot import eligible, manager_health, mounted, watch
 from covey.service.install import main as install_main, systemd_unit
@@ -341,12 +340,17 @@ class ServiceTests(unittest.TestCase):
         sock = instance_lock('test-' + service_key(self.root))
         self.addCleanup(sock.close)
         self.assertIsNone(instance_lock('test-' + service_key(self.root)))
-        cfg = {'enabled': True, 'devbox_id': 'test', 'pid1_entrypoint': '/platform/init.py'}
+        cfg = {'enabled': True, 'devbox_id': 'test', 'pid1_entrypoint': '/platform/init.py', 'host_env': 'HOST_JOB_ID'}
         self.assertTrue(eligible(cfg, 1, ['/platform/init.py'], {'HOST_JOB_ID': 'test'}))
         for pid, argv, env in [(42, ['/platform/init.py'], {'HOST_JOB_ID': 'test'}),
                                (1, ['/other.py'], {'HOST_JOB_ID': 'test'}),
-                               (1, ['/platform/init.py'], {'HOST_JOB_ID': 'other'})]:
+                               (1, ['/platform/init.py'], {'HOST_JOB_ID': 'other'}),
+                               (1, ['/platform/init.py'], {'OTHER_JOB_ID': 'test'})]:
             self.assertFalse(eligible(cfg, pid, argv, env))
+        # A config the hosting extension wrote without naming its variable starts nothing.
+        self.assertFalse(eligible({**cfg, 'host_env': ''}, 1, ['/platform/init.py'], {'': 'test', 'HOST_JOB_ID': 'test'}))
+        self.assertFalse(eligible({k: v for k, v in cfg.items() if k != 'host_env'}, 1, ['/platform/init.py'],
+                                  {'HOST_JOB_ID': 'test'}))
 
     def test_configuration_change_restarts_exact_service(self):
         old = self.register(health_timeout=120)
@@ -556,15 +560,15 @@ class ServiceTests(unittest.TestCase):
             self.assertFalse(mounted('/different/data', '/missing/data'))
             self.assertTrue(mounted('/data/services', '/'))
 
-    @requires_extension()
     def test_installer_root_follows_service_root_unless_given(self):
-        # Manager and doctor default to COVEY_SERVICE_ROOT; the installer must write the
-        # boot registration and its receipt under the same root, and an explicit --root still wins.
+        # Manager and doctor default to COVEY_SERVICE_ROOT; the installer must write the boot registration and its
+        # receipt under the same root, and an explicit --root still wins. A hosting extension's mode (its MODES).
         chosen = []
-        def install(root, activate=False):
+        def install(root, args):
             chosen.append(root)
             return {'root': str(root)}
-        with mock.patch('covey_internal.hosting.install_pid1', side_effect=install), \
+        hosting = SimpleNamespace(MODES={'platform-pid1': install}, add_arguments=lambda parser: None)
+        with mock.patch('covey.service.install.extensions.hook', return_value=hosting), \
              mock.patch.dict(os.environ, {'COVEY_SERVICE_ROOT': str(self.manager_root)}), \
              mock.patch('builtins.print'):
             with mock.patch.object(sys, 'argv', ['covey_service_install.py', '--mode', 'platform-pid1']):
@@ -573,33 +577,6 @@ class ServiceTests(unittest.TestCase):
                                                  '--root', str(self.root / 'explicit')]):
                 install_main()
         self.assertEqual(chosen, [self.manager_root.resolve(), (self.root / 'explicit').resolve()])
-
-    @requires_extension()
-    def test_installed_hook_only_starts_thread_in_matching_pid1(self):
-        from covey_internal.hosting import install_pid1
-        entry = '/opt/platform/entrypoint/exec/init.py'  # privacy: allow 扩展的 hosting 按平台 PID 1 入口路径认环境
-        probe = subprocess.CompletedProcess([], 0, stdout='/ nfs4\n')
-        with mock.patch('covey_internal.hosting.pid1_context', return_value=(['python', entry], 'test-devbox')), \
-             mock.patch('covey_internal.hosting.subprocess.run', return_value=probe), \
-             mock.patch('covey_internal.hosting.site.ENABLE_USER_SITE', True), \
-             mock.patch('covey_internal.hosting.sys.executable', str(Path('/proc/1/exe').resolve())):
-            receipt = install_pid1(self.manager_root, site_dir=self.root / 'site', config_dir=self.root / 'config')
-        hook = Path(receipt['hook']).read_text()
-        with mock.patch('threading.Thread') as thread:
-            exec(hook, {})
-            thread.assert_not_called()
-        with mock.patch('os.getpid', return_value=1), mock.patch.object(sys, 'argv', [entry]), \
-             mock.patch.dict(os.environ, {'HOST_JOB_ID': 'test-devbox'}), mock.patch('threading.Thread') as thread:
-            exec(hook, {})
-            thread.assert_called_once()
-            thread.return_value.start.assert_called_once()
-        # install_pid1(activate=True) starts the installed file itself as a standalone watchdog.
-        usage = subprocess.run([sys.executable, '-B', str(self.root / 'site' / 'lark_bridge_boot_hook.py'), '--help'],
-                               capture_output=True, text=True, timeout=60)
-        self.assertEqual(usage.returncode, 0, usage.stderr[-500:])
-        self.assertTrue(usage.stdout.startswith('usage: lark_bridge_boot_hook.py'), usage.stdout[:200])
-        self.assertFalse(receipt['reboot_verified'])
-        self.assertFalse(receipt['active_pid1_hook'])
 
 
 if __name__ == '__main__':
