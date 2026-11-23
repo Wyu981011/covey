@@ -346,7 +346,8 @@ class AboutTabTests(HubCase):
         self.assertFalse(row(apps, '敏感词脱敏')['on'])
         # Pi and DeepSeek Harness take the Bridge's tools too since T700: with one of them alone the butler runs.
         self.assertTrue(row({name: app for name, app in apps.items() if name == 'pi'}, '管家')['on'])
-        none = {name: app for name, app in apps.items() if name not in ('codex', 'agy', 'pi', 'dsh')}
+        from covey.app.butler_harness import takes_tools  # An enabled extension's that takes them too (MASO) goes as well.
+        none = {name: app for name, app in apps.items() if not takes_tools(app)}
         butler = row(none, '管家')
         self.assertFalse(butler['on'])
         self.assertIn('装好并登录 Claude Code、Codex 或 Antigravity 中的一个', butler['line'])

@@ -116,7 +116,9 @@ class WebSettingsTest(UnifiedCase):
             self.assertEqual((lead["title"], lead["note"]), ("专项负责人", cards.LEAD_NOTE))
             harness, = lead["rows"]  # Following the butler: the Harness row alone.
             self.assertEqual((harness["kind"], harness["current"], harness["editable"]), (cards.LEAD_HARNESS, "", True))
-            self.assertEqual([o["value"] for o in harness["options"]], ["", "claude", "codex", "dsh", "pi", "agy"])
+            from covey.core.roster import CORE_HARNESSES  # An enabled extension's (covey_internal's MASO) may be among them.
+            self.assertEqual([o["value"] for o in harness["options"] if not o["value"] or o["value"] in CORE_HARNESSES],
+                             ["", "claude", "codex", "dsh", "pi", "agy"])
             self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="agy"),
                              ("done", butler_panel.SAVED[butler_panel.LEAD]))
             self.assertEqual(settings.load(self.ctx.state_dir).lead.harness, "agy")

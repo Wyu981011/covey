@@ -20,6 +20,7 @@ from covey.app.butler_env import ButlerEnv
 from covey.app import butler_panel as panel
 from covey.app.butler_panel import GONE, OWNER_ONLY, TOOLS, settings_panel
 from covey.cards import butler_panel as panel_card
+from covey.core.roster import CORE_HARNESSES
 from covey.cards.settings_hub import TAB, TITLES as HUB_TITLES, successor
 from covey.cards.elements import CARD_BYTES, CARD_NODES, element_count, json_size
 from covey.cards.launch_config import (BUDGET_ACTION, HARNESS_ACTION, MODEL_ACTION, PROVIDER_ACTION,
@@ -384,8 +385,9 @@ class ButlerPanelTests(UnifiedCase):
             self.assertIn(panel_card.LEAD_NOTE, text)
             self.assertIn('负责人 跟管家', self.cards[-1]['header']['subtitle']['content'])
             # Every core Harness takes the Bridge's tools (Pi and DeepSeek Harness too since T700's second round).
-            self.assertEqual([v['option'] for v in self.values(panel_card.LEAD_HARNESS)],
-                             ['', 'claude', 'codex', 'dsh', 'pi', 'agy'])
+            # An enabled extension's Harness that takes them too (covey_internal's MASO) is listed among them.
+            self.assertEqual([v['option'] for v in self.values(panel_card.LEAD_HARNESS) if v['option'] in CORE_HARNESSES
+                              or not v['option']], ['', 'claude', 'codex', 'dsh', 'pi', 'agy'])
             self.click(self.option(panel_card.LEAD_HARNESS, 'codex'), event_id='lead1',
                        message=f'om_panel{self.app.messenger.create_and_send_card.call_count}')
             lead = self.settings().lead

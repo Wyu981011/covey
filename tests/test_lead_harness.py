@@ -24,6 +24,7 @@ from covey.core import butler, butler_settings, projects
 from covey.core.harness import HarnessCapabilities
 from covey.core.jobs import job_path, upsert_job_record
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
+from covey.core.roster import CORE_HARNESSES
 from covey.core.state import write_json
 from covey.core.topics import load_topic, routed_topic, topic_file
 
@@ -165,8 +166,10 @@ class CardSwitchTest(UpCase):
     def test_the_card_lists_only_models_a_lead_can_run_on_and_no_workspace(self):
         with without_tools():  # DeepSeek Harness as one without the Bridge's tools.
             form, _ = self.open()
-        self.assertEqual(set(form["models"]),
+        # The core's (an enabled extension's that takes the Bridge's tools, covey_internal's MASO, is listed too).
+        self.assertEqual({key for key in form["models"] if key.partition(":")[0] in CORE_HARNESSES},
                          {"claude:claude-model", "codex:codex-model", "agy:agy-model", "pi:pi-model"})
+        self.assertNotIn("dsh:dsh-model", form["models"])
         self.assertEqual(form["lead"], {"project_id": self.pid, "name": "迁移订单库"})
         self.assertEqual(form["current"]["workspace"], "project")
         card = json.dumps(switch_form.build_switch_card(form), ensure_ascii=False)
