@@ -31,6 +31,7 @@
 | `privacy_check.py` | 隐私检查：扫要公开的文件里的个人、公司信息，有命中就退出码 1 |
 | `cardkit_check.py` | 把卡片 JSON 用机器人身份在 CardKit 建一遍（不发到任何聊天），检查它能不能被接受 |
 | `card_sketches.py` | 用当前代码的卡片重画 README 和文档里的卡片示意图 |
+| `web_shots.py` | 用演示数据起一个自托管网页，用无头 Chromium 重拍 README 里的网页截图 |
 | `export_look.py` | 把 `covey/core/look.py` 导出成网页读的 `look.json` |
 | `bridge_timing.py` | 从 Bridge 的毫秒计时日志看各条流程的时间花在哪 |
 | `track_route_eval.py` | 用带标注的语料评估消息路由的准确度 |
