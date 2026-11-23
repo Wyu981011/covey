@@ -38,9 +38,12 @@ def _local_path(record, raw):
     try:
         root = Path(record["workdir"]).resolve()
         path = Path(raw).expanduser()
-        return (path if path.is_absolute() else root / path).resolve()
+        resolved = (path if path.is_absolute() else root / path).resolve()
     except (OSError, RuntimeError) as exc:
         raise ValueError("产物路径无法解析") from exc
+    if resolved.is_symlink():  # Python 3.13's resolve() leaves a link loop as it is instead of raising.
+        raise ValueError("产物路径无法解析")
+    return resolved
 
 
 def _entry_name(name):
