@@ -897,7 +897,7 @@ echo '{"ok":true}'
         base = {k: v for k, v in os.environ.items() if not k.startswith(("LARK_", "HARNESS_"))}
         return subprocess.run(
             ["/bin/bash", str(self.root / "scripts" / SETUP_SCRIPT.name),
-             "--workdir", str(self.root), "--skip-ext-tools", *([] if start else ["--no-start"]), *args],  # privacy: allow 旧选项名，核心保留，扩展的安装钩子读它
+             "--workdir", str(self.root), "--skip-ext-tools", *([] if start else ["--no-start"]), *args],
             env={**base, "PATH": str(self.bin), "SETUP_TEST_CALLS": str(self.calls),
                  "COVEY_DATA_HOME": str(self.root / "data"), **env},
             capture_output=True, text=True, timeout=10,
@@ -911,6 +911,13 @@ echo '{"ok":true}'
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no usable Harness", result.stderr)
         self.assertEqual(self.call_lines(), [])
+
+    def test_an_extensions_older_skip_flag_is_still_taken(self):
+        # An extension's tools were skipped with --skip-<tool>cli before --skip-ext-tools (rule 10: old callers).
+        self.stub("codex", "exit 0")
+        result = self.run_setup("--non-interactive", "--skip-oldtoolcli")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("unknown argument", result.stderr)
 
     def test_removed_single_harness_options_are_rejected(self):
         self.stub("codex", "exit 0")

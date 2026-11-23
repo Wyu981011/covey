@@ -223,6 +223,15 @@ class TraceTest(unittest.TestCase):
         self.assertEqual(list(text_chunks('', 400)), [])
 
 
+class TtftSourceTest(unittest.TestCase):
+    def test_a_source_is_named_by_its_backend_and_how_it_timed(self):
+        from covey.core.ttft import SOURCES
+        for name in ("codex_delta", "codex_item", "claude_delta", "pi_delta", "maso_native", "agy_delta"):
+            self.assertIn(name, SOURCES)
+        for name in ("", "estimated", "codex", "codex_guess", "Codex_delta", None, 3):
+            self.assertNotIn(name, SOURCES)
+
+
 class CompactionStepTest(unittest.TestCase):
     """A context compaction (backends/claude/compaction.py, or Claude Code's own) in 执行过程."""
 

@@ -436,7 +436,7 @@ class Installer:
         sources = "\n".join(f'. "{d}/scripts/setup_hook.sh"' for d in dirs)
         calls = "\n".join(f"if declare -F {p} >/dev/null; then {p}; fi" for p in phases)
         script = (f'ROOT="{REPO_ROOT}"\nhave() {{ command -v "$1" >/dev/null 2>&1; }}\ninfo() {{ :; }}\n'
-                  'warn() { echo "$*" >&2; }\nSKIP_EXT_TOOLS=0\nSKIP_LOGIN=0\n'  # privacy: allow 扩展钩子约定的变量名
+                  'warn() { echo "$*" >&2; }\nSKIP_EXT_TOOLS=0\nSKIP_LOGIN=0\n'
                   f'NON_INTERACTIVE={0 if self.interactive else 1}\nAVAILABLE_HARNESSES=()\n{sources}\n{calls}\n'
                   'for h in "${AVAILABLE_HARNESSES[@]}"; do echo "HARNESS:$h"; done\n')
         code, tail = self.run_logged("extension-hook", ["bash", "-c", script], timeout=900)

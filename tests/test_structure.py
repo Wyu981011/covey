@@ -706,7 +706,6 @@ DOC_SHORT_ROOTS = {"app", "core", "cards", "feishu", "service", "backends", "cla
 CODE_SUFFIXES = (".py", ".sh", ".json", ".js", ".html", ".css", ".md")
 # Paths the docs name on purpose that are not in this repo.
 DOC_UNTRACKED_PATHS = {
-    "skills/send-tool",  # In the send-tool repo, which that script copies from.  # privacy: allow 外部发送工具仓库里的路径
     "lark_bridge_boot_hook.py",  # Written into the user's site-packages by the service install.
 }
 # Backticked names from outside this repo (Feishu, CardKit, Claude Code, the environment) or defined in the docs.

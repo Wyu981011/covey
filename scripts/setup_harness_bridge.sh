@@ -20,6 +20,7 @@ Options:
   --harness-config FILE   Per-Harness argv JSON (docs/harnesses.md).
   --state-dir DIR         Bridge state. Default: <data-home>/harness-<APP_ID>.
   --skip-login            Do not run lark-cli (and extension) login flows.
+  --skip-ext-tools        Do not install or log in an extension's own tools (its setup hook reads SKIP_EXT_TOOLS).
   --no-start              Install/check only; do not register or start the bridge.
   --skip-app-setup        Do not check the Feishu app's scopes, events and menu, nor add
                           what is missing (docs/feishu-app.md 自动补齐飞书应用).
@@ -60,7 +61,7 @@ PAIRING_FILE=""
 HARNESS_CONFIG=""
 STATE_DIR=""
 SKIP_LOGIN=0
-SKIP_EXT_TOOLS=0  # privacy: allow 旧调用方还在传 --skip-ext-tools，核心保留这个选项名（规则 10）
+SKIP_EXT_TOOLS=0
 NO_START=0
 SKIP_APP_SETUP=0
 NON_INTERACTIVE=0
@@ -85,7 +86,7 @@ while [ "$#" -gt 0 ]; do
     --harness-config) HARNESS_CONFIG="${2:-}"; shift 2 ;;
     --state-dir) STATE_DIR="${2:-}"; shift 2 ;;
     --skip-login) SKIP_LOGIN=1; shift ;;
-    --skip-ext-tools) SKIP_EXT_TOOLS=1; shift ;;  # privacy: allow 同上，兼容旧选项
+    --skip-ext-tools|--skip-*cli) SKIP_EXT_TOOLS=1; shift ;;  # --skip-<tool>cli: an extension's older flag, the same (rule 10)
     --no-start) NO_START=1; shift ;;
     --skip-app-setup) SKIP_APP_SETUP=1; shift ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;

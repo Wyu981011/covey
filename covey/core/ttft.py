@@ -1,8 +1,21 @@
 """Numeric first-output timing; never retain streamed model content."""
+import re
+
 from covey.core.usage import number
 
-# compat: the extension backend's source name below is what it wrote into saved records and what its task processes still send.
-SOURCES = {"codex_delta", "codex_item", "ext_native", "claude_delta", "pi_delta"}  # privacy: allow 旧记录里扩展后端写的来源名（规则 10）
+
+class Sources:
+    """The ``ttft_source`` names a figure is shown for: ``<backend>_<how>``, ``how`` a streamed text delta, a whole item
+    or the backend's own timing (codex_delta, codex_item, claude_delta, pi_delta; an extension's backend names its own
+    the same way, and saved records keep the name it wrote: rule 10)."""
+
+    NAME = re.compile(r"[a-z][a-z0-9]*_(?:delta|item|native)")
+
+    def __contains__(self, name) -> bool:
+        return isinstance(name, str) and self.NAME.fullmatch(name) is not None
+
+
+SOURCES = Sources()
 
 
 def elapsed(start, first, end=None):

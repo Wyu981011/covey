@@ -7,7 +7,7 @@ CLAUDE_DEST="${CLAUDE_HOME:-$HOME/.claude}/skills"
 # Retired skills: the per-backend bot skills replaced by harness-bridge-onboarding,
 # and cr-mr-review-loop. Never delete them automatically: an installed copy may
 # have local changes.
-RETIRED_SKILLS=(lark-codex-bridge lark-claude-bridge lark-neeko-bridge lark-ext-bridge cr-mr-review-loop)  # privacy: allow 已下线的旧 Skill 名，安装时清理
+RETIRED_SKILLS=(lark-codex-bridge lark-claude-bridge lark-neeko-bridge cr-mr-review-loop)  # 已下线的旧 Skill 名，安装时清理
 
 install_to() {
   local dest="$1"
