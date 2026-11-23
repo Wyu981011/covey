@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 
 FIXTURE = os.environ.get("COVEY_WEB_SETTINGS_FIXTURE", "")  # Writes the snapshot there (the page's local mirror uses it).
 from unittest import mock
@@ -230,8 +231,11 @@ class WebSettingsTest(UnifiedCase):
             sync.inbox_once()  # Nothing changed: no post.
             self.assertEqual([path for path, _ in calls], ["/sync/inbox"])
             settings.update(self.ctx.state_dir, subagents="same")  # The card wrote main-thread.json.
-            sync.inbox_once()
-            self.assertEqual([path for path, _ in calls], ["/sync/inbox", "/sync/inbox", "/sync/upsert"])
+            sync.inbox_once()  # An empty poll reads no file now (T673: the inbox stuck 60 s on these stats).
+            self.assertEqual([path for path, _ in calls], ["/sync/inbox", "/sync/inbox"])
+            sync.last_full = time.time()  # No pass due: the pass thread's step looks at the settings' files alone.
+            sync.pass_once()
+            self.assertEqual([path for path, _ in calls][2:], ["/sync/upsert"])
 
     # -- T554 second round (2026-11-19): what the page could only look at -------------------------------------------------------
 

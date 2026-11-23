@@ -108,13 +108,14 @@ class WebSync:
         return (("web-push", lambda ctx: self.run_push()),
                 ("web-pass", lambda ctx: self.loop("pass", self.pass_once, lambda: PASS_PAUSE, self.start_over_pass,
                                                    lambda: self.passer.moved, where=lambda: self.passer.doing)),
-                ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, lambda: self.client.settings().poll_seconds, again=True)))
+                ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, lambda: self.client.known("poll_seconds", web_sync.POLL_SECONDS),
+                                                    again=True)))
 
     def run_push(self) -> None:
         """The quick looks' thread: every push_seconds, and at once (HOT_GAP apart at most) when this process wrote a job or a question."""
         store.listen(self.heard)
         try:
-            self.loop("push", self.push_hot, lambda: self.client.settings().push_seconds, self.start_over_hot,
+            self.loop("push", self.push_hot, lambda: self.client.known("push_seconds", web_sync.PUSH_SECONDS), self.start_over_hot,
                       lambda: self.collector.moved, stuck=HOT_STUCK_SECONDS, wake=self.wake, where=lambda: self.collector.doing)
         finally:
             store.unlisten(self.heard)
@@ -363,11 +364,13 @@ class WebSync:
                 self.last_full = max(self.last_full, now)
         if full:
             self.collector.projects_due, self.asks_full = True, True  # Every project built again, 要你处理 sent again if it was refused.
-            passer.mark("settings")
-            self.push_settings(chat, now, full=True)
-            passer.mark("tidy")
-            self.push_tidy(now, full=True)
             self.last_full = now
+        # The 设置 and 整理专项 items: built when their files changed (a few stats) or a pass starts. Here, in the thread whose stuck
+        # step holds up nothing else, not in the inbox's each poll (2026-11-23 T673: the inbox stuck 60 s on those stats).
+        passer.mark("settings")
+        self.push_settings(chat, now, full=full)
+        passer.mark("tidy")
+        self.push_tidy(now, full=full)
         passer.mark("images")
         self.push_images(passer, now)
         passer.mark("saving")
@@ -465,10 +468,10 @@ class WebSync:
             return []
 
     def push_settings(self, chat, now, full=False) -> int:
-        """The ``settings`` item posted on its own when it is due and changed (``settings_items``): from the inbox thread each second, so a
-        change the page made is on the page before its ack, and a change on the card a second later, however long the push thread's full look
-        takes (minutes in a big chat on a network disk); and from the push
-        thread's full look. One at a time (``settings_lock``). How many went (0 or 1); a failed post is logged and tried on the next look."""
+        """The ``settings`` item posted on its own when it is due and changed (``settings_items``): from the pass thread each step (a few
+        stats of its files: a change on the card is on the page a second later, however long the quick looks take) and on a full pass;
+        and from the inbox thread right after the page changed a setting, so it is on the page before the operation's ack. One at a
+        time (``settings_lock``). How many went (0 or 1); a failed post is logged and tried on the next look."""
         if not self.settings_lock.acquire(blocking=False):
             return 0  # The other thread posts it, or a look left behind still holds it (a read on the network disk that hangs).
         try:
@@ -514,9 +517,10 @@ class WebSync:
 
     def push_tidy(self, now, full=False) -> int:
         """The ``settings`` item ``tidy`` (整理专项's suggestions, app/project_tidy.py web_view, data contract v16), posted on its own: when
-        the runs or the proposals changed (a stat of two folders, from the inbox thread each second) and on a full look. A page older than
-        v16 refuses the key: that is logged (the first time, then every tenth) and tried again only on the next full look or change, and
-        never holds up the settings, which go in a request of their own. How many went (0 or 1)."""
+        the runs or the proposals changed (a stat of two folders, from the pass thread each step), on a full pass, and from the inbox
+        thread after the page decided a suggestion. A page older than v16 refuses the key: that is logged (the first time, then every
+        tenth) and tried again only on the next full pass or change, and never holds up the settings, which go in a request of their
+        own. How many went (0 or 1)."""
         tidy = getattr(self.env, "tidy", None)
         if tidy is None or not getattr(self.env, "state_dir", None) or not self.tidy_lock.acquire(blocking=False):
             return 0
@@ -557,17 +561,19 @@ class WebSync:
             self.ledger = web_sync.Ledger(self.env.state_dir)
         ledger = self.ledger
         data = self.client.request("GET", f"/sync/inbox?after={ledger.after()}&limit=100")
-        results, fresh = [], 0
+        results, fresh, wanted = [], 0, False
 
         def flush(timing=None) -> None:
             """What the page reads before it sees done (the new settings, the tidy list), then the ack of the results so far: one
             operation's ack does not wait for the ones after it in the same batch."""
-            nonlocal results
+            nonlocal results, wanted
             began = time.monotonic()
-            chat = self.runtime.access.owner_chat()
-            if chat:
-                self.push_settings(chat, time.time())
-                self.push_tidy(time.time())
+            if wanted:  # Only after an operation that changed them: an empty poll reads no file (T673).
+                chat = self.runtime.access.owner_chat()
+                if chat:
+                    self.push_settings(chat, time.time())
+                    self.push_tidy(time.time())
+                wanted = False
             pushed = time.monotonic()
             if results:
                 self.client.request("POST", "/sync/ack", {"results": results})
@@ -597,9 +603,9 @@ class WebSync:
                     self.collector.touch(opened)
                 self.wake.set()  # The quick look builds what the operation touched now, not at its next tick.
                 if row.get("kind") in ("settings", "launch"):  # A launch changes what the next one preselects.
-                    self.settings_due = True  # Pushed below, before the ack: the page reads the new settings when it sees done.
+                    self.settings_due = wanted = True  # Pushed below, before the ack: the page reads the new settings when it sees done.
                 if row.get("kind") == "tidy_decide":
-                    self.tidy_stamps = None  # Pushed below, before the ack, as the settings are.
+                    self.tidy_stamps, wanted = None, True  # Pushed below, before the ack, as the settings are.
             elif known.get("state") == "received":
                 ledger.finish(op_id, "failed", "这条执行到一半没有结果（Covey 重启或卡住了），结果不确定，没有重发")
             saved = ledger.get(op_id)

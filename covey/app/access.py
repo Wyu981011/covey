@@ -163,6 +163,7 @@ class Access:
         self.lookup = lookup or (lambda profile, chat_id: chat_info(profile, chat_id, self.runtime.log))
         # ``members(profile, chat_id)``: a group's users (``chat_members``; tests replace it).
         self.members = members or (lambda profile, chat_id: chat_members(profile, chat_id, self.runtime.log))
+        self.files = {}  # name -> (its stat when read, its data): owner-chat.json, owner-chats.json (``saved``).
 
     def identify(self, *, app_id='', bot_open_id=''):
         self.app_id, self.bot_open_id = str(app_id or ''), str(bot_open_id or '')
@@ -340,12 +341,39 @@ class Access:
         chat = self.owner_chat()
         return bool(chat and chat_id == chat)
 
+    def saved(self, name) -> dict:
+        """The state directory's small file ``name`` (owner-chat.json, owner-chats.json) as read last, read again only when its
+        stat changed (each write renames a new file over it: a new inode). Every message and click, and the web page's three
+        threads every second, asked for owner-chat.json, opened again each time; an NFS open of it held all three for minutes
+        while the client's NFSv4 state recovery could not start (2026-11-23 T673, dmesg kthread_run: -4). {} without a state
+        directory or a file."""
+        if self.runtime.state_dir is None:
+            return {}
+        path = self.runtime.state_dir / name
+        try:
+            stat = path.stat()
+            stamp = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        except (OSError, TypeError):
+            stamp = None
+        kept = self.files.get(name)
+        if kept is not None and kept[0] == stamp:
+            return kept[1]
+        data = read_object(path) if stamp is not None else {}
+        self.files[name] = (stamp, data)
+        return data
+
+    def wrote(self, name, data) -> None:
+        """This process wrote ``data`` as ``name``: kept with the file's new stat, so the next ``saved`` does not open it again."""
+        try:
+            stat = (self.runtime.state_dir / name).stat()
+        except (OSError, TypeError):
+            self.files.pop(name, None)
+            return
+        self.files[name] = ((stat.st_ino, stat.st_mtime_ns, stat.st_size), data)
+
     def owner_chat(self) -> str:
         """The owner's private chat with the bot as last seen; '' when unknown or saved for another owner."""
-        try:
-            saved = read_object(self.runtime.state_dir / OWNER_CHAT)
-        except TypeError:  # No state_dir.
-            return ''
+        saved = self.saved(OWNER_CHAT)
         chat_id, owner = saved.get('chat_id'), self.runtime.owner_open_id
         return chat_id if owner and saved.get('owner') == owner and isinstance(chat_id, str) \
             and CHAT_ID.fullmatch(chat_id) else ''
@@ -390,10 +418,7 @@ class Access:
         open_id -> chat_id (``owner-chats.json``); {} when none is saved or they were saved for another owner."""
         if not self.spaces.owner_accounts:
             return {}
-        try:
-            saved = read_object(self.runtime.state_dir / OWNER_CHATS)
-        except TypeError:  # No state_dir.
-            return {}
+        saved = self.saved(OWNER_CHATS)
         chats = saved.get('chats') if isinstance(saved.get('chats'), dict) else {}
         owner = self.runtime.owner_open_id
         if not owner or saved.get('owner') != owner:
@@ -414,9 +439,12 @@ class Access:
         path = self.runtime.state_dir / OWNER_CHATS
         try:
             with resource_lock('owner-chats', str(path)):
+                self.files.pop(OWNER_CHATS, None)  # Read the file itself under its lock: another process may have written it.
                 chats = self.account_chats()
                 chats[user_id] = chat_id
-                write_json(path, {'owner': owner, 'chats': chats})
+                data = {'owner': owner, 'chats': chats}
+                write_json(path, data)
+                self.wrote(OWNER_CHATS, data)
         except OSError as exc:
             self.runtime.log(f'owner account chat not saved ({type(exc).__name__})')
 
@@ -447,7 +475,9 @@ class Access:
                 or self.owner_chat() == chat_id:
             return
         try:
-            write_json(self.runtime.state_dir / OWNER_CHAT, {'owner': owner, 'chat_id': chat_id})
+            data = {'owner': owner, 'chat_id': chat_id}
+            write_json(self.runtime.state_dir / OWNER_CHAT, data)
+            self.wrote(OWNER_CHAT, data)
         except OSError as exc:
             self.runtime.log(f'owner chat not saved ({type(exc).__name__})')
 

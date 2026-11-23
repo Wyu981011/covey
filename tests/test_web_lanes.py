@@ -15,6 +15,7 @@ from __future__ import annotations
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 from support.records import write_job, write_topic
@@ -364,6 +365,61 @@ class FailingTopicTest(LanesCase):
                 self.sync.pass_once(T0 + web_sync.FULL_SECONDS + 2)
         self.assertTrue(self.sync.passer.pass_done)
         self.assertFalse([row for _, rows in self.sync.deletions for row in rows if row["key"] == TOPIC])
+
+class OwnerChatTest(LanesCase):
+    """2026-11-23 15:26-15:49 (T673): the client's NFSv4 state recovery could not start (dmesg kthread_run: -4) and opens hung for
+    minutes; the web page's three threads each opened owner-chat.json every step and all three were caught stuck in that open."""
+
+    def access(self):
+        from covey.app.access import Access
+        return Access(SimpleNamespace(state_dir=self.state, owner_open_id="ou_owner", log=self.logs.append))
+
+    def test_the_owner_chat_is_read_once_until_its_file_changes(self):
+        from covey.app import access as app_access
+        write_json(self.state / "owner-chat.json", {"owner": "ou_owner", "chat_id": CHAT})
+        access = self.access()
+        with mock.patch.object(app_access, "read_object", wraps=app_access.read_object) as read:
+            self.assertEqual({access.owner_chat() for _ in range(50)}, {CHAT})
+            self.assertEqual(read.call_count, 1)
+            write_json(self.state / "owner-chat.json", {"owner": "ou_owner", "chat_id": "oc_another0123"})
+            self.assertEqual(access.owner_chat(), "oc_another0123")  # Another process wrote it: a new inode.
+            self.assertEqual(read.call_count, 2)
+            access.remember_owner_chat(CHAT)  # This process writes it: kept as written, not read again.
+            self.assertEqual(access.owner_chat(), CHAT)
+            self.assertEqual(read.call_count, 2)
+
+
+class InboxQuietTest(LanesCase):
+    def test_an_empty_poll_reads_no_settings_or_tidy_file(self):
+        with mock.patch.object(app_web.WebSync, "push_settings") as settings, mock.patch.object(app_web.WebSync, "push_tidy") as tidy:
+            self.assertEqual(self.sync.inbox_once(), 0)
+        self.assertEqual((settings.call_count, tidy.call_count), (0, 0))
+
+    def test_a_settings_read_that_hangs_holds_up_no_poll(self):
+        """15:28 and 15:31: the inbox was left behind twice, stuck 60 s in what each poll read after its request."""
+        hang = threading.Event()
+        self.addCleanup(hang.set)
+        done = threading.Event()
+        with mock.patch.object(app_web.WebSync, "push_settings", side_effect=lambda *args, **kwargs: hang.wait(10)), \
+                mock.patch.object(app_web.WebSync, "push_tidy", side_effect=lambda *args, **kwargs: hang.wait(10)):
+            threading.Thread(target=lambda: (self.sync.inbox_once(), done.set()), daemon=True).start()
+            self.assertTrue(done.wait(3))
+
+    def test_the_config_is_read_again_only_when_its_file_changed_and_the_loops_read_none(self):
+        client = self.sync.client
+        self.assertEqual(client.known("push_seconds", 7.0), 7.0)  # Before any read: the default, no file touched.
+        with mock.patch.object(web_sync, "load_config", wraps=web_sync.load_config) as load:
+            first = client.settings()
+            client.loaded = 0.0  # Its check is due.
+            self.assertIs(client.settings(), first)
+            self.assertEqual(load.call_count, 1)
+            config = read_object(self.state / "web.json")
+            write_json(self.state / "web.json", {**config, "push_seconds": 2})
+            client.loaded = 0.0
+            self.assertEqual(client.settings().push_seconds, 2.0)
+            self.assertEqual(load.call_count, 2)
+            self.assertEqual(client.known("push_seconds", 7.0), 2.0)
+            self.assertEqual(load.call_count, 2)
 
 
 if __name__ == "__main__":
