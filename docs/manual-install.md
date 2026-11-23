@@ -12,7 +12,7 @@
 ./scripts/setup_harness_bridge.sh --profile my-bot --workdir /absolute/workspace --no-start
 ```
 
-安装时用到的参数如下，其余（`--app-id`、`--state-dir`、`--skip-login`、`--non-interactive`、`--lark-domains`）见 `--help`：
+安装时用到的参数如下，其余（`--app-id`、`--state-dir`、`--skip-login`、`--skip-ext-tools`、`--non-interactive`、`--lark-domains`）见 `--help`：
 
 | 参数 | 含义 |
 | --- | --- |
