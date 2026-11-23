@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 ### Added 新增
 
 - 仓库门面：`CODE_OF_CONDUCT.md`、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md`；`pyproject.toml` 补全项目元数据。
-- CI 增加网页工作台（`web/`）的检查和构建作业，以及 Python 3.13（见下），并开启 Dependabot 每周检查 GitHub Actions 和 `web/` 的 npm 依赖。
+- CI 增加网页工作台（`web/`）的检查和构建作业，测试矩阵加入 Python 3.13，并开启 Dependabot 每周检查 GitHub Actions 和 `web/` 的 npm 依赖。
 - `scripts/README.md`：列出 `scripts/` 里每个脚本的用途，分使用者用和维护者用。
 
 ### Changed 变更
@@ -19,10 +19,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - 根目录和 `web/` 的 `.gitignore` 补上环境文件、密钥、构建产物和编辑器缓存。
 - README 的快速开始补上 Node.js 和 npm 的前提。
 
+### Fixed 修复
+
+- Python 3.13：产物路径是符号链接环时，仍按“无法解析”处理（3.13 的 `Path.resolve()` 不再抛错）。
+
 ### Added (English)
 
 - Project files: `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md`; complete project metadata in `pyproject.toml`.
-- CI: a job that lints, tests and builds the web workbench (`web/`), Python 3.13 in the test matrix when it passes, and weekly Dependabot checks for GitHub Actions and the npm dependencies of `web/`.
+- CI: a job that lints, tests and builds the web workbench (`web/`), Python 3.13 in the test matrix, and weekly Dependabot checks for GitHub Actions and the npm dependencies of `web/`.
 - `scripts/README.md`: what each script in `scripts/` is for, split into user and maintainer scripts.
 
 ### Changed (English)
@@ -32,3 +36,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - `web/.env` is now `web/.env.example`; builds and deploys generate `.env` from it.
 - `.gitignore` (root and `web/`) now covers environment files, keys, build output and editor caches.
 - The README quick start lists Node.js and npm as requirements.
+
+### Fixed (English)
+
+- Python 3.13: an artifact path that is a symlink loop is still reported as one that cannot be resolved (3.13's `Path.resolve()` no longer raises).
