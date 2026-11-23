@@ -154,8 +154,10 @@ a{color:inherit;text-decoration:none}
 .col{width:100%;max-width:800px;margin:0 auto;padding:0 20px}
 .daysep{display:flex;align-items:center;gap:12px;color:var(--t3);font-size:12px;margin:2px 0 10px}
 .daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--line)}
-.um{background:var(--s2);border:1px solid var(--line);border-radius:11px;padding:8px 12px;display:flex;justify-content:space-between;gap:16px;margin:8px 0;box-shadow:var(--hi)}
-.um .tm{color:var(--t3);font-size:12px;flex:none}
+/* 你说的气泡：正文和时间（或“已发出，等 Covey 执行”）可折行地排。短句两者同一行；正文一行放不下时占满气泡宽度，
+   时间换到正文下面靠右，不再整列切掉右边一块 */
+.um{background:var(--s2);border:1px solid var(--line);border-radius:11px;padding:8px 12px;display:flex;flex-wrap:wrap;align-items:flex-end;column-gap:16px;row-gap:2px;margin:8px 0;box-shadow:var(--hi)}
+.um .tm{color:var(--t3);font-size:12px;flex:none;margin-left:auto}
 .msg{margin:10px 0}
 .msg .who{display:flex;align-items:center;gap:8px;margin-bottom:3px}
 .msg .who b{font-size:13px}.msg .who span{color:var(--t3);font-size:12px}

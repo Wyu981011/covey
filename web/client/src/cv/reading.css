@@ -67,6 +67,8 @@
 .cv .a-tbody .msg{margin:2px 0 0}
 /* 答题的那句在气泡里画成“问题 → 选择”的表 */
 .cv .feed .um.has-qa{width:min(86%,640px)}
+/* 答题表占满气泡，时间换到表下面靠右（和多行正文一样，右边不再空一块） */
+.cv .um.has-qa>.um-tx{flex-basis:100%}
 .cv .um .a-blk{border:0;padding:0;background:none;margin:2px 0 0}
 .cv .um .a-qa th{padding-left:0}
 .cv .um .a-qa td{border-top-color:var(--said-line)}

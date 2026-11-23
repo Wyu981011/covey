@@ -102,7 +102,7 @@ export const RichText = forwardRef<
     immediatelyRender: true,
     shouldRerenderOnTransaction: false,
     editorProps: {
-      attributes: { class: 'cp-rich prose', 'aria-label': placeholder, 'aria-multiline': 'true', role: 'textbox', spellcheck: 'false' },
+      attributes: { class: 'cp-rich prose max-w-none', 'aria-label': placeholder, 'aria-multiline': 'true', role: 'textbox', spellcheck: 'false' },
       handleDOMEvents: {
         // 组字结束（中文输入法）后再看一次要不要弹候选：组字中不弹、不碰输入
         compositionend: () => {

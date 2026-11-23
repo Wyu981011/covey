@@ -1,6 +1,8 @@
 /* 一轮带的图片（TurnImages.tsx）：消息里的缩略图和看大图 */
-.um.has-img{flex-wrap:wrap;row-gap:0}
+/* 带图的气泡：图占一整行，排在正文后面；时间放在最后、图下面靠右 */
 .um.has-img>.tis,.a-said .tis,.um.has-img>.tis-shown{flex-basis:100%}
+.um.has-img>.tis,.um.has-img>.tis-shown{order:1}
+.um.has-img>.tm{order:2}
 .tis{margin-top:8px;display:flex;gap:6px}
 .ti{position:relative;display:block;padding:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--s3);cursor:zoom-in;transition:border-color .18s var(--ease),transform .18s var(--ease)}
 .ti:hover{border-color:var(--line2)}
