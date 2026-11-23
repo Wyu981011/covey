@@ -1,9 +1,26 @@
 [project]
 name = "covey"
 version = "0.1.0"
-description = "Covey (formerly Harness Bridge): drive Codex, Claude Code, Pi and dsh on your own machine from Feishu chat."
+description = "Covey (formerly Harness Bridge): drive Codex, Claude Code, DeepSeek Harness (dsh), Pi and Antigravity on your own machine from Feishu chat."
+readme = "README.en.md"
+license = {file = "LICENSE"}
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+]
 requires-python = ">=3.10"
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ericxk/covey"
+Issues = "https://github.com/ericxk/covey/issues"
+Security = "https://github.com/ericxk/covey/blob/main/SECURITY.md"
 
 [project.optional-dependencies]
 feishu-sdk = ["lark-oapi==1.7.4", "cryptography>=43"]

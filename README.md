@@ -78,7 +78,7 @@
 
 ## 快速开始
 
-前提：Linux 或 macOS，Python 3.10+；这台机器上装好并登录了 Claude Code、Codex 或 Antigravity 里的任一个；一个飞书账号（用手机扫码）。
+前提：Linux 或 macOS，Python 3.10+，Node.js 和 npm（`./install` 没有 `lark-cli` 时用 npm 装它；没有 npm 时第 2 步就停）；这台机器上装好并登录了 Claude Code、Codex 或 Antigravity 里的任一个；一个飞书账号（用手机扫码）。
 
 ```bash
 git clone https://github.com/ericxk/covey.git && cd covey

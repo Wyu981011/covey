@@ -80,7 +80,7 @@ The source is in [`web/`](web/README.md), with two ways to deploy it:
 
 ## Quick start
 
-Requirements: Linux or macOS, Python 3.10+, one of Claude Code, Codex or Antigravity installed and logged in on this machine, and a Feishu account (you scan a QR code with the phone app).
+Requirements: Linux or macOS, Python 3.10+, Node.js and npm (`./install` installs `lark-cli` with npm when it is missing; without npm it stops at step 2), one of Claude Code, Codex or Antigravity installed and logged in on this machine, and a Feishu account (you scan a QR code with the phone app).
 
 ```bash
 git clone https://github.com/ericxk/covey.git && cd covey
