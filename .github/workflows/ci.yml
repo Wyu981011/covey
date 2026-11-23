@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 # A push that comes while the run of the one before is still going cancels that run: only the latest commit is
 # tested, and a cancelled run sends no failure mail.
 concurrency:
@@ -20,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -31,7 +34,7 @@ jobs:
       - name: Static checks
         run: |
           python -m pyflakes covey bin tests scripts
-          bash -n scripts/*.sh
+          bash -n install scripts/*.sh web/scripts/*.sh web/deploy/selfhost/build.sh
       - name: Privacy check (generic rules)
         run: python scripts/privacy_check.py
       - name: Documentation links
@@ -53,3 +56,33 @@ jobs:
           modules=$(python scripts/ci_retry_modules.py "$BRIDGE_TEST_LEDGER") || exit 1
           echo "::warning::retrying the failed test modules once: $modules"
           python -B scripts/test_map.py run --why ci-retry $modules
+
+  web:
+    # The web workbench (web/): lint, its unit tests and the self-hosted build.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        # package-lock.json records every package at registry.npmmirror.com, which a runner outside China reaches slowly
+        # or not at all: install from the public registry instead (the @lark-apaas/* packages are on it too).
+        run: npm ci --no-audit --no-fund --registry=https://registry.npmjs.org/ --replace-registry-host=registry.npmmirror.com
+      - name: Lint
+        run: npm run lint
+      - name: Tests
+        # Every test:* script of package.json (test:selfhost-tls and test:selfhost-api build the server themselves).
+        run: |
+          for name in $(node -p "Object.keys(require('./package.json').scripts).filter(k => k.startsWith('test:')).join(' ')"); do
+            echo "::group::npm run $name"
+            npm run "$name"
+            echo "::endgroup::"
+          done
+      - name: Build (self-hosted)
+        run: npm run build:selfhost
