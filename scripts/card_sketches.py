@@ -147,19 +147,34 @@ def task_sketch():
                 IO_BOX_ID: io_box(job, io_lines(running_figures(snapshot, began), "2分14秒"))}
     elements = []
     for element in card["body"]["elements"]:
-        elements.append(replaced.get(element.get("element_id"), element))
+        elements.append(by_id(replaced.get(element.get("element_id"), element), replaced))
         if element.get("element_id") == "answer":
             elements.append(panel_json(TraceView(snapshot).panel_model(True)))
     card["body"]["elements"] = [e for e in elements if not (e.get("element_id") == "answer" and not e.get("content"))]
     return [("user", ASK), ("card", card)]
 
 
+def by_id(node, replaced):
+    """``node`` with every element inside it whose element_id ``replaced`` names swapped for that one, as a CardKit write
+    by element ID finds it wherever it is (the status line sits in the task card's head row)."""
+    if isinstance(node, dict):
+        if node.get("element_id") in replaced:
+            return replaced[node["element_id"]]
+        return {key: by_id(value, replaced) for key, value in node.items()}
+    if isinstance(node, list):
+        return [by_id(item, replaced) for item in node]
+    return node
+
+
 def answer_sketch():
     """The answer card in the topic as app/answer_delivery.py makes it: the topic's row (app/saved_send.py status_head),
-    the answer whole, 产物 and 输入/输出."""
-    from covey.cards.answer_card import input_parts, tail, topic_head
+    the answer whole, 产物, the 改动 of a turn that changed code, 输入/输出 and 独立复核 (app/review.py)."""
+    from covey.cards.answer_card import input_parts, review_element, tail, topic_head
     from covey.cards.review import answer_card
-    card = answer_card(answer_text(), f"{LABEL} 有结果 · 结论", tail(artifacts(), input_parts(*INPUTS), outputs(242)),
+    change = {"commit": "3f9c2a7e41d08b6c5a12", "deployed": "", "verified": "npm test 全过（新增 3 个组件测试）；本地起页面点过登录"}
+    card = answer_card(answer_text(), f"{LABEL} 有结果 · 结论",
+                       tail(artifacts(), input_parts(*INPUTS), outputs(242), change=change,
+                            buttons=[review_element("t" * 64, 12)]),
                        [topic_head(LABEL, TITLE, "done")])
     return [("card", card)]
 
@@ -187,7 +202,8 @@ def redaction_sketch():
              "turns": [{"time": "11-20 14:05", "number": 7, "model": "opus", "requests": 6, "replaced": 4},
                        {"time": "11-20 14:02", "number": 7, "model": "opus", "requests": 3, "replaced": 5}]}
     card = redaction_card(token, {"revision": 1, "hub": True}, facts,
-                          top=[tab_row("redaction", token, ["topic", "main", "workspace", "redaction", "groups"])])
+                          top=[tab_row("redaction", token, ["config", "workspace", "redaction", "groups", "memory", "about",
+                                                            "doctor"])])
     return [("card", card)]
 
 
@@ -240,8 +256,65 @@ def demo_steps():
     ]
 
 
+def question_sketch():
+    """The demo topic's question card in its thread: the question under the topic's row, the options as buttons."""
+    return [("time", "话题 T7 · 14:04"), ("card", question())]
+
+
+def stopped_sketch():
+    """A 停住了 relay at the top level (app/relay_stops.py): the reason in plain words from core/failure.py and the
+    buttons it allows, here 换个模型 for a quota that ran out."""
+    from covey.app import relay_stops
+    from covey.cards.answer_card import ask_block
+    from covey.cards.relay_card import STOPPED, relay_card
+    from covey.core.failure import failure_view
+    record = {"job_id": 12, "topic_id": "t" * 64, "chat_id": "oc_demo", "status": "failed", "execution_status": "failed",
+              "failure_code": "quota_exhausted", "harness_id": "claude", "binding_revision": 1}
+    view = failure_view(record)
+    area = relay_stops.buttons(record, view)
+    card = relay_card(LABEL, STOPPED, reason=view["title"], buttons=[area] if area else [],
+                      ask=ask_block(ASK, at="14:02", url="https://example.invalid/t7", who=f"{LABEL} {TITLE}",
+                                    doing="stopped"))[0]
+    return [("user", ASK), ("reaction", "Get"), ("thread", f"{LABEL} {TITLE} · 3 条回复"), ("time", "14:20"),
+            ("card", card)]
+
+
+def switch_sketch():
+    """The 🔁 换配置 card of the demo topic: from Claude Code to Codex mid-conversation, the changed row in blue."""
+    from covey.cards.switch_form import build_switch_card
+    form = {"token": "s" * 24, "topic": LABEL, "workspace": "demo-app", "config_revision": 1,
+            "current": {"label": CHOICES["claude:opus"]["label"], "effort": "high", "key": "claude:opus",
+                        "budget": "high", "workspace": "demo-app", "run_mode": "worktree", "redaction": False},
+            "models": dict(CHOICES), "selected_model": "codex:gpt", "selected_effort": "high",
+            "workspaces": ["demo-app", "docs-site"], "selected_workspace": "demo-app", "selected_run_mode": "worktree",
+            "selected_redaction": "off"}
+    return [("card", build_switch_card(form))]
+
+
+def board_sketch():
+    """The bot menu's 看板 (cards/board.py): what waits for the owner first, then what stopped, what runs, what ended,
+    and the projects, one coloured block a topic."""
+    from covey.cards.board import board_card
+    view = {
+        "waiting": [{"topic": "a", "label": LABEL, "title": TITLE, "url": "https://example.invalid/t7",
+                     "line": "要你定：登录成功以后跳到哪里？", "meta": ["等了 3 分钟"]}],
+        "stale": [], "dismissable": True, "can_dismiss": True,
+        "running": [{"topic": "b", "label": "T8", "title": "给订单接口补集成测试", "url": "https://example.invalid/t8",
+                     "line": "现在：跑全量测试", "meta": ["2/3 步", "预计还要约 10 分钟", "1 分钟前有动静"]}],
+        "done": [{"topic": "d", "label": "T5", "title": "修登录接口的报错", "url": "https://example.invalid/t5",
+                  "card": "om_demo_t5", "status": "failed", "line": "模型服务的额度用完了；可以换个模型接着做",
+                  "meta": ["13:40 停", "下一步：在卡上点「换个模型」"], "seen": False},
+                 {"topic": "e", "label": "T6", "title": "升级依赖并跑回归", "status": "done", "line": "依赖升级好了，回归全过",
+                  "url": "https://example.invalid/t6", "meta": [], "seen": False, "state": "做完", "took": "用时 18分06秒"}],
+        "projects": [{"name": "demo-app 账号体系", "goal": "注册、登录、找回密码都上线并有测试", "topics": ["a", "b"],
+                      "waiting": 1, "running": 1, "stopped": 0, "url": "https://example.invalid/p1"}],
+        "proposals": 0, "tidy": {}, "stamp": "14:06", "done_since": "09:30", "pending": []}
+    return [("card", board_card(view))]
+
+
 SKETCHES = {"01-butler": butler_sketch, "02-task-card": task_sketch, "03-answer-card": answer_sketch,
-            "04-launch-card": launch_sketch, "05-settings-redaction": redaction_sketch}
+            "04-launch-card": launch_sketch, "05-settings-redaction": redaction_sketch, "06-question-card": question_sketch,
+            "07-stopped-card": stopped_sketch, "08-switch-card": switch_sketch, "09-board": board_sketch}
 
 
 def build():
