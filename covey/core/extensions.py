@@ -50,6 +50,9 @@ HOOK_NAMES = {
     "service_hosting": "service/install.py: other ways to host the Manager (MODES: name -> install(root, args); optional auto_mode() -> a mode name when it applies, for --mode auto)",
     "deploy_check": "service/plugins.py: the package's checks before a deploy, run in the release being deployed (check(harness_config) -> {'problems': [...], 'notes': [...]}; every package's, not only the first)",
     "claude_turn": "backends/claude/bridge.py: context manager around a Claude Code turn (turn(ctx, env, run_id=...) -> (ctx, env))",
+    "agy_turn": "backends/agy/bridge.py: context manager around an Antigravity turn on this machine (turn(ctx, env, "
+                "run_id=...) -> (env, switch): the first process's environment, and switch(failure) -> (env, note) or "
+                "None, asked when a process failed as SWITCHED)",
 }
 # compat: hooks of features the core no longer has; a manifest that still names one loads, and the hook is never asked for.
 RETIRED_HOOKS = {"dashboard_entry"}  # The web dashboard's fixed entry, with the dashboard taken out.

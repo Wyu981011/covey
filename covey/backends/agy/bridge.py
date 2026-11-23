@@ -18,6 +18,13 @@ job's reply is the last process's answer.
 The butler's turn (``options["mcp_config"]``, its Bridge tools) runs with a home of its own whose MCP config adds them
 (backends/agy/home.py): agy reads MCP servers from one file in the home and from nowhere a turn could name.
 
+An extension's ``agy_turn`` hook (core/extensions.py) may give a turn on this machine the environment its first process
+runs with and, when a process ends failed on a spent quota, a limit or a sign-in (SWITCHED), another one to go on in
+(``switch``): the same conversation goes on there in a new process, at most MAX_SWITCHES times a turn, with SWITCH_RESUMED
+when agy had taken the words in (its ``user_input`` step), else with the same words again, and the hook's line in 执行过程.
+Which environments there are and when one is better is the extension's (several Google accounts, each a HOME of its own;
+agy keeps a conversation in local files, so another account goes on with it); without one a turn runs as before.
+
 On a device (``ctx.device``, docs/configuration.md 多设备) the process is the device's (core/process.py
 stream_subprocess_lines with the turn's context): the device's own agy and Google sign-in, an environment from its profile,
 the conversation kept there. A running turn there takes no supplement (``capabilities``, AgyControl: the SIGINT and the
@@ -26,6 +33,7 @@ machine's ``agy models``.
 """
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import logging
@@ -42,7 +50,7 @@ from covey.backends.agy.home import PrivateHome
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
                                 JobCancelled, LEAD, TOOL_LIMIT, UUID_RE, for_device)
 from covey.core import env as cenv
-from covey.core import procfs
+from covey.core import extensions, procfs
 from covey.core.process import device_of, is_owned, process_identity, stop_group, stream_subprocess_lines
 from covey.core.process_env import child_process_env, process_device
 from covey.core.reply_state import ReplyState
@@ -194,8 +202,9 @@ class AntigravityEventAdapter:
                 self.steps.finish(key, not info.get("error"), now)
 
     def stopped(self, now):
-        """The process was stopped for a supplement: its steps still running end failed (their command was
-        stopped), what it wrote becomes a note, and the next process's steps get keys of their own."""
+        """The process was stopped for a supplement, or failed and the turn goes on in another environment: its steps
+        still running end failed (their command was stopped), what it wrote becomes a note, and the next process's
+        steps get keys of their own."""
         for key in self.steps.running():
             self.steps.finish(key, False, now)
         self.notes.to_notes(now)
@@ -335,14 +344,13 @@ class AntigravityBackend(BackendRuntime):
         request = dataclasses.replace(request, context=dataclasses.replace(ctx, options=options))
         stdin = json.dumps({"event": "user", "message": {"content": request.prompt}}, ensure_ascii=False) + "\n"
         argv, env = self.argv(ctx, request.session_id), self.environment(ctx)
-        if not ctx.options.get("mcp_config"):
-            return run_stream(request, argv, stdin, env)
-        # The butler's turn: its Bridge tools through a home of its own (backends/agy/home.py).
-        home = PrivateHome(ctx.state_dir, env.get("HOME") or Path.home(), ctx.options["mcp_config"], env)
-        with home as path:
-            if home.note:
-                logging.getLogger(__name__).warning("agy private home: %s", home.note)
-            return run_stream(request, argv, stdin, {**env, "HOME": str(path)})
+        homes = Homes(ctx)
+        try:
+            with extension_turn(ctx, env, run_id=request.inputs.run_id) as (env, switch):
+                return run_stream(request, argv, stdin, homes.env(env),
+                                  switch=None if switch is None else lambda failure: homes.switched(switch(failure)))
+        finally:
+            homes.close()
 
     def prompt_runtime_note(self, ctx):
         if ctx.options.get(TOOL_LIMIT) == LEAD:
@@ -353,6 +361,52 @@ class AntigravityBackend(BackendRuntime):
     def startup_lines(self, ctx):
         return [f"agy_cmd={ctx.backend_cmd} model={ctx.model or '(agy default)'} effort={ctx.effort or '(default)'} "
                 f"home={native_home()}"]
+
+
+@contextlib.contextmanager
+def extension_turn(ctx, env, *, run_id=""):
+    """``(env, switch)`` of a turn: the agy_turn hook's (core/extensions.py) on this machine, else ``(env, None)``. A
+    device's turn runs with the device's own agy and sign-in, so it has none."""
+    hook = None if device_of(ctx) else extensions.hook("agy_turn")
+    if hook is None:
+        yield env, None
+        return
+    with hook.turn(ctx, env, run_id=run_id) as found:
+        yield found
+
+
+class Homes:
+    """The butler's turn (``options["mcp_config"]``) runs each agy process in a home of its own (backends/agy/home.py)
+    over its environment's HOME: made again when the turn goes on in another environment, removed with the turn. Any
+    other turn runs in the environment as it is."""
+
+    def __init__(self, ctx):
+        self.ctx, self.home = ctx, None
+
+    def env(self, env):
+        """``env`` for the next process, the home of the one before removed."""
+        self.close()
+        config = self.ctx.options.get("mcp_config")
+        if not config:
+            return env
+        home = PrivateHome(self.ctx.state_dir, env.get("HOME") or Path.home(), config, env)
+        path = home.__enter__()
+        self.home = home
+        if home.note:
+            logging.getLogger(__name__).warning("agy private home: %s", home.note)
+        return {**env, "HOME": str(path)}
+
+    def switched(self, found):
+        """The hook's ``(env, note)`` with this turn's home over ``env``; None stays None."""
+        if found is None:
+            return None
+        env, note = found
+        return self.env(env), note
+
+    def close(self):
+        home, self.home = self.home, None
+        if home is not None:
+            home.__exit__(None, None, None)
 
 
 class StreamRows:
@@ -502,6 +556,11 @@ def auth_failure(stderr):
 RESUMED = ("用户补充（你刚才的执行被这条补充打断了，已经做完的仍然有效，停下来的命令没有跑完；"
            "先看补充，再决定怎么接着做）：\n")
 STOP_SECONDS = 5  # How long the commands a stopped turn left running get to exit before they are killed.
+# A process that failed as one of these may go on in another environment, when the agy_turn hook gives one (``switch``).
+SWITCHED = ("quota_exhausted", "rate_limited", "authentication_error")
+MAX_SWITCHES = 3  # How many times one turn goes on in another environment.
+SWITCH_RESUMED = "（刚才的执行因为模型额度或登录的问题停下了，已经做完的仍然有效；接着完成上面的要求）"
+SWITCH_NOTE = "换个环境接着做"  # The line in 执行过程 when the hook gives none.
 
 
 def descendants(root):
@@ -643,9 +702,28 @@ def user_line(text):
     return json.dumps({"event": "user", "message": {"content": text}}, ensure_ascii=False) + "\n"
 
 
-def run_stream(request, argv, stdin, env):
+def next_words(rows, argv, stdin):
+    """The argv and words of the process that goes on after ``rows``' one failed: in its conversation when it said
+    one; SWITCH_RESUMED when agy had taken its words in (its ``user_input`` step), else the same words again."""
+    if rows.sid is not None:
+        argv = resume_argv(argv, rows.sid)
+    if "user_input" in rows.kinds.values():
+        return argv, user_line(SWITCH_RESUMED)
+    return argv, stdin
+
+
+def outcome(rows, rc, stderr, cancel_event):
+    """``stream_outcome``, with a process that ended before its conversation for want of a login said as one."""
+    status, code = stream_outcome(rows, rc, cancel_event)
+    if code in ("process_exit", "root_incomplete") and rows.sid is None and auth_failure(stderr):
+        code = "authentication_error"
+    return status, code
+
+
+def run_stream(request, argv, stdin, env, switch=None):
     """One job's turn: agy processes, the first with the prompt, each next one resuming the same conversation with
-    the supplements that stopped the one before (AgyControl)."""
+    the supplements that stopped the one before (AgyControl), or, after one that failed as SWITCHED, in the environment
+    ``switch`` gives for the failure (the agy_turn hook's ``(env, note)``; None: the turn fails as it did)."""
     ctx, expected_session = request.context, request.session_id
     state = ReplyState(ctx.options, request.inputs.run_id, request.publish)
     adapter = AntigravityEventAdapter(lambda kind, data: request.emit(kind, data, None))
@@ -655,6 +733,7 @@ def run_stream(request, argv, stdin, env):
     rows = StreamRows(request, adapter, expected_session, control)
     rc, stderr, forced_cleanup = None, "", False
     status, code, text = "failed", "root_incomplete", ""
+    switches = 0
     try:
         request.observers.control(control)
     except Exception:
@@ -667,17 +746,38 @@ def run_stream(request, argv, stdin, env):
                                                  env=env, cwd=str(ctx.workdir), cancel_event=cancel_event,
                                                  process_observer=rows.observe, ctx=ctx)
             message, event_ids = control.take()
-            if not message or cancel_event.is_set() or rows.sid is None or rows.invalid or control.closing:
+            if cancel_event.is_set() or rows.invalid or control.closing or (message and rows.sid is None):
                 break
-            # Stopped for a supplement (or one came as it ended): the same conversation goes on with it.
-            argv, stdin = resume_argv(argv, rows.sid), user_line(message)
-            rows = StreamRows(request, adapter, rows.sid, control, resumed=True)
-            adapter.stopped(time.time())
-            for event_id in event_ids:
-                control.emit("steer_read", {"event_id": event_id})
-        status, code = stream_outcome(rows, rc, cancel_event)
-        if code in ("process_exit", "root_incomplete") and rows.sid is None and auth_failure(stderr):
-            code = "authentication_error"
+            if message:
+                # Stopped for a supplement (or one came as it ended): the same conversation goes on with it.
+                argv, stdin = resume_argv(argv, rows.sid), user_line(message)
+                rows = StreamRows(request, adapter, rows.sid, control, resumed=True)
+                adapter.stopped(time.time())
+                for event_id in event_ids:
+                    control.emit("steer_read", {"event_id": event_id})
+                continue
+            status, code = outcome(rows, rc, stderr, cancel_event)
+            if switch is None or switches >= MAX_SWITCHES or status != "failed" or code not in SWITCHED:
+                break
+            try:
+                found = switch({"code": code, "error": str((rows.result or {}).get("error") or ""),
+                                "stderr": stderr_lines(stderr), "model": ctx.model, "conversation": rows.sid or ""})
+            except Exception:
+                logging.getLogger(__name__).warning("agy_turn switch failed", exc_info=True)
+                found = None
+            if found is None or cancel_event.is_set() or control.closing:
+                break
+            env, note = found
+            switches += 1
+            # The same conversation goes on in the other environment.
+            argv, stdin = next_words(rows, argv, stdin)
+            rows = StreamRows(request, adapter, rows.sid or rows.expected_session, control,
+                              resumed=rows.resumed or rows.sid is not None)
+            now = time.time()
+            adapter.stopped(now)
+            adapter.emit("progress_note", {"id": f"agy-switch-{switches}", "text": str(note or SWITCH_NOTE)[:300],
+                                           "received_at": now})
+        status, code = outcome(rows, rc, stderr, cancel_event)
         if status == "completed":
             text = rows.reply()
             state.preserve(rows.sid, ("antigravity-stream", rows.sid, state.run_id), ("final:" + state.run_id,), text)

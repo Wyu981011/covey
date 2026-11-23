@@ -1,6 +1,7 @@
 """Antigravity (agy) over its headless stream-json: argv, events, verified completion and failure codes."""
 import dataclasses
 import json
+import logging
 import os
 from pathlib import Path
 import sys
@@ -334,6 +335,164 @@ class AntigravityTests(unittest.TestCase):
             "tool_info": {"parameters": {"Url": "https://example.invalid/doc?token=PRIVATE#part"}}}}, 1.0)
         self.assertEqual(adapter.tools["step-4"]["detail"], "https://example.invalid/doc")
         self.assertEqual(adapter.tools["step-4"]["name"], "webfetch")
+
+
+class AgyTurnHookTests(unittest.TestCase):
+    """T674: an extension's ``agy_turn`` hook gives a turn its environment and, after a process that failed on a spent
+    quota, a limit or a sign-in, another one in which the same conversation goes on (several Google accounts, each a
+    HOME of its own, are the extension's). Without the hook, or when it has none, a turn runs and fails as before."""
+
+    def setUp(self):
+        AntigravityTests.setUp(self)
+        self.failures = []
+        # Each process's record, kept past run_agy (which removes record.json's): ``runs`` reads and removes them.
+        self.record = self.root / "hook-record.json"
+        os.environ["FAKE_AGY_RECORD"] = str(self.record)
+
+    run_agy = AntigravityTests.run_agy
+
+    def runs(self):
+        path = self.record.with_name(self.record.name + ".all")
+        found = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+        if path.exists():
+            path.unlink()
+        return found
+
+    def hook(self, *spent, note="主号的 Gemini 额度用完了，换副号接着做", raises=False, cancel=None):
+        """A hook whose turn starts with ``FAKE_AGY_SPENT=spent[0]`` (the fake agy's failure, '' none) and HOME
+        <root>/acct-0, each switch going on with the next one; None once they are used up."""
+        import contextlib
+        from types import SimpleNamespace
+
+        def env_of(env, index):
+            home = self.root / f"acct-{index}"
+            home.mkdir(exist_ok=True)
+            return {**env, "HOME": str(home), "FAKE_AGY_SPENT": spent[index]}
+
+        @contextlib.contextmanager
+        def turn(ctx, env, *, run_id=""):
+            self.assertEqual(run_id, RUN)
+            left = list(range(1, len(spent)))
+
+            def switch(failure):
+                self.failures.append(failure)
+                if raises:
+                    raise RuntimeError("the hook broke")
+                if cancel is not None:
+                    cancel.set()
+                return (env_of(env, left.pop(0)), note) if left else None
+            yield env_of(env, 0), switch
+        return SimpleNamespace(turn=turn)
+
+    def hooked(self, hook, scenario="ok", **kwargs):
+        from covey.core import extensions
+        with mock.patch.object(extensions, "hook", return_value=hook) as asked:
+            found = self.run_agy(scenario, **kwargs)
+        asked.assert_called_with("agy_turn")
+        return found
+
+    def test_a_spent_quota_goes_on_in_the_hooks_next_environment_in_the_same_conversation(self):
+        from covey.backends.agy.bridge import SWITCH_RESUMED
+        result, events, replies, sessions, _record = self.hooked(self.hook("after-steps", ""))
+        self.assertFalse(result.is_error, result.text)
+        self.assertEqual((result.text, result.session_id, sessions), ("完成", SID, [SID]))
+        self.assertEqual(replies[-1].fingerprint, result.outcome.reply_fingerprint)
+        first, second = self.runs()
+        self.assertEqual((first["spent"], first["home"]), ("after-steps", str(self.root / "acct-0")))
+        self.assertEqual((second["spent"], second["home"]), ("", str(self.root / "acct-1")))
+        self.assertNotIn("--conversation", first["argv"])
+        self.assertEqual(second["argv"][second["argv"].index("--conversation") + 1], SID)
+        self.assertEqual(json.loads(second["stdin"])["message"]["content"], SWITCH_RESUMED)
+        failure, = self.failures
+        self.assertEqual((failure["code"], failure["conversation"], failure["model"]),
+                         ("quota_exhausted", SID, "gemini-3.8-pro-high"))
+        self.assertIn("exhausted your quota", failure["error"])
+        notes = [data for kind, data in events if kind == "progress_note" and data["id"].startswith("agy-switch-")]
+        self.assertEqual([note["text"] for note in notes], ["主号的 Gemini 额度用完了，换副号接着做"])
+        steps = {}
+        for kind, data in events:
+            if kind == "tool":
+                steps[data["id"]] = data["status"]
+        self.assertEqual(steps, {"step-2": "done", "step-1-2": "done"})  # The next process's steps have keys of their own.
+        self.assertEqual([kind for kind, _data in events].count("backend_failure"), 0)
+        self.assertEqual([kind for kind, _data in events].count("trace_finished"), 1)
+
+    def test_words_agy_never_took_in_go_again_and_taken_ones_are_gone_on_from(self):
+        from covey.backends.agy.bridge import SWITCH_RESUMED
+        cases = (("before-init", None, False, "做个任务"), ("before-init", SID, True, "做个任务"),
+                 ("after-input", None, True, SWITCH_RESUMED), ("logged-out", None, False, "做个任务"))
+        for spent, session, resumes, words in cases:
+            with self.subTest(spent=spent, session=session):
+                self.failures.clear()
+                result, _events, _replies, sessions, _record = self.hooked(self.hook(spent, ""), session=session)
+                self.assertFalse(result.is_error, result.text)
+                self.assertEqual(sessions, [SID])  # Said once, by the process that began it.
+                first, second = self.runs()
+                self.assertEqual("--conversation" in second["argv"], resumes)
+                self.assertEqual(json.loads(second["stdin"])["message"]["content"], words)
+                if spent == "before-init":
+                    self.assertEqual((second["argv"], second["stdin"]), (first["argv"], first["stdin"]))
+                self.assertEqual(self.failures[0]["code"],
+                                 {"before-init": "rate_limited", "after-input": "quota_exhausted",
+                                  "logged-out": "authentication_error"}[spent])
+
+    def test_without_the_hook_or_another_environment_the_turn_fails_as_before(self):
+        from covey.core import extensions
+        with mock.patch.object(extensions, "hook", return_value=None):
+            result, *_rest = self.run_agy("ok")
+        self.assertFalse(result.is_error)
+        self.assertEqual(Path(self.runs()[0]["home"]), self.root)  # The environment as it is.
+        for raises in (False, True):
+            with self.subTest(raises=raises), self.assertLogs("covey.backends.agy.bridge", "WARNING") as logs:
+                result, events, replies, _sessions, _record = self.hooked(self.hook("after-steps", raises=raises))
+                if not raises:
+                    logging.getLogger("covey.backends.agy.bridge").warning("none")  # assertLogs wants one.
+                self.assertEqual(any("agy_turn switch failed" in line for line in logs.output), raises)
+                self.assertTrue(result.is_error)
+                self.assertEqual(result.outcome.error_code, "quota_exhausted")
+                self.assertEqual((len(self.runs()), replies), (1, []))
+                self.assertFalse([data for kind, data in events if kind == "progress_note"
+                                  and data["id"].startswith("agy-switch-")])
+                self.assertEqual([kind for kind, _data in events].count("backend_failure"), 1)
+
+    def test_a_turn_goes_on_elsewhere_at_most_max_switches_times(self):
+        from covey.backends.agy.bridge import MAX_SWITCHES
+        result, *_rest = self.hooked(self.hook(*["after-steps"] * (MAX_SWITCHES + 2)))
+        self.assertEqual(result.outcome.error_code, "quota_exhausted")
+        self.assertEqual((len(self.runs()), len(self.failures)), (MAX_SWITCHES + 1, MAX_SWITCHES))
+
+    def test_other_failures_a_stop_and_a_device_never_ask_the_hook(self):
+        from covey.backends.agy import bridge
+        result, *_rest = self.hooked(self.hook("", ""), scenario="error")
+        self.assertEqual((result.outcome.error_code, len(self.runs()), self.failures), ("root_failed", 1, []))
+        cancel = threading.Event()
+        result, *_rest = self.hooked(self.hook("after-steps", "", cancel=cancel), cancel=cancel)
+        self.assertTrue(result.is_error)
+        self.assertEqual((len(self.runs()), len(self.failures)), (1, 1))  # Stopped while the hook looked: no next one.
+        hook = mock.Mock()
+        with mock.patch.object(bridge, "device_of", return_value="box"), \
+                mock.patch.object(bridge.extensions, "hook", return_value=hook):
+            with bridge.extension_turn(self.ctx, {"HOME": "/x"}) as found:
+                self.assertEqual(found, ({"HOME": "/x"}, None))
+        hook.turn.assert_not_called()
+
+    def test_the_butlers_home_is_made_again_over_the_next_environments_home(self):
+        from covey.core.butler import mcp_config
+        for index in (0, 1):
+            cli = self.root / f"acct-{index}" / ".gemini" / "antigravity-cli"
+            cli.mkdir(parents=True)
+            (cli.parent / "config").mkdir()
+        config = mcp_config(Path(__file__).resolve().parents[1], self.root / "state", "om_1-1", sys.executable)
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "mcp_config": config})
+        result, *_rest = self.hooked(self.hook("after-steps", ""), ctx=ctx)
+        self.assertFalse(result.is_error, result.text)
+        first, second = self.runs()
+        for index, run in enumerate((first, second)):
+            self.assertEqual(Path(run["home"]).parent, self.root / "state" / "tmp")
+            self.assertFalse(Path(run["home"]).exists())  # Each removed: the first when the turn moved on.
+            self.assertEqual(run["cli"], str((self.root / f"acct-{index}" / ".gemini" / "antigravity-cli").resolve()))
+            self.assertIn("bridge", run["mcp"]["mcpServers"])
+        self.assertNotEqual(first["home"], second["home"])
 
 
 if __name__ == "__main__":

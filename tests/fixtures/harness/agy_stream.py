@@ -1,5 +1,7 @@
 """A scripted ``agy --output-format stream-json --input-format stream-json`` run: records its argv, stdin and
-cwd, then prints the NDJSON rows of ``FAKE_AGY_SCENARIO`` (default: one successful turn)."""
+cwd, then prints the NDJSON rows of ``FAKE_AGY_SCENARIO`` (default: one successful turn). ``FAKE_AGY_SPENT`` in its
+environment (an account whose quota is spent, the agy_turn hook's) ends it failed instead: ``before-init`` before the
+conversation, ``after-input`` once agy took the words in, ``after-steps`` after a tool step, ``logged-out`` as one."""
 import json, os, sys, time
 args = sys.argv[1:]
 if args[:1] == ["models"]:
@@ -10,7 +12,10 @@ if args[:1] == ["models"]:
     print("gemini-4-neon-high\tGemini 4 Neon (High)\ngemini-4-neon-low\tGemini 4 Neon (Low)\n"
           "gemini-pro-orchestrator\tOrchestrator (Carbon)\ngemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)")
     sys.exit(0)
-record = {"argv": args, "stdin": sys.stdin.read(), "cwd": os.getcwd(), "home": os.environ.get("HOME", "")}
+record = {"argv": args, "stdin": sys.stdin.read(), "cwd": os.getcwd(), "home": os.environ.get("HOME", ""),
+          "spent": os.environ.get("FAKE_AGY_SPENT", ""),
+          "cli": os.path.realpath(os.path.join(os.environ.get("HOME", ""), ".gemini", "antigravity-cli"))}
+spent = record["spent"]
 try:  # The MCP servers this run's home gives agy (backends/agy/home.py).
     record["mcp"] = json.load(open(os.path.join(record["home"], ".gemini", "config", "mcp_config.json")))
 except (OSError, ValueError):
@@ -53,7 +58,12 @@ def result(status, response="", **fields):
                                         "duration_seconds": 7.1, "num_turns": 1, "usage": usage, **fields}})
 
 
-if scenario == "logged-out":
+if spent == "before-init":
+    emit({"event": "result", "result": {"conversation_id": "", "status": "ERROR", "response": "", "error":
+          "RESOURCE_EXHAUSTED (code 429): You have exhausted your capacity on this model. Your quota will reset after "
+          "1h2m3s."}})
+    sys.exit(1)
+if scenario == "logged-out" or spent == "logged-out":
     print("Authentication required. Please visit the URL to log in:\n  https://accounts.google.com/o/oauth2/auth?x=1",
           file=sys.stderr)
     print("error: authentication failed or timed out", file=sys.stderr)
@@ -65,6 +75,8 @@ if scenario == "garbage":
 emit({"event": "init", "conversation_id": "11111111-2222-4333-8444-555555555555" if scenario == "mismatch" else sid,
       "init": {"cwd": os.getcwd(), "tools": ["run_command", "view_file"], "permission_mode": "always-proceed"}})
 step(0, "DONE", "user_input")
+if spent == "after-input":
+    result("ERROR", error="You have exhausted your quota on this model."); sys.exit(1)
 step(1, "ACTIVE", "agent_response", text_delta="先看一下")
 step(1, "ACTIVE", "agent_response", text_delta="目录")
 step(1, "DONE", "agent_response", duration_seconds=4.0, usage={
@@ -86,6 +98,8 @@ step(2, "DONE", "tool", tool_name="run_command", duration_seconds=0.07, tool_inf
 emit({"event": "step_update", "step_update": {"conversation_id": "99999999-2222-4333-8444-555555555555",
                                               "step_index": 0, "state": "DONE", "step_type": "agent_response",
                                               "text_delta": "PRIVATE_SUBAGENT"}})
+if spent == "after-steps":
+    result("ERROR", error="You have exhausted your quota on this model. PRIVATE_DETAIL"); sys.exit(1)
 if scenario == "busy":
     result("ERROR", error="429 RESOURCE_EXHAUSTED: PRIVATE_DETAIL"); sys.exit(3)
 if scenario == "error":

@@ -10,6 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - 仓库门面：`CODE_OF_CONDUCT.md`、`CHANGELOG.md`、`THIRD_PARTY_NOTICES.md`；`pyproject.toml` 补全项目元数据。
 - CI 增加网页工作台（`web/`）的检查和构建作业，测试矩阵加入 Python 3.13，并开启 Dependabot 每周检查 GitHub Actions 和 `web/` 的 npm 依赖。
 - `scripts/README.md`：列出 `scripts/` 里每个脚本的用途，分使用者用和维护者用。
+- Antigravity：扩展钩子 `agy_turn`。它可以给本机的每一轮定运行环境；某个 agy 进程因额度用完、限流或没登录而失败时，它给出另一个环境，这一轮就在那里接着同一个对话。核心不认识账号，几个 Google 账号怎么轮换由扩展决定（[docs/harnesses.md](docs/harnesses.md#antigravity)）。
 
 ### Changed 变更
 
@@ -28,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - Project files: `CODE_OF_CONDUCT.md`, `CHANGELOG.md`, `THIRD_PARTY_NOTICES.md`; complete project metadata in `pyproject.toml`.
 - CI: a job that lints, tests and builds the web workbench (`web/`), Python 3.13 in the test matrix, and weekly Dependabot checks for GitHub Actions and the npm dependencies of `web/`.
 - `scripts/README.md`: what each script in `scripts/` is for, split into user and maintainer scripts.
+- Antigravity: the `agy_turn` extension hook. It can give each turn on this machine its environment and, when an agy process fails on a spent quota, a limit or a sign-in, another one in which the same conversation goes on. The core knows no accounts; an extension decides how several Google accounts take turns ([docs/harnesses.md](docs/harnesses.md#antigravity)).
 
 ### Changed (English)
 

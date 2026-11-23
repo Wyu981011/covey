@@ -122,13 +122,14 @@ Pi 是 pi（npm 包 `@earendil-works/pi-coding-agent`，不是另一个工具 `@
 Antigravity 是 Google 的 Agent 开发平台，这里用它的命令行 `agy`（替代了 Gemini CLI），跑当前 Google 账号能用的模型。
 
 - **安装**：`curl -fsSL https://antigravity.google/cli/install.sh | bash`，二进制在 `~/.local/bin/agy`，之后它在后台自己升级；按 1.5.13 验证过。
-- **登录**：在运行机器人的系统账号下执行一次 `agy`，选 “Google OAuth”；没有浏览器时它打印授权链接，在自己的浏览器里登录后把授权码贴回终端。没有 D-Bus 时令牌存在 `~/.config/antigravity/`，不进机器人的记录。也可以用 Gemini API 密钥或 Google Cloud 项目登录（[官方说明](https://antigravity.google/docs/install)）。没登录时启动卡上没有它，已有话题的一轮以“还没有登录”失败。
+- **登录**：在运行机器人的系统账号下执行一次 `agy`，选 “Google OAuth”；没有浏览器时它打印授权链接，在自己的浏览器里登录后把授权码贴回终端。没有 D-Bus 时令牌存在 `~/.gemini/antigravity-cli/antigravity-oauth-token`，不进机器人的记录。一台机器一个登录，agy 没有切账号的参数，只按 `HOME` 找登录。也可以用 Gemini API 密钥或 Google Cloud 项目登录（[官方说明](https://antigravity.google/docs/install)）。没登录时启动卡上没有它，已有话题的一轮以“还没有登录”失败。
 - **运行方式**：每轮一个 `agy --output-format stream-json --input-format stream-json --disable-slash-commands --dangerously-skip-permissions [--conversation <会话>] [--model <模型>] [--effort <档位>]`，正文作为一行 JSON 从 stdin 传入后关闭，跑完这一轮就退出。续接用 `--conversation`，会话 ID 和 `init` 里的不一致时按协议错误失败。
 - **本轮结果**：最后一行 `result` 的 `status` 为 `SUCCESS`、零退出码。正文取最后一个工具、子 Agent 或系统步骤之后模型写的字（`result.response` 把这一轮的字全拼在一起，取出的不是它的结尾时退回整个 `response`）；子 Agent 的步骤不算本轮正文。
 - **事件与用量**：文字增量是正文和进展说明，工具步骤按名字显示；工具输出和思考不上卡片。用量取每个 `agent_response` 步骤的 `usage`（`input_tokens` 不含缓存读取，`output_tokens` 含思考），没有时才用 `result.usage`。
 - **模型和档位**：启动卡的预算就是 `--effort`；模型目录（`launch-models/agy.json`）说没有这个档位时不启动，没有档位的模型不传 `--effort`。
 - **失败**（`backends/agy/bridge.py` 的 `error_code`）：`result.error` 像登录失败记 `authentication_error`；带安全拦截字样（SAFETY、PROHIBITED_CONTENT、违反政策等）的记 `root_failed`；像额度用完、又没说什么时候恢复的记 `quota_exhausted`；像 429、限流，或额度说了恢复时间（reset after、per minute、until 某时）的记 `rate_limited`；`UNAVAILABLE`、`INTERNAL`、`DEADLINE_EXCEEDED`、50x、过载、连接重置或断开、“network issue” 记 `server_fault`；其余 `root_failed`。点了停止后 agy 以错误收尾的，限流和故障都按停止记。agy 的原文不上卡片，stderr 最后几行（去掉登录链接、隐藏凭据）只进 `bridge.log`。
 - **补充**是“停下再接着做”（`AgyControl`）：agy 运行中不收新消息，收下补充即“后端已接收”，给 agy 发 SIGINT，它以 `interrupted` 结束并保留已做的部分；它还在跑的命令先 TERM、5 秒后 KILL；然后同一会话起新进程，消息是补充，这时算“模型已读取”。和 Claude 不同，正在执行的那一步会被打断。
+- **换个环境接着做**（扩展的 `agy_turn` 钩子，[架构 · 扩展](architecture.md#扩展)）：核心只认一个钩子，没有扩展时一轮和以前一样。有的话，钩子给本机每一轮第一个 agy 进程的环境；某个进程以额度用完、限流或没登录失败时再问它一次，它给回另一个环境就在那里接着同一个对话：agy 已经收下这一轮的话（有 `user_input` 那一步）时发一句“接着完成上面的要求”，没收下就把原话再发一遍；执行过程里多一条钩子写的说明；一轮最多换 3 次，钩子说没有就照旧失败、交给自动重试。用途是一台机器上的几个 Google 账号：一个账号一个 `HOME`，对话是本机文件，另一个账号能接着跑（1.5.14 实测）。账号表、额度查询（`agy -p /usage --output-format json`，不耗 token）和挑哪个账号都在扩展里。
 - **管家的工具**：agy 只从 `~/.gemini/config/mcp_config.json`（和插件）读 MCP 服务，`--settings` 不收 `mcpServers`。管家跑在 agy 上时，那一轮的 `HOME` 换成 `<state>/tmp/agy-home-*`（`backends/agy/home.py`）：真实主目录的每一项、`.gemini` 和它的 `config` 里的每一项都是指回原处的符号链接，只有 `mcp_config.json` 是这一轮自己的：主人原有的服务（文件是纯 JSON 时；带注释的读不了，这一轮就不带，`bridge.log` 记一行）加上 Bridge 的 `bridge`。每个工具标 `tools.<名字>.eager`（开跑前问一次服务的 `tools/list`），不然 agy 只给模型一个工具说明文件、要先读再调；`timeoutSeconds` 150。登录、会话、日志都经链接写回原处；这一轮在主目录顶层新建的文件随私有目录一起删掉。agy 会在 `~/.gemini/antigravity-cli/mcp/bridge/` 留工具说明的缓存。
 - 没有原生问答、原生图片（只给路径，它用自带的 `read_file` 打开）、原生分叉（所以换配置时不写交接摘要）、脱敏、回退一步、下载请求与结果；在设备上的差别见[在设备上运行](#在设备上运行)。
 
@@ -275,6 +276,6 @@ Codex 的参数写在 bootstrap 命令上（`setup_harness_bridge.sh` 不接受�
 | Claude Code（`backends/claude/`） | `runtime.py` 一轮的收发与收尾（`run_stream`、空闲压缩 `compact_only`）；`process.py` CLI 进程和 JSONL 传输（`ClaudeProcess`、`TRANSPORT_FAILURES`）；`control.py` 输入、补充、问答和权限请求（`ClaudeControl`）；`argv.py` 启动参数和环境（`stream_argv`、`turn_env`）；`events.py` 事件（`ClaudeEventAdapter`）；`completion.py` 结果边界；`usage.py` 用量和 TTFT；`models.py` 目录行；`compaction.py`、`rewind.py`、`export.py` 压缩、回退、下载；`policy.py` 官方拒绝；`redaction.py` 脱敏中继 |
 | Codex（`backends/codex/`） | `appserver.py` 一轮的开会话、起 turn、收尾（`run_appserver`）；`rpc.py` App Server 进程与 JSON-RPC（`AppServer`、`RpcError`）；`turn.py` 读一个 turn 到结束（`read_turn`、`close_turn`）；`events.py` 事件（`CodexEventAdapter`）；`usage.py` 用量；`gateway.py` 按会话分的 provider；`workspace_reader.py` 只读 MCP；`export.py` 下载 |
 | Pi（`backends/pi/`） | `home.py` 每轮私有目录、凭据和预算；`rpc.py` 一轮 RPC 的收发、补充、停止和结束判断（`run_rpc`）；`events.py` 事件 |
-| Antigravity（`backends/agy/`） | 只有 `bridge.py`：参数、进程、事件（`AntigravityEventAdapter`）、结果（`stream_outcome`）、模型目录 |
+| Antigravity（`backends/agy/`） | `bridge.py` 参数、进程、事件（`AntigravityEventAdapter`）、结果（`stream_outcome`）、模型目录、`agy_turn` 钩子（`extension_turn`、`Homes`）；`home.py` 管家的私有主目录；`judge.py` 小模型判断 |
 | dsh（`backends/dsh/`） | 只有 `bridge.py`：进程、补丁、事件（`DshEventAdapter`）、结果 |
 | 模型网关（`backends/gateway/`，配置在 `core/gateways.py`） | `connection.py` 密钥、目录、请求头、`BUSY_WINDOW`；`relay.py` 中继；`catalog.py` 目录行和繁忙提示（Codex、Pi 共用） |
