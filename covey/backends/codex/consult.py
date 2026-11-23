@@ -29,15 +29,12 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from covey.core.state import ensure_private_dir
+
 try:
     import tomllib
-except ModuleNotFoundError:  # Python 3.10 (pyproject requires-python >=3.10): tomllib is 3.11's; tomli is the same reader.
-    try:
-        import tomli as tomllib
-    except ModuleNotFoundError:
-        tomllib = None
-
-from covey.core.state import ensure_private_dir
+except ModuleNotFoundError:  # Python 3.10 (pyproject requires-python >=3.10): tomllib is 3.11's; core/toml_compat.py is
+    from covey.core import toml_compat as tomllib  # tomli, the same reader, kept in the tree.
 
 # Never linked into the turn's home. "memories" covers the folder and its databases (memories_1.sqlite, memories.lock);
 # history.jsonl is the owner's prompt history, which an ask's words would join.
@@ -94,10 +91,8 @@ def _toml_key(key) -> str:
 
 def minimal_config(text: str) -> str:
     """The config.toml of a consult's home from the owner's ``text``: ``KEPT`` and, for a provider of the owner's own
-    (not ``BUILT_IN``), its ``model_providers`` table. '' for a config that does not read as TOML, and where nothing reads
-    TOML (Python 3.10 without tomli): the consult runs on Codex's defaults then, the import never fails."""
-    if tomllib is None:
-        return ""
+    (not ``BUILT_IN``), its ``model_providers`` table. '' for a config that does not read as TOML: the consult runs on
+    Codex's defaults then. Python 3.10 reads it as 3.11+ does (core/toml_compat.py)."""
     try:
         data = tomllib.loads(text)
     except (tomllib.TOMLDecodeError, ValueError):

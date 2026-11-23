@@ -449,6 +449,7 @@
 | `core/task_processes.py` | What a task's commands leave running once its Harness has closed, found by the marker its runner puts in its … |
 | `core/text.py` | Text shown on a card from what a task or a tool said: secrets hidden, bounded, escaped |
 | `core/timing.py` | Millisecond timing of the live flows |
+| `core/toml_compat.py` | A TOML reader for Python 3.10, which has no tomllib |
 | `core/topic_gist.py` | 话题要点: a few lines each topic keeps of what it is about at heart, written by the topic's own model at the end … |
 | `core/topic_memory.py` | The memory of one topic |
 | `core/topic_seen.py` | When the owner last saw each topic |

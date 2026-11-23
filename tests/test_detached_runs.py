@@ -358,6 +358,8 @@ class PrestartTests(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in directory.iterdir()), [rd.HANDOFF])
 
 
+@unittest.skipUnless(hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"),
+                     "no pidfd here (macOS, or a Python built without it): the runner looks every 0.3 s instead")
 class WakeTests(unittest.TestCase):
     """A bridge's inbox write wakes its runner at once (S37: it looked every 0.3 s, 0.25 s a click)."""
 

@@ -4,13 +4,15 @@ read-only sandbox in a private CODEX_HOME with its apps, plugins, memories, hook
 Bridge's tools; READ and LOOK are as they were; a channel's turn forks the helper's session without touching it."""
 from __future__ import annotations
 
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from support import make_context, make_job
+from support import REPO, make_context, make_job
 from covey.app import collab_channel, tool_limits
 from covey.backends.claude import argv as claude_argv
 from covey.backends.claude.bridge import ClaudeBackend
@@ -150,7 +152,6 @@ class CodexConsultTest(unittest.TestCase):
         self.assertEqual(sent[0]["id"], 7)
         self.assertIn("error", sent[0])
 
-    @unittest.skipIf(consult.tomllib is None, "nothing reads TOML here (Python 3.10 without tomli)")
     def test_the_private_home_links_all_but_rules_hooks_plugins_skills_memories_history_and_config(self):
         with tempfile.TemporaryDirectory() as tmp:
             real, state = Path(tmp) / "real", Path(tmp) / "state"
@@ -183,7 +184,6 @@ class CodexConsultTest(unittest.TestCase):
             self.assertFalse(home.exists())  # Removed with the turn: its links, never what they point at.
             self.assertTrue((real / "rules" / "default.rules").exists() and (real / "sessions").is_dir())
 
-    @unittest.skipIf(consult.tomllib is None, "nothing reads TOML here (Python 3.10 without tomli)")
     def test_a_built_in_provider_takes_no_table_and_an_unreadable_config_gives_an_empty_one(self):
         self.assertEqual(consult.minimal_config('model_provider = "openai"\nmodel = "m"\n[model_providers.openai]\nx = 1\n'),
                          'model_provider = "openai"\nmodel = "m"\n')
@@ -353,9 +353,20 @@ if __name__ == "__main__":
 
 
 class NoTomlTest(unittest.TestCase):
-    """Python 3.10 (requires-python >=3.10) has no tomllib: the Codex backend still imports, and a consult's config is
-    empty instead of the import failing (CI's 3.10 job was red on it from 9f648d6)."""
+    """Python 3.10 (requires-python >=3.10) has no tomllib: the Codex backend reads the owner's config.toml with
+    core/toml_compat.py (tomli, the reader tomllib was made from), so a consult keeps its model and provider there too.
+    CI's 3.10 job was red from 9f648d6 (the import failed) and again from 5ff525e (the config came out empty)."""
 
-    def test_without_a_toml_reader_the_config_is_empty(self):
-        with mock.patch.object(consult, "tomllib", None):
-            self.assertEqual(consult.minimal_config('model = "m"\n'), "")
+    CONFIG = 'model = "m"\nmodel_provider = "acme"\napproval_policy = "never"\n[model_providers.acme]\nbase_url = "https://acme.example/v1"\n'
+
+    def test_without_the_standard_librarys_reader_a_consults_config_reads_the_same(self):
+        code = ("import sys\nsys.modules['tomllib'] = None\nfrom covey.backends.codex import consult\n"
+                "print(consult.tomllib.__name__)\nprint(consult.minimal_config(sys.argv[1]), end='')\n")
+        done = subprocess.run([sys.executable, "-B", "-c", code, self.CONFIG], cwd=str(REPO), capture_output=True,
+                              text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        name, _, config = done.stdout.partition("\n")
+        self.assertEqual(name, "covey.core.toml_compat")
+        self.assertEqual(config, 'model_provider = "acme"\nmodel = "m"\n\n[model_providers.acme]\n'
+                                 'base_url = "https://acme.example/v1"\n')
+        self.assertEqual(config, consult.minimal_config(self.CONFIG))
