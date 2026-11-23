@@ -391,9 +391,11 @@ class Temporary(Rule):
     # main-thread/dispatch: the 派发卡's records and conclusion notes (app/dispatch_cards.py); main-thread/tracks: the
     # ledger of what the butler's tracks answered (core/track_ledger.py; their session files go sooner,
     # TrackSessions); answer-cards: the cards an answer went out on, kept until their 产物 are uploaded (app/answer_cards.py);
-    # stranger-replies: the day's marks of the one line a person who is not the owner got (app/strangers.py).
+    # stranger-replies: the day's marks of the one line a person who is not the owner got (app/strangers.py);
+    # event-spool: events the SDK connection took in that no start handed over (feishu/event_spool.py; a start drops
+    # the ones past their REPLAY_SECONDS itself, so only what no SDK-mode start read again stays this long).
     folders = ("tmp", "artifact-upload", "inbound-messages", "proxy/shots", "main-thread/opened", "main-thread/relays",
-               "main-thread/dispatch", "main-thread/tracks", "answer-cards", "stranger-replies")
+               "main-thread/dispatch", "main-thread/tracks", "answer-cards", "stranger-replies", "event-spool")
     title = "删除 tmp/、artifact-upload/、proxy/shots/ 条目"
 
     def select(self, run):

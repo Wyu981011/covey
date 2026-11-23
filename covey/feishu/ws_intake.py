@@ -9,10 +9,13 @@ of the same event key prints (feishu/events.py ``*_JQ``), so the handlers cannot
 callback (``card.action.trigger``) is answered with a toast in the same frame, once the click is queued (HELD_TOAST
 while the Bridge's start, which connects first with ``Intake.start``, has not attached the click consumer yet):
 lark-cli always answers ``{"code":200}`` itself. Events are queued per key and handled on that key's own consumer
-thread, as with lark-cli, so a slow message never delays the connection's pings or a click's toast.
+thread, as with lark-cli, so a slow message never delays the connection's pings or a click's toast. What is taken in
+stays on disk until it is handled (feishu/event_spool.py): a stop, a restart or a crash before then leaves it to the
+next start, which hands it to its consumer before what came since.
 """
 from __future__ import annotations
 
+import functools
 import json
 import os
 import queue
@@ -24,7 +27,7 @@ from typing import Any
 
 from covey.core import env as cenv
 from covey.core import timing
-from covey.feishu import events
+from covey.feishu import event_spool, events
 from covey.feishu.events import (CARD_ACTION_EVENT_KEY, MENU_EVENT_KEY, MESSAGE_EVENT_KEY, READ_EVENT_KEY,
                                  REPLY_CONTEXT, SUBSCRIPTIONS, consumer, format_event_stderr)
 
@@ -274,6 +277,8 @@ class Intake:
         self.loop = None
         self.go = threading.Event()  # Set by start (or the first consume): the thread may connect.
         self.up = threading.Event()  # Set while connected: what wait_connected waits on.
+        # Each event on disk from its arrival until handled (feishu/event_spool.py); None without a state directory.
+        self.spool = event_spool.spool_for(ctx, log, self.first_time)
 
     # -- events in --
 
@@ -304,9 +309,12 @@ class Intake:
             self.log(f'event websocket: unreadable event ({type(exc).__name__})')
             return None
         if self.first_time(event.get('event_id')):
+            name = self.spool.keep(key, event) if self.spool is not None else ''  # Its write is queued, not done.
             try:
-                self.queues[key].put_nowait(event)
+                self.queues[key].put_nowait((event, name))
             except queue.Full:
+                if name:
+                    self.spool.done(name)
                 self.log(f'event websocket: {key} queue full; event dropped')
                 return None
         if key != CARD_ACTION_EVENT_KEY:
@@ -318,7 +326,9 @@ class Intake:
     # -- consumers --
 
     def consume(self, key: str, handle) -> None:
-        """Handle the key's events on this thread until shutdown: events.consume's job with lark-cli."""
+        """Handle the key's events on this thread until shutdown: events.consume's job with lark-cli. First what the
+        last run took in and did not handle (feishu/event_spool.py), in the order it came; each event is settled (its
+        kept file removed) when ``handle`` returns, or later by whoever took it over with ``event_spool.hold``."""
         sub, health = SUBSCRIPTIONS[key], consumer(key)
         marker = {REPLY_CONTEXT: True} if key == MESSAGE_EVENT_KEY else {}  # The event names type, root, parent, mentions.
         health.starting(self.link)
@@ -328,16 +338,22 @@ class Intake:
         if up:
             self._ready(key)
         self._start()
-        pending = self.queues[key]
+        pending, spool = self.queues[key], self.spool
+        if spool is not None:
+            spool.wait_loaded(event_spool.LOAD_SECONDS)  # Read at the start, long before the consumers attach.
         while not self.shutdown.is_set():
-            try:
-                event = pending.get(timeout=.5)
-            except queue.Empty:
-                continue
+            item = spool.left(key) if spool is not None else None
+            if item is None:
+                try:
+                    item = pending.get(timeout=.5)
+                except queue.Empty:
+                    continue
+            event, name = item
             health.begin()
             timing.arrived()  # A message's or click's flow counts from here (core/timing.py).
             try:
-                handle({**event, **marker}, self.ctx)
+                with event_spool.settling(functools.partial(spool.done, name) if name else None):
+                    handle({**event, **marker}, self.ctx)
             except Exception as exc:  # noqa: BLE001
                 self.log(f'{sub.handler} error: {exc}')
             finally:
@@ -388,6 +404,8 @@ class Intake:
     def _start(self, connect=True) -> None:
         if connect:
             self.go.set()
+        if self.spool is not None:
+            self.spool.start()  # Reads what the last run left meanwhile, before it writes anything of this one.
         with self.lock:
             if self.started:
                 return
@@ -447,14 +465,20 @@ class Intake:
     def stop(self) -> None:
         """Close the connection and stop the SDK's loop, once; called when the Bridge stops. The Bridge calls it twice
         (on the signal and at the end of its main): the second disconnect, on a loop already stopped, only waited out
-        its 2 s before the process could exit and the Manager start the next one (T648)."""
+        its 2 s before the process could exit and the Manager start the next one (T648). Each call then lets the
+        kept events' queued writes and removals finish, at most event_spool.FLUSH_SECONDS and not at all when none
+        are queued: the second comes after the last message and the clicks being handled are done."""
         with self.lock:
             client, loop, self.client, self.loop = self.client, self.loop, None, None
             kept = {key: self.queues[key].qsize() for key in (MESSAGE_EVENT_KEY, CARD_ACTION_EVENT_KEY, *self.attached)}
-        if client is None or loop is None:
-            return
+        if client is not None and loop is not None:
+            self._disconnect(client, loop, kept)
+        if self.spool is not None:
+            self.spool.flush(event_spool.FLUSH_SECONDS)
+
+    def _disconnect(self, client, loop, kept) -> None:
         left = ' '.join(f'{key}={n}' for key, n in sorted(kept.items()) if n)
-        if left:  # Taken in (a click answered) and never handled: what the owner may have to send again.
+        if left:  # Taken in (a click answered) and not handled: kept for the next start (feishu/event_spool.py).
             self.log(f'event websocket: stopping with events not handled {left}')
         client._auto_reconnect = False
         try:
@@ -560,8 +584,10 @@ def watch_status(runtime) -> None:
 
 
 def reset() -> None:
-    """Forget the connection (tests)."""
+    """Forget the connection (tests), its spool's thread ended."""
     global _intake
     with _intake_lock:
-        _intake = None
+        current, _intake = _intake, None
+    if current is not None and current.spool is not None:
+        current.spool.close()
     events._consumers.clear()

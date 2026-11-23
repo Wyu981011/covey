@@ -1,11 +1,13 @@
 """A bounded queue of card clicks and the worker threads that run them."""
 from __future__ import annotations
 
+import functools
 import queue
 import threading
 import time
 
 from covey.core import timing
+from covey.feishu.event_spool import hold, settling
 
 
 class CardActionQueue:
@@ -19,7 +21,9 @@ class CardActionQueue:
 
     A queued click was acknowledged: a clean stop lets the workers run what is
     queued (CardLanes.drain waits for it through Runtime.card_queues, within its
-    deadline) and never runs one twice.
+    deadline) and never runs one twice. Over the SDK connection the click stays
+    kept on disk until its handler here has run (feishu/event_spool.py ``hold``),
+    so one a stop left queued runs at the next start.
     """
     LIMIT = 32
 
@@ -34,7 +38,9 @@ class CardActionQueue:
 
     def submit(self, busy, handler, *args):
         """Run handler(*args) on a worker; False, with `<label> busy; <busy>` logged, when the queue is full."""
-        work = timing.carry(handler, 'worker')  # The message or click that queued it waits for it.
+        carried = timing.carry(handler, 'worker')  # The message or click that queued it waits for it.
+        settle = hold()  # Over the SDK connection: the click it came from stays kept until this has run.
+        work = carried if settle is None else functools.partial(_settled, settle, carried)
         with self.start_lock:
             # The first click; or, during a stop, one queued after the workers had emptied the queue and gone.
             if not self.started:
@@ -48,7 +54,9 @@ class CardActionQueue:
             else:
                 full = False
         if full:
-            timing.drop(work)
+            timing.drop(carried)
+            if settle is not None:
+                settle()  # Dropped on purpose: the controller decides what that leaves.
             self.topics.runtime.log(f'{self.label} busy; {busy}')
             return False
         return True
@@ -81,3 +89,9 @@ class CardActionQueue:
         if left:
             self.topics.runtime.log(f'{self.label} clicks not finished at stop: {left} left after {timeout} s')
         return not left
+
+
+def _settled(settle, work, *args):
+    """``work(*args)``, then the click it came from settled (feishu/event_spool.py)."""
+    with settling(settle):
+        return work(*args)

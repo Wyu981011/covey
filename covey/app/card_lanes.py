@@ -17,9 +17,11 @@ S36) runs in a lane of its own, at the same time as the task cards.
 
 A clean stop (``drain``) lets the clicks being handled and the acknowledged clicks'
 follow-ups finish, for at most DRAIN_SECONDS: the user was told an answer is being sent.
-Clicks not yet started are left; they were never acknowledged. The clicks a
-controller's CardActionQueue accepted (app/card_queue.py, Runtime.card_queues) run
-within the same time.
+Clicks not yet started are left. With lark-cli they were never acknowledged; over the
+SDK connection they were (its toast), so each stays kept on disk until its run is
+over (feishu/event_spool.py ``hold``) and a click left at a stop runs at the next start.
+The clicks a controller's CardActionQueue accepted (app/card_queue.py,
+Runtime.card_queues) run within the same time.
 """
 from __future__ import annotations
 
@@ -33,6 +35,7 @@ import uuid
 
 from covey.app.card_actions import click_kind
 from covey.core import timing
+from covey.feishu.event_spool import hold, settling
 
 WORKERS = 4
 LIMIT = 256  # Beyond this backlog a click is handled on the consumer thread, as before.
@@ -89,10 +92,12 @@ class CardLanes:
             self.log(f"card lane unavailable: {type(exc).__name__}")
             lane = ""
         arrival = timing.take_arrival()  # The click's flow counts from the consumer reading it.
-        if not self._queue(lane, functools.partial(self.run, event, ctx, lane, arrival), "card action"):
+        # Over the SDK connection the click stays kept on disk until its run is over, on whichever thread it runs.
+        work = functools.partial(self.run, event, ctx, lane, arrival, hold())
+        if not self._queue(lane, work, "card action"):
             if lane:
                 self.log(f"card lanes busy backlog={self.size}; handling on the consumer thread")
-            self.run(event, ctx, lane, arrival)
+            work()
 
     def _queue(self, lane, work, what):
         """Queue ``work`` at the end of ``lane``; False when it is to run on this thread instead
@@ -112,7 +117,9 @@ class CardLanes:
                 self.ready.put(lane)
         return True
 
-    def run(self, event, ctx, lane="", arrival=None):
+    def run(self, event, ctx, lane="", arrival=None, settle=None):
+        """Handle the click, then queue its follow-ups. ``settle`` (feishu/event_spool.py) is called once the handler
+        is over, unless the handler queued the click's work for another thread (``hold``)."""
         token = uuid.uuid4().hex
         self._unsettle(1)
         flow = None
@@ -127,7 +134,8 @@ class CardLanes:
                 self.health.begin(token)
             _click.pending, _click.report, _click.message = [], None, str(event.get("message_id") or "")
             try:
-                self.handle(event, ctx)
+                with settling(settle):
+                    self.handle(event, ctx)
             except Exception as exc:  # noqa: BLE001 - one click must not end a lane
                 self.log(f"handle_card_action_event error: {exc}")
             finally:
@@ -199,7 +207,9 @@ class CardLanes:
                 with self.lock:
                     items = self.lanes[lane]
                     if items and self.shutdown.is_set() and items[0][2] == "card action":
-                        self.size -= len(items)  # Never acknowledged: not started while stopping.
+                        # Not started while stopping: with lark-cli never acknowledged; over the SDK connection
+                        # kept on disk, as nothing settled them, and run by the next start (feishu/event_spool.py).
+                        self.size -= len(items)
                         items.clear()
                     if not items:
                         del self.lanes[lane]

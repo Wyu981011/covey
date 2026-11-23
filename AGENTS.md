@@ -481,6 +481,7 @@
 | `feishu/connections.py` | Linux event-bus transport watchdog, independent of user message activity |
 | `feishu/delivery.py` | Shared Feishu message delivery helpers for bridge scripts |
 | `feishu/drive.py` | The bot's cloud space (Drive) through lark-cli: one call, one upload, and a file uploaded for a chat message |
+| `feishu/event_spool.py` | Events the SDK connection took in, kept in the state directory until they are handled, so a stop, a restart … |
 | `feishu/events.py` | Shared Lark event consumer helpers for Feishu bridge scripts |
 | `feishu/forward.py` | The model text of a quoted message (render_replied_message_context) and of a merged forward, nested forwards … |
 | `feishu/install_browser.py` | ./install 用的浏览器会话：一个无头 Chromium 扫一次码，从头到尾替主人点完建应用、授权和开发者后台补配置。 在装了 Playwright 的 Python … |

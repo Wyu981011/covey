@@ -208,7 +208,7 @@
 | [多设备](#多设备开发中默认关)（开发中） | `COVEY_DEVICES=1` 加 `devices.json` | `devices` 后台线程（有设备时才起）；设备上能跑 Claude Code、Codex 和 Antigravity 的话题，管家也能开 |
 | [节点与机器状况](#节点与机器状况默认关) | `COVEY_NODE_LISTEN=<监听地址>` | `nodes-gateway`、`nodes-alerts`、`nodes-local` 后台线程；机器状况告警卡，设置卡「设备」标签 |
 | [飞书 SDK 与直连](#飞书-sdk-与直连) | `COVEY_CARD_TRANSPORT=sdk`；直连默认开 | 卡片和消息走常驻 SDK 客户端 |
-| [事件长连接走 SDK](#飞书-sdk-与直连) | `COVEY_EVENT_TRANSPORT=sdk` | `event-websocket` 线程代替 lark-cli 事件消费者 |
+| [事件长连接走 SDK](#飞书-sdk-与直连) | `COVEY_EVENT_TRANSPORT=sdk` | `event-websocket` 线程代替 lark-cli 事件消费者；`event-spool` 线程把收下没处理完的消息和点击记在 `event-spool/`，重启后补处理 |
 | [自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 默认开；`COVEY_APP_CHECK=0` 关 | `app-setup` 后台线程 |
 | [欢迎卡](usage.md#第一次使用) | 默认开；`COVEY_WELCOME=0` 关 | 启动时欢迎卡还没发出才有 `welcome` 后台线程，发出后它不再做事 |
 | [限流和临时故障后自动继续](reference.md#自动重试) | 默认开；`COVEY_AUTO_RETRY_LONG=0` 关 | 不多线程；任务记录多 `auto_retry_reset_at`、`auto_retry_progress`、`auto_retry_idle`、`auto_fault`、`auto_idle` |
@@ -411,7 +411,7 @@
 ### 飞书 SDK 与直连
 
 - `COVEY_CARD_TRANSPORT=sdk`：CardKit 卡片接口、消息的发送和回复、读消息详情都用常驻的 `lark-oapi` 客户端；上传文件和图片、转发话题等只有 lark-cli 做得了的仍走 lark-cli（见[投递、重投与 outbox](architecture.md#投递重投与-outbox)）。先在运行 Bridge 的那个 Python 里 `python3 -m pip install '.[feishu-sdk]'`。SDK 只支持显式命名的 profile，应用密钥只在内存里读取。请求发出前取不到凭据时退回 CLI（日志 `CardKit SDK unavailable locally; using CLI`）；请求已发出后不换传输重发。
-- `COVEY_EVENT_TRANSPORT=sdk`：Bridge 不起 lark-cli 的事件消费者，用一个 `lark_oapi` WebSocket 长连接收四类事件（消息、卡片点击、机器人菜单、已读回执），卡片点击在应答里立刻回 toast“收到”。Bridge 重启时它在核对完身份后就连上，启动恢复期间的点击和消息先收下（点击回“收到，机器人刚重启，稍后处理”），恢复做完再处理。同一个应用只能有一个事件长连接，所以**打开后四类事件全走 SDK**，同时也不能在别处再跑这个应用的 `lark-cli event consume`。依赖同上（`.[feishu-sdk]`），要显式命名的 profile。切回：去掉这个变量（或设 `cli`）并重启 Bridge。细节见[事件长连接走 SDK](architecture.md#事件长连接走-sdk默认关)。
+- `COVEY_EVENT_TRANSPORT=sdk`：Bridge 不起 lark-cli 的事件消费者，用一个 `lark_oapi` WebSocket 长连接收四类事件（消息、卡片点击、机器人菜单、已读回执），卡片点击在应答里立刻回 toast“收到”。Bridge 重启时它在核对完身份后就连上，启动恢复期间的点击和消息先收下（点击回“收到，机器人刚重启，稍后处理”），恢复做完再处理。收下的消息和点击处理完之前一直记在状态目录的 `event-spool/`，停止、重启或崩溃时还没处理的，下次启动先补处理（消息 24 小时内、点击 10 分钟内、菜单 2 分钟内的），不会重复建任务。同一个应用只能有一个事件长连接，所以**打开后四类事件全走 SDK**，同时也不能在别处再跑这个应用的 `lark-cli event consume`。依赖同上（`.[feishu-sdk]`），要显式命名的 profile。切回：去掉这个变量（或设 `cli`）并重启 Bridge。细节见[事件长连接走 SDK](architecture.md#事件长连接走-sdk默认关)。
 - `COVEY_FEISHU_DIRECT`：默认直连飞书开放平台，`0`（也认 `false`、`no`、`off`）时都走环境里的代理。直连时 Bridge 启动先试一次连 `open.feishu.cn:443`（lark 品牌是 `open.larksuite.com`），连得上就把它加进本进程的 `no_proxy`、`NO_PROXY`，之后的子进程都继承，日志 `Feishu direct: lark-cli reaches open.feishu.cn without the proxy`；连不上记 `Feishu direct unavailable (<异常类型>); lark-cli keeps the proxy`，环境不动。事件长连接的主机不在其中，仍走代理。
 
 ### 其他

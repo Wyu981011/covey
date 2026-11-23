@@ -187,13 +187,16 @@ class StorageMaintenanceTest(unittest.TestCase):
         fresh = self.write("tmp/fresh/file", "x")
         seen = self.write("inbound-messages/om_seen", "")
         told = self.write("stranger-replies/2026-11-21-ab12", "")  # app/strangers.py: a day's mark.
+        # feishu/event_spool.py: an event no SDK-mode start handed over (switched back to lark-cli, an older release).
+        spooled = self.write("event-spool/1795419554915-000001-message-0123456789abcdef.json", "{}")
         later = __import__("time").time() + 8 * DAY
         os.utime(fresh, (later, later))
         with held.open() as handle:  # Open in this process.
             plan = maintain(self.state, apply=True, now=later)
             self.assertTrue(handle.readable())
-        self.assertEqual(sorted(Path(p).name for p in plan["remove_temporary"]), ["2026-11-21-ab12", "old-cache", "om_seen"])
-        self.assertFalse(old.parent.parent.exists() or seen.exists() or told.exists())
+        self.assertEqual(sorted(Path(p).name for p in plan["remove_temporary"]),
+                         ["1795419554915-000001-message-0123456789abcdef.json", "2026-11-21-ab12", "old-cache", "om_seen"])
+        self.assertFalse(old.parent.parent.exists() or seen.exists() or told.exists() or spooled.exists())
         self.assertTrue(held.exists() and fresh.exists())
 
     def test_each_diff_is_kept_once_and_job_diffs_stay_bounded(self):

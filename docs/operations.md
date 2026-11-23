@@ -66,7 +66,7 @@ SERVICE_ROOT="$(python3 -B bin/covey_paths.py service-root)"
 - Bridge 一直起不来或收不到消息时，Manager 会在私聊里告诉主人，见下文[机器人停了会告诉主人](#机器人停了会告诉主人)。
 - 一个 lark-cli profile 只能被一份运行中的服务清单占用。另一个状态目录用同一 profile 注册时，`launch` 报 `another managed bridge already owns this profile`。
 
-开了 `COVEY_EVENT_TRANSPORT=sdk`（[配置](configuration.md#飞书-sdk-与直连)）时没有 lark-cli 事件消费者子进程，四类事件由 Bridge 的 `event-websocket` 线程收；`bridge.log` 里的 `ready event_key=` 两行照旧有，事件总线和 `bus.log` 这一层没有。这时 Bridge 启动后一核对完身份就连上（`event websocket connected; events wait for the start to finish`），重启认领那几秒里的点击和消息先收下，认领完再处理，见[启动时先连](architecture.md#事件长连接走-sdk默认关)。
+开了 `COVEY_EVENT_TRANSPORT=sdk`（[配置](configuration.md#飞书-sdk-与直连)）时没有 lark-cli 事件消费者子进程，四类事件由 Bridge 的 `event-websocket` 线程收；`bridge.log` 里的 `ready event_key=` 两行照旧有，事件总线和 `bus.log` 这一层没有。这时 Bridge 启动后一核对完身份就连上（`event websocket connected; events wait for the start to finish`），重启认领那几秒里的点击和消息先收下，认领完再处理，见[启动时先连](architecture.md#事件长连接走-sdk默认关)。停止时还没处理的消息和点击留在 `event-spool/`，下次启动先补处理：日志里停止时是 `event spool: N events taken in and not handled are kept for the next start`，启动时是 `event spool: what the last run took in and did not handle goes first: …`；停止时出现 `writes still queued` 说明盘挂住、有几条没记下来。
 
 **一条消息怎么走。** 消费者读到事件 → Bridge 判断谁被服务、找话题 → 发启动卡或排队卡 → 调度器取到任务，写交接文件、启动任务进程 → 任务进程启动后端、读后端事件、写任务卡、投递结果 → 退出。点击先到 Bridge：任务进程还活着时整条转进它的收件箱，否则由 Bridge 处理。详见[架构与开发说明](architecture.md)。
 
@@ -144,6 +144,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ interaction-deliveries/      补充和回答的送达记录
 │  ├─ delivery-receipts/           飞书写操作的幂等回执
 │  ├─ inbound-messages/            收到的消息的去重标记
+│  ├─ event-spool/                 事件长连接走 SDK 时，收下还没处理完的消息和点击（下次启动先补处理）
 │  ├─ stranger-replies/            别人私聊时回过的那句（每人每天一个标记）
 │  ├─ verified-results/、result-files/   已授权的回复正文、长回复文件
 │  ├─ answer-cards/                单独发出的答案卡（补产物链接用）
@@ -339,7 +340,7 @@ Bridge 的 maintenance 后台线程每小时检查一次（`core/maintenance.py`
 | 检查点 | 不在活跃状态、30 天未更新的压缩为 `.json.gz`，仍可用于“检查并继续” |
 | 执行过程 `traces/<任务键>.jsonl` | 任务已结束、30 天未更新、任务进程也不在的压缩为 `.jsonl.gz`，不删除；先写好并落盘 `.gz` 再删原文件 |
 | 任务记录 | 已结束的删掉没有代码再读的字段，其他字段和 `updated_at` 不变（`records_slimmed=`）；`jobs/`、`questions/`、`held-notes/` 的 `.journal` 超过 1 MiB 时删掉重来 |
-| `tmp/`、`artifact-upload/`、`inbound-messages/`、`stranger-replies/`、`proxy/shots/`、`main-thread/opened/`、`main-thread/relays/`、`main-thread/dispatch/`、`main-thread/tracks/` | 7 天内没有改动、也没有进程用着的整个删除 |
+| `tmp/`、`artifact-upload/`、`inbound-messages/`、`stranger-replies/`、`event-spool/`、`proxy/shots/`、`main-thread/opened/`、`main-thread/relays/`、`main-thread/dispatch/`、`main-thread/tracks/` | 7 天内没有改动、也没有进程用着的整个删除 |
 | 同时做几件事里这些事用过的 Claude 会话文件 | 按 `main-thread/tracks/` 账本里的 `session_id`，那一轮结束满 3 天、文件 3 天没改没读的删（`remove_track_sessions`）；不在账本里的不动 |
 | `runs/` 运行目录 | 任务进程已不在、最新文件早于 7 天的删除；任务记录和执行过程保留 |
 | 代答批次 `proxy/batches/` | 只删已结束且 30 天没改动的 |
