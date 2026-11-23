@@ -202,7 +202,7 @@
 | [专项停住后问主人](projects.md#专项停住后问主人) | `COVEY_PROJECT_ASK=1`（要 `COVEY_PROJECTS=1`） | 专项被护栏停住时多发一张卡：继续 / 收尾 / 停 |
 | [同时做几件事](butler.md#同时做几件事开关默认关) | `COVEY_BUTLER_TRACKS=1` | 管家消息的分流；`COVEY_TRACK_JUDGE_WARM` 没关时多一个待命的小模型进程 |
 | [我本来想找你的事](butler.md#我本来想找你的事开关默认关只记不打扰) | `COVEY_PATROL=shadow` | `patrol` 后台线程，只写 `patrol/` 记录；汇总和「看板」多一块，不发消息 |
-| [网页工作台](web.md) | `COVEY_WEB=1` 加 `COVEY_WEB_CONFIG=/absolute/path/to/web.json` | `web-push`、`web-inbox` 后台线程：把专项、话题、一轮、问题推给网页应用，取回网页上的操作 |
+| [网页工作台](web.md) | `COVEY_WEB=1` 加 `COVEY_WEB_CONFIG=/absolute/path/to/web.json` | `web-push`、`web-pass`、`web-inbox` 后台线程：把专项、话题、一轮、问题推给网页应用，取回网页上的操作 |
 | [派发卡](#派发卡) | `COVEY_DISPATCH_CARD=1` | `dispatch_cards` 后台线程；管家转给已有话题后提问下面挂一张活卡片 |
 | [群聊免@](#群聊免) | `COVEY_GROUP_ALL_MESSAGES=1` 加应用权限 | 设置卡「群聊」每个群多一个“免@” |
 | [多设备](#多设备开发中默认关)（开发中） | `COVEY_DEVICES=1` 加 `devices.json` | `devices` 后台线程（有设备时才起）；设备上能跑 Claude Code、Codex 和 Antigravity 的话题，管家也能开 |
@@ -516,7 +516,7 @@
 | `COVEY_PATROL_JUDGE_MINUTES` | `core/patrol.py`（`number`） | 30：小模型两次调用的间隔，分钟（1 到 1440）；试用时设 `1` | 否 |
 | `COVEY_PATROL_DAILY_CALLS` | `core/patrol.py`（`number`） | 48：小模型一天最多调几次（1 到 1000） | 否 |
 | `COVEY_PATROL_JUDGE_MS` | `core/patrol.py`（`number`） | 30000：小模型一次调用的硬上限，毫秒（1000 到 120000） | 否 |
-| `COVEY_WEB` | `core/web_sync.py`（`enabled`）、`core/web_backup.py`（`snapshot`）、`app/web_sync.py`（`WebSync.threads`） | 空：关。`1`：开网页工作台同步，`web-push`、`web-inbox` 两条线程；要同时设 `COVEY_WEB_CONFIG` | 否 |
+| `COVEY_WEB` | `core/web_sync.py`（`enabled`）、`core/web_backup.py`（`snapshot`）、`app/web_sync.py`（`WebSync.threads`） | 空：关。`1`：开网页工作台同步，`web-push`、`web-pass`、`web-inbox` 三条线程；要同时设 `COVEY_WEB_CONFIG` | 否 |
 | `COVEY_WEB_CONFIG` | `core/web_sync.py`（`load_config`）、`core/web_backup.py`（`snapshot`） | 空。指向一个 JSON：`base_url`（`https://`，或本机回环的 `http://127.0.0.1:端口`、`http://localhost`、`http://[::1]` 供自托管用，其他 `http://` 拒绝）、`key_file`（只从这个文件读密钥）、`push_seconds`（默认 1）、`poll_seconds`（默认 0.5）；文件缺了或写错只记一行失败、退避重试 | 否 |
 | `COVEY_WEB_SELFHOST` | `service/web_selfhost.py`（`enabled`、`spec`、`wanted`）、`service/doctor.py`（体检）、`core/web_backup.py`（`snapshot`）、`service/manager.py`（`Manager.ensure_selfhost`） | 空：关，Manager 不起线程、不起进程。`1`：Manager 拉起自托管网页进程 `node <COVEY_WEB_SELFHOST_DIR>/server/selfhost/main.js`（`node` 按服务清单的 `PATH` 找），只监听 `127.0.0.1`，挂了按服务的退避重启，Manager 退出时整组回收（Manager 被强杀时网页进程发现父进程不在了自己退出）；要同时设 `COVEY_WEB_SELFHOST_DIR`，Bridge 一侧另要 `COVEY_WEB=1` 和 `COVEY_WEB_CONFIG`（`python3 -B -m covey.service.web_selfhost` 一次备好） | 否 |
 | `COVEY_WEB_SELFHOST_DIR` | `service/web_selfhost.py`（`spec`） | 空。自托管网页的构建产物目录（`web/deploy/selfhost/build.sh` 打印的 `dist-selfhost`，`node_modules` 在它旁边），绝对路径，里面要有 `server/selfhost/main.js`；没设或不是绝对路径，开关开着也不起进程 | 否 |

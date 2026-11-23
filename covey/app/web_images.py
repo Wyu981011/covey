@@ -171,8 +171,10 @@ def file_id(path) -> str:
 
 
 class WebImages:
-    """The images of the turns one push thread builds: ``refs`` says what a turn carries and remembers what is still to be sent;
-    ``upload`` sends some of it and says which topics to build again. One thread uses it."""
+    """The images of the turns the push builds: ``refs`` says what a turn carries and remembers what is still to be sent;
+    ``upload`` sends some of it and says which topics to build again. The quick looks' thread and the pass's both build turns
+    (app/web_sync.py): what they change here is one dict entry at a time (a file's id, a pending image), which needs no lock; the
+    pass's thread alone uploads and saves, and changes ``ids`` and ``bad``."""
 
     def __init__(self, state, log=None) -> None:
         self.state = Path(state)

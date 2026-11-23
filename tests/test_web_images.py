@@ -120,8 +120,11 @@ class SentImageTest(ImagesCase):
         path = png(self.media / "om_1-1-img_v3.png")
         self.said_with(path, display=False)  # An answer's line has no display text: its words were pushed whole, path and all.
         self.sync.push_once(T0)
-        self.assertNotIn("images", self.owner_turn())  # Not on the page yet: sent after the items of this step.
+        # The pass's step read it and sent the image; the quick look after it built the topic again, now with it (T673: before, the
+        # turn went out without it and got it a step later).
         ident = web_images.file_id(path)
+        self.assertEqual(self.owner_turn()["images"], [{"id": ident, "kind": "sent", "w": 1200, "h": 800}])
+        self.assertEqual(len([item for item in self.web.items("turn") if item["key"] == f"{TOPIC}:1"]), 1)  # Only that read of it.
         self.assertEqual(sorted(self.web.images), [(ident, "full"), (ident, "thumb")])
         thumb = self.web.images[(ident, "thumb")]
         self.assertEqual((thumb["mime"], thumb["w"], thumb["h"]), ("image/webp", 1200, 800))

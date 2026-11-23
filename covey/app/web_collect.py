@@ -3,6 +3,7 @@ the page is sent. Reading only: it sends nothing and holds no lock (rule 1, AGEN
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import threading
@@ -10,7 +11,7 @@ import time
 from pathlib import Path
 
 from covey.app import owner_send, pins, project_lead, project_loop, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
-from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, revisits, turn_source, web_sync
+from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, revisits, store, turn_source, web_sync
 from covey.core import owner_send as owner_send_records
 from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
@@ -25,7 +26,7 @@ from covey.core.store import directory_store
 from covey.core.topics import topic_file
 from covey.core.trace_store import load_trace
 
-PASS_SLICE = 25  # Topics of a full pass looked at per step, after the hot ones: a pass is many steps, never one long look.
+PASS_SLICE = 25  # Topics of a full pass looked at per step of the pass thread (a pass is many steps, never one long look).
 TOPIC_DAYS = 30  # A full look takes the topics with a job written within this many days.
 MENU_SECONDS = 60.0  # How long the model menu a topic's ``config`` reads is kept (Collector.menu).
 TURNS_KEPT = 100  # The newest turns of a topic that are pushed.
@@ -34,6 +35,10 @@ BUTLER_TITLE = "管家"
 LEAD_TITLE = "负责人"
 EXTRA_TURNS = 20  # The newest turns of a topic that get their process and plan; every kept turn gets its figures (each read from its trace file once).
 FIGURES_KEPT = 8192  # Ended turns whose figures are remembered (a few numbers each): all kept turns of all topics a full look builds.
+# The caches go oldest first, a quarter at a time, never all at once (``Shared.keep``): a cleared cache read every topic's
+# history and trace files again in the next steps (2026-11-23 T673: 512 ended turns' extras were cleared every 26 topics).
+HISTORY_KEPT = 512  # Topics whose history lines are kept (Collector.rows).
+EXTRA_KEPT = 1024  # Ended turns whose process and plan are kept (Collector.ended_extras): up to 80 steps each, so not every one a pass reads.
 FILES_GOING, FILES_SETTLED = 15.0, 300.0  # Seconds a turn's 产物 are kept before they are read again: while one goes up, and after.
 RECEIPTS_KEPT = 200  # The newest receipts of a project's inbox that are looked at.
 EDIT_PREFIX = "edit-"  # The message id of the owner's edit sent into a running task (app/source_watch.py): edit-<message id>-<stamp>.
@@ -55,45 +60,115 @@ def estimate_of(job, turn) -> None:
         turn.pop("estimate_seconds", None)
 
 
-class Collector:
-    """The items of the owner's chat from the records (see the module's reading rules). One thread uses it."""
+class Shared:
+    """What the two collectors of one WebSync share (the quick look's, ``collect_hot``, and the pass's, ``collect_pass``, each used by
+    one thread) and what a collector made again after a stuck read keeps (WebSync.start_over): the caches of what ended turns and
+    histories read, so a new collector does not read every topic's files again; the board's reading; which topics the page has.
+    A left-behind thread that comes back late may still write a cache entry: each is keyed by what it was read from (a turn's
+    record time, a file's stamp), so a late one is right or read again, never wrong. Compound changes take ``lock``, no read
+    of a file or a request under it."""
 
-    def __init__(self, env, stuck=None, log=None, images=None) -> None:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.seq = itertools.count(1)  # Each topic's read takes the next (``next_seq``): the newer read of a topic has the higher.
+        self.history = {}  # topic id -> ((mtime_ns, size), rows)
+        self.extra = {}  # (job key, updated_at) -> the optional fields of an ended turn (web_turns.extras).
+        self.figures = {}  # (job key, updated_at) -> the figures of an ended turn (web_turns.ended_figures).
+        self.files = {}  # (job key, updated_at) -> (when read, the turn's 产物) (``artifacts``, data contract v32).
+        self.receipts = {}  # project id -> {receipt file name: its row} (thread_end only).
+        self.numbers = {}  # topic id -> its T number once it has one (a number is never changed): a project's rows name it.
+        self.project_rows = {}  # project id -> (what it was built from, its item) (Collector.project_items).
+        self.job_seqs = {}  # topic id -> {job id: seq of its answer turn}, of a topic in a collaboration (the evidence's seq).
+        self.states = {}  # topic id -> its state word, from its last build (a project's 等你 reads it).
+        self.unpaired = {}  # topic id -> its answer turns with no task record, as last logged (count_unpaired).
+        self.unseen = set()
+        self.board = None  # topic id -> its group on the board (``board_groups``); None without the board (COVEY_PINNED_TOPICS unset).
+        self.asks = None  # 要你处理 as every card counts it ({waiting, stopped, stuck}, core/board_read.py Asks.counts), data contract v34.
+        self.pushed_topics, self.pass_seen, self.pushed_collabs = set(), set(), set()
+        self.stuck = {}  # topic id -> the left-behind thread stuck reading it: looks leave the topic out while that thread lives.
+        self.dirty = set()  # The topics the next quick look builds whatever the indexes say (Collector.touch).
+        self.unbuilt = {}  # topic id -> the error its build raised, as last logged (Collector.build_each).
+
+    def next_seq(self) -> int:
+        return next(self.seq)
+
+    def recall(self, cache, key):
+        """``cache[key]``, made the newest, or None."""
+        with self.lock:
+            value = cache.pop(key, None)
+            if value is not None:
+                cache[key] = value
+            return value
+
+    def keep(self, cache, key, value, limit) -> None:
+        """``cache[key] = value``; over ``limit`` the oldest quarter goes."""
+        with self.lock:
+            cache.pop(key, None)
+            cache[key] = value
+            if len(cache) > limit:
+                for old in list(itertools.islice(cache, max(1, len(cache) // 4))):
+                    cache.pop(old, None)
+
+    def built(self, topics) -> None:
+        """``topics`` were built and their items handed to the push: the page has them, and the pass under way has seen them."""
+        names = {("topic", topic) for topic in topics}
+        with self.lock:
+            self.pushed_topics |= names
+            self.pass_seen |= names
+
+    def alive_stuck(self) -> set:
+        """The topics whose read is stuck in a thread still alive."""
+        with self.lock:
+            for topic, thread in list(self.stuck.items()):
+                if not thread.is_alive():
+                    del self.stuck[topic]
+            return set(self.stuck)
+
+
+class Collector:
+    """The items of the owner's chat from the records (see the module's reading rules). One thread uses it: the quick look's
+    (``collect_hot``) or the pass's (``collect_pass``); WebSync.push_once runs one of each in turn. What two collectors share is
+    ``shared``."""
+
+    def __init__(self, env, stuck=None, log=None, images=None, shared=None) -> None:
         self.env = env
+        self.shared = Shared() if shared is None else shared
+        if stuck is not None:
+            self.shared.stuck = stuck
         self.images = images  # web_images.WebImages (data contract v19); None: turns carry no images (their words lose local paths all the same).
         self.now = 0.0  # The time of the look under way.
         self.backfill = images is not None and not images.backfilled  # The first pass looks at every topic once (their images).
         self.backfilling, self.backfill_extra = False, set()  # The pass under way is that one; the topics only it looks at.
-        self.stuck = {} if stuck is None else stuck  # topic id -> the left-behind thread stuck reading it (WebSync.start_over).
         self.left = set()  # The topics the last look left out because their read is stuck.
         self.at, self.thread = "", None  # The topic being built now, and the thread that looks.
-        self.hot, self.dirty = set(), set()
-        self.unseen = set()
-        self.board = None  # topic id -> its group on the board (``board_groups``); None without the board (COVEY_PINNED_TOPICS unset).
-        self.asks = None  # 要你处理 as every card counts it ({waiting, stopped, stuck}, core/board_read.py Asks.counts), data contract v34.
-        self.states = {}  # topic id -> its state word, from its last build (a project's 等你 reads it).
-        self.pushed_topics = set()
-        # The full pass under way: the topics still to look at, the ones looked at so far, and whether the last step ended it.
-        self.pass_left, self.pass_seen, self.pass_done = [], set(), False
+        self.doing = ""  # What the look is at, for the log line of one left behind (WebSync.loop): indexes, board, topic, projects...
+        self.retired = False  # Left behind (WebSync.start_over_pass): a pass it ends late changes nothing the new one keeps.
+        self.hot = set()  # The topics the last quick look found running, asking or waiting for 开始.
+        # The full pass under way: the topics still to look at, and whether the last step ended it.
+        self.pass_left, self.pass_done = [], False
         self.urgent = 0  # How many of the last look's items, at its head, are the hot topics' (WebSync.push_once sends them first).
-        self.history = {}  # topic id -> ((mtime_ns, size), rows)
+        self.groups = []  # The last look's items by whose they are: [(topic or "project:<id>", seq of its read, items)] (WebSync).
+        self.projects_due = True  # The next quick look builds every project again, not only the ones that changed (a pass started).
+        self.history, self.extra, self.figures, self.files = self.shared.history, self.shared.extra, self.shared.figures, self.shared.files
+        self.receipts, self.job_seqs, self.states, self.unpaired = self.shared.receipts, self.shared.job_seqs, self.shared.states, self.shared.unpaired
         self.leads = {}  # lead topic id -> its project's record (COVEY_PROJECTS=1 only), from this look.
         self.projects = {}  # project id -> its record, from this look (a member topic's ``joined_at``).
-        self.extra = {}  # (job key, updated_at) -> the optional fields of an ended turn (web_turns.extras).
-        self.figures = {}  # (job key, updated_at) -> the figures of an ended turn (web_turns.ended_figures).
-        self.files = {}  # (job key, updated_at) -> (when read, the turn's 产物) (``artifacts``, data contract v32).
-        self.unpaired = {}  # topic id -> its answer turns with no task record, as last logged (count_unpaired).
         self.log = log  # The bridge.log writer (WebSync's runtime.log); None: nothing logged.
-        self.receipts = {}  # project id -> {receipt file name: its row} (thread_end only).
         self.room = web_room.Room()  # Whom the butler's turns handed on to and which topic turns went to the private chat (data contract v23).
         self.origins = None  # web_said.Origins of the owner's chat: who wrote each hand-on, read once.
         self.moved = 0.0  # Monotonic time of the last progress of a look and its push: a topic built, a batch sent (WebSync.loop's stuck check).
         self.collab_cache, self.collab_primed = {}, False  # name -> ((mtime_ns, size), record) of <state>/collab/ (read_collabs).
         self.collab_now, self.collab_helpers, self.collab_topics = {}, {}, set()  # This look's: id -> record (the chat's), helper topic -> records, topics in any.
-        self.job_seqs = {}  # topic id -> {job id: seq of its answer turn}, of a topic in a collaboration (the evidence's seq).
-        self.pushed_collabs = set()
-        self.lock = threading.Lock()
         self.menu_at, self.menu_models = -MENU_SECONDS, {}  # The model menu (available_models) a topic's ``config`` reads, read again after MENU_SECONDS.
+
+    # What the two collectors share, as attributes of each.
+    stuck = property(lambda self: self.shared.stuck, lambda self, value: setattr(self.shared, "stuck", value))
+    unseen = property(lambda self: self.shared.unseen, lambda self, value: setattr(self.shared, "unseen", value))
+    board = property(lambda self: self.shared.board, lambda self, value: setattr(self.shared, "board", value))
+    asks = property(lambda self: self.shared.asks, lambda self, value: setattr(self.shared, "asks", value))
+    pushed_topics = property(lambda self: self.shared.pushed_topics, lambda self, value: setattr(self.shared, "pushed_topics", value))
+    pass_seen = property(lambda self: self.shared.pass_seen, lambda self, value: setattr(self.shared, "pass_seen", value))
+    pushed_collabs = property(lambda self: self.shared.pushed_collabs, lambda self, value: setattr(self.shared, "pushed_collabs", value))
 
     def menu(self) -> dict:
         """The launch card's model menu (app/launch_models.py available_models), read at most every MENU_SECONDS; {} when it cannot be read
@@ -109,107 +184,180 @@ class Collector:
                 self.menu_models = {}
         return self.menu_models
 
-    def touch(self, topic) -> None:
-        """The page acted on ``topic``: it is built on the next look whatever the indexes say."""
-        with self.lock:
-            self.dirty.add(str(topic))
+    dirty = property(lambda self: self.shared.dirty)
 
-    def collect(self, chat, now, full) -> tuple:
-        """(items, deleted): ``items`` the topics looked at, their turns and questions, and all projects; ``deleted`` (full looks only)
-        the topics and projects pushed before that are not any more (a list of {type, key}; ``seen`` is updated by the caller)."""
+    def touch(self, topic) -> None:
+        """The page acted on ``topic`` (or a collaboration of it changed): the next quick look builds it whatever the indexes say."""
+        with self.shared.lock:
+            self.shared.dirty.add(str(topic))
+
+    def mark(self, doing) -> None:
+        """Progress: the look is at ``doing`` now (WebSync.loop's stuck check reads ``moved``, its log line ``doing``)."""
+        self.doing, self.moved = doing, time.monotonic()
+
+    def look_begins(self, chat, now) -> Path:
+        """What every look reads first: who said each hand-on, the private chat's room, the collaborations. The state directory."""
         state = Path(self.env.state_dir)
         self.thread = threading.current_thread()
         self.now = now
+        self.mark("room and collaborations")
         if self.origins is None or self.origins.chat != str(chat):
             self.origins = web_said.Origins(state, chat)
         self.room.refresh(state)
         self.read_collabs(state, chat)
-        out = {topic for topic, thread in list(self.stuck.items()) if thread.is_alive()}
-        back, self.left = self.left - out, out  # A stuck read that came back: its topic is looked at again now.
-        running = board_read.running_jobs(state, chat)
-        asking = board_read.pending_questions(state, chat)
-        butler = butler_topic_id(chat)
+        return state
+
+    def read_projects(self, state, chat) -> tuple:
+        """(the chat's project records, the conversations not on the board: the butler's and the projects' leads)."""
         records = projects.records(state, chat)
         self.leads = {str(record.get("lead_topic_id")): record for record in records if record.get("lead_topic_id")} if projects.enabled() else {}
         self.projects = {str(record.get("id")): record for record in records}
-        family = [butler, *self.leads]  # The conversations that are not on the board: the butler's and the projects' leads.
+        return records, [butler_topic_id(chat), *self.leads]
+
+    def read_board(self, state, chat, now) -> None:
+        """The board's reading (app/pins.py): which results the owner has not seen, each topic's group, 要你处理."""
+        read = board_read.read(state, chat, now, keep=pins.kept(state, chat) if pins.laid() else ())
+        looked = pins.PinnedTopics(None, None)
+        looked.look(state, chat, now, read, board=pins.laid())
+        self.unseen = set(looked.unseen)
+        self.board = board_groups(looked.rows, looked.dismissed) if pins.laid() else None
+        self.asks = self.counted(state, chat, now, looked)
+        self.board_due = False
+
+    board_due = True  # The quick look reads the board before its first build (a pass reads it when it starts).
+
+    def build(self, state, chat, topic, now) -> tuple:
+        """(seq, items) of ``topic``: its records read now, after the seq is taken (``Shared.next_seq``)."""
+        seq = self.shared.next_seq()
+        self.doing = f"topic {topic[:12]}"
+        records = sorted(topic_job_records(state, topic, chat_id=chat), key=board_read.job_number)
+        self.at = topic
+        items = self.topic_items(state, chat, topic, records, now)
+        self.moved = time.monotonic()
+        return seq, items
+
+    def build_each(self, state, chat, topics, now) -> tuple:
+        """([(topic, seq, items)], the topics whose build raised) of ``topics``, one at a time. One that raises (a record of a shape
+        the build does not know, a read that failed) is left out of this look and logged once per topic and error; the others go
+        on. A busy index (core/store.py Busy) ends the look: nothing of it is sent."""
+        groups, failed = [], []
+        for topic in topics:
+            try:
+                seq, mine = self.build(state, chat, topic, now)
+            except store.Busy:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one topic must not hold up the others
+                failed.append(topic)
+                why = f"{type(exc).__name__}: {str(exc)[:80]}"
+                if self.shared.unbuilt.get(topic) != why:
+                    self.shared.unbuilt[topic] = why
+                    if self.log is not None:
+                        self.log(f"web sync topic {topic[:12]} not built: {why}")
+                continue
+            self.shared.unbuilt.pop(topic, None)
+            groups.append((topic, seq, mine))
+        self.at = ""
+        return groups, failed
+
+    def collect_hot(self, chat, now) -> list:
+        """The quick look (WebSync.push_hot, every push_seconds and when this process wrote a job or a question): the topics that
+        run, ask or wait for 开始 (three index queries), the ones that stopped a moment ago or the page just acted on, the butler's
+        and a lead's conversation while one of those, then the projects (built again only when one changed, every one after a pass
+        started) and the collaborations. All its items are urgent; ``groups`` says whose each is and when it was read."""
+        state = self.look_begins(chat, now)
+        out = self.shared.alive_stuck()
+        back = self.left - out  # A stuck read that came back: its topic is looked at again now.
+        self.mark("indexes")
+        running = board_read.running_jobs(state, chat)
+        asking = board_read.pending_questions(state, chat)
+        records, family = self.read_projects(state, chat)
         hot = {row.get("topic_id") for row in (*running, *asking) if row.get("topic_id")}
         hot |= set(board_read.starts(state, chat))  # Waiting for 开始 on a launch card: 等我 as a question is.
         hot |= self.family_live(state, chat, family)  # A turn of one runs or asks (the board does not list them).
-        with self.lock:
-            touched, self.dirty = self.dirty | back, set()
+        with self.shared.lock:
+            asked = set(self.shared.dirty)  # Taken off once this look went through: one given up leaves them to the next.
+        touched = asked | back
+        if self.board_due or hot != self.hot or touched:
+            self.mark("board")
+            self.read_board(state, chat, now)
+        quick = [topic for topic in hot | self.hot | touched if topic not in family and topic not in out]
+        looked = [topic for topic in family if (topic in hot or topic in self.hot or topic in touched) and topic not in out]
+        groups, _ = self.build_each(state, chat, [*quick, *looked], now)
+        self.shared.built([topic for topic, _, mine in groups if topic in quick or mine])
+        self.mark("projects")
+        seq = self.shared.next_seq()
+        made = self.project_items(state, chat, records, force=self.projects_due) + self.collab_items()
+        self.projects_due = False
+        groups += [(f"{each['type']}:{each['key']}", seq, [each]) for each in made]
+        # The look went through: what it was asked to build is done with. A topic whose build raised was logged; it is built again when
+        # it runs, asks or is touched again, and by every pass (kept in the hot set it would read the board again at every look).
+        self.hot, self.left = hot, out
+        with self.shared.lock:
+            self.shared.pushed_collabs |= {each["key"] for each in made if each["type"] == "collab"}
+            self.shared.dirty -= asked
+        self.groups = groups
+        items = [each for _, _, mine in groups for each in mine]
+        self.urgent = len(items)
+        self.mark("")
+        return items
+
+    def collect_pass(self, chat, now, full, skip=()) -> tuple:
+        """One step of the full pass (WebSync.pass_once, its own thread: a slow read here holds up no quick look). When ``full`` and
+        none is under way a pass starts: the board read again, every topic with a job written in the last TOPIC_DAYS days, the
+        butler's and the leads' conversations. Each step builds the next PASS_SLICE topics; those in ``skip`` (the quick look builds
+        them every step) are left to it. (items, deleted): ``deleted`` once the pass ended, the topics and collaborations pushed
+        before that it did not see. Nothing to do: ([], [])."""
         start = full and not self.pass_left  # A new pass only once the last one has ended (``full``: one is due).
-        if start or hot != self.hot or touched:
-            read = board_read.read(state, chat, now, keep=pins.kept(state, chat) if pins.laid() else ())
-            looked = pins.PinnedTopics(None, None)
-            looked.look(state, chat, now, read, board=pins.laid())
-            self.unseen = set(looked.unseen)
-            self.board = board_groups(looked.rows, looked.dismissed) if pins.laid() else None
-            self.asks = self.counted(state, chat, now, looked)
-        quick = [topic for topic in hot | self.hot | touched if topic not in family]
+        self.pass_done, self.groups, self.urgent = False, [], 0
+        if not start and not self.pass_left:
+            return [], []
+        state = self.look_begins(chat, now)
+        out = self.shared.alive_stuck()
+        self.left = out
+        skip = set(skip)
+        self.mark("indexes")
+        records, family = self.read_projects(state, chat)
         if start:
+            self.mark("board")
+            self.read_board(state, chat, now)
             backfill, self.backfill = self.backfill, False  # Every topic once, not only the recent ones (images of older turns).
             self.backfilling = backfill
             jobs = board_read.topic_jobs(state, chat)
-            self.pass_left = [topic for topic, records_ in jobs.items() if topic in hot or topic in touched or self.recent(records_, now)]
+            self.pass_left = [topic for topic, records_ in jobs.items() if topic in skip or self.recent(records_, now)]
             # The topics only that pass looks at: once it ends they are forgotten as pushed, so the next pass does not delete them.
             self.backfill_extra = {("topic", topic) for topic in jobs if topic not in self.pass_left} if backfill else set()
             self.pass_left += [key for _, key in sorted(self.backfill_extra)]
-            self.pass_seen = set()
-        passing = bool(self.pass_left) or start
-        slice_ = []
+            with self.shared.lock:
+                self.shared.pass_seen = set()
+        slice_, left = [], set()
         while self.pass_left and len(slice_) < PASS_SLICE:
             topic = self.pass_left.pop(0)
-            if topic not in quick:
+            if topic in skip or topic in out:
+                left.add(topic)
+            else:
                 slice_.append(topic)
-        # The pass's slice first, then the topics that run, ask, just did or the page just acted on: their records are read now, at
-        # the end, so what they pushed is never older than what a pass read (else a look of every
-        # topic that read a question before its answer can push 等你 again minutes later).
-        by_topic = {topic: sorted(topic_job_records(state, topic, chat_id=chat), key=board_read.job_number)
-                    for topic in [*slice_, *quick] if topic not in out}
-        looked = [topic for topic in family if (start or topic in hot or topic in self.hot or topic in touched) and topic not in out]
-        self.hot = hot
-        items, later = [], []  # The hot topics' items (sent first, every step) and the pass's (sent as the backlog allows).
-        urgent = set(quick)
-        for topic, jobs in by_topic.items():
-            self.at = topic
-            (items if topic in urgent else later).extend(self.topic_items(state, chat, topic, jobs, now))
-            self.moved = time.monotonic()
-        for topic in looked:
-            self.at = topic
-            mine = self.topic_items(state, chat, topic, sorted(topic_job_records(state, topic, chat_id=chat), key=board_read.job_number), now)
-            self.moved = time.monotonic()
-            items += mine
-            if mine:
-                by_topic[topic] = []
-        urgent = len(items)
-        items += later
-        self.at = ""
+        looked = [topic for topic in family if topic not in out and topic not in skip] if start else []
+        groups, failed = self.build_each(state, chat, [*slice_, *looked], now)
+        self.shared.built([topic for topic, _, mine in groups if topic in slice_ or mine])
+        with self.shared.lock:  # Left to the quick look, stuck, or its build raised: still on the page, not deleted at the pass's end.
+            self.shared.pass_seen |= {("topic", topic) for topic in left | set(failed)}
+        self.pass_done = not self.pass_left
         deleted = []
-        built = {("topic", topic) for topic in by_topic}
-        if passing:
-            self.pass_seen |= built
-        self.pass_done = passing and not self.pass_left
-        if self.pass_done:
-            seen = self.pass_seen | {("topic", topic) for topic in out}  # A topic left out is still on the page: not deleted.
-            deleted += [{"type": kind, "key": key} for kind, key in sorted(self.pushed_topics - seen)]
-            self.pushed_topics = seen - self.backfill_extra
-        if self.pass_done and self.backfilling:
-            self.backfilling, self.backfill_extra = False, set()
-            self.images.mark_backfilled(now)
-        elif built:
-            self.pushed_topics |= built
-        projects_now = self.project_items(state, chat, records)  # Read every step, like the hot topics: they go with them.
-        projects_now += self.collab_items()
-        items[urgent:urgent] = projects_now
-        self.urgent = urgent + len(projects_now)
-        current = {each["key"] for each in projects_now if each["type"] == "collab"}
-        if self.pass_done:
-            deleted += [{"type": "collab", "key": key} for key in sorted(self.pushed_collabs - current)]
-            self.pushed_collabs = current
-        else:
-            self.pushed_collabs |= current
-        return items, deleted
+        if self.pass_done and not self.retired:
+            with self.shared.lock:
+                # A topic left out (its read stuck) is still on the page, and so is one the quick look builds: not deleted.
+                seen = self.shared.pass_seen | {("topic", topic) for topic in out | skip}
+                deleted += [{"type": kind, "key": key} for kind, key in sorted(self.shared.pushed_topics - seen)]
+                self.shared.pushed_topics = seen - self.backfill_extra
+                current = set(self.collab_now)
+                deleted += [{"type": "collab", "key": key} for key in sorted(self.shared.pushed_collabs - current)]
+                self.shared.pushed_collabs = current
+            if self.backfilling:
+                self.backfilling, self.backfill_extra = False, set()
+                self.images.mark_backfilled(now)
+        self.groups = groups
+        self.mark("")
+        return [each for _, _, mine in groups for each in mine], deleted
 
     # -- collaborations (COVEY_COLLAB=1) ---------------------------------------------------------------------------------------
 
@@ -219,7 +367,8 @@ class Collector:
         is read and nothing is kept."""
         if not turn_source.enabled():
             self.collab_cache, self.collab_primed = {}, False
-            self.collab_now, self.collab_helpers, self.collab_topics, self.job_seqs = {}, {}, set(), {}
+            self.collab_now, self.collab_helpers, self.collab_topics = {}, {}, set()
+            self.job_seqs.clear()
             return
         try:
             paths = sorted((Path(state) / collab_records.FOLDER).glob("*.json"))
@@ -248,7 +397,8 @@ class Collector:
             self.collab_topics |= {integrator, *(str(ask.get("to")) for ask in record.get("asks") or ())} - {""}
             for helper in dict.fromkeys(str(ask.get("to")) for ask in record.get("asks") or ()):
                 self.collab_helpers.setdefault(helper, []).append(record)
-        self.job_seqs = {topic: seqs for topic, seqs in self.job_seqs.items() if topic in self.collab_topics}
+        for topic in [topic for topic in list(self.job_seqs) if topic not in self.collab_topics]:
+            self.job_seqs.pop(topic, None)
         for record in changed:
             for topic in {str((record.get("integrator") or {}).get("key") or ""), *(str(ask.get("to")) for ask in record.get("asks") or ())} - {""}:
                 self.touch(topic)
@@ -507,7 +657,7 @@ class Collector:
         except OSError:
             return []
         stamp = (stat.st_mtime_ns, stat.st_size)
-        kept = self.history.get(topic)
+        kept = self.shared.recall(self.history, topic)
         if kept and kept[0] == stamp:
             return kept[1]
         rows = []
@@ -518,9 +668,7 @@ class Collector:
                 continue
             if isinstance(row, dict) and row.get("role") in ("user", "assistant"):
                 rows.append(row)
-        if len(self.history) > 256:
-            self.history.clear()
-        self.history[topic] = (stamp, rows)
+        self.shared.keep(self.history, topic, (stamp, rows), HISTORY_KEPT)
         return rows
 
     def turns(self, state, topic, records, latest, word, project=None, now=0.0, questions=(), form=None, butler=False) -> tuple:
@@ -796,11 +944,11 @@ class Collector:
     def ended_figures(self, state, job) -> dict:
         """The figures alone (usage, seconds, speed, context) of an ended turn older than the newest EXTRA_TURNS, read once."""
         key = (job_key(job.get("message_id"), job.get("job_id")), str(job.get("updated_at")))
-        if key not in self.figures:
-            if len(self.figures) > FIGURES_KEPT:
-                self.figures.clear()
-            self.figures[key] = web_turns.ended_figures(state, job)
-        return self.figures[key]
+        found = self.shared.recall(self.figures, key)
+        if found is None:
+            found = web_turns.ended_figures(state, job)
+            self.shared.keep(self.figures, key, found, FIGURES_KEPT)
+        return found
 
     def artifacts(self, state, job) -> list:
         """The 产物 of an answer turn (web_turns.artifacts_of, data contract v32), read again only while they can still change: after
@@ -808,25 +956,23 @@ class Collector:
         job's record); a turn without any is read once."""
         key = (job_key(job.get("message_id"), job.get("job_id")), str(job.get("updated_at")))
         now = self.now or time.time()
-        hit = self.files.get(key)
+        hit = self.shared.recall(self.files, key)
         if hit is not None:
             at, items = hit
             if not items or now - at < (FILES_GOING if any(item.get("uploading") for item in items) else FILES_SETTLED):
                 return items
-        if len(self.files) > FIGURES_KEPT:
-            self.files.clear()
         items = web_turns.artifacts_of(state, job, now)
-        self.files[key] = (now, items)
+        self.shared.keep(self.files, key, (now, items), FIGURES_KEPT)
         return items
 
     def ended_extras(self, state, job) -> dict:
         """The process, plan and figures of an ended turn, read once (they do not change once it has ended)."""
         key = (job_key(job.get("message_id"), job.get("job_id")), str(job.get("updated_at")))
-        if key not in self.extra:
-            if len(self.extra) > 512:
-                self.extra.clear()
-            self.extra[key] = web_turns.extras(state, job, False)
-        return self.extra[key]
+        found = self.shared.recall(self.extra, key)
+        if found is None:
+            found = web_turns.extras(state, job, False)
+            self.shared.keep(self.extra, key, found, EXTRA_KEPT)
+        return found
 
     def room_fields(self, state, turn, job, *, butler=False, lead=False) -> None:
         """The private chat's fields of an answer turn (data contract v23, app/web_room.py): a butler turn's ``handed``, an ordinary topic
@@ -866,13 +1012,20 @@ class Collector:
 
     # -- projects -------------------------------------------------------------------------------------------------------
 
-    def project_items(self, state, chat, records=None) -> list:
+    def project_items(self, state, chat, records=None, force=False) -> list:
+        """An item per project. One is built again only when what it is built from changed (its record, its state word, the files of
+        its folder: memory, meta, library), or with ``force`` (a pass started): a quick look every second reads no project's memory."""
         out = []
         for record in projects.records(state, chat) if records is None else records:
             pid = record["id"]
             members = [topic for topic in record.get("threads") or () if isinstance(topic, str)]
             lead = str(record.get("lead_topic_id") or "")
             word, why = self.project_state(record, [lead, *members])
+            basis = (web_sync.rev(record), word, why, project_stamp(state, str(pid)))
+            kept = self.shared.project_rows.get(pid)
+            if kept is not None and kept[0] == basis and not force:
+                out.append(kept[1])
+                continue
             try:
                 entries = project_memory.entries(state, record)
                 # The read a member topic's turn takes (app/project_context.py memory_view): one without redaction, and a line
@@ -880,28 +1033,35 @@ class Collector:
                 view = core_memory.project_view(entries, pid)
                 carried = {item["ref"] for item in view["kept"]} | {
                     item["ref"] for item in core_memory.project_view(entries, pid, redacted=True)["kept"] if item["redacted"]}
-                numbers = {}
-
                 def number(topic):
-                    if topic not in numbers:
-                        numbers[topic] = self.topic_number(state, topic)
-                    return numbers[topic]
+                    return self.topic_number(state, topic)
                 memory = [self.memory_row(row, pid, carried, number) for row in entries if not row["deleted"]]
-                library = [self.library_row(state, row) for row in project_library.entries(state, pid) if not row.get("purged")]
+                library = [self.library_row(state, row, number) for row in project_library.entries(state, pid) if not row.get("purged")]
                 version = view["version"]
             except Exception:  # noqa: BLE001 - the rest of the project is still worth pushing
                 memory, library, version = [], [], ""
-            out.append(web_sync.item("project", pid, {
+            item = web_sync.item("project", pid, {
                 "title": str(record.get("name") or ""), "goal": project_lead.lead_goal(record), "status": word, "status_reason": why,
                 "lead_topic_key": lead, "topic_keys": members, "memory": memory, "memory_version": version, "library": library,
-                "started_at": web_pairing.moment(record.get("created_at")), "updated_at": web_pairing.moment(record.get("updated_at"))}))
+                "started_at": web_pairing.moment(record.get("created_at")), "updated_at": web_pairing.moment(record.get("updated_at"))})
+            with self.shared.lock:
+                self.shared.project_rows[pid] = (basis, item)
+            out.append(item)
         return out
 
-    @staticmethod
-    def topic_number(state, topic) -> int:
-        """The T number of ``topic`` (0 when it has none)."""
-        label = board_read.topic_label(state, topic)[0] if topic else ""
-        return int(label[1:]) if label[1:].isdigit() else 0
+    def topic_number(self, state, topic) -> int:
+        """The T number of ``topic`` (0 when it has none yet), read once it has one: a number is never changed, and a project's
+        memory and library name the same topics in every row (18 thousand reads of topic.json in two passes, 2026-11-23 T673)."""
+        if not topic:
+            return 0
+        found = self.shared.numbers.get(topic)
+        if found:
+            return found
+        label = board_read.topic_label(state, topic)[0]
+        found = int(label[1:]) if label[1:].isdigit() else 0
+        if found:
+            self.shared.numbers[topic] = found
+        return found
 
     @staticmethod
     def memory_row(row, project_id="", carried=(), number=None) -> dict:
@@ -933,13 +1093,17 @@ class Collector:
         return out
 
     @staticmethod
-    def library_row(state, row) -> dict:
+    def library_row(state, row, number=None) -> dict:
+        """One entry of a project's library as the page shows it; ``number``: a topic's T number (read from its topic.json without)."""
         out = {"name": row["name"], "link": row["ref"], "at": row["at"], "kind": web_turns.library_kind(row)}
         if row.get("size"):
             out["size"] = row["size"]
         if row.get("topic_id"):
-            label = board_read.topic_label(state, row["topic_id"])[0]
-            out["topic_number"] = int(label[1:]) if label[1:].isdigit() else 0
+            if number is not None:
+                out["topic_number"] = number(row["topic_id"])
+            else:
+                label = board_read.topic_label(state, row["topic_id"])[0]
+                out["topic_number"] = int(label[1:]) if label[1:].isdigit() else 0
         return out
 
     def project_state(self, record, topics) -> tuple:
@@ -955,6 +1119,20 @@ class Collector:
         if any(self.states.get(topic) == "等你" for topic in topics):
             return "等你", "有问题等你回答"
         return "在做", ""
+
+
+def project_stamp(state, pid) -> tuple:
+    """What a project's memory, its meta and its library are read from, as stats (each written whole and renamed over, so a change
+    is a new inode): a quick look builds the project again only when one changed (Collector.project_items)."""
+    out = []
+    for path in (project_memory.memory_path(state, pid), project_memory.meta_path(state, pid), project_library.index_path(state, pid)):
+        try:
+            stat = path.stat()
+        except OSError:
+            out.append(())
+            continue
+        out.append((stat.st_ino, stat.st_mtime_ns, stat.st_size))
+    return tuple(out)
 
 
 def launch_choice(form) -> dict:

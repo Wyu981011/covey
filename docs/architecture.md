@@ -653,7 +653,7 @@ cancelled、superseded：终态
   - **唤醒轮的回复默认不发**：唤醒轮和负责人的其他轮一样算安静轮（见上面的“不出任务卡”）：不显示任务卡，没有表情。已授权回复保存、记为已送达（`TurnDelivery.silent`：`send` 直接返回），所以重投不重试、恢复卡不把它当未送达；没做完的轮（失败、停止、被拒）照旧在顶层说一句，不藏。例外：负责人在这一轮用 `project_note` 记了 `report`、且按风格该报（`project_lead.reportable`；`project_finish` 的收尾也算），这时和负责人主人触发的轮一样发到顶层。这一轮有变化也发（主人定的“有变化才发”）：用 `project_topic_start`、`project_topic_send` 派了活，`project_topic_stop` 停了话题，`project_answer`、`project_escalate` 替主人答了或转交了问题，工具都在专项记录的 `acted` 里记下这一轮（`app/project_tools.py` 的 `acted`，留最近 40 轮），`project_loop.reported` 认它。只是读了结果、没动手的唤醒轮照旧不发，只改专项卡。
 - **维护** `projects/` 里状态是 `done`、`cancelled` 且 180 天没改的记录连同 `projects/<id>/` 一起删（`ProjectRecords`，`remove_projects`），`projects/.locks/` 归 `Locks` 规则。
 - **主动记录**（`COVEY_PATROL=shadow`，只记不打扰）：规则每分钟、小模型每 30 分钟，写 `patrol/`，早晚汇总多一块；说明、可调数值和关法见[管家 · 我本来想找你的事](butler.md#我本来想找你的事开关默认关只记不打扰)。维护 `patrol/candidates/`、`patrol/decisions/` 里 14 天没改的日文件（`PatrolRecords`，`remove_patrol`）。
-- **网页工作台同步**（`COVEY_WEB=1`，默认关）：`web-push`、`web-inbox` 两条受监管线程，把专项、话题（含管家和专项负责人）、一轮（含过程和用量）、问题推给网页，取回网页上的说话（含对管家、负责人说）、答题、停止、重开、记为看过、作废一条专项记忆；不开没有线程。不持锁发请求，操作先记 `<state>/web/inbox.json` 再执行，不重放；说明和配置见[网页工作台](web.md)。
+- **网页工作台同步**（`COVEY_WEB=1`，默认关）：`web-push`（快看）、`web-pass`（全量）、`web-inbox` 三条受监管线程，把专项、话题（含管家和专项负责人）、一轮（含过程和用量）、问题推给网页，取回网页上的说话（含对管家、负责人说）、答题、停止、重开、记为看过、作废一条专项记忆；不开没有线程。不持锁发请求，操作先记 `<state>/web/inbox.json` 再执行，不重放；说明和配置见[网页工作台](web.md)。
 
 ## 多参与者协作（开发中，默认关）
 

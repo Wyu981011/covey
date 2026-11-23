@@ -591,14 +591,14 @@ class StuckTest(WebCase):
         self.topic(status="running")
         hang, entered = threading.Event(), threading.Event()
         self.addCleanup(hang.set)
-        real = app_collect.Collector.collect
+        real = app_collect.Collector.collect_hot
 
-        def collect(collector, chat, now, full):
-            found = real(collector, chat, now, full)
+        def collect(collector, chat, now):
+            found = real(collector, chat, now)
             entered.set()
             hang.wait(10)
             return found
-        with mock.patch.object(app_collect.Collector, "collect", collect):
+        with mock.patch.object(app_collect.Collector, "collect_hot", collect):
             late = threading.Thread(target=self.sync.push_once, args=(T0,))
             late.start()
             self.assertTrue(entered.wait(5))
@@ -1390,8 +1390,9 @@ class SwitchTest(WebCase):
         self.assertEqual(context_for_topic(ctx, {"chat_id": CHAT, "chat_type": "p2p", "message_id": "om_real"}, lambda w: w).reply_to_message_id, "om_real")
         self.assertTrue(web_sync.is_web_message("web-x") and not web_sync.is_web_message("om_web-x"))
 
-    def test_on_there_are_two_threads(self):
-        self.assertEqual([name for name, _ in self.sync.threads()], ["web-push", "web-inbox"])
+    def test_on_there_are_three_threads(self):
+        """The quick looks, the full pass (its own thread since T673: a slow read there holds up no quick look) and the inbox."""
+        self.assertEqual([name for name, _ in self.sync.threads()], ["web-push", "web-pass", "web-inbox"])
 
     def test_the_bridge_lists_the_threads_only_with_the_switch(self):
         from covey.app.unified import UnifiedBridgeApp
@@ -2212,7 +2213,7 @@ class RanWithTest(WebCase):
         self.topic()
         write_topic(self.state, topic_id=TOPIC, chat_id=CHAT, harness_id="claude", topic_number=7, origin={"title": "整理账单"},
                     workspace_name="ws1", redaction=True)
-        with mock.patch.object(self.sync.collector, "menu", return_value=self.MENU):
+        with mock.patch.object(app_collect.Collector, "menu", return_value=self.MENU):  # Both collectors' (the pass builds it).
             self.sync.push_once(T0)
         turns = {item["key"]: item["data"] for item in self.web.items("turn")}
         self.assertEqual(turns[f"{TOPIC}:2"]["ran_with"], {"harness": "Claude Code", "provider": "自带", "model": "Opus 5.5",

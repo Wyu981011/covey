@@ -31,6 +31,38 @@ INDEXED = ('topic_id', 'chat_id', 'job_id', 'status', 'request_id')  # The field
 # no index entry is made of them. An .index of a release before them has none: ``narrow`` is then told so (None).
 CARRIED = ('updated_at',)
 _scope = threading.local()
+_listeners = []  # Called with (folder name, record name) after each note_change of this process (listen).
+
+
+class Busy(Exception):
+    """A store's lock was not free within the ``bounded`` time of the asking thread: another thread holds it, in a scan
+    that may be stuck on the network disk (an NFS open of the journal held one for minutes, 2026-11-23 T673)."""
+
+
+@contextmanager
+def bounded(seconds):
+    """Inside, a query, count or max_field of this thread waits at most ``seconds`` for a store's lock and raises Busy
+    instead of waiting on. For a reader that must not hang behind another thread's stuck scan (the web page's push,
+    app/web_sync.py). Outside it, and on other threads, a query waits as it always has."""
+    before = getattr(_scope, "wait", None)
+    _scope.wait = seconds
+    try:
+        yield
+    finally:
+        _scope.wait = before
+
+
+def listen(callback):
+    """``callback(folder name, record name)`` after each record this process writes in a journaled folder (note_change):
+    a reader that wants to look at once, not at its next poll. It must return at once (it runs in the writer's thread,
+    maybe under the record's lock): set an event, nothing more. Without one, nothing changes."""
+    if callback not in _listeners:
+        _listeners.append(callback)
+
+
+def unlisten(callback):
+    if callback in _listeners:
+        _listeners.remove(callback)
 
 
 def note_change(folder, name):
@@ -47,6 +79,11 @@ def note_change(folder, name):
             os.close(fd)
     except OSError:
         pass
+    for callback in tuple(_listeners):
+        try:
+            callback(folder.name, name)
+        except Exception:  # noqa: BLE001 - a listener never fails a write
+            pass
 
 
 def _record_name(name):
@@ -109,7 +146,7 @@ class JsonDirectoryStore:
         has none of them) and must be true for every record ``where`` would accept; a record it is false for is not
         read at all. It must say True when a field it needs is missing."""
         asked = time.monotonic()
-        with self.lock:
+        with self._held():
             self._look(asked)
             names = self._selected(filters)
             if narrow is not None:
@@ -121,9 +158,22 @@ class JsonDirectoryStore:
     def count(self, **filters):
         """How many records the indexed ``filters`` (as query's) select, from the fields alone: none is read or copied."""
         asked = time.monotonic()
-        with self.lock:
+        with self._held():
             self._look(asked)
             return len(self._selected(filters))
+
+    @contextmanager
+    def _held(self):
+        """The store's lock, waited for as long as it takes, or (inside ``bounded``) at most that long: Busy then."""
+        wait = getattr(_scope, "wait", None)
+        if wait is None:
+            self.lock.acquire()
+        elif not self.lock.acquire(timeout=max(0.0, wait)):
+            raise Busy(self.directory.name)
+        try:
+            yield
+        finally:
+            self.lock.release()
 
     def _selected(self, filters):
         """The names of the records whose indexed fields match ``filters``."""
@@ -139,7 +189,7 @@ class JsonDirectoryStore:
         """The largest whole number in indexed ``field`` (one of INDEXED) over the records, 0 when none:
         from the fields alone, no record is read (the Bridge's first job number at start, repo review R4)."""
         asked = time.monotonic()
-        with self.lock:
+        with self._held():
             self._look(asked)
             return max((int(value) for fields in self.fields.values() if (value := fields.get(field)) is not None
                         and (isinstance(value, int) or value.isdigit())), default=0)
