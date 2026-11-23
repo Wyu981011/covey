@@ -79,7 +79,7 @@ class ClickTest(HintCase):
         self.assertEqual(self.record()["set_at"], saved["set_at"])  # A second click changes nothing.
         said = [call.args[2] for call in controls.messenger.reply.call_args_list]
         self.assertTrue(any("约 30 分钟后" in text for text in said))
-        self.assertTrue(any("已经约好" in text for text in said))
+        self.assertTrue(any("由 Covey 自动回看" in text for text in said))
 
     def test_someone_else_or_another_topic_sets_nothing(self):
         app, ctx = self.route("src")

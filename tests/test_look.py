@@ -24,7 +24,7 @@ class TableTest(unittest.TestCase):
     def test_retired_words_are_not_the_words(self):
         words = {found.word for found in look.STATES.values()}
         for key, old in look.RETIRED.items():
-            self.assertIn(key, look.STATES)
+            self.assertIn(key, set(look.STATES) | {"revisit"}, key)  # "revisit": rows of 到点回来看, not a state
             self.assertFalse(words & set(old), key)
 
     def test_pressing_names_states(self):
