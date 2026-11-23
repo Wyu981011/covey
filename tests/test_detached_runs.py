@@ -627,14 +627,16 @@ class BridgeSideTests(UnifiedCase):
         self.assertEqual((len(handoffs), record["status"], record["runner_start_failed"]), (2, "interrupted", True))
         recovery.assert_called_once()
         card = recovery_card(record)
-        text = card["body"]["elements"][1]["content"]  # The band leads: 停住了 · #7, 任务进程没能启动.
+        # The task card's row (停住了), why in bold (任务进程没能启动), then what did not happen (T666: no band).
+        head, lead, text = (element.get("content") or element for element in card["body"]["elements"][:3])
         self.assertNotIn("header", card)
-        self.assertIn("停住了 · &#35;7", text_of(card))
-        self.assertIn("任务进程没能启动", text_of(card))
+        self.assertIn("<text_tag color='red'>停住了</text_tag>", json.dumps(head, ensure_ascii=False))
+        self.assertIn("任务进程没能启动", lead)
         self.assertIn("没有执行任何操作", text)
-        self.assertNotIn("尚无检查点", text)
+        self.assertNotIn("尚无检查点", text_of(card))
         moved = recovery_card(record, moved_to=8)
-        self.assertIn("已转到任务 &#35;8 继续", text_of(moved))
+        self.assertIn("↪ 已重新开始", text_of(moved))
+        self.assertNotIn("&#35;8", text_of(moved))
         self.assertNotIn("recovery_actions", json.dumps(moved))
 
     def test_a_runner_that_cannot_be_started_ends_its_job_as_failed(self):
@@ -662,7 +664,7 @@ class BridgeSideTests(UnifiedCase):
         recovery.assert_called_once()
         card = recovery_card(record)
         text = json.dumps(card, ensure_ascii=False)
-        self.assertIn("停住了 · &#35;7", text)
+        self.assertIn("<text_tag color='red'>停住了</text_tag>", text)  # The task card's row (T666: no band).
         self.assertIn("任务进程没能启动", text)
         # The exception's kind is in 技术详情, folded (T650: no exception name in the words the owner reads first).
         self.assertNotIn("BlockingIOError", json.dumps(card["body"]["elements"][:2], ensure_ascii=False))
@@ -741,7 +743,8 @@ class BridgeSideTests(UnifiedCase):
         from covey.app.recovery_cards import recovery_card
         card = recovery_card(record)
         self.assertNotIn("header", card)
-        self.assertIn("停住了 · &#35;7", text_of(card))
+        self.assertEqual(card["body"]["elements"][0]["element_id"], "task_head")  # T666: the task card's row, no band.
+        self.assertIn("停住了", text_of(card["body"]["elements"][0]))
         self.assertIn("这一轮被打断了", text_of(card))
 
     def test_restart_blockers_name_only_jobs_a_restart_would_interrupt(self):

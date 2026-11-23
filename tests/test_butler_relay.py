@@ -170,15 +170,17 @@ class CardTest(unittest.TestCase):
 
     def test_a_question_and_a_stop(self):
         card, _ = relay_card("T408", WAITING, question="选 A 还是 B？")
-        row, band, rest = card["body"]["elements"][0], card["body"]["elements"][1], card["body"]["elements"][2:]
+        row, lead, rest = card["body"]["elements"][0], card["body"]["elements"][1], card["body"]["elements"][2:]
         self.assertEqual("<font color='white'>**T408**</font>", badge_words(row))
         self.assertTrue(row_line(row).startswith("<text_tag color='orange'>等你</text_tag>"))
-        self.assertIn("要你定：选 A 还是 B？", str(band))  # A short question is the band's alone, not said twice.
+        # No band saying the row's 等你 again (T666): a short question is one bold line under the row, not said twice.
+        self.assertEqual(lead, {"tag": "markdown", "content": "**要你定：选 A 还是 B？**"})
+        self.assertNotIn("band-line", json.dumps(card))
         self.assertEqual(1, json.dumps(card["body"], ensure_ascii=False).count("选 A 还是 B？"))
         self.assertIn("在 T408 的问题卡里答，或在这里回「T408 …」", rest[0]["content"])
         long = "选 A 还是 B？" + "A 快一些但要改接口，B 慢一些但不动接口。" * 2
         card, text = relay_card("T408", WAITING, question=long)
-        self.assertIn("要你定：下面这个问题", str(card["body"]["elements"][1]))
+        self.assertEqual("**要你定**", card["body"]["elements"][1]["content"])  # Then the question whole.
         self.assertEqual(long, card["body"]["elements"][2]["content"])
         self.assertTrue(text.startswith("**T408 等你**"))
         card, text = relay_card("T408", STOPPED, reason="用户停止了任务")

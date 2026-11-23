@@ -56,6 +56,7 @@ GROUP_NAMES = {"waiting": "等你", "result": "有结果没看", "running": "在
 START_PHASE = "处理本轮请求"  # TaskMonitor's phase before the checkpoint names one.
 # The phase written to a run's checkpoint before its model writes one (app/worker.py): the status line names none.
 SEED_PHASE = "准备处理本轮请求"
+SEED_NEXT = "检查任务要求与已有状态"  # The seed's next step: a stopped task's card does not say it (app/recovery_cards.py).
 UNSET_PHASES = frozenset({START_PHASE, SEED_PHASE})
 BLANK_PHASES = frozenset({"", *UNSET_PHASES})
 

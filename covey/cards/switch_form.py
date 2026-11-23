@@ -34,6 +34,8 @@ PAGE = "bridge_switch_page"  # A row's tap on a card sent with options pages (84
 # rounds in plain text, app/switch_handoff.py) are the model's to know, not the card's.
 SWITCH_NOTE = ("换 Harness、模型、预算、工作区或运行方式会开新会话，上下文不断：新会话拿到交接摘要和最近的问答，完整记录放在文件里，"
                "需要时自己去读；交接了什么写在下一张任务卡上。旧会话没答的问题会取消。只改敏感词脱敏时会话不变。")
+SWITCH_GIST = "换了以后：开新会话接着做，上下文不断"  # SWITCH_NOTE's one line under the buttons, which opens on it.
+NOTE_ID = "switch_note"
 HANDOFF_ID = "switch_handoff"  # The 交接 block of the first task card after a switch (``handoff_block``).
 HANDOFF_SUMMARY_CHARS = 6000  # Of the old model's summary the block opens on; its file keeps it whole.
 UNCHANGED = "先改一项再点确认更换"
@@ -134,7 +136,6 @@ def build_switch_card(form):
         elements.append(note(AUTO_OFF_NOTE))
     if form.get("active_task"):
         elements.append(note("任务还在排队或执行时不能更换：先在任务卡上停止，停止完成后再确认。"))
-    elements.append(note(SWITCH_NOTE))
     if form.get("notice"):
         elements.append(md(form["notice"]))
     elif unchanged(form):
@@ -147,6 +148,10 @@ def build_switch_card(form):
         confirm["confirm"] = {"title": plain(OFF_TITLE), "text": plain(OFF_TEXT)}
     elements.append(row((confirm, 1), (callback_button("取消", {"kind": CANCEL, "token": token}, style="default",
                                                        width="fill"), 1)))
+    # What a switch does, one grey line under the buttons that opens on it: its four lines sat between the choices and
+    # the buttons (the owner, 2026-11-23, of the same on a question card: 不再横亘在正文和按钮中间).
+    elements.append(fold(NOTE_ID, md(grey(SWITCH_GIST), size="notation"), [md(SWITCH_NOTE, size="notation")],
+                         title_padding="0px 0px 0px 0px", icon_position="follow_text", spacing="4px"))
     return styled_panel(panel_header("switch", "换配置", subtitle), elements, "换配置 · Harness、模型、工作区、脱敏")
 
 

@@ -299,6 +299,15 @@ class HarnessSwitchTests(UnifiedCase):
                      "<font color='grey'>工作区</font>", "<font color='grey'>运行方式</font>", switch_form.SWITCH_NOTE):
             self.assertIn(text, card)
         self.assertNotIn(f'最近 {switch_handoff.HANDOFF_ROUNDS} 轮', card)  # The handoff's details are the model's.
+        # What a switch does: one grey line under the buttons that opens on it, not four lines between the choices and
+        # the buttons (T666).
+        elements = switch_form.build_switch_card(form)['body']['elements']
+        note = elements[-1]
+        self.assertEqual((note['tag'], note['element_id'], note['expanded']), ('collapsible_panel', switch_form.NOTE_ID, False))
+        self.assertEqual(note['header']['title']['content'], f"<font color='grey'>{switch_form.SWITCH_GIST}</font>")
+        self.assertEqual(note['elements'][0]['content'], switch_form.SWITCH_NOTE)
+        self.assertIn('确认更换', json.dumps(elements[-2], ensure_ascii=False))  # The buttons right above it.
+        self.assertEqual(json.dumps(elements, ensure_ascii=False).count(switch_form.SWITCH_NOTE), 1)
         again, _, send = self.open()  # The same click redelivered.
         send.assert_not_called()
 

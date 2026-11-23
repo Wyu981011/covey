@@ -614,6 +614,11 @@ def recovery_cards():
                                        "status_message": "task runner could not be started; the job did not run"}),
         "saved_answer": recovery_card({**record, "result_retry_policy": "saved_delivery_only",
                                        "verified_reply_authorized": True, "verified_reply_state": "authorized"}),
+        # The owner's case (2026-11-23, T666: 这种UI还没改呢): a turn the rate limit stopped at once, moved on to its
+        # automatic retry. The task card's row says how it went on, one grey line that nothing is asked of him; no band
+        # with the task's and the retry's numbers, no 尚无记录, no 检查并继续 note for a button the card does not have.
+        "moved_rate_limited": recovery_card({**record, "status": "failed", "execution_status": "failed",
+                                             "failure_code": "rate_limited"}, moved_to=432, automatic="rate_limited"),
         "stopped": stopped_card("任务 #431 已停止。", retry=("检查并继续", TOPIC, 431),
                                 actions=[result_actions(TOPIC, 431, "重新执行")], header="T70 · #431",
                                 summary="⏹ T70 · #431"),

@@ -823,7 +823,10 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
         ctx = self.topic("om_a")
         self.app.record_job_state(ctx, job, "interrupted", "restart")
         record = next(r for r in self.app.harness.topic_records(ctx, "oc_chat") if r["job_id"] == job.job_id)
-        self.assertIn("检查并继续：新开一个任务", recovery_card(record)["body"]["elements"][1]["content"])
+        # What 检查并继续 does: one grey line under the buttons that opens on it, not in the card's body (T666).
+        note, = [e for e in recovery_card(record)["body"]["elements"] if e.get("element_id") == "result_actions_note"]
+        self.assertIn("检查并继续：新开一个任务", note["elements"][0]["content"])
+        self.assertIn("怎么继续：点“检查并继续”接着做", note["header"]["title"]["content"])
         event = {"chat_id": "oc_chat", "event_id": "retry",
                  "action_value": {"kind": "bridge_job_retry", "job_id": job.job_id, "topic_id": ctx.topic_id}}
         with mock.patch.object(type(self.app.cards), "replace_record_card") as replace:
@@ -832,7 +835,10 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
         card = replace.call_args.args[2]
         text = card["body"]["elements"][1]["content"]
         self.assertNotIn("header", card)
-        self.assertIn(f"已转到任务 &#35;{new.job_id} 继续", json.dumps(card, ensure_ascii=False))
+        # Its row says it went on, one grey line that nothing is asked; not the number of the task it went to (T666).
+        self.assertIn("↪ 已重新开始", json.dumps(card["body"]["elements"][0], ensure_ascii=False))
+        self.assertEqual(text, "<font color='grey'>不用处理，接着做的进展在后面。</font>")
+        self.assertNotIn(f"&#35;{new.job_id}", json.dumps(card, ensure_ascii=False))
         self.assertNotIn("恢复已入队", text)
 
     def stopped_while_sending(self, **fields):
@@ -887,10 +893,11 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
         path = self.root / "checkpoint.json"
         path.write_text(json.dumps({"phase": "训练", "completed": ["数据准备"], "next_step": "查询 train-1"}))
         card = recovery_card({"job_id": 7, "topic_id": "topic", "checkpoint_path": str(path)})
-        text = card["body"]["elements"][1]["content"]
-        self.assertIn("数据准备", text)
-        self.assertIn("查询 train-1", text)
-        button = card["body"]["elements"][2]["columns"][0]["elements"][0]
+        # The task card's row, why in bold, then where it stood (T666: no band over them).
+        head, lead, body, buttons = card["body"]["elements"][:4]
+        self.assertEqual((head["element_id"], lead["content"].split("\n")[0]), ("task_head", "**这一轮被打断了**"))
+        self.assertEqual(body["content"], "停在：训练\n做完的：数据准备\n下一步：查询 train-1")
+        button = buttons["columns"][0]["elements"][0]
         self.assertEqual(button["value"]["job_id"], 7)
         for continued in (False, True):
             view = recovery_card({"job_id": 7, "topic_id": "topic"}, continued=continued)
@@ -909,6 +916,14 @@ class TaskControlsTest(TopicFixture, unittest.TestCase):
             self.assertIn('用时 42秒',next(e for e in walk_dicts(panel) if e.get('element_id')=='trace_details')['header']['title']['content'])
             self.assertIn('已核对文件',str(panel))
             self.assertNotIn('history_actions',str(card))
+        # Moved on to an automatic retry it keeps what it did (T666); with no step, no 无执行记录 panel: its time on the row.
+        moved = recovery_card(record, moved_to=8, automatic='rate_limited')
+        self.assertIn('已核对文件', str(next(e for e in moved['body']['elements'] if e.get('element_id') == 'process_panel')))
+        empty = {**record, 'trace_snapshot': ToolTrace().snapshot(), 'status': 'interrupted'}
+        bare = recovery_card(empty)
+        self.assertFalse([e for e in bare['body']['elements'] if e.get('element_id') == 'process_panel'])
+        self.assertIn('停住了</text_tag> <font color=\'grey\'>用时 42秒</font>', json.dumps(bare['body']['elements'][0], ensure_ascii=False))
+        self.assertFalse([e for e in recovery_card({**empty}, moved_to=8)['body']['elements'] if e.get('element_id') == 'process_panel'])
 
     def test_followup_clears_waiting_state_before_execution(self):
         self.receive("om_a", "one")

@@ -10,8 +10,7 @@ from __future__ import annotations
 from covey.cards.answer_card import change_element, check_element, details, facts_element, words_fold
 from covey.cards.elements import card, grey, json_size, md, note
 from covey.cards.review import ANSWER_CARD_BYTES, FOLD_ID, answer_lead, drop_part_heading, reply_body, reply_shown
-from covey.cards.ui import (BODY_PADDING, BODY_SPACING, band_label, banded, conclusion_band, container, speaker_row,
-                            split_ask, styled, topic_badge)
+from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, container, speaker_row, split_ask, topic_badge
 from covey.core import look
 from covey.core.failure import HEADLINE_CHARS, split_title
 from covey.core.text import literal, redact
@@ -19,7 +18,7 @@ from covey.core.text import literal, redact
 CARD_TEXT_BYTES = 24000  # A card is at most 30 KB (CardKit); a longer reply goes on several (``relay_pages``).
 QUESTION_CHARS = 300
 SUMMARY_CHARS = 40
-REASON_CHARS = 200  # A stop's reason and next step (core/failure.py failure_view's title), before the band splits them.
+REASON_CHARS = 200  # A stop's reason and next step (core/failure.py failure_view's title), before they are split.
 DONE, WAITING, STOPPED = "done", "waiting", "stopped"
 NOTE_ID = "relay_note"  # A 停住了 card's last line (``stop_note``), redrawn after a click on its buttons (app/relay_stops.py).
 HINT_ID = "relay_hint"  # A 做完了 card's last line (``reply_hint``): its T number stays plain (app/relay_send.py linked).
@@ -74,8 +73,8 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
     line an older release kept as a string, ``change`` of those, its fold; ``notes`` and ``buttons``, its other parts, as
     the answer card's tail takes them), WAITING (``question``) or STOPPED (``reason``, one line). A DONE reply is the
     card's body as it is, whole, no conclusion band over it (its first words are its conclusion). A STOPPED ``reason`` is
-    core/failure.py failure_view's title: the band says the reason and, on its second line, the next step; its ``buttons``
-    go under it (app/relay_stops.py area: 检查并继续 and 看原因, redrawn in place once clicked: a shared card, ``update_multi``).
+    core/failure.py failure_view's title: the reason bold under the row and, grey under it, the next step; its ``buttons``
+    go under them (app/relay_stops.py area: 检查并继续 and 看原因, redrawn in place once clicked: a shared card, ``update_multi``).
     ``ask``: the "你问" block (cards/answer_card.py ask_block; a relay at the top level quoting no card, threaded):
     who and what it did go to the speaker's row, the owner's words to one line under it that opens (``words_fold``).
     The row is the way into the topic (``into``: ``url``, which opens it at this turn's card, else the block's own
@@ -112,9 +111,9 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
     elif outcome == WAITING:
         words = " ".join(str(question or "").split())
         body = words[:QUESTION_CHARS] + ("…" if len(words) > QUESTION_CHARS else "")
-        # A short question is the band's 要你定 alone; a longer one goes under it whole, never said twice.
+        # A short question is its bold 要你定 line alone; a longer one goes under a bold 要你定 whole, never said twice.
         short = len(words) <= HEADLINE_CHARS - 4
-        key, headline, line = "waiting", "要你定：" + (words if short else "下面这个问题"), ""
+        key, headline, line = "waiting", "要你定" + (f"：{words}" if short else ""), ""
         first = f"**{label} {look.word(key)}**"
         tail = f"在 {label} 的问题卡里答，或在这里回「{label} …」"
         lead = summary(label, look.word(key), words[:SUMMARY_CHARS])
@@ -125,13 +124,15 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         headline, line = split_title(why) if why else ("没有说原因", "")
         first = f"**{label} {look.word(key)}**" + (f"：{why}" if why else "")
         lead = summary(label, look.word(key), headline[:SUMMARY_CHARS])
-    band = conclusion_band(band_label(key), literal(headline), literal(line))
+    # No conclusion band (the owner, 2026-11-23: 这种UI还没改呢, of a band that said its row's 停住了 again): the reason or
+    # what is asked bold under the row, what can be done next grey, as a stopped task's card says it (cards/recovery.py).
+    said_line = md("\n".join([f"**{literal(headline)}**", *([grey(literal(line))] if line else [])]))
     shown = body and not (key == "waiting" and short)
     acts = list(buttons or ()) if outcome == STOPPED else []  # Its next steps, under the reason (app/relay_stops.py).
-    elements = [row, *said, band] + ([md(body)] if shown else []) + acts + [
+    elements = [row, *said, said_line] + ([md(body)] if shown else []) + acts + [
         stop_note(label) if outcome == STOPPED else note(tail)]
     markdown = "\n\n".join(part for part in (first, body, tail) if part)
-    return styled(card(elements, lead, update_multi=outcome == STOPPED, **style)), markdown
+    return banded(card(elements, lead, update_multi=outcome == STOPPED, **style)), markdown  # The badge's colour.
 
 
 MERGED_SUBTITLE = "点一行进那个话题"

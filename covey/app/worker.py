@@ -4,7 +4,7 @@ forms, the card's closing state)."""
 from __future__ import annotations
 
 from covey.core.trace import task_trace
-from covey.core.turn_words import device_restarted, retry_hint
+from covey.core.turn_words import SEED_NEXT, device_restarted, retry_hint
 
 import datetime as _dt
 import functools
@@ -82,7 +82,7 @@ def _start_turn(ctx, job, *, sessions, runtime, record_job_state):
     job.verified_reply = None
     job.checkpoint_path = str(ctx.state_dir / "checkpoints" / (job_key(job.message_id, job.job_id) + ".json"))
     write_json(Path(job.checkpoint_path), {"phase":SEED_PHASE, "completed":[],
-        "artifacts":[], "external_tasks":[], "next_step":"检查任务要求与已有状态", "requires_user":False}, ensure_ascii=False)
+        "artifacts":[], "external_tasks":[], "next_step":SEED_NEXT, "requires_user":False}, ensure_ascii=False)
     # Without a trace until its first event, a status line could say only "<后端> 已开始处理", with no
     # 已运行, and its progress text showed as a 执行进度 block.
     job.tool_trace = task_trace()

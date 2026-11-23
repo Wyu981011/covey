@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import time
 
-from covey.cards.elements import button_row, card, markdown_panel, topic_button
+from covey.cards.elements import button_row, card, markdown_panel, md, topic_button
 from covey.core.deliveries import (CHECK, INTERRUPT, REQUEUE, WITHDRAW, offers, on_arrival, shown_text,
                                    unread as unread_now)
-from covey.cards.ui import conclusion_band, styled, todo_bar
+from covey.cards.ui import font
+from covey.core import look
 from covey.core.butler import worded
 from covey.core.text import literal
 
@@ -33,9 +34,9 @@ STAGE = {
     "refused": "没有发出",
     "uncertain": "送达未确认",
 }
-# The band's label (docs/ui.md 4 结论带): what it asks of the owner, never a task's state word (停住了 is a task that did
-# not succeed, docs/glossary.md 状态词): the task this went into may well be fine.
-BAND_LABEL = "要你处理"
+# What a supplement that did not get through asks of the owner (``receipt_card``), the label docs/ui.md 4 要你做条 has:
+# never a task's state word (停住了 is a task that did not succeed, docs/glossary.md 状态词), the task may well be fine.
+TODO_LABEL = "要你做"
 
 
 def _clock(value):
@@ -118,9 +119,9 @@ def _lost_head(record, job_id, unread) -> str:
 
 def receipt_card(record, *, source=""):
     """The compact receipt: one line, details on demand, a check button while unconfirmed. A supplement that did not
-    get through (the task ended before the model read it, refused, unconfirmed) leads with a conclusion band instead
-    (docs/ui.md 4 结论带: 要你处理 · 补充 #N, what became of it, why, what to do), the card ``styled``; one on its way is
-    a line that does not stand out (告诉你一声). A topic's message that went in as it arrived (core/deliveries.py
+    get through (the task ended before the model read it, refused, unconfirmed) says on its line what became of it and,
+    on one of its own, what to do (要你做 in the waiting colour); the band that led it (要你处理 · 补充 #N, what became of
+    it, why) said the line again (the owner, 2026-11-23). One on its way is a line that does not stand out (告诉你一声). A topic's message that went in as it arrived (core/deliveries.py
     on_arrival) says it went into #N, not a round of its own; one its task never took becomes such a round by itself
     (``requeuing``). One queued again (``requeued_job_id``: by itself, or by a click on 重新排队 of any supplement) has
     nothing left to do: its receipt is a line saying it went to #M, no band and no 重新排队 (until 2026-11-22, T651, one
@@ -190,25 +191,20 @@ def receipt_card(record, *, source=""):
     # The butler is no topic: its receipts say so (the owner's own words below stay as written).
     details = [worded(line, record) for line in details]
     details.append("补充内容：\n" + "\n".join("> " + line for line in str(shown_text(record)).splitlines()[:40]))
-    band = None
+    todo = None
     if (unread or status in {"refused", "uncertain"}) and not handled:
         again_too = "重新排队，或" if REQUEUE in offers(record) else ""  # Only where the button is.
         if record.get("requeue_state") in {"submitting", "uncertain"}:
             # 重新排队 was clicked and its result is not known: a second message might run it twice.
-            headline, why, todo = "重新排队结果未确认", "不会重复排队", "看话题里有没有新任务，没有再发一次"
-        elif unread:
-            headline, why, todo = "模型没有读到这条补充", f"任务 #{job_id} 在它读到之前结束了", again_too + "在话题里再发一次"
-        elif status == "refused":
-            headline, why, todo = "没有发出", str(record.get("error") or "任务当前不能接收补充"), again_too + "在话题里再发一次"
+            head += "；重新排队结果未确认，不会重复排队"
+            todo = "看话题里有没有新任务，没有再发一次"
+        elif unread or status == "refused":
+            todo = again_too + "在话题里再发一次"
         else:
-            headline, why, todo = "送达未确认", str(record.get("error") or ""), "先查送达状态，不会自动重发"
-        band = conclusion_band(literal(f"{BAND_LABEL} · 补充 #{job_id}"), literal(headline),
-                               literal(worded(why, record)), below=[todo_bar(worded(todo, record))])
+            todo = "先查送达状态，不会自动重发"
     line = {"tag": "markdown", "element_id": "steer_receipt_line", "content": head + stage}
-    if band is not None:
-        line = {**line, "text_size": "notation"}
-    elements = ([band] if band is not None else []) + [line,
-                                                       markdown_panel("steer_receipt", "查看详情", "\n\n".join(details))]
+    asks = [md(f"{font('**' + TODO_LABEL + '**', look.STATES['waiting'].color)}　{literal(worded(todo, record))}")] if todo else []
+    elements = [line, *asks, markdown_panel("steer_receipt", "查看详情", "\n\n".join(details))]
     offered = offers(record) - ({REQUEUE} if handled else set())  # Queued by itself: no click to queue it.
     buttons = [(label, kind, tone) for offer, label, kind, tone in BUTTONS if offer in offered]
     if buttons:
@@ -216,5 +212,4 @@ def receipt_card(record, *, source=""):
             topic_button(label, tone=tone, value={"kind": kind, "topic_id": record.get("topic_id"),
                                                   "token": record.get("token"), "job_id": record.get("job_id")})
             for label, kind, tone in buttons]))
-    built = card(elements, summary, update_multi=True)
-    return styled(built) if band is not None else built
+    return card(elements, summary, update_multi=True)

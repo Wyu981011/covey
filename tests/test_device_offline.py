@@ -85,8 +85,11 @@ class WordsTest(unittest.TestCase):
             decided = core_recovery.classify(record)
             self.assertEqual((decided.card, decided.label), (core_recovery.INTERRUPTED, "检查并继续"))
             text = recovery_text(record, decided.card, decided.label, {}, continued=False, state_dir=None)
-            self.assertTrue(text.startswith('停在：'), text)  # Where the Agent is leads the band instead (recovery_card).
-            self.assertIn(words, json.dumps(recovery_card(record), ensure_ascii=False))
+            # Where the Agent is is the bold line under the row (recovery_card); the body has no checkpoint lines to say
+            # here (T666: 尚无检查点 / 尚无记录 said nothing).
+            self.assertEqual(text, "")
+            lead = recovery_card(record)["body"]["elements"][1]["content"]
+            self.assertIn(words, lead)
         decided = core_recovery.classify(local)
         self.assertNotIn("gpu1", recovery_text(local, decided.card, decided.label, {}, continued=False, state_dir=None))
 

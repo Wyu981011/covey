@@ -577,24 +577,38 @@ class AutoRetryCardTest(unittest.TestCase):
         # An incomplete turn's: the status says what the retry does.
         record = {'auto_retry_state': 'pending', 'auto_retry_at': due, 'auto_retry_attempt': 1,
                   'auto_retry_kind': 'incomplete'}
-        status = auto_retry.result_elements('topic', 7, record)[0]['content']
-        self.assertEqual(status, f"⏳ {auto_retry.status_line(due, 1, 'incomplete')}。现在点“检查并继续”会立即重试；"
-                                 "点“停止自动重试”、在本话题发消息或换配置会取消这次自动重试。")
-        self.assertIn('自动检查并继续（第 1/1 次）', status)
+        status, _, note = auto_retry.result_elements('topic', 7, record)
+        self.assertEqual(status['content'], f"⏳ {auto_retry.status_line(due, 1, 'incomplete')}")
+        self.assertIn('自动检查并继续（第 1/1 次）', status['content'])
+        # What the buttons do, and what cancels the retry: one grey line under them that opens on it (T666).
+        self.assertEqual((note['tag'], note['expanded']), ('collapsible_panel', False))
+        self.assertEqual(note['header']['title']['content'], "<font color='grey'>怎么继续：到点自动重试，不想等就点“检查并继续”</font>")
+        self.assertTrue(note['elements'][0]['content'].startswith(
+            "到点自动重试。现在点“检查并继续”会立即重试；点“停止自动重试”、在本话题发消息或换配置会取消这次自动重试。\n检查并继续："))
+        limit = auto_retry.result_elements('topic', 7, {**record, 'auto_retry_kind': 'rate_limited'})[2]
+        self.assertIn("到点自动重试，做法同“检查并继续”。", limit['elements'][0]['content'])
         # The stop click is the Bridge's: never forwarded to a task runner.
         self.assertIn(auto_retry.CANCEL_KIND, ACTIONS)
         self.assertIn(auto_retry.CANCEL_KIND, BOT_ONLY)
 
     def test_the_moved_card_says_which_automatic_retry(self):
         from covey.app.recovery_cards import recovery_card
+        from covey.cards.recovery import MOVED_LINE
         record = {'job_id': 7, 'topic_id': 'topic'}
-        for kind, text in (('', '已转到任务 #8 继续'), ('rate_limited', '已转到任务 #8 继续（限流后自动重试）'),
-                           ('incomplete', '已转到任务 #8 继续（未全部完成后自动检查并继续）')):
+        for kind, how in (('', '已重新开始'), ('rate_limited', '限流后自动重试'),
+                          ('incomplete', '未全部完成后自动检查并继续')):
             with self.subTest(kind=kind):
                 card = recovery_card(record, moved_to=8, automatic=kind)
-                self.assertNotIn('header', card)  # The band leads: 停住了 · #7, then where it went.
-                self.assertIn(text.replace('#', '&#35;'), text_of(card))
-                self.assertIn('停住了 · &#35;7', text_of(card))
+                # T666 (the owner, 2026-11-23: 停住了 · T666 #6047 / 已转到任务 #6055 继续 in a band, then 停在… 尚无记录):
+                # the task card's row says how it went on, one grey line that nothing is asked, nothing else.
+                head, line = card['body']['elements']
+                self.assertNotIn('header', card)
+                self.assertEqual(head['element_id'], 'task_head')
+                self.assertIn(f'↪ {how}', json.dumps(head, ensure_ascii=False))
+                self.assertEqual(line['content'], f"<font color='grey'>{MOVED_LINE}</font>")
+                self.assertNotIn('&#35;8', text_of(card))  # No number of the task it went to.
+                self.assertNotIn('band-line', json.dumps(card))
+                self.assertEqual(card['config']['summary']['content'], f'#7 ↪ {how}')
 
     def test_an_interrupted_card_says_when_it_continues_and_previews_it(self):
         from covey.app.recovery_cards import recovery_card
@@ -613,8 +627,8 @@ class AutoRetryCardTest(unittest.TestCase):
         self.assertIn(f'本轮被重启打断，将于 {at} 自动检查并继续（第 1/1 次）', pending['body']['elements'][2]['content'])
         self.assertEqual(json.dumps(pending, ensure_ascii=False).count('检查并继续：新开一个任务'), 1)  # The note once.
         moved = recovery_card(record, moved_to=8, automatic='restarted')
-        self.assertIn('已转到任务 &#35;8 继续（重启后自动检查并继续）', text_of(moved))
-        self.assertEqual(moved['config']['summary']['content'], '#7 · 已转到 #8 继续')
+        self.assertIn('↪ 重启后自动检查并继续', text_of(moved))
+        self.assertEqual(moved['config']['summary']['content'], '#7 ↪ 重启后自动检查并继续')
 
     def test_the_failed_card_gets_the_retry_controls(self):
         from support.world import build_claude_app

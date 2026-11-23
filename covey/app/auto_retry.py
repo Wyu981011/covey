@@ -31,7 +31,7 @@ import random
 import time
 from typing import NamedTuple
 
-from covey.app.outbox import RETRY_NOTE, retry_label
+from covey.app.outbox import REDELIVER_LABEL, REDELIVER_NOTE, RETRY_NOTE, retry_label
 from covey.cards.recovery import (FOLLOW_UP_NOTES, FOLLOW_UPS, OTHER_HARNESS, REPORT_NOTE, SWITCH_MODEL,
                                   failure_details, interrupted_summary, result_actions, result_note, retry_status, switch_route)
 from covey.core import env as cenv
@@ -343,24 +343,47 @@ def actions(topic_id, job_id, can_stop, record=None, other=False):
                           route=switch_route(record or {}))
 
 
-def result_note_text(label, follow):
-    note = RETRY_NOTE if label == "检查并继续" else label + "：" + RETRY_NOTE.split("：", 1)[1]
+def result_note_text(label, follow, pending_kind=""):
+    """What the buttons of a failed or stopped task card do, a line each, in the fold under them (``button_note``): its
+    retry ``label`` (检查并继续, 现在重试, 重新投递结果), then ``follow`` (看原因 with 复制诊断 after it, 拆小再试, 换个模型
+    …); while a retry of ``pending_kind`` waits, first when it runs and what cancels it."""
+    note = (REDELIVER_NOTE if label == REDELIVER_LABEL else RETRY_NOTE if label == "检查并继续"
+            else label + "：" + RETRY_NOTE.split("：", 1)[1] if label else "")
     # 复制诊断 comes with 看原因 (cards/recovery.py result_actions): its line after 看原因's.
-    return "\n".join([note, *(line for name in follow
-                              for line in (FOLLOW_UP_NOTES[name], *((REPORT_NOTE,) if name == "diagnose" else ())))])
+    lines = [note, *(line for name in follow
+                     for line in (FOLLOW_UP_NOTES[name], *((REPORT_NOTE,) if name == "diagnose" else ())))]
+    if pending_kind:
+        how = "，做法同“检查并继续”" if pending_kind in LONG_KINDS else ""
+        lines.insert(0, f"到点自动重试{how}。现在点“{label}”会立即重试；点“停止自动重试”、在本话题发消息或换配置会取消"
+                        "这次自动重试。")
+    return "\n".join(line for line in lines if line)
+
+
+def note_gist(label, pending_retry=False):
+    """The one line ``button_note`` shows of what the buttons do: the retry's in a few words."""
+    if pending_retry:
+        return f"怎么继续：到点自动重试，不想等就点“{label}”"
+    if label == REDELIVER_LABEL:
+        return f"怎么继续：点“{label}”，只发已保存的结果，不重跑"
+    return f"怎么继续：点“{label}”接着做，会先核查做过的" if label else "这几个按钮做什么"
+
+
+def button_note(label, follow=(), pending_kind=""):
+    """Under a failed or stopped task card's buttons, what they do: one grey line that opens on a line each
+    (cards/recovery.py result_note; the owner, 2026-11-23: those lines of print sat under every such card, and a
+    stopped card said 检查并继续's in its body too). ``pending_kind``: the kind of a retry that waits."""
+    return result_note(result_note_text(label, follow, pending_kind), note_gist(label, bool(pending_kind)))
 
 
 def result_elements(topic_id, job_id, record, other=False):
-    """What a failed task card shows after its answer when 检查并继续 applies: a pending
-    automatic retry's status, the buttons and the note."""
+    """What a failed task card shows after its answer when 检查并继续 applies: a pending automatic retry's status (when
+    it runs, the rest in the fold), the buttons and what they do (``button_note``)."""
     label, follow = next_steps(record, other)
-    elements = [actions(topic_id, job_id, pending(record), record, other), result_note(result_note_text(label, follow))]
-    if pending(record):
-        kind = kind_of(record)
-        how = "，做法同“检查并继续”" if kind in LONG_KINDS else ""
+    kind = kind_of(record) if pending(record) else ""
+    elements = [actions(topic_id, job_id, bool(kind), record, other), button_note(label, follow, kind)]
+    if kind:
         elements.insert(0, retry_status(
-            f"⏳ {status_line(record['auto_retry_at'], record['auto_retry_attempt'], kind, record.get('auto_retry_reset_at') or 0)}{how}。"
-            f"现在点“{label}”会立即重试；点“停止自动重试”、在本话题发消息或换配置会取消这次自动重试。"))
+            f"⏳ {status_line(record['auto_retry_at'], record['auto_retry_attempt'], kind, record.get('auto_retry_reset_at') or 0)}"))
     return elements
 
 
@@ -369,8 +392,10 @@ def show(app, ctx, record, text):
     (RESTARTED) said in its chat-list preview when it would continue: that goes too."""
     try:
         other = other_harness(ctx.state_dir, record, getattr(app, "topics", None))
+        label, follow = next_steps(record, other)  # The fold under the row no longer says when it would run.
         ok = app.cards.update_record_elements(ctx, record, [retry_status(text), actions(record["topic_id"],
-                                                                                   record["job_id"], False, record, other)])
+                                                                                   record["job_id"], False, record, other),
+                                                            button_note(label, follow)])
         if kind_of(record) == RESTARTED:
             name = topic_label(ctx.state_dir, record.get("topic_id", "")) or f"#{record.get('job_id')}"
             ok = app.cards.set_record_summary(ctx, record, interrupted_summary(name, "检查并继续")) and ok

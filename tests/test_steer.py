@@ -312,27 +312,30 @@ class ReceiptCardTest(unittest.TestCase):
                     self.assertNotIn(words, shown)
 
     def test_a_supplement_that_did_not_get_through_asks_for_what_it_needs_without_a_tasks_state_word(self):
-        # docs/glossary.md 状态词: 停住了 is a task that did not succeed, and the task this went into may be fine; the band
-        # says what it asks of the owner (docs/ui.md 4 结论带), its 要你做 only what the card's buttons offer.
+        # docs/glossary.md 状态词: 停住了 is a task that did not succeed, and the task this went into may be fine; its line
+        # says what became of it and a line of its own what to do (要你做), only what the card's buttons offer. No band
+        # (T666, the owner 2026-11-23): 要你处理 · 补充 #431 over the same words as the line was said twice.
         from covey.core.text import literal
         refused = {"status": "refused", "error": "任务已结束"}
         offered = {"requeue": {"text": "x"}}
-        cases = ((self.UNREAD, "模型没有读到这条补充", "在话题里再发一次"),
-                 ({**self.UNREAD, **offered}, "模型没有读到这条补充", "重新排队，或在话题里再发一次"),
-                 (refused, "没有发出", "在话题里再发一次"),
-                 ({**refused, **offered}, "没有发出", "重新排队，或在话题里再发一次"),
-                 ({"status": "uncertain", "error": "飞书超时"}, "送达未确认", "先查送达状态，不会自动重发"),
+        cases = ((self.UNREAD, "**任务 #431 已结束，模型没有读到这条补充**", "在话题里再发一次"),
+                 ({**self.UNREAD, **offered}, "**任务 #431 已结束，模型没有读到这条补充**", "重新排队，或在话题里再发一次"),
+                 (refused, "**没有补充到 #431**：任务已结束", "在话题里再发一次"),
+                 ({**refused, **offered}, "**没有补充到 #431**：任务已结束", "重新排队，或在话题里再发一次"),
+                 ({"status": "uncertain", "error": "飞书超时"}, "**补充 #431 送达未确认**：飞书超时", "先查送达状态，不会自动重发"),
                  # 重新排队 was clicked and its result is not known: not 再发一次 blindly, it might run twice.
-                 ({**refused, **offered, "requeue_state": "uncertain"}, "重新排队结果未确认", "看话题里有没有新任务，没有再发一次"))
-        for fields, headline, todo in cases:
-            with self.subTest(headline, todo=todo):
+                 ({**refused, **offered, "requeue_state": "uncertain"},
+                  "**没有补充到 #431**：任务已结束；重新排队结果未确认，不会重复排队", "看话题里有没有新任务，没有再发一次"))
+        for fields, said, todo in cases:
+            with self.subTest(said, todo=todo):
                 card = receipt_card({**self.BASE, **fields})
-                band = text_of(card["body"]["elements"][0])
-                self.assertIn(literal("要你处理 · 补充 #431"), band)
-                self.assertIn(f'"text_size": "heading", "content": "{literal(headline)}"', band)
-                self.assertIn("　" + literal(todo) + '"', band)
-                self.assertNotIn("停住了", text_of(card))
-                self.assertIn("style", card["config"])
+                line, ask = card["body"]["elements"][:2]
+                self.assertEqual(line, {"tag": "markdown", "element_id": "steer_receipt_line", "content": said})
+                self.assertEqual(ask, {"tag": "markdown", "content": f"<font color='orange'>**要你做**</font>　{literal(todo)}"})
+                for words in ("停住了", "要你处理"):
+                    self.assertNotIn(words, text_of(card))
+                self.assertNotIn("band-line", json.dumps(card))
+                self.assertNotIn("style", card["config"])
 
     def test_a_refusal_without_a_reason_leaves_no_colon_hanging(self):
         self.assertEqual(history_lines({**self.BASE, "status": "refused"}), "已保存 " + time.strftime(
