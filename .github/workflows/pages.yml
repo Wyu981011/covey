@@ -23,17 +23,24 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  # 上传和部署分两个 job：deploy 等 build 结束、产物落定后才开始（deploy-pages 推荐的用法；
+  # 同一个 job 里传完马上部署，deploy-pages 曾找不到刚传的 github-pages 产物）。
+  build:
     if: github.event_name == 'workflow_dispatch' || vars.PAGES_ENABLED == 'true'
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5
         with:
           path: docs/demo
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v5
