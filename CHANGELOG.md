@@ -1,9 +1,14 @@
 # 更新记录 / Changelog
 
-格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。还没有发布过版本号，改动都记在 Unreleased 里。
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No version has been released yet; everything goes under Unreleased.
+格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。还没发布的改动记在 Unreleased 里；每个版本先列中文，再列英文。
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Changes not yet released go under Unreleased; each release lists them in Chinese first, then in English.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-23
+
+首个公开版本。功能介绍见 [README](README.md)；下面是发布前最后一段时间的改动。
+First public release. [README.en.md](README.en.md) describes what Covey does; below are the changes of the last stretch before it.
 
 ### Added 新增
 
@@ -27,6 +32,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - 网页工作台数据约定 v35：话题的 `revisit` 加 `set_at`、`running`，新操作 `revisit_cancel`；网页看板和话题总览的「Covey 定时回看」一行主语改成 Covey，带「取消」。飞书看板同样改成“Covey 将于 … 自动回看”。
 - Python 3.13：产物路径是符号链接环时，仍按“无法解析”处理（3.13 的 `Path.resolve()` 不再抛错）。
 - 网络盘上一个话题的 `topic.json` 读挂住时，不再挡住所有卡片点击和私聊消息：路由读 `topic.json`、别名和工作区列表不再持全局锁，话题编号读过一次就不再读盘（[docs/architecture.md](docs/architecture.md#主要记录与锁)）。
+- 飞书 SDK 长连接收到的事件先落盘，处理完才删：Bridge 停止、重启或崩溃时还没处理完的消息和点击，下次启动时先接着处理，不会丢。
+- 一轮结束后的收尾只由 Bridge 跑，而且只跑一次，任务进程不再自己跑；在重启间隙里结束的任务，下次启动时补上收尾。
+- 记录存储读盘时不再持锁：网络盘上的读挂住时，别的请求先用上一次读到的结果回答，写也不再等读。
+- 网页工作台同步：正在跑、在问、刚结束的话题一秒内到网页，不用等全量补扫；三个同步线程每一步都不再打开文件。
 
 ### Added (English)
 
@@ -50,3 +59,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 - Web data contract v35: a topic's `revisit` gains `set_at` and `running`, and a new `revisit_cancel` operation; the page's rows now say who looks ("Covey 将于 … 自动回看") and have a 取消 button; the Feishu 看板 says the same.
 - Python 3.13: an artifact path that is a symlink loop is still reported as one that cannot be resolved (3.13's `Path.resolve()` no longer raises).
 - A read of one topic's `topic.json` that hangs on the network disk no longer holds up every card click and private message: routes read `topic.json`, the aliases and the workspace list without a process-wide lock, and a topic's number is read from disk once ([docs/architecture.md](docs/architecture.md#主要记录与锁)).
+- Events the Feishu SDK connection takes in stay on disk until they are handled: a message or click not yet handled when the Bridge stops, restarts or crashes is handled first at the next start, not lost.
+- A turn's end runs in the Bridge only, and once; a task runner no longer runs it. A task that ends in a restart's gap gets its end at the next start.
+- The record store holds no lock while it reads the disk: when a read hangs on a network disk, other requests answer from the last result, and a write never waits on a read.
+- Web workbench sync: a topic that runs, asks or just ended reaches the page within a second, without waiting for the full pass; the three sync threads open no file on each step.
+
+[Unreleased]: https://github.com/ericxk/covey/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ericxk/covey/releases/tag/v0.1.0

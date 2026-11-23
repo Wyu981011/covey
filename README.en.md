@@ -1,5 +1,7 @@
 # Covey
 
+[![CI](https://github.com/ericxk/covey/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ericxk/covey/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+
 [中文](README.md)
 
 **Run a small team of coding agents from Feishu.**
