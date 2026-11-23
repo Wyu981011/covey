@@ -57,6 +57,15 @@ class ChoiceTest(Case):
                 self.assertEqual(name, want)
                 self.assertIs(chosen, apps.get(want) if apps.get(want) and butler_harness.takes_tools(apps[want]) else None)
 
+    def test_codex_and_antigravity_come_before_pi_and_deepseek_without_claude_code(self):
+        """T700: Pi and DeepSeek Harness take the Bridge's tools too; a butler with no Harness named still falls back to
+        Codex, then Antigravity, and to them only where neither is enabled."""
+        pi, dsh, agy = app("pi"), app("dsh"), app("agy")
+        for apps, want in (({"dsh": dsh, "pi": pi, "agy": agy}, "agy"), ({"pi": pi, "codex": app("codex")}, "codex"),
+                           ({"pi": pi, "dsh": dsh}, "dsh"), ({"pi": pi}, "pi")):
+            with self.subTest(apps=sorted(apps)):
+                self.assertEqual(butler_harness.default_name(apps), want)
+
     def test_the_settings_choice_stands_even_where_it_cannot_run(self):
         butler_settings.update(self.state, harness="claude")
         self.assertEqual(butler_harness.chosen(self.state, {"codex": app("codex")}), ("claude", None))

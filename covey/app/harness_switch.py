@@ -71,7 +71,7 @@ LEAD = SWITCH_LEAD  # In a 换配置 click from a 专项卡: the project whose l
 # What a lead's switch says comes next: its next turn (a wake-up, or the owner's words) starts a new session.
 LEAD_NEXT = ("负责人下一轮起由新会话接着做：它重新读一遍专项的状态，最近几轮对话一起带上，仍然只读。"
              "引用专项卡或这张卡回复，就是对负责人说。")
-NO_LEAD_MODEL = "现在没有能当负责人的模型：要能接 Bridge 工具（Claude Code、Codex 或 Antigravity），在 harnesses.json 里启用一个。"
+NO_LEAD_MODEL = "现在没有能当负责人的模型：要能接 Bridge 工具的 Harness（设置卡「配置」里管家一段能选的那些），在 harnesses.json 里启用一个。"
 
 
 def other_harness_key(topics, state_dir, sel, topic) -> str:

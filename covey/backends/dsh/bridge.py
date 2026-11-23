@@ -22,7 +22,7 @@ from covey.core import env as cenv
 from covey.backends.gateway import connection
 from covey.core import gateways
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
-                                JobCancelled)
+                                JobCancelled, LEAD, TOOL_LIMIT)
 from covey.core.process import stop_group, stream_subprocess_lines
 from covey.core.process_env import child_process_env
 from covey.core.reply_state import ReplyState
@@ -67,8 +67,37 @@ class DshSessionStore:
         return next(iter(sorted(self.sessions_dir(workdir).glob(f"*/{session_id}"))), None)
 
 
-def route_patch(gateway, catalog, model, effort):
-    """The patch overlay: the gateway's route with every dsh model, and the task's model as the default."""
+# The Bridge's tool calls wait up to 120 seconds for the Bridge's answer (core/butler_requests.py): an MCP call outlives it.
+MCP_CALL_TIMEOUT_MS = 150_000
+MCP_PLUGIN = "@deepseek-ai/dsh-mcp-client"
+# A project lead's turn (core/harness.py LEAD): dsh's own read-only permission preset, and no approval to ask for (a
+# headless run has nobody to ask). Reads, searches and the Bridge's MCP tools stay; writes and commands that write are refused.
+LEAD_ARGS = ("--permission-mode", "read-only", "--approval-policy", "never")
+
+
+def lead_turn(ctx):
+    return ctx.options.get(TOOL_LIMIT) == LEAD
+
+
+def mcp_rows(mcp_config):
+    """One ``@deepseek-ai/dsh-mcp-client`` row (for a patch ``insert``) per server of ``options["mcp_config"]`` (the butler's and the lead's
+    Bridge tools); tools are named ``mcp__<server>__<tool>`` as on Claude Code."""
+    rows = []
+    servers = (mcp_config or {}).get("mcpServers") if isinstance(mcp_config, dict) else None
+    for name, server in (servers or {}).items():
+        if not isinstance(server, dict) or not server.get("command"):
+            continue
+        config = {"serverName": name, "transport": "stdio", "command": server["command"],
+                  "args": list(server.get("args") or []), "toolCallTimeoutMs": MCP_CALL_TIMEOUT_MS}
+        if server.get("env"):
+            config["env"] = dict(server["env"])
+        rows.append({"id": "mcp-" + name, "name": MCP_PLUGIN, "config": config})
+    return rows
+
+
+def route_patch(gateway, catalog, model, effort, mcp_config=None):
+    """The patch overlay: the gateway's route with every dsh model, the task's model as the default, and the Bridge's
+    tools when the turn has them."""
     models = []
     for name, row in catalog.items():
         levels = [r["effort"] for r in row["supported_reasoning_levels"]]
@@ -86,6 +115,7 @@ def route_patch(gateway, catalog, model, effort):
         {"id": "agent-default-model", "config": {"provider": gateway.name, "model": model,
                                                  **({"reasoningEffort": effort} if effort else {})}},
         {"id": "session-title-llm", "disabled": True},  # No extra model request for a title nobody shows.
+        *([{"insert": rows}] if (rows := mcp_rows(mcp_config)) else []),  # A new row is an insert; a bare id is "not found".
     ]
 
 
@@ -150,7 +180,7 @@ class DshBackend(BackendRuntime):
     def capabilities(self, ctx):
         # What headless_outcome tells apart. No native_fork: ``--session-id`` only goes on with a session (so no
         # 交接摘要 either, app/switch_handoff.py).
-        return HarnessCapabilities(rate_limit_retry=True, fault_retry=True)
+        return HarnessCapabilities(bridge_tools=True, rate_limit_retry=True, fault_retry=True)
 
     @staticmethod
     def gateway():
@@ -179,8 +209,8 @@ class DshBackend(BackendRuntime):
 
     def environment(self, ctx):
         env = connection.child_env(self.gateway(), child_process_env(ctx.workdir))
-        # Full access matches Codex's default; dsh's headless approvals have nobody to ask.
-        env.update(DSH_HOME=str(native_home()), DSH_PERMISSION_MODE="danger-full-access",
+        # Full access matches Codex's default; dsh's headless approvals have nobody to ask. A lead's turn is read-only.
+        env.update(DSH_HOME=str(native_home()), DSH_PERMISSION_MODE="read-only" if lead_turn(ctx) else "danger-full-access",
                    DSH_TELEMETRY_MODE="DISABLED")
         return env
 
@@ -195,8 +225,9 @@ class DshBackend(BackendRuntime):
         fd, patch = tempfile.mkstemp(prefix="dsh-patch-", suffix=".yml", dir=str(tmp))
         try:
             with os.fdopen(fd, "w") as handle:  # JSON is YAML; mkstemp already made it owner-only.
-                json.dump(route_patch(found, catalog, ctx.model, ctx.effort), handle)
+                json.dump(route_patch(found, catalog, ctx.model, ctx.effort, ctx.options.get("mcp_config")), handle)
             argv = [*ctx.backend_cmd, "--profile", "headless", "--patch", patch, "--json",
+                    *(LEAD_ARGS if lead_turn(ctx) else ()),
                     *(["--session-id", session_id] if session_id else []), "-"]
             options = {**ctx.options, "harness_id": "dsh", "harness_label": "dsh",
                        "error_texts": {**ctx.options.get("error_texts", {}), "rate_limited": connection.busy_text(found)}}
@@ -208,6 +239,9 @@ class DshBackend(BackendRuntime):
                 pass
 
     def prompt_runtime_note(self, ctx):
+        if lead_turn(ctx):
+            return ("dsh 权限模式：read-only：写文件和会改东西的命令都会被拒（这台机器没有可用的沙箱时 bash 整个不能用），"
+                    "读文件、搜索和 Bridge 工具照常")
         return "dsh 权限模式：danger-full-access"
 
     def startup_lines(self, ctx):

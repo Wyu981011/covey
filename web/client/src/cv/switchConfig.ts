@@ -10,7 +10,7 @@ export type SwitchSel = LaunchPreselect;
 export const SWITCH_FIELDS = ['model', 'effort', 'work_mode', 'workspace', 'run_mode', 'redaction'] as const;
 
 /** 负责人只能用的模型说不过去时的那句（同 Covey app/lead_harness.py 的 CANNOT_LEAD） */
-export const LEAD_ONLY = '负责人只能用能接 Bridge 工具的模型（Claude Code、Codex 或 Antigravity）';
+export const LEAD_ONLY = '负责人只能用能接 Bridge 工具的模型（和管家能选的一样）';
 
 /** 面板的初值：话题的配置，补成这个模型能选的（预算不在列表里取 start_budget，工作模式不在取第一个，不能脱敏的模型脱敏视为 off）。
  *  模型不在目录里（目录变了）原样留着：面板上那一行显示原值，要重选模型才能确认 */

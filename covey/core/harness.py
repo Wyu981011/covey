@@ -149,7 +149,8 @@ class AskFailed(Exception):
 # say, no shell, no network, no question, no checkpoint (Codex: its read-only sandbox in a private CODEX_HOME). LEAD: a
 # project lead's turn (app/project_lead.py lead_turn): reading and searching and its Bridge tools, no file change and no
 # command that changes anything (Claude Code: Read, Grep and Glob; Codex: its read-only sandbox, the Bridge's tools
-# approved; Antigravity: deny rules for commands, file writes and URL reads).
+# approved; Antigravity: deny rules for commands, file writes and URL reads; Pi: its tool allowlist, read, grep, find, ls
+# and the MCP tools; DeepSeek Harness: its read-only permission preset, no approval asked).
 TOOL_LIMIT = "tool_limit"
 READ, LOOK, PROXY, CONSULT, LEAD = "read", "look", "proxy", "consult", "lead"
 TOOL_NOTES = "tool_notes"  # With PROXY: the contact's notes directory, the one place its edit tools may write ('' none).

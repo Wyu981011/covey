@@ -116,14 +116,17 @@ class WebSettingsTest(UnifiedCase):
             self.assertEqual((lead["title"], lead["note"]), ("专项负责人", cards.LEAD_NOTE))
             harness, = lead["rows"]  # Following the butler: the Harness row alone.
             self.assertEqual((harness["kind"], harness["current"], harness["editable"]), (cards.LEAD_HARNESS, "", True))
-            self.assertEqual([o["value"] for o in harness["options"]], ["", "claude", "codex", "agy"])
+            self.assertEqual([o["value"] for o in harness["options"]], ["", "claude", "codex", "dsh", "pi", "agy"])
             self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="agy"),
                              ("done", butler_panel.SAVED[butler_panel.LEAD]))
             self.assertEqual(settings.load(self.ctx.state_dir).lead.harness, "agy")
             self.assertEqual([r["kind"] for r in self.snap()["config"]["lead"]["rows"]],
                              [cards.LEAD_HARNESS, cards.LEAD_PROVIDER, cards.LEAD_MODEL, cards.LEAD_EFFORT])
             self.assertIn("负责人 ", self.snap()["config"]["summary"])
-            self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="pi"), ("failed", web_settings.GONE))
+            # One that cannot take the Bridge's tools is not offered (DeepSeek Harness made one for the test).
+            from covey.core.harness import HarnessCapabilities
+            with mock.patch("covey.backends.dsh.bridge.DshBackend.capabilities", lambda self, ctx: HarnessCapabilities()):
+                self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="dsh"), ("failed", web_settings.GONE))
         self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="claude"), ("failed", web_settings.GONE))
 
     def test_a_row_changed_on_the_page_is_the_cards_change_and_shows_on_both(self):

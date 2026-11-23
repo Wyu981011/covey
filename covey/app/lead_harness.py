@@ -22,7 +22,7 @@ from covey.core.text import cut
 from covey.core.topics import load_topic
 
 # Said where a model cannot run a lead: on the 换配置 card, by the web page's switch, to the butler's topic_start.
-CANNOT_LEAD = "负责人只能用能接 Bridge 工具的 Harness（Claude Code、Codex 或 Antigravity），它要用这些工具派话题、守住只读"
+CANNOT_LEAD = "负责人只能用能接 Bridge 工具的 Harness（和管家能选的一样），它要用这些工具派话题，并在上面守住只读"
 CANNOT_REDACT = "管家开着敏感词脱敏，负责人也脱敏：只能选能脱敏的模型（Claude）"
 
 

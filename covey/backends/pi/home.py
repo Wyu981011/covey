@@ -1,6 +1,6 @@
 """Pi's private home for one turn, and how its models reach it.
 
-pi reads auth.json, models.json and settings.json from ``PI_CODING_AGENT_DIR``. Each turn gets a
+pi reads auth.json, models.json, settings.json and mcp.json from ``PI_CODING_AGENT_DIR``. Each turn gets a
 new one under ``<state>/tmp/pi-home-*`` (owner-only), removed when the turn ends: an Acme turn's
 provider points at that turn's relay port, and models.json resolves environment names only for
 ``apiKey`` and ``headers``, never for ``baseUrl``. The files name environment variables only: the
@@ -8,6 +8,11 @@ Codex access token (``PI_CODEX_ACCESS_TOKEN``, read fresh from Codex's auth.json
 Acme SK reach pi through its environment, never through a file or argv. pi never sees Codex's
 refresh token: pi's OAuth flow would store the rotated one it gets back and log Codex out, so the
 Codex CLI alone refreshes the login and a turn whose token is about to expire stops before pi starts.
+
+A turn that takes the Bridge's tools (``options["mcp_config"]``: the butler's, a project lead's) gets them in mcp.json
+(``mcp_config``), pi's built-in MCP support (pi 1.6): each server's tools declared to the model as built-ins are
+(``direct``, named ``mcp__<server>__<tool>`` as in Claude Code and Codex), each call waited for longer than the Bridge
+takes to answer one (``TOOL_SECONDS``). The owner's own ~/.pi/agent/mcp.json is never read: the home is the turn's.
 """
 from __future__ import annotations
 
@@ -35,6 +40,9 @@ MAX_TOKENS = 128000
 TOKEN_MARGIN = 60 * 60
 # pi's own retries after an error the relay or ChatGPT hands back (5xx, a dropped stream): 2, 4, 8, 16, 32 s.
 RETRIES = 5
+# A Bridge tool's call: pi waits this long (mcp.json ``timeout``, seconds; its default is 60), above the 120 seconds
+# core/butler_requests.py waits for the Bridge's answer, as backends/agy/home.py TOOL_SECONDS.
+TOOL_SECONDS = 150
 # The OpenAI SDK under pi's openai-responses gives up on response headers after 10 minutes by default and
 # sends the request again, which ends the relay's hold. This is the longest a Node timer waits (2^31-1 ms,
 # about 24.8 days; a longer one fires at once). pi sets undici's headersTimeout and bodyTimeout to 0 itself.
@@ -130,6 +138,18 @@ def settings_config():
     }
 
 
+def mcp_config(config):
+    """mcp.json of a turn that takes the Bridge's tools: every server of ``config`` (``options["mcp_config"]``,
+    {"mcpServers": {name: {command, args, env}}}) as it is, its tools ``direct`` and each call given TOOL_SECONDS; no
+    codemode (it would wrap the tools the model must call by name). None without servers."""
+    servers = (config or {}).get("mcpServers") if isinstance(config, dict) else None
+    if not isinstance(servers, dict) or not servers:
+        return None
+    return {"mcpServers": {name: {**server, "exposure": "direct", "timeout": TOOL_SECONDS}
+                           for name, server in servers.items() if isinstance(server, dict)},
+            "autoEnableCodemode": False}
+
+
 def key_command(env_name):
     """A models.json ``apiKey`` that has pi read the secret from its environment. pi 0.73.1 took a bare
     variable name; 1.x takes a bare name as the key itself and only resolves ``$NAME`` or ``!command``, and
@@ -146,13 +166,15 @@ def auth_config():
 class TurnHome:
     """The turn's ``PI_CODING_AGENT_DIR``; a context manager that removes it."""
 
-    def __init__(self, state_dir, model, effort, account, relay_url=""):
+    def __init__(self, state_dir, model, effort, account, relay_url="", mcp=None):
         tmp = Path(state_dir) / "tmp"
         ensure_private_dir(tmp)
         self.path = Path(tempfile.mkdtemp(prefix="pi-home-", dir=str(tmp)))  # mkdtemp is 0700.
+        servers = mcp_config(mcp)
         try:
             for name, data in (("auth.json", auth_config()), ("settings.json", settings_config()),
-                               ("models.json", models_config(model, effort, account, relay_url))):
+                               ("models.json", models_config(model, effort, account, relay_url)),
+                               *((("mcp.json", servers),) if servers else ())):
                 fd = os.open(self.path / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "w") as handle:
                     json.dump(data, handle)

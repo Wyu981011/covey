@@ -143,7 +143,8 @@ class Butler:
         if app is not None:
             return ""
         if not butler_settings.load(state_dir).harness:  # None named, and no enabled Harness takes the Bridge's tools.
-            return ("main thread is on but no enabled Harness can take the Bridge tools (Claude Code, Codex or Antigravity): "
+            return ("main thread is on but no enabled Harness can take the Bridge tools (Claude Code, Codex, Antigravity, Pi "
+                    "or DeepSeek Harness): "
                     "private chat messages open topics instead; enable one of them in harnesses.json, or choose 纯话题")
         return (f"main thread is on but its Harness {name} is not enabled or cannot take the Bridge tools: private chat "
                 f"messages open topics instead; enable {name} in harnesses.json, choose another Harness in the settings "

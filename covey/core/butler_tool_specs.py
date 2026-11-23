@@ -381,7 +381,7 @@ START_PROJECT = {"type": "boolean", "description": "这件事要分成几个话�
                                                    "这时 title 是专项名，prompt 写目标和完成标准（主人的说法），"
                                                    "workspace 是负责人和专项的话题默认用的工作区；"
                                                    "harness、model、effort 这时是负责人用的，主人点名负责人用哪个（如“负责人用 Codex”）才填，"
-                                                   "负责人只能用 Claude Code、Codex 或 Antigravity；主人要专项的话题用哪个模型，写进 prompt，负责人开话题时照办；"
+                                                   "负责人只能用能接 Bridge 工具的 Harness（不行时这次调用会说明）；主人要专项的话题用哪个模型，写进 prompt，负责人开话题时照办；"
                                                    "主人要把已有的话题收进这个专项时，把它们的 T 号放进 topics；拿不准就不要填"}
 START_TOPICS = {"type": "array", "items": {"type": "string"},
                 "description": "只在 project 为 true 时用：主人要收进这个专项的已有话题，T 号（如 T531）或话题 id，一个一项。"

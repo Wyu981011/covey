@@ -33,12 +33,18 @@ def takes_tools(app) -> bool:
     return bool(backend_capabilities(app.backend, harness.context).bridge_tools)
 
 
+# The Harnesses a butler with none named falls back to after Claude Code, in this order, before the roster's others
+# (Pi and DeepSeek Harness take the Bridge's tools too since T700, but a deployment that had Codex or Antigravity keeps it).
+FALLBACKS = ("codex", "agy")
+
+
 def default_name(apps) -> str:
-    """The Harness the butler runs on when its settings name none: Claude Code when it can, else the first Harness of the
-    roster's order (then any other enabled one) that can; Claude Code when none can (the start says it is missing)."""
+    """The Harness the butler runs on when its settings name none: Claude Code when it can, else Codex, then
+    Antigravity (FALLBACKS), then the first Harness of the roster's order (then any other enabled one) that can; Claude
+    Code when none can (the start says it is missing)."""
     if takes_tools(apps.get(contract.HARNESS)):
         return contract.HARNESS
-    order = [*NAMES, *(name for name in apps if name not in NAMES)]
+    order = [*FALLBACKS, *NAMES, *(name for name in apps if name not in NAMES)]
     return next((name for name in order if name != contract.HARNESS and takes_tools(apps.get(name))), contract.HARNESS)
 
 

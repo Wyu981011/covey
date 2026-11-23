@@ -969,7 +969,7 @@ export interface LaunchModel {
   work_modes: string[];
   /** 卡上对每个工作模式的叫法（Covey v16 后补的字段，旧 Covey 没有） */
   work_mode_texts?: Record<string, string>;
-  /** v36：这个模型能当专项负责人（它的 Harness 能接 Bridge 工具：Claude Code、Codex、Antigravity）。负责人的换配置只列这些；旧 Covey 没有 */
+  /** v36：这个模型能当专项负责人（它的 Harness 能接 Bridge 工具，和管家能选的一样）。负责人的换配置只列这些；旧 Covey 没有 */
   bridge_tools?: boolean;
 }
 export interface LaunchWorkspace {

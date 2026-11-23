@@ -7,6 +7,10 @@ the Codex Harness, which holds every 429 and asks the gateway again until anothe
 has no native question tool, so a task asks through the checkpoint file; it has no sub-agents,
 so Codex's ``ultra`` budget is not offered. Sessions live in one root and are always resumed or
 forked by their file's path: a bare id from another directory makes pi ask on the terminal.
+
+The butler and a project's lead run on it too (``bridge_tools``): the Bridge's tools reach pi through its built-in MCP
+support (backends/pi/home.py mcp_config), and a lead's turn (core/harness.py LEAD) is held to reading by pi's own tool
+allowlist (``LEAD_TOOLS``: read, grep, find, ls and the MCP tools; no bash, edit or write).
 """
 from __future__ import annotations
 
@@ -20,7 +24,7 @@ from covey.core import gateways
 from covey.backends.pi import home
 from covey.backends.pi.rpc import run_rpc
 from covey.core.harness import (BackendConfig, BackendRuntime, HarnessCapabilities, HARNESS_REGISTRY,
-                                         HarnessSpec, RunRequest, UUID_RE)
+                                         HarnessSpec, LEAD, RunRequest, TOOL_LIMIT, UUID_RE)
 from covey.core.attachments import MAX_IMAGE_BYTES
 from covey.core.paths import component_dir
 from covey.core.process_env import child_process_env
@@ -28,6 +32,9 @@ from covey.core.reply_state import ReplyState
 from covey.core.state import ensure_private_dir
 
 DEFAULT_MODEL = "gpt-6-astra"
+# A lead's turn: pi's read-only built-ins and the MCP tools (``pi --tools``, an allowlist; pi 1.6.0 drops the MCP tools
+# from it unless an entry names them, whatever its docs say: measured, T700), so no bash, edit or write.
+LEAD_TOOLS = "read,grep,find,ls,mcp__*"
 DEFAULT_EFFORT = "high"
 SESSIONS = "pi-sessions"
 
@@ -119,9 +126,10 @@ class PiBackend(BackendRuntime):
                              {"harness_id": "pi"})
 
     def capabilities(self, ctx):
-        # rate_limit_retry, fault_retry: what backends/pi/events.py failure_code tells apart.
+        # rate_limit_retry, fault_retry: what backends/pi/events.py failure_code tells apart. bridge_tools: the butler's
+        # and a lead's tools through pi's MCP (backends/pi/home.py mcp_config), a lead held to LEAD_TOOLS.
         return HarnessCapabilities(image_bytes=MAX_IMAGE_BYTES, steering=True, native_fork=True, model_requests=True,
-                                   steer_reads=True, rate_limit_retry=True, fault_retry=True)
+                                   steer_reads=True, rate_limit_retry=True, fault_retry=True, bridge_tools=True)
 
     def model_catalog(self, ctx):
         return {**account_catalog(), **gateway_models(ctx, connection.cached_catalog)}
@@ -161,7 +169,8 @@ class PiBackend(BackendRuntime):
         ensure_private_dir(sessions)
         return [*ctx.backend_cmd, "--mode", "rpc", "--session-dir", str(sessions), *self.session_args(ctx, session_id),
                 "--provider", gateway.name if gateway else home.CODEX_PROVIDER, "--model", model,
-                "--thinking", home.thinking(ctx.effort)]
+                "--thinking", home.thinking(ctx.effort),
+                *(["--tools", LEAD_TOOLS] if ctx.options.get(TOOL_LIMIT) == LEAD else [])]
 
     def run(self, request):
         request.check_cancelled()
@@ -210,13 +219,16 @@ class PiBackend(BackendRuntime):
 
     def turn(self, request, argv, account, relay_url, token, texts, label):
         ctx = request.context
-        with home.TurnHome(ctx.state_dir, ctx.model, ctx.effort, account, relay_url) as turn_home:
+        with home.TurnHome(ctx.state_dir, ctx.model, ctx.effort, account, relay_url,
+                           mcp=ctx.options.get("mcp_config")) as turn_home:
             env = home.environment(child_process_env(ctx.workdir), ctx.model, turn_home.path, token)
             options = {**ctx.options, "error_texts": {**ctx.options.get("error_texts", {}), **texts}}
             request = dataclasses.replace(request, context=dataclasses.replace(ctx, options=options))
             return run_rpc(request, argv, env, context_window=home.context_window(ctx.model, account), label=label)
 
     def prompt_runtime_note(self, ctx):
+        if ctx.options.get(TOOL_LIMIT) == LEAD:
+            return "Pi 这一轮只读：只有读文件、搜索和 Bridge 工具，没有 bash，也不能改文件"
         return "Pi 没有沙箱：每条命令都以机器人用户的全部权限运行"
 
     def startup_lines(self, ctx):

@@ -220,13 +220,15 @@
 | Claude Code | 自带工具只给 `Read`、`Grep`、`Glob`，Bridge 工具照常（`--tools`，和以前一样） |
 | Codex | 线程和每一轮都在只读沙箱里（`read-only`，`sandboxPolicy: readOnly`）：能跑只读的命令，写文件、联网被沙箱拒。只读沙箱里 MCP 工具默认要批准、批准策略又是从不问，所以给 Bridge 工具单独设成直接批准（`mcp_servers.bridge.default_tools_approval_mode = "approve"`）。接着上一轮时在一个不带你的规则、hook、插件和记忆的 `CODEX_HOME` 里跑，和群成员只读的一轮一样（`ReadingHome`）；开新线程的那一轮在你的 `CODEX_HOME` 里，执行规则里 allow 的命令那时仍在沙箱外执行（[harnesses.md 执行权限](harnesses.md#执行权限)） |
 | Antigravity | 这一轮带上只对这次运行生效的拒绝规则（`--settings`，不写进你的设置，`backends/agy/bridge.py` 的 `READ_ONLY_SETTINGS`）：写文件（新建和改已有的都算）、执行命令、读网址都被拒；读文件、搜索和 Bridge 工具照常（agy 1.5.14 实测） |
-| Pi、dsh | 接不了 Bridge 工具，当不了负责人：这一轮不启动，任务卡上说为什么（`app/tool_limits.py` 的 `refusal`） |
+| Pi | Bridge 工具经 Pi 自带的 MCP 接进来（这一轮私有的 `mcp.json`，工具直接声明，单次调用等 150 秒），工具白名单只留 `read`、`grep`、`find`、`ls` 和 MCP 工具（`--tools read,grep,find,ls,mcp__*`，`backends/pi/bridge.py` 的 `LEAD_TOOLS`）：没有 bash、edit、write。pi 1.6.0 的白名单不写 `mcp__*` 会把 MCP 工具也去掉（实测，和它的文档说的不一样）。真 pi 加本地假模型实测：Bridge 工具调用成功，write、bash 都“not found”，文件没写出来 |
+| DeepSeek Harness（dsh） | Bridge 工具经 dsh 自带的 `@deepseek-ai/dsh-mcp-client` 接进来（补丁里 `insert` 一行，`backends/dsh/bridge.py` 的 `mcp_rows`）；这一轮用 dsh 的 `read-only` 权限预设，`--approval-policy never`（没有人可问，提权一律拒）。写文件、改文件、提权都被拒；dsh 的只读沙箱要 bwrap 或 Landlock，这台机器上用不了，所以 bash 整个被拒（连只读命令也不行），读文件、搜索和 Bridge 工具照常（dsh 0.2.2-rc.5 加本地假模型实测） |
+| 没接 Bridge 工具的（扩展里没声明 `bridge_tools` 的） | 当不了负责人：这一轮不启动，任务卡上说为什么（`app/tool_limits.py` 的 `refusal`） |
 
 这一轮已经有更严的限制时（群成员只读、代答、协作咨询）照那个；只看不改（`look`）的一轮让位给负责人的。负责人话题的专项记录没了时这一轮照样只读，只是没有 Bridge 工具。实测记录见 Codex 的 C8 检查（`tests/test_collab_c8.py`）和 `tests/test_butler_harness.py`。
 
 ## 负责人用哪个 Harness
 
-负责人和管家、话题一样能单独选 Harness、模型和思考预算（`app/lead_harness.py`）。只列能接 Bridge 工具的（Claude Code、Codex、Antigravity：负责人靠它们派话题，并在上面守住只读）；Pi、dsh 不列。
+负责人和管家、话题一样能单独选 Harness、模型和思考预算（`app/lead_harness.py`）。只列能接 Bridge 工具的（核心的 Claude Code、Codex、Antigravity、Pi、DeepSeek Harness 都能，和管家能选的一样：负责人靠这些工具派话题，并在上面守住只读）；扩展里的 Harness 看它自己有没有声明 `bridge_tools`。
 
 - **新建的专项**（`app/projects.py` 的 `step_lead`，按这个顺序取第一个能用的）：
   1. 管家开专项时你点名了负责人用哪个（`topic_start` 带 `project` 时的 `harness`、`model`、`effort` 是负责人的，记在专项记录的 `origin.lead`；点名的接不了 Bridge 工具时这次不开，回复说清楚）。话题用什么模型写进专项的说明，负责人开话题时照办。
@@ -236,7 +238,7 @@
   选的 Harness 这台机器没启用、接不了 Bridge 工具，或者管家开着脱敏而它不能脱敏（负责人的脱敏跟管家），就落到下一项，不会让负责人的每一轮都跑不起来。日志一行 `project lead bound … harness=<名字> from=call|settings|butler`。
 - **已有的专项**：专项卡上点「换配置」，回复专项卡出一张换配置卡（`app/harness_switch.py`，记录里带 `lead`）：只列能当负责人的模型，没有工作区和运行方式两行（负责人在原来的工作区里读），能开关脱敏（选了不能脱敏的模型时同普通话题，确认前问一句）。确认更换和话题的换配置是同一个重绑（`app/binding.py` 的 `switch_topic`）：绑定版本加一，新 Harness 的会话指针清空，负责人旧绑定下没答的问题作废；负责人下一轮（醒来的或你说的）开新会话，状态包整份重读，最近几轮对话和交接一起带上。负责人有一轮在排队或在跑时不换，卡上写“负责人还有一轮在排队或在做：等它做完再点确认更换”，卡一直有效。换了以后专项卡的输入框写新的 Harness 和模型（`app/project_facts.py` 的 `rebound`：换配置之后还没跑过一轮时读负责人的 `topic.json`）。
 - **网页**：负责人的对话下面也有配置栏，和话题的换配置一样，只是只列能当负责人的模型、不能换工作区（数据约定 v36，见 [web.md](web.md#网页发回的操作)）；负责人那一轮没成功时的“换个模型”就是打开它。
-- 负责人跑不起来（Harness 后来被停用，或换到了接不了工具的）时，这一轮不启动，说明里写“点专项卡上的「换配置」换成 Claude Code、Codex 或 Antigravity”。管家换 Harness 不影响已有的负责人。
+- 负责人跑不起来（Harness 后来被停用，或换到了接不了工具的）时，这一轮不启动，说明里写“点专项卡上的「换配置」，换成能接 Bridge 工具的 Harness”。管家换 Harness 不影响已有的负责人。
 
 ## 负责人对照目标跟进
 

@@ -16,7 +16,7 @@ from covey.app.unified import UnifiedBridgeApp
 from covey.backends.dsh.bridge import DshEventAdapter, route_patch
 from covey.backends.gateway import connection
 from support import acme as acme_gateway
-from covey.core.harness import RunCallbacks, RunInputs, RunRequest
+from covey.core.harness import LEAD, LOOK, TOOL_LIMIT, RunCallbacks, RunInputs, RunRequest
 
 KEY = "sk-unit-private-key"
 RUN = "33333333-3333-4333-8333-333333333333"
@@ -52,8 +52,10 @@ class DshTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"updated_at": time.time(), "rows": catalog_rows()}))
 
-    def run_dsh(self, scenario, session=None, cancel=None):
+    def run_dsh(self, scenario, session=None, cancel=None, options=None):
         os.environ["FAKE_DSH_SCENARIO"] = scenario
+        if options is not None:
+            self.ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, **options})
         events, replies, sessions = [], [], []
         result = self.backend.run(RunRequest(self.ctx, "做个任务", session_id=session, callbacks=RunCallbacks(
             event=lambda kind, data, control: events.append((kind, data)), session=sessions.append,
@@ -108,6 +110,48 @@ class DshTests(unittest.TestCase):
         self.assertEqual(provider["retryPolicy"], {"mode": "normal", "maxRetries": 64, "backoff": {
             "initialDelayMs": 2000, "maxDelayMs": 60000, "jitterRatio": 0.2}})
         self.assertNotIn("reasoningEffort", route_patch(acme_gateway(), {}, "m", "")[1]["config"])
+
+    BRIDGE_TOOLS = {"mcpServers": {"bridge": {"command": "/abs/python3", "args": ["/abs/mcp.py", "--state", "/abs/state"],
+                                              "env": {"COVEY_X": "1", "COVEY_Y": "2"}}}}
+
+    def test_bridge_tools_become_an_insert_of_mcp_client_rows(self):
+        self.assertTrue(self.backend.capabilities(self.ctx).bridge_tools)
+        _r, _e, _rep, _s, plain = self.run_dsh("ok")
+        self.assertEqual(len(plain["patch"]), 3)  # No tools, no MCP row.
+        _r, _e, _rep, _s, record = self.run_dsh("ok", options={"mcp_config": self.BRIDGE_TOOLS})
+        self.assertEqual(record["patch"][:3], plain["patch"])
+        self.assertEqual(record["patch"][3:], [{"insert": [{
+            "id": "mcp-bridge", "name": "@deepseek-ai/dsh-mcp-client",
+            "config": {"serverName": "bridge", "transport": "stdio", "command": "/abs/python3",
+                       "args": ["/abs/mcp.py", "--state", "/abs/state"], "env": {"COVEY_X": "1", "COVEY_Y": "2"},
+                       "toolCallTimeoutMs": 150000}}]}])
+        # The call outlives the 120 seconds the Bridge may take to answer a tool request.
+        self.assertGreater(150000, 120 * 1000)
+        self.assertEqual(route_patch(acme_gateway(), {}, "m", "", {"mcpServers": {"x": {"args": []}}}),
+                         route_patch(acme_gateway(), {}, "m", ""))  # A server without a command is left out.
+
+    def test_a_lead_turn_is_read_only_and_asks_nobody(self):
+        _r, _e, _rep, _s, record = self.run_dsh("ok", options={TOOL_LIMIT: LEAD, "mcp_config": self.BRIDGE_TOOLS})
+        self.assertEqual(record["env"]["DSH_PERMISSION_MODE"], "read-only")
+        argv = record["argv"]
+        self.assertEqual(argv[argv.index("--permission-mode") + 1], "read-only")
+        self.assertEqual(argv[argv.index("--approval-policy") + 1], "never")
+        self.assertEqual(argv[-1], "-")
+        self.assertIn("mcp-bridge", json.dumps(record["patch"]))
+        self.assertNotIn("danger-full-access", self.backend.prompt_runtime_note(self.ctx))
+        self.assertIn("read-only", self.backend.prompt_runtime_note(self.ctx))
+
+    def test_other_turns_keep_full_access_and_their_argv(self):
+        _r, _e, _rep, _s, base = self.run_dsh("ok")
+        for options in ({}, {TOOL_LIMIT: LOOK}, {"mcp_config": self.BRIDGE_TOOLS}):
+            self.ctx = dataclasses.replace(self.ctx, options=options)
+            _r, _e, _rep, _s, record = self.run_dsh("ok")
+            self.assertEqual(record["env"], base["env"])
+            self.assertEqual(record["argv"][:2], base["argv"][:2])
+            self.assertNotIn("--permission-mode", record["argv"])
+            self.assertNotIn("--approval-policy", record["argv"])
+            self.assertEqual(record["argv"][4:], base["argv"][4:])
+            self.assertEqual(self.backend.prompt_runtime_note(self.ctx), "dsh 权限模式：danger-full-access")
 
     def test_resume_passes_the_session_and_rejects_another(self):
         result, *_rest, record = self.run_dsh("ok", session=SID)

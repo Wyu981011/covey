@@ -9,7 +9,8 @@ scenario = os.environ.get("FAKE_PI_SCENARIO", "ok")
 record = {"argv": args, "cwd": os.getcwd(), "commands": [],
           "env": {k: os.environ.get(k) for k in ("PI_CODEX_ACCESS_TOKEN", "ACME_API_KEY", "PI_TELEMETRY", "PI_OFFLINE",
                                                   "NO_PROXY")},
-          "home": {name: json.load(open(os.path.join(home, name))) for name in ("auth.json", "models.json", "settings.json")
+          "home": {name: json.load(open(os.path.join(home, name)))
+                   for name in ("auth.json", "models.json", "settings.json", "mcp.json")
                    if home and os.path.exists(os.path.join(home, name))},
           "home_mode": oct(os.stat(home).st_mode & 0o777) if home else ""}
 def save():

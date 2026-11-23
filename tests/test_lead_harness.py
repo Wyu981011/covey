@@ -28,6 +28,12 @@ from covey.core.state import write_json
 from covey.core.topics import load_topic, routed_topic, topic_file
 
 
+def without_tools(module="covey.backends.dsh.bridge.DshBackend"):
+    """The Harness ``module`` names as one that cannot take the Bridge's tools (every core Harness can since T700, so a
+    test of one that cannot makes one)."""
+    return mock.patch(module + ".capabilities", lambda self, ctx: HarnessCapabilities(rate_limit_retry=True))
+
+
 def app(name, *, tools=True, redaction=False):
     backend = SimpleNamespace(capabilities=lambda ctx: HarnessCapabilities(bridge_tools=tools, redaction=redaction))
     return SimpleNamespace(backend=backend, harness=SimpleNamespace(backend=backend, context=SimpleNamespace(device=None)))
@@ -110,7 +116,8 @@ class StartTest(UpCase):
         project, lead = self.lead_of(self.start("p1", project=True, title="迁移订单库", prompt="x", harness="codex"))
         self.assertEqual(lead["harness_id"], "codex")
         self.assertEqual(project["origin"]["lead"]["harness"], "codex")
-        refused = self.start("p2", project=True, title="另一个", prompt="x", harness="pi")
+        with without_tools():
+            refused = self.start("p2", project=True, title="另一个", prompt="x", harness="dsh")
         self.assertFalse(refused["ok"])
         self.assertIn(lead_harness.CANNOT_LEAD, refused["text"])
         self.assertEqual(len(projects.records(self.state)), 1)
@@ -156,8 +163,10 @@ class CardSwitchTest(UpCase):
             self.switch.dispatch(self.ctx, event)
 
     def test_the_card_lists_only_models_a_lead_can_run_on_and_no_workspace(self):
-        form, _ = self.open()
-        self.assertEqual(set(form["models"]), {"claude:claude-model", "codex:codex-model", "agy:agy-model"})
+        with without_tools():  # DeepSeek Harness as one without the Bridge's tools.
+            form, _ = self.open()
+        self.assertEqual(set(form["models"]),
+                         {"claude:claude-model", "codex:codex-model", "agy:agy-model", "pi:pi-model"})
         self.assertEqual(form["lead"], {"project_id": self.pid, "name": "迁移订单库"})
         self.assertEqual(form["current"]["workspace"], "project")
         card = json.dumps(switch_form.build_switch_card(form), ensure_ascii=False)
@@ -255,8 +264,9 @@ class CardSwitchTest(UpCase):
                 return ops.run({"kind": "switch", "op_id": op_id, "topic_key": self.lead, "payload": payload})
         moved = {**config, "workspace": "docs"}
         self.assertEqual(run("op-w1", **moved), ("failed", web_switch.LEAD_PLACE))
-        self.assertEqual(run("op-w2", **{**config, "model": "pi:pi-model", "effort": models["pi:pi-model"]["start_budget"]}),
-                         ("failed", lead_harness.CANNOT_LEAD))
+        with without_tools():
+            self.assertEqual(run("op-w2", **{**config, "model": "dsh:dsh-model", "effort": models["dsh:dsh-model"]["start_budget"]}),
+                             ("failed", lead_harness.CANNOT_LEAD))
         state, words = run("op-w3", **{**config, "model": "codex:codex-model",
                                        "effort": models["codex:codex-model"]["start_budget"]})
         self.assertEqual(state, "done", words)
@@ -284,8 +294,9 @@ class CatalogTest(UpCase):
         from covey.app import web_launch
         base = self.app.apps["claude"].harness.context
         found = {model["key"]: model["bridge_tools"] for model in web_launch.catalog(self.env, base, CHAT)["models"]}
+        # Every core Harness takes the Bridge's tools (Pi and DeepSeek Harness since T700's second round).
         core = {"claude:claude-model": True, "codex:codex-model": True, "agy:agy-model": True,
-                "dsh:dsh-model": False, "pi:pi-model": False}
+                "dsh:dsh-model": True, "pi:pi-model": True}
         # An enabled extension adds its own Harnesses' models (covey_internal: MASO's, no Bridge tools): only the core's are named.
         self.assertEqual({key: found.get(key) for key in core}, core)
         self.assertTrue(all(isinstance(value, bool) for value in found.values()), found)

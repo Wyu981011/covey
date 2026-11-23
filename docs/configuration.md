@@ -12,7 +12,7 @@
 
 | 功能 | 开关 | 怎么确认开着 | 怎么关 |
 | --- | --- | --- | --- |
-| [管家](#管家) | `COVEY_BUTLER`（不设即允许） | 私聊发一句话由管家回答或开话题；设置卡「配置」页有管家一段。管家没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity；设置卡「配置」页的“管家”一段可换；选的 Harness 没启用时私聊照旧开话题 | `COVEY_BUTLER=0`；或主人在设置卡「配置」页的“管家”一段把私聊顶层改成“每条直接开一个话题” |
+| [管家](#管家) | `COVEY_BUTLER`（不设即允许） | 私聊发一句话由管家回答或开话题；设置卡「配置」页有管家一段。管家没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity（再没有时 Pi、DeepSeek Harness）；设置卡「配置」页的“管家”一段可换；选的 Harness 没启用时私聊照旧开话题 | `COVEY_BUTLER=0`；或主人在设置卡「配置」页的“管家”一段把私聊顶层改成“每条直接开一个话题” |
 | [专项](projects.md) | `COVEY_PROJECTS=1`（`./install` 写） | 管家把长期要跟进的事开成专项时，私聊出现专项卡 | `COVEY_PROJECTS=0` |
 | [整理专项](#整理专项)（只提议） | `COVEY_PROJECT_TIDY=suggest`（`./install` 写，要 `COVEY_PROJECTS=1`） | 话题多了以后私聊出现“建个专项？”的提议卡；有菜单「看板」时看板卡上有「整理专项」 | `COVEY_PROJECT_TIDY=off` |
 | [菜单「看板」](usage.md#看板) | `COVEY_BOARD=1`（`./install` 写） | 菜单里有「看板」，随时点开看现在等你、停住、在做的事；不用开早晚汇总（应用里还没有这一项时，「飞书应用待补」卡会补上） | `COVEY_BOARD=0`（开了早晚汇总时「看板」照旧跟着它） |
@@ -324,7 +324,7 @@
 
 - `0`：不允许。不起后台线程、不改消息路由，设置卡没有管家的标签。
 - 不设或 `1`：允许。用不用由主人在设置卡上选的模式定（`<state>/main-thread.json` 的 `mode`），改模式不用重启。新部署第一次启动写成管家，日志 `main thread mode settled mode=agent|topics`。
-- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity（`app/butler_harness.py`）；设置卡「配置」页的管家一段可以换（`harness`，见[管家 · 换 Harness](butler.md#换-harness)）。Claude Code 没调通的新装，`./install` 在服务第一次启动前写好调通的那个，如 `"harness": "codex"`（`core/butler_settings.py` 的 `preset_harness`，文件里已经有 Harness 的不动）。
+- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity，再没有时 Pi、DeepSeek Harness（`app/butler_harness.py`）；设置卡「配置」页的管家一段可以换（`harness`，见[管家 · 换 Harness](butler.md#换-harness)）。Claude Code 没调通的新装，`./install` 在服务第一次启动前写好调通的那个，如 `"harness": "codex"`（`core/butler_settings.py` 的 `preset_harness`，文件里已经有 Harness 的不动）。
 - `main-thread.json` 里旧的 `"desk_topics": true` 读到也按 `false` 处理，启动时记一行 warning，见[已下线的功能与旧配置](legacy.md)。
 - 开着专项（`COVEY_PROJECTS=1`）时，话题能把只有管家能办的事转给管家（检查点 `ask_butler`，记录在 `<state>/butler-asks/`），没有单独的开关，见[在话题里说开专项](projects.md#在话题里说开专项)。
 

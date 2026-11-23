@@ -153,6 +153,37 @@ class PiTests(unittest.TestCase):
                          (14, 300, 100, 272000))
         self.assertEqual([data["ttft_source"] for kind, data in events if kind == "first_token"], ["pi_delta"])
 
+    def test_a_leads_turn_takes_the_bridge_tools_and_is_held_to_reading(self):
+        """T700: the butler and a project's lead run on Pi too (bridge_tools): the Bridge's MCP server goes into the turn's
+        own mcp.json, its tools declared as built-ins and waited for 150 s; a lead's turn has pi's read-only built-ins
+        alone (``--tools read,grep,find,ls``, which keeps MCP tools). Any other turn is as it was."""
+        from covey.backends.pi.bridge import LEAD_TOOLS
+        from covey.core.harness import LEAD, TOOL_LIMIT, backend_capabilities
+        self.assertTrue(backend_capabilities(self.backend, self.ctx).bridge_tools)
+        server = {"command": "python3", "args": ["mcp.py"], "env": {"COVEY_BUTLER_REQUEST": "r1"}}
+        lead = dataclasses.replace(self.ctx, options={**self.ctx.options, TOOL_LIMIT: LEAD,
+                                                      "mcp_config": {"mcpServers": {"bridge": server}}})
+        result, _, _, _, record = self.run_pi(ctx=lead)
+        self.assertFalse(result.is_error, result.text)
+        argv = record["argv"]
+        self.assertEqual(argv[argv.index("--tools") + 1], LEAD_TOOLS)
+        self.assertEqual(record["home"]["mcp.json"], {
+            "mcpServers": {"bridge": {**server, "exposure": "direct", "timeout": home.TOOL_SECONDS}},
+            "autoEnableCodemode": False})
+        self.assertGreater(home.TOOL_SECONDS, 120)  # core/butler_requests.py waits 120 s for the Bridge's answer.
+        self.assertIn("只读", self.backend.prompt_runtime_note(lead))
+        # The butler's own turn: its tools, every built-in (it is no lead).
+        butler = dataclasses.replace(self.ctx, options={**self.ctx.options, "mcp_config": {"mcpServers": {"bridge": server}}})
+        _, _, _, _, record = self.run_pi(ctx=butler)
+        self.assertNotIn("--tools", record["argv"])
+        self.assertIn("mcp.json", record["home"])
+        # A topic's turn: no MCP file, no allowlist, as before.
+        _, _, _, _, record = self.run_pi()
+        self.assertNotIn("--tools", record["argv"])
+        self.assertNotIn("mcp.json", record["home"])
+        self.assertIsNone(home.mcp_config({"mcpServers": {}}))
+        self.assertIsNone(home.mcp_config(None))
+
     def test_budgets_map_to_pi_thinking_and_ultra_is_never_offered(self):
         _, _, _, _, record = self.run_pi(ctx=dataclasses.replace(self.ctx, effort="max"))
         self.assertEqual(record["argv"][record["argv"].index("--thinking") + 1], "xhigh")

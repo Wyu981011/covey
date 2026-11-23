@@ -1,6 +1,6 @@
 # 管家
 
-管家是私聊里一个常驻的会话（设置卡的私聊模式选“管家”时），没选 Harness 时跑在 Claude Code 上，这台机器没启用 Claude Code 时跑在启用了的 Codex 或 Antigravity 上；也可以在设置卡「配置」页的“管家”一段换。主人在私聊**顶层**发的消息都交给它：能直接答的自己答，要干活的开话题或转给已有话题，主人说“T12 选 A”时替主人答选择题。用户视角见[使用指南 · 管家](usage.md#管家)，部署开关见[配置](configuration.md)。
+管家是私聊里一个常驻的会话（设置卡的私聊模式选“管家”时），没选 Harness 时跑在 Claude Code 上，这台机器没启用 Claude Code 时依次跑在启用了的 Codex、Antigravity 上（再没有时用 Pi 或 DeepSeek Harness）；也可以在设置卡「配置」页的“管家”一段换。主人在私聊**顶层**发的消息都交给它：能直接答的自己答，要干活的开话题或转给已有话题，主人说“T12 选 A”时替主人答选择题。用户视角见[使用指南 · 管家](usage.md#管家)，部署开关见[配置](configuration.md)。
 
 管家交给负责人跟进的长期的事见[专项](projects.md)，网页上的工作台见[网页工作台](web.md)。这篇讲管家是什么、由哪几块组成、一轮怎么走；放置表的每一格、工具通道的协议、各功能的记录和刷新方式等改代码时才查的细节在[管家的实现细节](butler-internals.md)，标题和这里一一对应。
 
@@ -24,7 +24,7 @@
 
 **纯话题**下和没有管家时一样：顶层每条消息开一个话题；引用管家以前的卡当作新消息开话题（`core/topics.py` 的 `context_for_topic`），引用“交给一个话题”的管家卡照旧进那个话题；正在跑的管家那一轮跑完，按 `BUTLER_OFF` 收尾；会话和记录留着；管家开过的话题不再回带、不再放顶层问题卡副本。群聊两种模式都没有管家。
 
-管家的 Harness 是设置里的 `harness`，只能选能接 Bridge 工具的（`core/harness.py` 的 `bridge_tools`：Claude Code、本机上的 Codex 和 Antigravity；Pi 和 dsh 接不了；见[换 Harness](#换-harness)）。没选（空）时跟着启用了的走（`app/butler_harness.py`）：启用了 Claude Code 就用它，和以前一样；没启用时用启用了的、能接工具的第一个，先 Codex 后 Antigravity。设置卡和网页设置页上画的是它现在用的那个，不写进文件，以后装上 Claude Code 就回到 Claude Code。没选 Harness 时记下的模型和预算是 Claude Code 的（设置卡把 Claude Code 存成空），换到别的 Harness 上时用它自己的默认模型（`model_of`）；在设置卡上给 Codex 或 Antigravity 选模型时，Harness 一起记下。选了的 Harness 没启用或接不了工具时不替换：私聊消息照旧开话题，Bridge 启动日志写一行 `main thread is on but its Harness <名字> is not enabled or cannot take the Bridge tools`；没选、也没有一个启用了的能接工具时写 `main thread is on but no enabled Harness can take the Bridge tools (Claude Code, Codex or Antigravity)`。新部署私聊里的[欢迎卡](usage.md#第一次使用)（`app/welcome.py` 的 `butler_state`）也当面说：没有管家时写为什么（管家用的 Harness 没启用或接不了工具；`COVEY_BUTLER=0`；私聊模式是纯话题；或它刚才没起来）和怎么补（装好并登录 Claude Code、Codex 或 Antigravity 中的一个再运行一次 `./install`，选过别的 Harness 的在设置卡「配置」页的“管家”一段换成启用了的；纯话题时在同一页改回交给管家），并说明每条消息会开一个话题、先出启动卡；有管家时说明你的话下面出现表情就是收到了，有东西要给你看时才发卡（一轮跑过 90 秒才发任务卡，见[提问不开串](#提问不开串)）。
+管家的 Harness 是设置里的 `harness`，只能选能接 Bridge 工具的（`core/harness.py` 的 `bridge_tools`：Claude Code、本机上的 Codex、Antigravity、Pi 和 DeepSeek Harness；扩展里的 Harness 看它自己声明没有；见[换 Harness](#换-harness)）。没选（空）时跟着启用了的走（`app/butler_harness.py`）：启用了 Claude Code 就用它，和以前一样；没启用时用启用了的、能接工具的第一个：先 Codex、再 Antigravity，然后才按名单顺序轮到 Pi、DeepSeek Harness（`FALLBACKS`）。设置卡和网页设置页上画的是它现在用的那个，不写进文件，以后装上 Claude Code 就回到 Claude Code。没选 Harness 时记下的模型和预算是 Claude Code 的（设置卡把 Claude Code 存成空），换到别的 Harness 上时用它自己的默认模型（`model_of`）；在设置卡上给 Codex 或 Antigravity 选模型时，Harness 一起记下。选了的 Harness 没启用或接不了工具时不替换：私聊消息照旧开话题，Bridge 启动日志写一行 `main thread is on but its Harness <名字> is not enabled or cannot take the Bridge tools`；没选、也没有一个启用了的能接工具时写 `main thread is on but no enabled Harness can take the Bridge tools (Claude Code, Codex, Antigravity, Pi or DeepSeek Harness)`。新部署私聊里的[欢迎卡](usage.md#第一次使用)（`app/welcome.py` 的 `butler_state`）也当面说：没有管家时写为什么（管家用的 Harness 没启用或接不了工具；`COVEY_BUTLER=0`；私聊模式是纯话题；或它刚才没起来）和怎么补（装好并登录 Claude Code、Codex 或 Antigravity 中的一个再运行一次 `./install`，选过别的 Harness 的在设置卡「配置」页的“管家”一段换成启用了的；纯话题时在同一页改回交给管家），并说明每条消息会开一个话题、先出启动卡；有管家时说明你的话下面出现表情就是收到了，有东西要给你看时才发卡（一轮跑过 90 秒才发任务卡，见[提问不开串](#提问不开串)）。
 
 ## 和话题的不同
 

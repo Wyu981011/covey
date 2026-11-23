@@ -383,7 +383,9 @@ class ButlerPanelTests(UnifiedCase):
             self.assertIn('**专项负责人**', text)
             self.assertIn(panel_card.LEAD_NOTE, text)
             self.assertIn('负责人 跟管家', self.cards[-1]['header']['subtitle']['content'])
-            self.assertEqual([v['option'] for v in self.values(panel_card.LEAD_HARNESS)], ['', 'claude', 'codex', 'agy'])
+            # Every core Harness takes the Bridge's tools (Pi and DeepSeek Harness too since T700's second round).
+            self.assertEqual([v['option'] for v in self.values(panel_card.LEAD_HARNESS)],
+                             ['', 'claude', 'codex', 'dsh', 'pi', 'agy'])
             self.click(self.option(panel_card.LEAD_HARNESS, 'codex'), event_id='lead1',
                        message=f'om_panel{self.app.messenger.create_and_send_card.call_count}')
             lead = self.settings().lead
