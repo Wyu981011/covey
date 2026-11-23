@@ -102,10 +102,14 @@ def hero(lang, th):
     W, H = 1280, 360
     zh = lang == "zh"
     tag = "在飞书里带一支编程 Agent 小队" if zh else "Run a small team of coding agents from Feishu"
+
+    def L(a, b):
+        return a if zh else b
+
     sub = (
-        "管家分活 · 话题独立进程 · 专项有负责人 · 三层记忆"
+        "管家分活 · 每个话题独立会话 · 专项有负责人"
         if zh
-        else "A butler hands out the work · one process per topic · a lead for long projects"
+        else "A butler hands out the work · one session per topic · a lead for long projects"
     )
     s = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" aria-label="Covey: {esc(tag)}">'
@@ -120,91 +124,36 @@ def hero(lang, th):
     s.append(rect(1, 1, W - 2, H - 2, 18, "url(#glow)"))
     s.append(rect(1, 1, 760, H - 2, 18, "url(#fade)"))
 
-    # cards on the right
-    def card(x, y, w, h, rot, title_pill, lines, extra=""):
-        g = [f'<g transform="rotate({rot} {x + w / 2} {y + h / 2})">']
-        g.append(rect(x, y, w, h, 14, c["panel"], c["stroke"]))
-        g.append(badge(x + 16, y + 16, "T7", th))
-        g.append(rect(x + 58, y + 23, 86, 9, 4.5, c["muted"], extra='fill-opacity=".55"'))
-        p, pw = title_pill
-        g.append(f'<g transform="translate({x + w - pw - 16} {y + 14})">{p}</g>')
-        g.append(extra)
-        g.append("</g>")
-        return "".join(g)
+    # cards on the right: three topics in three states, the middle one waiting on the question of the other pictures
+    def card(x, y, w, h, rot, topic, label, color, body):
+        p, pw = pill(0, 0, label, color, th, 14)
+        return (
+            f'<g transform="rotate({rot} {x + w / 2} {y + h / 2})">'
+            + rect(x, y, w, h, 14, c["panel"], c["stroke"])
+            + badge(x + 16, y + 16, topic, th)
+            + rect(x + 58, y + 23, 86, 9, 4.5, c["muted"], extra='fill-opacity=".55"')
+            + f'<g transform="translate({x + w - pw - 16} {y + 14})">{p}</g>'
+            + body
+            + "</g>"
+        )
 
-    # card 1: running
-    c1 = card(
-        850,
-        34,
-        300,
-        112,
-        -2,
-        pill(0, 0, "在做" if zh else "Working", c["blue"], th, 14)[0:1]
-        + (pill(0, 0, "在做" if zh else "Working", c["blue"], th, 14)[1],),
-        [],
-        "".join(
-            rect(866, 86 + i * 15, [250, 200, 150][i], 7, 3.5, c["text2"], extra='fill-opacity=".28"') for i in range(3)
-        ),
+    def bars(x, y, widths, opacity):
+        return "".join(
+            rect(x, y + i * 15, w, 7, 3.5, c["text2"], extra=f'fill-opacity="{opacity}"') for i, w in enumerate(widths)
+        )
+
+    first, second = ("首页（推荐）", "登录前打开的页面") if zh else ("Home (rec.)", "Page before login")
+    question = (
+        rect(916, 190, 230, 8, 4, c["text2"], extra='fill-opacity=".28"')
+        + rect(916, 212, 112, 34, 9, "none", c["stroke"], 1.2)
+        + txt(972, 234, first, 14, c["text"], 500, "middle")
+        + rect(1036, 212, 148, 34, 9, c["brand"], extra='fill-opacity=".2"')
+        + rect(1036, 212, 148, 34, 9, "none", c["brand"], 1.2)
+        + txt(1110, 234, second, 14, c["text"], 500, "middle")
     )
-    s.append(c1)
-    # card 2: question
-    q = pill(0, 0, "等你" if zh else "Your call", c["orange"], th, 14)
-    ex = (
-        rect(900, 230, 128, 34, 9, "none", c["stroke"], 1.2)
-        + txt(964, 252, "首页" if zh else "Home", 15, c["text"], 500, "middle")
-        + rect(1040, 230, 148, 34, 9, c["brand"], extra='fill-opacity=".20"')
-        + rect(1040, 230, 148, 34, 9, "none", c["brand"], 1.2)
-        + txt(1114, 252, "原来的页面" if zh else "Previous page", 15, c["text"], 500, "middle")
-    )
-    ex = (
-        rect(916, 196, 0, 0, 0, "none")
-        + "".join(rect(916, 180 + i * 0, 0, 0, 0, "none") for i in range(0))
-        + rect(916, 178, 230, 8, 4, c["text2"], extra='fill-opacity=".28"')
-        + rect(916, 196, 170, 8, 4, c["text2"], extra='fill-opacity=".2"')
-        + rect(916, 218, 110, 34, 9, "none", c["stroke"], 1.2)
-        + txt(971, 240, "首页" if zh else "Home", 15, c["text"], 500, "middle")
-        + rect(1038, 218, 128, 34, 9, c["brand"], extra='fill-opacity=".20"')
-        + rect(1038, 218, 128, 34, 9, "none", c["brand"], 1.2)
-        + txt(1102, 240, "原来的页面" if zh else "Previous", 15, c["text"], 500, "middle")
-    )
-    s.append(card(900, 150, 300, 120, 1.5, q, [], ex).replace("<text", "<text", 1) if False else "")
-    # build card 2 manually without the T7 placeholder bar clash
-    g = [
-        '<g transform="rotate(1.5 1050 210)">',
-        rect(900, 150, 300, 120, 14, c["panel"], c["stroke"]),
-        badge(916, 166, "T7", th),
-        rect(958, 173, 80, 9, 4.5, c["muted"], extra='fill-opacity=".55"'),
-    ]
-    p, pw = pill(0, 0, "等你" if zh else "Your call", c["orange"], th, 14)
-    g.append(f'<g transform="translate({900 + 300 - pw - 16} 164)">{p}</g>')
-    g.append(rect(916, 200, 230, 8, 4, c["text2"], extra='fill-opacity=".28"'))
-    g.append(
-        rect(916, 222, 116, 34, 9, "none", c["stroke"], 1.2)
-        + txt(974, 244, "首页" if zh else "Home", 15, c["text"], 500, "middle")
-    )
-    g.append(
-        rect(1042, 222, 142, 34, 9, c["brand"], extra='fill-opacity=".2"')
-        + rect(1042, 222, 142, 34, 9, "none", c["brand"], 1.2)
-        + txt(1113, 244, "原来的页面" if zh else "Previous page", 15, c["text"], 500, "middle")
-    )
-    g.append("</g>")
-    s.append("".join(g))
-    # card 3: result
-    g = [
-        '<g transform="rotate(-1 1000 320)">',
-        rect(840, 288, 300, 96, 14, c["panel"], c["stroke"]),
-        badge(856, 304, "T7", th),
-        rect(898, 311, 80, 9, 4.5, c["muted"], extra='fill-opacity=".55"'),
-    ]
-    p, pw = pill(0, 0, "有结果" if zh else "Done", c["green"], th, 14)
-    g.append(f'<g transform="translate({840 + 300 - pw - 16} 302)">{p}</g>')
-    g.append(
-        rect(856, 338, 220, 8, 4, c["text2"], extra='fill-opacity=".3"')
-        + rect(856, 356, 160, 8, 4, c["text2"], extra='fill-opacity=".2"')
-        + "</g>"
-    )
-    # clip card 3 at the bottom edge naturally (it ends at 384 > 360): shift up
-    s.append("".join(g).replace("translate", "translate"))
+    s.append(card(850, 24, 300, 104, -2, "T8", L("在做", "Working"), c["blue"], bars(866, 74, (250, 200, 150), ".28")))
+    s.append(card(900, 140, 300, 120, 1.5, "T7", L("等你", "Your call"), c["orange"], question))
+    s.append(card(840, 274, 300, 96, -1, "T6", L("有结果", "Done"), c["green"], bars(856, 324, (220, 160), ".25")))
     # left content
     s.append(mark_group(72, 86, 104, th, "h"))
     s.append(txt(200, 164, "Covey", 86, c["text"], 700, extra='letter-spacing="-1.5"'))
@@ -255,15 +204,15 @@ def workflow(lang, th):
         s += [txt(66, 262, "给 demo-app 加个登录页，", 15, c["text"]), txt(66, 283, "邮箱加密码就行", 15, c["text"])]
     else:
         s += [
-            txt(66, 258, "Add a login page to", 15, c["text"]),
-            txt(66, 278, "demo-app, email + password", 15, c["text"]),
+            txt(66, 260, "Login page for demo-app,", 14, c["text"]),
+            txt(66, 280, "email + password is fine", 14, c["text"]),
         ]
     s.append(step(40, 160, 1))
     # 2 butler
     s.append(box(320, 140, 220, 190))
     s.append(mark_group(338, 158, 34, th, "w"))
     s.append(txt(382, 181, L("管家", "Butler"), 19, c["text"], 700))
-    s.append(txt(382, 201, L("私聊里的总管", "your chat contact"), 14, c["muted"]))
+    s.append(txt(382, 201, L("私聊里的总管", "the one you talk to"), 14, c["muted"]))
     for i, t in enumerate(
         [
             L("接话，听懂要做什么", "Takes your message"),
@@ -284,7 +233,7 @@ def workflow(lang, th):
         p, pw = pill(0, 0, L("在做", "Working"), c["blue"], th, 14)
         s.append(f'<g transform="translate({930 - pw - 16} {y + 14})">{p}</g>')
         s.append(
-            txt(606, y + 68, L("独立进程 · 单独的会话和记录", "Own process · own session and record"), 15, c["muted"])
+            txt(606, y + 68, L("独立会话 · 每轮在自己的进程里跑", "Own session · a process per turn"), 15, c["muted"])
         )
     s.append(rect(590, 244, 340, 44, 12, c["panel2"], c["stroke"]))
     s.append(txt(604, 272, L("跑在", "Runs on"), 14, c["muted"], 600))
@@ -298,7 +247,7 @@ def workflow(lang, th):
         cx += w + 8
     s.append(box(590, 306, 340, 128, c["brand"]))
     s.append(txt(606, 336, L("专项负责人", "Project lead"), 18, c["text"], 700))
-    p, pw = pill(0, 0, L("在跟进", "Following up"), c["brand"], th, 14)
+    p, pw = pill(0, 0, L("在跟进", "Tracking"), c["brand"], th, 14)
     s.append(f'<g transform="translate({930 - pw - 16} 318)">{p}</g>')
     for i, t in enumerate(
         [
@@ -320,13 +269,13 @@ def workflow(lang, th):
     s.append(txt(996, 112, L("登录后跳到哪里？", "Where to go after login?"), 17, c["text"], 700))
     s.append(txt(996, 136, L("问题卡：停在这里等你拍板", "A question card; the topic waits"), 14, c["muted"]))
     s.append(
-        rect(996, 156, 106, 38, 10, "none", c["stroke"], 1.4)
-        + txt(1049, 180, L("首页（推荐）", "Home (rec.)"), 15, c["text"], 500, "middle")
+        rect(996, 156, 92, 38, 10, "none", c["stroke"], 1.4)
+        + txt(1042, 180, L("首页（推荐）", "Home (rec.)"), 13, c["text"], 500, "middle")
     )
     s.append(
-        rect(1112, 156, 112, 38, 10, c["brand"], extra='fill-opacity=".2"')
-        + rect(1112, 156, 112, 38, 10, "none", c["brand"], 1.4)
-        + txt(1168, 180, L("原页面", "Previous"), 15, c["text"], 500, "middle")
+        rect(1096, 156, 124, 38, 10, c["brand"], extra='fill-opacity=".2"')
+        + rect(1096, 156, 124, 38, 10, "none", c["brand"], 1.4)
+        + txt(1158, 180, L("登录前打开的页面", "Page before login"), 13, c["text"], 500, "middle")
     )
     s.append(txt(996, 225, L("点选项就提交", "One click answers"), 14, c["muted"]))
     s.append(step(980, 40, 4, c["orange"]))
@@ -363,19 +312,19 @@ def workflow(lang, th):
         + txt(64 + L(110, 150) / 2, 505, L("贯穿每一步", "Across every step"), 14, c["muted"], 600, "middle")
     )
     s.append(box(64, 528, 300, 76))
-    s.append(txt(84, 558, L("网页工作台", "Web workbench"), 18, c["text"], 700))
+    s.append(txt(84, 558, L("网页工作台（可选）", "Web workbench (optional)"), 18, c["text"], 700))
     s.append(txt(84, 584, L("看板、专项、手机上也能看", "Board, projects, phone-friendly"), 14, c["muted"]))
     s.append(
-        txt(396, 570, L("三层记忆", "Three-layer"), L(17, 15), c["text"], 700)
-        + (txt(396, 590, "memory", 15, c["text"], 700) if not zh else "")
+        txt(396, 562, L("记忆", "Memory"), 17, c["text"], 700)
+        + txt(396, 584, L("每轮都带", "in every turn"), 13, c["muted"])
     )
     mems = [
-        (L("长期约定", "Long-term rules"), L("你的偏好和规矩", "preferences, conventions")),
-        (L("当前决定", "Current decisions"), L("这件事现在定了什么", "what this work has settled")),
-        (L("历史记录", "History"), L("做过什么，为什么", "what ran, and why")),
+        (L("长期要求", "Standing rules"), L("你说过的偏好和规矩", "what you always want")),
+        (L("记一下", "Remember this"), L("让它记住的事", "what you asked it to keep")),
+        (L("专项约定", "Project decisions"), L("专项里定下的", "what a project settled")),
     ]
-    x = L(500, 572)
-    mw = L(220, 198)
+    x = L(500, 520)
+    mw = L(220, 216)
     for i, (a, b) in enumerate(mems):
         xx = x + i * (mw + 14)
         s.append(box(xx, 528, mw, 76))

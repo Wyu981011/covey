@@ -632,14 +632,28 @@ def demo_page():
         go = "" if last else f'<button class="next" data-step="{n + 1}">下一步：{escape(STEPS[n])}</button>'
         stages.append(f'<section class="stage{" on" if n == 1 else ""}" id="step-{n}"><p class="what">{escape(words)}</p>'
                       f'<div class="page">{body}</div>{go}</section>')
-    return ("<!doctype html><html lang=zh-CN><meta charset=utf-8><meta name=viewport content=\"width=device-width\">"
-            "<title>Covey 演示：派到话题、回答一道题、看答案和产物</title><style>" + CSS + DEMO_CSS + "</style>"
+    return ("<!doctype html><html lang=zh-CN><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\">"
+            + SHARE_META + "<title>Covey 演示：派到话题、回答一道题、看答案和产物</title><style>" + CSS + DEMO_CSS + "</style>"
             '<div class="demo"><header><h1>Covey<span>演示 · Demo</span></h1>'
             '<p class="tag">在飞书里带一支编程 Agent 小队　·　Run a small team of coding agents from Feishu</p></header>'
             f'<div class="banner">{escape(DEMO_NOTE)}<br><span class="en">{escape(DEMO_NOTE_EN)}</span></div><nav class="tabs">{"".join(tabs)}</nav>{"".join(stages)}'
             f'<div class="cap">{CAPTION}</div>'
             f'<footer><a href="https://github.com/ericxk/covey">github.com/ericxk/covey</a></footer></div><script>{DEMO_JS}</script></html>\n')
 
+
+SHARE_COVER = "https://raw.githubusercontent.com/ericxk/covey/main/docs/media/brand/social-preview.png"
+SHARE_TITLE = "Covey 演示 · Demo：在飞书里带一支编程 Agent 小队"
+SHARE_TEXT = ("三步看一遍：派到话题、回答一道题、看答案和产物（演示数据）。"
+              "Three steps: hand a task to a topic, answer one question, read the answer and artifacts (demo data).")
+SHARE_META = ('<meta property="og:type" content="website">'
+              f'<meta property="og:title" content="{html.escape(SHARE_TITLE)}">'
+              f'<meta property="og:description" content="{html.escape(SHARE_TEXT)}">'
+              f'<meta property="og:image" content="{SHARE_COVER}">'
+              '<meta name="twitter:card" content="summary_large_image">'
+              f'<meta name="twitter:title" content="{html.escape(SHARE_TITLE)}">'
+              f'<meta name="twitter:description" content="{html.escape(SHARE_TEXT)}">'
+              f'<meta name="twitter:image" content="{SHARE_COVER}">'
+              f'<meta name="description" content="{html.escape(SHARE_TEXT)}">')
 
 DEMO_CSS = """
 body{background:#07080b;color:#d0d3da}.demo{max-width:680px;margin:0 auto;padding:28px 10px 36px}
@@ -657,7 +671,10 @@ cursor:pointer;color:#b3b7c1}
 .tab.on{background:#7c83ff;border-color:#7c83ff;color:#07080b;font-weight:500}
 .stage{display:none}.stage.on{display:block}
 .what{margin:8px 10px 10px;font-size:14px;line-height:1.7;color:#b3b7c1}
-.page{width:auto;max-width:640px;color:#1f2329;background:#f2f3f5;border-radius:12px;padding:20px 14px 8px}
+.page{width:auto;max-width:640px;color:#1f2329;background:#f2f3f5;border-radius:12px;padding:20px 14px 8px;overflow-x:auto}
+.demo .card{width:500px;max-width:100%}.demo .msg>div:last-child{min-width:0;flex:1 1 auto}.demo .user{max-width:100%}
+.demo .md,.demo .cbody,.demo .col{min-width:0}.demo .btn{max-width:100%}.demo img{max-width:100%}
+@media(max-width:480px){.demo{padding:20px 6px 28px}.page{padding:16px 8px 6px}.tab{flex:1 1 auto;text-align:center}}
 .next{margin:12px 0 0 10px;border-color:#7c83ff;color:#7c83ff;background:transparent}
 .cap{margin:14px 10px 0;font-size:12px;color:#4e535f;text-align:left}
 footer{margin:6px 10px 0;font-size:12px}footer a{color:#7a7f8c;text-decoration:none}footer a:hover{color:#7c83ff}

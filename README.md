@@ -19,10 +19,13 @@
   <a href="README.en.md">English</a>
 </p>
 
-你在飞书私聊里说一句话，管家把活分给 Claude Code、Codex、Antigravity 这些编程 Agent，在你自己的开发机上跑。每件事一个话题、一个会话，进度和结果都在卡片上。机器人重启、模型限流都接得上，要你拍板时才来找你。
+你在飞书私聊里说一句话，管家把活分给 Claude Code、Codex、Antigravity 这些编程 Agent，在你自己的开发机上跑。每件事一个话题、一个会话，进度和结果都在卡片上。机器人重启、模型限流都接得上，要你拍板时才来找你。适合日常在飞书里工作、手上同时跑着几个编程 Agent 的人。
 
 <p align="center">
-  <img src="docs/media/demo/covey-flow.gif" width="640" alt="演示：私聊里说一句话，管家开出话题，答完一道选择题，拿到答案和产物">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/demo/flow-zh-dark.gif">
+    <img src="docs/media/demo/flow-zh-light.gif" width="600" alt="演示：私聊里说一句话，管家开出话题，答完一道选择题，拿到答案和产物">
+  </picture>
 </p>
 
 <sub>卡片示意：由 Covey 的卡片 JSON 和演示数据画成，不是真实客户端截图，实际样子以飞书里为准。想自己点着走一遍：[在线演示](https://ericxk.github.io/covey/)，或在检出里用浏览器打开[三步演示页](docs/demo/index.html)（派到话题 → 回答一道题 → 看答案和产物）。</sub>
@@ -54,6 +57,8 @@ git clone https://github.com/ericxk/covey.git && cd covey
     <img src="docs/media/brand/workflow-zh-light.svg" width="860" alt="工作流：私聊说一句话，管家开话题，话题在各自的会话里做，要你拍板时发问题卡，做完把结论带回私聊">
   </picture>
 </p>
+
+你说一句 → 管家接话分派 → 话题各自去做，长活有专项负责人跟进 → 要你拍板时发问题卡 → 结论带回私聊。
 
 同时跑好几个 Agent 以后，卡住你的往往不是模型，而是你自己：开终端、选目录、记住哪个会话在做什么、在会话之间抄上下文，还要隔一会儿去看它停没停。Covey 把这些接过去。
 
@@ -130,7 +135,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 ## 装好以后
 
 1. **第一句话**：私聊机器人发一句话，管家直接回答，或开一个话题去做。一页纸的用法见[五分钟上手](docs/quickstart.md)，再照[使用指南 · 第一次使用](docs/usage.md#第一次使用)走一遍。
-2. **默认开着的**：管家、专项（叫醒负责人、停住问你、专项记忆、问题分流）、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目。撤回或编辑消息后，任务跟着停或收到补充；任务在跑时在话题里发的话，直接补充给它。还能开什么、怎么开，见[配置 · 开关速查](docs/configuration.md#开关速查)；已经装好的机器人想一次打开演示套餐，见[演示套餐](docs/configuration.md#演示套餐)。
+2. **默认开着的**：管家、专项、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目。撤回或编辑消息后，任务跟着停或收到补充；任务在跑时在话题里发的话，直接补充给它。还能开什么、怎么开，见[配置 · 开关速查](docs/configuration.md#开关速查)；已经装好的机器人想一次打开演示套餐，见[演示套餐](docs/configuration.md#演示套餐)。
 3. **升级**：在检出里跑 `scripts/upgrade.sh`（先加 `--dry-run` 看会做什么）。它取上游的新提交，照服务清单原样部署成固定的 release，机器人重启只要几秒，在跑的任务不中断，由新进程接管。不要在服务运行的检出里直接 `git pull`。见[升级与部署 · 日常升级](docs/deploy.md#日常升级)。
 
 ## 文档

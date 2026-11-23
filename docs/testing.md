@@ -128,12 +128,16 @@ README 顶部的横幅、工作流图，仓库的分享封面和 README 里的�
 
 ```bash
 python3 -B scripts/brand_svgs.py                                       # 标志、横幅、工作流图（中英 × 深浅）写进 docs/media/brand
+python3 -B scripts/card_sketches.py --demo                             # 演示页 docs/demo/index.html；动图从它截
+/absolute/venv/bin/python -B scripts/brand_assets.py panels --work /absolute/dir [--browser /absolute/headless_shell]
+python3 -B scripts/brand_assets.py demo --out /absolute/covey/docs/media --work /absolute/dir [--font /absolute/NotoSansCJK-Regular.ttc]
 /absolute/venv/bin/python -B scripts/brand_assets.py social --out /absolute/covey/docs/media [--browser /absolute/headless_shell]
-python3 -B scripts/brand_assets.py demo --out /absolute/covey/docs/media [--font /absolute/NotoSansCJK-Regular.ttc]
 ```
 
 - SVG 不手改：每张图的中英、深浅四份要一致，改 `scripts/brand_svgs.py` 里的字或颜色再生成。字是读者系统字体的 SVG 文本，不引用字体文件和外部资源，GitHub 用 `<img>` 显示它们。
-- 封面（1280×640）和动图用 `docs/media/screenshots/` 的卡片示意图拼成，重渲示意图后一起重新生成。动图四步之间经空白页过渡，不让两张卡叠在一起；调色板取自全部场景，等你的橙色、有结果的绿色不会被压掉。
+- 动图四份：`docs/media/demo/flow-{zh,en}-{light,dark}.gif`。步骤标题条分中、英文（卡片内容保持中文，和产品一致），页面底色分浅色和深色（`#0d1117`），卡片面板带圆角和细边框，每份约 100 KB（上限 600 KB）。`panels` 要装了 Playwright 的 Python，把演示页的四个场景按 1 倍字号截成 624 px 宽的面板；`demo` 要 Pillow，把面板配上标题条合成 640×476 的 GIF。四步同一缩放比例，README 以 600 px 宽显示时卡片正文约 13 px；第 1、2 步是同一个场景（话题 T7 那一行原地出现），问题卡停留约 4.6 秒，全程约 12 秒。调色板取自全部场景，等你的橙色、停住的红色、有结果的绿色不会被压成一样。演示页或卡片样式变了，先重生成演示页，再重跑 `panels` 和 `demo`。
+- 封面（1280×640，不到 1 MB）：左边字标和中英定位，右边一张完整的问题卡加半张答案卡，按钮不被盖住，缩到 600 px 宽仍看得出是卡片；由 `docs/media/screenshots/` 的卡片示意图拼成，重渲示意图后重新生成。
+- 演示页的 `og:title`、`og:description`、`og:image`（`raw.githubusercontent.com` 上 `main` 的封面，绝对地址）和 `twitter:card` 在 `scripts/card_sketches.py` 的 `SHARE_META`；页面不引用外部脚本、样式、图片（`tests/test_demo_page.py` 核对），所以没有 favicon。手机上的宽度改后用 390 宽视口看 `scrollWidth` 不超过视口宽。
 - 封面要在仓库的 Settings → Social preview 手动上传，README 不引用它。
 
 ### 支持包与后端契约
