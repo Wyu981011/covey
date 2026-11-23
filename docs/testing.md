@@ -1,4 +1,3 @@
-<!-- privacy: allow-file 测试文档里讲扩展 Harness 的测试夹具与命令 -->
 # 测试与验收
 
 下面的检查在本地手动跑；推到 GitHub 的 `main` 和 PR 上时，CI 也会跑一遍 Python 这部分（见[GitHub 上的 CI](#github-上的-ci)）。
@@ -25,7 +24,7 @@ python3 -B -m unittest discover -s tests -p test_steer.py        # 不经地图�
 | 超时 | 子进程崩溃、起不来或超过 `MODULE_TIMEOUT`（600 秒）算该模块一个错误，写明当时在跑的测试。超时、Ctrl-C、SIGTERM 杀掉子进程的整个进程组；模块跑完也清掉它留下的进程 |
 | 地图过期 | 加了、移动或改名了模块或测试，地图就过期（`select`、`run` 会提示）。这时 `run --full` 拒绝（退出码 2，`--force` 仍跑），改用 `build` 并提交 `tests/test_map.json` |
 | 台账 | 每次 `run`、`build` 追加一行 JSON（原因、范围、计数、失败的测试 ID、HEAD、内容指纹），写到 `--ledger`、`BRIDGE_TEST_LEDGER` 或 `$TMPDIR` 上一级的 `test-ledger.jsonl`。同一内容上已有覆盖本次范围的通过记录时 `run` 跳过，重查偶发失败加 `--force` |
-| 临时文件 | 默认放 `/dev/shm` 下本次运行的新目录，跑完删除，每个模块一个子目录作 `TMPDIR`。仓库所有者同意内存盘只用于测试临时文件。`/dev/shm` 是 noexec：要直接执行自己写出的脚本或假 CLI，用 `support.exec_tempdir()`（建在 `BRIDGE_TEST_EXEC_TMPDIR` 下）。`--test-tmpdir DIR` 或 `BRIDGE_TEST_TMPDIR` 换基目录，`inherit` 保持 `$TMPDIR`；直接 `unittest discover` 和 EXT 解释器不切换 |
+| 临时文件 | 默认放 `/dev/shm` 下本次运行的新目录，跑完删除，每个模块一个子目录作 `TMPDIR`。仓库所有者同意内存盘只用于测试临时文件。`/dev/shm` 是 noexec：要直接执行自己写出的脚本或假 CLI，用 `support.exec_tempdir()`（建在 `BRIDGE_TEST_EXEC_TMPDIR` 下）。`--test-tmpdir DIR` 或 `BRIDGE_TEST_TMPDIR` 换基目录，`inherit` 保持 `$TMPDIR`；直接 `unittest discover` 和扩展自己的解释器不切换 |
 
 - 没改代码不重跑全量，不拿全量当修复循环。
 - 新测试要在改动前的代码上失败：`python3 -B scripts/test_map.py prove --base <改动前的提交> [TEST ...]` 把新增或改过的测试方法放到那个提交的 `covey/`、`bin/` 上跑，逐条列 fail/pass（守护旧行为的测试应当 pass，在报告里写明）。
@@ -47,7 +46,7 @@ python3 -B -m unittest discover -s tests -p test_steer.py        # 不经地图�
 | 地图不认识的 Python 文件 | 导入它的测试模块（含经 `tests/support/`）；都没有就全量 |
 | Markdown | 不选；`test_structure` 每次都跑 |
 
-导入扫描按文件缓存在台账旁的 `test-map-scan.json`。常量可能影响没跑过该文件函数的测试，所以阶段末仍要一次全量。改了共享层（worker、保存结果、会话保护、问答）时确认选中了 `test_backend_contract` 和 `test_ext_saved_delivery_text`、`test_ext_saved_delivery_file`。
+导入扫描按文件缓存在台账旁的 `test-map-scan.json`。常量可能影响没跑过该文件函数的测试，所以阶段末仍要一次全量。改了共享层（worker、保存结果、会话保护、问答）时确认选中了 `test_backend_contract`，扩展启用时还有扩展自己的保存结果用例。
 
 测试模块按被测对象命名（`test_<模块或功能>`），不在这里列全；要知道改动该跑哪些，用 `select`。
 
@@ -139,7 +138,6 @@ python3 -B scripts/web_shots.py --out /absolute/shots --install                 
 | `clock.py`、`processes.py`、`git.py`、`cards.py`、`sessions.py` | 不真等的时钟；`leftover_check()`（有后台线程或子进程活过模块就失败）；git 夹具；卡片断言；直接写会话标识 |
 | `launch_fixtures.py` | 启动卡和换配置共用的模型目录、会脱敏的 Harness |
 | `form_transitions.py` | 测试期检查表单记录的状态变化（见下） |
-| `ext_*.py` | EXT 链路、传输替身（`ext_helper`、`ext_runtime`、`web_tool_options`）、进度、并发重投用例基类 |
 | `memguard.py`、`proxy.py` | 内存看门狗的 `GuardCase`，代答的 `ProxyCase` |
 
 - `@slow`（`support/__init__.py`）只在 `BRIDGE_TESTS_SLOW=1` 时运行，`build` 总是带上。`tests/fixtures/` 是合成或脱敏的线上格式。
@@ -147,7 +145,7 @@ python3 -B scripts/web_shots.py --out /absolute/shots --install                 
 - 边界上的替身优先于按模块路径打补丁：任务记录写到 `records.state_dir` 再 `records.saved` 读回；CardKit 写用 `FakeCardKit`，不给 `cardkit_api` 打补丁。替身保留原函数签名，参数不对时测试失败。
 - 断言整句界面文字时，从产品模块导入这句话的常量，不在测试里另抄一份；产品里还是行内字面量的，先提成模块常量。
 
-`test_backend_contract` 对每个后端驱动（codex、claude、dsh、pi，扩展启用时再加 ext）跑同一组投递不变量：保存的回复只重投一次、不重跑模型；部分结果带说明发出、会话保持封住；部分失败不清掉更新的会话指针；失败的一轮不授权、不发正文；重启后 outbox 只发已授权的回复。`HarnessContractTests`、`SharedResultGateTests` 用假后端检查接口和结果闸门。加后端时加一个驱动。完整链用例只替换模型、进程传输、外部发送等边界，模拟通过不等于真实 SDK、进程清理或飞书发送已通过。
+`test_backend_contract` 对每个后端驱动（codex、claude、dsh、pi，扩展启用时再加扩展的后端）跑同一组投递不变量：保存的回复只重投一次、不重跑模型；部分结果带说明发出、会话保持封住；部分失败不清掉更新的会话指针；失败的一轮不授权、不发正文；重启后 outbox 只发已授权的回复。`HarnessContractTests`、`SharedResultGateTests` 用假后端检查接口和结果闸门。加后端时加一个驱动。完整链用例只替换模型、进程传输、外部发送等边界，模拟通过不等于真实 SDK、进程清理或飞书发送已通过。
 
 ### 任务进程协议与跨版本检查
 
@@ -186,7 +184,7 @@ npm run build:selfhost        # 自托管版构建
 
 ### 静态检查
 
-- `pyflakes covey bin tests scripts extensions`：只允许 2 条有意的未使用导入，都在公司扩展里：它的 EXT 后端模块再导出的 `MasoSessionStore` 和 `CompletionBudget`（扩展不在时没有这两条）。CI 跑的是不带 `extensions` 的那一份。
+- `pyflakes covey bin tests scripts extensions`：只允许 2 条有意的未使用导入，都在扩展里：它的后端模块为兼容再导出的两个名字（扩展不在时没有这两条）。
 - `bash -n scripts/*.sh`；装了 ruff 时加 `ruff check --select F821`。
 - `python3 -B scripts/code_map.py --check`：`AGENTS.md` 的模块表和各模块 docstring 一致。加、删、搬模块或改了 docstring 首句后跑 `--write`（`test_structure` 的 `CodeMapTest` 也查）。
 - 文档引用：`test_structure.DocReferenceTest` 每次都跑，检查 `AGENTS.md`、`README.md` 和 `docs/*.md`（不含 `docs/history/`）。反引号里的仓库路径（代码地图里相对 `covey/` 的也算）和相对链接（含 `#标题`）必须存在；有意不在仓库里的路径列在 `DOC_UNTRACKED_PATHS`。代码里找不到的反引号名字只打印，外来的名字列在 `DOC_EXTERNAL_NAMES`。
@@ -199,13 +197,13 @@ npm run build:selfhost        # 自托管版构建
 
 - 通用规则在脚本里：飞书 open_id、union_id、chat_id、消息 id、App ID（`cli_` 开头）的实值形状，私网和内网 IP，真实邮箱（`example.com` 等占位除外，`git@host` 的 SSH 地址不算），令牌形状，`/mnt/bn`、`/opt/tiger`、`/home/<人名>` 这类路径。<!-- privacy: allow 规则说明里列出被查的路径名 -->
 - 公司域名和内部名词的清单不进核心：`COVEY_PRIVACY_DENYLIST` 指向清单文件（每行一个词，不分大小写、按单词边界匹配；`词 | skip=tests/` 表示这些路径前缀下不查），公司扩展里放着一份 `privacy-denylist.txt`。没设置时只跑通用规则。
-- 豁免：同一行写 `privacy: allow <原因>`；整个文件免查内部名词写 `privacy: allow-file <原因>`（通用规则照查）。原因必须写。
+- 豁免：同一行写 `privacy: allow <原因>`；整个文件免查内部名词在单独一行注释里写 `privacy: allow-file <原因>`（通用规则照查；正文里提到这个写法不算）。原因必须写。
 - 用法：`COVEY_PRIVACY_DENYLIST=/absolute/path/to/privacy-denylist.txt python3 -B scripts/privacy_check.py` 应当干净；`tests/test_privacy_check.py` 在清单存在时对核心集合跑一遍。
 
 ### 耗时与偶发
 
 - 规模在 130 个测试模块上下；8 个并行时 `build` 约 45 秒（机器负载高时到 70 秒），逐个串行约 140 秒。在 NAS 上约慢 4 倍。
-- 默认档跳过 `test_claude` 的慢速档。其余跳过取决于机器：要扩展的 EXT SDK、显式开启的 Claude CLI 契约、无特权 PID namespace 或开发机身份的用例。
+- 默认档跳过 `test_claude` 的慢速档。其余跳过取决于机器：要扩展自己的 SDK、显式开启的 Claude CLI 契约、无特权 PID namespace 或开发机身份的用例。
 - 子进程导入时读 NFS 上的 `.py` 可能卡在 D 状态（约 10 秒的整数倍），所以新起子进程的用例用宽的等待上限（`CHILD_DEADLINE`），模块耗时偶尔多出 10–30 秒是正常的。
 - 已知偶发：`test_claude.ClaudeLiveQuestionDeliveryTests` 在同机并发跑多个全量时失败；`test_native_questions` 在并行下偶尔卡约 185 秒（NFSv4.1 委托等待）。单独重跑确认，`flaky` 看历史。
 
@@ -224,7 +222,7 @@ npm run build:selfhost        # 自托管版构建
 ## 真实环境验证
 
 - Claude CLI 契约：`CLAUDE_BRIDGE_REAL_CLI=1 python3 -B -m unittest discover -s tests -p test_claude.py -k InstalledClaudeContractTests`，本机 `claude` 连本地模拟接口，配置隔离。升级 Claude Code 后跑一次。
-- 扩展的 EXT `--check-runtime`：解释器、固定 revision、关键接口；不加载模型。
+- 扩展自己的 `--check-runtime`（有的话）：解释器、固定 revision、关键接口；不加载模型。
 - 交接摘要（Codex、Pi，`backends/<名字>/handoff.py`）：升级 `codex` 或 `pi` 后，在单独的 `CODEX_HOME`（只链登录和 `config.toml`）里用后端跑一轮带 shell 调用的小任务，再对这个会话调后端的 `handoff_summary`：要写出摘要；提示词让它执行命令时没有工具执行、不生成文件；超时和停止几秒内返回空；源会话文件、会话目录和 Codex 的状态库（`state_5.sqlite` 的 threads、`thread_history_1.sqlite`）都不变，没有残留目录和进程。`codex features list` 里要还有 `backends/codex/handoff.py` 的 `FLAGS` 关掉的每个功能（它不认识的键会忽略）。
 - 部署或重启后在 Bridge 的实际环境里发一次无副作用的真实模型请求（[健康诊断](troubleshooting.md#健康诊断)），终端里成功不能代替。
 

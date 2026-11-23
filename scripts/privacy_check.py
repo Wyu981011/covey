@@ -7,7 +7,7 @@ tests/test_map.json 是生成的测试地图，不扫。
 
 通用规则（写在本脚本里，对所有部署成立）：
   open_id / union_id / chat_id / app_id / message_id 的实值形状、飞书 cli_ 开头的 App ID、
-  私网与内网 IP、真实邮箱（example.com 等占位除外）、令牌形状、
+  私网与内网 IP（IPv4 私网段、IPv6 的 fc00::/7）、真实邮箱（example.com 等占位除外）、令牌形状、
   /mnt/bn、/opt/tiger、/home/<人名>（user、me、tiger 之外）这类个人或公司路径。
 
 公司域名和内部名词的清单不进仓库：环境变量 COVEY_PRIVACY_DENYLIST 指向一个文本文件，
@@ -16,8 +16,8 @@ tests/test_map.json 是生成的测试地图，不扫。
 没设置时只跑通用规则。
 
 行内豁免：同一行写 `privacy: allow <原因>`，原因必须写。
-整个文件豁免内部名词：文件里任何位置写 `privacy: allow-file <原因>`（只管清单里的名词，
-通用规则照查）。用于专门测平台、扩展接口的测试，不用于核心代码和文档。
+整个文件豁免内部名词：单独一行注释（# 或 <!-- 或 // 开头）写 `privacy: allow-file <原因>`（只管清单里的名词，
+通用规则照查；正文里提到这个写法不算）。用于专门测平台、扩展接口的测试，不用于核心代码和文档。
 """
 from __future__ import annotations
 
@@ -28,7 +28,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CORE = ("covey", "bin", "scripts", "docs", "tests", "skills", "integrations", ".github", "install", "web",
-        "README.md", "README.en.md", "CONTRIBUTING.md", "LICENSE", "AGENTS.md", "pyproject.toml")
+        "README.md", "README.en.md", "CONTRIBUTING.md", "LICENSE", "AGENTS.md", "pyproject.toml", "SECURITY.md",
+        "CODE_OF_CONDUCT.md", "CHANGELOG.md", "THIRD_PARTY_NOTICES.md", "harness_bridge.py", ".gitignore")
 # 默认不扫的相对路径前缀：历史文档、生成的测试地图、本脚本自己（规则里有样例）
 EXCLUDED = ("docs/history/", "tests/test_map.json", "scripts/privacy_check.py",
             "tests/test_privacy_check.py", "scripts/export_core.py", "extensions/")
@@ -37,7 +38,7 @@ SKIP_SUFFIX = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".ico", ".pyc",
 DENYLIST_ENV = "COVEY_PRIVACY_DENYLIST"
 
 ALLOW = re.compile(r"privacy:\s*allow\s+(\S.*)")
-ALLOW_FILE = re.compile(r"privacy:\s*allow-file\s+(\S.*)")
+ALLOW_FILE = re.compile(r"^[ \t]*(?:#|<!--|//)[ \t]*privacy:\s*allow-file\s+(\S.*)", re.M)  # A comment line of its own.
 PLACEHOLDER_MAIL_DOMAINS = {"example.com", "example.org", "example.net", "users.noreply.github.com", "noreply.github.com", "anthropic.com", "localhost"}
 PLACEHOLDER_HOME = {"user", "me", "tiger", "name", "you", "username", "your-name", "xxx", "<user>", "$user", "home", "runner"}
 
@@ -47,6 +48,7 @@ RULES = (
     ("飞书 chat_id", re.compile(r"\boc_[0-9a-f]{16,}\b")),
     ("飞书消息 id", re.compile(r"\bom_[0-9a-f]{16,}\b")),
     ("飞书 App ID", re.compile(r"\bcli_[0-9a-f]{12,}\b")),
+    ("内网 IPv6", re.compile(r"(?<![0-9A-Za-z:.])f[cd][0-9a-f]{2}:[0-9a-f:]*:[0-9a-f:]*(?![0-9A-Za-z:])", re.I)),
     ("私网 IP", re.compile(r"(?<![\d.])(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3})(?![\d.])")),
     ("令牌形状", re.compile(r"\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|t-[0-9a-f]{20,}|u-[A-Za-z0-9]{20,})\b")),
     ("个人或公司路径 /mnt/bn", re.compile(r"/mnt/bn\b")),

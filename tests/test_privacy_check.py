@@ -29,6 +29,7 @@ class RuleTest(unittest.TestCase):
             "飞书消息 id": "om_" + "d4" * 16,
             "飞书 App ID": "cli_" + "a9" * 8,
             "私网 IP": "host 10.1.2.3 up",
+            "内网 IPv6": "addr fd12:3456:789a::1 up",
             "令牌形状": "key sk-" + "x" * 24,
             "个人或公司路径 /mnt/bn": "/mnt/bn/team/data",
             "个人或公司路径 /opt/tiger": "/opt/tiger/entry.py",
@@ -41,7 +42,8 @@ class RuleTest(unittest.TestCase):
 
     def test_placeholders_and_ordinary_text_pass(self):
         for text in ("ou_xxx and oc_test", "bob@example.com", "git@github.com:me/repo.git", "/home/user/x /home/tiger/y",
-                     "pkg@1.5.2 and @scope/name@0.15.0", "http://127.0.0.1:8080", "8.8.8.8", "192.0.2.5"):
+                     "pkg@1.5.2 and @scope/name@0.15.0", "http://127.0.0.1:8080", "8.8.8.8", "192.0.2.5",
+                     "[2001:db8::14]:443", "fe80::1%eth0", "::1", "fcde and fd12", "a:fd00:b"):
             with self.subTest(text=text):
                 self.assertEqual(rules(text), [])
 
@@ -53,6 +55,15 @@ class RuleTest(unittest.TestCase):
         denylist = [("内部名词 acmecorp", check.re.compile(r"acmecorp", check.re.I), ())]
         text = "# privacy: allow-file 测平台接口\nacmecorp and /mnt/bn/x"
         self.assertEqual(rules(text, denylist), ["个人或公司路径 /mnt/bn"])
+
+    def test_the_file_exemption_is_a_comment_line_of_its_own(self):
+        # AGENTS.md and docs/testing.md explained the syntax in prose, and that exempted both files whole (T672).
+        denylist = [("内部名词 acmecorp", check.re.compile(r"acmecorp", check.re.I), ())]
+        for text in ("<!-- privacy: allow-file 测平台接口 -->\nacmecorp", "x = 1\n  // privacy: allow-file 测平台接口\nacmecorp"):
+            with self.subTest(text=text):
+                self.assertEqual(rules(text, denylist), [])
+        prose = "整个文件免查写 `privacy: allow-file <原因>`。\nacmecorp"
+        self.assertEqual(rules(prose, denylist), ["内部名词 acmecorp"])
 
 
 class DenylistTest(unittest.TestCase):

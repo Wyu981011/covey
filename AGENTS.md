@@ -1,4 +1,3 @@
-<!-- privacy: allow-file 开发说明里描述扩展的模块表和测试命令 -->
 # 仓库合并约定
 
 名词以 [docs/glossary.md](docs/glossary.md) 为准：界面、提示词只用表里的中文名。
@@ -613,7 +612,7 @@
 4. 状态只按 `JOB_TRANSITIONS`、`QUESTION_TRANSITIONS`、`NEXT`（限流自动重试 `auto_retry.py` 的 `AUTO_RETRY_TRANSITIONS`，安全拒绝换模型重试 `policy_retry.py` 的 `POLICY_RETRY_TRANSITIONS`）前进，终态不回退（状态）。
 5. 只发经 `verified_reply` 保存并授权的回复；重投只发保存的正文，不跑模型（结果授权与投递）。
 6. `RunHandle` 的写不自动重放：`SteerRefused`/`SteerNotReady` 是没发出，其他异常是可能已送达（一次运行）。
-7. 后端不导入 `app/`、`feishu/`、`cards/`，也不导入别的后端（`backends/gateway` 除外），`TYPE_CHECKING` 下也不；扩展里隔离解释器导入的 `core/` 模块只用标准库（清单在扩展自己的结构测试里，如 `EXT_CORE`）；`__init__.py` 为空（硬约束）。
+7. 后端不导入 `app/`、`feishu/`、`cards/`，也不导入别的后端（`backends/gateway` 除外），`TYPE_CHECKING` 下也不；扩展里隔离解释器导入的 `core/` 模块只用标准库（清单在扩展自己的结构测试里）；`__init__.py` 为空（硬约束）。
 8. 新按钮 kind 先进 `ACTIONS`（带认领它的 `handler`），会建任务的设 `bot_only`；任务进程只改本任务的卡和记录（`cards.md` 添加一个卡片按钮）。
 9. 表单变化时整卡替换；卡片 JSON 变了（`tests/golden/cards.json` 有 diff）要真实客户端验收（`cards.md` 卡片的客户端限制）。
 10. 兼容（2026-11-14 改名 Covey：旧导入 `harness_bridge`、旧变量 `LARK_BRIDGE_*`、旧 bin 名、旧单元名都保留，见 docs/compat.md「改名 Covey 后的兼容」）：现网 `harnesses.json` 仍能解析（删功能时保留它写着的选项，如 `--claude-transport stream-json`）；`runs/<任务键>/` 与旧 release 的任务进程双向兼容；旧记录可读；已发卡片的 kind 不崩溃、不悄悄开工（硬约束）。
@@ -627,7 +626,7 @@
 - `run`、`build` 每个测试模块一个子进程，`--jobs` 个并行（默认 8，`--jobs 1` 逐个）；测试的输出不显示，失败和错误照 unittest 格式列出。
 - `run`、`build` 把测试临时文件放 `/dev/shm`（所有者同意，仅限测试临时文件，跑完即删）；它是 noexec，要直接执行写出的文件用 `support.exec_tempdir()`。
 - 每个阶段结束一次全量：加了或改名了测试（`select` 提示地图过期）时 `build` 并提交 `tests/test_map.json`（地图过期时 `run --full` 拒绝），否则 `run --full`。不在没改的树上重跑全量，不拿全量当修复循环。
-- 动了扩展里的 EXT 或它导入的 `core/` 模块：再用 EXT 解释器跑扩展的 `test_ext_*.py` 和 `--check-runtime`（命令见扩展自己的 README）。核心测试另在 `COVEY_EXTENSIONS=''` 下跑一次全量，确认没有扩展也过。
+- 动了扩展里用隔离解释器的后端或它导入的 `core/` 模块：再按扩展自己的 README 用那个解释器跑它的测试和 `--check-runtime`。核心测试另在 `COVEY_EXTENSIONS=''` 下跑一次全量，确认没有扩展也过。
 - 不改行为的改动：改前在基线上录两次 `scripts/golden_trace.py record`，改后录一次再 `compare --noise`；搬模块前跑 `scripts/test_map.py patches <模块>`，看哪些测试按旧路径打补丁（`docs/testing.md` 副作用轨迹与补丁清单）。
 - 新测试在旧代码上该失败：`scripts/test_map.py prove --base <提交>`；部署用 `scripts/deploy_bridge.sh`（先 `--check-only`）。
 - 改公共核心或 `runs/` 协议（规则 10）：先跑 `scripts/cross_release.py run --old <现网 release> --out <目录>` 再 `compare`；`tests/golden/run_dir.json` 有 diff 就是改了协议（`docs/testing.md` 任务进程协议与跨版本检查）。
