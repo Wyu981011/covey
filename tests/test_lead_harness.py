@@ -284,8 +284,11 @@ class CatalogTest(UpCase):
         from covey.app import web_launch
         base = self.app.apps["claude"].harness.context
         found = {model["key"]: model["bridge_tools"] for model in web_launch.catalog(self.env, base, CHAT)["models"]}
-        self.assertEqual(found, {"claude:claude-model": True, "codex:codex-model": True, "agy:agy-model": True,
-                                 "dsh:dsh-model": False, "pi:pi-model": False})
+        core = {"claude:claude-model": True, "codex:codex-model": True, "agy:agy-model": True,
+                "dsh:dsh-model": False, "pi:pi-model": False}
+        # An enabled extension adds its own Harnesses' models (covey_internal: MASO's, no Bridge tools): only the core's are named.
+        self.assertEqual({key: found.get(key) for key in core}, core)
+        self.assertTrue(all(isinstance(value, bool) for value in found.values()), found)
 
 
 if __name__ == "__main__":
