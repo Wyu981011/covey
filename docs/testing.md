@@ -166,19 +166,10 @@ python3 -B scripts/cross_release.py compare /absolute/runs/cross-<提交>   # �
 
 ### 网页工作台的测试
 
-网页源码在 `web/`（[网页工作台](web.md)，部署见 `web/README.md`），要 Node 22 及以上。在 `web/` 下：
+网页源码在 `web/`（[网页工作台](web.md)，部署见 `web/README.md`），要 Node 22 及以上。命令（`npm ci`、`npm run lint`、`test:` 开头的各组单测、两种部署的构建）在 `web/README.md` 的「本地开发和检查」。
 
-```bash
-npm ci
-npm run lint                  # eslint、类型检查、stylelint
-npm run test:collab           # 单测，scripts/*.test.mjs；package.json 里 test: 开头的每组一条命令
-npm run build:server          # 网页平台版服务端构建
-WEBPLATFORM_APP_TYPE=3 npm run build:client   # 网页平台版前端构建
-npm run build:selfhost        # 自托管版构建
-```
-
-- 单测用 `node --test`，不连飞书、不连网页平台。`test:selfhost-tls`、`test:selfhost-api` 会先构建自托管服务端，后者再起真服务，走完密钥、登录、会话和公网 HTTPS。
-- 网页平台版的一键部署脚本有自己的测试（假的 `lark-cli` 和本机 git 仓库）：在仓库根目录 `python3 -B -m unittest discover -s web/deploy/webplatform/tests`。
+- 单测用 `node --test`，不连飞书、不连部署平台。`test:selfhost-tls`、`test:selfhost-api` 会先构建自托管服务端，后者再起真服务，走完密钥、登录、会话和公网 HTTPS。
+- 一键部署脚本有自己的测试（假的 `lark-cli` 和本机 git 仓库），命令也在 `web/README.md`。
 - 数据契约两头对着：Covey 一侧是 `core/web_sync.py`，网页一侧是 `web/shared/`；改了契约（字段、操作、版本）两边一起改，并更新 [网页工作台 · 版本一览](web.md#版本一览)。`look.json` 由 `scripts/export_look.py` 导出，词和颜色变了要重新导出。
 - CI 不跑 `web/` 的命令：改了网页，本地把 `lint`、相关的 `test:*` 和三种构建跑过。
 
