@@ -26,7 +26,7 @@ Covey is built for Feishu, the Chinese edition of Lark (the installer sets up a 
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/demo/flow-en-dark.gif">
-    <img src="docs/media/demo/flow-en-light.gif" width="600" alt="Demo: one sentence in the private chat, the butler opens a topic, a multiple-choice question is answered, and the answer arrives with its artifacts">
+    <img src="docs/media/demo/flow-en-light.gif" width="640" alt="Demo: one sentence in the private chat, the butler opens a topic, a multiple-choice question is answered, and the answer arrives with its artifacts">
   </picture>
 </p>
 

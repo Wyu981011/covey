@@ -232,9 +232,7 @@ def workflow(lang, th):
         s.append(txt(652, y + 34, name, 18, c["text"], 700))
         p, pw = pill(0, 0, L("在做", "Working"), c["blue"], th, 14)
         s.append(f'<g transform="translate({930 - pw - 16} {y + 14})">{p}</g>')
-        s.append(
-            txt(606, y + 68, L("独立会话 · 每轮在自己的进程里跑", "Own session · a process per turn"), 15, c["muted"])
-        )
+        s.append(txt(606, y + 68, L("独立会话 · 每个任务一个进程", "Own session · a process per task"), 15, c["muted"]))
     s.append(rect(590, 244, 340, 44, 12, c["panel2"], c["stroke"]))
     s.append(txt(604, 272, L("跑在", "Runs on"), 14, c["muted"], 600))
     cx = L(644, 662)

@@ -24,7 +24,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/media/demo/flow-zh-dark.gif">
-    <img src="docs/media/demo/flow-zh-light.gif" width="600" alt="演示：私聊里说一句话，管家开出话题，答完一道选择题，拿到答案和产物">
+    <img src="docs/media/demo/flow-zh-light.gif" width="640" alt="演示：私聊里说一句话，管家开出话题，答完一道选择题，拿到答案和产物">
   </picture>
 </p>
 

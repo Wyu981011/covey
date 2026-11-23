@@ -122,7 +122,8 @@ def make_panels(work: Path, browser: str | None) -> Path:
         for name, (step, js) in SCENES.items():
             page = b.new_page(viewport={"width": 700, "height": 900})
             page.goto((ROOT / "docs/demo/index.html").as_uri())
-            page.add_style_tag(content=f".demo .page{{width:624px;max-width:none;height:{PANEL_H}px;padding:8px 12px 4px;overflow:hidden}}")
+            page.add_style_tag(content=f".demo .page{{width:624px;max-width:none;height:{PANEL_H}px;padding:8px 12px 4px;overflow:hidden}}"
+                               "#ask-open .btn.pick{box-shadow:none}")  # no option looks chosen before the click
             page.evaluate(f"show({step})")
             page.evaluate(js)
             if name in ("a", "b"):  # the card's second fold (本轮请求) stays out of the frame
