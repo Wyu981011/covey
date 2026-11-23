@@ -29,3 +29,8 @@
 .cv .afoot-list .st.no{color:var(--t1);font-weight:500}
 .cv .mem .wrong{cursor:pointer;background:none}
 .cv .mem .mem-undo.bad{color:var(--fail)}
+/* 手机：标题占一行，回看和草稿那一行换到下面，写全、不再把标题挤成一个字 */
+.cv.m .v34-row{flex-wrap:wrap;gap:6px 10px}
+.cv.m .v34-tt{max-width:calc(100% - 90px)}
+.cv.m .v34-row .v34-later,.cv.m .v34-row .v34-drafts{flex:1 1 100%;flex-wrap:wrap}
+.cv.m .v34-lt{white-space:normal}
