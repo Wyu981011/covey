@@ -101,7 +101,7 @@ No Claude Code? It installs anyway: the butler runs on whichever of Codex or Ant
 
 1. **First message**: write to the bot in a private chat; the butler answers or opens a topic. One page of how to use it: [five-minute start](docs/quickstart.md); then walk through [first use](docs/usage.md#第一次使用).
 2. **On by default**: the butler, projects (with lead wake-ups, asking you when a project stops, project memory and question triage), project tidying (proposals only), the 看板 menu item, independent review, revisits, memory and knowledge entries. Recalling or editing a message stops or updates its task, and what you write in a topic while its task runs goes straight into it. What else can be turned on and how: [switches at a glance](docs/configuration.md#开关速查); to turn the whole showcase set on in a running bot, see [the showcase set](docs/configuration.md#演示套餐).
-3. **Upgrade**: run `scripts/upgrade.sh` in the checkout (`--dry-run` first to see what it would do). It takes the new upstream commit and deploys it as a fixed release with the service's own settings; while the bot restarts (it misses messages and clicks for some tens of seconds), running tasks go on and the new process takes them over. Do not `git pull` in the checkout the service runs from. See [daily upgrades](docs/deploy.md#日常升级).
+3. **Upgrade**: run `scripts/upgrade.sh` in the checkout (`--dry-run` first to see what it would do). It takes the new upstream commit and deploys it as a fixed release with the service's own settings; the bot restarts in a few seconds, and running tasks go on as the new process takes them over. Do not `git pull` in the checkout the service runs from. See [daily upgrades](docs/deploy.md#日常升级).
 
 ## Documentation
 
