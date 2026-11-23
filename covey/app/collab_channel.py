@@ -58,6 +58,8 @@ def open_channel(state, chat, record, helper, root, *, refresh=False) -> str:
     clarification that forks the helper again). Its id."""
     channel = collab.channel_id(record["id"], helper)
     path = topic_file(Path(state), channel)
+    if not refresh and read_object(path):
+        return channel  # Written once: looked at without LOCK (a read hung on the network disk under it holds up others).
     with LOCK:
         current = read_object(path)
         if current and not refresh:

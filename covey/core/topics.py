@@ -13,11 +13,17 @@ from typing import Any
 from covey.core import collab, devices, butler, projects, web_sync
 from covey.core.history_storage import history_lines
 from covey.core.jobs import topic_job_records
-from covey.core.locks import LOCK
+from covey.core.locks import LOCK, resource_lock
 from covey.core.state import read_json, read_object, write_json, write_private_text
 from covey.core.turn_words import request_line
 
+# Held only to write: a new topic (its number from counter.json), the Harness of an old one pinned, a number given to a
+# topic from before numbering. Never to read: topic.json and the aliases are replaced whole (core/state.py
+# atomic_write_bytes), so a read sees one version. A read under it that hung on the network disk held up every click and
+# message of the Bridge for 8 minutes (T680).
 _LOCK = threading.RLock()
+# (state dir, topic id) -> its T number: given once and never changed, so kept from its first read.
+_numbers: dict[tuple[str, str], int] = {}
 
 
 def _key(chat_id: str, identifier: str) -> str:
@@ -27,6 +33,12 @@ def _key(chat_id: str, identifier: str) -> str:
 def _alias_path(base: Path, chat_id: str, identifier: str) -> Path:
     """The alias file of the message or thread ``identifier`` of ``chat_id`` under ``base``, <state>/topics."""
     return base / "aliases" / f"{_key(chat_id, identifier)}.json"
+
+
+def _alias_lock(path: Path):
+    """The lock of one alias file: each of its writers looks at it and writes it under this, and takes no other lock
+    inside (the innermost lock, after LOCK and _LOCK). A write hung on the network disk holds up that alias alone."""
+    return resource_lock("topic-alias", str(path))
 
 
 def topic_key(chat_id: str, root_id: str) -> str:
@@ -156,18 +168,41 @@ def bind_topic(ctx, name: str, directory: Path, *, stored: str = "") -> None:
 
 def topic_number(state_dir: Path, topic_id: str) -> int:
     """A short number shown on a topic's cards (T12), so the topic can be named and found.
-    Topics created before numbering get theirs when first shown. 0 if there is no topic."""
+    Topics created before numbering get theirs when first shown. 0 if there is no topic.
+
+    Read without a lock and kept from then on (a number never changes): every card, the 专项卡 each second for each of
+    its topics and the board ask for it. Only a topic without a number yet takes the locks topic.json's writers hold
+    (``_give_number``). Under them, a read hung on the network disk once held up every route of the Bridge (T680)."""
     if not topic_id:
         return 0
+    key = (str(Path(state_dir)), topic_id)
+    number = _numbers.get(key)
+    if number is not None:
+        return number
     path = topic_file(state_dir, topic_id)
-    # Same lock order as launch submission (workspace LOCK, then _LOCK): topic.json has one writer at a time.
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return 0
+    if not butler.traits(topic_id, data.get("chat_id")).numbered:
+        return 0  # The butler (app/butler.py) is no numbered topic.
+    number = data.get("topic_number")
+    if type(number) is not int:
+        number = _give_number(state_dir, path)
+        if not number:
+            return 0
+    _numbers[key] = number
+    return number
+
+
+def _give_number(state_dir: Path, path: Path) -> int:
+    """The number of a topic from before numbering, given once: topic.json read again under the locks of its writers
+    (the order of launch submission: workspace LOCK, then _LOCK), so two callers cannot give it two. 0 when unreadable."""
     with LOCK, _LOCK:
         try:
             data = json.loads(path.read_text())
         except (OSError, ValueError):
             return 0
-        if not butler.traits(topic_id, data.get("chat_id")).numbered:
-            return 0  # The butler (app/butler.py) is no numbered topic.
         if type(data.get("topic_number")) is not int:
             data["topic_number"] = _next_topic_number(state_dir)
             write_private_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
@@ -242,62 +277,105 @@ def _first_user_message(path: Path) -> str:
     return ""
 
 
-def context_for_topic(ctx: Any, event: dict[str, Any], sessions_dir: Any, *, legacy_harness_id: str | None = None) -> Any:
+@dataclasses.dataclass(frozen=True)
+class _Place:
+    """Where an event goes (``_place``): its topic's id, topic.json and its contents."""
+    topic_id: str
+    path: Path
+    data: dict
+    existing: bool  # topic.json was there when looked at.
+    pending: bool  # Something must still be written: the topic made, its Harness pinned or an alias (only when not writing).
+
+
+def _place(ctx, event, base: Path, legacy_harness_id, *, write: bool, make: bool = True) -> _Place:
+    """The topic ``event`` goes to (``context_for_topic``), found by its aliases. ``write`` False: nothing is written, and
+    ``pending`` says whether something would be. ``write`` True (the caller holds _LOCK): the topic is made (only when
+    ``make``: ``ctx`` is the one a new topic starts from; else it stays pending), its Harness pinned and the aliases written
+    as needed."""
     chat_id = str(event.get("chat_id") or "")
     message_id = str(event.get("message_id") or event.get("id") or "")
     root_id = str(event.get("root_id") or "")
     thread_id = str(event.get("thread_id") or "")
-    if not chat_id or not message_id:
-        return ctx
     # Root/message aliases also work when a later event omits thread_id.
     # Parent aliases cover replies to a message already seen in the topic.
     parent_id = str(event.get("parent_id") or "")
     identifiers = list(dict.fromkeys(value for value in (root_id, thread_id, message_id) if value))
-    base = ctx.state_dir / "topics"
-    with _LOCK:
-        topic_id = _key(chat_id, root_id or parent_id or message_id)
-        # In a thread, with the butler on, only the quoted message's routes_to counts (the butler's
-        #  card is in the owner's message's thread, so quoting it there is the topic it handed on to; the
-        # thread is not that topic's). The mode 纯话题 keeps a thread its root's.
-        quoted = _routes_to(base, chat_id, parent_id) if not thread_id or butler.enabled() else ""
-        if quoted:
-            # A reply quoting a message routed to a topic (``route_message``): its chain's root is the owner's
-            # message, the butler's, so the quoted message decides, and only this message becomes the topic's
-            # alias.
-            topic_id, identifiers = quoted, [message_id]
-        for identifier in [] if quoted else [*identifiers, parent_id]:
-            if not identifier:
-                continue
-            alias = _alias_path(base, chat_id, identifier)
-            if alias.exists():
-                topic_id = json.loads(alias.read_text())["topic_id"]
-                break
-        if not thread_id and butler.is_butler_topic(topic_id, chat_id) and not butler.enabled():
-            # The mode 纯话题 (docs/butler.md 私聊模式): a top-level reply quoting one of the butler's
-            # messages is a new message like any other, its own topic; the butler's messages stay its own.
-            root_id = parent_id = ""
-            topic_id, identifiers = _key(chat_id, message_id), [message_id]
-        path = base / topic_id / "topic.json"
-        existing = path.exists()
-        if existing:
-            data = json.loads(path.read_text())
-        else:
-            data = {
-                "topic_id": topic_id, "chat_id": chat_id,
-                "root_id": root_id or parent_id or message_id, "thread_id": thread_id,
-                "workspace_name": ctx.workspace_name, "workdir": devices.stored_value(ctx),
-                "topic_number": _next_topic_number(ctx.state_dir),
-            }
-            write_private_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-        if ctx.options.get("harness_id") and not data.get("harness_id"):
-            # Unified routing pins old unbound topics to Codex even when this bot's new default changed.
-            name = legacy_harness_id if existing and legacy_harness_id else ctx.options["harness_id"]
-            data.update(harness_id=name, binding_revision=1)
-            write_private_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-        for identifier in identifiers:
-            alias = _alias_path(base, chat_id, identifier)
+    topic_id = _key(chat_id, root_id or parent_id or message_id)
+    # In a thread, with the butler on, only the quoted message's routes_to counts (the butler's
+    #  card is in the owner's message's thread, so quoting it there is the topic it handed on to; the
+    # thread is not that topic's). The mode 纯话题 keeps a thread its root's.
+    quoted = _routes_to(base, chat_id, parent_id) if not thread_id or butler.enabled() else ""
+    if quoted:
+        # A reply quoting a message routed to a topic (``route_message``): its chain's root is the owner's
+        # message, the butler's, so the quoted message decides, and only this message becomes the topic's
+        # alias.
+        topic_id, identifiers = quoted, [message_id]
+    for identifier in [] if quoted else [*identifiers, parent_id]:
+        if not identifier:
+            continue
+        alias = _alias_path(base, chat_id, identifier)
+        if alias.exists():
+            topic_id = json.loads(alias.read_text())["topic_id"]
+            break
+    if not thread_id and butler.is_butler_topic(topic_id, chat_id) and not butler.enabled():
+        # The mode 纯话题 (docs/butler.md 私聊模式): a top-level reply quoting one of the butler's
+        # messages is a new message like any other, its own topic; the butler's messages stay its own.
+        root_id = parent_id = ""
+        topic_id, identifiers = _key(chat_id, message_id), [message_id]
+    path = base / topic_id / "topic.json"
+    existing = path.exists()
+    if existing:
+        data = json.loads(path.read_text())
+    elif not write or not make:
+        return _Place(topic_id, path, {}, False, True)
+    else:
+        data = {
+            "topic_id": topic_id, "chat_id": chat_id,
+            "root_id": root_id or parent_id or message_id, "thread_id": thread_id,
+            "workspace_name": ctx.workspace_name, "workdir": devices.stored_value(ctx),
+            "topic_number": _next_topic_number(ctx.state_dir),
+        }
+        write_private_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    if ctx.options.get("harness_id") and not data.get("harness_id"):
+        if not write:
+            return _Place(topic_id, path, data, existing, True)
+        # Unified routing pins old unbound topics to Codex even when this bot's new default changed.
+        name = legacy_harness_id if existing and legacy_harness_id else ctx.options["harness_id"]
+        data.update(harness_id=name, binding_revision=1)
+        write_private_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    for identifier in identifiers:
+        alias = _alias_path(base, chat_id, identifier)
+        if alias.exists() and json.loads(alias.read_text()).get("topic_id") == topic_id:
+            continue
+        if not write:
+            return _Place(topic_id, path, data, existing, True)
+        with _alias_lock(alias):
             if not alias.exists() or json.loads(alias.read_text()).get("topic_id") != topic_id:
                 write_private_text(alias, json.dumps({"topic_id": topic_id}) + "\n")
+    return _Place(topic_id, path, data, existing, False)
+
+
+def context_for_topic(ctx: Any, event: dict[str, Any], sessions_dir: Any, *, legacy_harness_id: str | None = None,
+                      default=None) -> Any:
+    """``ctx`` in the topic of ``event``: found by its aliases, made when it is new. ``default()``, when given, is the
+    context a new topic starts from (core/workspaces.py topic_context: the default workspace), asked for only when the
+    topic is still to be made. Looked up without a lock first: a message or a click in a topic that is there, its aliases
+    written, takes none, so a read hung on the network disk holds up its own thread alone. What must be written is
+    written under _LOCK, everything looked up again there (T680)."""
+    chat_id = str(event.get("chat_id") or "")
+    message_id = str(event.get("message_id") or event.get("id") or "")
+    if not chat_id or not message_id:
+        return ctx
+    base = ctx.state_dir / "topics"
+    place = _place(ctx, event, base, legacy_harness_id, write=False)
+    defaulted = default is None
+    while place.pending:
+        if not place.existing and not defaulted:
+            # Before _LOCK: it may take LOCK (core/workspaces.py load_config), which comes first.
+            ctx, defaulted = default(), True
+        with _LOCK:
+            place = _place(ctx, event, base, legacy_harness_id, write=True, make=defaulted)
+    topic_id, path, data = place.topic_id, place.path, place.data
     # A device value (``gpu1:/home/me/proj``) becomes the stand-in and the device's directory; one for a device that
     # devices.json no longer lists still does (refused by name when a turn starts, app/runs.py).
     binding = devices.bind_workdir(ctx, data["workdir"], strict=False)
@@ -334,11 +412,14 @@ def _routes_to(base: Path, chat_id: str, parent_id: str) -> str:
 
 
 def remember_topic_message(state_dir: Path, topic_id: str, chat_id: str, message_id: str) -> None:
-    """Persist outgoing card aliases so callbacks need no network lookup."""
+    """Persist outgoing card aliases so callbacks need no network lookup. Written once, under the alias's own lock (one
+    already there is left as it is), never _LOCK: each card sent and each message of the butler's writes one (T680)."""
     if not topic_id or not chat_id or not message_id:
         return
     path = _alias_path(state_dir / "topics", chat_id, message_id)
-    with _LOCK:
+    if path.exists():
+        return
+    with _alias_lock(path):
         if not path.exists():
             write_private_text(path, json.dumps({"topic_id": topic_id}) + "\n")
 
@@ -350,7 +431,7 @@ def move_topic_message(state_dir: Path, topic_id: str, chat_id: str, message_id:
     if not topic_id or not chat_id or not message_id:
         return
     path = _alias_path(state_dir / "topics", chat_id, message_id)
-    with _LOCK:
+    with _alias_lock(path):
         write_private_text(path, json.dumps({"topic_id": topic_id}) + "\n")
 
 
@@ -362,7 +443,7 @@ def route_message(state_dir: Path, chat_id: str, message_id: str, topic_id: str,
     if not topic_id or not chat_id or not message_id:
         return
     path = _alias_path(state_dir / "topics", chat_id, message_id)
-    with _LOCK:
+    with _alias_lock(path):
         try:
             alias = json.loads(path.read_text())
         except (OSError, ValueError):
@@ -404,7 +485,9 @@ def label_title(state_dir, topic_id, unknown=""):
         record = projects.lead_record(state_dir, topic_id)
         if record:
             return "专项", " ".join(str(record.get("name") or "").split()) or unknown
-    number = read_object(topic_file(Path(state_dir), topic_id)).get("topic_number")
+    number = _numbers.get((str(Path(state_dir)), topic_id))  # Kept by topic_number: a number never changes.
+    if number is None:
+        number = read_object(topic_file(Path(state_dir), topic_id)).get("topic_number")
     return (f"T{number}" if type(number) is int else ""), topic_title(Path(state_dir), topic_id) or unknown
 
 

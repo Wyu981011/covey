@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 
 from covey.core.providers import retired_provider, retired_provider_notice
-from covey.core.locks import LOCK
 from covey.core.topics import read_topic, workspace_locked
 from covey.core.state import read_json
 
@@ -102,8 +101,9 @@ class ModelSettings:
             ctx = dataclasses.replace(ctx, model=model, effort=effort)
         if not ctx.topic_id:
             return ctx
-        with LOCK:
-            data = read_topic(ctx)
+        # Without LOCK: topic.json is replaced whole, so this reads one version, and every route of a message or a click
+        # comes here (a read hung on the network disk under LOCK held up all of them, T680).
+        data = read_topic(ctx)
         if not data.get("model_settings_snapshot"):
             return ctx
         if not isinstance(data.get("model"), str) or not isinstance(data.get("effort"), str):

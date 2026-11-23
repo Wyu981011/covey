@@ -267,7 +267,7 @@ class Submission:
         job.harness_id = self.harness.spec.name
         job.binding_revision = int(data.get('binding_revision', 1))
         locked = workspace_locked(ctx)  # Setting harness_locked below does not change it.
-        if locked:
+        if locked and data.get('harness_locked') is not True:  # Once: no rewrite of topic.json under LOCK per message (T680).
             data['harness_locked'] = True
             write_json(ctx.history_path.parent / 'topic.json', data, ensure_ascii=False)
         if ctx.options.get("workspace_selection") and not locked:

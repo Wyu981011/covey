@@ -18,8 +18,8 @@ from covey.core.state import read_json, write_json
 from covey.core.paths import component_dir, expand_user
 from covey.core.topics import bind_topic, context_for_topic, proxy_topic, read_topic, workspace_locked
 
-__all__ = ["LOCK", "RUN_MODES", "add_topic_worktree", "add_workspace", "bind_topic", "config_path", "directory_status",
-           "load_config", "main", "missing_workspaces", "plan_topic_worktree", "proxy_topic", "read_topic",
+__all__ = ["LOCK", "RUN_MODES", "add_topic_worktree", "add_workspace", "bind_topic", "config_path", "default_context",
+           "directory_status", "load_config", "main", "missing_workspaces", "plan_topic_worktree", "proxy_topic", "read_topic",
            "remove_workspaces", "resolve_binding", "resolve_selection", "set_default_workspace", "topic_context", "topic_lock",
            "touch_workspace", "visible_workspaces", "workspace", "workspace_locked", "worktree_root"]
 RUN_MODES = {"direct": "原目录", "worktree": "独立 worktree"}
@@ -75,15 +75,21 @@ def config_path(state: Path) -> Path:
 
 
 def load_config(state: Path, fallback: Path) -> dict:
-    with LOCK:
-        path = config_path(state)
-        if not path.exists():
-            data = {"default": fallback.name, "workspaces": {fallback.name: str(fallback.resolve())}}
-            write_json(path, data, ensure_ascii=False, indent=2)
+    """The workspace list (workspace-config.json), made with ``fallback`` as the default one when missing. Read without
+    LOCK: its writers replace it whole (core/state.py atomic_write_bytes) under LOCK, so a read sees one version, and a
+    read hung on the network disk holds up no other thread (T680). Only making the missing file takes LOCK."""
+    path = config_path(state)
+    try:
         data = read_json(path)
-        if not isinstance(data.get("workspaces"), dict) or data.get("default") not in data["workspaces"]:
-            raise ValueError("工作区配置需要有效的 default 和 workspaces")
-        return data
+    except FileNotFoundError:
+        with LOCK:
+            if not path.exists():
+                data = {"default": fallback.name, "workspaces": {fallback.name: str(fallback.resolve())}}
+                write_json(path, data, ensure_ascii=False, indent=2)
+            data = read_json(path)
+    if not isinstance(data.get("workspaces"), dict) or data.get("default") not in data["workspaces"]:
+        raise ValueError("工作区配置需要有效的 default 和 workspaces")
+    return data
 
 
 def device_binding(state: Path, value: str, timeout: float = devices.CHECK_SECONDS) -> devices.Binding:
@@ -299,18 +305,25 @@ def set_default_workspace(state: Path, fallback: Path, name: str) -> None:
 
 def topic_context(ctx: Any, event: dict[str, Any], sessions_dir: Any, *, legacy_harness_id: str | None = None) -> Any:
     """``ctx`` in the topic of ``event``; a topic seen for the first time starts in the
-    configured default workspace."""
+    configured default workspace. The workspace list is read only for such a topic (core/topics.py context_for_topic
+    asks ``default``): a message or a click in a topic that is there takes its workspace from its topic.json (T680)."""
+    if not str(event.get("chat_id") or "") or not str(event.get("message_id") or event.get("id") or ""):
+        return default_context(ctx)  # No topic to look up: the default workspace, as ever.
+    return context_for_topic(ctx, event, sessions_dir, legacy_harness_id=legacy_harness_id,
+                             default=lambda: default_context(ctx))
+
+
+def default_context(ctx: Any) -> Any:
+    """``ctx`` in the configured default workspace: where a new topic starts."""
     config = load_config(ctx.state_dir, ctx.default_workdir)
     default = config["default"]
     if devices.is_device_value(config["workspaces"][default]):
         # A default workspace on a device: the new topic starts there (its topic.json gets the value, not the stand-in).
-        proposed = devices.with_binding(ctx, devices.bind_workdir(ctx, config["workspaces"][default], strict=False),
-                                        workspace_name=default)
-    else:
-        proposed = dataclasses.replace(
-            ctx, workspace_name=default, workdir=Path(config["workspaces"][default]).expanduser().resolve()
-        )
-    return context_for_topic(proposed, event, sessions_dir, legacy_harness_id=legacy_harness_id)
+        return devices.with_binding(ctx, devices.bind_workdir(ctx, config["workspaces"][default], strict=False),
+                                    workspace_name=default)
+    return dataclasses.replace(
+        ctx, workspace_name=default, workdir=Path(config["workspaces"][default]).expanduser().resolve()
+    )
 
 
 def main():

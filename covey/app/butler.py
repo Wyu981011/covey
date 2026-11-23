@@ -317,8 +317,14 @@ class Butler:
         there, None when nothing is), under LOCK. A workspace or a Harness that changed with nothing running in the
         topic takes its next turn on a new session: ``name``, ``workdir`` and ``app`` are the new ones, and the new
         Harness's session pointer is cleared (a session it had before is behind the conversation since). The
-        topic's Harness, as written."""
+        topic's Harness, as written. Looked at without LOCK first (topic.json is replaced whole): a message that finds it
+        as it would be written takes no lock, so a read hung on the network disk holds up its own thread alone (T680)."""
         path = topic_file(ctx.state_dir, topic_id)
+        saved = read_object(path)
+        data = build(saved or None)
+        moved = data.get("workdir") != workdir or data.get("harness_id") != app.spec.name
+        if data == saved and not (moved and not self.runtime.jobs.in_topic(topic_id)):
+            return str(data.get("harness_id") or app.spec.name)
         with LOCK:
             saved = read_object(path)
             data = build(saved or None)

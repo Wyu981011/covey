@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 ### Fixed 修复
 
 - Python 3.13：产物路径是符号链接环时，仍按“无法解析”处理（3.13 的 `Path.resolve()` 不再抛错）。
+- 网络盘上一个话题的 `topic.json` 读挂住时，不再挡住所有卡片点击和私聊消息：路由读 `topic.json`、别名和工作区列表不再持全局锁，话题编号读过一次就不再读盘（[docs/architecture.md](docs/architecture.md#主要记录与锁)）。
 
 ### Added (English)
 
@@ -44,3 +45,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). No 
 ### Fixed (English)
 
 - Python 3.13: an artifact path that is a symlink loop is still reported as one that cannot be resolved (3.13's `Path.resolve()` no longer raises).
+- A read of one topic's `topic.json` that hangs on the network disk no longer holds up every card click and private message: routes read `topic.json`, the aliases and the workspace list without a process-wide lock, and a topic's number is read from disk once ([docs/architecture.md](docs/architecture.md#主要记录与锁)).

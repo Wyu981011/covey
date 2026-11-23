@@ -208,7 +208,8 @@ continued、done、failed、cancelled、interrupted：终态
 | --- | --- | --- | --- |
 | `jobs/` | 任务记录 | Bridge、任务进程 | `record`，跨进程 |
 | `questions/`、`held-notes/`、`interaction-deliveries/` | 问题、暂存消息、补充投递 | 两者 | `question`，跨进程 |
-| `topics/<topic_id>/topic.json` | 绑定：工作区、`harness_id`、`binding_revision`、模型快照 | Bridge | `LOCK`，进程内 |
+| `topics/<topic_id>/topic.json` | 绑定：工作区、`harness_id`、`binding_revision`、模型快照 | Bridge | 改写持 `LOCK`，进程内（建话题、给旧话题编号、钉 Harness 另持 `_LOCK`）；读不持锁 |
+| `topics/aliases/` | 消息、卡片和话题串到话题的对应 | Bridge | 每个别名文件一把进程内锁；读不持锁 |
 | `topics/<topic_id>/*_session_id` | 原生会话指针，比较 revision 更新 | 两者 | 同名 `.lock` 的 flock |
 | `verified-results/`、`native-session-guards/` | 已验证回复的候选与授权；会话保护 | 两者 | 目录下 `.lock` 的 flock |
 | `inbound-messages/` | 每个收到的消息 ID 一个空标记，飞书重投时跳过 | Bridge | 无：`O_EXCL` 新建 |
@@ -223,6 +224,7 @@ continued、done、failed、cancelled、interrupted：终态
 - **资源锁**：`core/locks.py` 的 `resource_lock(namespace, key)`。`record`、`question`、`answer-cards`、`card` 跨进程（进程内锁加 flock），其他命名空间只在进程内。
 - **持记录锁不发网络请求**（规则 1）：锁内写意图（`submitting`）并存内容，锁外发送，返回后再转状态，不确定转 `uncertain`、从不自动重发。例外：实时问题的回答在后端的 `control_lock` 内核对并发送。问题表单在每个问题一把的 `question_card_lock` 内发送。
 - **`LOCK` 和话题锁**（规则 2）：`LOCK` 只保护工作区配置、`topic.json` 改写和要看所有话题的检查，从不跨飞书调用持有。同话题的提交、启动、重试、换配置由 `topic_lock(ctx)` 排队：先话题锁、再短暂拿 `LOCK`，反过来直接报错。
+- **读不持 `LOCK`、`_LOCK`**：`topic.json`、别名和工作区列表（`workspace-config.json`）都整文件替换，不加锁读到的也是完整的某一版。NFS 上一次打开可能挂住几分钟（D 状态），持锁读时所有点击和私聊消息的路由都跟着等。所以点击和消息的路由（`context_for_topic` 先不加锁查找，要建话题、写新别名、钉 Harness 时才拿 `_LOCK` 再查一遍）、`configured_context`、`load_config`、管家的 `write_topic`（没有要改的就不拿锁）都不持锁读；别名的写入各用自己文件的锁。话题编号读到一次就记在进程里（编号给了就不变），专项卡每秒取每个成员的编号也不再读盘；已有话题的路由不读工作区列表，只有新话题读。提交登记仍在 `LOCK` 内读 `topic.json`（维护和换配置要同时看到登记），但 `harness_locked` 已在时不再每条重写。
 - **卡片锁**：只串行同一张卡，跨进程；卡锁内只套同一张卡的记录锁，从不在记录锁或 `LOCK` 内申请卡锁，所以没有等待环。
 
 ### 卡片 sequence
@@ -240,7 +242,7 @@ CardKit 只接受比同一张卡已有写入（含结果不确定的）都大的
 | # | 规则 | 防什么 | 代码与章节 |
 | --- | --- | --- | --- |
 | 1 | 持记录锁不发网络请求，不确定不重发 | 飞书卡住时挡住同一记录的所有读写；重复消息 | [主要记录与锁](#主要记录与锁) |
-| 2 | `LOCK` 不跨飞书调用；持 `LOCK` 不申请 `topic_lock` | 一个话题拖垮全部；锁顺序反转死锁 | `core/locks.py` |
+| 2 | `LOCK` 不跨飞书调用；持 `LOCK` 不申请 `topic_lock`；读不持 `LOCK`、`_LOCK` | 一个话题拖垮全部；一次挂住的读挡住所有路由；锁顺序反转死锁 | `core/locks.py`、[主要记录与锁](#主要记录与锁) |
 | 3 | sequence 从 `reserve` 取；发送经 `Messenger`；任务卡只由 `Cards` 写 | CardKit 拒收、旧写盖新写 | [卡片 sequence](#卡片-sequence) |
 | 4 | 状态只按转换表前进，终态不回退 | 晚到的心跳把完成的任务改回运行 | [状态](#状态) |
 | 5 | 只发经 `verified_reply` 保存并授权的回复 | 过程文字被当成答案；重投时再跑模型 | [结果授权与投递](#结果授权与投递) |

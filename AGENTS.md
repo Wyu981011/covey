@@ -607,7 +607,7 @@
 括号里是 `docs/architecture.md` 讲它的那一节，标 `cards.md` 的在 `docs/cards.md`。
 
 1. 持记录锁不发网络请求：锁内存意图（`submitting`），锁外发，不确定转 `uncertain`，从不自动重发（主要记录与锁）。
-2. `LOCK` 不跨飞书调用持有，持 `LOCK` 时不能申请 `topic_lock`（两者都在 `core/locks.py`；主要记录与锁）。
+2. `LOCK` 不跨飞书调用持有，持 `LOCK` 时不能申请 `topic_lock`（两者都在 `core/locks.py`；主要记录与锁）；读 `topic.json`、别名和工作区列表不持 `LOCK`、`_LOCK`，只有写才持（NFS 上一次打开能挂住几分钟）。
 3. 已发卡片的 CardKit 写从 `reserve` 取 sequence，不回退不复用；发送都经 `Messenger`，任务卡只由 `Cards` 写（卡片 sequence）。
 4. 状态只按 `JOB_TRANSITIONS`、`QUESTION_TRANSITIONS`、`NEXT`（限流自动重试 `auto_retry.py` 的 `AUTO_RETRY_TRANSITIONS`，安全拒绝换模型重试 `policy_retry.py` 的 `POLICY_RETRY_TRANSITIONS`）前进，终态不回退（状态）。
 5. 只发经 `verified_reply` 保存并授权的回复；重投只发保存的正文，不跑模型（结果授权与投递）。
