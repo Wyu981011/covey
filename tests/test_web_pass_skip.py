@@ -198,16 +198,21 @@ class ChangeTest(SkipCase):
 
 class CollabChangeTest(CollabCase):
     def test_a_collaboration_of_the_topic_changes_its_inputs(self):
+        """Its record rewritten within one tick of the clock (the same mtime and, here, the same size) is a change too."""
         collector = Collector(self.env, None, self.logs.append)
         collector.look_begins(CHAT, T0)
         records = topic_job_records(self.state, THIRD, chat_id=CHAT)
         before = collector.inputs(self.state, CHAT, THIRD, records)
-        self.collaboration(helpers=(THIRD,), asks=[(THIRD, [], {})])
-        collector.look_begins(CHAT, T0 + 1)
-        joined = collector.inputs(self.state, CHAT, THIRD, records)
-        self.assertNotEqual(before, joined)
-        cid = next(iter(collector.collab_now))
-        collab_records.change(self.state, cid, lambda record: {**record, "goal_rev": 6})
+        with mock.patch.object(collab_records, "time", mock.Mock(time=lambda: T0)):  # The same updated_at, so the same size.
+            self.collaboration(helpers=(THIRD,), asks=[(THIRD, [], {})])
+            collector.look_begins(CHAT, T0 + 1)
+            joined = collector.inputs(self.state, CHAT, THIRD, records)
+            self.assertNotEqual(before, joined)
+            cid = next(iter(collector.collab_now))
+            target, first = collab_records.path(self.state, cid), collab_records.path(self.state, cid).stat()
+            collab_records.change(self.state, cid, lambda record: {**record, "goal_rev": 6})
+        os.utime(target, ns=(first.st_atime_ns, first.st_mtime_ns))
+        self.assertEqual(target.stat().st_size, first.st_size)
         collector.look_begins(CHAT, T0 + 2)
         self.assertNotEqual(collector.inputs(self.state, CHAT, THIRD, records), joined)
 

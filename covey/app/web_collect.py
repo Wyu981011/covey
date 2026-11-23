@@ -470,9 +470,9 @@ class Collector:
     # -- collaborations (COVEY_COLLAB=1) ---------------------------------------------------------------------------------------
 
     def read_collabs(self, state, chat) -> None:
-        """This look's collaborations of ``chat`` (``collab_now``) from <state>/collab/, a file read again only when it changed; a topic
-        in one whose record changed is built on the next look (``touch``: its marks and its 已协助 line). Without COVEY_COLLAB nothing
-        is read and nothing is kept."""
+        """This look's collaborations of ``chat`` (``collab_now``) from <state>/collab/, a file read again only when it changed (its
+        inode too: a rewrite within one tick of the clock keeps its mtime and often its size); a topic in one whose record changed is
+        built on the next look (``touch``: its marks and its 已协助 line). Without COVEY_COLLAB nothing is read and nothing is kept."""
         if not turn_source.enabled():
             self.collab_cache, self.collab_primed = {}, False
             self.collab_now, self.collab_helpers, self.collab_topics = {}, {}, set()
@@ -488,7 +488,7 @@ class Collector:
                 stat = path.stat()
             except OSError:
                 continue
-            stamp, kept = (stat.st_mtime_ns, stat.st_size), self.collab_cache.get(path.stem)
+            stamp, kept = (stat.st_ino, stat.st_mtime_ns, stat.st_size), self.collab_cache.get(path.stem)
             if kept is not None and kept[0] == stamp:
                 record = kept[1]
             else:
