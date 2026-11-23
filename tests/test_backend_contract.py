@@ -808,6 +808,9 @@ class SharedResultGateTests(unittest.TestCase):
     def test_a_throttled_run_says_why_and_how_to_go_on(self):
         with contextlib.ExitStack() as stack:
             ctx, backend, app, tx = shared_worker(stack)
+            # The card with no automatic retry pending. The extension's Harness declares rate_limit_retry as every
+            # Harness does (test_auto_retry), and what a pending retry says is test_auto_retry's.
+            stack.enter_context(mock.patch("covey.app.auto_retry.applies", return_value=False))
 
             def throttled(request):
                 request.callbacks.session(SID)
