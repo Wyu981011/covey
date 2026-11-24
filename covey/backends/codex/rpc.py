@@ -126,6 +126,14 @@ class AppServer:
             with self.lock:
                 self.pending.pop(rid, None)
 
+    def post(self, method, params):
+        """A request whose answer nobody waits for (``_read`` drops an answer no one is pending on): for what the turn
+        goes on without, whatever the server says."""
+        with self.lock:
+            self.counter += 1
+            rid = self.counter
+        self.send({"id": rid, "method": method, "params": params})
+
     def reject_question(self, request_id, reason):
         self.send({"id": request_id, "error": {"code": -32602, "message": reason}})
 

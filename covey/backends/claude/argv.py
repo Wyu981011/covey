@@ -14,6 +14,7 @@ NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
 # A READ, CONSULT or LEAD turn's tools (core/harness.py): a project lead's (app/project_lead.py) keeps its Bridge tools.
 READ_TOOLS = ("Read", "Grep", "Glob")
 FILE_TOOLS = ("Edit", "Write", "NotebookEdit")  # What a LOOK turn goes without: Claude Code's tools that change files.
+NO_AUTO_MEMORY = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"  # Claude Code's auto memory off for the one process (turn_env).
 
 
 def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""):
@@ -116,9 +117,13 @@ def turn_env(ctx, env):
     (its Bridge tools in ``ctx.options["mcp_config"]``) loads every tool with the session instead of finding them
     through tool search, as Persona's assistant does: a Bridge tool called beside that search went out with no
     arguments and was refused (the first call of topic_start and of topic_send). Its subagents' model as
-    backends/claude/subagents.py says."""
+    backends/claude/subagents.py says. A 代答 turn and a redacted one (through the term relay) neither read nor write
+    Claude Code's own memory (``NO_AUTO_MEMORY``): the repository's MEMORY.md is every topic's of that workspace, and what
+    such a turn said must reach none of them, nor what they noted reach it (docs/proxy.md, docs/architecture.md 敏感词脱敏)."""
     child = {**subagents.turn_env(ctx, env), "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS": "1",
              "CLAUDE_CODE_SDK_READS_SESSION_STATE": "1"}
     if ctx.options.get("mcp_config") and ctx.options.get(TOOL_LIMIT) != CONSULT:
         child["ENABLE_TOOL_SEARCH"] = "false"
+    if ctx.options.get(TOOL_LIMIT) == PROXY or redaction.settings(ctx):
+        child[NO_AUTO_MEMORY] = "1"
     return child

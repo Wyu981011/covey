@@ -18,7 +18,7 @@ from covey.backends.codex.rpc import AppServer, RpcError, failed
 from covey.backends.codex.turn import close_turn, paused_question_end, read_turn
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.backends.codex import consult
-from covey.core.harness import CONSULT, LEAD, LOOK, READ, TOOL_LIMIT, JobCancelled, RunResult
+from covey.core.harness import CONSULT, LEAD, LOOK, PROXY, READ, TOOL_LIMIT, JobCancelled, RunResult
 from covey.core.paths import entry_script
 from covey.core.process import device_of
 from covey.core.protocol import deliver_event
@@ -53,6 +53,10 @@ BRIDGE_TOOL_SECONDS = 150.0
 
 # The turns held to reading (core/harness.py TOOL_LIMIT): the read-only sandbox for the thread and the turn.
 READ_ONLY = (READ, LOOK, CONSULT, LEAD)
+QUESTION_FLAG = "features.default_mode_request_user_input=true"  # The non-blocking question, on for every turn but CONSULT.
+# A 代答 turn's (PROXY) switches: its question as before, and Codex's memories (made from other sessions and injected into each
+# new one) neither read into it nor made by its server (keep_out_of_memories keeps its thread out of the others').
+PROXY_FLAGS = (QUESTION_FLAG, "features.memories=false", "memories.generate_memories=false", "memories.use_memories=false")
 
 
 def bridge_servers(ctx):
@@ -132,11 +136,25 @@ def thread_params(ctx, session_id, instructions="", process=None):
 def server_flags(ctx) -> list:
     """The app server's -c switches after its thread limit: the non-blocking question on, as before; a CONSULT turn's
     (backends/codex/consult.py FLAGS) instead: apps, plugins, memories, hooks and the question off; a READ, LOOK or LEAD
-    turn's (READING_FLAGS): apps, plugins, memories and hooks off, the question on."""
+    turn's (READING_FLAGS): apps, plugins, memories and hooks off, the question on; a 代答 turn's (``PROXY_FLAGS``): the
+    question on and Codex's memories neither read into the turn nor made by this server."""
     limit = ctx.options.get(TOOL_LIMIT)
     flags = (consult.FLAGS if limit == CONSULT else consult.READING_FLAGS if limit in (READ, LOOK, LEAD)
-             else ("features.default_mode_request_user_input=true",))
+             else PROXY_FLAGS if limit == PROXY else (QUESTION_FLAG,))
     return [part for flag in flags for part in ("-c", flag)]
+
+
+def keep_out_of_memories(rpc, ctx) -> None:
+    """A 代答 turn's thread out of Codex's memories for good (``thread/memoryMode/set`` ``disabled``, experimental, codex-cli
+    0.171.0): any other app server or CLI of this CODEX_HOME that makes memories reads only the threads marked ``enabled``,
+    and a contact's chat must not become what every other session is told (docs/proxy.md). Set on each of its turns, since
+    the threads before this were made enabled; not waited for: the turn goes on whatever the server answers."""
+    if ctx.options.get(TOOL_LIMIT) != PROXY or not rpc.thread_id:
+        return
+    try:
+        rpc.post("thread/memoryMode/set", {"threadId": rpc.thread_id, "mode": "disabled"})
+    except RpcError:
+        pass
 
 
 def image_paths(ctx, attachments):
@@ -188,6 +206,7 @@ def open_thread(rpc, request, state, observe):
         raise failed("identity_mismatch")
     request.observers.session(rpc.thread_id)
     state.invalidate()
+    keep_out_of_memories(rpc, ctx)
 
 
 def run_appserver(request, env):

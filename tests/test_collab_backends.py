@@ -224,8 +224,9 @@ class CodexReadingTest(unittest.TestCase):
                 self.assertEqual(pairs.get(key), "false", (limit, key))
             self.assertEqual(pairs.get("features.default_mode_request_user_input"), "true")  # Its question, as before.
             self.assertNotIn("web_search", pairs)
-        self.assertEqual(appserver.server_flags(self.ctx(**{TOOL_LIMIT: PROXY})),
-                         ["-c", "features.default_mode_request_user_input=true"])  # A 代答 turn as before.
+        proxy = appserver.server_flags(self.ctx(**{TOOL_LIMIT: PROXY}))  # A 代答 turn: its question, no memories.
+        self.assertEqual(proxy[:2], ["-c", "features.default_mode_request_user_input=true"])
+        self.assertNotIn("features.apps=false", proxy)  # Its lark-cli and the rest as before (tests/test_native_memory.py).
 
     def test_the_reading_home_links_all_but_rules_hooks_plugins_and_memories_and_keeps_the_owners_config(self):
         with tempfile.TemporaryDirectory() as tmp:

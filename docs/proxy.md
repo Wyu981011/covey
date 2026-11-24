@@ -89,6 +89,7 @@ IM 事件只有机器人身份，看不到主人的会话，所以 `ProxyIntake.
 - **主人的一轮**：主人在代答话题里说话、而联系人有 `submitted` 或 `held` 批次时，`app/runs.py` 的 `_turn_message` 附上 `owner_turn_note`：这一轮的回复会发给对方，不要发就以 `SKIP_MARK` 开头。
 - **规则**：代答话题的轮次用 `app/prompts.py` 的 `proxy_constraints` 代替普通话题的规则（不用 Markdown 排版、不写检查点和话题要点，只读查询，不发飞书消息），不附检查点说明（`Runs._checkpoint_note`），续接的会话也不再追加普通话题的提醒；新会话的“最近的对话”里，之前每批的提示词只留消息（`core/proxy.py` 的 `brief_history`），规则只在这一批里出现一次。
 - **工具收窄**（`app/tool_limits.py` 的 `proxy`，主人在话题里的一轮也算）：Claude Code 只有 Read、Grep、Glob、Bash、Edit、Write，不挂主人的 MCP 服务；它的 PreToolUse 钩子（`bin/covey_tool_guard.py`，`backends/claude/tool_guard.py`，由那一轮的 `--settings` 带上）让命令行只跑一条只读的 lark-cli 命令（`+…-list`、`+…-search`、`+fetch`、`api GET` 这类，可以接 `head`、`jq`、`grep` 这些管道；发消息、下载、`--output` 一律不跑），编辑工具只写联系人的笔记目录（`session_dir`；联系人没有笔记目录时哪都不能写）。不放行的调用 Claude Code 不执行，把原因交给模型，`--dangerously-skip-permissions` 下也一样。Codex 和别的 Harness 照旧：Codex 的沙箱里 lark-cli 读不了聊天（没有网络，登录也续不上）。主人的 Claude Code 设置里关了全部钩子（`disableAllHooks`）时，钩子不生效。
+- **Harness 自带的记忆**：代答话题的一轮不读也不产生 Harness 自己的记忆，联系人的话不会变成其他会话里的规矩：Claude Code 这一轮设 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`（`backends/claude/argv.py` 的 `turn_env`）；Codex 的 app-server 关 memories（`backends/codex/appserver.py` 的 `PROXY_FLAGS`），每轮还把这个线程标成不进记忆（`keep_out_of_memories`，实验接口 `thread/memoryMode/set`），同一个 `CODEX_HOME` 里别的会话整理记忆时就不再读它。改之前已经记进 Codex 记忆的那些，这里不删。
 - 代答话题不带主人的原则；产物不列代答联系人的笔记目录：扩展用 `contact_notes` 设置（一个正则）指出它在哪，核心默认没有（`app/artifacts.py` 的 `drive_paths`）。
 
 ## 发前闸门
