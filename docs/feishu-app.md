@@ -14,9 +14,9 @@
 
 | 订阅 | 类型 | 用途 | 什么时候要 |
 | --- | --- | --- | --- |
-| `im.message.receive_v1` | 事件 | 收消息 | 总要 |
+| `im.message.receive_v1` | 事件 | 收消息（含斜杠命令） | 总要 |
 | `card.action.trigger` | 回调 | 所有卡片按钮和选择 | 总要 |
-| `application.bot.menu_v6` | 事件 | 机器人菜单的点击 | 总要；不开时机器人照常工作，只是菜单点了没反应 |
+| `application.bot.menu_v6` | 事件 | 旧版底部自定义菜单的点击 | 仅在应用已启用旧版底部自定义菜单时需要；未启用时不要求 |
 | `im.message.message_read_v1` | 事件 | 话题看过没有（已读） | `COVEY_PINNED_TOPICS=1` |
 
 **权限**：
@@ -36,24 +36,25 @@
 | `drive:file:upload`、`space:folder:create` | 产物上传云空间 |
 | `docs:permission.member:create` | 产物文件夹给你权限 |
 | `application:application:self_manage` | 检查应用配置（自动补齐靠它读应用详情） |
+| `im:chat.tabs:write_only` | 私聊顶栏的「工作台」标签（网页工作台一键部署以机器人身份建，见 [web/README.md 的「部署」](../web/README.md#部署)）；免审核，默认就要。建和更新标签的响应里已带会话全部标签，所以不要 `im:chat.tabs:read` |
 | `im:message.pins:read`、`im:message.pins:write_only` | 置顶看板；`COVEY_PINNED_TOPICS=1` 或 `COVEY_PINNED_OVERVIEW=1` 时要 |
 | `im:chat.members:read` | 群聊免@ 选人；`COVEY_GROUP_ALL_MESSAGES=1` 时要 |
 | `im:message.group_msg` | 群聊免@ 收群里全部消息；`COVEY_GROUP_ALL_MESSAGES=1` 时要，要租户管理员审核 |
 
 `lark-cli config init --new` 的应用模板带了其中大部分。某个订阅具体要哪些权限，以 `lark-cli event schema <订阅名>` 的 `Required Scopes` 为准。不用群聊免@ 就不要申请 `im:message.group_msg`，见[在群里用](usage.md#在群里用)。
 
-**机器人菜单**：启用自定义菜单，展示形式选“悬浮菜单”（浮在输入框上方，不挡输入），都是一级菜单（飞书最多 5 个），动作都选“推送事件”，事件 key 一字不差（机器人按它认菜单项）：
+**斜杠命令（默认，官方 OpenAPI 自动注册，无需浏览器与开发者后台）**：`./install` 与 Bridge 的日常检查会以机器人身份调用 `lark-cli application +slash-command-create --as bot --force`（对应 `POST /open-apis/application/v7/app_slash_commands`，使用 `lark-cli config init --new` 默认自带的 `application:app_slash_command:read/write` 权限，定义在 `feishu/slash_commands.py`），在输入框打 `/` 即可呼出（客户端缓存约 5 分钟生效，也可直接手打英文命令或中文别名）：
 
-| 菜单 | 事件 key | 图标（自动补齐用飞书内置线性图标；手工配可以上传右边的文件） | 什么时候要 |
+| 斜杠命令 | 中文别名 | 对应菜单键 | 什么时候注册 |
 | --- | --- | --- | --- |
-| 用量 | `weekly_usage` | `insert-chart_outlined`；`docs/media/menu-icons/usage.png` | 总要 |
-| 看板 | `digest_board` | `bitablekanban_outlined` | 设了 `COVEY_BOARD=1`（`./install` 写）或 `COVEY_DIGEST_TIMES` |
-| 代答 | `proxy_settings` | `robot_outlined`；`docs/media/menu-icons/proxy.png` | 启用的扩展有代答发送器 |
-| 设置 | `bridge_settings` | `setting_outlined`；`docs/media/menu-icons/settings.png` | 总要 |
+| `/usage` | `/用量` | `weekly_usage` | 总要 |
+| `/board` | `/看板` | `digest_board` | 设了 `COVEY_BOARD=1`（`./install` 写）或 `COVEY_DIGEST_TIMES` |
+| `/proxy` | `/代答` | `proxy_settings` | 启用的扩展有代答发送器 |
+| `/settings` | `/设置` | `bridge_settings` | 总要 |
 
-- “设置”是一张卡上几个标签：配置（设了 `COVEY_BUTLER=0` 时没有管家那一段）、工作区、脱敏、群聊（开了节点再加设备）、诊断，见[机器人菜单](usage.md#机器人菜单)。菜单只对主人有反应，结果发在主人和机器人的私聊里。
-- 以前单独配的菜单项照旧能点：`manage_workspaces`（工作区）、`redaction_dashboard`（脱敏）、`manage_groups`（群聊，图标 `docs/media/menu-icons/groups.png`）、`main_thread_settings`。它们算进 5 项上限，自动补齐不删也不换。
-- 上传的图标飞书 7.22 以上显示；菜单补上后约 5 分钟出现在输入框上方。
+**旧版底部自定义菜单（可选兼容）**：不再要求配置。已经配过底部悬浮菜单的老部署继续完全可用（动作“推送事件”，事件 key 同上表，以及以前单独配过的 `manage_workspaces`、`redaction_dashboard`、`manage_groups`、`main_thread_settings`）；新部署直接用斜杠命令即可，无需打开开发者后台或做桌面设备认证。
+
+- “设置”是一张卡上几个标签：配置（设了 `COVEY_BUTLER=0` 时没有管家那一段）、工作区、脱敏、群聊（开了节点再加设备）、诊断，见[机器人菜单](usage.md#机器人菜单)。斜杠命令和菜单都只对主人有反应，不开话题。
 
 ## 自动补齐飞书应用
 
@@ -64,6 +65,8 @@ Bridge 自己检查上面的清单。缺了就在主人私聊里发一张「飞�
 - 读这两个接口要应用有 `application:application:self_manage`；没有时卡上只列这一项，补上后下次检查才看得到其余的。
 - 同一组缺项只发一次卡（`<state>/app-setup/state.json`）；点「不管了」后，缺项变了才再发。主人还没和机器人私聊过时不发。
 - 要租户管理员审核的权限（`im:message.group_msg`）单列在卡上、默认不申请，只缺它时不发卡；点「连同需审核的一起申请」才一起提交。
+- 老部署升级后清单多了 `im:chat.tabs:write_only`：缺这一项就发一张待补卡（同一组缺项只发一次，补上后不再提示）；点「扫码自动补齐」只加这一项权限（免审核，不提交管理员审核）。不用网页工作台的部署也会提示，点「不管了」即可，不影响别的功能。
+- 「网页应用」能力不在默认清单里：它只为把网页工作台固定到飞书左侧主导航，没有开放接口，Bridge 也不替你在后台点（要建版本并发布，可能要管理员审核）。要用时在开发者后台手工开，步骤见 [web/README.md 的「部署」](../web/README.md#部署)。
 - 只增不删：应用里别的权限、事件和菜单项都不动。一级菜单放不下的菜单项不补，卡上说明。
 - 设 `COVEY_APP_CHECK=0` 不检查、不发卡。
 

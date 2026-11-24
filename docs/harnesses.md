@@ -75,7 +75,7 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 ## Codex
 
 - **准备**：装 `codex` 并用本人账号登录；任务开始前只检查可执行文件。
-- **运行方式**：每个任务一个 `codex app-server`，经 stdio 通信。命令、文件修改、MCP 工具、计划和子 Agent 都进执行过程；模型、推理强度、工作区和权限每轮传入；`agents.max_threads=4`。桥接规则在新会话首轮的用户输入开头，续接轮附提醒和约定（[一次运行](architecture.md#一次运行)）。
+- **运行方式**：每个任务一个 `codex app-server`，经 stdio 通信。命令、文件修改、MCP 工具、计划和子 Agent 都进执行过程（命令没有写说明的字段，桥接规则要它在命令第一行写一行 `# 这一步做什么`，执行过程显示这句；没写时显示去掉开头样板以后真正在跑的命令）；模型、推理强度、工作区和权限每轮传入；`agents.max_threads=4`。桥接规则在新会话首轮的用户输入开头，续接轮附提醒和约定（[一次运行](architecture.md#一次运行)）。
 - **原生提问**：不需要停下的显示在任务卡上，其他工作继续；必须先回答的让本轮先结束，回答后在同一会话继续。
 - **工作区只读工具**：每个会话挂本任务专用的 `bridge_workspace` MCP 服务，可读工作区、附件目录和换配置的 `handoff/`，拒绝 `..`、符号链接和二进制；实际权限只由 `--sandbox` 决定。
 - **本轮结果**：thread 和 turn 双重绑定，只用当前 turn 的完整 items（不完整时按 ID 回读），取 `final_answer` 阶段的 agentMessage。下载请求与结果从 rollout 还原，不记的部分列在 `not_recorded`。
@@ -173,7 +173,7 @@ Antigravity 是 Google 的 Agent 开发平台，这里用它的命令行 `agy`�
 - **登录**：在运行机器人的系统账号下执行一次 `agy`，选 “Google OAuth”；没有浏览器时它打印授权链接，在自己的浏览器里登录后把授权码贴回终端。没有 D-Bus 时令牌存在 `~/.gemini/antigravity-cli/antigravity-oauth-token`，不进机器人的记录。一台机器一个登录，agy 没有切账号的参数，只按 `HOME` 找登录。也可以用 Gemini API 密钥或 Google Cloud 项目登录（[官方说明](https://antigravity.google/docs/install)）。没登录时启动卡上没有它，已有话题的一轮以“还没有登录”失败。
 - **运行方式**：每轮一个 `agy --output-format stream-json --input-format stream-json --disable-slash-commands --dangerously-skip-permissions [--conversation <会话>] [--model <模型>] [--effort <档位>]`，正文作为一行 JSON 从 stdin 传入后关闭，跑完这一轮就退出。续接用 `--conversation`，会话 ID 和 `init` 里的不一致时按协议错误失败。
 - **本轮结果**：最后一行 `result` 的 `status` 为 `SUCCESS`、零退出码。正文取最后一个工具、子 Agent 或系统步骤之后模型写的字（`result.response` 把这一轮的字全拼在一起，取出的不是它的结尾时退回整个 `response`）；子 Agent 的步骤不算本轮正文。
-- **事件与用量**：文字增量是正文和进展说明，工具步骤按名字显示；工具输出和思考不上卡片。用量取每个 `agent_response` 步骤的 `usage`（`input_tokens` 不含缓存读取，`output_tokens` 含思考），没有时才用 `result.usage`。
+- **事件与用量**：文字增量是正文和进展说明，工具步骤按名字显示；工具输出和思考不上卡片。每一步写模型自己说的这一步做什么：agy 的 stream-json 不带调用的 `toolSummary`（实测 1.5.14：`run_command` 只流出 `CommandLine`），Bridge 按步骤号和参数从本机 agy 的会话库（`$HOME/.gemini/antigravity-cli/conversations/<会话>.db`）只读查出来写在前面（`backends/agy/bridge.py` 的 `tool_summary`）；查不到（设备上的回合、agy 换了存法）时用命令第一行的 `# 注释`，再没有就显示去掉开头样板以后真正在跑的命令。`schedule`（定时等待）写回来做什么和多久以后；`edit_file`、`write_file`、`update_steps` 按修改文件、写入文件、更新计划显示。用量取每个 `agent_response` 步骤的 `usage`（`input_tokens` 不含缓存读取，`output_tokens` 含思考），没有时才用 `result.usage`。
 - **模型和档位**：启动卡的预算就是 `--effort`；模型目录（`launch-models/agy.json`）说没有这个档位时不启动，没有档位的模型不传 `--effort`。
 - **失败**（`backends/agy/bridge.py` 的 `error_code`）：`result.error` 像登录失败记 `authentication_error`；带安全拦截字样（SAFETY、PROHIBITED_CONTENT、违反政策等）的记 `root_failed`；像额度用完、又没说什么时候恢复的记 `quota_exhausted`；像 429、限流，或额度说了恢复时间（reset after、per minute、until 某时）的记 `rate_limited`；`UNAVAILABLE`、`INTERNAL`、`DEADLINE_EXCEEDED`、50x、过载、连接重置或断开、“network issue” 记 `server_fault`；其余 `root_failed`。点了停止后 agy 以错误收尾的，限流和故障都按停止记。agy 的原文不上卡片，stderr 最后几行（去掉登录链接、隐藏凭据）只进 `bridge.log`。
 - **补充**是“停下再接着做”（`AgyControl`）：agy 运行中不收新消息，收下补充即“后端已接收”，给 agy 发 SIGINT，它以 `interrupted` 结束并保留已做的部分；它还在跑的命令先 TERM、5 秒后 KILL；然后同一会话起新进程，消息是补充，这时算“模型已读取”。和 Claude 不同，正在执行的那一步会被打断。

@@ -168,10 +168,10 @@ class JobRegistry:
         with self.lock:
             return any(job_key(j.message_id, j.job_id) == key for j in self.by_id.values())
 
-    def topic_count(self) -> int:
-        """How many topics have a job here (the scheduler's unit)."""
+    def topic_count(self, where=None) -> int:
+        """How many topics have a job here (the scheduler's unit); ``where``: only the jobs it says yes to."""
         with self.lock:
-            return len({topic_key(j) for j in self.by_id.values()})
+            return len({topic_key(j) for j in self.by_id.values() if where is None or where(j)})
 
     def busy(self) -> bool:
         with self.lock:

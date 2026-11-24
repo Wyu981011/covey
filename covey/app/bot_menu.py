@@ -31,14 +31,37 @@ import functools
 import hashlib
 import time
 
-from covey.core import timing
+from covey.core import app_manifest, timing
 from covey.core.locks import resource_lock
 from covey.core.state import claim_once, read_object, utc_now_iso, write_json
+from covey.feishu.message_parts import collect_message_parts, text_message_texts
 from covey.feishu.message_read import fetch_message_detail, message_item
 from covey.feishu.messenger import Messenger
 
 FIRST_TEXT = '菜单的结果都发在这个私聊里。'
 PANELS = 'menu-panels.json'  # event_key -> the chat and message of the card it last sent.
+# Personal groups open only these three (same as app/group_menu.py ITEMS); 代答 stays in the owner's private chat.
+GROUP_SLASH_KEYS = frozenset({'weekly_usage', 'digest_board', 'bridge_settings'})
+SLASH_MESSAGE_TYPES = frozenset({'', 'text', 'post'})
+
+
+def slash_key(event):
+    """The bot menu event key a top-level slash command message names (/settings, /设置, …), else ''.
+
+    Never matches replies inside a topic thread, quoted replies, messages with images/files, or text with extra words."""
+    if any(str(event.get(field) or '') for field in ('thread_id', 'root_id', 'reply_to', 'parent_id')):
+        return ''
+    if str(event.get('message_type') or '') not in SLASH_MESSAGE_TYPES:
+        return ''
+    raw = str(event.get('content') or '')
+    parts, images, files = collect_message_parts(raw)
+    if not parts and not images and not files:
+        texts = text_message_texts(raw)
+        if texts:
+            parts, images, files = collect_message_parts('\n'.join(texts))
+    if images or files or len(parts) != 1:
+        return ''
+    return app_manifest.slash_key(parts[0])
 
 
 class Panels:
@@ -154,6 +177,30 @@ class BotMenu:
             return 'no_chat'
         how = self.run(ctx, key, chat_id, event_id, clicked=click_time(event))
         return 'twice' if how == 'twice' else key
+
+    def handle_slash(self, ctx, event, admitted, *, personal_group=False):
+        """A top-level slash command message (/usage, /board, /proxy, /settings or their Chinese aliases) from the
+        owner in a private chat or personal group: opens the menu card in that chat without starting a topic.
+        Returns True when handled, False when the message should continue to normal routing."""
+        if not getattr(admitted, 'owner', False):
+            return False
+        if admitted.group and not personal_group:
+            return False
+        key = slash_key(event)
+        if not key:
+            return False
+        if admitted.group and key not in GROUP_SLASH_KEYS:
+            return False
+        if key not in self.actions:
+            return False
+        chat_id = str(event.get('chat_id') or '')
+        source = str(event.get('message_id') or event.get('event_id') or '')
+        if not chat_id or not source:
+            return False
+        how = self.run(ctx, key, chat_id, source)
+        timing.outcome(f'slash:{key}')
+        self.runtime.log(f'slash menu key={key} message={source[-10:]} chat={chat_id[-8:]} outcome={how}')
+        return True
 
     def run(self, ctx, key, chat_id, source, clicked=None):
         """Item ``key``'s card in ``chat_id`` for the click ``source``: its last card there folded or unfolded while it

@@ -7,8 +7,8 @@ from support.world import UnifiedCase
 from covey.core.topics import read_topic, remember_topic_message
 
 
-# Commands that retired single-harness bots registered; all must stay inert.
-COMMANDS = ('menu', 'workspace', 'settings', 'status', 'history', 'stop', 'retry', 'cancel', 'steer', 'start', 'help')
+# Commands that retired single-harness bots registered; all must stay inert (/settings is now a Feishu official slash command).
+COMMANDS = ('menu', 'workspace', 'status', 'history', 'stop', 'retry', 'cancel', 'steer', 'start', 'help')
 
 
 class RetiredShortcutTests(UnifiedCase):

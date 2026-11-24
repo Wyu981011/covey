@@ -7,7 +7,7 @@ export const TOPIC_STATES = ['等你', '在做', '做完', '已停止', '失败'
 export type TopicState = (typeof TOPIC_STATES)[number];
 
 /** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload */
-export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo', 'revisit_cancel'] as const;
+export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo', 'revisit_cancel', 'memory_edit'] as const;
 export type OutboxKind = (typeof OUTBOX_KINDS)[number];
 export const isOutboxKind = (v: string): v is OutboxKind =>
   (OUTBOX_KINDS as readonly string[]).includes(v);
@@ -1117,7 +1117,7 @@ export type SettingsWhat = (typeof SETTINGS_WHATS)[number];
 /** v15：proxy 的 op */
 export const PROXY_OPS = ['enable', 'disable', 'row', 'pause', 'resume', 'remove'] as const;
 /** 同步条目 type=settings 的 key；settings 是设置快照，usage 是本周用量（v15），tidy 是整理专项的建议（v16） */
-export const SETTINGS_KEYS = ['settings', 'usage', 'tidy', 'asks'] as const;
+export const SETTINGS_KEYS = ['settings', 'usage', 'tidy', 'asks', 'memory'] as const;
 export const isSettingsKey = (v: string): boolean => (SETTINGS_KEYS as readonly string[]).includes(v);
 
 /** v16：整理专项的建议。kind 对应的标签词、按钮字由 Covey 给（tag、verb），headline、from 也是 Covey 拼好的 */
@@ -1212,4 +1212,103 @@ export interface SettingsAsks {
 export interface MemoryUndoPayload {
   job_id: string;
   entry_id: string;
+}
+
+/* ---------- 主记忆（v37，设置条目 key memory；Covey 的 app/web_memory.py view） ---------- */
+
+/** 一条主记忆：原则、知识条目，或作为“它总结的”带进下一轮的候选 */
+export interface MainMemoryEntry {
+  /** principle:<id>、knowledge:<id>、candidate:<id>；改、删都用它 */
+  key: string;
+  kind: 'principle' | 'knowledge' | 'candidate';
+  text: string;
+  /** owner 你说的，lead 它总结的 */
+  by: 'owner' | 'lead';
+  pinned: boolean;
+  /** 只有原则能标常驻 */
+  pinnable: boolean;
+  /** 原则、知识条目能改正文；候选不能 */
+  editable: boolean;
+  /** 下一轮带不带（放不下的是 false） */
+  carried: boolean;
+  /** 这一条占的字数（算在这一组的上限里） */
+  chars: number;
+  /** 记下的时刻（秒） */
+  at: number;
+  /** 从哪来：网页上记的、管家记的、设置卡里升为全局的、候选里记下的；说不清是空串 */
+  origin: string;
+  /** 原则在网页上改过的时刻（ISO），没改过是空串 */
+  edited: string;
+  /** 知识条目的种类（decision、practice、pitfall、fact、question）和原因 */
+  knowledge_kind?: string;
+  why?: string;
+}
+
+export interface MainMemoryGroup {
+  scope: 'global' | 'workspace';
+  /** 全局是空串 */
+  workspace: string;
+  title: string;
+  /** 下一轮这一组用了多少字、上限、放不下几条 */
+  used: number;
+  limit: number;
+  left: number;
+  /** 常驻的在前，再新的在前 */
+  entries: MainMemoryEntry[];
+}
+
+/** 开着的候选（开了 COVEY_MEMORY_LEARN）：记下就成原则，不用就不再提 */
+export interface MainMemoryCandidate {
+  key: string;
+  text: string;
+  /** 空串是全局 */
+  workspace: string;
+  /** 已作为“它总结的”带进下一轮 */
+  carried: boolean;
+  at: number;
+  /** 上次记下没成功的原因（比如这一组满了） */
+  error: string;
+  from: string;
+}
+
+/** 某个工作区下一轮实际带上的记忆那一段 */
+export interface MainMemoryPreview {
+  count: number;
+  chars: number;
+  left: number;
+  text: string;
+}
+
+export interface MainMemoryData {
+  /** false：记忆关着，页面收起这一页 */
+  on: boolean;
+  knowledge?: boolean;
+  learn?: boolean;
+  limits?: { text: number; group: number; pinned: number; global: number; workspace: number };
+  kinds?: { value: string; text: string }[];
+  default?: string;
+  workspaces?: string[];
+  groups?: MainMemoryGroup[];
+  candidates?: MainMemoryCandidate[];
+  previews?: Record<string, MainMemoryPreview>;
+}
+
+export interface MainMemoryResponse {
+  rev: string;
+  data: MainMemoryData;
+  at: string;
+}
+
+/** outbox kind=memory_edit 的 payload（v37）：不带 topic_key、project_key */
+export interface MemoryEditPayload {
+  action: 'add' | 'edit' | 'pin' | 'unpin' | 'delete' | 'keep' | 'drop';
+  key?: string;
+  what?: 'principle' | 'knowledge';
+  scope?: 'global' | 'workspace';
+  workspace?: string;
+  text?: string;
+  /** 改之前看到的正文：Covey 核对，对不上就不覆盖 */
+  base?: string;
+  knowledge_kind?: string;
+  why?: string;
 }

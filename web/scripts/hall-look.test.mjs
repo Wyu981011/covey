@@ -100,3 +100,25 @@ test('服务端收产物：只留认得的字段，链接只认 https，没名�
   assert.deepEqual(artifactsOf({ name: 'a' }), []);
   assert.equal(artifactsOf(Array.from({ length: 80 }, (_, i) => ({ name: `f${i}` }))).length, 50);
 });
+
+test('在做的状态点是转圈（T749）：侧栏 T 号块角上的和列表里的同一条规则；减少动态效果时不转、画回实心点', async () => {
+  const { default: postcss } = await import('postcss');
+  const css = postcss.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src', 'cv', 'unify.css'), 'utf8'));
+  const decls = (pick) => {
+    const out = {};
+    css.walkRules((r) => {
+      if (!pick(r)) return;
+      r.walkDecls((d) => { out[d.prop] = d.value; });
+    });
+    return out;
+  };
+  const inReduce = (r) => r.parent?.type === 'atrule' && /prefers-reduced-motion:\s*reduce/u.test(r.parent.params);
+  const spin = decls((r) => !inReduce(r) && r.selector.split(',').map((s) => s.trim()).includes('.cv .dot.tone-running'));
+  assert.match(spin.animation ?? '', /\bspin\b.*infinite/u);
+  assert.match(spin.border ?? '', /2px solid/u, '线宽 2px：1.5px 会被 Chrome 取整成 1px');
+  const corner = decls((r) => !inReduce(r) && r.selector.trim() === '.cv .a-tlogo .dot.tone-running');
+  assert.equal(corner.background, 'var(--side)', '侧栏角上的转圈中间填侧栏底色，压住下面的 T 号块');
+  const still = decls((r) => inReduce(r) && r.selector.includes('.cv .dot.tone-running'));
+  assert.equal(still.animation, 'none');
+  assert.equal(still.background, 'var(--c)');
+});

@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import signal
@@ -16,7 +17,7 @@ from support.cards import text_of
 from covey.cards.elements import find_element
 from support.fake_backends import SID, RecordingBackend
 from support.processes import leftover_check
-from support.world import UnifiedCase
+from support.world import UnifiedCase, wait_for
 from support.records import run_files
 from covey.app.outbox import retry_label
 from covey.app.questions import recover_question_delivery
@@ -39,6 +40,106 @@ setUpModule, tearDownModule = leftover_check()
 def snapshot(steps, **fields):
     return {"schema_version": 1, "steps": steps, "step_order": list(steps), "total": len(steps),
             "agents": {}, "children": {}, **fields}
+
+
+@contextlib.contextmanager
+def failing_reads(path, count):
+    """The next ``count`` reads of ``path`` fail as a read that met a replace of the file did on ByteFuse (T740): the file
+    not there, then cut short (its JSON does not parse), by turns. Yields the reads made of it, True for each that failed."""
+    real, reads = Path.read_text, []
+
+    def read_text(self, *args, **kwargs):
+        if Path(self) != Path(path):
+            return real(self, *args, **kwargs)
+        reads.append(reads.count(True) < count)
+        if not reads[-1]:
+            return real(self, *args, **kwargs)
+        if reads.count(True) % 2:
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real(self, *args, **kwargs)[:3]
+    with mock.patch.object(Path, "read_text", read_text):
+        yield reads
+
+
+@contextlib.contextmanager
+def slow_replaces(path, window):
+    """A replace of ``path`` off the main thread takes ``window`` seconds, and a read of ``path`` meanwhile fails as one did
+    on ByteFuse (T740). Yields the names of the threads that replaced ``path``, one entry a replace."""
+    real_replace, real_read, replacing, made = Path.replace, Path.read_text, threading.Event(), []
+
+    def replace(self, target):
+        if Path(target) != Path(path):
+            return real_replace(self, target)
+        made.append(threading.current_thread().name)
+        if threading.current_thread() is threading.main_thread():
+            return real_replace(self, target)
+        replacing.set()
+        try:
+            time.sleep(window)
+            return real_replace(self, target)
+        finally:
+            replacing.clear()
+
+    def read_text(self, *args, **kwargs):
+        if Path(self) == Path(path) and replacing.is_set():
+            raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_read(self, *args, **kwargs)
+    with mock.patch.object(Path, "replace", replace), mock.patch.object(Path, "read_text", read_text):
+        yield made
+
+
+class SteadyReadTests(unittest.TestCase):
+    """runner.json read again when a read fails for a moment (core/run_dir.py read_steady, T740)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.state = Path(tmp.name) / "state"
+
+    def test_a_read_of_runner_json_that_fails_for_a_moment_is_made_again(self):
+        # T740 (ByteFuse): a read that met the runner's replace of runner.json failed, and the Bridge took the runner for
+        # dead: its watch ended at once and a second runner was started for the same job.
+        directory = rd.run_dir(self.state, "task-7")
+        live = RunnerProcess(directory)
+        self.addCleanup(live.stop)
+        with failing_reads(directory / rd.RUNNER, 2) as reads:
+            self.assertTrue(rd.runner_alive(directory))
+        self.assertEqual(reads, [True, True, False])
+        with failing_reads(directory / rd.RUNNER, 2):
+            self.assertEqual((rd.runner_info(directory) or {}).get("pid"), live.process.pid)
+
+    def test_a_run_directory_that_is_not_there_is_not_waited_for_nor_a_torn_file_for_ever(self):
+        torn = run_files(self.state, "torn")
+        (torn / rd.RUNNER).write_text("{")
+        with mock.patch.object(rd.time, "sleep") as slept:
+            self.assertFalse(rd.runner_alive(rd.run_dir(self.state, "none")))
+            self.assertIsNone(rd.runner_info(rd.run_dir(self.state, "none")))
+            slept.assert_not_called()  # A job about to run asks about a directory not made yet (prestart_runner).
+            self.assertFalse(rd.runner_alive(torn))
+        self.assertEqual([c.args[0] for c in slept.call_args_list], list(rd.READ_PAUSES))
+
+    def test_wake_json_still_names_a_live_runner_whose_runner_json_cannot_be_read(self):
+        directory = rd.run_dir(self.state, "task-7")
+        live = RunnerProcess(directory)
+        self.addCleanup(live.stop)
+        identity = process_identity(live.process.pid)
+        (directory / rd.RUNNER).write_text("{")
+        self.assertFalse(rd.runner_alive(directory))
+        self.assertFalse(rd.runner_here(directory))
+        run_files(directory, wake=identity)
+        self.assertTrue(rd.runner_here(directory))
+        self.assertTrue(rd.runner_here(directory, patient=False))
+        live.stop()
+        self.assertFalse(rd.runner_here(directory))  # Its pid, start time and boot: never a later process.
+
+    def test_a_look_at_the_saved_results_index_that_misses_it_for_a_moment_is_made_again(self):
+        directory = run_files(self.state, "task-7")
+        answers = iter([False, True])
+        with mock.patch.object(detached, "run_began", side_effect=lambda state, key: next(answers)), \
+                mock.patch.object(detached.time, "sleep"):
+            self.assertFalse(detached.unstarted({"status": "queued", "key": "task-7"}, directory, self.state))
+        with mock.patch.object(detached, "run_began", return_value=False), mock.patch.object(detached.time, "sleep"):
+            self.assertTrue(detached.unstarted({"status": "queued", "key": "task-7"}, directory, self.state))
 
 
 class TraceStoreTests(unittest.TestCase):
@@ -357,6 +458,71 @@ class PrestartTests(unittest.TestCase):
             self.assertEqual(task_runner.runner_main(["--run-dir", str(directory), "--await-handoff", "mine"]), 0)
         self.assertEqual(sorted(p.name for p in directory.iterdir()), [rd.HANDOFF])
 
+    def written(self, fail=None):
+        """runner_spawn's write_json, recording each file's name, failing the one named ``fail``."""
+        real, names = runner_spawn.write_json, []
+
+        def write(path, value, **dumps):
+            names.append(Path(path).name)
+            if Path(path).name == fail:
+                raise OSError(5, "Input/output error")
+            return real(path, value, **dumps)
+        return mock.patch.object(runner_spawn, "write_json", write), names
+
+    def test_the_bridge_names_a_prestarted_runner_before_its_handoff(self):
+        # T740: written after the handoff, runner.json was replaced at once by the Bridge and by the runner taking the
+        # handoff; on ByteFuse the Bridge's read of it then failed, and it took the runner for dead.
+        writes, names = self.written()
+        with self.popen(None), writes:
+            runner_spawn.prestart_runner(self.runtime, self.job, self.ctx)
+            directory = runner_spawn.start_runner(self.runtime, "codex", self.job, self.ctx)
+        self.assertEqual([name for name in names if name in (rd.RUNNER, rd.HANDOFF)], [rd.RUNNER, rd.HANDOFF])
+        # What the runner finds on taking its handoff: itself, so it does not write the file again (app/runner.py).
+        self.assertTrue(runner_spawn.registered(directory, os.getpid(), REPO, 7, "m7", "codex"))
+        self.assertFalse(runner_spawn.registered(directory, os.getpid(), REPO, 8, "m7", "codex"))  # Another job's.
+
+    def test_a_handoff_the_bridge_could_not_write_ends_the_prestarted_runner_and_its_record(self):
+        writes, _ = self.written(fail=rd.HANDOFF)
+        with self.popen(None), writes, mock.patch.object(runner_spawn, "_abandon") as abandon:
+            runner_spawn.prestart_runner(self.runtime, self.job, self.ctx)
+            early = self.job.early_runner
+            with self.assertRaises(OSError):
+                runner_spawn.start_runner(self.runtime, "codex", self.job, self.ctx)
+        abandon.assert_called_once_with(early.process)  # The Bridge reports the job not started: no runner may take it.
+        self.assertFalse((rd.run_dir(self.state, "m7") / rd.RUNNER).exists())
+
+    def test_a_live_runner_in_the_run_directory_is_left_alone(self):
+        # T740: relaunching, start_runner cleared runner.json and the inbox of a directory whose runner was alive, and
+        # handed its job to a second runner.
+        directory = rd.run_dir(self.state, "m7")
+        live = RunnerProcess(directory, key="m7")
+        self.addCleanup(live.stop)
+        run_files(directory, handoff={"its": "own"})
+        rd.post(directory / rd.INBOX, {"kind": "steer", "text": "for the live one"})
+        before = {name: (directory / name).read_text() for name in (rd.RUNNER, rd.HANDOFF)}
+        raised = None
+        with self.popen(None) as popen:
+            try:
+                runner_spawn.start_runner(self.runtime, "codex", self.job, self.ctx)
+            except Exception as exc:  # noqa: BLE001 - which one is asserted below
+                raised = exc
+        popen.assert_not_called()
+        self.assertEqual({name: (directory / name).read_text() for name in before}, before)
+        self.assertEqual(len(list((directory / rd.INBOX).glob("*.json"))), 1)
+        self.assertEqual((type(raised).__name__, raised.info["pid"]), ("RunnerAlive", live.process.pid))
+
+    def test_a_prestarted_runner_a_stopped_bridge_left_waiting_does_not_hold_up_its_job(self):
+        # Its Bridge named it in runner.json and stopped before writing its handoff: it runs nothing and leaves in
+        # PRESTART_WAIT, so the job's next start does not wait for it.
+        directory = rd.run_dir(self.state, "m7")
+        waiting = RunnerProcess(directory, key="m7")
+        self.addCleanup(waiting.stop)
+        with self.popen(None) as popen:
+            runner_spawn.start_runner(self.runtime, "codex", self.job, self.ctx)
+        popen.assert_called_once()
+        self.assertNotIn("prestart", json.loads((directory / rd.HANDOFF).read_text()))  # Not the one it waits for.
+        self.assertEqual(json.loads((directory / rd.RUNNER).read_text())["pid"], os.getpid())
+
 
 @unittest.skipUnless(hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal"),
                      "no pidfd here (macOS, or a Python built without it): the runner looks every 0.3 s instead")
@@ -583,6 +749,197 @@ class BridgeSideTests(UnifiedCase):
         handoffs, recovery, record = self.launches(app, ctx, job, "crashed", during_delay=steer)
         self.assertEqual((len(handoffs), record["status"]), (1, "interrupted"))
         recovery.assert_called_once()
+
+    def first_runs_save(self, app, ctx, job):
+        """The first run of ``job`` saves its first generation (its initial revocation, as a backend's ReplyState does)."""
+        from covey.core.saved_results import observe_verified_reply
+        first = runner_spawn.load_job(runner_spawn.dump_job(job))
+        first.bridge_run_id = "first-run"
+        observe_verified_reply(SimpleNamespace(state_dir=ctx.state_dir, workdir=self.work), first, app.spec.name, None)
+
+    def test_a_job_whose_record_moved_on_during_the_wait_is_not_started_again(self):
+        # T740: the record was read once, before RELAUNCH_DELAY: the runner that only looked gone had begun the job by
+        # the end of it, and a second runner was started all the same.
+        app, ctx, job = self.unstarted_job()
+        began = lambda directory: upsert_job_record(ctx.state_dir, job.message_id, status="running")
+        handoffs, recovery, record = self.launches(app, ctx, job, "crashed", "done", during_delay=began)
+        self.assertEqual((len(handoffs), record["status"], record.get("runner_start_failed")), (1, "interrupted", False))
+        recovery.assert_called_once()
+
+    def test_a_job_whose_runner_saved_its_results_is_not_started_again(self):
+        # T740: the second runner's first save met the first one's run id in the job's index (storage_failed), and its
+        # failure card took the reply key of the first one, which then finished the job.
+        app, ctx, job = self.unstarted_job()
+        handoffs, recovery, record = self.launches(app, ctx, job, "crashed", "done",
+                                                   during_delay=lambda directory: self.first_runs_save(app, ctx, job))
+        self.assertEqual((len(handoffs), record["status"], record.get("runner_start_failed")), (1, "interrupted", False))
+        self.assertEqual(record["result_run_id"], "first-run")
+
+    def test_a_job_whose_runner_wrote_done_json_is_not_started_again(self):
+        app, ctx, job = self.unstarted_job()
+        handoffs, recovery, record = self.launches(app, ctx, job, "crashed", "done",
+                                                   during_delay=lambda directory: run_files(directory, done={"status": "x"}))
+        self.assertEqual((len(handoffs), record["status"], record.get("runner_start_failed")), (1, "interrupted", False))
+
+    def test_a_runner_found_alive_after_the_wait_is_watched_again_not_settled_or_joined(self):
+        # T740's trap: relaunch_unstarted finding the runner alive must not end in finish_detached, which would mark its
+        # job interrupted, show a recovery card and run the turn's end while the runner works on.
+        app, ctx, job = self.unstarted_job()
+        stubs = []
+
+        def alive_after_all(directory):
+            if stubs:
+                return
+            stubs.append(RunnerProcess(directory, job.message_id))
+            self.addCleanup(stubs[0].stop)
+
+            def finish():
+                upsert_job_record(ctx.state_dir, job.message_id, status="done")
+                run_files(directory, exit={"status": "finished"})
+                stubs[0].stop()
+            threading.Timer(0.5, finish).start()
+        handoffs, recovery, record = self.launches(app, ctx, job, "crashed", "done", during_delay=alive_after_all)
+        self.assertEqual((len(handoffs), record["status"]), (1, "done"))
+        recovery.assert_not_called()
+        self.assertTrue(any(f"task runner of job #{job.job_id} still alive: watched again" in line for line in self.logs))
+
+    def test_a_runner_that_only_looked_gone_is_watched_again_never_started_twice_or_settled(self):
+        # T740: watch_until_exit took the live runner for gone, as each read of its runner.json failed for a moment.
+        app, ctx, directory, stub = self.running_job(status="queued")
+        job = runner_spawn.load_job(json.loads((directory / rd.HANDOFF).read_text())["job"])
+        job.detached_run_dir = directory
+        app.runtime.jobs.register(job)
+        shutdown = self.fast_polling()
+        start = mock.Mock(side_effect=OSError(11, "Resource temporarily unavailable"))
+        returned = threading.Event()
+        watcher = threading.Thread(target=lambda: (detached.run_detached(self.app, app, job, ctx), returned.set()),
+                                   name="runner-watch", daemon=True)
+        # Three reads: every one watch_until_exit makes in one look (READ_PAUSES); the next one finds the runner.
+        with failing_reads(directory / rd.RUNNER, 3) as reads, mock.patch.object(detached, "start_runner", start), \
+                mock.patch.object(type(app.controls), "show_recovery_card", return_value=True) as recovery:
+            watcher.start()
+            wait_for(self, lambda: returned.is_set() or len(reads) > 3)
+            self.assertTrue(returned.is_set() or shutdown.wait_rounds("runner-watch", 3))
+            self.assertFalse(returned.is_set())  # Still watching the live runner ...
+            self.assertEqual(find_job_record(ctx.state_dir, "task-7")["status"], "queued")  # ... its job not settled.
+            upsert_job_record(ctx.state_dir, "task-7", status="done")
+            run_files(directory, exit={"status": "finished"})
+            stub.stop()
+            self.assertTrue(returned.wait(10))
+        start.assert_not_called()
+        recovery.assert_not_called()
+        self.assertEqual(find_job_record(ctx.state_dir, "task-7")["status"], "done")
+        self.assertTrue(any("task runner of job #7 still alive: watched again" in line for line in self.logs))
+        self.assertIsNone(app.runtime.jobs.find(7))
+
+    def watching(self, app, ctx, job):
+        """``job`` watched in run_detached on a thread named runner-watch: (the thread, set once run_detached returned)."""
+        returned = threading.Event()
+        watcher = threading.Thread(target=lambda: (detached.run_detached(self.app, app, job, ctx), returned.set()),
+                                   name="runner-watch", daemon=True)
+        return watcher, returned
+
+    def test_a_runner_that_looked_gone_after_its_job_began_is_looked_at_again_before_its_job_is_settled(self):
+        # Its record says running, so it is not started again, and finish_detached would mark it interrupted.
+        app, ctx, directory, stub = self.running_job(status="running")
+        job = runner_spawn.load_job(json.loads((directory / rd.HANDOFF).read_text())["job"])
+        job.detached_run_dir = directory
+        app.runtime.jobs.register(job)
+        shutdown = self.fast_polling()
+        watcher, returned = self.watching(app, ctx, job)
+        # Six reads fail: watch_until_exit's look and relaunch_unstarted's first one; the look a moment later finds it.
+        with failing_reads(directory / rd.RUNNER, 6) as reads, \
+                mock.patch.object(type(app.controls), "show_recovery_card", return_value=True) as recovery:
+            watcher.start()
+            wait_for(self, lambda: returned.is_set() or len(reads) > 6)
+            self.assertTrue(returned.is_set() or shutdown.wait_rounds("runner-watch", 3))
+            self.assertFalse(returned.is_set())
+            self.assertEqual(find_job_record(ctx.state_dir, "task-7")["status"], "running")
+            upsert_job_record(ctx.state_dir, "task-7", status="done")
+            run_files(directory, exit={"status": "finished"})
+            stub.stop()
+            self.assertTrue(returned.wait(10))
+        recovery.assert_not_called()
+        self.assertEqual(find_job_record(ctx.state_dir, "task-7")["status"], "done")
+
+    def test_a_runner_that_looked_gone_while_it_uploads_keeps_its_end_until_it_exits(self):
+        app, ctx, directory, stub = self.running_job(status="done")
+        job = runner_spawn.load_job(json.loads((directory / rd.HANDOFF).read_text())["job"])
+        job.detached_run_dir = directory
+        app.runtime.jobs.register(job)
+        rd.mark_done(directory, "finished")
+        shutdown = self.fast_polling()
+        watcher, returned = self.watching(app, ctx, job)
+        ended = lambda: any("task runner ended job=#7" in line for line in self.logs)
+        watcher.start()
+        self.assertTrue(returned.wait(10))  # The topic is free; a thread watches the runner as it uploads.
+        with failing_reads(directory / rd.RUNNER, 3) as reads:
+            wait_for(self, lambda: len(reads) > 3)
+            self.assertTrue(shutdown.wait_rounds("runner-exit", 3))
+        self.assertFalse(ended())  # Its end (finish_detached) is not run while it lives.
+        self.assertTrue(app.runtime.jobs.settling("task-7"))
+        stub.stop()
+        wait_for(self, lambda: not app.runtime.jobs.settling("task-7"))
+        self.assertTrue(ended())
+
+    def test_a_job_whose_run_directory_holds_a_live_runner_is_watched_not_started_twice(self):
+        app, ctx, job = self.unstarted_job()
+        directory = rd.run_dir(ctx.state_dir, job.message_id)
+        stub = RunnerProcess(directory, job.message_id)
+        self.addCleanup(stub.stop)
+        run_files(directory, handoff={"harness": app.spec.name, "job": runner_spawn.dump_job(job), "its": "own"})
+        shutdown = self.fast_polling()
+        returned = threading.Event()
+        watcher = threading.Thread(target=lambda: (detached.run_detached(self.app, app, job, ctx), returned.set()),
+                                   name="runner-watch", daemon=True)
+        with mock.patch.object(runner_spawn.subprocess, "Popen") as popen, \
+                mock.patch.object(type(app.controls), "show_recovery_card", return_value=True) as recovery:
+            watcher.start()
+            self.assertTrue(returned.is_set() or shutdown.wait_rounds("runner-watch", 3))
+            self.assertFalse(returned.is_set())
+            self.assertEqual(json.loads((directory / rd.HANDOFF).read_text())["its"], "own")
+            self.assertEqual(json.loads((directory / rd.RUNNER).read_text())["pid"], stub.process.pid)
+            upsert_job_record(ctx.state_dir, job.message_id, status="done")
+            run_files(directory, exit={"status": "finished"})
+            stub.stop()
+            self.assertTrue(returned.wait(10))
+        popen.assert_not_called()
+        recovery.assert_not_called()
+        self.assertEqual(find_job_record(ctx.state_dir, job.message_id)["status"], "done")
+        self.assertTrue(any("already alive" in line and "not started again" in line for line in self.logs))
+
+    def test_a_restart_adopts_a_live_runner_whose_handoff_cannot_be_read_for_a_moment(self):
+        app, ctx, directory, _ = self.running_job()
+        with failing_reads(directory / rd.HANDOFF, 1):
+            kept = detached.adopt_runners(self.app, ctx)
+        self.assertEqual(kept, {"task-7"})
+        self.assertEqual(self.app.runtime.jobs.queue.get_nowait().detached_run_dir, directory)
+
+    def test_a_second_run_of_the_same_job_fails_at_its_saved_results_and_saves_nothing(self):
+        # Why T740's second runner failed before its backend started: the job's index holds the first run's id. The rule
+        # stays (a run never saves over another's generation); T740 keeps the second runner from starting instead.
+        from covey.core.reply_state import ReplyError, ReplyState
+        from covey.core.saved_results import observe_verified_reply
+        app, ctx, job = self.unstarted_job()
+        self.first_runs_save(app, ctx, job)
+        second = runner_spawn.load_job(runner_spawn.dump_job(job))
+        second.bridge_run_id = "second-run"
+        saved_ctx = SimpleNamespace(state_dir=ctx.state_dir, workdir=self.work)
+        state = ReplyState({"harness_id": app.spec.name}, "second-run",
+                           lambda reply: observe_verified_reply(saved_ctx, second, app.spec.name, reply))
+        with self.assertRaises(ReplyError) as raised:
+            state.invalidate()
+        self.assertEqual(raised.exception.code, "storage_failed")
+        self.assertEqual(find_job_record(ctx.state_dir, "task-7")["result_run_id"], "first-run")
+
+    def test_a_relaunched_runner_gets_no_run_id_of_the_first_and_no_saved_generation_to_meet(self):
+        # The usual relaunch: the first runner ended before its job began, so it saved nothing; the second one's run id
+        # comes when its own turn starts (app/worker.py), and its first save starts at generation 1.
+        app, ctx, job = self.unstarted_job()
+        handoffs, recovery, record = self.launches(app, ctx, job, "crashed", "done")
+        self.assertEqual(len(handoffs), 2)
+        self.assertIsNone(handoffs[1]["fields"].get("bridge_run_id"))
+        self.assertNotIn("result_run_id", record)
 
     def test_a_steer_form_sent_after_the_handoff_is_closed_when_the_runner_ends(self):
         # S35 #930: a 补充 click while the job was handed over; the runner never knew the form it got.
@@ -1009,8 +1366,8 @@ class BridgeSideTests(UnifiedCase):
 class RunnerTests(UnifiedCase):
     """runner_main in this process: the job's whole path, with a stop forwarded through the inbox."""
 
-    def handoff(self):
-        """Job #7's run directory with its handoff, as the Bridge leaves it for the runner."""
+    def bridge_job(self):
+        """Job #7 of a bound topic, queued, as the Bridge hands it on: (its Harness app, the job, the topic's context)."""
         app, ctx = self.route("task")
         from covey.core.topics import bind_topic
         bind_topic(ctx, ctx.workspace_name, self.work)
@@ -1022,6 +1379,71 @@ class RunnerTests(UnifiedCase):
                           status="queued", backend=app.spec.name, kind="chat")
         remember_topic_message(ctx.state_dir, ctx.topic_id, "chat", "card-7")
         upsert_job_record(ctx.state_dir, "task", card_message_id="card-7")
+        return app, job, ctx
+
+    def stopped_at_once(self):
+        """The patches a runner_main in this process runs a job under: its backend stops it at once, nothing is sent."""
+        def generate(self, ctx, job, session_id, progress):
+            raise JobCancelled("任务已停止")
+        from covey.app.runs import Runs
+        from covey.feishu.messenger import Messenger
+        stack = contextlib.ExitStack()
+        for patch in (mock.patch.object(Runs, "generate_reply_for_worker", generate),
+                      mock.patch.object(Runtime, "log", lambda self, message: None),
+                      mock.patch.object(Messenger, "send_message", lambda self, *a, **k: True), mock.patch("signal.signal")):
+            stack.enter_context(patch)
+        return stack
+
+    def test_a_runner_its_runner_json_names_already_leaves_the_file_alone(self):
+        # T740: the runner wrote runner.json again on taking its handoff, in the moment its Bridge read the file.
+        directory, ctx = self.handoff()
+        app = self.app.apps[json.loads((directory / rd.HANDOFF).read_text())["harness"]]
+        named = {**process_identity(os.getpid()), "release": str(REPO), "started_at": 1.0, "job_id": 7, "key": "task",
+                 "harness": app.spec.name}
+        run_files(directory, runner=named)  # As the Bridge writes it (runner_spawn.register_runner), time aside.
+        with self.stopped_at_once():
+            task_runner.runner_main(["--run-dir", str(directory)])
+        self.assertEqual(json.loads((directory / rd.RUNNER).read_text()), named)
+        self.assertEqual(find_job_record(ctx.state_dir, "task")["status"], "cancelled")
+
+    def test_a_prestarted_runner_and_its_bridge_never_replace_runner_json_at_once(self):
+        # T740 (ByteFuse): the Bridge wrote runner.json after the handoff and the prestarted runner wrote it again on
+        # taking it; a read of the file that met the second replace failed, the Bridge took the runner for dead, started
+        # a second one 2 s later, and that one's failure card took the reply key of the first. Here the runner's replace
+        # of runner.json is slow and fails the reads made meanwhile, as on ByteFuse.
+        app, job, ctx = self.bridge_job()
+        directory = run_files(ctx.state_dir, "task")  # As prestart_runner makes it.
+        runtime = SimpleNamespace(owner_open_id="owner", script_path=REPO / "bin" / "covey_bridge.py",
+                                  cli_argv=["--profile", "test-bot"])
+        argv = ["--run-dir", str(directory), "--await-handoff", "n1"]
+        runner = threading.Thread(target=task_runner.runner_main, name="runner", args=(argv,))
+        # This process stands in for the runner's, whose command line names its run directory (runner_alive asks).
+        real_bytes, cmdline = Path.read_bytes, Path(f"/proc/{os.getpid()}/cmdline")
+        stand_in = lambda path: ("\0".join([sys.executable, "-B", "covey_runner.py", *argv]) + "\0").encode() \
+            if Path(path) == cmdline else real_bytes(path)
+        seen = []
+        with self.stopped_at_once(), slow_replaces(directory / rd.RUNNER, 0.5) as replaced, \
+                mock.patch.object(Path, "read_bytes", stand_in):
+            runner.start()
+            job.early_runner = SimpleNamespace(process=mock.Mock(pid=os.getpid(), **{"poll.return_value": None}),
+                                               nonce="n1", started=time.monotonic())
+            runner_spawn.start_runner(runtime, app.spec.name, job,
+                                      SimpleNamespace(state_dir=ctx.state_dir, default_workdir=self.work))
+            deadline = time.monotonic() + 30
+            while not (directory / rd.EXIT).exists() and runner.is_alive() and time.monotonic() < deadline:
+                seen.append(rd.runner_alive(directory))  # As the Bridge's watch_until_exit asks, from the handoff on.
+                time.sleep(0.005)
+            runner.join(30)
+        self.assertFalse(runner.is_alive())
+        self.assertEqual(json.loads((directory / rd.EXIT).read_text())["status"], "finished")
+        self.assertTrue(seen)
+        self.assertNotIn(False, seen)
+        self.assertEqual(replaced, [threading.main_thread().name])  # The Bridge's write, before the handoff: the only one.
+        self.assertEqual(find_job_record(ctx.state_dir, "task")["status"], "cancelled")
+
+    def handoff(self):
+        """Job #7's run directory with its handoff, as the Bridge leaves it for the runner."""
+        app, job, ctx = self.bridge_job()
         argv = ["--workdir", str(self.work), "--state-dir", str(self.root / "state"), "--profile", "test-bot"]
         directory = run_files(ctx.state_dir, "task", folders=(rd.INBOX, rd.ACKS), handoff={
             "harness": app.spec.name, "argv": argv, "owner": "owner",

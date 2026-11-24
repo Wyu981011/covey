@@ -166,6 +166,7 @@ class Traits:
     relays: bool  # A turn the butler started or handed on relays to the chat's top level (app/butler_relay.py).
     has_thread: bool  # It has a thread of its own: its status card (app/status_cards.py), 管家转来 lines in it.
     linkify_body: bool  # T numbers in its task card's body are links to those topics (app/worker.py, topic_links).
+    keeps_slot: bool = False  # May take the task slots kept for the butler's and the leads' turns (core/scheduler.py RESERVED).
 
 
 TOPIC = Traits("topic", switch_config=True, rewind=True, card_target=True, numbered=True,
@@ -174,7 +175,7 @@ TOPIC = Traits("topic", switch_config=True, rewind=True, card_target=True, numbe
 # What a text written for a topic says on the butler, which is no topic: the private chat's top level. In
 # order, the longer phrase first.
 WORDING = (("本话题前方", "管家前方"), ("本话题的", "管家的"), ("本话题", "私聊里"))
-BUTLER = Traits("butler", switch_config=False, rewind=False, card_target=False, numbered=False,
+BUTLER = Traits("butler", keeps_slot=True, switch_config=False, rewind=False, card_target=False, numbered=False,
               top_level=True, listed=False, own_turn=True, answers_in_place=True, lists_supplements=True,
               hold_seconds=HOLD_SECONDS, wording=WORDING, slim_card=True, relays=False, has_thread=False,
               linkify_body=True)

@@ -52,6 +52,11 @@ from covey.feishu.events import REPLY_CONTEXT
 from covey.feishu.media import enrich_incoming_event
 
 
+
+def pick_buttons(form):
+    """A picks() card's option buttons and 不回答此题, in the order they are drawn."""
+    return [e for e in walk_dicts(form) if e.get("tag") == "button" and str(e.get("name") or "").startswith("pick_")]
+
 class QuestionTest(QuestionFixture, unittest.TestCase):
     def test_an_answer_refused_by_a_stop_repaints_its_card(self):
         """停止 clicked, its backend not yet closing its questions: the answer is refused and the card,
@@ -995,8 +1000,7 @@ class TopLevelPickTest(QuestionFixture, unittest.TestCase):
         form = question_element({**self.record, TOP_COPY: True})
         self.assertFalse([e for e in walk_dicts(form) if str(e.get("tag")).endswith("select_static")])
         self.assertEqual([form_button(form, f"pick_{j}")["text"]["content"] for j in (0, 1)], ["全部", "只要新的"])
-        row = next(e for e in walk_dicts(form) if e.get("tag") == "column_set" and e.get("flex_mode") == "flow")
-        buttons = [c["elements"][0] for c in row["columns"]]
+        buttons = pick_buttons(form)
         self.assertEqual([b["name"] for b in buttons], ["pick_0", "pick_1", "pick_skip"])
         self.assertTrue(all(b["form_action_type"] == "submit" and len(b["name"]) <= 20 for b in buttons))
         self.assertEqual(buttons[1]["behaviors"][0]["value"], {"kind": "bridge_question", "topic_id": self.record["topic_id"],
@@ -1010,11 +1014,30 @@ class TopLevelPickTest(QuestionFixture, unittest.TestCase):
     def test_a_topic_card_shows_option_buttons_too(self):
         form = question_element(self.record)
         self.assertFalse([e for e in walk_dicts(form) if str(e.get("tag")).endswith("select_static")])
-        row = next(e for e in walk_dicts(form) if e.get("tag") == "column_set" and e.get("flex_mode") == "flow")
-        self.assertEqual([c["elements"][0]["name"] for c in row["columns"]], ["pick_0", "pick_1", "pick_skip"])
+        self.assertEqual([b["name"] for b in pick_buttons(form)], ["pick_0", "pick_1", "pick_skip"])
         self.assertIn("怎么回答：点选项就提交，也可以直接在话题里回复", text_of(form))
         self.assertIn("也可以直接在话题里回复，当作这道题的回答。", text_of(form))
         form_button(form, "submit")
+
+    def test_long_options_stand_one_under_another_as_wide_as_the_card(self):
+        """2026-11-24 T746: three long options and 不回答此题 in one row (flow) were squeezed to "…" on Feishu's desktop client and
+        不回答此题 was pushed past the card's edge. Each option is a row of its own as wide as the card, 不回答此题 under them as
+        wide as its label; nothing lays them side by side, and a label keeps its words up to 100 characters."""
+        long = ["保留 v2.3 草稿并在 e2e50c 新版组上继续跑完第 1 轮评审再决定", "回退到 v2.2 基线 8b6ce4d9，重新从第 1 轮开始跑随机 50 道",
+                "两组都停下，先人工核对首轮不单列的 12 道题和 DR 措辞再说"]
+        record = {**self.record, "questions": [{"id": "a", "question": "接下来怎么跑？", "options": [{"label": label} for label in long]}]}
+        form = question_element(record)
+        buttons = pick_buttons(form)
+        self.assertEqual([b["name"] for b in buttons], ["pick_0", "pick_1", "pick_2", "pick_skip"])
+        self.assertEqual([b["text"]["content"] for b in buttons[:3]], long)
+        self.assertEqual([b["width"] for b in buttons], ["fill", "fill", "fill", "default"])
+        holder = next(e for e in walk_dicts(form) if e.get("tag") == "column" and buttons[0] in (e.get("elements") or []))
+        self.assertEqual(holder["elements"], buttons)  # One column: one under another.
+        rows = [e for e in walk_dicts(form) if e.get("tag") == "column_set" and buttons[0] in walk_dicts(e)]
+        self.assertTrue(rows and all(row.get("flex_mode") != "flow" and len(row["columns"]) == 1 for row in rows))
+        self.assertEqual(pick_buttons(question_element({**record, "questions": [{**record["questions"][0],
+                                                                                  "options": [{"label": "长" * 150}]}]}))[0]["text"]["content"],
+                         "长" * 100)
 
     def test_other_cards_keep_the_dropdown(self):
         other = {"id": "b", "question": "顺序？", "options": [{"label": "先后"}]}

@@ -1756,7 +1756,7 @@ def app_setup_cards():
     from covey.core import app_manifest
 
     needs = [need for need in app_manifest.required({"COVEY_DIGEST_TIMES": "09:30",
-                                                      "COVEY_GROUP_ALL_MESSAGES": "1"})
+                                                      "COVEY_GROUP_ALL_MESSAGES": "1"}, bottom_menu=True)
              if need.name in ("application.bot.menu_v6", "im:message", "drive:file:upload", "weekly_usage",
                               "bridge_settings", "digest_board", "im:message.group_msg")]
     offer = [need_dict(n) for n in needs if not n.review]

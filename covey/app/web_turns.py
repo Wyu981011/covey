@@ -37,11 +37,13 @@ from covey.core.checkpoint import artifact_key, artifact_paths, checkpoint_deliv
 from covey.core.look import WAITS
 from covey.core.metrics import run_seconds, timings_of
 from covey.core.state import epoch_seconds
+from covey.core.text import COMMAND_TITLES, command_core, command_purpose
 from covey.core.trace_store import load_trace
 
 STEPS_KEPT = 80
 RUNNING_STEP = 10  # Seconds: the 用时 of a running turn moves by this much.
 LABEL_CHARS = 80
+CHECKPOINT_TITLE = "更新检查点"  # core/trace.py CHECKPOINT_STEP: a command that writes the task's checkpoint.
 DETAIL_CHARS = 400
 NOTE_KINDS = ("remembered", "voided", "undone", "skipped_ask", "reference")
 NOTES_KEPT = 20
@@ -106,6 +108,14 @@ def step_row(key, step) -> dict:
     words = plain_words(step.get("detail"))
     purpose, cut, command = words.partition(" · ")
     name, more = (purpose, command) if cut and purpose else (words, "")
+    if not (cut and purpose) and words and (title in COMMAND_TITLES or title == CHECKPOINT_TITLE):
+        # A command its model said nothing of in a field (Codex, an Antigravity call without its summary): a comment it began
+        # with, else what it runs past its wrappers and setup lines (core/text.py), never "set -euo pipefail for v in
+        # http_proxy…" (2026-11-24 T738); a checkpoint write by its title alone. The whole command is the detail.
+        text = html.unescape(re.sub(r"\\([`*_\[\]\\])", r"\1", str(step.get("detail") or "")))
+        said = command_purpose(text)
+        name = said or ("" if title == CHECKPOINT_TITLE else " ".join(command_core(text).split()))
+        more = words if name != words else ""
     label = f"{title}：{name}" if name else title
     if not more and len(label) > LABEL_CHARS:
         more = words

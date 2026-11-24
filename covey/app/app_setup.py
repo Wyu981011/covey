@@ -31,6 +31,7 @@ from covey.core.locks import resource_lock
 from covey.core.web_profile import web_profile
 from covey.core.process import stop_group
 from covey.core.state import claim_once, read_object, utc_now_iso, write_json
+from covey.feishu import slash_commands
 from covey.feishu.app_config import PYTHON_ENV, playwright_python, remove, survey
 from covey.feishu.transport import lark_argv, run_cli
 
@@ -60,8 +61,9 @@ def as_need(entry):
 
 
 class AppSetup:
-    def __init__(self, runtime, messenger, voice) -> None:
+    def __init__(self, runtime, messenger, voice, *, sync_slash=None) -> None:
         self.runtime, self.messenger, self.voice = runtime, messenger, voice
+        self.sync_slash = sync_slash
         self.busy = threading.Lock()  # One console run at a time.
         self.no_chat = False  # The last check had something to offer but nobody to offer it to.
 
@@ -117,16 +119,22 @@ class AppSetup:
             self.runtime.log(f"app setup removed {len(folders)} run folder(s) left by an earlier process")
 
     def check(self, ctx):
-        """Read the online app; offer what is missing once per set. Returns the view it built (None: nothing)."""
+        """Sync slash commands as the bot, then read the online app and offer what is still missing once per set.
+        Returns the view it built (None: nothing)."""
         self.no_chat = False
         app_id = self.app_id(ctx)
         if not app_id:
             return None
+        slash = (self.sync_slash or slash_commands.sync)(ctx.profile)
+        slash_summary = {"ok": bool(slash.get("ok")), "synced": list(slash.get("synced") or ()),
+                         "unchanged": list(slash.get("unchanged") or ()), "error": str(slash.get("error") or "")}
+        self.runtime.log(f"app setup slash ok={slash_summary['ok']} synced={len(slash_summary['synced'])} "
+                         f"unchanged={len(slash_summary['unchanged'])} error={slash_summary['error'] or '-'}")
         online, lacking, full = survey(ctx.profile, app_id)
         offer = app_manifest.offered(lacking, full)
         review = [n for n in lacking if n.review]
         self.save(ctx, checked_at=utc_now_iso(), version=online.get("version", ""), error=online.get("error", ""),
-                  lacking=[n.id for n in lacking], offered=[n.id for n in offer])
+                  lacking=[n.id for n in lacking], offered=[n.id for n in offer], slash=slash_summary)
         self.runtime.log(f"app setup check version={online.get('version') or '-'} error={online.get('error') or '-'} "
                          f"lacking={len(lacking)} offered={len(offer)} review={len(review)} full={len(full)}")
         if not offer:

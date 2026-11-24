@@ -42,6 +42,7 @@ import re
 import os
 import shlex
 import signal
+import sqlite3
 import subprocess
 import threading
 import time
@@ -114,16 +115,79 @@ class AntigravitySessionStore:
         return next(iter(sorted(self.sessions_dir(workdir).glob(f"{session_id}*"))), None)
 
 
-# agy's tools by the step names the cards know (core/protocol.py STEP_TITLES); any other shows as it is.
+# agy's tools by the step names the cards know (core/protocol.py STEP_TITLES); any other shows as it is. agy 1.5 renamed some
+# (write_file, edit_file); its timer (schedule: wait DurationSeconds, then go on with Prompt), its plan (update_steps) and its
+# background commands (manage_task) are named for what they do.
 TOOL_NAMES = {"run_command": "bash", "view_file": "read", "read_file": "read", "view_file_outline": "read", "view_code_item": "read",
-              "write_to_file": "write", "replace_file_content": "edit", "multi_replace_file_content": "edit",
-              "grep_search": "grep", "find_by_name": "glob", "list_dir": "glob", "read_url_content": "webfetch",
-              "search_web": "websearch", "invoke_subagent": "agent"}
+              "write_to_file": "write", "write_file": "write", "replace_file_content": "edit", "multi_replace_file_content": "edit",
+              "edit_file": "edit", "grep_search": "grep", "find_by_name": "glob", "list_dir": "glob", "read_url_content": "webfetch",
+              "search_web": "websearch", "invoke_subagent": "agent", "schedule": "定时等待", "update_steps": "更新计划",
+              "manage_task": "后台任务"}
+# Where agy keeps a conversation under a HOME: one SQLite database each, ``<id>.db`` (``tool_summary``).
+CONVERSATIONS = Path(".gemini") / "antigravity-cli" / "conversations"
+SUMMARY_ROWS = 8  # Rows before a tool step's own looked at for its call: one model response may call several tools.
+SUMMARY_BYTES = 262144  # Of a row's payload, read for its calls.
+SUMMARY_TRIES = 64  # JSON objects tried in a row's payload.
+
+
+def tool_summary(home, conversation, index, parameters):
+    """What agy's model said a tool call is for, its ``toolSummary`` (the bridge rules ask for it in the owner's language,
+    app/prompts.py LANGUAGE_RULE), which agy's stream-json leaves out of the call's ``parameters``: on 1.5.14 a run_command
+    streams its CommandLine alone while the call carries toolSummary and WaitMsBeforeAsync (2026-11-24 T738: 1753 of 1807
+    run_command calls in this machine's latest conversations had one). Read from the call as agy keeps it on this machine:
+    ``<home>/.gemini/antigravity-cli/conversations/<conversation>.db``, table ``steps``, whose ``idx`` is the stream's
+    step_index and whose ``step_payload`` holds the call's arguments as a JSON object; the call is the object there with a
+    toolSummary whose values are the streamed ``parameters`` (none streamed: the step's own row only). Read only, with a
+    short wait for agy's lock, and only to say what a step is for: None for anything it cannot read or find, a format agy
+    no longer has among them, and the step keeps what it streamed."""
+    if not home or not isinstance(conversation, str) or not UUID_RE.fullmatch(conversation) or type(index) is not int:
+        return None
+    path = Path(home) / CONVERSATIONS / f"{conversation}.db"
+    wanted = {str(key): value for key, value in (parameters or {}).items()} if isinstance(parameters, dict) else {}
+    try:
+        if not path.is_file():
+            return None
+        with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.2)) as db:
+            rows = db.execute("SELECT step_payload FROM steps WHERE idx BETWEEN ? AND ? ORDER BY idx DESC",
+                              (index if not wanted else index - SUMMARY_ROWS, index)).fetchall()
+    except (sqlite3.Error, OSError, ValueError):
+        return None
+    decoder = json.JSONDecoder()
+    for (payload,) in rows:
+        if not isinstance(payload, (bytes, bytearray)):
+            continue
+        text = bytes(payload[:SUMMARY_BYTES]).decode("utf-8", "replace")
+        at, tried = text.find('{"'), 0
+        while at != -1 and tried < SUMMARY_TRIES:
+            tried += 1
+            try:
+                found = decoder.raw_decode(text, at)[0]
+            except ValueError:
+                found = None
+            said = found.get("toolSummary") if isinstance(found, dict) else None
+            if isinstance(said, str) and said.strip() and all(str(found.get(key)) == str(value) for key, value in wanted.items()):
+                return " ".join(said.split())[:160]
+            at = text.find('{"', at + 2)
+    return None
+
+
+def schedule_words(parameters):
+    """A schedule call (agy's timer) as 执行过程 says it: what it comes back to do and when, "查看波次 2C 的结果（3 分钟后）"."""
+    prompt = " ".join(str((parameters or {}).get("Prompt") or "").split())
+    seconds = (parameters or {}).get("DurationSeconds")
+    when = ""
+    if isinstance(seconds, (int, float)) and not isinstance(seconds, bool) and seconds > 0:
+        when = (f"{round(seconds)} 秒后" if seconds < 90 else f"{round(seconds / 60)} 分钟后" if seconds < 5400
+                else f"{seconds / 3600:.1f} 小时后".replace(".0 ", " "))
+    return f"{prompt}（{when}）" if prompt and when else prompt or (f"{when}回来接着做" if when else "")
 # A tool parameter by the key tool_detail reads.
 PARAMETER_KEYS = {"commandline": "command", "command": "command", "absolutepath": "path", "targetfile": "path",
                   "file": "path", "path": "path", "searchpath": "path", "directorypath": "path",
                   "searchdirectory": "path", "query": "query", "pattern": "pattern", "url": "url"}
 DETAIL_KEYS = ("command", "path", "pattern", "query", "url")
+# Of a step's detail kept: a script's first lines often only set it up (strict mode, the proxy variables, assignments), and
+# what it runs (core/text.py command_core) comes after them; at 500 it was cut before it (T738).
+DETAIL_CHARS = 4000
 
 
 def tool_inputs(parameters):
@@ -156,6 +220,10 @@ class AntigravityEventAdapter:
         self.emit = emit
         self.steps = Steps(emit)
         self.notes = AnswerNotes(emit)
+        # Where the process that runs now keeps its conversations (its HOME), None on a device (``tool_summary``), and the
+        # conversation its init row named: a tool step's detail leads with its call's toolSummary when they find it.
+        self.home, self.conversation = None, None
+        self.summarized = set()  # The step keys whose detail has the call's toolSummary.
         self.texts = {}  # step key -> the text streamed so far
         self.segment = 0  # Which agy process of the turn (a supplement starts the next one).
         self.tokens = TurnTokens()
@@ -194,12 +262,24 @@ class AntigravityEventAdapter:
         elif kind in ("tool", "subagent"):
             info = step.get("tool_info") if isinstance(step.get("tool_info"), dict) else {}
             native = str(step.get("tool_name") or info.get("name") or "tool")
+            parameters = info.get("parameters") if isinstance(info.get("parameters"), dict) else {}
             if key not in self.steps:
                 self.notes.to_notes(now)
-                self.steps.start(key, TOOL_NAMES.get(native, native),
-                                 tool_detail(tool_inputs(info.get("parameters")), DETAIL_KEYS)[:500], now)
+                self.steps.start(key, TOOL_NAMES.get(native, native), self.detail(key, native, parameters, index), now)
             if step.get("state") == "DONE":
-                self.steps.finish(key, not info.get("error"), now)
+                # A call agy had not written down when it started: its summary is looked for once more.
+                again = {} if key in self.summarized else {"detail": self.detail(key, native, parameters, index)}
+                self.steps.finish(key, not info.get("error"), now, **again)
+
+    def detail(self, key, native, parameters, index):
+        """A tool step's detail: a schedule's words (``schedule_words``), else its parameter (core/text.py tool_detail),
+        led by what the model said the call is for (``tool_summary``, when it is found)."""
+        if native == "schedule":
+            return schedule_words(parameters)[:DETAIL_CHARS]
+        said = tool_summary(self.home, self.conversation, index, parameters) if self.home else None
+        if said:
+            self.summarized.add(key)
+        return tool_detail(tool_inputs(parameters), DETAIL_KEYS, said or "", said=said or "")[:DETAIL_CHARS]
 
     def stopped(self, now):
         """The process was stopped for a supplement, or failed and the turn goes on in another environment: its steps
@@ -459,6 +539,7 @@ class StreamRows:
                 self.invalid = True
                 return
             self.sid = value
+            self.adapter.conversation = value
             if self.control is not None:
                 with self.control.lock:
                     self.control.ready = not self.control.closing
@@ -742,6 +823,9 @@ def run_stream(request, argv, stdin, env, switch=None):
         state.invalidate()
         while True:
             left = 0 if deadline is None else max(1, int(deadline - time.monotonic()))
+            # Where this process keeps its conversations (its HOME, the account the agy_turn hook gave it): a tool step's
+            # summary is read there (tool_summary); a device's are on the device.
+            adapter.home = None if device_of(ctx) else (env or {}).get("HOME") or str(Path.home())
             rc, stderr = stream_subprocess_lines(argv, stdin_text=stdin, timeout=left, on_line=rows.on_line,
                                                  env=env, cwd=str(ctx.workdir), cancel_event=cancel_event,
                                                  process_observer=rows.observe, ctx=ctx)

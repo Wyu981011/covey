@@ -2,7 +2,7 @@
 
 Every release's Bridge and task runner read and write these names, so they are defined here once and
 never change. The Bridge writes handoff.json (the job and its arguments), runner.json (the runner's
-process identity, written again by the runner) and inbox/ (clicks, supplements and answers it
+process identity; a runner writes it itself only when it does not name it) and inbox/ (clicks, supplements and answers it
 forwards); the runner writes wake.json (where to signal an inbox write), acks/ (its answers to the
 inbox), requests/ (continuations it asks for), done.json (its job has ended, uploads may remain) and
 exit.json, and the Bridge answers its requests in replies/. Each message is one JSON file named by its
@@ -11,7 +11,6 @@ op id, ``<time_ns>-<hex8>``, read once, oldest first. A job waiting for its turn
 """
 from __future__ import annotations
 
-import json
 import os
 import re
 import secrets
@@ -36,6 +35,11 @@ ACKS = "acks"
 REQUESTS = "requests"
 REPLIES = "replies"
 OP = re.compile(r"[0-9]+-[0-9a-f]+")
+# A read of a run directory's file that fails (OSError, or JSON cut short: ValueError) while the directory is there is
+# made again after each of these pauses (read_steady): on ByteFuse a read of runner.json that met another process
+# replacing it failed for a moment, and the Bridge took the runner it had just handed a job for dead and started a
+# second one for the same job (T740). A directory that is not there is not waited for.
+READ_PAUSES = (0.01, 0.04)
 
 
 def _stem(state_dir: Path, key: str) -> str:
@@ -51,19 +55,31 @@ def queued_path(state_dir: Path, key: str) -> Path:
     return Path(state_dir) / QUEUED / (_stem(state_dir, key) + ".json")
 
 
+def read_steady(path: Path):
+    """``read_json(path)``, made again after each of READ_PAUSES while it fails and ``path``'s directory is there; what the
+    last one raised is raised."""
+    path = Path(path)
+    for pause in READ_PAUSES:
+        try:
+            return read_json(path)
+        except (OSError, ValueError):
+            if not path.parent.is_dir():
+                raise
+        time.sleep(pause)
+    return read_json(path)
+
+
 def runner_info(directory: Path) -> dict | None:
+    """What runner.json says (read_steady); None when it cannot be read."""
     try:
-        return read_json(Path(directory) / RUNNER)
+        return read_steady(Path(directory) / RUNNER)
     except (OSError, ValueError):
         return None
 
 
-def runner_alive(directory: Path) -> bool:
-    """The task runner recorded in this run directory's runner.json is still the same live process."""
-    try:
-        info = json.loads((Path(directory) / RUNNER).read_text())
-    except (OSError, ValueError):
-        return False
+def names_alive(directory: Path, info) -> bool:
+    """``info`` (runner.json's, or wake.json's) names a live process of this user, by its pid, start time and boot,
+    that has ``directory`` as one argument."""
     if not isinstance(info, dict) or not isinstance(info.get("pid"), int):
         return False
     identity = process_identity(info["pid"])
@@ -74,6 +90,28 @@ def runner_alive(directory: Path) -> bool:
     except OSError:
         return False
     return str(Path(directory).absolute()).encode() in argv
+
+
+def runner_alive(directory: Path) -> bool:
+    """The task runner recorded in this run directory's runner.json (read as runner_info does) is still the same live process."""
+    return names_alive(directory, runner_info(directory))
+
+
+def runner_here(directory: Path, *, patient: bool = True) -> bool:
+    """A live task runner holds ``directory``: the one its runner.json names (runner_alive), else the one its wake.json does
+    (a runner writes its identity there once it serves its inbox, app/runner_ipc.py accept_wake), read once. Asked where a
+    wrong no starts a second runner of a job or settles a live one's (app/detached.py, app/runner_spawn.py start_runner):
+    two files, so a read of one that fails still leaves the other. ``patient`` False: runner.json is read once too, for a
+    directory where its absence is the rule (a prestarted runner's, before its handoff)."""
+    info = runner_info(directory) if patient else _read_once(Path(directory) / RUNNER)
+    return names_alive(directory, info) or names_alive(directory, _read_once(Path(directory) / WAKE))
+
+
+def _read_once(path: Path):
+    try:
+        return read_json(path)
+    except (OSError, ValueError):
+        return None
 
 
 def argv_dirs(root: Path) -> set[str] | None:

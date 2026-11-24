@@ -76,6 +76,17 @@ def _index(state, key):
     return path
 
 
+def run_began(state, key):
+    """A run of job ``key`` (its record's key) has begun saving its replies: the job's index is there (written with its
+    first generation, observe_verified_reply), so a task runner began it. One that cannot be looked at counts as begun:
+    app/detached.py never starts the job's runner again then, as a second run of the job could only fail at this index
+    (its run id is another) and send that failure where the first run's reply goes."""
+    try:
+        return _index(state, key).exists()
+    except (OSError, ValueError):
+        return True
+
+
 def withdrawn_unauthorized(record):
     """The turn's candidates were all withdrawn (``observe_verified_reply(None)``) before one was
     authorized: nothing was saved to send, so 检查并继续 and the automatic retry run the turn again,

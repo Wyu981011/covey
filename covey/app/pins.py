@@ -432,10 +432,12 @@ class PinnedTopics:
         """要你处理 of ``chat`` as the last ``look`` found it (core/board_read.py asking): ``waits`` (core/board_read.py waits,
         as the caller read it), its results that stopped and its running that may be stuck, the projects a guard paused,
         and with ``proposals`` (the owner's private chat: a group has none) 整理专项's proposals waiting for his 好; the topics
-        taken off (``off``, else the look's ``dismissed``) left out. What 手上的事 and the 看板 both count."""
+        taken off (``off``, else the look's ``dismissed``) left out, and a project's member's stop while it wakes its lead
+        (core/board_read.py lead_handled of the look's ``cells``). What 手上的事, the 看板 and the web page all count."""
         return board_read.asking(waits, self.topics, now, self.dismissed if off is None else off,
                                  board_read.halted_projects(state, chat),
-                                 board_read.waiting_proposals(state) if proposals else None)
+                                 board_read.waiting_proposals(state) if proposals else None,
+                                 board_read.lead_handled(self.cells))
 
     def tick(self, ctx, chat, index, now):
         """One round toward the board ``look`` found, once 手上的事 (``index``, its record) is pinned in ``chat``."""

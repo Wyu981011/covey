@@ -382,17 +382,21 @@ def _send_row(record, token):
 
 
 def _pick_row(record, options):
-    """The options of a picks() card, each a submit button as wide as its label, then 不回答此题, in a row that
-    wraps (as build_stop_action_row). A button sends the form, so 补充说明 goes with it; its value says which."""
-    def pick(name, label, value):
-        return {"tag": "button", "text": plain(label[:100]), **button_look(), "form_action_type": "submit",
+    """The options of a picks() card, a submit button each, one under another as wide as the card, then 不回答此题 under
+    them as wide as its label. Its words are the model's, of any length: in one row that was to wrap (flow, as
+    build_stop_action_row's fixed labels do) Feishu's desktop client squeezed three long options to "…" and pushed
+    不回答此题 past the card's edge (2026-11-24 T746); one under another none leaves the card, in a topic's side panel
+    and on a phone too, and each has the card's width before its label is cut. A button sends the form, so 补充说明 goes
+    with it; its value says which."""
+    def pick(name, label, value, width):
+        return {"tag": "button", "text": plain(label[:100]), **button_look(), "width": width, "form_action_type": "submit",
                 "name": name, "behaviors": [{"type": "callback", "value": {
                     "kind": "bridge_question", "topic_id": record["topic_id"], "token": record["token"], PICK: value}}]}
 
-    buttons = [pick(f"pick_{j}", o["label"], j) for j, o in enumerate(options)]
-    buttons.append(pick("pick_skip", SKIP_LABEL, SKIP_VALUE))
-    return {"tag": "column_set", "flex_mode": "flow", "horizontal_spacing": BUTTON_SPACING,
-            "columns": [{"tag": "column", "width": "auto", "elements": [button]} for button in buttons]}
+    buttons = [pick(f"pick_{j}", o["label"], j, "fill") for j, o in enumerate(options)]
+    buttons.append(pick("pick_skip", SKIP_LABEL, SKIP_VALUE, "default"))
+    return {"tag": "column_set", "columns": [
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_spacing": BUTTON_SPACING, "elements": buttons}]}
 
 
 def lead_notes(record):

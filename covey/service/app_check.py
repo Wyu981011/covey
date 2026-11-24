@@ -24,6 +24,7 @@ from pathlib import Path
 
 from covey.core import app_manifest
 from covey.core.paths import data_home
+from covey.feishu import slash_commands
 from covey.feishu.app_config import playwright_python, remove, survey
 from covey.feishu.transport import cli_json, lark_argv
 
@@ -68,38 +69,53 @@ def draw(matrix, out=sys.stdout):
 def check(args):
     online, lacking, full = survey(args.profile, args.app_id)
     offer = app_manifest.offered(lacking, full, review=getattr(args, "review", False))
+    slash_missing, slash_error = slash_commands.missing(args.profile)
     report = {"version": online.get("version", ""), "error": online.get("error", ""),
               "detail": online.get("detail", ""), "offer": [n.id for n in offer],
-              "review": [n.id for n in lacking if n.review], "full": [n.id for n in full]}
+              "review": [n.id for n in lacking if n.review], "full": [n.id for n in full],
+              "slash_missing": [s.command for s in slash_missing], "slash_error": slash_error}
     if getattr(args, "json", False):
         print(json.dumps(report, ensure_ascii=False))
     else:
         if online.get("error") and online.get("error") != "no_self_manage":
             print(f"读不到飞书应用的线上配置：{online.get('detail') or online['error']}")
-        elif not offer:
+        elif not offer and not slash_missing:
             print(f"飞书应用（线上版本 {online.get('version') or '-'}）不缺 Bridge 要用的配置。")
         else:
-            print(f"飞书应用（线上版本 {online.get('version') or '-'}）缺 {len(offer)} 项：")
-            for need in offer:
-                print(f"  - {need.words}（{need.name}）")
+            if offer:
+                print(f"飞书应用（线上版本 {online.get('version') or '-'}）缺 {len(offer)} 项：")
+                for need in offer:
+                    print(f"  - {need.words}（{need.name}）")
+            if slash_missing:
+                print(f"斜杠命令缺 {len(slash_missing)} 项（可直接通过官方接口自动注册，无需浏览器）：")
+                for spec in slash_missing:
+                    print(f"  - /{spec.command}（{spec.label}）")
+        if slash_error:
+            print(f"  斜杠命令读取失败（{slash_error}）")
         for need in [n for n in lacking if n.review]:
             print(f"  需要管理员审核、默认不申请：{need.words}（{need.name}），加 --review 才申请")
         for need in full:
             print(f"  菜单已满放不下：{need.words}")
     if online.get("error") and online.get("error") != "no_self_manage":
         return UNREADABLE
-    return SOMETHING if offer else NOTHING
+    return SOMETHING if (offer or slash_missing) else NOTHING
 
 
 def apply(args):
+    slash = slash_commands.sync(args.profile)
+    if slash.get("synced"):
+        print("斜杠命令已注册：" + "、".join(f"/{name}" for name in slash["synced"]))
+    elif not slash.get("ok") and slash.get("error"):
+        print(f"斜杠命令未同步（{slash['error']}）：{slash.get('detail') or ''}")
     online, lacking, full = survey(args.profile, args.app_id)
     if online.get("error") and online.get("error") != "no_self_manage":
         print(f"读不到飞书应用的线上配置：{online.get('detail') or online['error']}")
         return UNREADABLE
     offer = app_manifest.offered(lacking, full, review=args.review)
     if not offer:
-        print("没有要补的。")
-        return NOTHING
+        if not slash.get("synced"):
+            print("没有要补的。")
+        return NOTHING if slash.get("ok") else SOMETHING
     python = args.python or playwright_python()
     if not python:
         print("没有装了 Playwright 的 Python：先运行 scripts/install_console_browser.sh，或用 --python 指定。")

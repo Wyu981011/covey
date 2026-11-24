@@ -18,18 +18,23 @@ CHAT = "oc_dm"
 
 
 def menu(env):
-    return [need.name for need in manifest.required(env) if need.kind == "menu"]
+    return [need.name for need in manifest.required(env, bottom_menu=True) if need.kind == "menu"]
+
+
+def slash(env):
+    return [item.key for item in manifest.slash_commands(env)]
 
 
 class ManifestTest(unittest.TestCase):
     def test_the_app_needs_the_item_with_the_switch_or_the_digest_as_before(self):
         board = ["weekly_usage", "digest_board", "bridge_settings"]
         with mock.patch.object(manifest, "proxy_sender", return_value=False):
-            self.assertEqual(menu({}), ["weekly_usage", "bridge_settings"])
-            self.assertEqual(menu({"COVEY_BOARD": "0"}), ["weekly_usage", "bridge_settings"])
-            self.assertEqual(menu({"COVEY_BOARD": "1"}), board)
-            self.assertEqual(menu({"COVEY_DIGEST_TIMES": "09:30"}), board)  # Through the digest, as before.
-            self.assertEqual(menu({"COVEY_BOARD": "0", "COVEY_DIGEST_TIMES": "09:30"}), board)
+            for reader in (slash, menu):
+                self.assertEqual(reader({}), ["weekly_usage", "bridge_settings"])
+                self.assertEqual(reader({"COVEY_BOARD": "0"}), ["weekly_usage", "bridge_settings"])
+                self.assertEqual(reader({"COVEY_BOARD": "1"}), board)
+                self.assertEqual(reader({"COVEY_DIGEST_TIMES": "09:30"}), board)  # Through the digest, as before.
+                self.assertEqual(reader({"COVEY_BOARD": "0", "COVEY_DIGEST_TIMES": "09:30"}), board)
 
     def test_a_new_install_has_it(self):
         self.assertEqual(installer.INSTALL_SWITCHES["COVEY_BOARD"], "1")

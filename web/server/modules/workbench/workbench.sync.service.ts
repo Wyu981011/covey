@@ -47,10 +47,10 @@ export class WorkbenchSyncService {
       if (!isSyncType(str(it?.type)) || !str(it?.key)) {
         throw new BadRequestException('每条要有合法的 type 和 key');
       }
-      if (it.type === 'settings' && !isSettingsKey(it.key)) throw new BadRequestException('settings 的 key 只能是 settings、usage、tidy 或 asks');
+      if (it.type === 'settings' && !isSettingsKey(it.key)) throw new BadRequestException('settings 的 key 只能是 settings、usage、tidy、asks 或 memory');
     }
     for (const d of deleted) {
-      if (d?.type === 'settings' && !isSettingsKey(str(d.key))) throw new BadRequestException('settings 的 key 只能是 settings、usage、tidy 或 asks');
+      if (d?.type === 'settings' && !isSettingsKey(str(d.key))) throw new BadRequestException('settings 的 key 只能是 settings、usage、tidy、asks 或 memory');
     }
     let upserted = 0;
     for (let i = 0; i < items.length; i += CHUNK) {

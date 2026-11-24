@@ -21,7 +21,8 @@ import type {
   SettingsWorkspacePage,
 } from '@shared/api.interface';
 import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
-import { newOpId, SETTINGS_KEY, useSettings } from '@client/src/hooks/use-workbench';
+import { newOpId, SETTINGS_KEY, useMemory, useSettings } from '@client/src/hooks/use-workbench';
+import { MainMemory } from './MainMemory';
 import { errorText } from '@client/src/lib/workbench-format';
 import { Head } from './Shell';
 import { setLight, useUi } from './store';
@@ -935,24 +936,34 @@ const Body: React.FC<{ data: SettingsData; tab: string; ops: Ops }> = ({ data, t
   }
 };
 
+/** 「记忆」页签（v37）：Covey 推了主记忆（key memory）且开着才有，排在「配置」后面；数据不在 settings 条目里，自己取 */
+const MEMORY_TAB = { key: 'memory', label: '记忆' };
+
 const SettingsPage: React.FC = () => {
   const { tab } = useParams<{ tab: string }>();
   const q = useSettings();
+  const mem = useMemory();
   const ops: Ops = useOps();
   const snap = q.data ?? null;
-  const first: string | undefined = snap?.data.tabs?.[0]?.key;
-  if (snap && first && (!tab || !snap.data.tabs.some((t) => t.key === tab))) return <Navigate to={`/settings/${first}`} replace />;
+  const memoryOn: boolean = !!mem.data?.data?.on;
+  const tabs: { key: string; label: string }[] = snap
+    ? (memoryOn ? [...snap.data.tabs.slice(0, 1), MEMORY_TAB, ...snap.data.tabs.slice(1)] : snap.data.tabs)
+    : [];
+  const first: string | undefined = tabs[0]?.key;
+  // 「记忆」要等主记忆取回来再判断有没有，免得刷新时先被跳到第一页
+  const waiting: boolean = tab === MEMORY_TAB.key && mem.isLoading;
+  if (snap && first && !waiting && (!tab || !tabs.some((t) => t.key === tab))) return <Navigate to={`/settings/${first}`} replace />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <Head title="设置" />
       <div className="st-wrap">
-        <div className={`st-in${tab === 'config' ? ' wide' : ''}`}>
+        <div className={`st-in${tab === 'config' || tab === MEMORY_TAB.key ? ' wide' : ''}`}>
           {q.isLoading ? <p className="st-faint">读取中…</p> : snap ? (
             <>
               <nav className="st-tabs" aria-label="设置分页">
-                {snap.data.tabs.map((t) => <NavLink key={t.key} to={`/settings/${t.key}`} className={({ isActive }) => (isActive ? 'on' : '')}>{t.label}</NavLink>)}
+                {tabs.map((t) => <NavLink key={t.key} to={`/settings/${t.key}`} className={({ isActive }) => (isActive ? 'on' : '')}>{t.label}</NavLink>)}
               </nav>
-              <Body data={snap.data} tab={tab ?? ''} ops={ops} />
+              {tab === MEMORY_TAB.key ? <MainMemory /> : <Body data={snap.data} tab={tab ?? ''} ops={ops} />}
             </>
           ) : (
             <div className="st-empty">

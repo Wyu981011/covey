@@ -282,8 +282,8 @@ class AsksPushTest(WebCase):
         looked = SimpleNamespace(dismissed={"t-off": {}}, asks=lambda state, chat, found, now, off, proposals: SimpleNamespace(
             counts=lambda: {"waiting": len(found.all) + (1 if proposals else 0), "stopped": len(off), "stuck": 0}))
         with mock.patch.object(web_collect.board_read, "waits", return_value=SimpleNamespace(all=[1, 2])):
-            self.assertEqual(web_collect.Collector.counted(self.state, CHAT, 0, looked), {"waiting": 3, "stopped": 1, "stuck": 0})
-        self.assertIsNone(web_collect.Collector.counted(self.state, CHAT, 0, SimpleNamespace()))
+            self.assertEqual(web_collect.Collector.asked(self.state, CHAT, 0, looked).counts(), {"waiting": 3, "stopped": 1, "stuck": 0})
+        self.assertIsNone(web_collect.Collector.asked(self.state, CHAT, 0, SimpleNamespace()))
 
 
 class KindsTest(V34Case):

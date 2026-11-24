@@ -554,6 +554,7 @@
 | `COVEY_AVATARS` | `feishu/avatars.py`（`image_key`） | 开：私聊卡片的头像行放管家和负责人的头像（第一次用时上传到飞书，`image_key` 记在状态目录的 `avatars.json`）；`0` 关：不上传、卡上只有名字（测试套件默认关）。话题的头像是它的 T 号（卡片里画的，不是图片），不受这个开关影响 | 否 |
 | `COVEY_WELCOME` | `app/welcome.py`（`enabled`：`settle` 据此写 `welcome.json`，`threads()` 据此起 `welcome` 后台线程） | 开：新部署第一次启动后在主人私聊发一张欢迎卡，每个部署只发一次（之前已有任务、话题或私聊记录的部署不发）；`0` 关：不写记录、不起线程、不发，和原来一样 | 否 |
 | `COVEY_AUTO_RETRY_LONG` | `app/auto_retry.py`（`long_ladder`：`plan` 排自动重试时据此选等待时间表、是否有临时故障一类、是否读恢复时间、是否加随机、做了实事是否清零；`applies`、`status_line` 也看它） | 开（默认，只有 `0` 关）：限流 60 秒到 1 小时共六次、临时故障 30 秒到 5 分钟共三次、读得到恢复时间就等到那时、每次另加 0–30 秒随机；`0`：和原来一样，限流 60、180 秒两次，临时故障不重试，没有随机 | 否 |
+| `COVEY_MAX_WORKERS` | `core/scheduler.py`（`worker_limit`：Bridge 起调度器时读一次；`app/submission.py` 排队时据它说“并发已满（最多 N 个任务）”） | 32：最多同时跑这么多个任务（每个话题一次一个），其中 2 个只留给管家和专项负责人那一轮，普通话题最多占其余的；写大于 0 的整数改它（最多 512），机器小就调低；改了要重新注册服务才生效 | 否 |
 | `COVEY_LIMIT_NOTICE` | `app/limit_notice.py`（`enabled`：`tick` 在 Bridge 的 outbox 循环里据此决定看不看记录、发不发提示） | 开（默认，只有 `0` 关）：私聊里几个话题同一原因停下、各自排好自动重试时发一条合并提示；`0`：不读记录、不发，和原来一样 | 否 |
 | `COVEY_STRANGER_REPLY` | `app/strangers.py`（`enabled`） | 开：别人私聊机器人时回一句纯文本“这是某某的个人助手，只处理某某的消息”，每人每天最多一次；`0` 关：和原来一样不回，只记一行 `ignored message … reason=not_owner` | 否 |
 | `COVEY_INVITE_URL` | `app/strangers.py`（`invite_url`） | 扩展的 `invite_url`，都没有时空：那句话不带链接。设了 http(s) 地址时末尾加“想要一个自己的：<地址>”，一般指向安装说明 | 否 |
@@ -616,7 +617,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--home`、`--start`、`--idle`、`--max`、`--dy` | `feishu/web_client.py`（`bin/covey_feishu_web.py`） | 见 [浏览器服务](testing.md#浏览器服务) | 否 |
 | `--app-id`、`--home`、`--plan`、`--login-from`、`--console`、`--login-seconds` | `feishu/app_console.py`（`bin/covey_app_console.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |
 | `--profile`、`--app-id`、`--review`、`--json`、`--python`、`--login-from`、`--work` | `service/app_check.py`（`bin/covey_app_setup.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |
-| `--reconfigure`、`--skills`、`--non-interactive`、`--data-home`、`--workdir`、`--keep-login`、`--no-browser`、`--no-autostart`、`--profile`、`--app-name`、`--no-start`、`--showcase`、`--web`、`--web-public`、`--browser-login-dir`（验收用，隐藏，见[运维](operations.md#服务托管)） | `service/installer.py`（`./install`、`bin/covey_install.py`） | 见[安装](install.md#选项)；`--showcase` 写[演示套餐](#演示套餐) | 否 |
+| `--reconfigure`、`--skills`、`--non-interactive`、`--data-home`、`--workdir`、`--keep-login`、`--browser`、`--no-browser`、`--no-autostart`、`--profile`、`--app-name`、`--no-start`、`--showcase`、`--web`、`--web-public`、`--browser-login-dir`（验收用，隐藏，见[运维](operations.md#服务托管)） | `service/installer.py`（`./install`、`bin/covey_install.py`） | 见[安装](install.md#选项)；`--showcase` 写[演示套餐](#演示套餐) | 否 |
 | `--home`、`--console`、`--shots` | `feishu/install_browser.py`（`bin/covey_install_browser.py`，`./install` 起的浏览器会话） | 见[安装](install.md#它做了什么) | 否 |
 
 ## 已下架项与旧配置

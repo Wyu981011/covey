@@ -136,6 +136,32 @@ class ForkTests(UnifiedCase):
         ctx, history = app.forks.fork_start(self.source, ['own'])
         self.assertEqual((ctx.options.get('fork_session'), history), (None, ['own']))
 
+    def test_a_fork_with_its_own_conversation_does_not_fork_the_source_again(self):
+        # T750: its first turn ran, then 换配置 left it without a session on the new Harness; that run goes on from the
+        # fork's own record (and the switch handoff), not from the source's session or record.
+        self.fork()
+        app, target = self.route_reply('om_forwarded')
+        self.assertEqual(read_topic(target)['forked_from']['harness_id'], 'codex')
+        own = [{'role': 'user', 'content': 'own question'}, {'role': 'assistant', 'content': 'own answer'}]
+        ctx, history = app.forks.fork_start(target, own)
+        self.assertEqual((ctx.options.get('fork_session'), history), (None, own))
+
+    def test_the_source_session_is_forked_only_on_its_own_harness(self):
+        # A fork of a topic that was on another Harness (Antigravity then): its session id means nothing here.
+        self.fork()
+        app, target = self.route_reply('om_forwarded')
+        data = read_topic(target)
+        data['forked_from']['harness_id'] = 'agy'
+        write_topic(target, data)
+        ctx, history = app.forks.fork_start(target, [])
+        self.assertNotIn('fork_session', ctx.options)
+        self.assertEqual([row['content'] for row in history][-2:], ['remember the codeword', 'OK'])
+        # A fork recorded before harness_id: as before, forked on the Harness it was bound to.
+        del data['forked_from']['harness_id']
+        write_topic(target, data)
+        ctx, history = app.forks.fork_start(target, [])
+        self.assertEqual(ctx.options.get('fork_session'), self.session)
+
     def test_a_reply_in_the_new_topic_runs_without_a_launch_card(self):
         self.fork()
         before = {name: a.submission.selection_card.call_count for name, a in self.app.apps.items()}

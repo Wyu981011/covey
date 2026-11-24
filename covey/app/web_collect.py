@@ -236,8 +236,9 @@ class Collector:
         looked = pins.PinnedTopics(None, None)
         looked.look(state, chat, now, read, board=pins.laid())
         self.unseen = set(looked.unseen)
-        self.board = board_groups(looked.rows, looked.dismissed) if pins.laid() else None
-        self.asks = self.counted(state, chat, now, looked)
+        asked = self.asked(state, chat, now, looked)
+        self.board = board_groups(looked.rows, looked.dismissed, asked) if pins.laid() else None
+        self.asks = dict(asked.counts()) if asked is not None else None
         self.board_due = False
 
     board_due = True  # The quick look reads the board before its first build (a pass reads it when it starts).
@@ -697,14 +698,15 @@ class Collector:
                 turn["ran_with"] = ran
 
     @staticmethod
-    def counted(state, chat, now, looked):
-        """要你处理 now as every card counts it (core/board_read.py Asks.counts, what the 看板 and 手上的事 say: 等你 with the
-        butler's and the leads' questions and 整理专项's proposals, 停住了 with the projects a guard paused, 可能卡住), from the look
-        just taken (``looked``: app/pins.py PinnedTopics, its topics taken off left out); None when it cannot be read."""
+    def asked(state, chat, now, looked):
+        """要你处理 now as every card counts it (core/board_read.py Asks, what the 看板 and 手上的事 say: 等你 with the butler's and
+        the leads' questions and 整理专项's proposals, 停住了 with the projects a guard paused, 可能卡住), from the look just taken
+        (``looked``: app/pins.py PinnedTopics, its topics taken off left out); None when it cannot be read. Its ``counts`` are
+        the page's numbers (data contract v34 ``asks``) and its 停住了 the topics ``board_groups`` says it of."""
         try:
             off = dict(looked.dismissed)
             found = board_read.waits(state, chat, now, off=off)
-            return dict(looked.asks(state, chat, found, now, off, proposals=True).counts())
+            return looked.asks(state, chat, found, now, off, proposals=True)
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             return None
 
@@ -1379,13 +1381,19 @@ DRAFT_WAITS = ("drafted", "unsent")  # A draft that waits for the owner's 确认
 DRAFTS_SHOWN = 5
 
 
-def board_groups(rows, dismissed) -> dict:
+def board_groups(rows, dismissed, asks=None) -> dict:
     """topic id -> its group on the board (app/pins.py PinnedTopics.look ``rows``, without the topics the owner took off,
     ``dismissed``), as a core/look.py STATES key: waiting, running, stuck, or a result's (stopped, result, done, cancelled).
     A project's thread is its own topic here (the board's row is its project's cell, the record says which thread). The page
-    counts 要你处理 by this (data contract v6 ``board``), so a stopped topic the board no longer lists (seen KEEP_SEEN ago,
+    lists 要你处理 by this (data contract v6 ``board``), so a stopped topic the board no longer lists (seen KEEP_SEEN ago,
     taken off with 不管了) is not 停住了 there either: a topic stopped and seen at once must not come back on the page as
-    停住了 while the board has let it go."""
+    停住了 while the board has let it go.
+
+    停住了 is exactly what ``asks`` (core/board_read.py Asks, whose ``counts`` are the page's numbers) counts: each of its topics,
+    though the board's row is its project's cell showing another thread or it ended before the board's rules; and a stopped
+    result it leaves out (a project's member its lead is woken for) is on the page as one the board let go, not 停住了.
+    2026-11-24 T734: the page said 9 停住了 and drew none, nine members of one project behind their project's cell."""
+    stopped = asks.stopped if asks is not None else None
     out = {}
     for row in rows:
         if row["topic"] in dismissed:
@@ -1397,6 +1405,10 @@ def board_groups(rows, dismissed) -> dict:
         elif row["group"] == "running":
             out[topic] = "running"
         else:
-            out[topic] = look.record_tone(record, seen=row.get("seen") is not None)
+            tone = look.record_tone(record, seen=row.get("seen") is not None)
+            if tone != "stopped" or stopped is None or topic in stopped:
+                out[topic] = tone
+    for topic in stopped or ():
+        out[str(topic)] = "stopped"
     return out
 

@@ -1,4 +1,4 @@
-"""./install 的安装器本体：一遍跑完，扫一次码，最后发一句话就有回答（docs/install.md）。
+"""./install 的安装器本体：一遍跑完，手机扫码，官方斜杠命令自动注册，最后发一句话就有回答（docs/install.md）。
 
 步骤（每步一行标题，之后只有必要的提示）：
   1 检查环境和目录   Python、平台；数据根、工作区、临时目录、浏览器和 lark-cli 的安装位置都给默认值并自动建；在检出里运行、
@@ -10,8 +10,9 @@
                     没调通的加进 harnesses.json。Claude Code 没调通时（docs/install.md 没有 Claude Code 时）新服务的管家写成
                     调通了的 Codex 或 Antigravity（core/butler_settings.py preset_harness，第一次启动前）；专项、整理专项这些
                     开关照常写（负责人和小模型判断都能跑在它们上面），--showcase 也一样
-  4 飞书应用        一个无头浏览器扫一次码：登录、建应用、授权、开发者后台补回调/事件/菜单/权限并发布、读回核对
-                    （feishu/install_browser.py）；浏览器装不上或 ``--no-browser`` 时退回手机多次扫码
+  4 飞书应用        默认手机扫码 3 步（建应用、授权、事件与回调一键订阅）+ Bot OpenAPI 自动注册斜杠命令（feishu/slash_commands.py），
+                    无需浏览器和电脑端设备认证；显式加 ``--browser`` 时改用无头浏览器扫一次码（feishu/install_browser.py），
+                    遇到浏览器起不来或条件访问拦截自动切回手机扫码
   5 注册并启动服务   scripts/bootstrap_harness_bridge.sh，先 bin/covey_service_install.py --mode auto --activate（托管），再 bootstrap（注册）；
                     先用将注册的 python3 给检出预编译 .pyc（scripts/precompile_release.py，失败只提示）；终端里有
                     Harness 可能靠它登录的变量（API key、网关地址）时，按服务自己的环境再探测一次（check_service_env）
@@ -50,7 +51,9 @@ from covey.core import env as cenv
 from covey.core.paths import REPO_ROOT, data_home
 from covey.core.process import service_key
 from covey.core.state import read_json, write_json
+from covey.feishu import slash_commands
 from covey.feishu.app_config import remove, survey
+from covey.feishu.app_console import CONDITIONAL_ACCESS_CODE
 from covey.service import browser_setup, install_probe, web_selfhost
 from covey.service.app_check import draw, profile_app_id, profile_app_name
 from covey.service.manager import (PROXY_ENV_KEYS, SECRET_NAME, change_settings, manifest_path, persistable,
@@ -141,6 +144,10 @@ class Fail(Exception):
         self.next = next
 
 
+class ConditionalAccessFallback(Exception):
+    """Browser login hit tenant conditional access: close Chromium and switch to phone QR."""
+
+
 def parser():
     p = argparse.ArgumentParser(prog="covey_install.py", description=__doc__.split("\n\n")[0] + "\n\n" +
                                 "前提：这台机器上已装好并登录了 Claude Code、Codex 或 Antigravity（见 docs/harnesses.md）。")
@@ -150,7 +157,9 @@ def parser():
     p.add_argument("--data-home", help="数据根（默认：COVEY_DATA_HOME，没设时是仓库同级的 <仓库目录名>-data）")
     p.add_argument("--workdir", help="默认工作区（默认：当前目录；在仓库里运行时用 <数据根>/workspace）")
     p.add_argument("--keep-login", action="store_true", help="结束后不删浏览器里主人的网页登录（默认删）")
-    p.add_argument("--no-browser", action="store_true", help="不用无头浏览器：每个链接画成二维码，手机上依次打开")
+    p.add_argument("--browser", action="store_true", help="改用无头浏览器扫一次码完成建应用和授权（默认不用浏览器、直接手机扫码，"
+                   "避免无头 Linux 触发条件访问设备认证；若遇条件访问仍会自动切回手机扫码）")
+    p.add_argument("--no-browser", action="store_true", help="不用无头浏览器：每个链接画成二维码，手机上依次打开（已是默认，保留以兼容）")
     p.add_argument("--profile", default=DEFAULT_PROFILE, help=f"lark-cli profile 名（默认 {DEFAULT_PROFILE}）")
     p.add_argument("--app-name", default=DEFAULT_APP_NAME, help=f"新建飞书应用的名称（默认 {DEFAULT_APP_NAME}）")
     p.add_argument("--browser-login-dir", help=argparse.SUPPRESS)  # 验收用：浏览器从这份已登录的用户目录副本开始，跳过二维码
@@ -276,12 +285,13 @@ class Installer:
 
     def __init__(self, args, *, env=None, say=say_now, ask=input, interactive=None, probe=install_probe.probe,
                  browser_factory=None, survey_app=survey, app_id_of=profile_app_id, app_name_of=profile_app_name, prepare_browser=browser_setup.prepare,
-                 web_prepare=None, web_suggest=None):
+                 web_prepare=None, web_suggest=None, sync_slash=slash_commands.sync):
         self.args, self.say, self.ask = args, say, ask
         # The old spelling inside: what is saved, fingerprinted and passed on is what an older release reads too (core/env.py).
         self.env = cenv.canonical(dict(os.environ if env is None else env))
         self.interactive = (not args.non_interactive and sys.stdin.isatty()) if interactive is None else interactive
         self.probe, self.survey_app, self.app_id_of, self.app_name_of = probe, survey_app, app_id_of, app_name_of
+        self.sync_slash = sync_slash
         self.ready_seconds = self.answer_seconds = None  # tests
         self.ready = False  # The doctor said the service is ready (wait_ready).
         self.waiting_steps = []  # Phone steps (their numbers) whose scan is not seen in the app's online version yet
@@ -586,14 +596,23 @@ class Installer:
         sys.stdout.flush()
         self.live_open = True
 
+    def use_browser(self):
+        """Whether this run opts into headless browser automation (default False: phone QR + Bot OpenAPI slash commands)."""
+        return (bool(getattr(self.args, "browser", False)) or bool(self.args.browser_login_dir)) and not self.args.no_browser
+
+    def close_browser(self):
+        if self.browser is not None:
+            self.browser.close()
+            self.browser = None
+
     def ensure_browser(self):
         """The Python that has Playwright and a browser that starts, prepared under the data root (service/browser_setup.py:
         a Chrome the machine has, else Chromium downloaded with mirrors, plus system libraries when they are missing);
-        None (and why) when it cannot be had."""
+        None (and why) when it cannot be had or when browser mode is not requested."""
         if self.browser_python is not None:
             return self.browser_python or None
         self.browser_python = ""
-        if self.args.no_browser:
+        if not self.use_browser():
             return None
         env_python = self.env.get("LARK_BRIDGE_PLAYWRIGHT_PYTHON", "")
         if env_python and os.access(env_python, os.X_OK):
@@ -607,7 +626,7 @@ class Installer:
             prepared = self.prepare_browser(self.data, self.env, self.note, live=self.live if tty else None)
         except browser_setup.Unavailable as why:
             self.note(f"浏览器用不了：{why}")
-            self.note("改用手机扫码：下面每个链接画成二维码，依次扫（以后想直接这样，加 --no-browser）")
+            self.note("改用手机扫码：下面每个链接画成二维码，依次扫（以后想直接这样，不用加 --browser）")
             return None
         self.browser_python = prepared.python
         return prepared.python
@@ -672,7 +691,7 @@ class Installer:
         self.say(f"    {after}")
 
     def feishu_app(self):
-        self.step(4, "飞书应用（扫一次码）")
+        self.step(4, "飞书应用（扫一次码）" if self.use_browser() else "飞书应用（手机扫码）")
         profile = self.args.profile
         python = None
         try:
@@ -686,23 +705,36 @@ class Installer:
             else:
                 python = self.ensure_browser()
                 self.create_and_authorize(python, have_profile)
-            self.settle_switches()  # Before the app's needs are read: they follow the switches (menu 看板, Pin scopes).
+            self.settle_switches()  # Before the app's needs are read: they follow the switches (slash /board, Pin scopes).
+            self.sync_slash_commands()
             lacking = self.lacking()
             if lacking and reused and not self.interactive and not self.args.browser_login_dir:
                 # An upgrade with nobody to scan (no login copy either): list what is missing, go on with the service; the Bridge's 飞书应用待补 card finishes it.
                 self.leftovers.append(f"飞书应用还缺 {app_manifest.joined(lacking)}。非交互不等扫码，服务照常换成新代码；"
                                       "给机器人发一句话后会收到「飞书应用待补」卡，点「扫码自动补齐」（或交互运行 ./install）")
             elif lacking:
-                self.configure_app(python or self.ensure_browser(), lacking)
+                self.configure_app(python if self.browser_python else self.ensure_browser(), lacking)
         finally:
-            if self.browser is not None:
-                self.browser.close()
-                self.browser = None
+            self.close_browser()
             if self.browser_home is not None:
                 if self.args.keep_login:
                     self.note(f"浏览器登录留在 {self.browser_home}（--keep-login）；用完请删掉这个目录")
                 else:
                     remove(self.browser_home, self.note)
+
+    def sync_slash_commands(self):
+        """Register Covey's official Feishu slash commands (/usage, /board, /proxy, /settings) via Bot OpenAPI."""
+        result = self.sync_slash(self.args.profile, self.env)
+        wanted = result.get("wanted") or []
+        if result.get("ok"):
+            if wanted:
+                cmds = "、".join(f"/{name}" for name in wanted)
+                self.note(f"斜杠命令已就绪：{cmds}（私聊输入框打 / 呼出，新注册约 5 分钟内生效）")
+            return
+        why = {"no_scope": "应用缺少 application:app_slash_command 权限",
+               "unsupported": "当前 lark-cli 版本不支持斜杠命令注册（请升级 @larksuite/cli）"}.get(
+            result.get("error"), result.get("detail") or "接口报错")
+        self.leftovers.append(f"斜杠命令没注册到输入框面板（{why}）；不影响使用，私聊直接发 /设置、/看板、/用量 也能打开菜单卡")
 
     def create_and_authorize(self, python, have_profile):
         profile = self.args.profile
@@ -710,13 +742,20 @@ class Installer:
         login = ["lark-cli", "--profile", profile, "auth", "login", "--domain", LARK_DOMAINS]
         if python:
             session = self.open_browser(python)
-            if not have_profile:
-                self.note("在浏览器里建应用")
-                self.run_flow(init, lambda link: self.expect(session.create_app(link, self.args.app_name)))
-            self.note("在浏览器里授权")
-            self.run_flow(login, lambda link: self.expect(session.authorize(link)))
+            try:
+                if not have_profile:
+                    self.note("在浏览器里建应用")
+                    self.run_flow(init, lambda link: self.expect(session.create_app(link, self.args.app_name), fallback=True))
+                self.note("在浏览器里授权")
+                self.run_flow(login, lambda link: self.expect(session.authorize(link), fallback=True))
+            except ConditionalAccessFallback:
+                self.close_browser()
+                self.browser_python = ""
+                self.note("飞书网页登录被租户条件访问拦下（需要受信任设备授权），自动改用手机扫码")
+                self.create_and_authorize(None, self.profile_exists())
+                return
         else:
-            self.note("手机上共 3 步：1 建应用、2 授权、3 事件与回调订阅（一个链接）；后面的链接要等前一步做完才有"
+            self.note("手机上共 3 步：1 建应用、2 授权、3 事件与回调订阅（一个链接）；菜单用官方斜杠命令自动注册，不需要浏览器或电脑端认证"
                       + ("" if self.interactive else "。非交互时第 3 步不等待：列出链接，扫完后重新运行 ./install 或等几分钟"))
             if not have_profile:
                 self.run_flow(init, lambda link: self.by_phone(f"建应用（建议把名称改成「{self.args.app_name}」，点「创建」）", link))
@@ -727,8 +766,10 @@ class Installer:
         self.note(f"应用 {self.app_id} 已建好并授权")
 
     @staticmethod
-    def expect(result):
+    def expect(result, *, fallback=False):
         if not result.get("ok"):
+            if fallback and result.get("code") == CONDITIONAL_ACCESS_CODE:
+                raise ConditionalAccessFallback()
             raise Fail(f"浏览器这一步没做成：{result.get('detail')}", next=f"{AGAIN}；还不行就 {NO_BROWSER}")
 
     def lacking(self):
@@ -749,6 +790,12 @@ class Installer:
         plan.write_text(json.dumps(app_manifest.plan(offer, remark=app_manifest.remark(offer)), ensure_ascii=False))
         result = session.configure(self.app_id, plan)
         if not result.get("ok"):
+            if result.get("code") == CONDITIONAL_ACCESS_CODE:
+                self.close_browser()
+                self.browser_python = ""
+                self.note("开发者后台登录被租户条件访问拦下，自动改用手机扫码补齐事件与回调")
+                self.configure_by_phone(offer)
+                return
             self.leftovers.append(f"开发者后台没补完（{result.get('detail')}）；重新运行 ./install 再试，"
                                   "或点机器人发来的「飞书应用待补」卡")
             return

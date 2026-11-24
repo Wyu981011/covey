@@ -11,6 +11,8 @@ import { Head } from './Shell';
 import { Pill } from './ui';
 import { engineText, harnessName, isRunning, isWaiting, toneOf, toneWord, type ToneKey } from './lib';
 import { MobileProgress, ProgressRail, TopicOverview } from './TopicOverview';
+import { PaneHandle } from './PaneHandle';
+import { TOPIC_RAIL } from './panes';
 import { TopicBadge } from './RoleAvatar';
 import { lastAgent, listTone, stopPressing } from './topicText';
 
@@ -95,6 +97,7 @@ const TopicPage: React.FC = () => {
           }
         />
       </div>
+      {desktop ? <PaneHandle spec={TOPIC_RAIL} /> : null}
       {desktop ? <ProgressRail topicKey={key} /> : null}
     </div>
   );

@@ -47,6 +47,11 @@ SCHEMA = "0.0.2"
 LOGIN_SECONDS = 300
 PUBLISH_SECONDS = 120
 REMARK_PREFIX = "Harness Bridge 自动补齐"
+CONDITIONAL_ACCESS_CODE = "conditional_access"
+CONDITIONAL_ACCESS_URLS = ("/conditionalaccess/deny", "/conditionalaccess/")
+CONDITIONAL_ACCESS_WORDS = ("设备信息授权", "条件访问", "未登记的设备", "受信任的设备")
+CONDITIONAL_ACCESS_DETAIL = ("租户条件访问拦下了这台机器的网页登录（需在受信任设备的客户端完成设备信息授权）；"
+                             "请改用手机扫码（不加 --browser 或使用 ./install --no-browser）")
 # Not copied from the login: caches, and the lock files of a browser that has it open.
 SKIPPED = ("Cache", "Code Cache", "Service Worker", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache",
            "GrShaderCache", "GraphiteDawnCache", "ShaderCache", "IndexedDB", "Singleton*")
@@ -95,9 +100,17 @@ VISIBLE_TEXT = ("Array.from(document.querySelectorAll('body *'))"
                 ".map(e => (e.innerText || '').trim()).filter(Boolean).join(' ').slice(0, 300)")
 
 
+def conditional_access(url: str, text: str = "") -> bool:
+    """Whether the browser landed on a Feishu conditional-access block page (e.g. DevBox lacking trusted-device auth)."""
+    low = (url or "").lower()
+    if any(part in low for part in CONDITIONAL_ACCESS_URLS):
+        return True
+    return bool(text) and any(word in text for word in CONDITIONAL_ACCESS_WORDS)
+
+
 class Stop(Exception):
-    def __init__(self, step, detail):
-        self.step, self.detail = step, detail
+    def __init__(self, step, detail, *, code=""):
+        self.step, self.detail, self.code = step, detail, code
         super().__init__(f"{step}: {detail}")
 
 
@@ -261,6 +274,12 @@ class Console:
             if ready() if ready else (self.on_console() and self.has_token() and self.logged_in()):
                 emit("logged_in")
                 return
+            if not self.on_console():
+                url = str(getattr(self.page, "url", "") or "")
+                if conditional_access(url):
+                    text = self.visible_text()
+                    emit("login_page", text=text or "条件访问拦截", reason=CONDITIONAL_ACCESS_CODE)
+                    raise Stop("login", CONDITIONAL_ACCESS_DETAIL, code=CONDITIONAL_ACCESS_CODE)
             data = self.qr_data() if not self.on_console() else ""
             if data and data != shown:
                 number += 1
@@ -274,6 +293,9 @@ class Console:
                 emit("qr", path=str(path), number=number, matrix=matrix)
             elif not data and not self.on_console():
                 text = self.visible_text()
+                if conditional_access(str(getattr(self.page, "url", "") or ""), text):
+                    emit("login_page", text=text or "条件访问拦截", reason=CONDITIONAL_ACCESS_CODE)
+                    raise Stop("login", CONDITIONAL_ACCESS_DETAIL, code=CONDITIONAL_ACCESS_CODE)
                 if text and text != said:
                     said = text
                     emit("login_page", text=text)
@@ -448,7 +470,7 @@ def run(args, playwright):
         except Exception:  # noqa: BLE001
             shot = None
         emit("failed", step=stop.step, words=STEPS.get(stop.step, stop.step), detail=stop.detail,
-             shot=str(shot) if shot else "", changed=console.changed)
+             shot=str(shot) if shot else "", changed=console.changed, **({"code": stop.code} if stop.code else {}))
         return 1
     except Exception as exc:  # noqa: BLE001 - reported as the step it happened in
         emit("failed", step=step, words=STEPS.get(step, step), detail=f"{type(exc).__name__}: {str(exc)[:200]}",

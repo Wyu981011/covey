@@ -69,7 +69,8 @@ def step_detail(step):
     shown_command shows it, a long path by its last two parts. ToolTrace already escaped this
     producer-approved, bounded detail."""
     title = step_title(step)
-    detail = " ".join(str(step.get("detail") or "").split())
+    raw = str(step.get("detail") or "")
+    detail = " ".join(raw.split())
     for prefix in dict.fromkeys((safe_text(step["title"], None), safe_text(title, None))):
         if detail == prefix:
             return ""
@@ -80,8 +81,9 @@ def step_detail(step):
             detail = detail[len(prefix):]
             break
     if (title in COMMAND_TITLES or title == CHECKPOINT_STEP) and detail:
-        # A checkpoint write is a command too: Codex's showed its /bin/bash -lc "…" wrapper.
-        detail = shown_command(detail)
+        # A checkpoint write is a command too: Codex's showed its /bin/bash -lc "…" wrapper. Read with its lines (its
+        # setup lines and a comment it begins with are lines of their own), then on one line.
+        detail = " ".join(shown_command(raw if " ".join(raw.split()) == detail else detail).split())
     if title in {"读取文件", "写入文件", "修改文件", "浏览目录"} and detail.startswith("/") and len(detail) > 96:
         detail = "…/" + "/".join(detail.rstrip("/").split("/")[-2:])  # Recognisable without the mount prefix.
     if len(detail) > 160:

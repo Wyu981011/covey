@@ -1305,6 +1305,42 @@ class BoardGroupTest(WebCase):
         data = self.stopped(seen=False)
         self.assertEqual((data["tone"], data["board"]), ("stopped", "stopped"))
 
+    def members(self):
+        """A project's member that stopped (no one asked it to: an official refusal's record) and another at work, which its
+        project's cell on the board shows; one push: (the pushed 要你处理, the topics drawn 停住了, the topics' items)."""
+        ended = T0 - 3600
+        self.thread(OTHER, "试跑", 8, status="cancelled", card_message_id="om_card_o",
+                    timings={"backend_started": ended - 60, "execution_finished": ended})
+        self.thread("e" * 32, "接管试跑", 9, status="running", card_message_id="om_card_e",
+                    timings={"received": T0 - 120, "backend_started": T0 - 100})
+        self.sync.push_once(T0)
+        topics = {item["key"]: item["data"] for item in self.web.items("topic")}
+        asks = next(item["data"] for item in self.web.items("settings") if item["key"] == web_sync.ASKS_KEY)
+        return asks, sorted(key for key, data in topics.items() if data.get("board") == "stopped"), topics
+
+    def test_a_projects_member_that_stopped_is_drawn_where_it_is_counted(self):
+        """2026-11-24 T734: the page said 9 停住了 (要你处理 as every card counts it, data contract v34) and drew none: nine members
+        of one project, each ``board`` empty, the board's row being their project's cell showing a thread at work. Without
+        COVEY_PROJECT_AUTOWAKE nothing wakes the lead for them: each is the owner's, counted and drawn."""
+        asks, drawn, topics = self.members()
+        self.assertEqual((asks["stopped"], drawn), (1, [OTHER]))
+        self.assertEqual(topics["e" * 32]["board"], "running")
+
+    def test_a_members_stop_its_lead_is_woken_for_is_neither_counted_nor_drawn(self):
+        with mock.patch.dict(os.environ, {projects.AUTOWAKE_ENV: "1"}):
+            asks, drawn, topics = self.members()
+        self.assertEqual((asks["stopped"], drawn), (0, []))
+        self.assertEqual((topics[OTHER]["tone"], topics[OTHER]["board"]), ("stopped", ""))  # Grey on the page: the board let it go.
+
+    def test_a_stop_from_before_the_boards_rules_is_drawn_where_it_is_counted(self):
+        """要你处理 counts a stop however long before the board's rules it ended (app/pins.py PinnedTopics.look); the board's rows
+        do not hold it, and the page must draw it all the same."""
+        write_json(self.state / "pinned-topics.json", {"chat_id": CHAT, "since": T0, "keep_since": T0 - 10 * 86400,
+                                                       "stopped_since": T0, "results": {}})
+        data = self.stopped(seen=False)
+        asks = next(item["data"] for item in self.web.items("settings") if item["key"] == web_sync.ASKS_KEY)
+        self.assertEqual((asks["stopped"], data["board"]), (1, "stopped"))
+
     def test_without_the_board_there_is_no_board_field(self):
         os.environ.pop("COVEY_PINNED_OVERVIEW")
         self.topic()
@@ -1496,6 +1532,25 @@ class ExtrasTest(WebCase):
         self.assertEqual(rows["c2"]["label"], "执行命令：git status")
         self.assertNotIn("detail", rows["c2"])
         self.assertEqual((len(rows["r1"]["label"]), rows["r1"]["detail"]), (web_turns.LABEL_CHARS, long_path))
+
+    def test_a_command_without_a_purpose_is_labelled_by_what_it_runs_or_its_comment(self):
+        """T738 (2026-11-24): the page's 过程 of Antigravity and Codex turns read "set -euo pipefail for v in http_proxy https_proxy…"
+        row under row. A comment the command began with labels it; else what it runs, past its wrappers and setup lines; a
+        checkpoint write its title alone. The whole command is the detail."""
+        from covey.core.text import safe_text
+        boiler = "set -euo pipefail\nfor v in http_proxy https_proxy all_proxy; do unset \"$v\"; done\nS=state/pool-a\n"
+        snapshot = {"steps": {"a": {"title": "执行命令", "detail": safe_text(boiler + ".venv/bin/python tools/check.py --pool a", None),
+                                    "status": "done", "started": T0, "ended": T0 + 600},
+                              "b": {"title": "执行命令", "detail": safe_text("/bin/bash -lc '# 看 a 池的在线状态\n" + boiler + "python3 x.py'", None),
+                                    "status": "running", "started": T0 + 601},
+                              "c": {"title": "更新检查点", "detail": safe_text("/bin/bash -lc \"cat > /x/checkpoints/a.json\"", None),
+                                    "status": "done", "started": T0 + 602, "ended": T0 + 603}},
+                    "step_order": ["a", "b", "c"], "started_at": T0}
+        rows = {row["id"]: row for row in web_turns.steps_of(snapshot)}
+        self.assertEqual(rows["a"]["label"], "执行命令：.venv/bin/python tools/check.py --pool a")
+        self.assertTrue(rows["a"]["detail"].startswith("set -euo pipefail for v in http_proxy"))
+        self.assertEqual(rows["b"]["label"], "执行命令：看 a 池的在线状态")
+        self.assertEqual((rows["c"]["label"], rows["c"]["detail"]), ("更新检查点", '/bin/bash -lc "cat > /x/checkpoints/a.json"'))
 
     def test_a_quiet_running_turn_does_not_change_its_rev_every_second(self):
         self.topic(status="running", lines=(("user", "做一下"),))

@@ -1,12 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useMatch } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ChevronDown, ChevronRight, FolderOpen, LayoutDashboard, ListTree, Menu, PanelLeft, Plus, Search, Settings, Share2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Brain, ChevronDown, ChevronRight, FolderOpen, LayoutDashboard, ListTree, Menu, PanelLeft, Plus, Search, Settings, Share2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { prefetchTurns, useSettings, useSnapshot, useWarmup } from '@client/src/hooks/use-workbench';
+import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemory } from '@client/src/hooks/use-workbench';
 import { ageMs, errorText } from '@client/src/lib/workbench-format';
 import { byRecent, isRunning, isWaiting, pref, setPref, toneOf, toneWord, topicNumberOf, type ToneKey } from './lib';
 import { Avatar, Dot, useTick } from './ui';
@@ -14,6 +14,8 @@ import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { setCollapsed, setMenu, useUi } from './store';
 import { listTone } from './topicText';
 import { askNumbers, asks, askSum, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
+import { PaneHandle } from './PaneHandle';
+import { SIDE_PANE, showSavedPanes } from './panes';
 import './covey.css';
 import './layout-a.css';
 import './night.css';
@@ -250,6 +252,7 @@ export const SyncDot: React.FC<{ at: string | null | undefined }> = ({ at }) => 
 };
 
 const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }) => {
+  const memoryOn: boolean = !!useMemory().data?.data?.on;
   const { data } = useSnapshot();
   const ui = useUi();
   const loc = useLocation();
@@ -358,6 +361,12 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
               </>
             )}
           </Link>
+          {memoryOn ? (
+            <Link to="/settings/memory" className={`row a-nav ${loc.pathname === '/settings/memory' ? 'on' : ''}`} title="记忆：全局和各工作区的原则、知识条目">
+              <Brain className="ic" />
+              {mini ? null : <span className="t">记忆</span>}
+            </Link>
+          ) : null}
           {mini ? (
             topics.filter(hot).slice(0, 12).map((t: SnapshotTopic) => <TopicRow key={t.key} t={t} active={isOn(t)} stopped={stoppedKeys.has(t.key)} mini />)
           ) : (
@@ -565,6 +574,13 @@ export const Head: React.FC<{
   );
 };
 
+// 两侧栏拖过的宽度（T741）：模块载入时就放上，首屏按记下的宽度画
+try {
+  showSavedPanes();
+} catch {
+  /* 没有 DOM */
+}
+
 const Shell: React.FC = () => {
   const desktop: boolean = useIsDesktop();
   const ui = useUi();
@@ -605,6 +621,7 @@ const Shell: React.FC = () => {
     <div className={cls}>
       <div className="app">
         {desktop ? <Sidebar mini={ui.collapsed} /> : null}
+        {desktop && !ui.collapsed ? <PaneHandle spec={SIDE_PANE} /> : null}
         <main className="main">
           <Outlet />
         </main>

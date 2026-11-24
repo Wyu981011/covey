@@ -16,6 +16,14 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --yes
 ```
 
+部署脚本最后一步会在你和机器人的私聊顶栏建「工作台」标签（飞书内嵌打开，要机器人有 `im:chat.tabs:write_only` 权限）。老部署补建，或当时缺权限、还没私聊过没做成时，单独补一遍：
+
+```bash
+python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --only-chat-tab --yes
+```
+
+建好的标签自动排在「消息」后面。要把工作台也固定到飞书左侧主导航，需在 Covey 机器人那个飞书应用的开发者后台手工做：应用能力里添加「网页应用」，桌面端主页和移动端主页都填网页地址（不要加 `lk_jump_to_browser`），再创建版本并发布；这几步没有开放接口，部署脚本结尾会打印，详见 [deploy/miaoda/README.md](deploy/miaoda/README.md#固定到飞书主导航)。
+
 自托管：装 Covey 时加 `./install --web`（要公网直连加 `./install --web-public <IP或域名>`）一步做完；也可以手动构建、备好密钥和配置，再按打印的开关改 Covey 的服务清单：
 
 ```bash
@@ -47,7 +55,7 @@ npm run build:selfhost           # 自托管版：服务端和前端构建到 di
 - 仓库里提交的是 `.env.example`（三行日志配置，没有密钥）；`.env` 在 `.gitignore` 里，各人本机的覆盖写在那里。`npm run dev` 和 `prune-smart` 先读 `.env`，没有的项用 `.env.example`；`scripts/build.sh` 和自托管的 `build.sh` 构建时，没有 `.env` 就用 `.env.example` 生成，妙搭一键部署把 `.env.example` 当成应用仓库的 `.env`。所以不用手动建 `.env`，行为和原来提交 `.env` 时一样。
 - 头像只有一份，在核心的 `covey/assets/avatars/`（核心运行时从那里读，上传给飞书）。`client/src/cv/avatars/` 是 `scripts/sync-avatars.mjs` 从它拷来的，在 `.gitignore` 里，不要手改。`npm run dev`、`dev:client`、`build`、`build:client`、`build:selfhost:client` 的 `pre` 钩子、自托管的 `build.sh` 和妙搭的 `deploy.py` 都会先拷一遍；只拷 `web/` 出去（没有 `covey/`）时，目录已经在就不动，不在就报错。第一次在新检出里直接跑 `vite` 或 `tsc` 之前，先 `npm run sync:avatars`。
 
-单测一共 22 组：工作台 19 组（`test:graph` 到 `test:v34`），自托管 3 组（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
+单测一共 23 组：工作台 20 组（`test:graph` 到 `test:v34`），自托管 3 组（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
 
 部署脚本的测试（不连飞书，用假的 lark-cli 和本机 git 仓库），在 covey 仓库根目录：
 
