@@ -417,19 +417,23 @@ while time.time() < deadline:
     time.sleep(3)
 post["started_line"] = started
 post["ready_lines"] = sum("ready event_key=" in line for line in after or [])
+# Lead and butler runners have no job number or adoption log. Keep them in runners_before,
+# but only numbered task runners participate in the handoff check.
 pending = {}
 while started and time.time() < deadline:
     _, after = log_after_start(release_id)
     text = "\n".join(after or [])
     pending = {pid: job for pid, job in live_runners.items()
-               if f"adopted task runner job=#{job} pid={pid}" not in text and os.path.exists(f"/proc/{pid}")}
+               if job is not None and f"adopted task runner job=#{job} pid={pid}" not in text
+               and os.path.exists(f"/proc/{pid}")}
     if not pending:
         break
     time.sleep(3)
 text = "\n".join(after or [])
 post["adopted"] = sorted(int(m) for m in re.findall(r"adopted task runner job=#(\d+)", text))
 post["not_adopted_alive"] = {str(pid): job for pid, job in pending.items()}
-post["ended_meanwhile"] = sorted(job for pid, job in live_runners.items() if not os.path.exists(f"/proc/{pid}"))
+post["ended_meanwhile"] = sorted(job for pid, job in live_runners.items()
+                                 if job is not None and not os.path.exists(f"/proc/{pid}"))
 now = status(release)
 st = now.get("status") or {}
 pid = (st.get("process") or {}).get("pid")

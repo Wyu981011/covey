@@ -1,6 +1,6 @@
 """scripts/deploy_bridge.sh (arguments and pre-checks, --check-only on a fake state directory and
-service root; nothing is packed or bootstrapped) and scripts/cardkit_check.py (cards from samples and
-files, measured; CardKit's create faked, no other call), scripts/golden_trace.py (a throwaway test module
+service root; post-checks with fake processes and services; nothing is packed or bootstrapped) and
+scripts/cardkit_check.py (cards from samples and files, measured; CardKit's create faked, no other call), scripts/golden_trace.py (a throwaway test module
 recorded three times and a sleeping one terminated, one Python child each; compare on hand-made recordings)
 and scripts/cross_release.py (its output checks and compare), scripts/check_doc_links.py (files and anchors of a
 throwaway tree). Each deploy run is one short-lived bash and
@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -626,6 +627,63 @@ class DeployPrecompileTests(DeployFixture):
                                                     "bin/covey_bridge.py": "# entry\n"})
         self.assertFalse(out["precompile"]["ok"])
         self.assertEqual(out["bootstrap_exit"], 1)
+
+
+class DeployPostCheckTests(unittest.TestCase):
+    """Run the actual post-check block with fake processes, clock, logs and service commands; never bootstrap."""
+
+    def post_check(self, runners, alive, adopted=()):
+        source = DEPLOY.read_text().split("# ---- post-checks\n", 1)[1].rsplit("\nPY", 1)[0]
+        release = Path("/fake/releases/new")
+        lines = ["ready event_key=message", "ready event_key=card"]
+        lines += [f"adopted task runner job=#{runners[pid]} pid={pid}" for pid in adopted]
+        clock = mock.Mock()
+        clock.time.side_effect = iter(range(0, 2000, 10))
+        shell = mock.Mock(return_value=subprocess.CompletedProcess([], 0, stdout='{"ok": true}'))
+        finish = mock.Mock()
+        namespace = {"time": clock, "os": os, "re": re, "Path": Path, "json": json,
+                     "live_runners": runners, "release": release, "release_id": "new",
+                     "log_after_start": lambda _: ("bridge started release=new", lines),
+                     "status": lambda _: {"status": {"generation": 2, "process": {"pid": 900},
+                                                       "health": {"status": "ready", "workers": {"proxy": True}}}},
+                     "sh": shell, "args": mock.Mock(profile="fake", app_id="fake"), "finish": finish}
+        with mock.patch("os.path.exists", side_effect=lambda path: int(path.rsplit("/", 1)[1]) in alive), \
+                mock.patch.object(Path, "read_bytes", return_value=b"python3\0/fake/releases/new/bin/covey_bridge.py\0"):
+            exec(compile(source, str(DEPLOY), "exec"), namespace)
+        # Health, doctor and application checks must still run to completion.
+        self.assertEqual(shell.call_count, 2)
+        self.assertEqual(shell.call_args_list[0].args[0][2], "bin/covey_doctor.py")
+        self.assertEqual(shell.call_args_list[1].args[0][2], "bin/covey_app_setup.py")
+        self.assertEqual(finish.call_count, 1)
+        return finish.call_args.kwargs, clock
+
+    def test_ended_unnumbered_runners_do_not_break_sorting(self):
+        out, clock = self.post_check({101: None, 102: None, 103: 42, 104: 7}, alive=set())
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["post"]["ended_meanwhile"], [7, 42])
+        self.assertEqual(out["post"]["not_adopted_alive"], {})
+        clock.sleep.assert_not_called()
+
+    def test_live_unnumbered_runners_do_not_wait_for_adoption(self):
+        out, clock = self.post_check({101: None, 102: None, 103: 42}, alive={101, 102, 103}, adopted=(103,))
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["post"]["not_adopted_alive"], {})
+        self.assertEqual(out["post"]["adopted"], [42])
+        clock.sleep.assert_not_called()
+
+    def test_a_numbered_runner_still_blocks_without_its_own_adoption(self):
+        # A matching job number on another pid must not count as this runner's adoption.
+        out, clock = self.post_check({101: None, 103: 42, 104: 42}, alive={101, 103, 104}, adopted=(104,))
+        self.assertFalse(out["ok"])
+        self.assertEqual(out["post"]["not_adopted_alive"], {"103": 42})
+        self.assertGreater(clock.sleep.call_count, 0)
+
+    def test_numbered_runners_are_reported_when_adopted_or_ended(self):
+        out, clock = self.post_check({103: 42, 104: 7}, alive={103}, adopted=(103,))
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["post"]["adopted"], [42])
+        self.assertEqual(out["post"]["ended_meanwhile"], [7])
+        clock.sleep.assert_not_called()
 
 
 class CardkitCheckTests(unittest.TestCase):
