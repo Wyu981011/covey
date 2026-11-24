@@ -108,7 +108,8 @@ def serve(console, lines, shots=None):
             emit("result", cmd=name, ok=True, detail=action(console, command))
         except Stop as stop:
             shot(console, shots, name)
-            emit("result", cmd=name, ok=False, detail=f"{stop.step}: {stop.detail}")
+            emit("result", cmd=name, ok=False, detail=f"{stop.step}: {stop.detail}",
+                 **({"code": stop.code} if stop.code else {}))
         except Exception as exc:  # noqa: BLE001 - said in one line, the installer decides
             shot(console, shots, name)
             emit("result", cmd=name, ok=False, detail=f"{type(exc).__name__}: {' '.join(str(exc).split())[:300]}")

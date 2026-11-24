@@ -96,6 +96,10 @@ class CardRouting:
             timing.outcome('ignored')
             access.ignore(event, 'empty')  # Only the bot's @ (an owner's may have asked him about the group).
             return
+        if self.menu.handle_slash(
+                ctx, event, admitted,
+                personal_group=admitted.group and access.agent_chat(str(event.get('chat_id') or ''), True)):
+            return
         if any(feature.handle_event(ctx, event, admitted.owner) for feature in self.extension_features
                if hasattr(feature, 'handle_event')):
             return

@@ -14,9 +14,9 @@
 
 | 订阅 | 类型 | 用途 | 什么时候要 |
 | --- | --- | --- | --- |
-| `im.message.receive_v1` | 事件 | 收消息 | 总要 |
+| `im.message.receive_v1` | 事件 | 收消息（含斜杠命令） | 总要 |
 | `card.action.trigger` | 回调 | 所有卡片按钮和选择 | 总要 |
-| `application.bot.menu_v6` | 事件 | 机器人菜单的点击 | 总要；不开时机器人照常工作，只是菜单点了没反应 |
+| `application.bot.menu_v6` | 事件 | 旧版底部自定义菜单的点击 | 仅在应用已启用旧版底部自定义菜单时需要；未启用时不要求 |
 | `im.message.message_read_v1` | 事件 | 话题看过没有（已读） | `COVEY_PINNED_TOPICS=1` |
 
 **权限**：
@@ -42,18 +42,18 @@
 
 `lark-cli config init --new` 的应用模板带了其中大部分。某个订阅具体要哪些权限，以 `lark-cli event schema <订阅名>` 的 `Required Scopes` 为准。不用群聊免@ 就不要申请 `im:message.group_msg`，见[在群里用](usage.md#在群里用)。
 
-**机器人菜单**：启用自定义菜单，展示形式选“悬浮菜单”（浮在输入框上方，不挡输入），都是一级菜单（飞书最多 5 个），动作都选“推送事件”，事件 key 一字不差（机器人按它认菜单项）：
+**斜杠命令（默认，官方 OpenAPI 自动注册，无需浏览器与开发者后台）**：`./install` 与 Bridge 的日常检查会以机器人身份调用 `lark-cli application +slash-command-create --as bot --force`（对应 `POST /open-apis/application/v7/app_slash_commands`，使用 `lark-cli config init --new` 默认自带的 `application:app_slash_command:read/write` 权限，定义在 `feishu/slash_commands.py`），在输入框打 `/` 即可呼出（客户端缓存约 5 分钟生效，也可直接手打英文命令或中文别名）：
 
-| 菜单 | 事件 key | 图标（自动补齐用飞书内置线性图标；手工配可以上传右边的文件） | 什么时候要 |
+| 斜杠命令 | 中文别名 | 对应菜单键 | 什么时候注册 |
 | --- | --- | --- | --- |
-| 用量 | `weekly_usage` | `insert-chart_outlined`；`docs/media/menu-icons/usage.png` | 总要 |
-| 看板 | `digest_board` | `bitablekanban_outlined` | 设了 `COVEY_BOARD=1`（`./install` 写）或 `COVEY_DIGEST_TIMES` |
-| 代答 | `proxy_settings` | `robot_outlined`；`docs/media/menu-icons/proxy.png` | 启用的扩展有代答发送器 |
-| 设置 | `bridge_settings` | `setting_outlined`；`docs/media/menu-icons/settings.png` | 总要 |
+| `/usage` | `/用量` | `weekly_usage` | 总要 |
+| `/board` | `/看板` | `digest_board` | 设了 `COVEY_BOARD=1`（`./install` 写）或 `COVEY_DIGEST_TIMES` |
+| `/proxy` | `/代答` | `proxy_settings` | 启用的扩展有代答发送器 |
+| `/settings` | `/设置` | `bridge_settings` | 总要 |
 
-- “设置”是一张卡上几个标签：配置（设了 `COVEY_BUTLER=0` 时没有管家那一段）、工作区、脱敏、群聊（开了节点再加设备）、诊断，见[机器人菜单](usage.md#机器人菜单)。菜单只对主人有反应，结果发在主人和机器人的私聊里。
-- 以前单独配的菜单项照旧能点：`manage_workspaces`（工作区）、`redaction_dashboard`（脱敏）、`manage_groups`（群聊，图标 `docs/media/menu-icons/groups.png`）、`main_thread_settings`。它们算进 5 项上限，自动补齐不删也不换。
-- 上传的图标飞书 7.22 以上显示；菜单补上后约 5 分钟出现在输入框上方。
+**旧版底部自定义菜单（可选兼容）**：不再要求配置。已经配过底部悬浮菜单的老部署继续完全可用（动作“推送事件”，事件 key 同上表，以及以前单独配过的 `manage_workspaces`、`redaction_dashboard`、`manage_groups`、`main_thread_settings`）；新部署直接用斜杠命令即可，无需打开开发者后台或做桌面设备认证。
+
+- “设置”是一张卡上几个标签：配置（设了 `COVEY_BUTLER=0` 时没有管家那一段）、工作区、脱敏、群聊（开了节点再加设备）、诊断，见[机器人菜单](usage.md#机器人菜单)。斜杠命令和菜单都只对主人有反应，不开话题。
 
 ## 自动补齐飞书应用
 

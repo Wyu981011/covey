@@ -28,7 +28,7 @@ from covey.app.unified import UnifiedBridgeApp
 from covey.cards import app_setup as cards
 from covey.core import app_manifest as manifest
 from covey.core.state import read_object, write_json
-from covey.feishu import app_config, app_console
+from covey.feishu import app_config, app_console, slash_commands
 from covey.service import app_check
 
 FULL = {"scopes": {name for name, _ in manifest.SCOPES + manifest.PIN_SCOPES + manifest.GROUP_ALL_SCOPES},
@@ -45,22 +45,40 @@ def ids(needs):
 class ManifestTests(unittest.TestCase):
     def test_switches_add_their_needs(self):
         bare = ids(manifest.required({}))
-        self.assertIn("event:application.bot.menu_v6", bare)
         self.assertIn("callback:card.action.trigger", bare)
+        self.assertIn("event:im.message.receive_v1", bare)
+        # Slash commands replace the legacy bottom custom menu by default: no console menu required.
+        self.assertNotIn("event:application.bot.menu_v6", bare)
+        self.assertNotIn("menu_enable:menu", bare)
+        self.assertNotIn("menu:weekly_usage", bare)
         self.assertNotIn("event:im.message.message_read_v1", bare)
         self.assertNotIn("menu:digest_board", bare)
         self.assertNotIn("scope:im:message.pins:read", bare)
         on = manifest.required({**SWITCHES, "COVEY_GROUP_ALL_MESSAGES": "1"})
         self.assertIn("event:im.message.message_read_v1", ids(on))
-        self.assertIn("menu:digest_board", ids(on))
         self.assertIn("scope:im:message.pins:write_only", ids(on))
         self.assertEqual([n.name for n in on if n.review], ["im:message.group_msg"])
+        # Legacy bottom menu remains available when requested explicitly.
+        legacy = ids(manifest.required({**SWITCHES, "COVEY_GROUP_ALL_MESSAGES": "1"}, bottom_menu=True))
+        self.assertIn("event:application.bot.menu_v6", legacy)
+        self.assertIn("menu_enable:menu", legacy)
+        self.assertIn("menu:digest_board", legacy)
+
+    def test_existing_bottom_menu_still_requires_menu_event_but_fresh_app_does_not(self):
+        no_menu = {**FULL, "menu_enable": False, "menu_keys": [], "events": {manifest.MESSAGE_EVENT, manifest.READ_EVENT}}
+        lacking, full = manifest.missing(SWITCHES, no_menu)
+        self.assertEqual((lacking, full), ([], []))
+        with_menu = {**no_menu, "menu_enable": True}
+        lacking_legacy, _ = manifest.missing(SWITCHES, with_menu)
+        self.assertEqual(ids(lacking_legacy), ["event:application.bot.menu_v6"])
 
     def test_the_proxy_menu_item_only_where_an_extension_has_the_sender(self):
         with mock.patch.object(manifest, "proxy_sender", return_value=False):
-            self.assertNotIn("menu:proxy_settings", ids(manifest.required({})))
+            self.assertNotIn("proxy", [c.command for c in manifest.slash_commands({})])
+            self.assertNotIn("menu:proxy_settings", ids(manifest.required({}, bottom_menu=True)))
         with mock.patch.object(manifest, "proxy_sender", return_value=True):
-            menu = [n for n in manifest.required({}) if n.kind == "menu"]
+            self.assertEqual([c.command for c in manifest.slash_commands({})], ["usage", "proxy", "settings"])
+            menu = [n for n in manifest.required({}, bottom_menu=True) if n.kind == "menu"]
         self.assertEqual([n.name for n in menu], ["weekly_usage", "proxy_settings", "bridge_settings"])
         with mock.patch("covey.core.extensions.manifests", side_effect=OSError):
             self.assertFalse(manifest.proxy_sender())
@@ -74,13 +92,13 @@ class ManifestTests(unittest.TestCase):
     def test_menu_items_past_five_are_not_offered(self):
         online = {**FULL, "menu_keys": ["a", "b", "c", "manage_workspaces"], "menu_enable": True}
         with mock.patch.object(manifest, "proxy_sender", return_value=False):
-            lacking, full = manifest.missing(SWITCHES, online)
+            lacking, full = manifest.missing(SWITCHES, online, bottom_menu=True)
         self.assertEqual(ids(full), ["menu:digest_board", "menu:bridge_settings"])
         self.assertEqual(ids(manifest.offered(lacking, full)), ["menu:weekly_usage"])
 
     def test_plan_and_remark(self):
-        needs = [n for n in manifest.required(SWITCHES) if n.name in ("im:message", "application.bot.menu_v6",
-                                                                      "weekly_usage", "bridge_settings")]
+        needs = [n for n in manifest.required(SWITCHES, bottom_menu=True)
+                 if n.name in ("im:message", "application.bot.menu_v6", "weekly_usage", "bridge_settings")]
         plan = manifest.plan(needs, remark=manifest.remark(needs))
         self.assertEqual(plan["scopes"], ["im:message"])
         self.assertEqual(plan["events"], ["application.bot.menu_v6"])
@@ -208,6 +226,25 @@ class ConsoleTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
             self.assertFalse(app_console.copy_login(Path(tmp) / "none", Path(tmp) / "other"))
 
+    def test_conditional_access_page_fails_fast_instead_of_timing_out(self):
+        self.assertTrue(app_console.conditional_access("https://security.larkoffice.com/conditionalaccess/deny?foo=1"))
+        self.assertTrue(app_console.conditional_access("https://accounts.feishu.cn/x", "继续访问飞书网页版前，需先在客户端完成设备信息授权"))
+        self.assertFalse(app_console.conditional_access("https://accounts.feishu.cn/accounts/page/login", "扫码登录"))
+        page = SimpleNamespace(
+            url="https://security.larkoffice.com/conditionalaccess/deny?code=1",
+            goto=lambda *a, **k: None,
+            evaluate=lambda *a, **k: "继续访问飞书网页版前，需先在客户端完成设备信息授权",
+            wait_for_timeout=mock.Mock(),
+        )
+        console = app_console.Console(page, "https://open.feishu.cn", "cli_x", "/tmp")
+        with mock.patch.object(app_console, "emit") as emitted, self.assertRaises(app_console.Stop) as caught:
+            console.login(seconds=300)
+        self.assertEqual(caught.exception.step, "login")
+        self.assertEqual(caught.exception.code, app_console.CONDITIONAL_ACCESS_CODE)
+        page.wait_for_timeout.assert_not_called()
+        emitted.assert_called_once()
+        self.assertEqual(emitted.call_args.kwargs.get("reason"), app_console.CONDITIONAL_ACCESS_CODE)
+
 
 class Runtime:
     def __init__(self, chat="oc_dm"):
@@ -254,28 +291,48 @@ class SetupCase(unittest.TestCase):
         env = mock.patch.dict(os.environ, SWITCHES, clear=False)
         env.start()
         self.addCleanup(env.stop)
-        for name in ("COVEY_GROUP_ALL_MESSAGES", "COVEY_PINNED_OVERVIEW"):
+        for name in ("COVEY_GROUP_ALL_MESSAGES", "LARK_BRIDGE_GROUP_ALL_MESSAGES",
+                     "COVEY_PINNED_OVERVIEW", "LARK_BRIDGE_PINNED_OVERVIEW"):
             os.environ.pop(name, None)
-        self.online = lacking_online("im:message", "weekly_usage")
+        self.online = lacking_online("im:message", "im:resource")
         reader = mock.patch.object(app_config, "online_config", lambda *a, **k: self.online)
         reader.start()
         self.addCleanup(reader.stop)
+        self.slash_sync = mock.Mock(return_value={
+            "ok": True, "error": "", "detail": "", "wanted": ["usage", "board", "settings"],
+            "synced": ["usage", "board", "settings"], "unchanged": [], "failed": [],
+        })
+        syncer = mock.patch.object(slash_commands, "sync", self.slash_sync)
+        syncer.start()
+        self.addCleanup(syncer.stop)
 
 
 class CheckTests(SetupCase):
     def test_one_card_per_set_of_missing_things(self):
         view = self.setup.check(self.ctx)
-        self.assertEqual([n["id"] for n in view["offer"]], ["scope:im:message", "menu:weekly_usage"])
+        self.assertEqual([n["id"] for n in view["offer"]], ["scope:im:message", "scope:im:resource"])
         self.assertEqual(len(self.messenger.sent), 1)
         chat, text, key, card = self.messenger.sent[0]
         self.assertEqual(chat, "oc_dm")
         self.assertIn("缺 2 项", json.dumps(card, ensure_ascii=False))
         record = read_object(self.state / "app-setup" / "state.json")
         self.assertEqual(record["card"]["message_id"], "om_1")
+        self.assertTrue(record["slash"]["ok"])
+        self.assertEqual(record["slash"]["synced"], ["usage", "board", "settings"])
         self.assertIsNone(self.setup.check(self.ctx))  # The same set: no second card.
         self.online = lacking_online("im:message")
         self.assertIsNotNone(self.setup.check(self.ctx))  # Another set: a new card.
         self.assertEqual(len(self.messenger.sent), 2)
+
+    def test_missing_bottom_menu_alone_syncs_slash_commands_and_sends_no_card(self):
+        self.online = {**FULL, "menu_enable": False, "menu_keys": [],
+                       "events": {manifest.MESSAGE_EVENT, manifest.READ_EVENT}}
+        self.assertIsNone(self.setup.check(self.ctx))
+        self.slash_sync.assert_called_once_with("p")
+        self.assertEqual(self.messenger.sent, [])
+        record = read_object(self.state / "app-setup" / "state.json")
+        self.assertEqual(record["lacking"], [])
+        self.assertTrue(record["slash"]["ok"])
 
     def test_no_card_for_a_reviewed_scope_alone_or_without_the_chat(self):
         self.online = FULL
@@ -420,7 +477,7 @@ class RunTests(SetupCase):
         self.assertEqual(list((self.state / "app-setup" / "runs").iterdir()), [])
 
     def test_groups_are_blocks_of_their_own(self):
-        offer = [need_dict(n) for n in manifest.required(SWITCHES) if n.name in ("im:message", "bridge_settings")]
+        offer = [need_dict(n) for n in manifest.required(SWITCHES, bottom_menu=True) if n.name in ("im:message", "bridge_settings")]
         card = cards.offer_card({"offer": offer})
         blocks = [e["content"] for e in card["body"]["elements"] if e.get("tag") == "markdown"]
         self.assertIn("**权限**\n- 撤回消息 <font color='grey'>im:message</font>", blocks)

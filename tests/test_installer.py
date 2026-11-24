@@ -71,13 +71,13 @@ d="$FAKE_DIR"; echo "$@" >> "$d/calls"
 case "$*" in
   *"config show"*) [ -f "$d/profile" ] && echo '{"appId": "cli_fake"}' || exit 1 ;;
   *"config init"*) echo "  https://open.feishu.cn/page/cli?user_code=AAAA-BBBB"
-     for i in $(seq 100); do [ -f "$d/clicked-create" ] && break; sleep 0.05; done
-     [ -f "$d/clicked-create" ] || { [ -f "$d/phone" ] || exit 1; }
+     for i in $(seq 100); do [ -f "$d/clicked-create" ] || [ -f "$d/phone" ] && break; sleep 0.05; done
+     [ -f "$d/clicked-create" ] || [ -f "$d/phone" ] || exit 1
      touch "$d/profile"; echo "OK: 应用配置成功" ;;
   *"auth status"*) [ -f "$d/authed" ] || exit 1 ;;
   *"auth login"*) echo "  https://accounts.feishu.cn/oauth/v1/device/verify?user_code=CCCC-DDDD"
-     for i in $(seq 100); do [ -f "$d/clicked-auth" ] && break; sleep 0.05; done
-     [ -f "$d/clicked-auth" ] || { [ -f "$d/phone" ] || exit 1; }
+     for i in $(seq 100); do [ -f "$d/clicked-auth" ] || [ -f "$d/phone" ] && break; sleep 0.05; done
+     [ -f "$d/clicked-auth" ] || [ -f "$d/phone" ] || exit 1
      touch "$d/authed" ;;
   *"profile remove"*) rm -f "$d/profile" "$d/authed" "$d/clicked-create" "$d/clicked-auth" ;;
 esac
@@ -171,6 +171,10 @@ class InstallerCase(unittest.TestCase):
         FakeBrowser.opened = []
         self.lacking = [app_manifest.Need("callback", "card.action.trigger", "卡片按钮")]
         self.app_name = ""  # What the app is really called (the bot's info); "" when unreadable.
+        self.slash_sync = mock.Mock(return_value={
+            "ok": True, "error": "", "detail": "", "wanted": ["usage", "board", "settings"],
+            "synced": ["usage", "board", "settings"], "unchanged": [], "failed": [],
+        })
 
     def env(self, **extra):
         return {"PATH": f"{self.bin}:/usr/bin:/bin", "HOME": str(self.root), "FAKE_DIR": str(self.fake),
@@ -191,7 +195,8 @@ class InstallerCase(unittest.TestCase):
         ins = installer.Installer(args, env=env or self.env(), say=self.lines.append, interactive=interactive,
                                   ask=ask or self.ask, probe=self.probe, browser_factory=FakeBrowser,
                                   survey_app=self.survey, app_name_of=lambda profile: self.app_name,
-                                  app_id_of=lambda profile: "cli_fake" if (self.fake / "profile").exists() else "")
+                                  app_id_of=lambda profile: "cli_fake" if (self.fake / "profile").exists() else "",
+                                  sync_slash=self.slash_sync)
         return ins
 
     def ask(self, prompt):
@@ -207,10 +212,22 @@ class InstallerCase(unittest.TestCase):
 
 
 class FlowTest(InstallerCase):
+    def test_default_run_uses_phone_qr_and_syncs_slash_commands_with_no_browser(self):
+        (self.fake / "phone").touch()
+        self.lacking.clear()
+        ins = self.make("--no-start")
+        self.assertEqual(0, ins.run())
+        self.assertEqual([], FakeBrowser.opened)
+        self.slash_sync.assert_called_once()
+        self.assertEqual(self.slash_sync.call_args.args[0], "covey")
+        self.assertEqual("1", cenv.get("COVEY_BOARD", None, self.slash_sync.call_args.args[1]))
+        self.assertIn("斜杠命令已就绪：/usage、/board、/settings", self.text())
+        self.assertNotIn("还差：", self.text())
+
     def test_one_run_creates_authorizes_configures_and_leaves_no_login(self):
         self.probes["claude"] = Probe(False, install_probe.NOT_LOGGED_IN, "Not logged in")
         self.lacking = [app_manifest.Need("callback", "card.action.trigger", "卡片按钮")]
-        ins = self.make("--no-start")
+        ins = self.make("--no-start", "--browser")
         with mock.patch.object(installer.Installer, "lacking_after", return_value=[]):
             self.assertEqual(0, ins.run())
         browser = FakeBrowser.opened[0]
@@ -228,6 +245,7 @@ class FlowTest(InstallerCase):
         self.assertEqual(str(self.data / "browsers"), ins.env["PLAYWRIGHT_BROWSERS_PATH"])
 
     def test_a_rerun_keeps_what_the_owner_enabled_and_only_names_a_failed_probe(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         self.assertEqual(0, self.make("--no-start").run())  # First install: by the probes.
         path = self.data / "harnesses.json"
@@ -245,6 +263,7 @@ class FlowTest(InstallerCase):
         self.assertIn("启动卡上会显示不可用", self.text())
 
     def test_an_upgrade_without_a_person_lists_the_missing_menu_and_does_not_open_the_browser(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         self.assertEqual(0, self.make("--no-start").run())
         (self.fake / "authed").touch()
@@ -258,6 +277,7 @@ class FlowTest(InstallerCase):
         self.assertIn("飞书应用待补", self.text())
 
     def test_a_second_run_reuses_everything_and_opens_no_browser(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         self.assertEqual(0, self.make("--no-start").run())
         (self.fake / "authed").touch()
@@ -269,16 +289,16 @@ class FlowTest(InstallerCase):
 
     def test_reconfigure_removes_the_profile_and_scans_again(self):
         self.lacking.clear()
-        self.make("--no-start").run()
+        self.make("--no-start", "--browser").run()
         (self.fake / "authed").touch()
         FakeBrowser.opened.clear()
-        self.assertEqual(0, self.make("--no-start", "--reconfigure").run())
+        self.assertEqual(0, self.make("--no-start", "--browser", "--reconfigure").run())
         self.assertEqual(1, len(FakeBrowser.opened))
         self.assertTrue(any("profile remove" in c for c in self.calls()))
 
     def test_keep_login_leaves_the_browser_folder(self):
         self.lacking.clear()
-        self.assertEqual(0, self.make("--no-start", "--keep-login").run())
+        self.assertEqual(0, self.make("--no-start", "--browser", "--keep-login").run())
         self.assertTrue(FakeBrowser.opened[0].home.exists())
         self.assertIn("--keep-login", self.text())
 
@@ -290,6 +310,7 @@ class FlowTest(InstallerCase):
         self.assertIn("没登录", self.text())
 
     def test_a_missing_cli_is_named_not_probed(self):
+        (self.fake / "phone").touch()
         (self.bin / "claude").unlink()
         self.lacking.clear()
         self.make("--no-start").run()
@@ -297,6 +318,7 @@ class FlowTest(InstallerCase):
         self.assertNotIn("claude：能调通", self.text())
 
     def test_defaults_need_no_questions(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         self.make("--no-start").run()
         self.assertEqual([], self.asked)
@@ -315,6 +337,7 @@ class ProxyTest(InstallerCase):
         return Probe(True, "ok") if env.get("https_proxy") else Probe(False, install_probe.NETWORK, "403")
 
     def test_a_network_failure_asks_for_a_proxy_and_the_service_gets_it(self):
+        (self.fake / "phone").touch()
         self.probes["codex"] = self.network_until_proxy
         self.lacking.clear()
         ins = self.make("--no-start", interactive=True, ask=lambda prompt: "http://127.0.0.1:7890")
@@ -328,6 +351,7 @@ class ProxyTest(InstallerCase):
         self.assertIn("代理设置会一起写进服务", self.text())
 
     def test_non_interactive_says_how_to_set_one_and_enables_the_rest(self):
+        (self.fake / "phone").touch()
         self.probes["codex"] = self.network_until_proxy
         self.lacking.clear()
         ins = self.make("--no-start", "--non-interactive")
@@ -337,6 +361,7 @@ class ProxyTest(InstallerCase):
         self.assertEqual(["claude"], json.loads((self.data / "harnesses.json").read_text())["enabled_harnesses"])
 
     def test_a_terminal_proxy_is_kept_with_the_feishu_domains_direct(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         ins = self.make("--no-start", env=self.env(HTTPS_PROXY="http://proxy.example.com:3128", NO_PROXY="corp.local"))
         self.assertEqual(0, ins.run())
@@ -346,6 +371,7 @@ class ProxyTest(InstallerCase):
         self.assertNotIn("HTTPS_PROXY", ins.env)
 
     def test_a_lowercase_terminal_proxy_wins_over_the_uppercase_one(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         ins = self.make("--no-start", env=self.env(HTTPS_PROXY="http://upper.example.com:3128",
                                                    https_proxy="http://lower.example.com:3128"))
@@ -378,6 +404,7 @@ class NoBrowserTest(InstallerCase):
             self.assertTrue((self.data / "tmp" / f"link-qr-{n}.png").is_file())
 
     def test_the_closing_line_names_the_app_as_it_is_called_now_or_no_name(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         self.app_name = "王小明的飞书 CLI"  # The create page's own proposal, kept by the user.
         self.assertEqual(0, self.make("--no-start").run())
@@ -438,15 +465,47 @@ class NoBrowserTest(InstallerCase):
 
         env = self.env()
         env.pop("COVEY_PLAYWRIGHT_PYTHON")
-        ins = self.make(env=env)
+        ins = self.make("--browser", env=env)
         ins.prepare_browser = prepare
         self.assertIsNone(ins.ensure_browser())
         self.assertIn("浏览器用不了：Chromium 起不来：缺系统库", self.text())
         self.assertIn("改用手机扫码", self.text())
 
+    def test_browser_hitting_conditional_access_falls_back_to_phone_automatically(self):
+        class BlockedBrowser(FakeBrowser):
+            def create_app(self, url, name):
+                self.calls.append(("create_app", url, name))
+                return {"ok": False, "code": "conditional_access", "detail": "租户条件访问拦下"}
+
+            def close(self):
+                super().close()
+                (self.fake / "phone").touch()  # Let the phone fallback's lark-cli flows proceed after aborting init.
+
+        self.lacking = [app_manifest.Need("callback", "card.action.trigger", "卡片按钮")]
+        ins = self.make("--no-start", "--browser")
+        ins.browser_factory = BlockedBrowser
+        self.assertEqual(0, ins.run())
+        self.assertEqual(len(FakeBrowser.opened), 1)
+        self.assertEqual([c[0] for c in FakeBrowser.opened[0].calls], ["create_app", "close"])
+        self.assertIn("条件访问拦下", self.text())
+        self.assertIn("手机第 1 步：建应用", self.text())
+        self.assertIn("手机第 2 步：授权", self.text())
+        self.assertIn("手机第 3 步：回调订阅：卡片按钮", self.text())
+        self.slash_sync.assert_called_once()
+
+    def test_slash_sync_failure_becomes_non_fatal_leftover(self):
+        (self.fake / "phone").touch()
+        self.lacking.clear()
+        self.slash_sync.return_value = {"ok": False, "error": "no_scope", "detail": "99991672",
+                                        "wanted": ["usage", "board", "settings"], "synced": [], "unchanged": [], "failed": []}
+        self.assertEqual(0, self.make("--no-start").run())
+        self.assertIn("还差：斜杠命令没注册到输入框面板", self.text())
+        self.assertIn("application:app_slash_command", self.text())
+
 
 class ExtensionHookTest(InstallerCase):
     def test_hooks_see_the_old_setup_script_helpers_and_may_add_harnesses(self):
+        (self.fake / "phone").touch()
         ext = self.root / "ext"
         (ext / "scripts").mkdir(parents=True)
         (ext / "scripts" / "setup_hook.sh").write_text(
@@ -670,6 +729,7 @@ class SwitchesTest(InstallerCase):
         return lambda name: cenv.get(name, None, ins.env), ins
 
     def test_the_app_is_checked_against_the_switches_the_new_service_starts_with(self):
+        (self.fake / "phone").touch()
         self.lacking.clear()
         self.assertEqual(0, self.make("--no-start", interactive=True).run())
         seen = self.surveyed[0]
@@ -1447,7 +1507,7 @@ class EntryTest(unittest.TestCase):
         done = subprocess.run([str(REPO / "install"), "--help"], capture_output=True, text=True, timeout=60)
         self.assertEqual(0, done.returncode, done.stderr)
         for flag in ("--reconfigure", "--skills", "--non-interactive", "--data-home", "--workdir", "--keep-login",
-                     "--no-browser", "--web", "--web-public"):
+                     "--browser", "--no-browser", "--web", "--web-public"):
             self.assertIn(flag, done.stdout)
 
 

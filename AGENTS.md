@@ -500,6 +500,7 @@
 | `feishu/messenger.py` | The Bridge's outbound Feishu boundary: text messages, card messages, published cards and CardKit writes |
 | `feishu/outgoing_images.py` | The local images an answer's Markdown links to, uploaded to Feishu and linked by their image key instead … |
 | `feishu/sdk.py` | Opt-in long-lived bot SDK for CardKit writes and message sends and reads |
+| `feishu/slash_commands.py` | The bot's Feishu slash commands, synced as the bot through the official API (no browser) |
 | `feishu/transport.py` | Structured delivery failures and durable, bounded idempotent CLI writes |
 | `feishu/web_client.py` | Feishu web, driven by a headless Chromium logged in as the owner, for the acceptance page of the browser … |
 | `feishu/web_service.py` | Feishu web's browser service, for the acceptance page alone |
@@ -518,7 +519,7 @@
 | `service/down_notice.py` | The Manager tells the owner when his bot is down (COVEY_DOWN_NOTICE in the service's manifest, on unless 0) |
 | `service/install.py` | Install an explicit boot registration without changing platform init files |
 | `service/install_probe.py` | ./install 对 Harness 做的一次真实探测：薄适配层，判断本身在 core/harness_probe.py（安装器、doctor、可用性检查共用一份）。 |
-| `service/installer.py` | ./install 的安装器本体：一遍跑完，扫一次码，最后发一句话就有回答（docs/install.md）。 |
+| `service/installer.py` | ./install 的安装器本体：一遍跑完，手机扫码，官方斜杠命令自动注册，最后发一句话就有回答（docs/install.md）。 |
 | `service/launchd.py` | macOS 的 launchd 托管：`~/Library/LaunchAgents/<label>.plist` 让 Manager 登录后自动跑、挂了自动拉起。 |
 | `service/manager.py` | Persistent single-host service management for all bridge entrypoints |
 | `service/memguard.py` | Memory watchdog: stop runaway search tools before they exhaust the machine |

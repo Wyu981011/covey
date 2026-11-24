@@ -1,13 +1,16 @@
 """What the Feishu app behind a Bridge must have, and what its online version lacks (docs/feishu-app.md 应用要有什么).
 
-``required(env)`` lists the app's needs from this deployment's switches: the bot, its events and callback, the
-scopes the Bridge's own calls use, and the bot menu's items. ``missing(env, online)`` compares them with the
-online version as feishu/app_config.py reads it through the official API (no login). app/app_setup.py checks
-at each start and offers the owner to add what is missing (feishu/app_console.py, after a QR login);
-bin/covey_app_setup.py prints the same check for the install and deploy scripts.
+``required(env)`` lists the app's needs from this deployment's switches: the bot, its events and callback, and the
+scopes the Bridge's own calls use. The bot's menu items are Feishu slash commands (``slash_commands(env)``, synced
+directly as the bot through feishu/slash_commands.py, with no browser or console login); the older floating bot menu
+(``MENU``) stays optional (``bottom_menu=True``) and keeps working where an app already has it. ``missing(env, online)``
+compares them with the online version as feishu/app_config.py reads it through the official API (no login).
+app/app_setup.py syncs slash commands and checks at each start, offering the owner to add what is still missing
+(feishu/app_console.py, after a QR login); bin/covey_app_setup.py prints the same check for the install and deploy
+scripts.
 
 A scope that needs the tenant admin's review is never added unless asked (``review``): listed apart on
-the card, unticked. Nothing is ever removed: the app's other scopes, events and menu items stay.
+the card, unticked. Nothing is ever removed: the app's other scopes, events, slash commands and menu items stay.
 Standard library only.
 """
 from __future__ import annotations
@@ -74,6 +77,60 @@ MENU = (("weekly_usage", "用量", "insert-chart_outlined"), ("digest_board", "�
 # Older items that still work (app/bot_menu.py KEYS): counted toward the limit, never replaced or removed.
 OLD_MENU_KEYS = ("manage_workspaces", "redaction_dashboard", "manage_groups", "main_thread_settings")
 
+# Feishu official slash commands (POST /open-apis/application/v7/app_slash_commands, feishu/slash_commands.py):
+# registered directly as the bot with no console login or version publish. Server enforces ^[a-z][a-z0-9_-]{0,31}$
+# for ``command`` and rejects icons outside its AI/skill list (40000031); Chinese lives in ``description`` and ``i18n``.
+SLASH_ICON = "skill_outlined"
+SLASH_INVISIBLE = "\u200b\u200c\u200d\ufeff\u00a0"
+
+
+@dataclasses.dataclass(frozen=True)
+class SlashCommand:
+    """One Feishu slash command wired to a bot menu item."""
+    key: str          # BotMenu action key (e.g. "bridge_settings")
+    command: str      # ASCII command name without leading '/'
+    label: str        # Chinese menu word ("设置"), also matched when typed as /设置
+    description: str  # Chinese description shown in Feishu's '/' panel (default_value and zh_cn)
+    en_description: str = ""
+    icon_key: str = SLASH_ICON
+
+
+SLASH_COMMANDS = (
+    SlashCommand("weekly_usage", "usage", "用量", "用量 · 查看本周用量", "Weekly usage"),
+    SlashCommand("digest_board", "board", "看板", "看板 · 查看等你、停住和在做的事", "Board"),
+    SlashCommand("proxy_settings", "proxy", "代答", "代答 · 打开代答设置", "Proxy settings"),
+    SlashCommand("bridge_settings", "settings", "设置", "设置 · 配置、工作区、脱敏、群聊与诊断", "Settings"),
+)
+
+
+def slash_commands(env=None):
+    """The slash commands this deployment registers, in panel order."""
+    env = os.environ if env is None else env
+    shown = board(env)
+    proxy = proxy_sender()
+    return tuple(item for item in SLASH_COMMANDS
+                 if (item.key != "digest_board" or shown) and (item.key != "proxy_settings" or proxy))
+
+
+def slash_key(text):
+    """The bot menu event key an exact slash command text names (/settings, /设置, …), else ''.
+
+    Only an exact single-token command matches: arguments (/settings 改模型), paths (/mnt/a),
+    multiline text and other slash commands (/compact, /pair) stay ordinary messages."""
+    if not isinstance(text, str):
+        return ""
+    cleaned = text.strip(" \t\r\n" + SLASH_INVISIBLE)
+    if not cleaned.startswith("/") or len(cleaned) < 2:
+        return ""
+    body = cleaned[1:]
+    if any(ch.isspace() or ch == "/" for ch in body):
+        return ""
+    low = body.lower()
+    for item in SLASH_COMMANDS:
+        if low == item.command or body == item.label:
+            return item.key
+    return ""
+
 
 def proxy_sender():
     """Whether an enabled extension has the proxy_sender hook (read from the manifests, no module imported);
@@ -101,13 +158,15 @@ def board(env=None) -> bool:
     return board_switch(env) or bool(str(cenv.get("COVEY_DIGEST_TIMES", "", env)).strip())
 
 
-def required(env=None):
-    """This deployment's needs, in the card's order: bot, events, callback, scopes, menu."""
+def required(env=None, *, bottom_menu=False):
+    """This deployment's needs, in the card's order: bot, events, callback, scopes (and the legacy floating bot
+    menu only when ``bottom_menu`` is requested; slash commands replace it by default)."""
     env = os.environ if env is None else env
     needs = [Need("bot", "bot", "机器人能力"),
-             Need("event", MESSAGE_EVENT, "收消息"),
-             Need("event", MENU_EVENT, "机器人菜单的点击"),
-             Need("callback", CARD_CALLBACK, "卡片按钮的点击")]
+             Need("event", MESSAGE_EVENT, "收消息")]
+    if bottom_menu:
+        needs.append(Need("event", MENU_EVENT, "机器人菜单的点击"))
+    needs.append(Need("callback", CARD_CALLBACK, "卡片按钮的点击"))
     pinned = switch(env, "COVEY_PINNED_TOPICS")
     if pinned:
         needs.append(Need("event", READ_EVENT, "话题看过没有（已读）"))
@@ -120,11 +179,12 @@ def required(env=None):
     needs += [Need("scope", name, words) for name, words in scopes]
     if group_all:
         needs.append(Need("scope", GROUP_ALL_REVIEW[0], GROUP_ALL_REVIEW[1], review=True))
-    needs.append(Need("menu_enable", "menu", "自定义菜单"))
-    shown = board(env)
-    for key, label, icon in MENU:
-        if (key != "digest_board" or shown) and (key != "proxy_settings" or proxy_sender()):
-            needs.append(Need("menu", key, f"菜单「{label}」", label=label, icon=icon))
+    if bottom_menu:
+        needs.append(Need("menu_enable", "menu", "自定义菜单"))
+        shown = board(env)
+        for key, label, icon in MENU:
+            if (key != "digest_board" or shown) and (key != "proxy_settings" or proxy_sender()):
+                needs.append(Need("menu", key, f"菜单「{label}」", label=label, icon=icon))
     return needs
 
 
@@ -137,10 +197,14 @@ def has(online, need):
     return need.name in (online.get(field) or ())
 
 
-def missing(env, online):
+def missing(env, online, *, bottom_menu=False):
     """(lacking, full): the needs ``online`` (feishu/app_config.py online_config) lacks, and of those the menu items
-    that would not fit in the menu's MENU_LIMIT next to the items it has."""
-    lacking = [need for need in required(env) if not has(online, need)]
+    that would not fit in the menu's MENU_LIMIT next to the items it has. An app that already enabled the floating
+    bot menu keeps requiring MENU_EVENT so its clicks work."""
+    needs = required(env, bottom_menu=bottom_menu)
+    if not bottom_menu and online.get("menu_enable"):
+        needs.append(Need("event", MENU_EVENT, "机器人菜单的点击"))
+    lacking = [need for need in needs if not has(online, need)]
     room = MENU_LIMIT - len(online.get("menu_keys") or ())
     full = []
     for need in lacking:
