@@ -15,6 +15,10 @@ NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
 READ_TOOLS = ("Read", "Grep", "Glob")
 FILE_TOOLS = ("Edit", "Write", "NotebookEdit")  # What a LOOK turn goes without: Claude Code's tools that change files.
 NO_AUTO_MEMORY = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"  # Claude Code's auto memory off for the one process (turn_env).
+# Claude Code hooks an extension's ``claude_turn`` (core/extensions.py) gives the turn: event name -> matcher groups, as
+# Claude Code's settings write them. Into the turn's one --settings; never on a 代答 turn (its hooks are its tool
+# guard's alone) or a CONSULT one (it keeps nothing it was given).
+TURN_HOOKS = "claude_turn_hooks"
 
 
 def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""):
@@ -91,10 +95,13 @@ def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""
         # the app sets the subagents' model (a retry after a refusal).
         argv += subagents.argv(ctx)
         # One --settings: a redacted topic's turn, its compaction included, talks to the model through the term relay;
-        # a 代答 turn's shell and edit tools go through its PreToolUse hook (backends/claude/tool_guard.py).
+        # a 代答 turn's shell and edit tools go through its PreToolUse hook (backends/claude/tool_guard.py); an
+        # extension's hooks (TURN_HOOKS) go into any other but a CONSULT one.
         settings = redaction.settings(ctx)
         if limit == PROXY:
             settings["hooks"] = tool_guard.settings(ctx.options.get(TOOL_NOTES, ""))
+        elif limit != CONSULT and ctx.options.get(TURN_HOOKS):
+            settings["hooks"] = {event: list(groups) for event, groups in ctx.options[TURN_HOOKS].items()}
         argv += ["--settings", json.dumps(settings, ensure_ascii=False)] if settings else []
     return backend.wrap_argv(argv, ctx)
 

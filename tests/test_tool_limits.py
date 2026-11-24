@@ -24,7 +24,7 @@ from covey.backends.claude import redaction, tool_guard
 from covey.backends.claude.bridge import ClaudeBackend
 from covey.backends.codex import appserver
 from covey.cards.group_manager import ask_card, ask_text, group_manager_card
-from covey.core.harness import (LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES, HarnessCapabilities, JobCancelled,
+from covey.core.harness import (CONSULT, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES, HarnessCapabilities, JobCancelled,
                                 backend_capabilities)
 from covey.core.groups import save_group
 from covey.core.jobs import find_job_record, upsert_job_record
@@ -161,6 +161,19 @@ class ClaudeArgvTests(unittest.TestCase):
         self.assertEqual(hook['type'], 'command')
         self.assertIn('covey_tool_guard.py', hook['command'])
         self.assertTrue(hook['command'].endswith('--notes /abs/notes'))
+
+    def test_an_extensions_hooks_go_into_the_one_settings_but_not_a_proxy_or_consult_turn(self):
+        hooks = {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': '/abs/hook'}]}],
+                 'SessionStart': [{'hooks': [{'type': 'command', 'command': '/abs/start'}]}]}
+        for options in ({}, {TOOL_LIMIT: LOOK}):
+            argv = self.argv(**options, **{claude_argv.TURN_HOOKS: hooks, redaction.SETTINGS_ENV: {'A': 'b'}})
+            self.assertEqual(argv.count('--settings'), 1)
+            self.assertEqual(json.loads(self.value(argv, '--settings')), {'env': {'A': 'b'}, 'hooks': hooks})
+        settings = json.loads(self.value(self.argv(**{TOOL_LIMIT: PROXY, claude_argv.TURN_HOOKS: hooks}), '--settings'))
+        self.assertEqual(list(settings['hooks']), ['PreToolUse'])
+        self.assertIn('covey_tool_guard.py', settings['hooks']['PreToolUse'][0]['hooks'][0]['command'])
+        self.assertNotIn('--settings', self.argv(**{TOOL_LIMIT: CONSULT, claude_argv.TURN_HOOKS: hooks}))
+        self.assertNotIn('--settings', self.argv(**{claude_argv.TURN_HOOKS: {}}))
 
     def test_a_turn_without_a_limit_is_as_before(self):
         argv = self.argv()

@@ -332,13 +332,13 @@ class TurnTests(Base):
         hook = SimpleNamespace(turn=fake_turn)
         backend = ClaudeBackend()
         # Unredacted turn receives the hook's settings directly.
-        with mock.patch.object(extensions, "hook", return_value=hook), \
+        with mock.patch.object(extensions, "hooks", return_value=[("pkg", hook)]), \
                 mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran") as run_stream:
             self.assertEqual(backend.run(self.request()), "ran")
         self.assertEqual(run_stream.call_args.args[1].context.options[redaction.SETTINGS_ENV]["ANTHROPIC_BASE_URL"],
                          self.upstream.url)
         # Compact and handoff summary pass through the same hook.
-        with mock.patch.object(extensions, "hook", return_value=hook), \
+        with mock.patch.object(extensions, "hooks", return_value=[("pkg", hook)]), \
                 mock.patch("covey.backends.claude.runtime.compact_only", return_value=True) as compact_only, \
                 mock.patch("covey.backends.claude.handoff.summarize", return_value=("sum", "ok")) as summarize:
             self.assertTrue(backend.compact_session(self.request()))
@@ -358,7 +358,7 @@ class TurnTests(Base):
             captured["status"], captured["body"] = status, body
             return "redacted-ran"
 
-        with mock.patch.object(extensions, "hook", return_value=hook), \
+        with mock.patch.object(extensions, "hooks", return_value=[("pkg", hook)]), \
                 mock.patch("covey.backends.claude.runtime.run_stream", side_effect=capture_stream):
             self.assertEqual(backend.run(self.request()), "redacted-ran")
         self.assertNotEqual(captured["url"], self.upstream.url)
@@ -366,6 +366,35 @@ class TurnTests(Base):
         self.assertEqual(json.loads(captured["body"])["content"][0]["text"], f"about {TERM}")
         self.assertNotIn(TERM.encode(), self.upstream.seen[-1][3])
         self.assertEqual(seen, [(RUN, "t1"), (RUN, "t1"), ("h1", "t1"), (RUN, "t1")])
+
+    def test_every_packages_claude_turn_hook_wraps_the_turn_the_first_outermost(self):
+        import contextlib
+        from types import SimpleNamespace
+        from covey.core import extensions
+
+        events = []
+
+        def package(name):
+            @contextlib.contextmanager
+            def turn(ctx, env, *, run_id=""):
+                events.append(f"enter {name} {run_id} {','.join(ctx.options.get('order', []))} {env.get('ORDER', '')}")
+                try:
+                    yield (dataclasses.replace(ctx, options={**ctx.options, "order": [*ctx.options.get("order", []), name]}),
+                           {**env, "ORDER": env.get("ORDER", "") + name})
+                finally:
+                    events.append(f"exit {name}")
+            return name, SimpleNamespace(turn=turn)
+
+        with mock.patch.object(extensions, "hooks", return_value=[package("a"), package("b")]), \
+                mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran") as run_stream:
+            self.assertEqual(ClaudeBackend().run(self.request()), "ran")
+        self.assertEqual(events, [f"enter a {RUN}  ", f"enter b {RUN} a a", "exit b", "exit a"])
+        self.assertEqual(run_stream.call_args.args[1].context.options["order"], ["a", "b"])
+        self.assertEqual(run_stream.call_args.args[2]["ORDER"], "ab")
+        with mock.patch.object(extensions, "hooks", return_value=[]), \
+                mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran") as run_stream:
+            self.assertEqual(ClaudeBackend().run(self.request()), "ran")  # None enabled: as before.
+        self.assertNotIn("order", run_stream.call_args.args[1].context.options)
 
 
 class GuardTests(Base):

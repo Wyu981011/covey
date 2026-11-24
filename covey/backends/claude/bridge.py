@@ -327,13 +327,12 @@ class ClaudeBackend(BackendRuntime):
 
 @contextlib.contextmanager
 def _extension_turn(ctx, env, *, run_id=""):
-    """Optional extension hook around a Claude Code turn (core/extensions.py ``claude_turn``)."""
-    hook = extensions.hook("claude_turn")
-    if hook is None:
+    """Every enabled package's ``claude_turn`` hook around a Claude Code turn (core/extensions.py), the first package's
+    outermost: each gets the (ctx, env) the one outside it gave. None enabled: the turn as it is."""
+    with contextlib.ExitStack() as stack:
+        for _package, hook in extensions.hooks("claude_turn"):
+            ctx, env = stack.enter_context(hook.turn(ctx, env, run_id=run_id))
         yield ctx, env
-        return
-    with hook.turn(ctx, env, run_id=run_id) as wrapped:
-        yield wrapped
 
 
 def redacted_stream(backend, request, env):
