@@ -1,0 +1,20 @@
+/* 两侧栏拖动调宽（T741，PaneHandle.tsx、panes.ts）。只在电脑上（.cv 没有 .m）；收起的侧栏（.mini）和手机的抽屉不管。
+   宽度来自 <html> 上的 --pane-*（拖过才有），没有就是原来的默认；再按视口宽兜一个上限，窗口变窄时中间区不被挤没 */
+.cv:not(.m) .side:not(.mini){width:clamp(200px,var(--pane-side,248px),28vw)}
+.cv:not(.m) .a-rail{width:clamp(240px,var(--pane-topic-rail,300px),32vw)}
+.cv:not(.m) .rp.a-prail{width:clamp(260px,var(--pane-project-rail,324px),34vw)}
+.cv:not(.m) .nb-rail{width:clamp(260px,var(--pane-board-rail,316px),32vw)}
+
+/* 把手：零宽，压在分界线上；能点的 8px 偏向面板那边（左侧栏往左 5px、右栏往右 5px），
+   不碰中间区左边的刻度导航（.jr 从中间区 6px 处开始）和中间区右边的滚动条 */
+.cv .pane-h{position:relative;flex:none;width:0;z-index:6;cursor:col-resize;touch-action:none;outline:none}
+.cv .pane-h::before{content:'';position:absolute;top:0;bottom:0;width:8px}
+.cv .pane-h.left::before{left:-5px}
+.cv .pane-h.right::before{left:-3px}
+/* 悬停一会儿才亮（只是划过不闪），拖动和键盘聚焦时是实的品牌色 */
+.cv .pane-h::after{content:'';position:absolute;top:0;bottom:0;left:-1px;width:2px;border-radius:1px;background:transparent;pointer-events:none;transition:background-color .12s ease .18s}
+.cv .pane-h:hover::after{background:color-mix(in srgb,var(--a1) 45%,transparent)}
+.cv .pane-h.on::after,.cv .pane-h:focus-visible::after{background:var(--a1);transition-delay:0s}
+/* 拖动时整页都是左右箭头的光标，也不选中字 */
+body.cv-resizing,body.cv-resizing *{cursor:col-resize!important;user-select:none!important}
+@media (prefers-reduced-motion:reduce){.cv .pane-h::after{transition:none}}

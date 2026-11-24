@@ -8,6 +8,8 @@ import { shortTime } from '@client/src/lib/workbench-format';
 import { Conversation } from './Conversation';
 import ProjectGraph from './ProjectGraph';
 import ProjectRail from './ProjectRail';
+import { PaneHandle } from './PaneHandle';
+import { PROJECT_RAIL } from './panes';
 import ProjectReport from './ProjectReport';
 import { ToneBar } from './ProjectsPage';
 import { Head } from './Shell';
@@ -216,6 +218,7 @@ const ProjectPage: React.FC = () => {
               }
               placeholder={desktop ? '对负责人说一句，它会协调这个专项' : '对负责人说一句'}
             />
+            {desktop ? <PaneHandle spec={PROJECT_RAIL} /> : null}
             {desktop ? <ProjectRail p={p} topics={topics} /> : null}
           </>
         ) : (

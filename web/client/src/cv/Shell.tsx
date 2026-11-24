@@ -14,6 +14,8 @@ import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { setCollapsed, setMenu, useUi } from './store';
 import { listTone } from './topicText';
 import { askNumbers, asks, askSum, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
+import { PaneHandle } from './PaneHandle';
+import { SIDE_PANE, showSavedPanes } from './panes';
 import './covey.css';
 import './layout-a.css';
 import './night.css';
@@ -565,6 +567,13 @@ export const Head: React.FC<{
   );
 };
 
+// 两侧栏拖过的宽度（T741）：模块载入时就放上，首屏按记下的宽度画
+try {
+  showSavedPanes();
+} catch {
+  /* 没有 DOM */
+}
+
 const Shell: React.FC = () => {
   const desktop: boolean = useIsDesktop();
   const ui = useUi();
@@ -605,6 +614,7 @@ const Shell: React.FC = () => {
     <div className={cls}>
       <div className="app">
         {desktop ? <Sidebar mini={ui.collapsed} /> : null}
+        {desktop && !ui.collapsed ? <PaneHandle spec={SIDE_PANE} /> : null}
         <main className="main">
           <Outlet />
         </main>

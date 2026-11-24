@@ -21,6 +21,8 @@ import { cachePct, shownDays, spanOf, weekWord } from './usageData';
 import { askNumbers, asks, askSum, haltWords, isHalted, type Asks } from './projectData';
 import { DismissButton, RecoverActions, useBoardOn } from './RecoverBits';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
+import { PaneHandle } from './PaneHandle';
+import { BOARD_RAIL } from './panes';
 import { useOutboxOp } from './sendOp';
 import { LaterPanel, ProjectOps } from './V34Bits';
 import { OP_WAIT_MS, opWords } from './opWords';
@@ -520,6 +522,7 @@ const Board: React.FC = () => {
           <Updated at={snap.synced_at} />
         </div>
       </div>
+      {desktop ? <PaneHandle spec={BOARD_RAIL} /> : null}
       {desktop ? <aside className="nb-rail">{rail}</aside> : null}
     </div>
   );
