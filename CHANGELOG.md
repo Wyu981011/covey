@@ -9,6 +9,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 - 专项负责人能单独选和换 Harness、模型、思考预算，和管家、话题一样：设置卡「配置」页多一段“专项负责人”（新建专项用它，默认跟管家一样），管家开专项时点名的优先；已有的专项点专项卡上的「换配置」，或在网页负责人的对话下面换。只列能接 Bridge 工具的 Harness，负责人在哪个上都只读，工作区不变（[docs/projects.md](docs/projects.md#负责人用哪个-harness)）。网页数据约定 v36。
 - Pi 和 DeepSeek Harness 也能当管家和专项负责人：Pi 用它自带的 MCP 接 Bridge 工具，负责人那一轮只留 read、grep、find、ls；DeepSeek Harness 用自带的 `dsh-mcp-client`，负责人那一轮用 read-only 权限预设。核心的五个 Harness 在设置卡「配置」的管家、专项负责人两段都能选了。管家没选 Harness 时的顺序不变（Claude Code → Codex → Antigravity，然后才是它们）。
+- 记忆自己长（`COVEY_MEMORY_LEARN=1`，要 `COVEY_MEMORY=1`）：一轮结束后 Bridge 自己读主人的话，引用核对过的长期要求直接记下（通用的、工作区的记成原则），答案卡上能“不对”；记下这一轮用到了哪几条，放不下时最近用过的先带；晚间汇总的“你反复说的”先生效（它总结的）；新增“整理记忆”，收起专项里办完的、被替代的、很久没用的当前决定（能撤销），把反复的选择提炼成约定；把 Codex、Claude Code 自己记的偏好收进候选；每轮的记忆块能用 `bin/covey_memory.py search` 按需查放不下的和答过的题。
+
+### Fixed 修复
+
+- 代答话题和开了脱敏的一轮不再读写 Harness 自带的记忆：Claude Code 关自动记忆，Codex 关 memories 并把代答线程标成不进记忆，联系人的话不会变成其他会话里的规矩。
+- 记忆核对“主人原话”时只认主人答的和补充的，不再把问题卡的题面当成他说的话（题面里的“要不要再”也不再当成纠正）。
 
 ### Fixed 修复
 
@@ -19,6 +25,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 - A project's lead chooses and changes its Harness, model and budget like the butler and a topic: the 设置 card's 配置 has a 专项负责人 section (new projects; follows the butler by default), a Harness the butler names when it opens a project comes first, and an existing lead changes through 换配置 on its 专项卡 or the web page. Only Harnesses that take the Bridge's tools are offered; the lead stays read-only and keeps its workspace. Web data contract v36.
 - Pi and DeepSeek Harness can be the butler and a project's lead: Pi takes the Bridge's tools through its built-in MCP and a lead's turn keeps only read, grep, find and ls; DeepSeek Harness takes them through its bundled `dsh-mcp-client` and a lead's turn runs on its read-only permission preset. All five core Harnesses are on the 设置 card's butler and lead sections now; a butler with none named still falls back Claude Code, Codex, Antigravity first.
+- Memory that learns by itself (`COVEY_MEMORY_LEARN=1`, with `COVEY_MEMORY=1`): after a turn the Bridge reads the owner's own words and writes down what he asks from now on (quote-checked; general and workspace ones as principles), with 不对 on the answer card; which lines a turn used is noted and orders what fits; the evening digest's repeated corrections take effect at once as 它总结的; a nightly 整理记忆 puts away a project's decisions that are done, replaced or unused (undoable) and distills rules from repeated choices; what Codex and Claude Code noted of the owner on their own comes in as candidates; a turn looks up what its memory block could not carry with `bin/covey_memory.py search`.
+
+### Fixed (English)
+
+- A 代答 turn and a redacted one no longer read or write the Harness's own memory: Claude Code's auto memory off, Codex's memories off and the 代答 thread marked out of them, so a contact's words never become a rule of other sessions.
+- The memory's check of the owner's words takes only what he answered and added, never a question card's own words.
 
 ### Fixed (English)
 

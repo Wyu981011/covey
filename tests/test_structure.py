@@ -43,7 +43,7 @@ from covey.cards.butler_panel import KINDS as BUTLER_PANEL_KINDS
 from covey.cards.redaction_panel import KINDS as REDACTION_KINDS
 from covey.cards.node_panel import KINDS as NODE_PANEL_KINDS
 from covey.cards.memory_panel import KINDS as MEMORY_PANEL_KINDS
-from covey.cards.digest import REMEMBER_KIND
+from covey.cards.digest import MEMORY_KIND, REMEMBER_KIND
 from covey.cards.project_proposal import KINDS as TIDY_KINDS
 from covey.cards.settings_hub import KINDS as SETTINGS_KINDS
 from covey.cards.overview import DISMISS as OVERVIEW_DISMISS, UNDO as OVERVIEW_UNDO
@@ -90,7 +90,7 @@ class CardActionTableTest(unittest.TestCase):
         before_routing |= set(extensions.card_kinds())  # An enabled extension's cards (its features claim them).
         before_routing |= {OVERVIEW_DISMISS, OVERVIEW_UNDO}  # 手上的事's 这些都不用回答了 and its 撤销 (app/overview.py).
         before_routing |= BOARD_KINDS  # The 看板's 刷新 and 记为看过 (app/digest.py).
-        before_routing |= {REMEMBER_KIND}  # 你反复说的 on the evening digest (app/digest.py).
+        before_routing |= {REMEMBER_KIND, MEMORY_KIND}  # 你反复说的 and 整理记忆 on the evening digest (app/digest.py).
         before_routing |= {APP_SETUP_START, APP_SETUP_SKIP}  # 飞书应用待补 (app/app_setup.py).
         before_routing |= WEB_LOGIN_KINDS  # 网页登录确认 (app/web_login.py).
         before_routing |= {WELCOME_KIND}  # 发这句 on the welcome card (app/welcome.py).
@@ -200,6 +200,7 @@ ENTRIES = {
     "covey_paths.py": "covey.core.paths",
     "covey_app_console.py": "covey.feishu.app_console",
     "covey_workspaces.py": "covey.core.workspaces",
+    "covey_memory.py": "covey.core.memory_search",
     "covey_devices.py": "covey.service.device_check",
     "covey_plugins.py": "covey.service.plugins",
     "covey_feishu_web.py": "covey.feishu.web_client",

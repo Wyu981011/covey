@@ -6,7 +6,8 @@ turn whose rules said so (app/memory_turn.py fix_rule: the owner's words hold �
 runner (rule 8: a task process changes only its own task's card and record), checks them here once the runner has exited and the
 record is settled (app/detached.py finish_detached, app/job_dispatch.py for a run in this process): ``collect``.
 
-- A ``quote`` must be a run of the owner's own words of that turn (the job record's ``user_text``); one that is not drops its line.
+- A ``quote`` must be a run of the owner's own words of that turn (app/memory_turn.py ``owner_words``: the job record's ``user_text``, but of an
+  answer's turn only what he answered and added, never the question's own words); one that is not drops its line.
 - A ``memory`` line becomes a line of 你说的 in the narrowest place there is: the project the topic belongs to (core/project_memory.py,
   source ``owner``), else the topic (core/topic_memory.py). A topic with redaction on (or whose setting cannot be read) marks it.
 - A ``memory_void`` id must be a number the turn carried (the record's ``memory_ids``) of a line of 它总结的 of the project; it becomes a
@@ -38,6 +39,8 @@ PER_TURN = 3
 ENDED_WELL = ("done", "waiting_user")
 PROJECT_WORDS, TOPIC_WORDS = "管这个专项", "管这个话题"
 GLOBAL_WORDS = "管全局"  # A line 升为全局 (``promote``): one of the owner's principles now.
+WORKSPACE_WORDS = "管这个工作区"  # A line the memory learned as a principle of the topic's workspace (app/memory_learn.py).
+PRINCIPLE_WORDS = (GLOBAL_WORDS, WORKSPACE_WORDS)  # A note whose entry is a principle: 不对 removes the principle.
 REDACTED_REFUSAL = "这条来自开着脱敏的话题，不能升为全局：全局的记忆会带进不脱敏的话题。"
 
 
@@ -67,7 +70,8 @@ def reason_to_ignore(runtime, ctx, job, record) -> str:
         return "butler"
     if proxy_topic(ctx):
         return "proxy"
-    if not memory_turn.triggered(record.get("user_text"), knowledge_takes=_knowledge_takes(runtime, ctx, job, record)):
+    if not memory_turn.triggered(memory_turn.owner_words(record, ctx.state_dir),
+                                 knowledge_takes=_knowledge_takes(runtime, ctx, job, record)):
         return "no-trigger"
     return ""
 
@@ -137,7 +141,7 @@ def collect(runtime, messenger, job, ctx) -> None:
         if reason:
             runtime.log(f"memory lines ignored reason={reason} job=#{record.get('job_id')}")
             return
-        said, marked, notes = str(record.get("user_text") or ""), _topic_marked(ctx, str(record.get("topic_id") or "")), []
+        said, marked, notes = memory_turn.owner_words(record, ctx.state_dir), _topic_marked(ctx, str(record.get("topic_id") or "")), []
         for item in voids[:PER_TURN]:
             if isinstance(item, dict) and from_owner(item.get("quote"), said):
                 notes.append(_void(ctx, record, item))
@@ -195,8 +199,8 @@ def take_back(state, topic_id, record, entry_id):
 
 def _forget(state, topic_id, entry_id, scope="") -> None:
     """The entry ``entry_id`` a turn of ``topic_id`` wrote, a tombstone in its project's memory or the topic's; a line that
-    went 升为全局 (``scope`` GLOBAL_WORDS), the principle it became, removed."""
-    if scope == GLOBAL_WORDS:
+    is a principle (``scope`` one of PRINCIPLE_WORDS: it went 升为全局, or the memory learned it as one), the principle removed."""
+    if scope in PRINCIPLE_WORDS:
         principles.delete(state, entry_id)
         return
     found = projects.topic_project(state, topic_id) if projects.memory_enabled() else None

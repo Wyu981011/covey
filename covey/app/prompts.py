@@ -318,6 +318,11 @@ MEMORY_LAYER_RULES = (  # With a project's lines in the block: what its three pa
     "或做要主人点头的事的依据。",
 )
 NO_ORIGIN_RULE = "标“你说的（无出处）”的是没留下原问题或原话出处的旧记录，条件可能不全，拿不准就照常问主人。"
+# 记忆自己长 (COVEY_MEMORY_LEARN=1, app/memory_turn.py learn): where to look up what the block left out, and which lines were used.
+MEMORY_SEARCH_RULE = ("查记忆：放不下的、整理时收起的、以前问过主人的问题和他的回答，都能用这个命令查（只读）：{command}。"
+                      "要问主人之前，先查一下他答过没有。")
+MEMORY_USED_RULE = ("这一轮照着哪几条记忆做了（或因为它没有再问主人），在检查点里写 memory_used：[\"M12\"]，只写编号；"
+                    "Bridge 据此决定哪些留着，不用在回复里提。")
 MEMORY_FIX_RULE = (
     "记忆纠正：主人这一轮的话里说了“以后”“每次”“别再”“不要再”“记住”这类长期适用的话，才在检查点里加 memory："
     '[{"quote":"主人原话里的一段","text":"一句话，最多 200 字，把“这个”“那个”写成所指的事"}]，最多 3 条；'
@@ -335,17 +340,19 @@ def memory_line(item, new=False) -> str:
             + f"{core_memory.OWNER_WORDS[item['by']]}{NO_ORIGIN if unsourced(item) else ''}：{item_text(item)}" + ("（新）" if new else ""))
 
 
-def memory_block(kept, left: int = 0, project=None) -> str:
+def memory_block(kept, left: int = 0, project=None, *, learn=None) -> str:
     """The memory block of a turn: its items (core/memory.py select), each a ``memory_line``, then how many were left out; with
     ``project`` (core/memory.py project_view of the turn's project) what its parts left out, the lines voided since the topic's
     previous turn and the version; then the rules that say who counts (with a project's lines, what its parts are, and of an
-    older line of the owner's without an origin). '' with nothing to say."""
+    older line of the owner's without an origin). ``learn`` (记忆自己长, app/memory_turn.py): {search}, the command that looks
+    the memory up ('' none), and the rule asking which lines were used. '' with nothing to say."""
     view = project or {"items": [], "voided": [], "new": set()}
     if not kept and not view["voided"]:
         return ""
+    search = (learn or {}).get("search") or ""
     lines = [MEMORY_HEAD, *(memory_line(item, item.get("ref") in view["new"]) for item in kept)]
     if left:
-        lines.append(f"另有 {left} 条放不下，没有列出。")
+        lines.append(f"另有 {left} 条放不下，没有列出" + ("，要用时按下面的命令查。" if search else "。"))
     if project is not None and left_parts(project):
         lines.append(left_parts(project))
     if view["voided"]:
@@ -353,8 +360,9 @@ def memory_block(kept, left: int = 0, project=None) -> str:
     if view["items"] or view["voided"]:
         lines.append(f"专项记忆版本 {view['version']}。")
     projects_lines = [item for item in (*kept, *view["voided"]) if item["scope"] == core_memory.PROJECT]
+    learned = ([MEMORY_SEARCH_RULE.format(command=search)] if search else []) + ([MEMORY_USED_RULE] if learn is not None else [])
     return "\n".join([*lines, *MEMORY_RULES, *(MEMORY_LAYER_RULES if projects_lines else ()),
-                      *((NO_ORIGIN_RULE,) if any(unsourced(item) for item in kept) else ())])
+                      *((NO_ORIGIN_RULE,) if any(unsourced(item) for item in kept) else ()), *learned])
 
 
 # COVEY_WORKSPACE_GISTS (app/workspace_gists.py): a new topic's rules carry the 话题要点 of the workspace's last topics.

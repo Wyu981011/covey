@@ -223,6 +223,9 @@ ACTIONS = {
     "bridge_board_recover": CardAction("在看板上检查并继续", bot_only=True),
     # 你反复说的 on the evening digest (cards/digest.py REMEMBER_KIND, COVEY_MEMORY=1): 记下 writes a principle (app/digest.py).
     "bridge_digest_remember": CardAction("记下或不用汇总里的候选"),
+    # 整理记忆 on the evening digest (cards/digest.py MEMORY_KIND, COVEY_MEMORY_LEARN=1): 撤销 puts the lines it put away back,
+    # 确认长期 makes a new rule the owner's, 不对 strikes it out (app/digest.py memory_click, app/memory_tidy.py decide).
+    "bridge_digest_memory": CardAction("确认或撤销汇总里的整理记忆"),
     # 飞书应用待补 (cards/app_setup.py): the owner's, in the private chat (app/app_setup.py).
     "bridge_app_setup": CardAction("补齐飞书应用配置"),
     "bridge_app_setup_skip": CardAction("先不补飞书应用配置"),

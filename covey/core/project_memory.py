@@ -481,6 +481,54 @@ def fix(state_dir, project_id, entry_id, what, *, origin, applies="", now=None) 
     return next(row for row in stored(state_dir, project_id) if row["id"] == found)
 
 
+SETTLED = ("done", "superseded")  # What 整理记忆 makes of a line no longer carried (``settle``).
+
+
+def settle(state_dir, project_id, changes, *, now=None) -> list:
+    """Lines that no longer hold for a turn to carry (整理记忆, app/memory_tidy.py): each of ``changes`` {id, valid (one of
+    ``SETTLED``), superseded_by?} written into the meta of its live entry (not the style line), which core/memory.py describe
+    then reads as history. [(entry id, what its meta said of ``valid`` and ``superseded_by`` before)] of the ones changed, for
+    ``unsettle``. Who may be settled is the caller's to decide (never the owner's 长期约定). KeyError for a project with no
+    record."""
+    def edit(rows, meta):
+        live = {row["id"] for row in rows if not row["deleted"] and row["kind"] != "style"}
+        out = []
+        for change in changes:
+            entry_id, valid = str(change.get("id") or ""), change.get("valid")
+            if entry_id not in live or valid not in SETTLED or any(done == entry_id for done, _ in out):
+                continue
+            entry = dict(meta.get(entry_id) or {})
+            before = {key: entry[key] for key in ("valid", "superseded_by") if key in entry}
+            entry["valid"] = valid
+            if valid == "superseded" and str(change.get("superseded_by") or "").strip():
+                entry["superseded_by"] = clean(change["superseded_by"], 40)
+            else:
+                entry.pop("superseded_by", None)
+            meta[entry_id] = entry
+            out.append((entry_id, before))
+        return out
+    return _edit(state_dir, project_id, edit, None, now)
+
+
+def unsettle(state_dir, project_id, settled, *, now=None) -> list:
+    """整理记忆's 撤销: each (entry id, before) of ``settle`` put back as its meta was; the ids put back (one the owner or a
+    lead changed since, or that is gone, is left as it is)."""
+    def edit(rows, meta):
+        live = {row["id"] for row in rows if not row["deleted"]}
+        out = []
+        for entry_id, before in settled:
+            entry = dict(meta.get(str(entry_id)) or {})
+            if str(entry_id) not in live or entry.get("valid") not in SETTLED:
+                continue
+            entry.pop("valid", None)
+            entry.pop("superseded_by", None)
+            entry.update({key: value for key, value in (before or {}).items() if key in ("valid", "superseded_by")})
+            meta[str(entry_id)] = entry
+            out.append(str(entry_id))
+        return out
+    return _edit(state_dir, project_id, edit, None, now)
+
+
 def answer_record(state_dir, project_id, token) -> dict:
     """The question record ``token`` as it was answered (``note_answers``), {} when it was not kept or cannot be read."""
     try:

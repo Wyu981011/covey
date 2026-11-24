@@ -18,6 +18,10 @@ answer card leaves). A button's ``key`` names the entry in its store: ``principl
 topic's memory one of the 全局 principles (core/principles.py ``save``) and the entry it was a tombstone, as it does on an answer
 card (app/memory_collect.py promote); not a line from a topic with redaction on, which only such a topic may read.
 
+With COVEY_MEMORY_LEARN=1 (记忆自己长) the candidates a turn carries as 它总结的 (app/memory_candidates.py carried) are read
+too, ordered by their last use as a turn orders them (core/memory_usage.py), and deleted as 不用 deletes them (``key``
+``candidate:<id>``: declined, not offered again).
+
 The tab's record is the 设置 card's (app/settings_hub.py, app/menu_panel.py); a click (app/unified.py PANELS, the owner's) acts
 outside the record's lock, then the whole card is drawn again under it once the click is acknowledged (``notice`` says what
 happened). The same click delivered again acts once: the view keeps the last ``seen`` event ids.
@@ -26,13 +30,14 @@ from __future__ import annotations
 
 import re
 
+from covey.app import memory_candidates
 from covey.app.card_lanes import after_ack
 from covey.app.memory_collect import TOPIC_WORDS
 from covey.app.menu_panel import FOLDED, MenuPanel, hub_top
 from covey.app.prompts import memory_block
 from covey.cards.memory_panel import DELETE, KINDS, OPEN, PIN, PROMOTE, WORKSPACE, WORKSPACES, memory_card
 from covey.cards.settings_hub import MEMORY
-from covey.core import knowledge, memory, principles, project_memory, projects, topic_memory
+from covey.core import knowledge, memory, memory_usage, principles, project_memory, projects, topic_memory
 from covey.core.jobs import select_job_records
 from covey.core.topics import label_title
 from covey.core.workspaces import load_config
@@ -41,6 +46,7 @@ SEEN = 8
 NEAR = 0.8  # A scope this full (of its limit) says so on the card.
 WARNINGS = 4  # Lines of scopes near or past their limit; the rest is one line.
 ENTRY = re.compile(r"[0-9A-Za-z_-]{1,40}")  # A project's or a topic's entry id.
+CANDIDATE = re.compile(r"c[0-9a-f]{8}")  # A candidate's id (app/memory_candidates.py), carried with COVEY_MEMORY_LEARN=1.
 DROP_REASON = "主人在设置卡「记忆」里删掉"
 OWNER_ONLY = '⚠️ 仅机器人主人可以改记忆。'
 SCOPE_TITLES = {memory.GLOBAL: "全局", memory.WORKSPACE: "工作区", memory.PROJECT: "专项", memory.TOPIC: "话题"}
@@ -107,7 +113,10 @@ def facts(state_dir, names, chosen) -> dict:
     knowledge_on = knowledge.enabled()
     mine, space = principles.for_turn(state_dir, chosen)
     entries = knowledge.for_turn(state_dir, chosen) if knowledge_on else ((), ())
-    found = memory.items(principles=(mine, space), entries=entries)
+    drafts, used = ((), ()), None
+    if memory.learning():
+        drafts, used = memory_candidates.carried(state_dir, chosen), memory_usage.last_used(state_dir)
+    found = memory.items(principles=(mine, space), entries=entries, drafts=drafts, used=used)
     scopes = memory.fill(found)
     kept, left = memory.select([dict(item) for item in found])
     carried = {item["ref"] for item in kept}
@@ -146,7 +155,7 @@ def facts(state_dir, names, chosen) -> dict:
         warnings = [*warnings[:WARNINGS - 1], f"另有 {len(warnings) - WARNINGS + 1} 个专项或话题快满了或放不下，展开下面的专项、话题看。"]
     preview = {"workspace": chosen, "workspaces": shown, "count": len(kept),
                "chars": sum(memory.line_size(item) for item in kept), "left": left, "rooms": rooms,
-               "warnings": warnings, "text": memory_block(kept, left)}
+               "warnings": warnings, "text": memory_block(kept, left, learn={"search": ""} if memory.learning() else None)}
     return {"preview": preview, "parts": parts}
 
 
@@ -177,6 +186,9 @@ def forget(state_dir, key):
             return None
         row = next((row for row in topic_memory.live(state_dir, topic) if row["id"] == entry), None)
         return row["text"] if row is not None and topic_memory.delete(state_dir, topic, entry) else None
+    if kind == "candidate" and CANDIDATE.fullmatch(rest):
+        row = memory_candidates.decide(state_dir, rest, "drop")
+        return row["text"] if row is not None and row.get("state") == memory_candidates.DECLINED else None
     return None
 
 

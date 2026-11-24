@@ -25,7 +25,13 @@ that is the same every turn (a hash of the ref; one taken by another bumps to th
 scope, with the room used and what was left out: the 设置 card's 记忆 tab says it (app/memory_panel.py) rather than leave it to
 the one line the block ends with. ``project_view`` is a project's memory as every reader takes it, a member topic's turn, the
 lead's state pack and the web page alike: the same items, parts and choice, its version, and the lines voided since the reader's
-previous turn. Nothing here reads a file but through those stores, and nothing is written. Standard library and core only."""
+previous turn. Nothing here reads a file but through those stores, and nothing is written. Standard library and core only.
+
+With COVEY_MEMORY_LEARN=1 as well (``learning``, docs/butler.md 记忆自己长) two more things count. ``drafts``: what the Bridge
+distilled from the owner's repeated words and has not been confirmed or declined (app/memory_candidates.py, ``carried``), an
+item of 它总结的 of 全局 or 工作区 (``ref`` "candidate:<id>"), always after his own words. ``used``: when a turn last used an
+item (core/memory_usage.py, ref -> epoch seconds): an item's ``seen`` is the later of its time and that, and "the newest first"
+is by ``seen``. Without either the choice is the one above, word for word."""
 from __future__ import annotations
 
 import hashlib
@@ -35,6 +41,7 @@ from covey.core import knowledge, project_memory, turn_source
 from covey.core.state import epoch_seconds
 
 ENV = "COVEY_MEMORY"
+LEARN_ENV = "COVEY_MEMORY_LEARN"  # 记忆自己长 (``learning``): only with ENV on too.
 GLOBAL, WORKSPACE, PROJECT, TOPIC = "global", "workspace", "project", "topic"
 SCOPES = (GLOBAL, WORKSPACE, PROJECT, TOPIC)
 WORDS = {GLOBAL: "全局", WORKSPACE: "这个工作区", PROJECT: "这个专项", TOPIC: "这个话题"}
@@ -47,6 +54,8 @@ PART_LIMITS = {RULE: 1000, DECISION: 1000, REFERENCE: 800}  # Characters of a pr
 SPARE_ORDER = (RULE, REFERENCE, DECISION)  # Who takes, in turn, the room the parts left unused: never the room a part uses itself.
 LIMITS = {GLOBAL: 1200, WORKSPACE: 800, PROJECT: sum(PART_LIMITS.values()), TOPIC: 800}  # Characters of a scope's lines.
 OWNER, LEAD = "owner", "lead"
+# The owner's words that start a correction (app/memory_turn.py, app/memory_candidates.py, app/memory_learn.py).
+CORRECTION_WORDS = ("以后", "每次", "别再", "不要再", "记住", "再也不要", "从现在起")
 OWNER_WORDS = {OWNER: "你说的", LEAD: "它总结的"}
 OWNER_SOURCES = project_memory.OWNERS  # Of a project line: the owner's own words.
 ANSWER_SOURCES = project_memory.ANSWERS  # Of a project line: the owner's answer to a question.
@@ -59,6 +68,13 @@ HELD_KINDS = ("decision", "constraint")  # Of the lead's notes: what the project
 
 def enabled(environ=None) -> bool:
     return (os.environ if environ is None else environ).get(ENV) == "1"
+
+
+def learning(environ=None) -> bool:
+    """Whether the memory learns by itself (docs/butler.md 记忆自己长): COVEY_MEMORY_LEARN=1 with COVEY_MEMORY=1. Off: every
+    reader and writer of the memory does what it did before it."""
+    env = os.environ if environ is None else environ
+    return enabled(env) and env.get(LEARN_ENV) == "1"
 
 
 def by_source(source) -> str:
@@ -105,14 +121,19 @@ def make(ref, scope, by, text, at=0, redacted=False, pinned=False) -> dict:
     return item
 
 
-def items(*, principles=((), ()), entries=((), ()), project=(), topic=(), project_id="", redacted=False) -> list:
+def items(*, principles=((), ()), entries=((), ()), project=(), topic=(), project_id="", redacted=False, drafts=((), ()),
+          used=None) -> list:
     """The items one turn may read: ``principles`` and ``entries`` are (全局, 工作区) lists as core/principles.py and
     core/knowledge.py for_turn give them (the caller leaves 全局 out of a turn that is not the owner's), ``project`` and ``topic``
-    the live rows of those memories. A redacted line is only for a turn with ``redacted`` on."""
+    the live rows of those memories. A redacted line is only for a turn with ``redacted`` on. ``drafts`` (全局, 工作区): the
+    candidates carried (app/memory_candidates.py carried, {id, text, at}), 它总结的; ``used``: ref -> when a turn last used it
+    (core/memory_usage.py last_used), each item's ``seen``."""
     found = []
     for scope, rows in zip((GLOBAL, WORKSPACE), principles):
         found += [make(f"principle:{row['id']}", scope, OWNER, row["text"], row.get("at"), pinned=row.get("pinned") is True)
                   for row in rows]
+    for scope, rows in zip((GLOBAL, WORKSPACE), drafts):
+        found += [make(f"candidate:{row['id']}", scope, LEAD, row["text"], row.get("at")) for row in rows]
     for scope, rows in zip((GLOBAL, WORKSPACE), entries):
         for row in rows:
             text = f"{knowledge.KINDS[row['kind']]}：{row['text']}" + (f"（原因：{row['why']}）" if row.get("why") else "")
@@ -124,7 +145,14 @@ def items(*, principles=((), ()), entries=((), ()), project=(), topic=(), projec
         found.append({**item, **facts, "kind": str(row.get("kind") or "")})
     for row in topic:
         found.append(make(f"topic:{row['id']}", TOPIC, by_source(row.get("source")), row["text"], row.get("at"), row.get("redacted")))
+    for item in found if used else ():
+        item["seen"] = max(item["at"], _at(used.get(item["ref"])))
     return [item for item in found if item["text"] and (redacted or not item["redacted"])]
+
+
+def seen(item) -> float:
+    """When ``item`` was last of use: its ``seen`` (``items`` with ``used``), else its own time."""
+    return item.get("seen", item["at"])
 
 
 def number(ref, taken) -> str:
@@ -146,11 +174,12 @@ def line_size(item) -> int:
 
 
 def _order(part=""):
-    """The order items are taken in: pinned first, the owner's words first, the newest first; of the 待核对参考 of a project
-    (``REFERENCE``), the decisions and constraints before the facts and contacts, the newest first within each."""
+    """The order items are taken in: pinned first, the owner's words first, the newest first (``seen``: the later of its
+    time and its last use); of the 待核对参考 of a project (``REFERENCE``), the decisions and constraints before the facts and
+    contacts, the newest first within each."""
     if part == REFERENCE:
-        return lambda item: (item.get("kind") not in HELD_KINDS, -item["at"], item["ref"])
-    return lambda item: (not item.get("pinned"), item["by"] != OWNER, -item["at"], item["ref"])
+        return lambda item: (item.get("kind") not in HELD_KINDS, -seen(item), item["ref"])
+    return lambda item: (not item.get("pinned"), item["by"] != OWNER, -seen(item), item["ref"])
 
 
 def _take(items, limit, order) -> dict:

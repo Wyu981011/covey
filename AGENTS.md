@@ -51,6 +51,7 @@
 | 主人的原则 | `core/principles.py`（`entries`、`delete`）、`app/prompts.py` 的 `principles_block`、`Runs.principles`/`Runs.owner_turn`（`app/runs.py`）、`app/butler_tools.py` | [butler.md](docs/butler.md) |
 | 知识条目与历史搜索 | `core/knowledge.py`、`app/knowledge_turn.py`、`app/knowledge_collect.py`、`app/butler_knowledge.py`、`app/prompts.py` 的 `knowledge_block`/`knowledge_rules`、`app/digest.py` 的 `knowledge_view` | [butler.md](docs/butler.md#知识库)、[配置](docs/configuration.md#知识条目与历史搜索) |
 | 记忆（`COVEY_MEMORY=1`） | `core/memory.py`（读口：条目、编号、范围上限）、`core/topic_memory.py`（话题的记忆）、`app/memory_turn.py`（每轮的块、`memory_ids`、纠正规则）、`app/memory_collect.py`（一轮结束后记下 `memory`、作废 `memory_void`，“不对”点击 `undo`）、`app/prompts.py` 的 `memory_block`、`cards/answer_card.py` 的 `memory_element`、`app/answer_cards.py` 的 `put_memory`、设置卡「记忆」`app/memory_panel.py`（常驻：`core/principles.py` 的 `pin`） | [butler.md](docs/butler.md#记忆开关默认关)、[配置](docs/configuration.md#记忆) |
+| 记忆自己长（`COVEY_MEMORY_LEARN=1`，要 `COVEY_MEMORY=1`）：每轮之后读主人的话、用到才留、整理记忆、收拢 Harness 自己记的、查记忆 | `app/memory_learn.py`（`after_turn`：用到的编号、读原话记下）、`core/memory_usage.py`、`app/memory_tidy.py`（晚间汇总的整理记忆，`core/project_memory.py` 的 `settle`）、`app/memory_harvest.py`（Codex、Claude Code 自己的记忆进候选）、`app/memory_candidates.py`（`carried`）、`core/memory_search.py`（`bin/covey_memory.py search`）、`cards/digest.py` 的 `memory_elements`；Harness 自己的记忆在代答和脱敏里关掉：`backends/claude/argv.py` 的 `turn_env`、`backends/codex/appserver.py` 的 `keep_out_of_memories` | [butler.md](docs/butler.md#记忆自己长开关默认关)、[配置](docs/configuration.md#记忆) |
 | 敏感词脱敏 | `core/redaction.py`、`core/redactor.py`、`backends/claude/redaction.py`、`app/redaction_panel.py`（设置卡「脱敏」标签） | [敏感词脱敏](docs/architecture.md#敏感词脱敏) |
 | 官方拒绝与停止 | `app/policy_guard.py`、`core/model_policy.py`、`backends/claude/policy.py`；cyber/bio 拒绝换旧模型重试一次 `app/policy_retry.py` | [policy-stop.md](docs/policy-stop.md) |
 | 任务进程与 `runs/` 协议 | `app/detached.py`、`app/runner_spawn.py`、`app/runner_ipc.py`、`app/runner.py`、`core/run_dir.py` | [排队与任务进程](docs/architecture.md#排队与任务进程)、[跨版本检查](docs/testing.md#任务进程协议与跨版本检查) |
@@ -147,7 +148,10 @@
 | `app/memguard_alerts.py` | The memory watchdog's alerts, sent by the Bridge |
 | `app/memory_candidates.py` | 每天一次的候选整理: what the owner corrected more than once in the day's ended topics, at most SHOWN a day, put in the … |
 | `app/memory_collect.py` | What the owner said in a topic's turn that holds from now on becomes memory, and a click takes it back |
+| `app/memory_harvest.py` | What Codex and Claude Code learned of the owner on their own, offered to Covey's memory once a day |
+| `app/memory_learn.py` | 记忆自己长, one turn at a time |
 | `app/memory_panel.py` | The 设置 card's 记忆 tab, shown when COVEY_MEMORY=1 |
+| `app/memory_tidy.py` | 整理记忆, once a day: at the evening digest what the memory holds is put in order, so a project's 当前决定 are not a … |
 | `app/memory_turn.py` | What a turn reads of the owner's memory, for app/runs.py |
 | `app/menu_panel.py` | A card the bot menu sends to the owner's private chat: no topic, no job, one card a menu click |
 | `app/model_picker.py` | The launch card's choices |
@@ -389,6 +393,8 @@
 | `core/maintenance_report.py` | How maintenance's --dry-run words what it would do |
 | `core/maintenance_rules.py` | The rules of daily maintenance |
 | `core/memory.py` | The one read port of the owner's memory |
+| `core/memory_search.py` | 按需查记忆: what a turn's memory block could not carry, looked up by its words from the turn itself |
+| `core/memory_usage.py` | Which memory lines the turns used, so what is never of use goes first and in time out of the way |
 | `core/menu_choice.py` | A model menu's entries and the choices on them |
 | `core/metrics.py` | Content-free job timings |
 | `core/migrate.py` | One-time migrations of old records, so the code that reads records needs no compat branch for them |
@@ -599,7 +605,7 @@
 
 ### bin
 
-入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_install.py`、`covey_install_browser.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
+入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_install.py`、`covey_install_browser.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
 
 改名前的入口名留作转发壳，服务清单、开机钩子和各部署的脚本还在用：`bridge_app_setup.py`、`bridge_doctor.py`、`bridge_main_mcp.py`、`bridge_memguard.py`、`bridge_pairing.py`、`bridge_service.py`、`bridge_service_install.py`、`covey_main_mcp.py`、`lark_app_console.py`、`lark_bridge_maintenance.py`、`lark_bridge_paths.py`、`lark_bridge_workspaces.py`、`lark_feishu_web.py`、`lark_harness_bridge.py`、`lark_install_browser.py`、`lark_task_runner.py`、`lark_workspace_reader.py`。
 <!-- code-map:end -->

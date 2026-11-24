@@ -176,6 +176,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.bot_menu import BotMenu, Panels, known_chats
         from covey.app.digest import Digest
         from covey.app.memory_candidates import Candidates
+        from covey.app.memory_harvest import Harvest
+        from covey.app.memory_tidy import MemoryTidy
         from covey.app.directory_picker import DirectoryPicker
         from covey.app.dispatch_cards import DispatchCards
         from covey.app.project_cards import ProjectCards
@@ -256,6 +258,9 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.digest = Digest(self.runtime, self.messenger, self.voice)
             # 你反复说的 on the evening digest (app/memory_candidates.py), COVEY_MEMORY=1: the Claude Code that groups them.
             self.digest.candidates = Candidates(self.runtime, self.topics)
+            # 整理记忆 on the evening digest (app/memory_tidy.py), COVEY_MEMORY_LEARN=1: the 整理 model it asks.
+            self.digest.memory_tidy = MemoryTidy(self.runtime, self.topics)
+            self.digest.harvest = Harvest(self.runtime, self.topics)  # Codex's and Claude Code's own notes as candidates.
             self.digest.topics = self.topics  # A stopped row's 检查并继续 on the 看板 runs in its topic's app (Digest.recover).
             # Its line of old questions has 手上的事's 这些都不用回答了: the click is 手上的事's, then the digest card's.
             self.overview.handed[self.digest.origin] = self.digest.dismissed

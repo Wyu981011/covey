@@ -179,6 +179,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ limit-notices/               几个话题同一原因停下的合并提示（`COVEY_LIMIT_NOTICE`）：每组一个，发没发过
 │  ├─ digest.json                  早晚汇总
 │  ├─ memory-candidates.json       晚间汇总里“你反复说的”候选和主人点的「记下」「不用」（`COVEY_MEMORY=1`）
+│  ├─ memory-usage.json、memory-tidy.json、memory-harvest.json   记忆自己长（`COVEY_MEMORY_LEARN=1`）：每条记忆最后一次被用到的时间、每晚整理记忆收起了什么（撤销用）、读过的 Codex 和 Claude Code 自己的记忆
 │  ├─ projects/                    专项（`COVEY_PROJECTS`）：`<专项>.json`；`<专项>/` 里是记忆 `memory.json`、资料库索引 `library.json` 和复制的文件 `library/`、收件箱 `inbox/`；整理专项的记录 `tidy/`
 │  ├─ owner-send/                  代发的草稿和发送记录
 │  ├─ butler-asks/                 话题转给管家的事（`COVEY_PROJECTS`）：每轮一个，转了什么、发没发出去
@@ -190,7 +191,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
    ├─ backend-health/              各后端最近一次任务的结果和模型目录查询结果，doctor 从这里读
    ├─ launch-models/、native-models/   模型目录缓存、扩展的实测档位
    ├─ pi-sessions/、<网关名>/、<扩展>-sessions/   后端自己的会话和运行文件（<网关名>/relay.log 是模型网关的繁忙记录）
-   ├─ stuck-check/、track-judge/、memory-candidates/   小模型一次调用的工作目录：「看看」、同时做几件事的判断、你反复说的分组
+   ├─ stuck-check/、track-judge/、memory-candidates/、memory-learn/、memory-tidy/、memory-harvest/   小模型一次调用的工作目录：「看看」、同时做几件事的判断、你反复说的分组
    ├─ codex-judge/、agy-judge/   没给工作目录时，小模型问 Codex、Antigravity 自己的命令行用的空目录（它们的临时主目录在 tmp/ 下，问完就删）
    └─ claude-diagnostics/、<扩展>-diagnostics/   后端诊断
 ```

@@ -19,9 +19,16 @@ topics or more; one that says what a principle already says (core/principles.py 
 left out.
 
 The record, <state>/memory-candidates.json: {schema_version, rows: [{id, text, topics, labels, workspace, slot, at, state
-(open, saved, declined), decided_at, principle, error}], declined: [same_key, …], ran: [slot, …]}; a digest time is looked at
-once (``ran``), rows older than KEPT_DAYS go. Written under its own lock, never across the model's call or a Feishu one (rule
-1). Log lines never hold the owner's words.
+(open, saved, declined, expired), decided_at, principle, error, carried?, source?}], declined: [same_key, …], ran: [slot, …]};
+a digest time is looked at once (``ran``), rows older than KEPT_DAYS go. Written under its own lock, never across the model's call
+or a Feishu one (rule 1). Log lines never hold the owner's words.
+
+With COVEY_MEMORY_LEARN=1 too (core/memory.py learning, docs/butler.md 记忆自己长) what the owner repeated takes effect before
+his click: a row offered then is ``carried`` and, while open, every turn reads it as a line of 它总结的 (``carried``,
+app/memory_turn.py; 全局 ones on his own turns only), at most CARRIED of them, the newest; 记下 makes it his (a principle), 不用
+takes it out for good. An open carried row stays past KEPT_DAYS until he decides it or 整理记忆 lets it go as unused
+(app/memory_tidy.py ``expire``: ``expired``). Rows of other ``source``s (``SOURCE_WORDS``: what Codex and Claude Code noted of
+their own, app/memory_harvest.py ``add``) are offered the same way and never carried: a click makes them count.
 """
 from __future__ import annotations
 
@@ -31,11 +38,12 @@ import secrets
 import time
 from pathlib import Path
 
-from covey.app import memory_turn, track_judge
+from covey.app import track_judge
 from covey.app.track_standby import Failed
-from covey.core import principles, topic_gist, turn_source
+from covey.core import memory, principles, topic_gist, turn_source
 from covey.core.board_read import ended_at
 from covey.core.butler import is_butler_topic
+from covey.core.butler_opened import handed_on
 from covey.core.jobs import select_job_records
 from covey.core.locks import resource_lock
 from covey.core.redaction import topic_redaction
@@ -56,10 +64,13 @@ SENTENCE = 120  # Characters of a sentence sent.
 TEXT = 80  # Characters of a candidate's rule.
 JUDGE_SECONDS = 30  # As the patrol judge's default (COVEY_PATROL_JUDGE_MS): about forty short sentences.
 ENDED = ("done", "waiting_user", "failed", "interrupted", "cancelled")
-# A correction's words: memory's own (app/memory_turn.py WORDS) and the ones a repeated correction is said with.
-CUES = (*memory_turn.WORDS, "不要", "别", "不是", "应该", "说过", "又", "总是", "老是", "必须", "一定要", "记得", "改成", "先")
+# A correction's words: memory's own (core/memory.py CORRECTION_WORDS) and the ones a repeated correction is said with.
+CUES = (*memory.CORRECTION_WORDS, "不要", "别", "不是", "应该", "说过", "又", "总是", "老是", "必须", "一定要", "记得", "改成", "先")
 SPLIT = re.compile(r"(?<=[。！？!?；;\n])")
-OPEN, SAVED, DECLINED = "open", "saved", "declined"
+OPEN, SAVED, DECLINED, EXPIRED = "open", "saved", "declined", "expired"
+CARRIED = 8  # Open carried rows a turn reads (COVEY_MEMORY_LEARN=1), the newest.
+REPEAT = "repeat"  # What the owner repeated in the day's topics (``find``): the rows of every release before ``source``.
+SOURCE_WORDS = {REPEAT: "", "codex": "Codex 自己记的", "claude": "Claude Code 自己记的"}  # How a row's card line says where it is from.
 FULL = f"这一组的记忆已有 {principles.GROUP_LIMIT} 条，先在菜单「设置」→「记忆」里删掉不用的"  # 记下 refused: the group is full.
 SYSTEM = (
     "你帮一位用户找出他反复纠正助理的话。输入是一个 JSON：sentences（他今天在不同话题里对助理说的话，每条有 index、topic、text）、"
@@ -133,7 +144,7 @@ def sentences(state_dir, chat, since, until, owner_turn) -> list:
     found, per = [], {}
     for record in sorted(records, key=ended_at):
         topic = str(record.get("topic_id") or "")
-        if (not topic or is_butler_topic(topic, chat) or memory_turn.handed_on(record.get("message_id"))
+        if (not topic or is_butler_topic(topic, chat) or handed_on(record.get("message_id"))
                 or not turn_source.behavior(record).owner_words  # A 协作 turn's words are not the owner's.
                 or not owner_turn(chat, str(record.get("sender_id") or "")) or _proxy(state_dir, topic)
                 or _redacted(state_dir, topic)):
@@ -252,15 +263,91 @@ def offer(state_dir, chat, slot, finder, *, now=None) -> list:
         if slot in data["ran"]:
             return [row for row in data["rows"] if row.get("slot") == slot]
     found = finder()
+    carried = memory.learning()
     with lock(state_dir):
         data = load(state_dir)
         if slot not in data["ran"]:
             data["ran"] = [*data["ran"], slot][-RAN_KEPT:]
-            data["rows"] = [row for row in data["rows"] if _at(row) >= now - KEPT_DAYS * DAY]
-            data["rows"] += [{"id": "c" + secrets.token_hex(4), **item, "slot": slot, "at": now, "state": OPEN}
-                             for item in found]
+            data["rows"] = kept_rows(data["rows"], now)
+            data["rows"] += [{"id": "c" + secrets.token_hex(4), **item, "slot": slot, "at": now, "state": OPEN,
+                              **({"carried": True, "source": REPEAT} if carried else {})} for item in found]
             save(state_dir, data)
         return [row for row in data["rows"] if row.get("slot") == slot]
+
+
+def kept_rows(rows, now) -> list:
+    """``rows`` without the ones offered over KEPT_DAYS ago, but an open carried one: it counts until it is decided or let go."""
+    return [row for row in rows if _at(row) >= now - KEPT_DAYS * DAY or (row.get("carried") and row.get("state") == OPEN)]
+
+
+def carried(state_dir, workspace_name) -> tuple[list, list]:
+    """(通用, the workspace's) open carried rows, each {id, text, at}, the newest CARRIED in all (COVEY_MEMORY_LEARN=1:
+    app/memory_turn.py reads them as 它总结的); ([], []) without the record."""
+    rows = sorted((row for row in load(state_dir)["rows"] if row.get("carried") and row.get("state") == OPEN
+                   and isinstance(row.get("text"), str) and row["text"].strip()), key=lambda row: -_at(row))[:CARRIED]
+    shaped = [{"id": row["id"], "text": row["text"], "at": _at(row), "workspace": str(row.get("workspace") or "")}
+              for row in rows]
+    return ([row for row in shaped if not row["workspace"]],
+            [row for row in shaped if workspace_name and row["workspace"] == workspace_name])
+
+
+def add(state_dir, items, slot, *, source, now=None) -> list:
+    """Rows of ``source`` (one of SOURCE_WORDS but REPEAT: app/memory_harvest.py) offered at ``slot``, never carried; one
+    whose rule says what a principle, an open row or a declined one already says is left out. The rows added."""
+    now = time.time() if now is None else now
+    with lock(state_dir):
+        data = load(state_dir)
+        taken = ({principles.same_key(row["text"]) for row in principles.entries(state_dir)} | set(data["declined"])
+                 | {principles.same_key(row.get("text")) for row in data["rows"] if row.get("state") in (OPEN, SAVED)})
+        added = []
+        for item in items:
+            key = principles.same_key(item.get("text"))
+            if not key or key in taken:
+                continue
+            taken.add(key)
+            added.append({"id": "c" + secrets.token_hex(4), "text": cut(item["text"], TEXT), "topics": [], "labels": [],
+                          "workspace": str(item.get("workspace") or ""), "slot": slot, "at": now, "state": OPEN,
+                          "source": source})
+        if added:
+            data["rows"] = [*kept_rows(data["rows"], now), *added]
+            save(state_dir, data)
+        return added
+
+
+def open_carried(state_dir) -> list:
+    """Every open carried row, {id, at} (app/memory_tidy.py lets the unused ones go)."""
+    return [{"id": row["id"], "at": _at(row)} for row in load(state_dir)["rows"]
+            if row.get("carried") and row.get("state") == OPEN]
+
+
+def reopen(state_dir, ids) -> list:
+    """整理记忆's 撤销 (app/memory_tidy.py): the rows ``ids`` it let go open and carried again; the ids reopened."""
+    wanted, changed = set(ids), []
+    with lock(state_dir):
+        data = load(state_dir)
+        for row in data["rows"]:
+            if row["id"] in wanted and row.get("state") == EXPIRED:
+                row["state"] = OPEN
+                row.pop("decided_at", None)
+                changed.append(row["id"])
+        if changed:
+            save(state_dir, data)
+    return changed
+
+
+def expire(state_dir, ids, *, now=None) -> list:
+    """Open carried rows ``ids`` no turn used for long (app/memory_tidy.py): ``expired``, no longer read; the rows changed."""
+    now = time.time() if now is None else now
+    wanted, changed = set(ids), []
+    with lock(state_dir):
+        data = load(state_dir)
+        for row in data["rows"]:
+            if row["id"] in wanted and row.get("state") == OPEN and row.get("carried"):
+                row.update(state=EXPIRED, decided_at=now)
+                changed.append(dict(row))
+        if changed:
+            save(state_dir, data)
+    return changed
 
 
 def decide(state_dir, candidate_id, op, *, now=None) -> dict | None:

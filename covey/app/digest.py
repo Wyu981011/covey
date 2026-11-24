@@ -76,7 +76,7 @@ from covey.app.menu_panel import MenuPanel
 from covey.app.card_lanes import after_ack
 from covey.cards.board import (KINDS as BOARD_KINDS, OPEN_KIND, PROJECT_GO_KIND, RECOVER_KIND, REVISIT_KIND, SEEN_KIND,
                                SEEN_MAX, board_card)
-from covey.cards.digest import ORIGIN, REMEMBER_KIND, digest_card, digest_text, folded_board
+from covey.cards.digest import MEMORY_KIND, ORIGIN, REMEMBER_KIND, digest_card, digest_text, folded_board
 from covey.core import app_manifest, board_read, failure, knowledge, look, memory, patrol, projects, turn_words, web_sync
 from covey.core import project_proposals
 from covey.core import progress as turn_progress
@@ -188,7 +188,9 @@ def remember_row(row) -> dict:
     """A candidate (app/memory_candidates.py) as the card's view keeps it."""
     return {"id": row["id"], "text": str(row.get("text") or ""), "labels": list(row.get("labels") or ()),
             "workspace": str(row.get("workspace") or ""), "state": row.get("state") or memory_candidates.OPEN,
-            **({"error": str(row["error"])} if row.get("error") else {})}
+            **({"error": str(row["error"])} if row.get("error") else {}),
+            **({"carried": True} if row.get("carried") else {}),
+            **({"source": str(row["source"])} if row.get("source") not in (None, "", memory_candidates.REPEAT) else {})}
 
 
 def since_of(times, slot, last):
@@ -496,6 +498,8 @@ class Digest:
         self.link = lambda ctx, chat, text, cards=None: linkify(text, ctx.state_dir, chat, profile=ctx.profile, cards=cards)
         self.menu = MenuPanel(self, BOARD_KIND, BOARD_FOLDER, BOARD_KIND)
         self.candidates = None  # 你反复说的 (app/memory_candidates.py Candidates): the private chat's digest only (app/unified.py).
+        self.memory_tidy = None  # 整理记忆 (app/memory_tidy.py MemoryTidy, COVEY_MEMORY_LEARN=1): the private chat's digest only.
+        self.harvest = None  # What Codex and Claude Code noted on their own (app/memory_harvest.py Harvest), the same.
         # The Bridge's Topics (app/unified.py, app/group_boards.py): their apps take a stopped row's 检查并继续 (``recover``);
         # None: the 看板's stopped rows keep 去任务卡.
         self.topics = None
@@ -686,7 +690,7 @@ class Digest:
 
     @staticmethod
     def matches(raw):
-        return isinstance(raw, dict) and (raw.get("kind") in BOARD_KINDS or raw.get("kind") == REMEMBER_KIND)
+        return isinstance(raw, dict) and (raw.get("kind") in BOARD_KINDS or raw.get("kind") in (REMEMBER_KIND, MEMORY_KIND))
 
     def claim(self, ctx, event, raw, owner):
         """刷新, 记为看过 or a project's 继续 on a 看板 card, or 去看板 under an answered question (cards/board.py KINDS;
@@ -702,6 +706,8 @@ class Digest:
             return "owner_only"
         if kind == REMEMBER_KIND:
             return self.remember(ctx, event, raw)
+        if kind == MEMORY_KIND:
+            return self.memory_click(ctx, event, raw)
         message = str(event.get("message_id") or "")
         if kind == OPEN_KIND:
             # 去看板 under an answered question: the bot menu's 看板, a new card for this click (its event id keys it).
@@ -839,6 +845,44 @@ class Digest:
                 write_json(path, {**record, "sent": {**sent, message_id: {**sent[message_id], "view": view}}},
                            ensure_ascii=False)
 
+    def memory_click(self, ctx, event, raw):
+        """确认长期, 不对 or 撤销 on the evening digest's 整理记忆 (the owner's): decided (app/memory_tidy.py ``decide``) and the
+        card redrawn once acknowledged."""
+        run, op, message = raw.get("run"), raw.get("op"), str(event.get("message_id") or "")
+        if (self.memory_tidy is None or not (isinstance(run, str) and re.fullmatch(r"t[0-9a-f]{8}", run))
+                or op not in ("confirm", "wrong", "undo") or not message):
+            return "digest_memory_ignored"
+        project, entry = str(raw.get("project") or ""), str(raw.get("entry") or "")
+        after_ack(lambda: self.memory_decided(ctx, message, run, op, project, entry))
+        return "digest_memory"
+
+    def memory_decided(self, ctx, message_id, run_id, op, project, entry):
+        """After a click on 整理记忆: the run decided, then the card ``message_id`` redrawn from its saved view with the run as it
+        stands now. A card whose view is no longer kept is left as it is."""
+        from covey.app.memory_tidy import view_of
+        run = self.memory_tidy.decide(ctx, run_id, op, project=project, entry=entry, message_id=message_id)
+        if run is None:
+            self.runtime.log(f"digest memory {op} run={run_id}: no such run")
+            return
+        path = self.path(ctx)
+        with resource_lock("digest", str(path)):
+            sent = read_object(path).get("sent")
+        entry_view = sent.get(message_id) if isinstance(sent, dict) else None
+        view = entry_view.get("view") if isinstance(entry_view, dict) else None
+        if not isinstance(view, dict) or not view.get("memory_tidy"):
+            self.runtime.log(f"digest card not redrawn message={message_id[-8:]}: no view of its 整理记忆 kept")
+            return
+        view = {**view, "memory_tidy": view_of(run) or view["memory_tidy"]}
+        if not self.messenger.patch_card(ctx.profile, message_id, digest_card(view)):
+            self.runtime.log(f"digest card redraw failed message={message_id[-8:]}")
+            return
+        with resource_lock("digest", str(path)):
+            record = read_object(path)
+            sent = record.get("sent") if isinstance(record.get("sent"), dict) else {}
+            if isinstance(sent.get(message_id), dict):
+                write_json(path, {**record, "sent": {**sent, message_id: {**sent[message_id], "view": view}}},
+                           ensure_ascii=False)
+
     def daily(self, ctx, chat, slot, now) -> dict:
         """The evening digest's own parts (the private chat's, the day's last time): 本周找你, 今天代答 and 你反复说的; each
         one that cannot be read is left out (a log line)."""
@@ -856,7 +900,10 @@ class Digest:
             found["proxy"] = proxied
         if self.candidates is not None and memory.enabled():
             try:
-                rows = [remember_row(row) for row in self.candidates.offer(ctx, chat, slot)]
+                found_rows = self.candidates.offer(ctx, chat, slot)
+                if self.harvest is not None and memory.learning() and self.harvest.offer(ctx, slot):  # Never raises.
+                    found_rows = memory_candidates.rows_of(ctx.state_dir, slot)
+                rows = [remember_row(row) for row in found_rows]
                 for row in rows:
                     row["sources"] = self.link(ctx, chat, "、".join(row["labels"])) if row["labels"] else ""
             except Exception as exc:  # noqa: BLE001 - the digest goes out without them
@@ -864,6 +911,10 @@ class Digest:
                 rows = []
             if rows:
                 found["remember"] = rows
+        if self.memory_tidy is not None and memory.learning():
+            tidied = self.memory_tidy.view(ctx, chat, slot, now)  # 整理记忆: never raises.
+            if tidied:
+                found["memory_tidy"] = tidied
         return found
 
     def board_refresh(self, ctx, message_id, notice=""):
@@ -949,7 +1000,8 @@ class Digest:
         view.update(self.asks_view(ctx, chat))
         if not self.fixed and last_of_day(times, slot):
             view.update(self.daily(ctx, chat, slot, now))
-        waits = any(row.get("state") == memory_candidates.OPEN for row in view.get("remember") or ())
+        waits = (any(row.get("state") == memory_candidates.OPEN for row in view.get("remember") or ())
+                 or bool(view.get("memory_tidy")))  # 整理记忆 put something away or wrote a rule: it says so, with 撤销.
         if not (view["waiting"] or view["stale"] or view["running"] or view["done"] or view.get("pending")
                 or view.get("projects") or waits):
             self.save(ctx, last_slot=slot, pending=None)

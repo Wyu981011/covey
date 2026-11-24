@@ -33,7 +33,7 @@ from pathlib import Path
 
 from covey.core import timing
 from covey.core.state import read_json, write_json
-from covey.app import butler_asks, idle_compaction, knowledge_collect, memory_collect, butler_relay, owner_send
+from covey.app import butler_asks, idle_compaction, knowledge_collect, memory_collect, memory_learn, butler_relay, owner_send
 from covey.core import turn_words
 from covey.core.turn_words import interrupted_notice, retry_hint
 from covey.app.task_card import bind_record
@@ -313,6 +313,7 @@ def after_job(gateway, app, job, ctx) -> None:
         return
     knowledge_collect.collect(gateway.runtime, job, ctx)  # The owner's 记一下 in a topic's turn (off without COVEY_KNOWLEDGE).
     memory_collect.collect(gateway.runtime, getattr(app, "messenger", None), job, ctx)  # The owner's 以后 / 别再 … (off without COVEY_MEMORY).
+    memory_learn.after_turn(gateway, app, job, ctx)  # What the memory learns of the turn (off without COVEY_MEMORY_LEARN).
     owner_send.collect(gateway, job, ctx)  # The turn's send_as_owner drafts: 代发草稿 cards (off without a 代答 sender).
     butler_asks.collect(gateway, job, ctx)  # The turn's ask_butler: handed to the butler (off without COVEY_PROJECTS=1).
     collab_after(gateway, job, ctx)  # 协作: an ask settled, a continuation's end, a turn's collab_ask (COVEY_COLLAB=1).
