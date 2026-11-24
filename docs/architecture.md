@@ -202,6 +202,8 @@ continued、done、failed、cancelled、interrupted：终态
 
 ## 状态与并发
 
+同时跑几个任务：`core/scheduler.py` 的 `WorkspaceScheduler`，每个话题一次一个、话题之间先来先跑，最多 `COVEY_MAX_WORKERS`（默认 32）个；其中 `RESERVED`（2）个只给管家和专项负责人那一轮（`keeps_slot`），普通话题占满其余的也挤不住私聊和专项。排队提示的“并发已满（最多 N 个任务）”和调度器读同一份（`room_for`）。
+
 ### 主要记录与锁
 
 完整目录见[数据目录](operations.md#数据目录)。

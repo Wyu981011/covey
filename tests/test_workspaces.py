@@ -260,43 +260,69 @@ class WorkspaceSchedulerTest(unittest.TestCase):
             thread.join(3)
         self.assertFalse(thread.is_alive())
 
-    def test_ten_task_limit_and_eleventh_waits(self):
+    def test_the_limit_is_its_setting_and_two_slots_wait_for_the_butler_and_the_leads(self):
+        """T744 (2026-11-24): the limit was 10, written in, and a new topic waited "排队中 · 并发已满（最多 10 个任务）". It is
+        COVEY_MAX_WORKERS now; ordinary topics take all but RESERVED slots, which a turn of the butler or of a lead may take."""
+        from covey.core import scheduler as sched
         shutdown, release = threading.Event(), threading.Event()
-        ten, eleven = threading.Event(), threading.Event()
-        incoming, started = queue.Queue(), []
-        lock = threading.Lock()
+        incoming, started, lock = queue.Queue(), [], threading.Lock()
+        changed = threading.Condition(lock)
 
         def process(job):
-            with lock:
+            with changed:
                 started.append(job.message_id)
-                if len(started) == 10:
-                    ten.set()
-                if len(started) == 11:
-                    eleven.set()
+                changed.notify_all()
             release.wait(5)
 
-        for i in range(11):
-            incoming.put(
-                SimpleNamespace(
-                    message_id=str(i),
-                    chat_id="chat",
-                    topic_id=str(i),
-                    workdir=Path("/tmp/same"),
-                    cancel_event=threading.Event(),
-                )
-            )
-        scheduler = WorkspaceScheduler(shutdown, incoming, process, lambda _: None)
-        thread = threading.Thread(target=scheduler.run, daemon=True)
-        thread.start()
-        try:
-            self.assertTrue(ten.wait(3))
-            self.assertFalse(eleven.wait(0.3))
-            release.set()
-            self.assertTrue(eleven.wait(2))
-        finally:
-            release.set()
-            shutdown.set()
-            thread.join(3)
+        def wait_for(count):
+            with changed:
+                return changed.wait_for(lambda: len(started) >= count, timeout=3)
+
+        for i in range(9):
+            incoming.put(SimpleNamespace(message_id=str(i), chat_id="chat", topic_id=str(i), workdir=Path("/tmp/same"),
+                                         cancel_event=threading.Event()))
+        incoming.put(SimpleNamespace(message_id="lead", chat_id="chat", topic_id="lead-topic", workdir=Path("/tmp/same"),
+                                     cancel_event=threading.Event()))
+        with mock.patch.dict(os.environ, {sched.WORKERS_ENV: "10"}), \
+                mock.patch.object(sched, "keeps_slot", lambda job: job.topic_id == "lead-topic"):
+            scheduler = WorkspaceScheduler(shutdown, incoming, process, lambda _: None)
+            self.assertEqual((scheduler.max_workers, sched.topic_limit(scheduler.max_workers)), (10, 8))
+            thread = threading.Thread(target=scheduler.run, daemon=True)
+            thread.start()
+            try:
+                self.assertTrue(wait_for(9))  # Eight topics and the lead, in a slot kept for it.
+                time.sleep(0.3)
+                with lock:
+                    self.assertEqual((len(started), "lead" in started, "8" in started), (9, True, False))
+                release.set()
+                self.assertTrue(wait_for(10))  # The ninth topic once a slot is free.
+            finally:
+                release.set()
+                shutdown.set()
+                thread.join(3)
+
+    def test_the_limit_reads_its_setting(self):
+        from covey.core import scheduler as sched
+        for raw, limit in (("", 32), ("64", 64), ("0", 32), ("-3", 32), ("abc", 32), ("99999", sched.WORKERS_CEILING)):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {sched.WORKERS_ENV: raw}):
+                self.assertEqual(sched.worker_limit(), limit)
+        self.assertEqual([sched.topic_limit(n) for n in (1, 2, 3, 32)], [1, 1, 1, 30])
+        job = SimpleNamespace(topic_id="t", chat_id="c")
+        with mock.patch.object(sched, "keeps_slot", lambda job: False):
+            self.assertEqual([sched.room_for(job, n, 10) for n in ((7, 7), (8, 8), (9, 7), (10, 7))], [True, False, True, False])
+        with mock.patch.object(sched, "keeps_slot", lambda job: True):
+            self.assertEqual([sched.room_for(job, n, 10) for n in ((8, 8), (9, 8), (10, 8))], [True, True, False])
+
+    def test_a_queued_task_says_the_limit_its_kind_has(self):
+        from covey.app.submission import capacity_words
+        from covey.core import scheduler as sched
+        job = SimpleNamespace(topic_id="t", chat_id="c")
+        with mock.patch.dict(os.environ, {sched.WORKERS_ENV: "40"}):
+            with mock.patch.object(sched, "keeps_slot", lambda job: False):
+                with mock.patch("covey.app.submission.keeps_slot", lambda job: False):
+                    self.assertEqual(capacity_words(job), 38)
+            with mock.patch("covey.app.submission.keeps_slot", lambda job: True):
+                self.assertEqual(capacity_words(job), 40)
 
     def test_overlapping_directories_do_not_block_different_topics(self):
         scheduler = WorkspaceScheduler(None, None, None, None)

@@ -14,7 +14,7 @@ from covey.core.model_settings import recorded_model_settings, recorded_work_mod
 from covey.core.deliveries import topic_steer
 from covey.cards.review import recent_user_questions, render_stream_status
 from covey.cards.streaming import steer_label
-from covey.core.scheduler import MAX_WORKERS
+from covey.core.scheduler import keeps_slot, room_for, topic_limit, worker_limit
 from covey.core.butler import HOLD_STATUS, traits_of
 from covey.core.state import write_json
 from covey.core.history_storage import recent_history
@@ -85,6 +85,13 @@ def quick_hold(ctx, job) -> int:
     if where.role not in (placement.TOPIC_ROLE, placement.MEMBER_ROLE) or where.row.answer != placement.THREAD:
         return 0
     return seconds
+
+
+def capacity_words(job) -> int:
+    """How many tasks the card and the reply say may run at once for ``job``: the limit for the butler's and the leads' turns,
+    the ordinary topics' share of it for any other (core/scheduler.py topic_limit)."""
+    limit = worker_limit()
+    return limit if keeps_slot(job) else topic_limit(limit)
 
 
 def queued_line(job) -> str:
@@ -280,7 +287,10 @@ class Submission:
         ahead = self.runtime.jobs.ahead_of(job)
         if job.steer_target_job_id is None:
             job.steer_target_job_id = ahead[-1].job_id if ahead else 0
-        capacity_full = self.runtime.jobs.topic_count() >= MAX_WORKERS
+        # Full as the scheduler counts it (core/scheduler.py room_for: the butler's and the leads' turns take the reserved slots too).
+        limit = worker_limit()
+        topics = (self.runtime.jobs.topic_count(), self.runtime.jobs.topic_count(lambda each: not keeps_slot(each)))
+        capacity_full = not room_for(job, topics, limit)
         from covey.core.harness import backend_capabilities
         job.harness_capabilities = backend_capabilities(self.harness.backend, ctx)
         self.runtime.jobs.register(job)
@@ -303,7 +313,7 @@ class Submission:
         held = (getattr(job, "start_held_until", 0) or 0) > time.time()
         status = (queue_status(ctx.state_dir, plan.get("jobs_ahead") or []) if plan.get("jobs_ahead")
                   else f"排队中 · 本话题前方 {ahead} 个任务" if ahead
-                  else f"排队中 · 并发已满（最多 {MAX_WORKERS} 个任务）" if capacity_full
+                  else f"排队中 · 并发已满（最多 {capacity_words(job)} 个任务）" if capacity_full
                   else HOLD_STATUS if held else "已入队")
         # The status line, the card's first: where the message goes (the butler's slim card takes its own from the body).
         line = (steering_line(job) if steering else queued_line(job)) if ahead and not traits_of(job).slim_card else ""
@@ -377,7 +387,7 @@ class Submission:
             if ahead:
                 notice += f"\n前面有 {ahead} 个同话题任务，本条排在它们之后。"
             elif capacity_full:
-                notice += f"\n当前并发名额已满（最多 {MAX_WORKERS} 个任务），本条已排队。"
+                notice += f"\n当前并发名额已满（最多 {capacity_words(job)} 个任务），本条已排队。"
             self.runtime.log(f"task card missing job=#{job.job_id}")
             self.messenger.reply(ctx, job.chat_id, notice, self.voice.key("ack", job.message_id), voice=self.voice)
         elif ahead:
@@ -386,7 +396,7 @@ class Submission:
                 self.voice.key("queue", job.message_id), voice=self.voice)
         elif capacity_full:
             self.messenger.reply(
-                ctx, job.chat_id, f"已收到，当前并发名额已满（最多 {MAX_WORKERS} 个任务），本条消息已排队。",
+                ctx, job.chat_id, f"已收到，当前并发名额已满（最多 {capacity_words(job)} 个任务），本条消息已排队。",
                 self.voice.key("queue", job.message_id), voice=self.voice)
         else:
             self.messenger.reply(
