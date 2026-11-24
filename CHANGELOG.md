@@ -10,10 +10,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 - 专项负责人能单独选和换 Harness、模型、思考预算，和管家、话题一样：设置卡「配置」页多一段“专项负责人”（新建专项用它，默认跟管家一样），管家开专项时点名的优先；已有的专项点专项卡上的「换配置」，或在网页负责人的对话下面换。只列能接 Bridge 工具的 Harness，负责人在哪个上都只读，工作区不变（[docs/projects.md](docs/projects.md#负责人用哪个-harness)）。网页数据约定 v36。
 - Pi 和 DeepSeek Harness 也能当管家和专项负责人：Pi 用它自带的 MCP 接 Bridge 工具，负责人那一轮只留 read、grep、find、ls；DeepSeek Harness 用自带的 `dsh-mcp-client`，负责人那一轮用 read-only 权限预设。核心的五个 Harness 在设置卡「配置」的管家、专项负责人两段都能选了。管家没选 Harness 时的顺序不变（Claude Code → Codex → Antigravity，然后才是它们）。
 
+### Fixed 修复
+
+- 网页工作台：输入框里 @ 一位名字很长的（长名字的专项负责人、长标题的话题），胶囊不再折成两行、撑高变形、右边空一块：名字只占一行，放不下就截断（话题截标题，负责人截专项名，T 号和“负责人”一直在），悬停看全名；胶囊和后面的字在同一条基线上，带胶囊的行和别的行一样高。手机上长胶囊不再把输入框撑出屏幕；你那句下面的去向放不下时换到下一行、名字太长截断，不再顶出气泡。
+
 ### Added (English)
 
 - A project's lead chooses and changes its Harness, model and budget like the butler and a topic: the 设置 card's 配置 has a 专项负责人 section (new projects; follows the butler by default), a Harness the butler names when it opens a project comes first, and an existing lead changes through 换配置 on its 专项卡 or the web page. Only Harnesses that take the Bridge's tools are offered; the lead stays read-only and keeps its workspace. Web data contract v36.
 - Pi and DeepSeek Harness can be the butler and a project's lead: Pi takes the Bridge's tools through its built-in MCP and a lead's turn keeps only read, grep, find and ls; DeepSeek Harness takes them through its bundled `dsh-mcp-client` and a lead's turn runs on its read-only permission preset. All five core Harnesses are on the 设置 card's butler and lead sections now; a butler with none named still falls back Claude Code, Codex, Antigravity first.
+
+### Fixed (English)
+
+- Web page: the composer's @ pill for a long name (the lead of a long-named project, a topic with a long title) no longer wraps into two lines, grows taller and leaves a gap on its right. The name stays on one line and is cut short when it has no room (a topic's title or a lead's project name; the T number and 负责人 always show), the full name shows on hover, the pill sits on the text's baseline, and a line with a pill is as tall as the others. On a phone a long pill no longer pushes the composer off the screen, and the route under your message moves to its own line and cuts long names instead of running out of the bubble.
 
 ## [0.1.0] - 2026-11-23
 

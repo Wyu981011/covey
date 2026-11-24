@@ -63,8 +63,11 @@ export type RoomTurn = TurnView & {
 const LIVE_PROJECT = new Set<string>(['在做', '等你', '停住', '收起']);
 const GONE_PROJECT: Record<string, string> = { 做完: '做完了', 已取消: '降为普通话题了' };
 
+/** 负责人在名字里的角色词 */
+export const LEAD_ROLE = '负责人';
+
 /** 负责人在界面上的名字：“<专项名> 负责人” */
-export const leadName = (title: string): string => `${title || '专项'} 负责人`;
+export const leadName = (title: string): string => `${title || '专项'} ${LEAD_ROLE}`;
 
 export function members(snap: SnapshotResponse | undefined): Member[] {
   if (!snap) return [];

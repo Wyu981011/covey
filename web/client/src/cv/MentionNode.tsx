@@ -4,7 +4,7 @@ import { Node } from '@tiptap/core';
 import { NodeViewWrapper, ReactNodeViewRenderer, type ReactNodeViewProps } from '@tiptap/react';
 import { Check, Crown, X } from 'lucide-react';
 import type { MentionInfo } from './collab';
-import { mentionToken, tokenAtStart, type MentionAttrs } from './mention';
+import { mentionToken, pillText, tokenAtStart, type MentionAttrs } from './mention';
 import { Who } from './RoomBits';
 import './collab.css';
 
@@ -98,14 +98,17 @@ const MentionView: React.FC<ReactNodeViewProps> = ({ node, selected }) => {
   const known: MentionInfo | undefined = e.info.get(a.key);
   const info: MentionInfo = known ?? { key: a.key, kind: a.kind, label: a.label, ...(a.avatar ? { avatar: a.avatar } : {}), number: a.number ?? null };
   const sum: boolean = e.summarizer === a.key;
-  // 话题的 T 号已经在头像上，名字写标题；管家、负责人写名字
-  const shownName: string = info.kind === 'topic' ? info.title ?? '' : info.label;
+  // 话题的 T 号已经在头像上，名字写标题；负责人是专项名加“负责人”（太长只截专项名）；管家写名字。悬停看全名
+  const { name, role, full } = pillText(info);
   const [at, setAt] = useState<DOMRect | null>(null);
   const close = React.useCallback(() => setAt(null), []);
   return (
     <NodeViewWrapper
       as="span"
       className={`mn ${info.kind}${selected ? ' sel' : ''}${sum ? ' sum' : ''}`}
+      // TipTap 给这层写了行内 white-space:normal，样式表里的 nowrap 盖不过它，长名字就折成几行（T720）
+      style={{ whiteSpace: 'nowrap' }}
+      title={sum ? `${full} · 汇总方` : full}
       data-mention={a.key}
       data-testid="mention-pill"
       contentEditable={false}
@@ -115,7 +118,8 @@ const MentionView: React.FC<ReactNodeViewProps> = ({ node, selected }) => {
       onClick={(ev: React.MouseEvent<HTMLElement>) => setAt(at ? null : ev.currentTarget.getBoundingClientRect())}
     >
       <Who info={info} bare />
-      {shownName ? <span className="mn-n">{shownName}</span> : null}
+      {name ? <span className="mn-n">{name}</span> : null}
+      {role ? <span className="mn-r">{role}</span> : null}
       {sum ? <span className="mn-sum">汇总</span> : null}
       {at ? <MentionMenu at={at} info={info} summarizer={sum} canSet={e.canSet} onClose={close} /> : null}
     </NodeViewWrapper>

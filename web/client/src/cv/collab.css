@@ -69,15 +69,27 @@
 .cv .who .rm-av{width:18px;height:18px;font-size:10px}
 .who-n{color:var(--t1);font-size:inherit;white-space:nowrap}
 
-/* 正文里的 @ 胶囊（编辑器里的行内原子节点） */
-.cv .mn{display:inline-flex;align-items:center;gap:5px;height:22px;max-width:16em;padding:0 8px 0 2px;margin:0 1px;border-radius:11px;background:var(--sel);color:var(--accent-t);font-size:.92em;line-height:1;cursor:pointer;user-select:none;vertical-align:middle;white-space:nowrap}
+/* 正文里的 @ 胶囊（编辑器里的行内原子节点）。T720：
+   - 名字只占一行，放不下就截断：话题截标题、负责人截专项名，T 号和“负责人”一直在；悬停（title）看全名。
+     nowrap 写在名字上：TipTap 给节点外壳写了行内 white-space:normal，外壳上的盖不过它。
+   - 名字和后面的正文同一条基线：名字 align-self:baseline，胶囊的基线就是名字的。
+   - 胶囊 20px 高，上下各收 1px（负外边距），带胶囊的那行和纯文字的行一样高（输入框行高 20.8px，手机 21px）。
+   - 头像缩到 16px，四周留 2px；圆角跟着头像走（管家、负责人是圆头像，话题是圆角方块的 T 号）。底色用正文色的 8%，深浅色一条规则。 */
+.cv .mn{display:inline-flex;align-items:center;gap:4px;box-sizing:border-box;height:20px;max-width:min(20em,100% - 2px);padding:0 7px 0 2px;margin:-1px 1px;
+  border-radius:10px;background:color-mix(in srgb,var(--t1) 8%,transparent);color:var(--t1);font-size:.92em;font-weight:500;line-height:20px;
+  vertical-align:baseline;white-space:nowrap;cursor:pointer;user-select:none;transition:background-color .12s}
+.cv .mn.topic{border-radius:6px}
 .cv .mn .who{gap:4px}
 .cv .mn .who-n{display:none}
-.cv .mn-n{overflow:hidden;text-overflow:ellipsis;color:var(--t1)}
-.cv .mn:hover{box-shadow:inset 0 0 0 1px var(--accent-t)}
-.cv .mn.sel,.cv .mn.sum{box-shadow:inset 0 0 0 1px var(--accent-t)}
-.cv .mn.sel{box-shadow:0 0 0 2px var(--accent-t)}
-.cv .mn-sum{flex:none;height:14px;padding:0 5px;border-radius:7px;background:var(--accent-t);color:#fff;font-size:10px;line-height:14px;font-weight:600}
+.cv .mn .rm-pic .a-avatar{width:16px;height:16px}
+.cv .mn .rm-av{width:16px;height:16px;font-size:9.5px}
+.cv .mn .a-tbadge{height:16px;min-width:16px;padding:0 4px;border-radius:4px;font-size:10px}
+.cv .mn-n,.cv .mn-r{align-self:baseline;white-space:nowrap}
+.cv .mn-n{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cv .mn-r{flex:none;color:var(--t2);font-weight:400}
+.cv .mn:hover{background:color-mix(in srgb,var(--t1) 13%,transparent)}
+.cv .mn.sel{box-shadow:0 0 0 1.5px color-mix(in srgb,var(--a1) 70%,transparent)}
+.cv .mn-sum{flex:none;height:14px;padding:0 5px;border-radius:7px;background:var(--t2);color:var(--s1);font-size:10px;line-height:14px;font-weight:600;white-space:nowrap}
 .cv .mn-menu{position:fixed;z-index:60;display:flex;flex-direction:column;gap:2px;width:220px;padding:4px;border:1px solid var(--line2);border-radius:8px;background:var(--s3);box-shadow:0 6px 18px rgba(0,0,0,.25)}
 .cv .mn-menu button{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;border:0;border-radius:6px;background:none;color:var(--t1);font-size:13px;text-align:left;cursor:pointer}
 .cv .mn-menu button:hover:not(:disabled),.cv .mn-menu button:focus-visible{background:var(--hover)}
@@ -104,6 +116,12 @@
 
 /* 去向里的头像：“→ [T586] 汇总 · 协助 [T505][T601]” */
 .rt{display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;vertical-align:middle}
+/* 头像加名字排在一行的地方（去向、@ 候选、底栏的汇总小胶囊）：名字太长就截断，不撑出气泡和输入框（T720）。
+   去向本身最宽是时间那一栏的宽；手机上那一栏占满气泡（min-width:0，不按最长的名字撑） */
+.cv :is(.rt,.rm-pick,.rc) .who{flex:0 1 auto;max-width:100%}
+.cv :is(.rt,.rm-pick,.rc) .who-n{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cv .rt{max-width:100%}
+.cv.m .feed .um .tm{min-width:0}
 
 /* 顶栏「成员 N」 */
 .mm{position:relative;flex:none}

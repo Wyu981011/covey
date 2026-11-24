@@ -204,6 +204,20 @@ test('胶囊的样子：话题 T 号、管家、负责人（专项头像），�
   assert.ok(C.candidates(snap, ['k586']).every((c) => c.key !== 'k586'));
 });
 
+test('胶囊上写什么（T720）：话题写标题、负责人拆出“负责人”只截专项名、悬停看全名；草稿读回来认不得时写 label', () => {
+  assert.deepEqual(M.pillText(C.mentionInfo('k586', snap, B)), { name: 'Golden 作答', role: '', full: 'T586 Golden 作答' });
+  assert.deepEqual(M.pillText(C.mentionInfo(L1, snap, B)), { name: '夜航改版', role: '负责人', full: '夜航改版 负责人' });
+  assert.deepEqual(M.pillText(C.mentionInfo(B, snap, B)), { name: '管家', role: '', full: '管家' });
+  // 负责人的名字和 room.leadName 是同一个词拼的；专项名里带“负责人”也只拆最后那个
+  assert.deepEqual(M.pillText({ kind: 'lead', label: R.leadName('找负责人') }), { name: '找负责人', role: '负责人', full: '找负责人 负责人' });
+  assert.deepEqual(M.pillText({ kind: 'lead', label: '负责人' }), { name: '负责人', role: '', full: '负责人' });
+  // 话题没有标题：T 号已在头像上，名字空着；草稿读回来认不得（kind 默认 topic、没有号码）时写 label
+  assert.deepEqual(M.pillText({ kind: 'topic', label: 'T12' }), { name: '', role: '', full: 'T12' });
+  assert.deepEqual(M.pillText({ kind: 'topic', label: '夜航改版 负责人' }), { name: '夜航改版 负责人', role: '', full: '夜航改版 负责人' });
+  // 没有号码的话题 label 就是标题，全名不重复写
+  assert.deepEqual(M.pillText({ kind: 'topic', label: '密度', title: '密度' }), { name: '密度', role: '', full: '密度' });
+});
+
 test('去向的结构化写法：协作写汇总、协助，直达和经管家转的写 to', () => {
   const outbox = [{ seq: 1, op_id: 'o1', kind: 'say', topic_key: 'k586', project_key: null, payload: { text: '两位', room: true, to: ['k586', 'k505', 'k601'] }, state: 'done', message: '', created_at: new Date(990_000).toISOString() },
     { seq: 2, op_id: 'o2', kind: 'say', topic_key: 'k12', project_key: null, payload: { text: '单个', room: true, to: ['k12'] }, state: 'done', message: '', created_at: new Date(991_000).toISOString() }];

@@ -25,6 +25,9 @@
 /* 边写边渲染的编辑区（RichText）：和原来的文字框一样大小、行高；里面按“你说的话”的样子画 */
 .cv .cp-richbox{min-height:24px;overflow-y:auto;cursor:text;color:var(--t1)}
 .cv .mcomp .cp-richbox{width:100%;max-height:30vh}
+/* 手机那一行（+、输入框、发送）：输入框可以比里面最长的一段字窄。@ 胶囊不折行，按百分比截断的宽度在算“最窄能多窄”时不算数，
+   不加这两个 min-width，长胶囊会把输入框连同整页撑出屏幕（T720） */
+.cv .mcomp .in,.cv .mcomp .cp-richbox{min-width:0}
 /* 编辑区挂着 .prose（排版插件默认 max-width:65ch）：放开宽度，正文铺满输入框（普通、放大、手机都一样） */
 .cv .cp-rich{max-width:none;outline:0;min-height:24px;padding:2px;line-height:1.6;font-size:inherit;color:var(--t1);white-space:pre-wrap;overflow-wrap:anywhere;caret-color:var(--a1)}
 .cv .mcomp .cp-rich{padding:0;line-height:1.5}

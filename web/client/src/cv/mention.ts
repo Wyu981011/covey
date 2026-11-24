@@ -6,6 +6,8 @@
  * 代码块和行内代码里的记号不认（只当字）。
  */
 
+import { LEAD_ROLE } from './room';
+
 export const SCHEME = 'covey-mention:';
 
 /** 一枚记号：label 里转义过 \ [ ]；key 是 encodeURIComponent 之后再把括号编掉的，好让 `[^)\s]` 能找到它的结尾 */
@@ -95,4 +97,21 @@ export interface MentionAttrs {
   label: string;
   avatar?: string;
   number?: number | null;
+}
+
+/**
+ * 胶囊上写什么（T720）：name 放不下时截断，role 一直在，full 是悬停看到的全名。
+ * 话题的 T 号画在头像上，名字写标题（没有标题、又不是“T586”这样的号码时写 label）；负责人拆成专项名和“负责人”，
+ * 专项名太长只截专项名；管家和别的写 label。
+ */
+export function pillText(m: { kind: MentionAttrs['kind']; label: string; title?: string }): { name: string; role: string; full: string } {
+  if (m.kind === 'topic') {
+    const name: string = m.title || (/^T\d+$/u.test(m.label) ? '' : m.label);
+    return { name, role: '', full: m.title && m.title !== m.label ? `${m.label} ${m.title}` : m.label };
+  }
+  const tail = ` ${LEAD_ROLE}`;
+  if (m.kind === 'lead' && m.label.length > tail.length && m.label.endsWith(tail)) {
+    return { name: m.label.slice(0, -tail.length), role: LEAD_ROLE, full: m.label };
+  }
+  return { name: m.label, role: '', full: m.label };
 }
