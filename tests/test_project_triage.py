@@ -39,6 +39,16 @@ def question(topic=THREAD, **fields):
             "request_id": "checkpoint-k-bbbb", "created_at": NOW, "questions": CHOICE, **fields}
 
 
+def card_out(shown, state):
+    """A ``show`` that sent the card: it records the token and, as the real one does, leaves the question's card shown."""
+    def show(env, record):
+        shown.append(record["token"])
+        path = Path(state) / "questions" / (record["token"] + ".json")
+        write_json(path, {**read_object(path), "display_pending": False}, ensure_ascii=False)
+        return True
+    return show
+
+
 class Held(Case):
     """A project with one member topic and a question it asked, the switch on."""
 
@@ -289,7 +299,7 @@ class SweepCase(Held):
         self.env = SimpleNamespace(state_dir=self.state, runtime=SimpleNamespace(log=self.logs.append), topics=mock.Mock())
         self.write()
         self.route()
-        patch = mock.patch.object(flow, "show", side_effect=lambda env, record: self.shown.append(record["token"]) or True)
+        patch = mock.patch.object(flow, "show", side_effect=card_out(self.shown, self.state))
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -319,7 +329,7 @@ class SweepTest(SweepCase):
         flow.sweep(self.env, time.time() + triage.DEADLINE + 1)
         record = self.saved()
         self.assertEqual((triage.state(record), record["triage"]["why"], record["display_pending"]),
-                         (triage.ESCALATED, "3 分钟没人处理", True))
+                         (triage.ESCALATED, "3 分钟没人处理", False))
         self.assertEqual(self.shown, [TOKEN])
         row = self.reload()["triage"][-1]
         self.assertEqual(row["kind"], "escalated")
@@ -954,7 +964,7 @@ class PauseInterplayTest(Held):
         from test_project_loop import lead_app
         mock.patch.dict(os.environ, {projects.ASK_ENV: "1", projects.BUDGET_ENV: "10000000"}).start()
         shown = []
-        mock.patch.object(flow, "show", side_effect=lambda env, record: shown.append(record["token"]) or True).start()
+        mock.patch.object(flow, "show", side_effect=card_out(shown, self.state)).start()
         self.write()
         self.route()
         projects.update(self.state, PID, lambda data: data.update(tokens_used=10_000_000))
@@ -1080,7 +1090,7 @@ class ClosedTest(Held):
         self.env = SimpleNamespace(state_dir=self.state, runtime=SimpleNamespace(log=self.logs.append), topics=mock.Mock())
         self.write()
         self.route()
-        patch = mock.patch.object(flow, "show", side_effect=lambda env, record: self.shown.append(record["token"]) or True)
+        patch = mock.patch.object(flow, "show", side_effect=card_out(self.shown, self.state))
         patch.start()
         self.addCleanup(patch.stop)
 
@@ -1088,7 +1098,7 @@ class ClosedTest(Held):
         with mock.patch.dict(os.environ, {triage.ENV: ""}):
             flow.sweep(self.env, time.time())
         record = self.saved()
-        self.assertEqual((triage.state(record), record["triage"]["why"], record["display_pending"]), (triage.ESCALATED, "问题分流已关闭", True))
+        self.assertEqual((triage.state(record), record["triage"]["why"], record["display_pending"]), (triage.ESCALATED, "问题分流已关闭", False))
         self.assertEqual(self.shown, [TOKEN])
 
     def test_with_the_projects_switch_off_too(self):
@@ -1295,6 +1305,89 @@ class UnshownLiveQuestionTest(HeldFixture):
         self.assertNotIn("重新投递", said)
         self.assertEqual(self.saved()["status"], "pending")
         self.app.questions.submit_answer.assert_not_called()
+
+
+class StrandedCheckpointQuestionTest(HeldFixture):
+    """T752, 2026-11-23: the lead handed a member's checkpoint question to the owner and the tool said ok, but the card did not go
+    (nothing logged) and nothing asked again: the question stayed pending with the task marked failed until a click on 重试. The
+    hand-over logs a card that did not go, the sweep sends it again (once a minute, five tries), a card that goes out puts the task
+    back to waiting for the answer, and the task's 重试 is what is left when the tries are used up."""
+
+    def setUp(self):
+        super().setUp()
+        record = {**json.loads(self.path.read_text()),
+                  "triage": {"state": triage.HELD, "project": PID, "at": NOW, "deadline": NOW + 180, "receipt": True}}
+        self.path.write_text(json.dumps(record))
+        self.env = SimpleNamespace(state_dir=self.state, runtime=self.app.runtime,
+                                   topics=SimpleNamespace(target=lambda state, topic, chat: (self.app, self.ctx_topic, None)))
+        upsert_job_record(self.state, self.job.message_id, final_text="结果正文")  # The saved reply 重新投递 would send.
+        self.logs = []
+        self.app.runtime.log = self.logs.append
+        self.app.questions.publish_question_card.return_value = False  # Feishu would not take the card.
+        self.record = record
+
+    def saved(self):
+        return json.loads(self.path.read_text())
+
+    def job_now(self):
+        return find_job_record(self.state, self.job.message_id)
+
+    def escalate(self):
+        self.assertFalse(flow.escalate(self.env, self.record, "要主人定"))
+
+    def sweep(self, now):
+        flow.sweep(self.env, now)
+
+    def test_a_card_that_did_not_go_is_logged_and_the_task_says_it_was_not_delivered(self):
+        self.escalate()
+        self.assertTrue(any("escalation card not sent token=" + self.record["token"][:8] in line for line in self.logs))
+        self.assertTrue(any("card did not go out" in line for line in self.logs))
+        self.assertTrue(flow.stranded(self.saved()))
+        self.assertEqual((self.job_now()["status"], self.job_now()["question_delivery_ok"]), ("failed", False))
+
+    def test_the_reason_is_the_result_that_is_not_delivered_when_it_is_not(self):
+        self.app.questions.checkpoints.result_delivered = lambda ctx, record: False
+        self.escalate()
+        self.assertTrue(any("result is not delivered yet" in line for line in self.logs))
+
+    def test_the_sweep_sends_it_again_after_a_minute_and_mends_the_task(self):
+        self.escalate()
+        at = triage.of(self.saved())["at"]
+        self.sweep(at + 10)
+        self.assertEqual(self.app.questions.publish_question_card.call_count, 1)  # Only the hand-over's own: not within the minute.
+        self.app.questions.publish_question_card.return_value = True
+        self.sweep(at + flow.RESHOW_EVERY)
+        self.assertEqual(self.app.questions.publish_question_card.call_count, 2)
+        saved = self.saved()
+        self.assertEqual((saved["display_pending"], triage.of(saved)["reshows"]), (False, 1))
+        self.assertEqual((self.job_now()["status"], self.job_now()["question_delivery_ok"]), ("waiting_user", True))
+        self.assertTrue(any("card again token=" + self.record["token"][:8] + " try=1 ok=True" in line for line in self.logs))
+        self.sweep(at + 3 * flow.RESHOW_EVERY)
+        self.assertEqual(self.app.questions.publish_question_card.call_count, 2)  # Nothing more once it is out.
+
+    def test_it_gives_up_after_its_tries_and_the_task_stays_for_its_retry_button(self):
+        self.escalate()
+        at = triage.of(self.saved())["at"]
+        for step in range(1, flow.RESHOW_TRIES + 4):
+            self.sweep(at + step * flow.RESHOW_EVERY)
+        self.assertEqual(self.app.questions.publish_question_card.call_count, 1 + flow.RESHOW_TRIES)
+        self.assertEqual(len([line for line in self.logs if "card gave up" in line]), 1)
+        self.assertEqual((self.job_now()["status"], self.job_now()["question_delivery_ok"]), ("failed", False))
+
+    def test_with_the_switch_off_the_sweep_does_not_send_it_again(self):
+        self.escalate()
+        os.environ.pop(triage.ENV)
+        self.app.questions.publish_question_card.return_value = True
+        self.sweep(triage.of(self.saved())["at"] + 10 * flow.RESHOW_EVERY)
+        self.assertEqual(self.app.questions.publish_question_card.call_count, 1)
+
+    def test_a_question_that_is_not_stranded_is_left_alone(self):
+        self.escalate()
+        data = {**self.saved(), "status": "cancelled"}
+        self.path.write_text(json.dumps(data))
+        self.app.questions.publish_question_card.return_value = True
+        self.sweep(triage.of(data)["at"] + 10 * flow.RESHOW_EVERY)
+        self.assertEqual(self.app.questions.publish_question_card.call_count, 1)
 
 
 if __name__ == "__main__":
