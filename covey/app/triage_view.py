@@ -12,7 +12,7 @@ from covey.core.topics import topic_label
 
 def held_questions(state_dir, topics=None) -> list:
     """[(path, record)] of the held questions (of the topics ``topics`` when given), oldest first."""
-    rows = [(path, row) for path, row in directory_store(Path(state_dir) / "questions").query(status="pending") if triage.held(row)]
+    rows = directory_store(Path(state_dir) / "questions").query(status="pending", where=triage.held)  # Only the held ones are copied.
     rows = [row for row in rows if topics is None or row[1].get("topic_id") in topics]
     return sorted(rows, key=lambda row: row[1].get("created_at") or 0)
 
@@ -20,7 +20,7 @@ def held_questions(state_dir, topics=None) -> list:
 def lead_held(state_dir) -> list:
     """[(path, record)] of the questions whose triage is still ``held`` in any status (a lead's answer that left ``pending`` is one:
     the sweep settles it), oldest first."""
-    rows = [(path, row) for path, row in directory_store(Path(state_dir) / "questions").query() if triage.state(row) == triage.HELD]
+    rows = directory_store(Path(state_dir) / "questions").query(where=lambda row: triage.state(row) == triage.HELD)  # Copies only those.
     return sorted(rows, key=lambda row: row[1].get("created_at") or 0)
 
 

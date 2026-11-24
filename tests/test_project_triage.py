@@ -251,6 +251,28 @@ class GateTest(unittest.TestCase):
         self.assertEqual(project_gates.hit([{"header": "上线时间", "question": "什么时候？", "options": [{"label": "周一"}]}]), "上线")
         self.assertEqual(project_gates.hit([{"question": "怎么办？", "options": [{"label": "A", "description": "会花钱"}]}]), "花钱")
 
+    def test_taking_machines_quota_and_services_hits(self):
+        """T722, 2026-11-24 12:13: three questions asking to take cards, charge quota and make a service were held for the lead."""
+        asked = [
+            {"header": "A 型卡 走 W4A8", "question": "是否接受 W4A8 版按新模型走独立槽位试跑，并批准在 pool-a 的 zone-1 占 1 台 8 卡 A 型机（扣 pool-a shared）？",
+             "options": [{"label": "接受，占 1 台 A 型卡 试跑（推荐）", "description": "不选的话 pool-a 的 70 张 A 型卡 只能空着或给评测用"},
+                         {"label": "不接受量化版", "description": "只走原精度路线"}]},
+            {"header": "pool-a B 型卡 +2台", "question": "是否批准 T27 在 pool-a 的 zone-2 再占 2 台 8 卡（B 型 128G 1 台、B 型 112G 1 台，"
+             "扣 pool-a shared，不碰 pool-b），用已验收的原精度方案做单机验收？", "options": [{"label": "批准两台（推荐）"}, {"label": "暂不"}]},
+            {"header": "pool-b C 型", "question": "是否批准在 pool-b 的 zone-3 建 1 个不挂业务标签的普通服务（挂 team-x 节点），"
+             "占 1 台 C 型 整机（扣 pool-b dedicated），只做拓扑和 多卡通信 验证、不接流？",
+             "options": [{"label": "批准 1 台验证（推荐）"}, {"label": "不用 pool-b 的 B 型卡"}]},
+        ]
+        for question in asked:
+            self.assertTrue(project_gates.hit([question]), question["header"])
+        self.assertLessEqual({"建 1 个不挂业务标签的普通服务", "占 1 台", "扣 pool-b dedicated"}, set(project_gates.hits([asked[2]])))
+        for text in ("要扩容到 4 台吗？", "缩到 0 吗？", "释放这 8 张卡吗？", "现在申请配额吗？", "scale up 到 4 个吗？", "新建一个推理服务吗？"):
+            self.assertTrue(project_gates.hit([{"question": text, "options": [{"label": "是"}]}]), text)
+
+    def test_talk_of_cards_and_services_without_taking_them_passes(self):
+        for text in ("建议先做中小模型服务的评测方案？", "执行 tailscale up 吗？", "扣分项按哪种算？", "这张卡的显存够不够？", "服务的首 token 慢在哪？"):
+            self.assertEqual(project_gates.hit([{"question": text, "options": [{"label": "A"}]}]), "", text)
+
     def test_only_questions_with_options_are_choices(self):
         self.assertTrue(project_gates.choice_only(CHOICE))
         self.assertFalse(project_gates.choice_only([]))
@@ -258,8 +280,8 @@ class GateTest(unittest.TestCase):
         self.assertFalse(project_gates.choice_only("x"))
 
 
-class SweepTest(Held):
-    """The Bridge's look: the receipt for the lead, and the owner's turn once the three minutes are up."""
+class SweepCase(Held):
+    """A held question, its card's sending recorded (``shown``)."""
 
     def setUp(self):
         super().setUp()
@@ -273,6 +295,10 @@ class SweepTest(Held):
 
     def receipts(self):
         return [item for item in project_loop.unread(self.state, PID) if item["kind"] == "question"]
+
+
+class SweepTest(SweepCase):
+    """The Bridge's look: the receipt for the lead, and the owner's turn once the three minutes are up."""
 
     def test_a_held_question_gets_one_receipt_that_names_it(self):
         flow.sweep(self.env, time.time())
@@ -335,6 +361,60 @@ class SweepTest(Held):
         loop = ProjectLoop(SimpleNamespace(log=self.logs.append, shutdown=mock.Mock()), self.env)
         loop.tick(time.time())
         self.assertEqual(len(self.receipts()), 1)
+
+
+class StuckLoopTest(SweepCase):
+    """T726, 2026-11-24: 12:13:14 the sweep wrote a held question's receipt, then the project loop's thread was stuck on the disk until
+    the Bridge restarted at 12:35: the lead was not woken and the 12:16:03 deadline passed with nobody told."""
+
+    def test_a_look_stuck_on_a_project_is_left_behind_and_the_late_question_still_goes_to_the_owner(self):
+        gate, calls, real = threading.Event(), [], project_loop.unread
+
+        def unread(state, pid):
+            calls.append(pid)
+            gate.wait(10)  # An NFS open that does not return.
+            return real(state, pid)
+        loop = ProjectLoop(SimpleNamespace(log=self.logs.append, shutdown=threading.Event()), self.env)
+        with mock.patch.object(project_loop, "unread", side_effect=unread), \
+                mock.patch.object(project_loop, "STUCK_SECONDS", 0.3, create=True):
+            loop.step(time.time())
+            old = loop.left[0].thread
+            self.assertTrue(any("project loop stuck" in line and f"project:{PID}" in line for line in self.logs), self.logs)
+            began = time.monotonic()
+            loop.step(time.time() + triage.DEADLINE + 1)
+            self.assertLess(time.monotonic() - began, 5)
+            self.assertEqual(self.shown, [TOKEN])  # The sweep went on in the new thread.
+            self.assertEqual(calls, [PID])  # The project the old look is stuck on is left out.
+            gate.set()
+            old.join(10)
+        self.assertFalse(old.is_alive())
+        self.assertFalse(project_loop.wakes_of(self.reload())["count"])  # The look that came back late woke nobody.
+
+    def test_the_sweep_looks_at_every_question_only_now_and_then(self):
+        flow.sweep(self.env, time.time())  # A process's first look: every question.
+        data = self.saved()
+        data["triage"]["answering"] = time.time()
+        write_json(self.path, data, ensure_ascii=False)
+        with mock.patch.object(flow, "lead_held", wraps=flow.lead_held) as every_question:
+            flow.sweep(self.env, time.time())
+            data = self.saved()
+            data["status"] = "answered"  # The lead's answer landed: the question is no longer pending.
+            write_json(self.path, data, ensure_ascii=False)
+            flow.sweep(self.env, time.time())
+        self.assertEqual(every_question.call_count, 0)
+        self.assertEqual((triage.state(self.saved()), self.saved()["triage"]["by"]), (triage.ANSWERED, "lead"))
+
+    def test_receipts_the_lead_has_read_are_read_from_disk_once(self):
+        write_job(self.state, "k-lead", topic_id=LEAD, chat_id=CHAT, job_id=7, status="done")
+        item = project_lead.add_receipt(self.state, PID, "thread_end", "做完了", thread=THREAD)
+        path = project_lead.inbox_dir(self.state, PID) / (item["id"] + ".json")
+        write_json(path, {**item, "taken_by": "k-lead"}, ensure_ascii=False)
+        project_loop.receipts(self.state, PID)
+        with mock.patch.object(project_loop, "read_object", wraps=project_loop.read_object) as reads:
+            found = project_loop.receipts(self.state, PID)
+            self.assertNotIn(item["id"], [item["id"] for item in project_loop.unread(self.state, PID)])
+        self.assertIn(item["id"], [each.get("id") for each in found])
+        self.assertNotIn(str(path), [str(call.args[0]) for call in reads.call_args_list])
 
 
 class AnswerTest(Held):

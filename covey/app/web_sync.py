@@ -40,8 +40,9 @@ from pathlib import Path
 from covey.app import web_images
 from covey.app.web_collect import Collector, Shared
 from covey.app.web_ops import Ops
-from covey.app.web_push_client import Client, Stuck, WebError, Worker
+from covey.app.web_push_client import Client, WebError
 from covey.core import avatars, store, web_sync
+from covey.core.loops import Stuck, Worker
 from covey.core.state import read_object, write_json
 
 FULL_SECONDS = web_sync.FULL_SECONDS  # A full pass starts this long after the last one ended (its own thread reads it a slice a step).

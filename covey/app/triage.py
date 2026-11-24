@@ -50,6 +50,8 @@ ROW = 120  # Characters of a row's question and answer.
 RECEIPT = "question"  # The inbox receipt's kind.
 RESHOW_EVERY = 60  # Seconds between the sweep's tries at the card of a live question handed on that never went (``reshow``).
 RESHOW_TRIES = 5  # The sweep's tries; the owner's message in the topic asks once more each time.
+FULL_SWEEP = 600  # Seconds between the sweep's looks at the held questions of every status; the others look at the pending ones.
+_swept = {}  # state directory -> {"full": monotonic time of the last full look, "answering": {token: path}} (``swept``).
 
 
 def question_path(state_dir, token) -> Path:
@@ -284,17 +286,44 @@ def show_here(questions, ctx, job, record, written) -> bool:
     return True
 
 
-def sweep(env, now=None) -> None:
+def swept(state) -> list:
+    """[(path, record)] the sweep looks at, oldest first: the held questions that are pending, and those the lead's answer was on its
+    way to last time (read again by name: the answer landing takes them out of ``pending``). Every FULL_SWEEP seconds, and on the
+    first look of a process, the held ones of every status instead (``lead_held``). The questions directory has thousands of records
+    on a live deployment: looking at all of them every TICK seconds was most of the project loop's time (T726)."""
+    seen = _swept.setdefault(str(state), {"full": None, "answering": {}})
+    now = time.monotonic()
+    if seen["full"] is None or now - seen["full"] >= FULL_SWEEP:
+        rows, seen["full"] = lead_held(state), now
+    else:
+        rows = held_questions(state)
+        known = {row.get("token") for _, row in rows}
+        for token, path in list(seen["answering"].items()):
+            if token not in known:
+                record = read_object(path)
+                if triage.state(record) == triage.HELD:
+                    rows.append((path, record))
+        rows.sort(key=lambda row: row[1].get("created_at") or 0)
+    seen["answering"] = {row.get("token"): path for path, row in rows
+                         if row.get("status", "pending") == "pending" and triage.of(row).get("answering")}
+    return rows
+
+
+def sweep(env, now=None, going=None) -> None:
     """The Bridge's look at the held questions (app/project_loop.py ProjectLoop.tick): a receipt for each one the lead has not been
     told of, and the owner's turn for each one that waited its 180 seconds, whose project stopped, or that was handed back. An
     answer the lead sent to a task process is settled here too: ``answered_by_lead`` once the question record shows it landed,
     the owner's turn when it did not within ANSWERING seconds. An answer on its way (ANSWERING seconds) leaves its question alone.
-    With the switch off nobody handles a held question: all of them are the owner's (``closed``; the Bridge's start does it once)."""
+    With the switch off nobody handles a held question: all of them are the owner's (``closed``; the Bridge's start does it once).
+    ``going()``, when given, is asked before each question: False stops the sweep (app/project_loop.py: this look was left behind
+    as stuck, and a newer one does the work)."""
     if not getattr(env, "state_dir", None):
         return
     state, now = Path(env.state_dir), time.time() if now is None else now
     closed = not triage.enabled()
-    for path, record in lead_held(state):
+    for path, record in (lead_held(state) if closed else swept(state)):
+        if going is not None and not going():
+            return
         try:
             found = triage.of(record)
             answering = float(found.get("answering") or 0)
@@ -317,9 +346,10 @@ def sweep(env, now=None) -> None:
                 receipt(state, projects.read_record(state, found.get("project") or ""), record, now)
         except Exception as exc:  # noqa: BLE001 - the others are looked at all the same
             env.runtime.log(f"question triage sweep failed token={str(record.get('token'))[:8]}: {type(exc).__name__}")
-    for _, record in directory_store(state / "questions").query(status="pending"):
-        if reshow_due(record, now):
-            reshow(env, record, now)
+    for _, record in directory_store(state / "questions").query(status="pending", where=lambda row: reshow_due(row, now)):
+        if going is not None and not going():
+            return
+        reshow(env, record, now)
 
 
 def settle_closed(env) -> None:

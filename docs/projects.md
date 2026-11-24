@@ -164,7 +164,7 @@
   - `Triage.route(ctx, job, record)` 在两个发卡的口子前调：原生的活问题和检查点、暂停的问题；它出任何错都按“给你”走。
 - **扣住是什么样**：问题记录加 `triage: {state: held, at, deadline: 现在+180 秒, project, receipt}`，`status` 仍是 `pending`，`display_pending` 仍是真，所以所有“待回答的问题”的列表都看不到它，也没有你能点的卡。话题的任务卡上那一行写“已交负责人”。`state` 只有 `held → answered_by_lead | escalated`（`TRIAGE_TRANSITIONS`），都是终态。
 - **扣住的问题不算没投出去**：任务记录的 `question_delivery_ok` 是真，所以 `undelivered_jobs` 不重投，恢复判定（`core/recovery.py` 的 `classify`）和问题卡已发出时一样。Bridge 重启时 `recover_question_delivery` 跳过扣住的问题，由 `sweep` 照常接着数 180 秒。任务进程只写自己这道题的记录，扣住时不发卡也不碰收件箱，活问题的任务进程照常等答案。`tests/test_project_triage.py` 的 `HeldDeliveryTest`、`HeldLiveQuestionTest` 逐条验证。
-- **回执和 3 分钟**：Bridge 的 `ProjectLoop` 每 10 秒扫一遍扣住的问题（`sweep`）：没有回执的，往专项收件箱写一条 `question` 回执（这种回执不用 `COVEY_PROJECT_AUTOWAKE` 也唤醒负责人）；到了 `deadline`、专项不再 `active` 的，发给你。负责人的状态包里“交给你的话题问题”一段有每道题的 id、题目、选项和还剩几秒（`app/triage_view.py`）。
+- **回执和 3 分钟**：Bridge 的 `ProjectLoop` 每 10 秒扫一遍扣住的问题（`sweep`）：没有回执的，往专项收件箱写一条 `question` 回执（这种回执不用 `COVEY_PROJECT_AUTOWAKE` 也唤醒负责人）；到了 `deadline`、专项不再 `active` 的，发给你。平时只看还在等回答的扣住问题，加上上一次看时负责人的回答正在送的那几道（按名字重读）；进程起来后的第一遍和之后每 10 分钟（`FULL_SWEEP`）才看所有状态的问题：`questions/` 动辄上千条，每 10 秒全看一遍会占掉这条线程大半的时间。负责人的状态包里“交给你的话题问题”一段有每道题的 id、题目、选项和还剩几秒（`app/triage_view.py`）。
 - **负责人的两个工具**（只在开关开着时列给负责人）：
   - `project_answer(thread, answers)`：每题都要答，答案是选项原文，多选给数组；走 `Questions.submit_answer`，效果和你点“提交回答”一样，补充说明是“（负责人按专项记忆替主人答的）”；开了协作还要写 `evidence`，见[分流的依据](#分流的依据)。提交前先把 `display_pending` 记成假并写 `answering`；提交失败就把问题转给你。
   - `project_escalate(thread, why[, context, recommend, if_not])`：问题卡马上按原来的口子发给你（话题串里一张，私聊顶层一份副本），卡上多一行“负责人转给你的理由：…”；写了 `context`（背景一句话，最多 120 字）卡上理由下面多一行灰字“背景：…”，写了 `recommend`（推荐的选项原文）多一行“负责人推荐：…”，再写 `if_not`（不选它的代价）就跟在后面一行；三个都不写，卡跟以前一样（到期按推荐执行不做，只是写给你看）。这三项记在题目的 `triage` 里，任务卡上的那一行换成“转给你了”；卡发不出去时任务记录记 `question_delivery_ok: false`，你那边是平常的“重新投递”。
@@ -172,7 +172,8 @@
 - **负责人的回答要确认**：`project_answer` 提交时任务进程还活着，答案只是写进它的收件箱，问题记录仍是 `pending`。这时分流状态保持 `held`，工具回“还没确认收到”；`sweep` 看到问题记录已落地才改成 `answered_by_lead`；`answering` 超过 90 秒（`ANSWERING`）仍是 `pending` 就转给你（理由“负责人的回答没有送到”）。这 90 秒里 `sweep` 对这道题所有分支都不动。
 - **硬闸**（`core/project_gates.py`，只用标准库）：一份词表，查题目、标题、选项的标签和说明，命中就直接给你：
   - 中文：部署、发布、上线、下线、发给、对外、转账、付费、付款、购买、充值、花钱、额度、扣费、删除、清空、覆盖原/掉/现有/画板/文档、停用、排空、批一份、不可逆、无法恢复、强制、生产环境、线上环境/服务、到线上、密钥、密码、令牌；
-  - 英文整词：`rm`、`force`、`deploy`、`release`、`publish`、`delete`、`drop`、`truncate`、`purge`、`wipe`、`destroy`、`prod`、`production`、`sudo`、`password`、`secret`、`api key`、`payment`、`billing`。
+  - 英文整词：`quota`、`rm`、`force`、`deploy`、`release`、`publish`、`delete`、`drop`、`truncate`、`purge`、`wipe`、`destroy`、`prod`、`production`、`sudo`、`password`、`secret`、`api key`、`payment`、`billing`。
+  - 占机器、扣配额、建服务（`PATTERNS`，按动作写的式子，卡上的命中词是匹配到的原文）：“占 N 台/张/卡/个节点”、“扣 … shared/dedicated/配额/额度/quota”、“新建/创建/建 N 个 … 服务/集群/实例/资源池”（“建议”“重建”“搭建”不算）、扩缩容/扩容/缩容/缩到 0、“申请/释放/归还/退还 … 卡/机器/资源/节点/配额”、配额、`scale up/down/out/in`。“占 1 台 8 卡机器（扣 pool-a shared）”“建 1 个普通服务、占 1 台整机（扣 pool-b dedicated）”这类题里没有上面的任何一个词，没有这些式子就会扣给负责人。“卡”“服务”“资源”单独出现在很多不要资源的问题里，所以不收单字。拿一个部署的一千多道选择题核过，多拦下的约 3%，几乎都是要卡、建池、扩缩容的拍板题。
   - 词表宁多勿漏：多一次命中只是你多看一张本来就会看到的卡。“线上”“token”“预算”“清理”“回滚”这类在问题里多是别的意思的词不在表里，漏的靠负责人自己判断、3 分钟超时和“不对”兜底。
 - **你看得到**：负责人替你答的每一条、每一次转给你，都是专项卡“分流记录”里的一行（最多 40 条）；答的那行带一个“不对”按钮（`bridge_project_triage_wrong`）。
   - 点了发一张只有一个输入框的小表单卡（`cards/triage_card.py`；专项卡会重画，不放输入框）。

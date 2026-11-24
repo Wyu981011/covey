@@ -259,7 +259,7 @@
 | `app/web_ops.py` | 网页上发来的操作怎么执行: `Ops.run` does one operation of the page's outbox as the owner's own and says (state, message) … |
 | `app/web_pairing.py` | 网页工作台同步里不碰 Collector 缓存的那部分 |
 | `app/web_panels.py` | 网页设置页的设备和代答两页 (docs/web.md, COVEY_WEB=1 |
-| `app/web_push_client.py` | 网页工作台同步的客户端: the page's /openapi over HTTP (`Client`, `WebError`) and the thread a push step runs in, left … |
+| `app/web_push_client.py` | 网页工作台同步的客户端: the page's /openapi over HTTP (`Client`, `WebError`) |
 | `app/web_room.py` | What the web page's room needs beside the butler's and the leads' turns |
 | `app/web_said.py` | Who said a topic's owner line and the words the web page shows for it |
 | `app/web_settings.py` | 网页工作台的设置页 (docs/web.md, COVEY_WEB=1 |
@@ -388,7 +388,7 @@
 | `core/logs.py` | Logs of a state directory |
 | `core/longtask.py` | Long-task status: the thread that watches a running turn (TaskMonitor) |
 | `core/look.py` | How a state looks on all three surfaces: the chat's cards, the bot menu's panels and the web page |
-| `core/loops.py` | The Bridge's background threads: `supervised` keeps one running, `every` is the loop most of them run |
+| `core/loops.py` | The Bridge's background threads |
 | `core/maintenance.py` | Daily maintenance of a state directory: a verifiable backup, archival and bounded storage |
 | `core/maintenance_report.py` | How maintenance's --dry-run words what it would do |
 | `core/maintenance_rules.py` | The rules of daily maintenance |

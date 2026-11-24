@@ -46,24 +46,36 @@ Rules 1 and 5 (AGENTS.md): records are written under their own lock, nothing is 
 reply that goes out is the saved, authorized one."""
 from __future__ import annotations
 
+import threading
 import time
 from collections import namedtuple
+from contextlib import contextmanager
 from pathlib import Path
 
 from covey.app import butler_harness, project_context, project_lead, triage as triage_flow
 from covey.core import board_read, collab, collab_records, projects, triage, turn_source
 from covey.core import env as cenv
 from covey.core.history_storage import append_history
-from covey.core.jobs import find_job_record, job_field, job_key, topic_job_records
-from covey.core.loops import every
+from covey.core.jobs import find_job_record, job_field, job_key, job_path, read_job_record, topic_job_records
+from covey.core.loops import Stuck, Worker
 from covey.core.state import read_object
-from covey.core.statuses import ENDED, NOT_ENDED
-from covey.core.store import directory_store
+from covey.core.statuses import ENDED, NOT_ENDED, RUNNING
+from covey.core.store import directory_store, one_scan
 from covey.core.text import cut
 from covey.core.topics import load_topic, remember_topic_message, topic_label
 from covey.core.turn_words import RESULTS
 
 TICK = 10  # Seconds between two looks.
+# A look runs in a Worker (core/loops.py). One with no progress (the sweep's next question, a project looked at) in STUCK_SECONDS
+# is left behind: an NFS open can hold its thread for good, and with it every wake-up and every hand-over to the owner (T726,
+# 2026-11-24: 12:13:14 the sweep wrote a held question's receipt, then nothing until the Bridge restarted at 12:35: no wake,
+# and the 12:16:03 deadline passed). The next look runs in a new thread and leaves out the project the old one was stuck on
+# while that thread lives; a left-behind look that comes back changes nothing (``behind``).
+STUCK_SECONDS = 60
+SLOW_SECONDS = 10  # A look that took longer is logged (``project loop slow``), at most once a SLOW_LOG seconds.
+SLOW_LOG = 300
+MAX_LEFT = 3  # Left-behind looks still stuck: with this many the next waits for one to end, at most LEFT_WAIT seconds.
+LEFT_WAIT = 300
 START_WAIT = 20  # After the Bridge starts: its own recovery of interrupted turns goes first.
 HOUR = 3600
 WAKE_TEXT = ("[Bridge 唤醒] 专项状态里的收件箱有新的回执，主人不在场：按回执判断下一步。"
@@ -121,23 +133,74 @@ def record_tokens(record) -> int:
                if type(value := part.get(name)) is int and value >= 0)
 
 
+# Receipts that no longer change: taken by a lead turn that ended well and is over (project_lead.take_receipts never takes such a
+# one again). Read once per process instead of every TICK: an inbox keeps every receipt, a hundred and more each.
+_settled = {}  # inbox directory -> {file name: receipt}
+_settled_lock = threading.Lock()
+SETTLED = project_lead.GOOD_ENDS & ENDED
+
+
+def inbox(state_dir, project_id) -> list:
+    """[(receipt, unread)] of every receipt of the project's inbox, oldest first; ``unread``: no lead turn has read it (or one that
+    did not end well took it). The settled ones (``_settled``) are not read again."""
+    folder = project_lead.inbox_dir(state_dir, project_id)
+    try:
+        paths = sorted(folder.glob("*.json"))
+    except OSError:
+        return []
+    with _settled_lock:
+        known = dict(_settled.get(str(folder)) or {})
+    found, settled = [], {}
+    for path in paths:
+        item = known.get(path.name)
+        if item is not None:
+            settled[path.name] = item
+            found.append((item, False))
+            continue
+        item = read_object(path)
+        taker = item.get("taken_by")
+        status = (read_job_record(job_path(state_dir, taker)) or {}).get("status") if taker else None
+        if status in SETTLED:
+            settled[path.name] = item
+        # project_lead.took_it with no turn of its own: untaken, or taken by a turn that did not end well.
+        found.append((item, bool(item.get("id")) and (not taker or (status not in project_lead.GOOD_ENDS and status not in RUNNING))))
+    with _settled_lock:
+        _settled[str(folder)] = settled  # Only the files still there.
+    return found
+
+
 def unread(state_dir, project_id) -> list:
     """The inbox's receipts no lead turn has read (or one that did not end well took), oldest first."""
-    found = []
+    return [item for item, fresh in inbox(state_dir, project_id) if fresh]
+
+
+_memo = threading.local()  # .jobs: {topic: its job records} while ``remembered`` holds (one project's look).
+
+
+@contextmanager
+def remembered():
+    """Inside, each topic's job records are read once (``jobs_of``): a project's look asks for the same topics up to five times."""
+    before = getattr(_memo, "jobs", None)
+    _memo.jobs = {} if before is None else before
     try:
-        paths = sorted(project_lead.inbox_dir(state_dir, project_id).glob("*.json"))
-    except OSError:
-        return found
-    for path in paths:
-        item = read_object(path)
-        if item.get("id") and project_lead.took_it(state_dir, item.get("taken_by"), ""):
-            found.append(item)
-    return found
+        yield
+    finally:
+        _memo.jobs = before
+
+
+def jobs_of(state_dir, topic) -> list:
+    """``topic``'s job records, once per ``remembered`` block."""
+    cache = getattr(_memo, "jobs", None)
+    if cache is None:
+        return topic_job_records(state_dir, topic)
+    if topic not in cache:
+        cache[topic] = topic_job_records(state_dir, topic)
+    return cache[topic]
 
 
 def open_turns(state_dir, topics) -> bool:
     """Whether any of ``topics`` has a task not ended: queued, running, or waiting for the owner."""
-    return any(record.get("status") in NOT_ENDED for topic in topics for record in topic_job_records(state_dir, topic))
+    return any(record.get("status") in NOT_ENDED for topic in topics for record in jobs_of(state_dir, topic))
 
 
 def has_question(state_dir, topics) -> bool:
@@ -158,12 +221,12 @@ def movable(state_dir, topics, pending) -> bool:
     the owner's to move, not the lead's: a project that only waits for the owner never stalls (the owner sees the question card)."""
     if any(item.get("kind") != "stalled" for item in pending):
         return True
-    return any(record.get("status") == "queued" for topic in topics for record in topic_job_records(state_dir, topic))
+    return any(record.get("status") == "queued" for topic in topics for record in jobs_of(state_dir, topic))
 
 
 def running_turns(state_dir, topics) -> bool:
     """Whether any of ``topics`` has a task executing (one still queued or waiting for the owner's answer is work that is not moving)."""
-    return any(record.get("status") in EXECUTING for topic in topics for record in topic_job_records(state_dir, topic))
+    return any(record.get("status") in EXECUTING for topic in topics for record in jobs_of(state_dir, topic))
 
 
 def last_activity(state_dir, record, receipts) -> float:
@@ -172,7 +235,7 @@ def last_activity(state_dir, record, receipts) -> float:
     lead = str(record.get("lead_topic_id") or "")
     times = [float(record.get("created_at") or 0)]
     for topic in (lead, *(record.get("threads") or ())):
-        for job in topic_job_records(state_dir, topic):
+        for job in jobs_of(state_dir, topic):
             if topic == lead and projects.is_wake(job.get("message_id")):
                 continue
             times.append(board_read.ended_at(job))
@@ -182,10 +245,7 @@ def last_activity(state_dir, record, receipts) -> float:
 
 def receipts(state_dir, project_id) -> list:
     """Every receipt of the project's inbox, read or not: a member's end the lead has read is activity all the same."""
-    try:
-        return [read_object(path) for path in project_lead.inbox_dir(state_dir, project_id).glob("*.json")]
-    except OSError:
-        return []
+    return [item for item, _ in inbox(state_dir, project_id)]
 
 
 def resting(state_dir, record, pending) -> bool:
@@ -608,6 +668,11 @@ class ProjectLoop:
         """``stop``: app/project_clicks.py ``stop_tasks`` (it imports this module, so the wiring hands it over); none, no task is stopped."""
         self.runtime, self.env, self.stop = runtime, env, stop
         triage_flow.attach(env)  # The 专项卡's 不对 click reaches the member topic through it (app/triage.py correct).
+        self.worker, self.left = None, []  # The Worker the looks run in; the left-behind ones still stuck.
+        self.stuck = {}  # project id -> the thread of a left-behind look stuck on it: the project is left out while it lives.
+        self.generation = 0  # Moves on when a look is left behind; a look of an older one changes nothing (``behind``).
+        self.mine = threading.local()  # .generation of the look this thread runs.
+        self.at, self.moved, self.slowest, self.slow_logged = "", 0.0, ("", 0.0), 0.0
 
     def threads(self):
         return ((self.name, self.run),) if projects.enabled() else ()
@@ -615,26 +680,92 @@ class ProjectLoop:
     def run(self, ctx) -> None:
         if self.runtime.shutdown.wait(START_WAIT):
             return
-        every(self.runtime, TICK, self.tick, isolate=self.name)
+        while not self.runtime.shutdown.is_set():
+            self.step()
+            self.runtime.shutdown.wait(TICK)
 
-    def tick(self, now=None) -> None:
-        """One look at every active project."""
+    def step(self, now=None) -> None:
+        """One look (``tick``) in the Worker, left behind when it has not moved in STUCK_SECONDS. Never raises."""
+        if self.worker is None:
+            self.worker = Worker(f"{self.name}-step")
+        generation, began = self.generation, time.monotonic()
+        self.moved, self.at, self.slowest = began, "", ("", 0.0)
+        try:
+            self.worker.call(lambda: self.tick(now, generation), STUCK_SECONDS, lambda: self.moved)
+        except Stuck:
+            return self.leave_behind()
+        except Exception as exc:  # noqa: BLE001 - the next look runs all the same
+            self.runtime.log(f"{self.name} step failed: {type(exc).__name__}")
+        took = time.monotonic() - began
+        if took >= SLOW_SECONDS and time.monotonic() - self.slow_logged >= SLOW_LOG:
+            self.slow_logged = time.monotonic()
+            where, longest = self.slowest
+            self.runtime.log(f"project loop slow: a look took {took:.0f} s, the longest part {longest:.0f} s at {where or '?'}")
+
+    def leave_behind(self) -> None:
+        """The look stuck: its thread is left to it, the project it was at left out while that thread lives, and the next look runs
+        in a new Worker (after waiting for one of MAX_LEFT left-behind ones to end, LEFT_WAIT seconds at most)."""
+        old, at = self.worker, self.at
+        self.generation += 1
+        self.left = [worker for worker in (*self.left, old) if worker.thread.is_alive()]
+        self.stuck = {pid: thread for pid, thread in self.stuck.items() if thread.is_alive()}
+        if at.startswith("project:"):
+            self.stuck[at.split(":", 1)[1]] = old.thread
+        self.runtime.log(f"project loop stuck: a look has not moved in {STUCK_SECONDS} s, at: {at or 'its start'}; "
+                         f"left behind ({len(self.left)} so far)")
+        began = time.monotonic()
+        while len(self.left) >= MAX_LEFT and time.monotonic() - began < LEFT_WAIT and not self.runtime.shutdown.wait(10):
+            self.left = [worker for worker in self.left if worker.thread.is_alive()]
+        if len(self.left) >= MAX_LEFT:
+            self.runtime.log(f"project loop: {len(self.left)} left-behind looks still stuck after {LEFT_WAIT} s; going on in a new thread")
+        self.worker = Worker(f"{self.name}-step")
+
+    def behind(self) -> bool:
+        """Whether this thread's look was left behind (``leave_behind``): what it read is old, a newer look does the work."""
+        return getattr(self.mine, "generation", self.generation) != self.generation
+
+    def going(self, at) -> bool:
+        """A part of the look done: progress for the Worker's watch (``moved``), and whether to go on (not ``behind``). A left-behind
+        look touches nothing of the current one's."""
+        if self.behind():
+            return False
+        now = time.monotonic()
+        if now - self.moved > self.slowest[1]:
+            self.slowest = (self.at, now - self.moved)
+        self.moved, self.at = now, at
+        return not self.behind()
+
+    def tick(self, now=None, generation=None) -> None:
+        """One look at every active project (``generation``: the look's, ``step``; none, the current one)."""
         if not projects.enabled() or not self.env.state_dir:
             return
+        self.mine.generation = self.generation if generation is None else generation
         now = time.time() if now is None else now
-        if triage.enabled():  # COVEY_PROJECT_TRIAGE=1: receipts for the held questions, the owner's turn for the late ones.
-            triage_flow.sweep(self.env, now)
-        for record in projects.records(Path(self.env.state_dir)):
-            if record.get("state") != projects.ACTIVE:
-                continue
-            try:
-                self.look(record, now)
-            except Exception as exc:  # noqa: BLE001 - the others are looked at all the same
-                self.runtime.log(f"project loop failed project={str(record.get('id'))[:8]}: {type(exc).__name__}")
+        with one_scan():
+            if triage.enabled():  # COVEY_PROJECT_TRIAGE=1: receipts for the held questions, the owner's turn for the late ones.
+                triage_flow.sweep(self.env, now, going=lambda: self.going("sweep"))
+            if not self.going("projects"):
+                return
+            for record in projects.records(Path(self.env.state_dir)):
+                if record.get("state") != projects.ACTIVE:
+                    continue
+                pid = str(record.get("id"))
+                if pid in self.stuck and self.stuck[pid].is_alive():
+                    continue  # A left-behind look is stuck on it: this one does not get stuck there too.
+                if not self.going(f"project:{pid}"):
+                    return
+                try:
+                    with remembered():
+                        self.look(record, now)
+                except Exception as exc:  # noqa: BLE001 - the others are looked at all the same
+                    self.runtime.log(f"project loop failed project={pid[:8]}: {type(exc).__name__}")
+            self.going("")
 
     def pause(self, record, reason, now=None, idle=0) -> None:
         """The project paused by a guard (``reason``: tokens, wakes, stalled). With COVEY_PROJECT_ASK=1 the same write keeps
         ``pause_ask`` for app/project_cards.py to put to the owner, and a ``tokens`` pause stops the member topics' tasks."""
+        if self.behind():
+            return
         ask = projects.ask_enabled()
         now = time.time() if now is None else now
         kept = []
@@ -711,6 +842,8 @@ class ProjectLoop:
         """Nothing to do: folded away once ``projects.idle_seconds()`` have passed since anything happened (a task ended, a receipt came, the
         owner spoke, the project was opened or opened again). The pause card is not sent and nothing is asked."""
         pid = record["id"]
+        if self.behind():
+            return
         self.unstall(record, state)  # Nothing left to do: a reminder of a stall is over.
         if now - quiet_since(state, record) < projects.idle_seconds():
             return
@@ -741,7 +874,7 @@ class ProjectLoop:
         and as long again with nothing moving the project is paused. A task running is movement; a project with nothing to do never stalls,
         nor one that only waits for the owner's answer (``movable``: the owner, not the lead, moves it)."""
         topics = [lead, *(record.get("threads") or ())]
-        if running_turns(state, topics):
+        if running_turns(state, topics) or self.behind():
             return
         if not movable(state, topics, pending):
             return self.unstall(record, state)  # Only the owner's answer is awaited now: no stall, and none left over.
@@ -764,6 +897,8 @@ class ProjectLoop:
     def wake(self, record, now) -> None:
         """One wake-up turn queued (its number counted first: a lost one is looked for again, never doubled)."""
         pid, mine = record["id"], []
+        if self.behind():
+            return
 
         def change(data):
             wakes = wakes_of(data)

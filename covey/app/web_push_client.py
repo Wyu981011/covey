@@ -1,12 +1,10 @@
-"""网页工作台同步的客户端 (app/web_sync.py): the page's /openapi over HTTP (``Client``, ``WebError``) and the thread a push step runs in, left behind when it
-is stuck (``Worker``, ``Stuck``). No records are read here."""
+"""网页工作台同步的客户端 (app/web_sync.py): the page's /openapi over HTTP (``Client``, ``WebError``); the thread a push step runs in, left
+behind when it is stuck, is core/loops.py ``Worker``. No records are read here."""
 
 from __future__ import annotations
 
 import json
 import os
-import queue
-import threading
 import time
 
 from covey.core import env as cenv
@@ -32,49 +30,6 @@ class WebError(Exception):
     def __init__(self, text, status=0) -> None:
         super().__init__(text)
         self.status = status
-
-
-class Stuck(Exception):
-    """A step that did not end within its time."""
-
-
-class Worker:
-    """A thread that runs the steps it is handed, one at a time. A step stuck in a system call is left to it: the caller hands the
-    next steps to a new Worker, and this thread ends when the stuck step does."""
-
-    def __init__(self, name) -> None:
-        self.steps, self.ends = queue.Queue(), queue.Queue()
-        self.thread = threading.Thread(target=self.run, name=name, daemon=True)
-        self.thread.start()
-
-    def run(self) -> None:
-        while True:
-            step = self.steps.get()
-            if step is None:
-                return
-            try:
-                self.ends.put((step(), None))
-            except Exception as exc:  # noqa: BLE001 - raised in the caller's thread
-                self.ends.put((None, exc))
-
-    def call(self, step, seconds, moved=None):
-        """``step``'s value (its exception is raised here). Stuck when it has not ended ``seconds`` after it began, or, with ``moved`` (the
-        monotonic time of the step's last progress), ``seconds`` after its last progress: a long first push that keeps sending is not stuck."""
-        self.steps.put(step)
-        last = time.monotonic()
-        while True:
-            try:
-                value, exc = self.ends.get(timeout=max(0.0, last + seconds - time.monotonic()))
-                break
-            except queue.Empty:
-                newer = moved() if moved is not None else 0.0
-                if newer <= last:
-                    self.steps.put(None)
-                    raise Stuck from None
-                last = newer
-        if exc is not None:
-            raise exc
-        return value
 
 
 class Client:
