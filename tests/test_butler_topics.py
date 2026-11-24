@@ -505,8 +505,43 @@ class TopicDefaultsTest(ButlerTopicsCase):
         self.launched("claude:gone", "max")  # A model no longer on the menu: the Bridge's model.
         name, model, _, sources = self.resolved()
         self.assertEqual((name, model, sources["model"]), ("claude", self.own("claude").model, "bridge"))
-        self.launched("claude:opus", "default")  # The model's own default budget.
-        self.assertEqual(self.resolved(), ("claude", "opus", "", {"harness": "last", "model": "last", "effort": "last"}))
+        # 模型原生默认 names no budget: the one the 设置 card would save (its 推荐), T718.
+        self.launched("claude:opus", "default")
+        self.assertEqual(self.resolved(), ("claude", "opus", "xhigh",
+                                           {"harness": "last", "model": "last", "effort": "last"}))
+
+    def test_a_topic_names_its_model_and_budget_where_its_harness_would_pick_them(self):
+        # T718 (2026-11-24): a project's lead opened T716 on Antigravity naming nothing else. The Bridge's own default
+        # there is '' (agy runs its saved /model) and so is its budget: the topic card read 默认模型 · 思考预算 模型默认,
+        # the task card 默认模型 · 思考 默认. T610 named a model and no budget.
+        menu = {**self.MENU,
+                "agy:neon": {"harness": "agy", "model": "neon", "levels": ["low", "medium", "high", "xhigh"]},
+                "agy:carbon": {"harness": "agy", "model": "carbon", "levels": ["low", "medium", "high"]},
+                "agy:orchestrator": {"harness": "agy", "model": "orchestrator", "levels": []}}
+        self.assertEqual((self.own("agy").model, self.own("agy").effort), ("", ""))
+        with mock.patch("covey.app.butler_model_choice.available_models", return_value=menu), \
+                mock.patch("covey.app.butler_topics.available_models", return_value=menu, create=True):
+            # The first model on the menu (what agy's own pick ran), at the highest budget without orchestration.
+            self.assertEqual(self.resolved(harness="agy"), ("agy", "neon", "xhigh", {"harness": "call", "model": "bridge",
+                                                                                     "effort": "bridge"}))
+            self.assertEqual(self.resolved(harness="agy", model="carbon")[1:3], ("carbon", "high"))
+            self.assertEqual(self.resolved(harness="agy", model="orchestrator")[1:3], ("orchestrator", ""))
+            self.assertEqual(self.opened(harness="agy"), ("agy", "neon", "xhigh"))
+            card = json.dumps(self.app.messenger.create_and_send_card.call_args.args[2], ensure_ascii=False)
+            self.assertIn("neon · 思考预算 xhigh", card)
+            self.assertNotIn("默认", card)
+            self.opened(harness="agy", model="orchestrator")  # No budget to choose: it says so.
+            card = json.dumps(self.app.messenger.create_and_send_card.call_args.args[2], ensure_ascii=False)
+            self.assertIn("思考预算 模型自动管理", card)
+        # Claude Code's "Default (recommended)" names no model either (T698 ran Opus 5.5 under it): a last launch
+        # on it opens the Harness's first model that names itself.
+        native = {"claude:default": {"harness": "claude", "model": "default", "display_name": "Default (recommended)",
+                                     "levels": ["medium", "high", "xhigh", "max"]}, **self.MENU}
+        self.launched("claude:default", "top_minus_one")
+        with mock.patch("covey.app.butler_model_choice.available_models", return_value=native):
+            self.assertEqual(self.resolved(), ("claude", "opus", "xhigh",
+                                               {"harness": "last", "model": "last", "effort": "last"}))
+            self.assertEqual(self.resolved(model="default")[1], "opus")
 
     def test_a_budget_the_call_names_and_the_model_lacks_is_refused_one_from_elsewhere_falls_through(self):
         self.defaults(harness="claude", model="sonnet", effort="max")  # Hand-edited: sonnet has no max.

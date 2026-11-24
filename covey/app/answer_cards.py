@@ -50,10 +50,12 @@ def record_path(state_dir, key) -> Path:
 def inputs(job, harness, snapshot=None, ctx=None) -> list:
     """输入 of ``job`` run by the Harness ``harness`` (its spec: name, title), always its six parts: the
     Harness, the provider as the 换配置 card names it, the model's name, the reasoning budget, 脱敏
-    and the workspace. No model chosen (the butler runs the Harness's default): the one the turn ran as its
-    process ``snapshot`` names it (Claude's, app/launch_models.py shown_model), else 默认模型; no budget chosen, the
-    one its context ``ctx`` (core/jobs.py context_for_job) ran with, else 默认."""
+    and the workspace. No model chosen, or Claude Code's "Default (recommended)" (core/menu_choice.py NATIVE: the
+    Harness picks): the one the turn ran as its process ``snapshot`` names it (Claude's, app/launch_models.py
+    shown_model: Opus 5.5, T718), else the entry's name, else 默认模型; no budget chosen, the one its context ``ctx``
+    (core/jobs.py context_for_job) ran with, else 默认."""
     from covey.app.launch_models import shown_model
+    from covey.core.menu_choice import NATIVE
     from covey.core.providers import menu_name, provider_of
 
     spec = getattr(harness, "spec", None)
@@ -62,9 +64,11 @@ def inputs(job, harness, snapshot=None, ctx=None) -> list:
     label = str(getattr(job, "model_label", "") or "")
     ran = (snapshot or {}).get("model") if isinstance(snapshot, dict) else None
     state_dir = getattr(ctx, "state_dir", None)
-    name = (label.rsplit(" · ", 1)[-1] if label else model.rsplit("/", 1)[-1] if model
-            else (shown_model(state_dir, getattr(spec, "name", ""), ran) if ran and state_dir else str(ran or ""))
-            or "默认模型")
+    if ran and model in ("", NATIVE):
+        name = shown_model(state_dir, getattr(spec, "name", ""), ran) if state_dir else str(ran)
+    else:
+        name = label.rsplit(" · ", 1)[-1] if label else model.rsplit("/", 1)[-1] if model else ""
+    name = name or "默认模型"
     provider = provider_of(str(getattr(spec, "name", "") or ""), model)
     source = menu_name(provider, title) if provider is not None else ""
     effort = str(getattr(job, "effort", "") or "") or str(getattr(ctx, "effort", "") or "") or named_effort(model)

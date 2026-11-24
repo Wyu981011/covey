@@ -38,6 +38,7 @@ from covey.app import dispatch_cards, butler_handoff, repo_peers
 from covey.app.forks import FINISHED, fork_token
 from covey.app.butler_env import arg_text, reply
 from covey.app.butler_model_choice import resolve
+from covey.app.launch_models import available_models
 from covey.cards.topic_card import topic_card
 from covey.app.relay_targets import butler_job_owner_message
 from covey.core import criteria, devices, butler, butler_settings, dispatch_records, projects
@@ -280,9 +281,17 @@ def config_line(env, plan):
     app = env.topics.apps[plan["harness"]]
     model = app.cards.model_label(app.harness.context, plan["model"]) if plan["model"] else ""
     model = model.split(" · ", 1)[-1] if model else (plan["model"] or "默认模型")
-    return (app.spec.title, model, "思考预算 " + (plan["effort"] or "模型默认"), "工作区 " + plan["workspace"],
+    return (app.spec.title, model, "思考预算 " + (plan["effort"] or unnamed_budget(env, app, plan)),
+            "工作区 " + plan["workspace"],
             *(["设备 " + plan["device_title"]] if plan.get("device_title") else []),
             RUN_MODES[plan["run_mode"]], *(["脱敏"] if plan["redaction"] else []))
+
+
+def unnamed_budget(env, app, plan):
+    """How the topic card names a budget ``plan`` leaves '': 模型自动管理 for a model without levels (resolve names
+    every other one, T718), else 模型默认 (a model not on the menu now)."""
+    entry = available_models(env.topics, app.harness.context).get(f"{plan['harness']}:{plan['model']}")
+    return "模型自动管理" if entry is not None and not entry.get("levels") else "模型默认"
 
 
 def launch_draft(plan):

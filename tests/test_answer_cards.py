@@ -448,6 +448,12 @@ class DefaultsTest(unittest.TestCase):
             self.assertEqual(answer_cards.inputs(job, harness, {"model": "claude-opus-5-5[1m]"}, ctx),
                              ["Claude Code", "Claude 自带", "Opus 5.5", "思考 xhigh", "脱敏关", "repo.code"])
             self.assertEqual(answer_cards.inputs(job, harness, {"model": "claude-sonnet-5-5"}, ctx)[2], "Sonnet 5.5")
+            # Claude Code's "Default (recommended)" names no model: the one it ran, once said (T698 ran Opus 5.5, T718).
+            native = SimpleNamespace(**{**vars(job), "model": "default",
+                                        "model_label": "Claude Code · Default (recommended)", "effort": "xhigh"})
+            self.assertEqual(answer_cards.inputs(native, harness, {"model": "claude-opus-5-5[1m]"}, ctx)[2:4],
+                             ["Opus 5.5", "思考 xhigh"])
+            self.assertEqual(answer_cards.inputs(native, harness, None, ctx)[2], "Default (recommended)")
         # A MASO budget preset run as it is (no effort of its own): the budget its name gives, not 默认.
         maso = SimpleNamespace(spec=SimpleNamespace(name="maso", title="MASO"))
         argon = SimpleNamespace(model="gemini-4-argon_reasoning_high", model_label="MASO · Gemini 4 Argon", effort="",

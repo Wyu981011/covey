@@ -13,7 +13,8 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from covey.app import model_usage
-from covey.core.menu_choice import default_entry, effort_options, find_choice, harness_of, preset_choice, work_modes
+from covey.core.menu_choice import (default_entry, effort_options, explicit, find_choice, harness_of, preset_choice,
+                                    work_modes)
 from covey.core.defaults import RECOMMENDED
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 
@@ -45,17 +46,22 @@ def device_fit(choices, model, declared):
 def harness_model(choices, harness, model, current):
     """(key, budget) of the menu entry the 新话题 page's ``harness`` and ``model`` name: that model; with the Harness
     alone, ``current`` (the last launch's) where it is that Harness's, else its default entry (core/menu_choice.py
-    default_entry), else its first on the menu. None with no Harness named, or none of it on the menu."""
+    default_entry), else its first on the menu. None with no Harness named, or none of it on the menu. With the
+    Harness alone it is never Claude Code's "Default (recommended)" (menu_choice.explicit), which says no model: a
+    chat's first launch card had preselected it, and its topics read "Default (recommended)" (T698, T718). Still on
+    the menu, for an owner who picks it."""
     if not harness:
         return None
     if model:
         found = find_choice(choices, f'{harness}:{model}')
         if found:
             return found
-    if current in choices and harness_of(current, choices[current]) == harness:
+    named = explicit(choices)
+    if current in named and harness_of(current, named[current]) == harness:
         return current, ''
-    entry = default_entry(choices, harness)
-    keys = [key for key, value in choices.items() if harness_of(key, value) == harness]
+    entry = default_entry(named, harness)
+    keys = ([key for key, value in named.items() if harness_of(key, value) == harness]
+            or [key for key, value in choices.items() if harness_of(key, value) == harness])
     key = next((key for key in keys if choices[key] is entry), keys[0] if keys else None)
     return (key, '') if key else None
 

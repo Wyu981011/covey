@@ -177,6 +177,21 @@ class LaunchSelectionTests(unittest.TestCase):
              {'model': 'codex:gpt', 'workspace': 'other'}),
         ])
 
+    def test_a_harness_alone_never_preselects_a_model_that_names_none(self):
+        # T718 (2026-11-24): a chat's first launch card preselected Claude Code's "Default (recommended)" for a 新话题
+        # page naming Claude Code alone; its topics (T698) read that, not the model they ran, and so did the next ones.
+        native = {'claude:default': {'harness': 'claude', 'model': 'default', 'display_name': 'Default (recommended)',
+                                     'levels': ['high', 'xhigh', 'max']}, **CHOICES}
+        last = {'model_choice': 'claude:default', 'effort': 'max'}
+        self.check([
+            ('its first model that names itself', {'choices': native, 'fresh': True, 'topic_model': ('claude', '')},
+             {'model': 'claude:opus', 'first': 'claude:opus'}),
+            ('nor the last launch on it', {'choices': native, 'fresh': True, 'topic_model': ('claude', ''),
+                                           'saved': last}, {'model': 'claude:opus'}),
+            ('the owner may still pick it', {'choices': native, 'fresh': True, 'saved': last},
+             {'model': 'claude:default'}),
+        ])
+
 
 class SwitchSelectionTests(unittest.TestCase):
     def check(self, cases):

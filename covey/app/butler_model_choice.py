@@ -4,6 +4,10 @@ says which of them it was (``sources``). It reads the menu app/launch_models.py 
 launch app/launch.py ``launch_defaults`` saved, and turns a budget the way 开始任务 does (core/menu_choice.py,
 app/launch_models.py ``run_choice``); it does not draw a card (app/preselection.py is the launch card's own order of
 preference). Used by the butler's topic tools (app/butler_topics.py) and the 管家 card's preview (app/butler_panel.py).
+
+What it finds always names the model and the budget where the menu can (T718): a topic the butler or a project's lead
+opens never runs "whatever the Harness picks" (agy without --model, Claude Code's "Default (recommended)"), nor a
+budget nobody named (模型原生默认), so its cards say which model and budget it runs.
 """
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ from covey.app.butler_env import arg_text
 from covey.app.launch import launch_defaults
 from covey.app.launch_models import available_models, run_choice
 from covey.core.defaults import RECOMMENDED
-from covey.core.menu_choice import budget_effort, find_choice
+from covey.core.menu_choice import NATIVE, budget_effort, explicit, find_choice, plain_budget
 from covey.core.roster import NAMES
 
 # Where a field topic_start opens with came from, in the order resolve looks.
@@ -69,8 +73,13 @@ def resolve(topics, state_dir, chat, defaults, args=None, choices=None):
     Harness alone in the settings had dropped the last launch's model): the call's value, else the settings'
     default (core/butler_settings.py TopicDefaults; its model and budget only for its Harness), else the
     chat's last 开始任务 (its model and budget only for its Harness, a budget only one the model offers), else the
-    Bridge's own default. A dict, ``sources`` saying where each came from (CALL, SETTINGS, LAST or BRIDGE); a str
-    saying why not. ``choices``: available_models, when the caller has it."""
+    Bridge's own default. A model none of them names (the Bridge's own is '' on Antigravity, which then runs its saved
+    /model; or Claude Code's NATIVE "Default (recommended)") is the Harness's first model on the menu that names
+    itself (core/menu_choice.py explicit: what those defaults ran, Gemini 4 Neon and Opus 5.5 on 11-24); a budget
+    none of them names ('' or 模型原生默认) is the one the 设置 card saves for the model (plain_budget: 推荐, else the
+    highest without orchestration), so every topic it opens names both (T718). A model without levels keeps ''
+    (模型自动管理). A dict, ``sources`` saying where each came from (CALL, SETTINGS, LAST or BRIDGE); a str saying why
+    not. ``choices``: available_models, when the caller has it."""
     args = args or {}
     last = last_launch(state_dir, chat)
     own = defaults.harness.lower()
@@ -108,6 +117,11 @@ def resolve(topics, state_dir, chat, defaults, args=None, choices=None):
     if not model:
         model, sources["model"] = base.model, BRIDGE
     key = key or (f"{name}:{model}" if f"{name}:{model}" in choices else "")
+    if model in ("", NATIVE):
+        # Whatever the Harness picks itself is no model its cards can name (T716 read 默认模型 on Antigravity).
+        named = next(iter(explicit(listed)), "")
+        if named:
+            key, model = named, named.partition(":")[2]
     choice = choices.get(key)
     levels = (choice or {}).get("levels") or []
     asked = arg_text(args.get("effort"))
@@ -128,6 +142,8 @@ def resolve(topics, state_dir, chat, defaults, args=None, choices=None):
         effort, sources["effort"] = base.effort, BRIDGE
     # "default" is the model's own default budget, 推荐 the launch card's recommended one.
     effort = "" if effort == "default" else budget_effort(choice, effort) if effort == RECOMMENDED else effort
+    if not effort and choice and choice.get("levels"):
+        effort = plain_budget(choice)  # A budget its cards can name, not the model's own unnamed one (T718).
     label = str((choice or {}).get("display_name") or model)
     # As 开始任务 does: a budget-preset model runs as the preset of its budget. One with budget presets only has no plain
     # preset, so a call that names no budget gets the card's own preselection.
