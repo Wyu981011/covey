@@ -301,11 +301,12 @@ class Overview:
         old = [self.waiting_row(state, wait) for wait in found.stale]
         gone = sorted(off, key=lambda topic: off[topic]["at"], reverse=True)
         # A result by what it is (core/look.py record_tone): 已停止 is background, the rest 有结果; 停住了 is what 要你处理
-        # counts (``stopped``: a topic's, a project's), each whose topic (or its project's cell) has no pin.
+        # counts (``stopped``: a topic's, a project's), each unless a pin shows that very stop (its topic's own pin, or its
+        # project's cell pinned on that thread's result). One behind its project's pinned cell showing another thread is
+        # listed: the band counts it and nothing else on the card would show it (T734).
         results = listed.pop("result")
-        cells = self.pins.cells
-        listed.update(stopped=[row for row in stopped if row.get("project") or (
-                          row["topic"] not in held and cells.get(row["topic"]) not in held)],
+        shown = {str((row.get("record") or {}).get("topic_id") or row["topic"]) for row in rows if row["topic"] in held}
+        listed.update(stopped=[row for row in stopped if row.get("project") or row["topic"] not in shown],
                       cancelled=[row for row in results if row["tone"] == "cancelled"],
                       result=[row for row in results if row["tone"] not in ("stopped", "cancelled")])
         tones = [board_row_tone(row, self.pins.unseen) for row in rows if row["group"] == "result"]

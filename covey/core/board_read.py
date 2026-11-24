@@ -12,11 +12,13 @@ the project card (``asks``) and the web page (app/web_sync.py) take it, and each
 要你处理 (docs/ui.md 1.2: 等你, 停住了, 可能卡住, ``ACT``) is one count over it, ``Asks`` (``asking``): 等我 as ``waits``
 has it, the topics whose result as the board keeps one (``groups``, read topic by topic, and however long before the
 board was on it ended: app/pins.py PinnedTopics.look) stopped (core/look.py record_tone 停住了: failed, interrupted,
-timed out, refused, or stopped by someone other than the owner), the topics running that may be stuck
-(core/progress.py maybe_stuck), the projects a guard paused (core/projects.py halted) and, in the owner's private chat
-with 整理专项 on, its proposals waiting for his 好 (``waiting_proposals``: 等你定 is 等你, docs/ui.md 2.2). The 看板 and
-手上的事 (the pinned one too) take it from the same read with the same rules (app/pins.py PinnedTopics.asks), list what
-it names under those words, and count with ``act_count``: the same number on every card at the same time.
+timed out, refused, or stopped by someone other than the owner; not a project's member while its stop wakes its lead,
+``lead_handled``), the topics running that may be stuck (core/progress.py maybe_stuck), the projects a guard paused
+(core/projects.py halted) and, in the owner's private chat with 整理专项 on, its proposals waiting for his 好
+(``waiting_proposals``: 等你定 is 等你, docs/ui.md 2.2). The 看板 and 手上的事 (the pinned one too) take it from the same
+read with the same rules (app/pins.py PinnedTopics.asks), list what it names under those words, and count with
+``act_count``: the same number on every card at the same time; the web page counts it too and lists by each topic's
+``board``, which says 停住了 for exactly the topics it counts (app/web_collect.py board_groups).
 
 A reader that also needs the board's ``taken off`` reads once with the board record's ``keep`` (app/pins.py kept)
 and hands the read to the board's look; the jobs it judges itself are those ``fresh`` picks, as read without it. So
@@ -617,12 +619,22 @@ class Asks:
         return act_count(self.counts())
 
 
-def stopped_results(found: Groups, off=()) -> dict:
+def stopped_results(found: Groups, off=(), handled=()) -> dict:
     """停住了 among ``found``'s results: topic -> the job record of a result that stopped (core/look.py record_tone: failed,
-    interrupted, or stopped by someone other than the owner), seen or not, not a topic in ``off``. The owner's own stop is
-    已停止, background: not in it."""
+    interrupted, or stopped by someone other than the owner), seen or not, not a topic in ``off`` nor one its project's lead
+    handles (``handled``, ``lead_handled``). The owner's own stop is 已停止, background: not in it."""
     return {topic: record for topic, (record, _, _) in found.results.items()
-            if topic not in off and look.record_tone(record) == "stopped"}
+            if topic not in off and topic not in handled and look.record_tone(record) == "stopped"}
+
+
+def lead_handled(cells) -> frozenset:
+    """The topics whose stop is their project's lead's to deal with, not the owner's: the members of a project (``cells``, a
+    ``read``'s) when a member's ended turn wakes its lead (COVEY_PROJECT_AUTOWAKE=1: its ``thread_end`` receipt, and the lead
+    decides what to tell the owner, app/project_loop.py). Without it nothing wakes the lead, the receipt waits for the
+    owner's next word to it, and the stop stays his: none. 2026-11-24 T734: nine members of one project stopped in a day
+    (eight by an official refusal, several of them taken over by topics the lead opened, one stopped by the lead), and
+    要你处理 said 9 停住了 for what the lead had in hand."""
+    return frozenset(cells or ()) if cells and projects.autowake_enabled() else frozenset()
 
 
 def stuck_running(found: Groups, now, off=()) -> dict:
@@ -669,10 +681,12 @@ def waiting_proposals(state) -> dict:
     return dict(found)
 
 
-def asking(found_waits: Waits, found: Groups, now, off=(), halted=None, proposals=None) -> Asks:
+def asking(found_waits: Waits, found: Groups, now, off=(), halted=None, proposals=None, handled=()) -> Asks:
     """要你处理 now: 等我 (``found_waits``, the topics ``waits`` found), the results that stopped and the running that may be
     stuck of ``found`` (``groups`` of a ``read``, topic by topic: no ``cells``, a project's topics counted each), the
     topics in ``off`` (taken off the board) left out, the projects ``halted`` names (``halted_projects``) and the
-    proposals ``proposals`` names (``waiting_proposals``, the private chat's alone)."""
-    return Asks(tuple(wait.topic for wait in found_waits.all), stopped_results(found, off), stuck_running(found, now, off),
-                dict(halted or {}), dict(proposals or {}))
+    proposals ``proposals`` names (``waiting_proposals``, the private chat's alone). A stop of a topic in ``handled``
+    (``lead_handled``: a project's member, its lead woken for it) is not his; one that may be stuck still is, as it wakes no
+    one."""
+    return Asks(tuple(wait.topic for wait in found_waits.all), stopped_results(found, off, handled),
+                stuck_running(found, now, off), dict(halted or {}), dict(proposals or {}))

@@ -238,6 +238,48 @@ class AsksTest(unittest.TestCase):
                     self.assertEqual([number[row["topic"]] for row in shown["board"]["cancelled"]], [14])
                     self.assertEqual(shown["board"]["counts"]["stopped"], 3)
 
+    def test_a_project_members_stop_is_the_leads_while_it_wakes_the_lead_and_else_listed_wherever_counted(self):
+        """2026-11-24 T734: nine members of one project stopped in a day and 要你处理 said 9 停住了 for them, though the lead was
+        woken for each (it took several over in topics of its own); the web page drew none of them. With
+        COVEY_PROJECT_AUTOWAKE=1 a member's stop is its lead's: no card counts it or lists it, and a member that may be stuck
+        still is the owner's (it wakes no one). Without it nothing wakes the lead: the stop is the owner's, counted and listed
+        on every card, on 手上的事's pinned board too while the project's pinned cell shows another thread at work."""
+        from covey.core import board_read, projects
+        record = projects.new_record(chat_id=CHAT, name="扩缩容", goal="一周内上线")
+        pid = record["id"]
+        projects.create(self.state, record)
+        lead = projects.lead_topic_id(CHAT, pid)
+        write_topic(self.state, topic_id=lead, chat_id=CHAT, harness_id="claude", project=projects.project_field(pid, projects.LEAD))
+        number = {topic: n for n, topic in self.topics.items()}
+        # 21 stopped (no one asked it to stop: an official refusal's record), 22 at work and quiet three hours: the cell shows 22.
+        for n, status, fields in ((21, "cancelled", {}), (22, "running", {"last_activity_at": self.now - 3 * HOUR})):
+            topic = f"{n:02d}" * 16
+            number[topic] = n
+            write_topic(self.state, topic_id=topic, chat_id=CHAT, topic_number=n, harness_id="claude", root_id=f"om_r{n}",
+                        project=projects.project_field(pid, projects.MEMBER))
+            projects.add_member(self.state, pid, topic)
+            ended = {} if status == "running" else {"execution_finished": self.now - 1200}
+            write_job(self.state, f"om_j{n}-{n}", chat_id=CHAT, topic_id=topic, job_id=n, status=status,
+                      card_message_id=f"om_card{n}", harness_id="claude", timings={"backend_started": self.now - 2 * HOUR, **ended},
+                      **fields)
+        saved = json.loads((self.state / pins.RECORD).read_text())
+        write_json(self.state / pins.RECORD, {**saved, "pins": [{"topic_id": lead, "message_id": "om_project_card"}]})
+        for autowake, stopped, tags in (("", [12, 13, 21], ["1 等你", "4 停住了", "2 可能卡住"]),
+                                        ("1", [12, 13], ["1 等你", "3 停住了", "2 可能卡住"])):
+            with self.subTest(autowake=autowake), mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: autowake,
+                                                                               "COVEY_BOARD": "1", **ON}):
+                asks = pins.board_look(self.state, CHAT, self.now).asks(
+                    self.state, CHAT, board_read.waits(self.state, CHAT, self.now), self.now)
+                self.assertEqual(sorted(number[topic] for topic in asks.stopped), stopped)
+                self.assertEqual(sorted(number[topic] for topic in asks.stuck), [15, 22])  # The quiet member's: no one else hears of it.
+                view, card = self.board()
+                self.assertEqual(self.counted(card), (len(stopped) + 4, tags))
+                self.assertEqual(sorted(number[row["topic"]] for row in view["done"] if row.get("tone") == "stopped"), stopped)
+                shown, drawn = self.overview()
+                self.assertEqual(self.counted(drawn), (len(stopped) + 4, tags))
+                listed = [number.get(row["topic"], 0) for row in shown["board"]["stopped"] if not row.get("project")]
+                self.assertEqual(sorted(listed), stopped)  # 21 is listed though its project's cell is pinned (showing 22).
+
     def test_a_proposal_waiting_is_counted_and_listed_alike_by_the_board_and_both_overviews(self):
         """B3 (T657, docs/ui.md 2.2: 等你定的 are 等你): with 整理专项 on, its proposal waiting for his 好 is 等你 on every card at
         once: counted in 要你处理 (core/board_read.py Asks.proposals) by the 看板, 手上的事 and its index over the pinned board,

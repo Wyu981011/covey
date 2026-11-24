@@ -158,7 +158,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 - **普通话题**：`kind: topic`。另带 `round`（已有几轮）、`started_at`、`context`（最近一轮的）。
 - **状态色**（v5）：`tone` 是 [UI 规范](ui.md#3-状态词表) 的状态 key（waiting、stopped、stuck、result、running、queued、done、cancelled、idle，`core/look.py` 的 `tone`）。网页按它上色、取词，不比较 `state` 的中文字；`state` 照旧。词和颜色由 `scripts/export_look.py` 导出成 `look.json` 给网页；`look.json` 另带 `retired`（v34）：`core/look.py` 的 `RETIRED`，每个状态 key 不再用的说法，网页的退役词单测（`web/scripts/words.test.mjs`）只读它，不照抄。
-- **在看板的哪一组**（v6）：开了看板（`COVEY_PINNED_TOPICS=1` 且 `COVEY_PINNED_OVERVIEW=1`）时，普通话题另带 `board`：看板上的哪一组（waiting、running，结果的 stopped、result、done、cancelled），不在看板上（看过超过 12 小时的结果、点了“不管了”的、更早的）为空串。网页的“要你处理”“停住了”和侧栏红点按它算；没开看板时不带这个字段。
+- **在看板的哪一组**（v6）：开了看板（`COVEY_PINNED_TOPICS=1` 且 `COVEY_PINNED_OVERVIEW=1`）时，普通话题另带 `board`：看板上的哪一组（waiting、running，结果的 stopped、result、done、cancelled），不在看板上（看过超过 12 小时的结果、点了“不管了”的、更早的）为空串。网页的“要你处理”“停住了”和侧栏红点按它算；没开看板时不带这个字段。`board` 是 stopped 的话题正好是 `asks`（v34）数进停住了的那些：专项成员在看板上折进专项的格子、格子显示的是别的话题，或者在看板起算以前停的，只要算进要你处理，`board` 就是 stopped；要你处理不算的停住（负责人会被叫醒去处理的专项成员，见[专项](projects.md)）不是 stopped，网页按“看板已放下”画灰（`app/web_collect.py` 的 `board_groups`）。
 - **进度**（v4）：在跑的话题带 `progress`：`{phase, plan_done, plan_total, last_activity_at, last_activity, eta_seconds, slow_step, maybe_stuck}`，和任务卡、看板同一个函数（`core/progress.py`）。
   - `last_activity` 是“在跑测试”这样的人话。
   - `eta_seconds` 估不出来为 null，到分钟（按这一轮平均每步用时减去当前这步已做的时间）。
