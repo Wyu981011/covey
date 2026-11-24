@@ -15,7 +15,8 @@ topic_fork, handlers as app/butler_env.py describes them. Only in the owner's pr
 What each topic's model gets is app/butler_handoff.py's: the Bridge's note, the butler's task, the owner's words
 from the butler turn's record and its attachments, carried into the topic's incoming_media; its card and
 history show the owner's words.
-- ``topic_fork`` forks a topic's last finished turn (app/forks.py create_fork) and submits the new topic's first.
+- ``topic_fork`` forks a topic's last finished turn, on whichever Harness it ran (app/forks.py create_fork), and submits
+  the new topic's first.
 - The 派发卡 (``dispatch_card``, COVEY_DISPATCH_CARD=1) is topic_send's alone, in the thread of the owner's question
   (app/dispatch_cards.py created): a topic topic_start or topic_fork opens shows at the top level already, its thread
   under the owner's question or its own card there.
@@ -36,6 +37,7 @@ from pathlib import Path
 
 from covey.app import dispatch_cards, butler_handoff, repo_peers
 from covey.app.forks import FINISHED, fork_token
+from covey.app.harnesses import chat_records
 from covey.app.butler_env import arg_text, reply
 from covey.app.butler_model_choice import resolve
 from covey.app.launch_models import available_models
@@ -630,7 +632,8 @@ def topic_fork(env, request):
     record = read_object(path)
     if record.get("answer"):
         return record["answer"]
-    records = app.harness.topic_records(ctx, chat)
+    # Its turns on every Harness: one 🔁 换配置 moved to another has its finished turns on the one before.
+    records = chat_records(env.state_dir, ctx.topic_id, chat)
     if not record.get("fork_topic_id") and (live_turn(app, ctx, chat) is not None
                                             or any(r.get("status") in RUNNING for r in records)):
         return reply(False, f"{label} 正在跑，现在不能分叉；要把话交给它，用 topic_send 作为补充。")
