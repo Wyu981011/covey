@@ -9,7 +9,7 @@ COVEY_PROJECTS=1 and COVEY_PROJECT_MEMORY=1; with either off every function here
 - ``remember_answer`` (app/questions.py): the owner's answer to a question card of a project's topic or lead becomes memory
   entries, one a question answered (kind decision, source owner_answer, "主人答：question→answer", ``answer_line``), and the
   question record as it was answered is kept whole beside them (core/project_memory.py note_answers). Feedback and skipped
-  answers do not.
+  answers do not. A question that names an entry of another project's memory by its id (``elsewhere``) is history at once.
 - ``fix_memory``: the owner's correction of a line (docs/web.md memory_fix: ``scope`` its conditions, ``once`` only that time,
   ``confirm`` his for good), for the page and the cards to call once they checked the click is the owner's.
 - ``owner_files`` (app/app.py, the message of the owner in a lead's topic: quoting the project's card goes there): the files it
@@ -118,10 +118,34 @@ def answer_line(question, answer) -> str:
     return f"{ANSWER_HEAD}{question}→{answer}"
 
 
+def elsewhere(state_dir, project_id, lines, log=None) -> None:
+    """Of ``lines`` (``remember_answer``'s, each with ``asked``: the question's id, header and text), the ones whose question
+    names an entry of another project's memory by its id (core/project_memory.py quoted) get ``valid`` done: the card sorted
+    out that project's memory (a migration asking how each of its lines counts), and what the owner chose holds in that line,
+    not as a decision of this project, so it is noted as history and never carried. Only a question with a word that looks
+    like an id makes the projects' memories be read; when they cannot be, the answers are noted as decisions as before."""
+    asked = [line for line in lines if project_memory.QUOTE.search(line["asked"])]
+    if not asked:
+        return
+    try:
+        known = project_memory.ids(project_memory.across(state_dir))
+    except Exception as exc:  # noqa: BLE001 - noted as decisions, as before
+        if log is not None:
+            log(f"project memory answers not read against the other projects: {type(exc).__name__}")
+        return
+    for line in asked:
+        about = project_memory.quoted(known, project_id, line["asked"])
+        if about:
+            line["valid"] = "done"
+            if log is not None:
+                log(f"project memory answer {line['index']} noted as history: it names project {about[0]}'s lines")
+
+
 def remember_answer(state_dir, topic_id, record, log=None) -> None:
     """Note the owner's saved answer ``record`` (a question record with ``answers``) of ``topic_id`` in its project's memory:
     a decision for each question answered (``answer_line``), the record kept whole beside them (core/project_memory.py
-    note_answers; a record with no token, as none is, an entry a question with no record kept).
+    note_answers; a record with no token, as none is, an entry a question with no record kept); one whose question is about
+    another project's memory is history (``elsewhere``).
     An answer the lead gave in the owner's place (COVEY_PROJECT_TRIAGE=1: the record is still ``held`` while it is saved,
     app/triage.py ``answer``) is not the owner's word and is not noted; the 分流记录 and the decision log hold it, and the
     owner's 不对 corrects it. A question the lead passed on (``escalated``) and the owner answered is noted as always."""
@@ -140,10 +164,12 @@ def remember_answer(state_dir, topic_id, record, log=None) -> None:
             parts = [str(part) for part in given or () if str(part).strip() and part != SKIPPED]
             if parts:
                 lines.append({"index": index, "item": str(question.get("id") or ""),
-                              "text": answer_line(question.get("question") or question.get("header"), "；".join(parts))})
+                              "text": answer_line(question.get("question") or question.get("header"), "；".join(parts)),
+                              "asked": " ".join(str(question.get(key) or "") for key in ("id", "header", "question"))})
         if not lines:
             return
         if project_memory.TOKEN.fullmatch(str(record.get("token") or "")):
+            elsewhere(state_dir, found.id, lines, log)
             project_memory.note_answers(state_dir, found.id, {**record, "topic_id": record.get("topic_id") or topic_id}, lines)
             return
         for line in lines:
