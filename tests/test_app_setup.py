@@ -227,11 +227,11 @@ class ConsoleTests(unittest.TestCase):
             self.assertFalse(app_console.copy_login(Path(tmp) / "none", Path(tmp) / "other"))
 
     def test_conditional_access_page_fails_fast_instead_of_timing_out(self):
-        self.assertTrue(app_console.conditional_access("https://security.larkoffice.com/conditionalaccess/deny?foo=1"))
+        self.assertTrue(app_console.conditional_access("https://security.feishu.cn/conditionalaccess/deny?foo=1"))
         self.assertTrue(app_console.conditional_access("https://accounts.feishu.cn/x", "继续访问飞书网页版前，需先在客户端完成设备信息授权"))
         self.assertFalse(app_console.conditional_access("https://accounts.feishu.cn/accounts/page/login", "扫码登录"))
         page = SimpleNamespace(
-            url="https://security.larkoffice.com/conditionalaccess/deny?code=1",
+            url="https://security.feishu.cn/conditionalaccess/deny?code=1",
             goto=lambda *a, **k: None,
             evaluate=lambda *a, **k: "继续访问飞书网页版前，需先在客户端完成设备信息授权",
             wait_for_timeout=mock.Mock(),
