@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import type { TurnAnswer, TurnView } from '@shared/api.interface';
+import type { StepView, TurnAnswer, TurnView } from '@shared/api.interface';
 import { AnswerFoot } from './AnswerFoot';
 import { ArtifactFold } from './ArtifactFold';
 import { Md } from './Md';
 import { QuoteButton } from './RoomBits';
 import { Waterfall } from './Waterfall';
-import { Pill, useTick } from './ui';
+import { Dot, Pill, useTick } from './ui';
 import { ctxLimitOk, fmtDur, fmtTok, fmtWindow, hhmm, turnStats } from './lib';
 import { isAnswerBody, saidLabel, shownText } from './topicText';
 import { Notes, StartedChips } from './turnBits';
@@ -132,7 +132,9 @@ export const AgentTurn: React.FC<{
   const elapsed: number | null = live && turn.started_at ? now - turn.started_at : (st?.seconds ?? turn.seconds ?? null);
   const hasFigs: boolean = !!(turn.usage || turn.speed || turn.context);
   const chip: boolean = !live && !!(st || hasFigs);
-  const showFall: boolean = (live && !!turn.steps?.length) || (open && (!!turn.steps?.length || hasFigs));
+  // 在跑的一轮也默认折成一行（T753，学 Linear、Cursor：过程是细节，要看再展开），跑完的一轮折成“工具 N · 用时”
+  const showFall: boolean = open && (!!turn.steps?.length || hasFigs);
+  const cur: StepView | undefined = live && turn.steps?.length ? ([...turn.steps].reverse().find((s: StepView) => s.status === 'running') ?? turn.steps[turn.steps.length - 1]) : undefined;
   const ring: React.CSSProperties = hl ? { boxShadow: JUMP_RING, borderRadius: 10 } : {};
   return (
     <div className="msg" data-seq={turn.seq} data-room-key={roomKey} style={ring}>
@@ -148,6 +150,15 @@ export const AgentTurn: React.FC<{
           {open ? <ChevronDown /> : <ChevronRight />}
           {st ? <>工具 {st.tools}{st.thinks ? ` · 思考 ${st.thinks}` : ''}</> : '过程'}
           {elapsed ? ` · ${fmtDur(elapsed)}` : ''}
+        </button>
+      ) : null}
+      {cur ? (
+        <button type="button" className="fold livefold" onClick={() => setOpen(!open)} aria-expanded={open} title={open ? '收起过程' : '展开过程'}>
+          <Dot tone="running" />
+          <b>{turn.steps?.length} 步</b>
+          {elapsed ? <span className="lf-t">{fmtDur(elapsed)}</span> : null}
+          <span className="lf-now">现在：{cur.label}</span>
+          {open ? <ChevronDown /> : <ChevronRight />}
         </button>
       ) : null}
       {showFall ? (
@@ -171,7 +182,7 @@ export const AgentTurn: React.FC<{
         <AnswerFoot turn={turn} copy={{ text: [turn.failure?.title ?? '', turn.failure?.detail ?? turn.body].filter(Boolean).join('\n'), label: '复制停住的原因' }} />
       ) : null}
       {turn.images?.length ? <ShownImages images={turn.images} /> : null}
-      {live ? (
+      {live && !cur ? (
         <div className="typing">
           <span className="dots"><i /><i /><i /></span>
           {turn.steps?.length ? '正在做' : '在做…'}

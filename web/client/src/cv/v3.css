@@ -1,0 +1,56 @@
+/* 方案 X「状态优先」（T753，covey docs/ui.md 第 1 节和 2.1、4、5.2）：调研了业界 23 个产品，三组都提到的结构改动在组件里
+   （侧栏状态分组 StatusGroups.tsx、在跑一轮的过程折成一行 chatTurn.tsx、输入框上沿的运行胶囊 Conversation.tsx）；
+   这张表管颜色和排版：中性灰配色、结论带改成浅灰底简报、回答窄栏大字、你说的话不画边、看板改成收件箱列表。放在所有样式表最后。 */
+.cv{
+/* ---------- 颜色：中性灰，品牌色只给选中、主按钮和“要你处理”；状态色不变（和飞书卡片同一张表） ---------- */
+&.light{
+  --side:#EEEEEB;--bg:#F6F6F3;
+  --s1:#FFFFFF;--s2:#F6F6F3;--s3:#EEEEEA;--s4:#E3E3DE;
+  --line:rgba(28,28,20,.075);--line2:rgba(28,28,20,.13);
+  --t1:#1D2024;--t2:#353A42;--t3:#5E636B;--t4:#8A8F96;--read:#1F2328;
+  --hover:rgba(28,28,20,.045);--sel:rgba(28,28,20,.07);
+}
+&:not(.light){
+  --lk-surface:#111113;--lk-panel:#18181B;--lk-raised:#202024;--lk-line:#26262A;--lk-line2:#323238;
+  --lk-ink:#EDEDF0;--lk-read:#D6D6DB;--lk-body:#ABABB3;--lk-muted:#7B7B84;
+  --s2:#1F1F23;--s3:#27272C;--s4:#303036;
+}
+&:not(.m):not(.light){--side:#0C0C0E}
+&:not(.m) .main{border-radius:14px}
+&.light:not(.m) .main{box-shadow:0 0 0 1px rgba(28,28,20,.06),0 1px 2px rgba(28,28,20,.04),0 16px 40px -24px rgba(28,28,20,.28)}
+
+/* ---------- 标题栏：矮一点，不画渐变 ---------- */
+& .hd{height:52px;background:none}
+& .hd h1{font-size:15px}
+
+/* ---------- 话题页的结论带：浅灰底简报，大字；不再是靛蓝渐变 + 网格 + 描边 ---------- */
+& .ov2-band{background:var(--s2);box-shadow:none;border-radius:16px;padding:18px 22px 14px}
+& .ov2-band::before,& .ov2-band::after{display:none}
+& .ov2-head{font-size:20px;line-height:1.45;letter-spacing:-.01em}
+& .ov2-l1{color:var(--t3)}
+& .ov2-now{border-top-color:var(--line)}
+
+/* ---------- 回答：窄栏、大字、不套框；你说的话是浅灰圆角块，不画边 ---------- */
+& .feed .col{max-width:740px}
+& .a-ovwrap{max-width:780px}
+& .feed .um{background:var(--s2);border:0;box-shadow:none;border-radius:16px;padding:9px 15px}
+& .fold:not(.livefold){background:none;box-shadow:none;padding:0 6px;color:var(--t3)}
+& .hint{display:none}
+
+/* ---------- 右栏：检查器，安静一点 ---------- */
+& .a-rail h3,& .a-rail .a-rh{font-size:11px;letter-spacing:.04em;color:var(--t4)}
+
+/* ---------- 看板：结论带同上；要你处理从两列卡片改成一列收件箱（左状态和时长、中间标题和原因、右边按钮） ---------- */
+& .nb-band{background:var(--s2);box-shadow:none;border:0}
+& .nb-band::after{display:none}
+&:not(.m) .nb-actgrid{display:flex;flex-direction:column;gap:0;border-radius:14px;box-shadow:0 0 0 1px var(--line);overflow:hidden}
+&:not(.m) .nb-act{display:grid;grid-template-columns:88px minmax(0,1fr) auto;grid-template-areas:"h t b" "h r b" "h o b";column-gap:16px;row-gap:2px;align-items:center;
+  border:0;border-radius:0;border-bottom:1px solid var(--line);background:var(--s1);box-shadow:none;padding:12px 16px;animation:none}
+&:not(.m) .nb-act:last-child{border-bottom:0}
+&:not(.m) .nb-act:hover{background:var(--s2)}
+&:not(.m) .nb-act .nb-acth{grid-area:h;display:flex;flex-direction:column;align-items:flex-start;gap:4px}
+&:not(.m) .nb-act .nb-actt{grid-area:t}
+&:not(.m) .nb-act .nb-clamp2{grid-area:r;color:var(--t3);margin:0}
+&:not(.m) .nb-act .nb-opts{grid-area:o}
+&:not(.m) .nb-act :is(.nb-btns,.rc-acts){grid-area:b;justify-content:flex-end}
+}

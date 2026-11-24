@@ -15,6 +15,7 @@ import { setCollapsed, setMenu, useUi } from './store';
 import { listTone } from './topicText';
 import { askNumbers, asks, askSum, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
 import { PaneHandle } from './PaneHandle';
+import { StatusGroups } from './StatusGroups';
 import { SIDE_PANE, showSavedPanes } from './panes';
 import './covey.css';
 import './layout-a.css';
@@ -24,6 +25,7 @@ import './v2.css';
 import './tags.css';
 import './sidebar.css';
 import './unify.css';
+import './v3.css';
 
 
 /** 侧栏话题行右下角画状态点的状态：要你处理、告诉你一声和在做的；做完、空闲、排队、已停止不画（灰点不带信息） */
@@ -371,6 +373,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
             topics.filter(hot).slice(0, 12).map((t: SnapshotTopic) => <TopicRow key={t.key} t={t} active={isOn(t)} stopped={stoppedKeys.has(t.key)} mini />)
           ) : (
             <>
+              <StatusGroups a={a} data={data} running={topics.filter((t: SnapshotTopic) => t.kind === 'topic' && toneOf(t) === 'running')} act={act} now={now} />
               {groups.length ? (
                 <div className="sec" id="side-projects">
                   <span>专项</span>
