@@ -90,8 +90,10 @@ class Forks:
                 raise ValueError("新话题的起始消息发送失败，未创建新话题；可稍后再点")
             target = context_for_topic(ctx, {"chat_id": chat, "message_id": root, "root_id": root},
                                        self.harness.store.sessions_dir)
+            # The session is the source's on its Harness then: harness_id says which, so no other Harness is handed it.
             origin = {"topic_id": ctx.topic_id, "job_id": record["job_id"], "mode": "fork", "at": time.time(),
                       "session_id": self.sessions.read_session_id(ctx.session_path) or "",
+                      "harness_id": source.get("harness_id") or self.harness.spec.name,
                       "history_path": str(ctx.history_path)}
             with LOCK:
                 data = read_topic(target)
@@ -165,7 +167,14 @@ class Forks:
                                                    voice=self.voice)[1]
 
     def fork_start(self, ctx, history_snapshot):
-        """First run of a forked topic: fork the native session, or use the source's finished conversation."""
+        """First run of a forked topic: fork the native session, or use the source's finished conversation.
+
+        Only the first: a fork with a conversation of its own (``history_snapshot``) runs without a native session
+        again only after 🔁 换配置, and goes on from its own record and the switch handoff, not from the source. The
+        source's session is forked only on the Harness it belongs to: T750, forked from a topic on Antigravity and
+        then switched to Claude Code, had the Antigravity session handed to ``claude --resume`` and failed every turn."""
+        if history_snapshot:
+            return ctx, history_snapshot
         try:
             origin = read_topic(ctx).get("forked_from")
         except (OSError, ValueError, KeyError):
@@ -177,6 +186,8 @@ class Forks:
             # Its record too: the source may run in another task runner.
             busy = any(r.get("status") in {"running", "cancel_requested"}
                        for _, r in directory_store(ctx.state_dir / "jobs").query(topic_id=origin["topic_id"]))
-        if origin.get("session_id") and not busy and backend_capabilities(self.harness.backend, ctx).native_fork:
+        # Forks made before harness_id was recorded were bound to the source's Harness and have not switched yet.
+        same = (origin.get("harness_id") or self.harness.spec.name) == self.harness.spec.name
+        if origin.get("session_id") and same and not busy and backend_capabilities(self.harness.backend, ctx).native_fork:
             return dataclasses.replace(ctx, options={**ctx.options, "fork_session": origin["session_id"]}), history_snapshot
         return ctx, recent_history(Path(origin["history_path"]))
