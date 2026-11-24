@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowDown, ChevronRight, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
-import type { CollabView, OutboxView, SayFile, SnapshotTopic, TurnView } from '@shared/api.interface';
+import type { CollabView, OutboxView, SayFile, SnapshotProject, SnapshotTopic, TurnView } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
 import { newOpId, postOutboxQuiet, useRoomTurns, useSendOutbox, useSnapshot, useTurns } from '@client/src/hooks/use-workbench';
 import {
@@ -17,7 +17,6 @@ import { composerWords, QuestionPanel, useQuestionForm } from './Question';
 import { ctxLimitOk, fmtDur, fmtWindow, harnessName, hhmm, isRunning, isWaiting, toneOf } from './lib';
 import { FailBox, stopWords } from './Timeline';
 import { opLine, opWords } from './opWords';
-import { Hx } from './ui';
 import { AgentTurn, ChatRound, OwnerBubble } from './chatTurn';
 import { saidLabel, shownText, stopPressing } from './topicText';
 import { JumpRail } from './JumpRail';
@@ -333,9 +332,15 @@ export const Conversation: React.FC<{
   const agentGroups: Group[] = groups.filter((g: Group) => g.agent && g.agent.role !== 'event');
   // 刻度：你说的每一句一条（data-seq 和那个气泡对上），话题页和管家、负责人一样
   const marks: Mark[] = useMemo(() => (desktop && loaded ? chatMarks(groups) : []), [desktop, loaded, groups]);
-  // 话题页回答的人：Harness 的图标和名字；最后一轮没做完时，原因和按钮画在它下面
+  // 话题页回答的人：头像是话题自己的（T 号块，和侧栏、标题栏、大厅一样；负责人是专项头像，管家是管家头像，T756），
+  // 名字是它跑的 Harness。原来按 Harness 画小图标，只认得 Codex，别的（agy、Pi……）都画成 Claude Code 的橙色星号
   const lastAgentSeq: number | null = [...groups].reverse().find((g: Group) => g.agent && g.agent.role !== 'event')?.agent?.seq ?? null;
   const topicWho: string = harnessName(topic?.harness ?? '') || 'Covey';
+  const topicFace: { kind: 'butler' | 'lead' | 'topic'; avatar?: string; number?: number | null } = topic?.kind === 'butler'
+    ? { kind: 'butler' }
+    : topic?.kind === 'lead'
+      ? { kind: 'lead', avatar: snap?.projects.find((p: SnapshotProject) => p.key === topic.project_key)?.avatar }
+      : { kind: 'topic', number: topic?.number ?? null };
   // 不折叠
   const foldBelow: number = 0;
 
@@ -691,7 +696,7 @@ export const Conversation: React.FC<{
                     agent={g.agent}
                     hl={hl}
                     who={topicWho}
-                    avatar={<Hx harness={topic?.harness ?? ''} />}
+                    avatar={<RoleAvatar who={topicFace} />}
                     fail={g.agent ? (
                       <FailBox
                         failure={g.agent.failure}
