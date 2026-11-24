@@ -5,8 +5,9 @@ next turn took: the owner's next message waited for the summary first (85 s of 1
 marks the request ``idle`` and the Bridge compacts between the turns:
 
 - ``after_runner`` (app/detached.py finish_detached, once the turn's runner has exited): with a request waiting, a
-  thread waits IDLE_SECONDS (the owner's quick follow-up goes first; still within the prompt cache's 5 minutes); a
-  later turn's exit supersedes it. Then ``start``: the butler still on, the turn ``done`` (a turn waiting for an
+  thread waits IDLE_SECONDS, or the backend's ``compact_idle_seconds`` (agy's, backends/agy/compaction.py), so the
+  owner's quick follow-up goes first and the compaction still finds the turn's prompt in the model's cache; a later
+  turn's exit supersedes it. Then ``start``: the butler still on, the turn ``done`` (a turn waiting for an
   answer keeps its session as it is), no job of the topic here (queued, held or running), the request not ``failed``.
 - Under the request's record lock it checks the jobs once more, takes the request, starts a runner of the Bridge's
   release that only compacts (``bin/covey_runner.py --compact-only``) and writes
@@ -73,8 +74,15 @@ def put_back(request_path: Path, request, *, failed) -> None:
 
 # The Bridge's side ----------------------------------------------------------
 
+def idle_seconds(backend) -> float:
+    """How long a topic stays idle before its compaction starts: the backend's ``compact_idle_seconds``, else
+    IDLE_SECONDS."""
+    value = getattr(backend, "compact_idle_seconds", None)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else IDLE_SECONDS
+
+
 def after_runner(gateway, app, job, ctx, launch) -> None:
-    """A butler turn's runner has exited: with a request waiting, compact once the topic was idle IDLE_SECONDS.
+    """A butler turn's runner has exited: with a request waiting, compact once the topic was idle ``idle_seconds``.
     Only the live Bridge, only the butler's own turns (core/butler.py own_turn: the butler on).
     ``launch`` (app/runner_spawn.py compaction_launch): the turn's ``handoff()`` and ``spawn(directory)`` of a runner."""
     runtime = gateway.runtime
@@ -86,9 +94,10 @@ def after_runner(gateway, app, job, ctx, launch) -> None:
     token = object()
     with _waiting_lock:
         _waiting[job.topic_id] = token
+    wait_seconds = idle_seconds(app.backend)
 
     def wait():
-        if runtime.shutdown.wait(IDLE_SECONDS):
+        if runtime.shutdown.wait(wait_seconds):
             return
         with _waiting_lock:
             if _waiting.get(job.topic_id) is not token:

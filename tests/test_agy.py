@@ -15,7 +15,8 @@ from support import FIXTURES
 from covey.app.unified import UnifiedBridgeApp
 from covey.backends.agy.bridge import (AntigravityEventAdapter, CONVERSATIONS, NOT_LOGGED_IN, models_from_listing, tool_inputs,
                                       tool_summary)
-from covey.core.harness import RunCallbacks, RunInputs, RunRequest
+from covey.app import idle_compaction
+from covey.core.harness import RunCallbacks, RunInputs, RunRequest, backend_capabilities
 from covey.core.steer import SteerNotReady, SteerRefused
 
 RUN = "33333333-3333-4333-8333-333333333333"
@@ -443,6 +444,73 @@ class AntigravityTests(unittest.TestCase):
             "tool_info": {"parameters": {"Url": "https://example.invalid/doc?token=PRIVATE#part"}}}}, 1.0)
         self.assertEqual(adapter.tools["step-4"]["detail"], "https://example.invalid/doc")
         self.assertEqual(adapter.tools["step-4"]["name"], "webfetch")
+
+
+    def test_each_root_request_says_the_context_the_next_one_starts_from(self):
+        # What the butler's compaction threshold reads (app/butler.py compact_butler): input, cache reads and output.
+        _result, events, *_ = self.run_agy("ok")
+        usage = [d for k, d in events if k == "token_usage"]
+        self.assertEqual([d.get("context_tokens") for d in usage], [13187 + 0 + 91, 2249 + 11130 + 41])
+
+    def compact(self, how="", ctx=None):
+        os.environ["FAKE_AGY_SCENARIO"] = "ok"
+        os.environ["FAKE_AGY_COMPACT"] = how
+        processes = []
+        done = self.backend.compact_session(RunRequest(ctx or self.ctx, "", session_id=SID, callbacks=RunCallbacks(
+            process=processes.append), inputs=RunInputs(threading.Event(), run_id=RUN)))
+        path = self.root / "record.json"
+        record = json.loads(path.read_text()) if path.exists() else {}
+        return done, record, processes
+
+    def test_the_idle_compaction_is_agys_own_compact_with_slash_commands_on(self):
+        done, record, processes = self.compact()
+        self.assertTrue(done)
+        self.assertEqual(json.loads(record["stdin"]), {"event": "user", "message": {"content": "/compact"}})
+        self.assertEqual(record["argv"], ["--output-format", "stream-json", "--input-format", "stream-json",
+                                          "--dangerously-skip-permissions", "--conversation", SID,
+                                          "--model", "gemini-3.8-pro-high", "--effort", "high"])
+        self.assertTrue(processes)  # The runner records the process, so 停止 can stop it.
+
+    def test_a_conversation_agy_did_not_compact_is_no_compaction(self):
+        for how in ("short", "fail"):
+            with self.subTest(how=how):
+                self.assertFalse(self.compact(how)[0])
+
+    def test_the_idle_compaction_runs_in_the_butlers_home_with_its_tools(self):
+        config = {"mcpServers": {"bridge": {"command": sys.executable, "args": ["-c", "pass"]}}}
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "mcp_config": config})
+        done, record, _ = self.compact(ctx=ctx)
+        self.assertTrue(done)
+        self.assertIn("bridge", record["mcp"]["mcpServers"])
+        self.assertNotEqual(record["home"], str(self.root))
+
+    def test_a_turn_asked_to_compact_first_compacts_then_runs(self):
+        os.environ["FAKE_AGY_COMPACT"] = ""
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "compact_first": True})
+        result, events, replies, _sessions, _record = self.run_agy("ok", session=SID, ctx=ctx)
+        self.assertFalse(result.is_error, result.text)
+        steps = [d for k, d in events if k == "tool" and d.get("id") == "compact-before-turn"]
+        self.assertEqual([d["status"] for d in steps], ["running", "done"])
+        self.assertIn("压缩前上下文 7.30 万 token", steps[-1]["detail"])
+        usage = [d for k, d in events if k == "token_usage"]
+        self.assertEqual(usage[-1]["input_tokens"], 3125 + 69866 + 13187 + 0 + 2249 + 11130)
+        self.assertEqual(usage[-1]["context_tokens"], 2249 + 11130 + 41)  # The compaction's is not the context after it.
+
+    def test_a_failed_compaction_first_leaves_the_turn_as_it_was(self):
+        os.environ["FAKE_AGY_COMPACT"] = "fail"
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "compact_first": True})
+        result, events, *_ = self.run_agy("ok", session=SID, ctx=ctx)
+        self.assertFalse(result.is_error, result.text)
+        step = [d for k, d in events if k == "tool" and d.get("id") == "compact-before-turn"][-1]
+        self.assertEqual(step["status"], "failed")
+        self.assertIn("本轮按原上下文继续", step["detail"])
+
+    def test_it_compacts_here_and_not_on_a_device(self):
+        self.assertTrue(backend_capabilities(self.backend, self.ctx).compaction)
+        device = dataclasses.replace(self.ctx, device="box")
+        self.assertFalse(backend_capabilities(self.backend, device).compaction)
+        self.assertFalse(self.backend.compact_session(RunRequest(device, "", session_id=SID)))
+        self.assertEqual(idle_compaction.idle_seconds(self.backend), 180.0)
 
 
 class AgyStepWordsTests(unittest.TestCase):

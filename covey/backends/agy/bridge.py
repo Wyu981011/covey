@@ -48,6 +48,7 @@ import subprocess
 import threading
 import time
 
+from covey.backends.agy import compaction as agy_compaction
 from covey.backends.agy.home import EAGER_ENV, PrivateHome
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
                                 JobCancelled, LEAD, TOOL_LIMIT, UUID_RE, for_device)
@@ -291,8 +292,9 @@ class AntigravityEventAdapter:
 
     def accept(self, row, now):
         if row.get("event") == "result":
-            if not self.counted:  # No model request said its usage: the turn's total, untimed.
-                self.add_usage((row.get("result") or {}).get("usage") if isinstance(row.get("result"), dict) else None)
+            if not self.counted:  # No model request said its usage: the turn's total, untimed, not a context.
+                self.add_usage((row.get("result") or {}).get("usage") if isinstance(row.get("result"), dict) else None,
+                               context=False)
             return
         step = row.get("step_update")
         if row.get("event") != "step_update" or not isinstance(step, dict):
@@ -345,11 +347,15 @@ class AntigravityEventAdapter:
         self.notes.to_notes(now)
         self.segment += 1
 
-    def add_usage(self, usage, seconds=None):
+    def add_usage(self, usage, seconds=None, *, context=True):
+        """One request's usage into the turn's counts. ``context``: the request is the root conversation's, so what it
+        read and wrote is the context the next request starts from (``context_tokens``, which the butler's compaction
+        threshold reads, app/butler.py compact_butler)."""
         counts = usage_counts(usage)
         if counts is not None and self.tokens.add(*counts, 0, seconds=seconds):
             self.counted = True
-            self.emit("token_usage", self.tokens.payload())
+            size = sum(value for value in counts if type(value) is int) if context else 0
+            self.emit("token_usage", self.tokens.payload(**({"context_tokens": size} if size > 0 else {})))
 
 
 SLUG_RE = re.compile(r"[a-z][a-z0-9]*(?:[-._][a-z0-9]+)+")
@@ -402,9 +408,34 @@ class AntigravityBackend(BackendRuntime):
         # rate_limit_retry, fault_retry: what stream_outcome tells apart in agy's error. bridge_tools: the butler's tools through
         # a home of its own (backends/agy/home.py), a lead's turn held to reading by READ_ONLY_SETTINGS. ask_once:
         # backends/agy/judge.py (this machine's only: DEVICE_OFF).
+        # compaction: agy's own /compact (backends/agy/compaction.py), on this machine's conversations only.
         here = not device_of(ctx)
         return for_device(HarnessCapabilities(steering=here, steer_reads=here, bridge_tools=True, rate_limit_retry=True,
-                                              fault_retry=True, ask_once=True), ctx)
+                                              fault_retry=True, ask_once=True, compaction=here), ctx)
+
+    # The butler's idle compaction (app/idle_compaction.py): how long after a turn it starts, and that it runs with the
+    # butler's tools (the turn's MCP servers), so its request starts with the same prompt as the turn and reads it from
+    # the cache (backends/agy/compaction.py).
+    compact_idle_seconds = agy_compaction.COMPACT_IDLE_SECONDS
+    compact_with_tools = True
+
+    def compact_session(self, request):
+        """``/compact`` on ``request.session_id`` and nothing else (the butler's idle compaction), in a turn's
+        environment: the agy_turn hook's and, with ``mcp_config``, the butler's home."""
+        ctx = request.context
+        if device_of(ctx) or not request.session_id:
+            return False  # A device's conversation is on the device.
+        self.normalize_model_settings(ctx, ctx.model, ctx.effort)
+        argv, env = self.argv(ctx, request.session_id), self.environment(ctx)
+        homes = Homes(ctx)
+        try:
+            with extension_turn(ctx, env, run_id=request.inputs.run_id) as (env, _switch):
+                done, _usage = agy_compaction.compact(ctx, argv, homes.env(env), request.session_id,
+                                                      cancel_event=request.inputs.cancel_event,
+                                                      process_observer=request.observers.process)
+                return done
+        finally:
+            homes.close()
 
     def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None):
         """One question to agy and nothing else (backends/agy/judge.py): the answer's text, or AskFailed."""
@@ -896,6 +927,11 @@ def run_stream(request, argv, stdin, env, switch=None):
         pass
     try:
         state.invalidate()
+        if ctx.options.get("compact_first") and expected_session:
+            # A compaction the butler's idle one did not take in time: before the turn, in its environment.
+            agy_compaction.compact_before_turn(ctx, argv, env, expected_session, adapter.steps,
+                                               add_usage=lambda usage: adapter.add_usage(usage, context=False),
+                                               cancel_event=cancel_event, process_observer=request.observers.process)
         while True:
             left = 0 if deadline is None else max(1, int(deadline - time.monotonic()))
             # Where this process keeps its conversations (its HOME, the account the agy_turn hook gave it): a tool step's
