@@ -55,7 +55,7 @@ npm run build:selfhost           # 自托管版：服务端和前端构建到 di
 - 仓库里提交的是 `.env.example`（三行日志配置，没有密钥）；`.env` 在 `.gitignore` 里，各人本机的覆盖写在那里。`npm run dev` 和 `prune-smart` 先读 `.env`，没有的项用 `.env.example`；`scripts/build.sh` 和自托管的 `build.sh` 构建时，没有 `.env` 就用 `.env.example` 生成，妙搭一键部署把 `.env.example` 当成应用仓库的 `.env`。所以不用手动建 `.env`，行为和原来提交 `.env` 时一样。
 - 头像只有一份，在核心的 `covey/assets/avatars/`（核心运行时从那里读，上传给飞书）。`client/src/cv/avatars/` 是 `scripts/sync-avatars.mjs` 从它拷来的，在 `.gitignore` 里，不要手改。`npm run dev`、`dev:client`、`build`、`build:client`、`build:selfhost:client` 的 `pre` 钩子、自托管的 `build.sh` 和妙搭的 `deploy.py` 都会先拷一遍；只拷 `web/` 出去（没有 `covey/`）时，目录已经在就不动，不在就报错。第一次在新检出里直接跑 `vite` 或 `tsc` 之前，先 `npm run sync:avatars`。
 
-单测一共 23 组：工作台 20 组（`test:graph` 到 `test:v34`），自托管 3 组（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
+单测一共 25 组：工作台 22 组（`test:graph` 到 `test:canvas`），自托管 3 组（`test:selfhost-logic` 12 条，纯逻辑；`test:selfhost-tls` 10 条，公网 HTTPS 的证书；`test:selfhost-api` 26 条，先构建自托管服务端，再起真服务把密钥、登录、会话、频控、登出和公网 HTTPS 走一遍）。
 
 部署脚本的测试（不连飞书，用假的 lark-cli 和本机 git 仓库），在 covey 仓库根目录：
 

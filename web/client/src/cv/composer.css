@@ -20,6 +20,12 @@
 .cv .cp-ic:disabled{opacity:.4;cursor:not-allowed}
 .cv .mcomp .pl:disabled{opacity:.4}
 .cv .cp-extra{flex:none;white-space:nowrap}
+/* 上下文用量（T753）：字前面一条 32px 的细条，过八成变橙（快满了，下一轮可能先压缩） */
+.cv .cp-ctx{display:inline-flex;align-items:center;gap:6px}
+.cv .cp-ctxbar{width:32px;height:4px;border-radius:2px;background:rgba(255,255,255,.16);overflow:hidden;flex:none}
+.cv.light .cp-ctxbar{background:rgba(20,25,45,.12)}
+.cv .cp-ctxbar i{display:block;height:100%;border-radius:inherit;background:var(--a1)}
+.cv .cp-ctxbar.full i{background:var(--wait)}
 
 /* 预览：和编辑区同样的位置，按你说的话的样子画 */
 /* 边写边渲染的编辑区（RichText）：和原来的文字框一样大小、行高；里面按“你说的话”的样子画 */

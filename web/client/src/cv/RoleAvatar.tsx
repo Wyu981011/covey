@@ -17,10 +17,11 @@ export const RoleAvatar: React.FC<{ name?: string; size?: number }> = ({ name, s
     : <UserRound className="a-avatar a-avatar-empty" aria-hidden="true" width={size} height={size} />;
 };
 
-/** 话题头像（和飞书私聊区一样，covey docs/ui.md“话题头像”）：自己的 T 号，白色粗体放在话题自己的颜色上；没有号码时是一个灰的“T” */
+/** 话题头像（和飞书私聊区一样，covey docs/ui.md“话题头像”）：自己的 T 号，白色粗体放在话题自己的颜色上；没有号码时是一个灰的“T”。
+ *  颜色经 --tc 交给样式表（badge.css 画实心底；侧栏一列几十个，sidebar.css 改画浅底彩字） */
 export const TopicBadge: React.FC<{ number: number | null | undefined }> = ({ number }) => {
   const color: string | null = topicColor(number);
   return color
-    ? <span className="a-tbadge" style={{ background: color }} aria-hidden="true">T{number}</span>
+    ? <span className="a-tbadge" style={{ '--tc': color } as React.CSSProperties} aria-hidden="true">T{number}</span>
     : <span className="a-tbadge none" aria-hidden="true">T</span>;
 };

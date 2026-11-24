@@ -39,7 +39,7 @@
 &.light{
   --bg:#f2f3f7;--side:#eaecf1;--s1:#ffffff;--s2:#f7f8fb;--s3:#eef0f5;--s4:#e4e7ee;
   --line:rgba(20,25,45,.09);--line2:rgba(20,25,45,.16);--hi:inset 0 1px 0 rgba(255,255,255,.9);
-  --t1:#14161c;--t2:#434859;--t3:#5b6172;
+  --t1:#14161c;--t2:#353a46;--t3:#5b6172;
   --a1:#5563f0;--a2:#8a5cf0;--accent-t:#4452d6;
   --wait:#b45309;--run:#2563eb;--done:#15803d;--fail:#dc2626;--stop:#5b6172;
   --grid:rgba(20,25,45,.035);--glow:.1;--hover:rgba(20,25,45,.045);--sel:rgba(20,25,45,.07);
@@ -49,6 +49,14 @@
 *{box-sizing:border-box}
 
 &{font:13px/1.6 var(--font);color:var(--t1);background:var(--bg);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-kerning:normal;overflow:hidden;font-variant-numeric:tabular-nums}
+/* 浅色不用 antialiased（T753）：Mac 上它关掉了系统给浅底深字的笔画加粗，苹方和 SF Pro 的常规体被削细发虚，粗体不受影响，
+   所以只有不加粗的字“差点意思”。深色保留（浅字深底再加粗会发胀）；浅色里彩底白字的小块也保留，不然白字发胖 */
+&.light{-webkit-font-smoothing:auto;-moz-osx-font-smoothing:auto}
+&.light :is(.a-tbadge,.logo,.avc,.hxi,.btn.pri,.send,.opt.sel .n,.trow .bb,.rtl-ok){-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+/* 句子和标题里的数字用比例数字（T753）：等宽数字留给计数、时间、耗时和表格这类要对齐、会跳的数；
+   SF Pro 的等宽“1”两边各空一块，“11/24”“T741”在句子里看着松 */
+:is(.mdans .prose,.um-tx,.ov2-goal,.ov2-head,.ov2-rest,.ov2-nowt,.hd h1,.a-hmeta,.a-tt,.a-gtitle){font-variant-numeric:normal}
+.mdans .prose :is(table,pre,code){font-variant-numeric:tabular-nums}
 svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
 b,strong{font-weight:600}
 .mono{font-family:var(--mono)}

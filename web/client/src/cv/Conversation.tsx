@@ -38,6 +38,21 @@ import {
 /** 没有协作时用同一个空数组（免得每次重算对话的分组） */
 const NO_COLLABS: CollabView[] = [];
 
+/** 输入框下沿的上下文用量（T753）：知道窗口多大时前面一条细进度条，过八成变橙（快满了，下一轮可能先压缩）；不知道时只写用了多少 */
+const ContextMeter: React.FC<{ used: number; limit: number }> = ({ used, limit }) => {
+  const pct: number = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return (
+    <span className="cp-ctx" title={limit > 0 ? `上下文已用 ${pct}%` : undefined}>
+      {limit > 0 ? (
+        <span className={`cp-ctxbar${pct >= 80 ? ' full' : ''}`} aria-hidden="true">
+          <i style={{ width: `${pct}%` }} />
+        </span>
+      ) : null}
+      {limit > 0 ? `上下文 ${Math.round(used / 1000)}K / ${fmtWindow(limit)}` : `上下文 ${Math.round(used / 1000)}K`}
+    </span>
+  );
+};
+
 /** 刚发出的一句话：状态按 outbox 行走（发送中 → 已发出，等 Covey → 已执行 / 没办成：原因，opWords.ts），没办成的可以关掉 */
 const PendingBubble: React.FC<{ p: Pending; row: OutboxView | undefined; onClose: () => void }> = ({ p, row, onClose }) => {
   const failed: boolean = p.phase === 'failed' || row?.state === 'failed';
@@ -792,7 +807,7 @@ export const Conversation: React.FC<{
         config={config ?? ownConfig}
         sendLabel={answering ? '提交回答' : '发送'}
         onStop={running && !butler && !stopPending ? stop : undefined}
-        extra={extra !== undefined ? extra : topic?.context ? (ctxLimitOk(topic.context) ? `上下文 ${Math.round(topic.context.used / 1000)}K / ${fmtWindow(topic.context.limit)}` : `上下文 ${Math.round(topic.context.used / 1000)}K`) : undefined}
+        extra={extra !== undefined ? extra : topic?.context ? <ContextMeter used={topic.context.used} limit={ctxLimitOk(topic.context) ? topic.context.limit : 0} /> : undefined}
       />
     </div>
   );

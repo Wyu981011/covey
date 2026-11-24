@@ -28,6 +28,18 @@ svg.rot{transform:rotate(90deg)}
 .a-rail h3:first-child,.a-rail .a-rh:first-child{margin-top:0}
 .a-rail h3 em,.a-rh em{font-style:normal;font-size:12px;margin-left:auto}
 
+/* ---------- 内嵌画布（T753，只在电脑上） ----------
+   侧栏直接铺在外槽上，主区是一块四周留 8px 的圆角画布，右栏并进画布、只留一条发丝线；不再三栏平铺、从顶到底直线硬切。
+   画布是面板色 --s1（浅色白、深色 #0d0f13），深色电脑上外槽压暗到 #060709，比画布暗一截、再加一圈细亮边。画布里的 --bg 换成画布色，
+   拿 --bg 当遮罩的（时间线的点、滚动区的淡出）跟着换；手机（.m）照旧铺满 */
+&:not(.m):not(.light){--side:#060709}
+&:not(.m) .app{background:var(--side)}
+&:not(.m) .side{background:transparent;border-right:0}
+&:not(.m) .main{--bg:var(--s1);margin:8px 8px 8px 0;border-radius:12px;overflow:clip;background:var(--bg);
+  box-shadow:0 0 0 1px rgba(255,255,255,.075),0 10px 30px -14px rgba(0,0,0,.8)}
+&.light:not(.m) .main{box-shadow:0 0 0 1px rgba(20,25,45,.075),0 1px 3px rgba(20,25,45,.05),0 10px 28px -18px rgba(20,25,45,.18)}
+&:not(.m) :is(.a-rail,.rp){background:transparent}
+
 /* ---------- 话题总览 ---------- */
 .a-ovwrap{flex:none;width:100%;max-width:800px;margin:0 auto;padding:12px 20px 0}
 .a-ov{border:1px solid var(--line2);border-radius:12px;background:var(--s1);overflow:hidden}
