@@ -22,6 +22,8 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --only-chat-tab --yes
 ```
 
+建好的标签自动排在「消息」后面。要把工作台也固定到飞书左侧主导航，需在 Covey 机器人那个飞书应用的开发者后台手工做：应用能力里添加「网页应用」，桌面端主页和移动端主页都填网页地址（不要加 `lk_jump_to_browser`），再创建版本并发布；这几步没有开放接口，部署脚本结尾会打印，详见 [deploy/miaoda/README.md](deploy/miaoda/README.md#固定到飞书主导航)。
+
 自托管：装 Covey 时加 `./install --web`（要公网直连加 `./install --web-public <IP或域名>`）一步做完；也可以手动构建、备好密钥和配置，再按打印的开关改 Covey 的服务清单：
 
 ```bash

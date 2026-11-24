@@ -208,11 +208,14 @@ class DeployTest(unittest.TestCase):
     def test_full_run_makes_the_built_in_tab_as_the_bot_and_rerun_changes_nothing(self):
         code, text = self.run_deploy("--yes", "--covey-state", self.covey_state())
         self.assertEqual(code, 0, text)
-        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs"])
+        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs", "POST chat_tabs/sort_tabs"])
+        self.assertIn("桌面端主页", text)  # 固定到主导航要手工开网页应用能力：只提示，不调接口
+        self.assertIn(self.PAGE, text.split("桌面端主页")[1])
         tabs = self.workbench_tabs()
         self.assertEqual(len(tabs), 1)
         self.assertEqual(tabs[0]["tab_type"], "url")
         self.assertEqual(tabs[0]["tab_content"], {"url": self.PAGE})
+        self.assertEqual([t["tab_id"] for t in self.fake()["tabs"]], ["1", tabs[0]["tab_id"], "2", "3"])  # 消息、工作台、其余原顺序
         self.assertIs(tabs[0]["tab_config"]["is_built_in"], True)  # 飞书内嵌打开，不跳外部浏览器
         api = [c for c in self.fake()["calls"] if c.startswith("api ")]
         self.assertTrue(all(" bot " in c and "--profile bot-prof" in c for c in api), api)  # 机器人身份和机器人的 profile，不是部署用的
@@ -222,7 +225,7 @@ class DeployTest(unittest.TestCase):
         web_before = (self.out / "web.json").read_text()
         code, text = self.run_deploy("--yes", "--covey-state", self.covey_state())
         self.assertEqual(code, 0, text)
-        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs", "GET chat_tabs/list_tabs"])  # 第二次只读
+        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs", "POST chat_tabs/sort_tabs", "GET chat_tabs/list_tabs"])  # 第二次只读，已在第 2 位不再排
         self.assertEqual(len(self.workbench_tabs()), 1)
         self.assertIn("没动", text)
         self.assertEqual((self.out / "web.json").read_text(), web_before)
@@ -243,7 +246,7 @@ class DeployTest(unittest.TestCase):
         self.addCleanup(os.environ.pop, "FAKE_TABS_SEED", None)
         code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(), "--page-url", self.PAGE)
         self.assertEqual(code, 0, text)
-        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs/update_tabs"])
+        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs/update_tabs", "POST chat_tabs/sort_tabs"])
         tabs = self.workbench_tabs()
         self.assertEqual([(t["tab_id"], t["tab_content"]["url"], t["tab_config"]["is_built_in"]) for t in tabs], [("77", self.PAGE, True)])
 
@@ -340,6 +343,49 @@ class DeployTest(unittest.TestCase):
         code, text = self.run_deploy("--yes", "--covey-state", self.covey_state(), "--skip-chat-tab")
         self.assertEqual(code, 0, text)
         self.assertEqual(self.tab_calls(), [])
+
+    def test_sort_moves_only_the_workbench_next_to_the_message_tab(self):
+        os.environ["FAKE_TABS_SEED"] = "1"  # 旧的「工作台」排在最后：消息、Pin、文件、工作台
+        self.addCleanup(os.environ.pop, "FAKE_TABS_SEED", None)
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(), "--page-url", self.PAGE)
+        self.assertEqual(code, 0, text)
+        self.assertEqual([t["tab_id"] for t in self.fake()["tabs"]], ["1", "77", "2", "3"])
+        self.assertIn("第 2 位", text)
+        calls = self.fake()["calls"]
+        sort = [c for c in calls if "sort_tabs" in c][0]
+        self.assertIn('"tab_ids": ["1", "77", "2", "3"]', sort)  # 全部标签的 ID，消息在内
+
+    def test_already_second_means_no_sort_call_and_only_chat_tab_sorts_too(self):
+        covey = self.covey_state()
+        self.run_deploy("--only-chat-tab", "--yes", "--covey-state", covey, "--page-url", self.PAGE)
+        before = len(self.tab_calls())
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", covey, "--page-url", self.PAGE)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls()[before:], ["GET chat_tabs/list_tabs"])
+        self.assertIn("已经在第 2 位", text)
+
+    def test_keep_tab_order_skips_sorting(self):
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(), "--page-url", self.PAGE, "--keep-tab-order")
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("POST chat_tabs/sort_tabs", self.tab_calls())
+
+    def test_no_tab_list_in_the_response_skips_sorting_and_says_how_to_redo(self):
+        os.environ["FAKE_TABS_NOLIST"] = "1"
+        self.addCleanup(os.environ.pop, "FAKE_TABS_NOLIST", None)
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(), "--page-url", self.PAGE)
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("POST chat_tabs/sort_tabs", self.tab_calls())
+        self.assertIn("没排", text)
+        self.assertIn("--only-chat-tab --yes", text)
+
+    def test_a_sort_error_does_not_block(self):
+        os.environ["FAKE_TABS_SORT"] = "error"
+        self.addCleanup(os.environ.pop, "FAKE_TABS_SORT", None)
+        code, text = self.run_deploy("--yes", "--covey-state", self.covey_state())
+        self.assertEqual(code, 0, text)
+        self.assertIn("sort failed", text)
+        self.assertIn("全部做完", text)
+        self.assertEqual(len(self.workbench_tabs()), 1)
 
     def test_render_schema(self):
         sql = deploy.render_schema("100000000042")

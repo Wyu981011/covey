@@ -10,6 +10,8 @@
   FAKE_APP_ID      auth status 里的 appId（测 profile 对不对得上机器人）
   FAKE_TABS_READ   deny：list_tabs 报缺权限
   FAKE_TABS_WRITE  deny：建/改标签报缺权限；error：报别的错
+  FAKE_TABS_NOLIST 1：建/更新的响应里不带标签列表
+  FAKE_TABS_SORT   error：排序报错
   FAKE_TABS_SEED   1：会话里已有一个旧的「工作台」标签（没有 is_built_in）
 """
 import json
@@ -81,10 +83,10 @@ def tabs_api(s, args):
     method, path = args[1], args[2]
     body = json.loads(opt(args, "--data", "{}"))
     if "tabs" not in s:
-        s["tabs"] = [{"tab_id": "1", "tab_type": "message"}, {"tab_id": "2", "tab_type": "pin"}]
+        s["tabs"] = [{"tab_id": "1", "tab_type": "message"}, {"tab_id": "2", "tab_type": "pin"}, {"tab_id": "3", "tab_type": "file"}]
         if os.environ.get("FAKE_TABS_SEED"):
             s["tabs"].append({"tab_id": "77", "tab_name": "工作台", "tab_type": "url", "tab_content": {"url": "https://old.example.com/"}})
-    m = re.match(r"^/open-apis/im/v1/chats/(oc_\w+)/chat_tabs(/list_tabs|/update_tabs)?$", path)
+    m = re.match(r"^/open-apis/im/v1/chats/(oc_\w+)/chat_tabs(/list_tabs|/update_tabs|/sort_tabs)?$", path)
     if not m:
         fail("unknown", f"假 lark-cli 不认识这个接口：{path}", 2)
     s["tab_calls"] = s.get("tab_calls", []) + [f"{method} {path.split('/chats/')[1].split('/', 1)[1]}"]
@@ -98,6 +100,14 @@ def tabs_api(s, args):
         out({"ok": False, "error": {"type": "api", "subtype": "missing_scope", "code": 99991672, "message": "need im:chat.tabs:write_only"}}, 1)
     if os.environ.get("FAKE_TABS_WRITE") == "error":
         out({"code": 232006, "msg": "invalid chat_id"}, 0)
+    if m.group(2) == "/sort_tabs":
+        if os.environ.get("FAKE_TABS_SORT") == "error":
+            out({"code": 232001, "msg": "sort failed"}, 0)
+        ids = body["tab_ids"]
+        if sorted(ids) != sorted(t["tab_id"] for t in s["tabs"]):
+            out({"code": 232001, "msg": "tab_ids must hold every tab"}, 0)
+        s["tabs"] = [next(t for t in s["tabs"] if t["tab_id"] == i) for i in ids]
+        out({"code": 0, "msg": "ok", "data": {"chat_tabs": s["tabs"]}})
     for tab in body["chat_tabs"]:
         if m.group(2) == "/update_tabs":
             old = next((t for t in s["tabs"] if t["tab_id"] == tab["tab_id"]), None)
@@ -106,7 +116,7 @@ def tabs_api(s, args):
             old.update({k: v for k, v in tab.items() if k != "tab_id"})
         else:
             s["tabs"].append({**tab, "tab_id": str(100 + len(s["tabs"]))})
-    out({"code": 0, "msg": "ok", "data": {"chat_tabs": s["tabs"]}})
+    out({"code": 0, "msg": "ok", "data": {} if os.environ.get("FAKE_TABS_NOLIST") else {"chat_tabs": s["tabs"]}})
 
 
 def main():

@@ -524,6 +524,9 @@ def step_config(ctx: Ctx) -> None:
 # 建和更新的响应里都带会话当前的全部标签（含 tab_id、tab_content.url），所以最小权限只加 im:chat.tabs:write_only，
 # 不另加 im:chat.tabs:read：幂等靠三层——先试拉取（机器人已有 im:chat:read 之类能读群的权限时多半能读）；
 # 读不了就用进度文件里记的 tab_id（或 --tab-id）直接更新；两样都没有才建，建完看响应里有没有同名的旧标签并提醒。
+#   POST /open-apis/im/v1/chats/{chat_id}/chat_tabs/sort_tabs   排序；权限同上。请求体 {"tab_ids": [...]} 必须含会话里全部标签的 ID，
+#        顺序就是从左到右；「消息」标签固定第一、不参与排序，但 ID 也要在里面。建/更新的响应里的标签列表是按当前顺序给的完整列表，
+#        所以排序不需要读权限：把响应里的 ID 取出来，只把「工作台」挪到「消息」后面（第 2 位），其余相对顺序不变。已经在第 2 位就不调。
 # 标签是网址类型，tab_config.is_built_in 必须是 true，飞书才在客户端内嵌打开，不跳外部浏览器。
 TAB_NAME = "工作台"
 TAB_SCOPE = "im:chat.tabs:write_only"
@@ -664,6 +667,29 @@ def step_chat_tab(ctx: Ctx) -> None:
         say(f"10. 私聊「{TAB_NAME}」标签：这次没建，飞书接口说：{exc}\n    {extra}\n    处理好以后单独做这一步：{tab_rerun(ctx)}")
 
 
+def tab_order(tabs: list, mine: str) -> list:
+    """把 mine 挪到「消息」标签后面（第 2 位），其余保持原来的相对顺序。没有「消息」标签就挪到最前。"""
+    ids = [str(t.get("tab_id")) for t in tabs if isinstance(t, dict) and t.get("tab_id")]
+    rest = [i for i in ids if i != mine]
+    first = next((n for n, t in enumerate(tabs) if isinstance(t, dict) and t.get("tab_type") == "message"), None)
+    head = [str(tabs[first]["tab_id"])] if first is not None and str(tabs[first].get("tab_id")) in rest else []
+    return head + [mine] + [i for i in rest if i not in head]
+
+
+def sort_chat_tab(ctx: Ctx, path: str, tabs: list, mine: str) -> None:
+    """让「工作台」紧挨着「消息」。排序失败只提示，不影响别的。"""
+    order = tab_order(tabs, mine)
+    if order == [str(t.get("tab_id")) for t in tabs if isinstance(t, dict) and t.get("tab_id")]:
+        say("    标签顺序：「工作台」已经在第 2 位，没动")
+        return
+    try:
+        bot_api(ctx, "POST", path + "/sort_tabs", {"tab_ids": order})
+    except TabFailed as exc:
+        say(f"    标签顺序：没排成，飞书接口说：{exc}\n    标签已经建好，只是不在第 2 位；之后单独补排：{tab_rerun(ctx)}")
+        return
+    say("    标签顺序：「工作台」排到了「消息」后面（第 2 位）")
+
+
 def chat_tab(ctx: Ctx) -> None:
     a = ctx.args
     if a.skip_chat_tab:
@@ -679,7 +705,8 @@ def chat_tab(ctx: Ctx) -> None:
             say(f"10. 私聊「{TAB_NAME}」标签：[不执行] 现在做不了：{exc}（补上后再做：{tab_rerun(ctx)}）")
             return
         say(f"10. 私聊「{TAB_NAME}」标签：[不执行] 以机器人身份（profile 取 bot-identity.json 里的，或 --bot-profile）对会话 {chat} 先试拉取标签；"
-            f"没有同名标签就 POST {TAB_PATH.format(chat=chat)} 建，有就 .../update_tabs 原地更新，已一致就不动。"
+            f"没有同名标签就 POST {TAB_PATH.format(chat=chat)} 建，有就 .../update_tabs 原地更新，已一致就不动；"
+            "然后用 .../sort_tabs 把它排到「消息」后面（第 2 位：消息、工作台、其余标签保持原顺序，已经在就不调）。"
             f"标签网址：{url or '发布后的线上地址'}，tab_config.is_built_in=true（飞书内嵌打开）。")
         return
     if not url:
@@ -724,9 +751,27 @@ def chat_tab(ctx: Ctx) -> None:
     say(f"10. 私聊「{TAB_NAME}」标签：{action}（{url}，飞书内嵌打开）")
     if mine and "is_built_in" in flag and flag["is_built_in"] is not True:
         say("    注意：飞书返回的标签 is_built_in 不是 true，客户端可能会跳外部浏览器；去飞书里看一眼。")
+    if a.keep_tab_order:
+        pass
+    elif mine and mine.get("tab_id"):
+        sort_chat_tab(ctx, path, after, mine["tab_id"])
+    else:
+        say("    标签顺序：飞书这次没返回完整的标签列表，不知道全部标签的 ID（排序要全部），没排；"
+            f"能读标签后补排：{tab_rerun(ctx)}")
     if twins:
         say(f"    注意：会话里还有 {len(twins)} 个同名标签（tab_id {', '.join(str(t.get('tab_id')) for t in twins)}），"
             "可以在飞书里手动删掉多的；之后更新用 --tab-id 指定要留的那个。")
+
+
+def homepage_hint(ctx: Ctx) -> None:
+    """11. 想把工作台固定到飞书左侧主导航：机器人的飞书应用要有「网页应用」能力并把主页设成网页地址。
+    这一步没有开放接口（应用管理的官方接口里没有「添加应用能力」「设主页」），本脚本也不替你点开发者后台，只提示手工步骤。"""
+    url = tab_page_url(ctx) or "<网页地址>"
+    say(f"\n可选（要把工作台固定到飞书左侧主导航时才做；私聊顶栏的标签不依赖它）：在 Covey 机器人那个飞书应用的开发者后台\n"
+        f"  1. 应用能力 → 添加应用能力 → 添加「网页应用」\n"
+        f"  2. 应用能力 → 网页应用：「桌面端主页」和「移动端主页」都填 {url}（不要加 lk_jump_to_browser 参数，否则会跳外部浏览器）\n"
+        f"  3. 版本管理与发布 → 创建版本并发布（租户要审核时等管理员通过）；可用范围至少含你自己\n"
+        f"  详见 web/deploy/miaoda/README.md 的「固定到飞书主导航」。")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -745,6 +790,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--poll-seconds", type=float, default=10, help="查发布进度的间隔")
     ap.add_argument("--only-chat-tab", action="store_true", help="只做第 10 步：给私聊顶栏建/更新「工作台」标签（老部署补建用；网址取进度文件、web.json 或 --page-url）")
     ap.add_argument("--skip-chat-tab", action="store_true", help="不建私聊顶栏的「工作台」标签")
+    ap.add_argument("--keep-tab-order", action="store_true", help="建/更新「工作台」标签后不调整它的位置（默认排到「消息」后面，第 2 位）")
     ap.add_argument("--bot-profile", default=None, help="Covey 机器人用的 lark-cli profile（建标签用机器人身份；默认读 <covey-state>/bot-identity.json 的 profile）")
     ap.add_argument("--chat-id", default=None, help="你和机器人的私聊 chat_id（默认读 <covey-state>/owner-chat.json）")
     ap.add_argument("--page-url", default=None, help="标签要打开的网页地址（默认用发布后的线上地址或 web.json 的 page_url）")
@@ -765,6 +811,7 @@ def main(argv: list[str] | None = None) -> int:
     if a.only_chat_tab:
         say(("【只看不做】" if a.dry_run else "") + "只补建私聊顶栏的「工作台」标签")
         step_chat_tab(ctx)
+        homepage_hint(ctx)
         return 0
     say(("【只看不做】" if a.dry_run else "") + f"部署 web/ 到妙搭（进度记在 {ctx.state_path}）")
     try:
@@ -780,6 +827,7 @@ def main(argv: list[str] | None = None) -> int:
         step_scope(ctx)
         step_config(ctx)
         step_chat_tab(ctx)
+        homepage_hint(ctx)
     except StepFailed as exc:
         say(str(exc))
         return exc.code
