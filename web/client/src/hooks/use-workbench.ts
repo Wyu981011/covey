@@ -13,9 +13,8 @@ import type {
   SnapshotResponse,
   SnapshotTopic,
   TurnView,
-  TurnsResponse,
-} from '@shared/api.interface';
-import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
+  TurnsResponse, MainMemoryResponse } from '@shared/api.interface';
+import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
 import { mergeCollabs } from '@client/src/cv/collab';
 
 /** 所有列表来自同一份快照，每 2 秒轮询一次 */
@@ -198,6 +197,10 @@ export const useSettings = () =>
   });
 
 export const TIDY_KEY = ['tidy'] as const;
+export const MEMORY_KEY = ['memory'] as const;
 /** v16 整理专项的建议：看板上每 10 秒拉一次；点完按钮另外隔 1.5 秒、4 秒各拉一次（见 Tidy.tsx） */
 export const useTidy = () =>
   useQuery<TidyResponse>({ queryKey: TIDY_KEY, queryFn: fetchTidy, refetchInterval: 10000, staleTime: 3000, gcTime: KEEP_MS });
+/** v37：主记忆（设置页「记忆」）；改了以后 Covey 回执之前就推，页面收到 done 再取一次 */
+export const useMemory = () =>
+  useQuery<MainMemoryResponse | null>({ queryKey: MEMORY_KEY, queryFn: fetchMemory, refetchInterval: 30000, staleTime: 3000, gcTime: KEEP_MS });

@@ -37,7 +37,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import web_images
+from covey.app import web_images, web_memory
 from covey.app.web_collect import Collector, Shared
 from covey.app.web_ops import Ops
 from covey.app.web_push_client import Client, WebError
@@ -94,6 +94,7 @@ class WebSync:
         self.settings_due, self.settings_stamps = True, None  # The 设置 item: built on a full look, after the page changed one, or when its files did.
         self.settings_lock = threading.Lock()  # push_settings runs in both threads.
         self.tidy_stamps, self.tidy_lock, self.tidy_failed = None, threading.Lock(), 0  # The 整理专项 item (push_tidy).
+        self.memory_stamps, self.memory_lock, self.memory_failed = None, threading.Lock(), 0  # The 记忆 item (push_memory).
         self.asks_failed, self.asks_tried, self.asks_full = 0, None, False  # The 要你处理 item (push_asks): failures in a row, the rev tried last, a pass began.
         self.ledger = None
         self.down = {}  # thread name -> failures in a row.
@@ -372,6 +373,8 @@ class WebSync:
         self.push_settings(chat, now, full=full)
         passer.mark("tidy")
         self.push_tidy(now, full=full)
+        passer.mark("memory")
+        self.push_memory(full=full)
         passer.mark("images")
         self.push_images(passer, now)
         passer.mark("saving")
@@ -552,6 +555,49 @@ class WebSync:
         finally:
             self.tidy_lock.release()
 
+    def default_workdir(self):
+        """The default Harness's default workdir (the workspace list's fallback), None when it cannot be told."""
+        try:
+            return self.ops.web_settings.context().default_workdir
+        except Exception:  # noqa: BLE001 - the list in workspaces.json is read all the same
+            return None
+
+    def push_memory(self, full=False) -> int:
+        """The ``settings`` item ``memory`` (the page's 记忆 tab, app/web_memory.py view, data contract v37), posted on its own as
+        ``push_tidy`` is: when a file of the memory changed (a few stats, from the pass thread each step), on a full pass, and from
+        the inbox thread after the page changed the memory, before the ack. With COVEY_MEMORY off it is ``{on: false}``, so a page
+        that had the tab drops it, and nothing at all when the page never had one. A page older than v37 refuses the key: logged the first time and every tenth. How many went."""
+        state = getattr(self.env, "state_dir", None)
+        if not state or not self.memory_lock.acquire(blocking=False):
+            return 0
+        try:
+            on = web_memory.enabled()
+            if not on and ("settings", web_sync.MEMORY_KEY) not in self.sent:
+                return 0  # Never pushed (the memory was never on here): nothing on the page to take back.
+            stamps = (on, web_memory.stamps(state)) if on else (False,)
+            if not full and stamps == self.memory_stamps:
+                return 0
+            self.memory_stamps = stamps
+            data = web_memory.view(state, self.default_workdir()) if on else {"on": False}
+            each = web_sync.item("settings", web_sync.MEMORY_KEY, data)
+            if self.sent.get((each["type"], each["key"])) == each["rev"]:
+                return 0
+            try:
+                self.client.request("POST", "/sync/upsert", {"items": [each], "deleted": []})
+            except Exception as exc:  # noqa: BLE001 - logged; the next full look or change tries again
+                self.memory_failed += 1
+                if self.memory_failed == 1 or self.memory_failed % 10 == 0:
+                    self.runtime.log(f"web memory not pushed ({self.memory_failed}): {type(exc).__name__}: {self.why(exc)}")
+                return 0
+            self.memory_failed = 0
+            self.sent[(each["type"], each["key"])] = each["rev"]
+            return 1
+        except Exception as exc:  # noqa: BLE001 - a memory that cannot be read stops nothing
+            self.runtime.log(f"web memory not built: {type(exc).__name__}")
+            return 0
+        finally:
+            self.memory_lock.release()
+
     # -- inbox ----------------------------------------------------------------------------------------------------------
 
     def inbox_once(self) -> int:
@@ -574,6 +620,7 @@ class WebSync:
                 if chat:
                     self.push_settings(chat, time.time())
                     self.push_tidy(time.time())
+                    self.push_memory()
                 wanted = False
             pushed = time.monotonic()
             if results:
@@ -607,11 +654,13 @@ class WebSync:
                     self.settings_due = wanted = True  # Pushed below, before the ack: the page reads the new settings when it sees done.
                 if row.get("kind") == "tidy_decide":
                     self.tidy_stamps, wanted = None, True  # Pushed below, before the ack, as the settings are.
+                if row.get("kind") == "memory_edit":
+                    self.memory_stamps, wanted = None, True  # The 记忆 tab reads its change when it sees done.
             elif known.get("state") == "received":
                 ledger.finish(op_id, "failed", "这条执行到一半没有结果（Covey 重启或卡住了），结果不确定，没有重发")
             saved = ledger.get(op_id)
             results.append({"seq": seq, "op_id": op_id, "state": saved["state"], "message": saved["message"]})
-            if timing is not None and timing[0] in ("settings", "launch", "tidy_decide"):
+            if timing is not None and timing[0] in ("settings", "launch", "tidy_decide", "memory_edit"):
                 flush(timing)  # Acked at once, not after the rest of the batch.
         flush()
         return fresh

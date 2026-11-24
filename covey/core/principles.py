@@ -11,11 +11,12 @@ deletes them (``delete``) and marks them 常驻 (``pin``).
      "workspaces": {"<workspace name>": [principle, ...]}}  # a topic in that workspace, the butler in its own
 
     principle: {"id": "p1a2b3c", "text": "≤200 字，一行", "at": "2026-11-08T12:00:00Z",
-                "source": {"job_key": "<管家任务键>", "job_id": 12}, "pinned": true}
+                "source": {"job_key": "<管家任务键>", "job_id": 12}, "pinned": true, "edited": "2026-11-24T14:00:00Z"}
 
 Each group keeps at most GROUP_LIMIT, oldest first. ``pinned`` (常驻, absent: not) is the owner's mark from the 设置
 card's 记忆 tab (``pin``, app/memory_panel.py): a pinned principle is never left out of a turn for want of room
-(core/memory.py select, app/prompts.py principles_block); at most PINNED_LIMIT in a group.
+(core/memory.py select, app/prompts.py principles_block); at most PINNED_LIMIT in a group. ``edited`` (absent: never) is when the
+owner last changed its words on the web page (``edit``, app/web_memory.py); ``at`` stays when it was first noted.
 
 A write reads, changes and replaces the whole file (core/state.py write_json) under its shared file lock (core/locks.py,
 across processes): the Bridge's butler tools and the 设置 card. Nothing inside the lock sends to Feishu. Readers take no lock: a replace is
@@ -69,6 +70,8 @@ def _item(value):
     item = {"id": pid, "text": text[:TEXT_LIMIT], "at": str(value.get("at") or ""), "source": dict(source)}
     if value.get("pinned") is True:
         item["pinned"] = True
+    if isinstance(value.get("edited"), str) and value["edited"]:
+        item["edited"] = value["edited"]
     return item
 
 
@@ -181,6 +184,36 @@ def pin(state_dir, pid, on, *, now=None) -> dict | None:
                         item["pinned"] = True
                     else:
                         item.pop("pinned", None)
+                    _write(state_dir, data, bad, time.time() if now is None else now)
+                return {"scope": scope, "workspace": name, **item}
+    return None
+
+
+def edit(state_dir, pid, text, *, base=None, now=None) -> dict | None:
+    """New words for the principle ``pid`` (its id, group, 常驻 and ``at`` stay; ``edited`` is now): it, with its "scope" and
+    "workspace", as it is now; None when there is none. ``base``, when given, is the text the editor started from: a principle that
+    no longer reads so was changed elsewhere meanwhile and is left as it is. Words that are already its own write nothing.
+    ValueError says why nothing was written."""
+    text = clean_text(text)
+    if not text:
+        raise ValueError("原则的正文是空的")
+    if len(text) > TEXT_LIMIT:
+        raise ValueError(f"一条原则最多 {TEXT_LIMIT} 字，这条 {len(text)} 字：概括成一句再记")
+    pid = str(pid or "").strip()
+    with shared_file_lock(path(state_dir)):
+        data, bad = _read(state_dir)
+        groups = [(OWNER, "", data["owner"]), *((WORKSPACE, name, group) for name, group in data["workspaces"].items())]
+        for scope, name, group in groups:
+            for item in group:
+                if item["id"] != pid:
+                    continue
+                if base is not None and clean_text(base) != item["text"]:
+                    raise ValueError("这条刚在别处改过，先看看现在的内容再改")
+                if item["text"] != text:
+                    key = same_key(text)
+                    if any(other["id"] != pid and same_key(other["text"]) == key for other in group):
+                        raise ValueError("这一组已有说同样意思的一条，不重复记")
+                    item["text"], item["edited"] = text, utc_now_iso()
                     _write(state_dir, data, bad, time.time() if now is None else now)
                 return {"scope": scope, "workspace": name, **item}
     return None

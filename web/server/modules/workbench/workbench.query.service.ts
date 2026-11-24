@@ -47,8 +47,7 @@ import {
   type TurnImage,
   type TurnView,
   type WaitingItem,
-  type SettingsAsks,
-} from '@shared/api.interface';
+  type SettingsAsks, type MainMemoryData, type MainMemoryResponse } from '@shared/api.interface';
 import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
@@ -1032,6 +1031,15 @@ export class WorkbenchQueryService {
     return { rev: str(o.rev), data: o.data as SettingsResponse['data'], at: str(o.at) };
   }
 
+  /** v37：主记忆（设置条目 key memory）；Covey 还没推过是 null */
+  async memory(): Promise<MainMemoryResponse | null> {
+    const res = await this.db.execute(sql`select value from sync_state where name = ${'memory'}`);
+    const v = asRows<{ value: unknown }>(res)[0]?.value;
+    const o: Record<string, unknown> = obj(typeof v === 'string' ? JSON.parse(v) : v);
+    if (!o.data) return null;
+    return { rev: str(o.rev), data: o.data as MainMemoryData, at: str(o.at) };
+  }
+
   /** v16：整理专项的建议；没收到过是 null */
   async tidy(): Promise<TidyResponse> {
     const d: Record<string, unknown> | null = await this.snapshotData('tidy');
@@ -1107,6 +1115,10 @@ export class WorkbenchQueryService {
   private checkPayload(kind: string, payload: Record<string, unknown>, req: OutboxRequest): void {
     if (kind === 'settings') {
       this.checkSettings(payload);
+      return;
+    }
+    if (kind === 'memory_edit') {
+      checkMemoryEdit(payload, req);
       return;
     }
     if (kind === 'tidy_decide') {
@@ -1245,4 +1257,30 @@ export class WorkbenchQueryService {
       throw new BadRequestException('先答题，或写上补充说明再提交');
     }
   }
+}
+
+/* v37：memory_edit 的 payload（改主记忆，Covey 的 app/web_memory.py edit）。不带 topic_key、project_key；正文最多 200 字（和 Covey 一样，
+   这里先拦下明显不对的，具体能不能记、有没有重复由 Covey 回执说） */
+const MEMORY_ACTIONS: readonly string[] = ['add', 'edit', 'pin', 'unpin', 'delete', 'keep', 'drop'];
+const MEMORY_KEY = /^(principle:p[0-9a-f]{6}|knowledge:k[0-9a-f]{6}|candidate:c[0-9a-f]{8})$/u;
+const MEMORY_FIELDS: readonly string[] = ['action', 'key', 'what', 'scope', 'workspace', 'text', 'base', 'knowledge_kind', 'why'];
+const MEMORY_TEXT = 200;
+
+export function checkMemoryEdit(payload: Record<string, unknown>, req: OutboxRequest): void {
+  if (str(req.topic_key) || str(req.project_key)) throw new BadRequestException('memory_edit 不带 topic_key、project_key');
+  if (Object.keys(payload).some((k: string) => !MEMORY_FIELDS.includes(k))) throw new BadRequestException('memory_edit 有不认识的字段');
+  const action: string = str(payload.action);
+  if (!MEMORY_ACTIONS.includes(action)) throw new BadRequestException('memory_edit 的 action 不认识');
+  const long = (k: string): boolean => payload[k] !== undefined && Array.from(str(payload[k])).length > MEMORY_TEXT;
+  if (['text', 'base', 'why'].some(long)) throw new BadRequestException(`一条记忆最多 ${MEMORY_TEXT} 字`);
+  if (str(payload.workspace).length > 200 || str(payload.knowledge_kind).length > 20) throw new BadRequestException('memory_edit 的字段太长');
+  if (action === 'add') {
+    if (payload.what !== 'principle' && payload.what !== 'knowledge') throw new BadRequestException('要选记成原则还是知识条目');
+    if (payload.scope !== 'global' && payload.scope !== 'workspace') throw new BadRequestException('要选记在全局还是某个工作区');
+    if (payload.scope === 'workspace' && !str(payload.workspace).trim()) throw new BadRequestException('要选记在哪个工作区');
+    if (!str(payload.text).trim()) throw new BadRequestException('记忆的正文是空的');
+    return;
+  }
+  if (!MEMORY_KEY.test(str(payload.key))) throw new BadRequestException('memory_edit 的 key 不合法');
+  if (action === 'edit' && !str(payload.text).trim()) throw new BadRequestException('记忆的正文是空的');
 }

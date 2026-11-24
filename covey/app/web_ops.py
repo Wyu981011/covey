@@ -65,6 +65,8 @@ KINDS) as the owner's own and says (state, message) for the ack.
   (a member topic running or waiting, the 目标检查表) checked first and their reason said, nothing done.
 - ``memory_undo`` (data contract v34): 不对 on a turn's "记下了" line as on its answer card (app/memory_collect.py take_back); a line taken
   back already says so, ``done``.
+- ``memory_edit`` (data contract v37): the 记忆 tab's add, edit (only while the entry still reads ``base``), pin, unpin, delete of a
+  principle or a knowledge entry and keep, drop of a candidate (app/web_memory.py edit); the owner's only.
 - ``revisit_cancel`` (data contract v35): 取消 on a topic's 定时回看, ``payload.set_at`` the time it was asked for (core/revisits.py cancel);
   gone already says so, ``done``; one Covey is looking at now, or a newer one that replaced it, is ``failed`` and stays.
 The topic or project has to be the owner's private chat's, known and not over; anything else is ``failed`` with the reason.
@@ -83,7 +85,7 @@ from covey.app import auto_retry, memory_collect, project_clicks, project_lead, 
 from covey.app.answers import AnswerIncomplete, answer_fields, skip_all_fields, submitted_answer
 from covey.app.binding import stale_job_card
 from covey.app.runtime import job_stage, supplement_target_of
-from covey.app import web_files
+from covey.app import web_files, web_memory
 from covey.app.web_settings import WebSettings
 from covey.app.web_turns import STOP_AUTO_RETRY
 from covey.core import board_read, collab, collab_records, failure, project_memory, projects, revisits, triage, turn_source, web_sync
@@ -140,7 +142,8 @@ class Ops:
                        "dismiss": self.dismiss, "tidy_decide": self.tidy_decide, "launch": self.launch,
                        "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover,
                        "login": self.login, "project_finish": self.project_finish, "project_stop": self.project_stop,
-                       "memory_undo": self.memory_undo, "revisit_cancel": self.revisit_cancel}.get(kind)
+                       "memory_undo": self.memory_undo, "revisit_cancel": self.revisit_cancel,
+                       "memory_edit": self.memory_edit}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -816,6 +819,15 @@ class Ops:
         except Exception as exc:  # noqa: BLE001 - taken back all the same; the card's lines follow on its next redraw
             self.runtime.log(f"web memory_undo card not redrawn: {type(exc).__name__}")
         return "已撤销：" + " ".join(str(note.get("text") or "").split())[:40]
+
+    def memory_edit(self, state, chat, row, payload) -> str:
+        """The page's 记忆 tab (data contract v37): add, change, 常驻, delete a principle or a knowledge entry of 全局 or a workspace,
+        记下 or 不用 a candidate, through the stores' own functions as the 设置 card's 记忆 tab (app/web_memory.py edit)."""
+        if not web_memory.enabled():
+            raise ValueError("记忆没开（COVEY_MEMORY）")
+        if self.runtime.access.is_owner(self.runtime.owner_open_id or "") is not True:
+            raise ValueError("只有主人能改记忆")
+        return web_memory.edit(state, payload)
 
     # -- 定时回看的「取消」 (data contract v35) ------------------------------------------------------------------------------
 

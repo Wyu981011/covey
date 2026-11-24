@@ -52,6 +52,7 @@
     "test:collab": "node --import ./scripts/alias.mjs --test scripts/collab.test.mjs",
     "test:memory": "node --import ./scripts/alias.mjs --test scripts/memory.test.mjs",
     "test:mention": "node --import ./scripts/alias.mjs --test scripts/mention.test.mjs",
+    "test:mainmem": "node --import ./scripts/alias.mjs --test scripts/main-memory.test.mjs",
     "test:panes": "node --import ./scripts/alias.mjs --test scripts/panes.test.mjs",
     "test:asks": "node --import ./scripts/alias.mjs --test scripts/asks.test.mjs",
     "test:recover": "node --import ./scripts/alias.mjs --test scripts/recover.test.mjs",

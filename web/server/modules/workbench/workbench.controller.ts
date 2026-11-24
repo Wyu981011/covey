@@ -22,6 +22,7 @@ import type {
   UploadPartRequest,
   UploadStartRequest,
   UploadStartResponse,
+  MainMemoryResponse,
 } from '@shared/api.interface';
 import { WorkbenchImagesService } from './workbench.images.service';
 import { WorkbenchQueryService } from './workbench.query.service';
@@ -66,6 +67,13 @@ export class WorkbenchController {
   settings(@Req() req: Request): Promise<SettingsResponse | null> {
     mustBeOwner(req);
     return this.svc.settings();
+  }
+
+  /** v37：主记忆（全局和各工作区的原则、知识条目、候选）；Covey 还没推过就是 null */
+  @Get('memory')
+  memory(@Req() req: Request): Promise<MainMemoryResponse | null> {
+    mustBeOwner(req);
+    return this.svc.memory();
   }
 
   /** v16：整理专项的建议；Covey 还没推过就是 null */

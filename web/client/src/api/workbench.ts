@@ -19,8 +19,7 @@ import type {
   UploadDoneResponse,
   UploadPartRequest,
   UploadStartRequest,
-  UploadStartResponse,
-} from '@shared/api.interface';
+  UploadStartResponse, MainMemoryResponse } from '@shared/api.interface';
 
 export async function fetchMe(): Promise<{ name: string | null }> {
   const res = await axiosForBackend({ url: '/api/me', method: 'GET' });
@@ -101,6 +100,13 @@ export async function fetchSettings(): Promise<SettingsResponse | null> {
   const res = await axiosForBackend({ url: '/api/settings', method: 'GET' });
   const d = res.data as SettingsResponse | '' | null;
   return d && typeof d === 'object' && d.data ? d : null;
+}
+
+/** v37：主记忆；Covey 还没推过时是 null（空响应体） */
+export async function fetchMemory(): Promise<MainMemoryResponse | null> {
+  const res = await axiosForBackend({ url: '/api/memory', method: 'GET' });
+  const d = res.data as MainMemoryResponse | '';
+  return d && typeof d === 'object' && d.data && typeof d.data === 'object' ? d : null;
 }
 
 /** v16：整理专项的建议；Covey 还没推过时是 null（空响应体） */

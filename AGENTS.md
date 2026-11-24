@@ -256,6 +256,7 @@
 | `app/web_images.py` | The images of a turn on the web page |
 | `app/web_launch.py` | 网页开新话题 (docs/web.md, COVEY_WEB=1 |
 | `app/web_login.py` | 网页登录确认: the page's `login` operation becomes a card in the owner's private chat, and the owner's click on it … |
+| `app/web_memory.py` | The web page's 记忆 tab (data contract v37, COVEY_MEMORY=1) |
 | `app/web_ops.py` | 网页上发来的操作怎么执行: `Ops.run` does one operation of the page's outbox as the owner's own and says (state, message) … |
 | `app/web_pairing.py` | 网页工作台同步里不碰 Collector 缓存的那部分 |
 | `app/web_panels.py` | 网页设置页的设备和代答两页 (docs/web.md, COVEY_WEB=1 |

@@ -117,6 +117,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **停住了的一轮**：原因和下一步和任务卡同一句话，按钮也和任务卡一样：检查并继续（结果没发出去时是“重新投递结果”，只重发保存的结果，不重跑模型；限流是“现在重试”）、看原因、拆小再试做的和飞书里点同名按钮一样；自动重试已经排好时写几点重试，只给“现在重试”和“停止自动重试”，不会和排好的那次一起跑；换个模型用网页自己的换配置（负责人的也是，v36；管家的配置只在飞书的设置卡上换）。
 - **开新话题**：选项和启动卡一样（模型、思考预算、工作模式、脱敏、工作区、运行方式），直接开工；要独立 worktree 的话题会在飞书里出一张填好的启动卡，点开始。
 - **设置**：设置卡的各页都能看，第一页和卡上一样是“配置”，分新话题、管家、独立复核（开了独立复核才有）、专项负责人（开了专项才有）、更多几段；卡片一次只展开一段，网页各段都展开。能改的有新话题的每一行，管家的每一行（Harness、供应商、模型、思考预算、脱敏、工作区、压缩阈值）和私聊顶层的消息，独立复核的模型，专项负责人的模型，子 Agent，工作区的用途和增删，脱敏的两个开关和词表的批量增删，群的停用与免@（只能改成关闭或只有你），用 ssh 添加和移除设备，代答的开关和白名单。其余只读，每页有“去飞书改”。
+- **记忆**（v37，开了[记忆](butler.md#记忆开关默认关)时）：设置页的「记忆」一页是主人的主记忆：全局和每个工作区的原则、知识条目（开了 `COVEY_KNOWLEDGE` 时）和待确认的候选（开了 `COVEY_MEMORY_LEARN` 时）。每组写着用了多少字、上限多少、下一轮带不带每一条（放不下的标出来），常驻的排在前面；能搜、能按全局或工作区筛，能看某个工作区下一轮实际带上的那一段。新建、改正文（数着字，⌘/Ctrl+S 保存）、标或取消常驻、删除或作废、候选的「记下」「不用」都在页上，和飞书设置卡「记忆」改的是同一份。专项和话题的记忆还在专项页、话题页的右栏。
 - **整理专项**：开了[整理专项](projects.md#整理专项)时，看板首屏“要你处理”下面有整理专项的建议。
   - 有要你定的：一条一块（原因、目标、话题），直接点照办或「不用」；标题栏「收起」收成一行“要你定 N 条”，来了新建议再展开。
   - 定好的（24 小时内）一行一条：标签、动作、几个话题、结果（已拆出、不用、没做成……），照办了的带「去专项」；点一行看原因、话题和没做成的原因。有要你定的时它们收在底下“已定 N 条”里。
@@ -276,6 +277,11 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - `spans` 是最近 7、30、90 天（都含今天）各自的合计：`days`、`since`（第一天）、同上的几项和按卡片顺序排的 `harnesses`。一段里的话题要去重，不能把每天的相加，所以由 Covey 算好。
   - `first` 是最早一条任务记录的日期，落在这 90 天里才有，否则为 null。那之前还没有记录，网页不画成 0。
   - 读的是记录目录的缓存，一条记录都不复制，每次全量对时都算一遍（5700 条记录约 0.1 秒）。
+- **key `memory`**（v37，`app/web_memory.py` 的 `view`）：网页的「记忆」页读它。开了 `COVEY_MEMORY` 才有内容，关着推 `{on: false}`（页面收起这一页）。
+  - `knowledge`、`learn`：知识条目、候选开没开；`limits`：一条的字数（`text`）、一组最多几条（`group`）、常驻最多几条（`pinned`）、全局和工作区的字数上限（`global`、`workspace`）；`kinds`：知识条目的种类（`value`、`text`）；`default`、`workspaces`：默认工作区和全部工作区的名字（新建时选）。
+  - `groups`：全局一组在前，再是有条目的工作区，按名字。每组 `scope`（global、workspace）、`workspace`、`title`、`used`、`limit`、`left`（下一轮放不下几条），`entries` 常驻的在前、再新的在前。每条 `key`（`principle:<id>`、`knowledge:<id>`、`candidate:<id>`）、`kind`、`text`、`by`（owner 你说的、lead 它总结的）、`pinned`、`pinnable`、`editable`、`carried`（下一轮带不带）、`chars`、`at`、`origin`（网页上记的、管家记的……）、`edited`（原则在网页上改过的时刻）；知识条目另带 `knowledge_kind`、`why`。用量和带不带同 `core/memory.py` 的 `fill`、`select`，和一轮真正读的一样。
+  - `candidates`：开着的候选（`key`、`text`、`workspace`、`carried`、`at`、`error`、`from`），新的在前。`previews`：按工作区（默认的和有条目的，最多 24 个），新话题在那里的一轮会读到的记忆那一段（`text`），带几条（`count`）、多少字（`chars`）、放不下几条（`left`）。
+  - 单独一个请求推：记忆的几个文件（原则、知识条目、候选、用量、工作区列表）变了、全量对时、网页改了记忆之后回执之前。比 v37 旧的网页拒收这个 key 时只记日志。
 - **key `asks`**（v34）：“要你处理”的几个数，`{waiting, stopped, stuck}`，和飞书看板、「手上的事」同一个算法（`core/board_read.py` 的 `Asks.counts`：等你含管家、负责人的题和整理专项要你定的建议，停住了含护栏停住的专项，点了“不管了”的不算）。
   - 推的线程每一步看完话题就算一次（`app/web_collect.py` 的 `counted`），变了就紧跟着这一步的话题单独一个请求推（`app/web_sync.py` 的 `push_asks`），所以和话题条目一起变；网页快照接口把它和话题一起给页面。
   - 网页有它就用它的数，没有（旧 Covey，或这几个数不全是非负整数）时照旧按条目自己数。比 v34 旧的网页拒收这个 key 时只记日志（第一次和每第十次），同样的数等下一次全量对时再试，不耽误话题。
@@ -301,6 +307,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | `recover`（v33） | 没成功的一轮上的按钮，见下 |
 | `project_finish`（v34） | `project_key`：专项的「收尾」，同停住卡的“收尾”，见下 |
 | `project_stop`（v34） | `project_key`：专项的「停止」，同专项卡的“停止专项”、停住卡的“停”，见下 |
+| `memory_edit`（v37） | 不带 `topic_key`、`project_key`，`payload` 是 `{action, …}`：改主记忆，同飞书设置卡「记忆」，见下 |
 | `revisit_cancel`（v35） | `topic_key`，`payload` 是 `{set_at}`：取消话题的 Covey 定时回看，同飞书看板的「取消」，见下 |
 | `memory_undo`（v34） | `topic_key`，`payload` 是 `{job_id, entry_id}`：撤销这一轮刚记下的一条记忆，同答案卡上的「不对」，见下 |
 | `login` | 自托管网页的“用飞书登录”：`op_id` 是 `login-<request_id>`，`payload` 是 `{request_id, code, browser, os, ip, at}`；Covey 在私聊发确认卡（[网页登录确认](#网页登录确认)），回执只说卡发出了；主人的决定由 Covey 推 `type` 为 `login` 的条目（`key` 是 `request_id`，`data` 是 `{decision: approved \| denied, decided_at}`）告诉网页 |
@@ -338,6 +345,16 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 - `project_stop`：在做的专项（`active`）同专项卡的“停止专项”：停住，原因是“主人停止”（看板上灰色“已停止”，不是红色“停住了”）。护栏停住、停住卡还在等你选的，同停住卡上点“停”（`project_loop.answer_pause`）。然后负责人和各成员话题排着、在跑的任务都请停（`project_clicks.stop_tasks`，停止来源是 `web`），回 done“已停住专项「X」，已请 N 个任务停下……要继续，点「继续」”。已经做完、停住（停住卡也选过了）的回 failed“……没有要停的”；刚被负责人、护栏或卡片改了状态的回 failed，请你刷新再看。
 - `project_finish`：先过负责人收尾的两道闸，不过就回 failed、什么都不改，原因原样写出：还有成员话题在做或等你（`project_lead.live_members`，写出是哪几个话题）；目标检查表有没满足的项或没处理的协作缺口（`project_tools.checklist_gate`，去掉只说给负责人的那几步）。过了：护栏停住、停住卡在等你选的，同停住卡上点“收尾”（`answer_pause` 和给负责人的回执 `pause_receipt`）；其余（在做、你停的、收起的）当作你说了话（`owner_spoke`：收起的重新展开）并给负责人一条“主人在网页上选了收尾”的回执，由负责人总结做完了什么、还有什么没做完，再调它自己的 `project_finish`（它的闸照样管着）。回 done“已请负责人收尾专项「X」……”。已经做完或取消的回 failed。
+
+**`memory_edit`**（v37，`app/web_memory.py` 的 `edit`）：只认主人，记忆开着才做。`payload.action`：
+
+- `add`：`what`（principle 原则、knowledge 知识条目）、`scope`（global、workspace）、`workspace`（scope 是 workspace 时必填）、`text`（≤200 字）；知识条目另有 `knowledge_kind`（`limits` 里的种类，默认 fact）、`why`。同一组里说同样意思的不重复记（回 done“已有说同样意思的一条，没再记”），一组满了回 failed 写怎么办。
+- `edit`：`key`、`text`、`base`（页面改之前看到的正文，带了就核对：对不上回 failed“这条刚在别处改过”，不覆盖）；知识条目可带 `knowledge_kind`、`why`。原则原地改（`id`、常驻、记下的时刻不变，记 `edited`），知识条目照 `core/knowledge.py` 的 `update` 换成新的一条（旧的标已取代）。没改动回 done“没有变化”。
+- `pin`、`unpin`：`key`，只有原则；一组常驻满了回 failed。
+- `delete`：`key`；原则删掉，知识条目作废（原因写“主人在网页「记忆」里作废”）。
+- `keep`、`drop`：`key` 是候选；记下就写成那一组的原则，不用就不再提，同晚间汇总里的「记下」「不用」。已经处理过的回 failed。
+
+回执是一句话（“已记下：…”“已保存：…”“已标常驻：…”“已删除：…”）。不认识的 `key`、已经不在了的条目回 failed，页面等推送按最新的重画。执行完、回执之前 Covey 先推一次 `memory`，页面看到 done 时读到的已是改好的。
 
 **`revisit_cancel`**（v35，`app/web_ops.py`）：`topic_key` 是话题，`payload.set_at` 是话题的 `revisit.set_at`（这条预约约下的时刻）。只认主人（`app/access.py` 的 `is_owner`），话题要在主人私聊里。照 `core/revisits.py` 的 `cancel` 取消：时刻对得上才删，换了新预约不误删。回执：办好回 done“已取消定时回看”；已经没有了（回看过、取消过）回 done“这条定时回看已经没有了”；预约已换成新的回 failed“这条定时回看已经换成了新的，没有取消”，页面等下一次推送换上新的；Covey 已经在回看（`running`）回 failed“Covey 已经在回看了，这一次取消不了”。办完 Covey 马上重看这个话题（`Collector.touch`），页面不用等下一轮补扫。
 
@@ -450,3 +467,4 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v34 | `project_finish`、`project_stop`、`memory_undo` 操作；话题的 `revisit`、`owner_send`（`COVEY_REVISIT`、代发关着时没有）；回答那一轮的 `criteria`、`delivery`；`settings` 的 `ops` 和 `asks` 条目；`look.json` 的 `retired` |
 | v35 | `revisit_cancel` 操作（网页上取消 Covey 定时回看）；话题 `revisit` 加 `set_at`、`running`（正在回看的也推了）；网页上的说法改成“Covey 将于 … 自动回看” |
 | v36 | 专项负责人的 `config`，`switch` 接受负责人（只换模型、预算、脱敏）；`launch.models` 的 `bridge_tools`；负责人那一轮“换个模型”的 `how` 是 `switch`；`settings.config` 的 `lead`（专项负责人一段） |
+| v37 | `settings` 的 `memory` 条目（主记忆：全局和各工作区的原则、知识条目、候选，用量，下一轮预览）；`memory_edit` 操作 |
