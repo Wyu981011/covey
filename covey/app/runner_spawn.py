@@ -1,7 +1,7 @@
 """Starting a job's task runner, the Bridge side of app/detached.py: the job as a handoff or queued file
 saves it (dump_job, load_job), the runner's command line and environment (runner_argv, runner_env), a
 runner started before its job's card and record (prestart_runner, await_handoff), the handoff itself
-(start_runner, register_runner) and the butler's compaction runner (compaction_launch)."""
+(start_runner, register_runner, registered) and the butler's compaction runner (compaction_launch)."""
 from __future__ import annotations
 
 import dataclasses
@@ -23,7 +23,7 @@ from covey.app.task_card import StreamingReply
 from covey.core.jobs import BridgeReplyJob
 from covey.core.process import process_identity, signal_group
 from covey.core.run_dir import (ACKS, DONE, EXIT, HANDOFF, INBOX, LOG, REPLIES, REQUESTS, RUNNER, WAKE,
-                                         queued_path, run_dir, runner_alive as alive)
+                                         queued_path, read_steady, run_dir, runner_here as here, runner_info)
 
 RUNNER_PYTHONPATH = "COVEY_RUNNER_PYTHONPATH"
 # A runner started before its handoff (prestart_runner) waits this long for it, then exits having run
@@ -93,11 +93,31 @@ def load_job(data: dict):
     return job
 
 
+class RunnerAlive(RuntimeError):
+    """start_runner found a live task runner in the job's run directory and changed nothing there: clearing its files
+    would hide it from the Bridge, and a second runner would run its job again (T740). ``info``: its runner.json, None
+    when only its wake.json names it."""
+
+    def __init__(self, directory: Path, info):
+        super().__init__("a live task runner holds this run directory")
+        self.directory, self.info = Path(directory), info
+
+
 def register_runner(directory: Path, pid: int, release: Path, job_id, key: str, harness: str) -> None:
     identity = process_identity(pid) or {"pid": pid}
     write_json(Path(directory) / RUNNER, {
         **identity, "release": str(release), "started_at": time.time(), "job_id": job_id,
         "key": key, "harness": harness})
+
+
+def registered(directory: Path, pid: int, release: Path, job_id, key: str, harness: str) -> bool:
+    """runner.json already says what register_runner would (but for its time): process ``pid`` by its start time and boot,
+    of ``release``, the runner of this job and Harness. A runner asks before it registers itself, so that the Bridge's own
+    write, made before a prestarted runner's handoff, stays the only one (T740)."""
+    info, identity = runner_info(directory), process_identity(pid)
+    return (isinstance(info, dict) and identity is not None and all(info.get(k) == v for k, v in identity.items())
+            and info.get("release") == str(release) and info.get("job_id") == job_id and info.get("key") == key
+            and info.get("harness") == harness)
 
 
 def runner_env() -> dict:
@@ -177,7 +197,7 @@ def prestart_runner(runtime, job, ctx) -> None:
     if not runtime.detached() or job.early_runner is not None:
         return
     directory = run_dir(ctx.state_dir, job.message_id)
-    if alive(directory):
+    if here(directory):
         return
     nonce = secrets.token_hex(8)
     try:
@@ -190,10 +210,17 @@ def prestart_runner(runtime, job, ctx) -> None:
 
 
 def start_runner(runtime, name: str, job, ctx) -> Path:
+    """Hand ``job`` to a task runner in its run directory, the prestarted one (``job.early_runner``) while it is young
+    enough, else a new one; the directory. Raises RunnerAlive, having changed nothing, when another live runner holds
+    the directory; anything else it raises, no runner has the job (one it could not record is ended)."""
     directory = run_dir(ctx.state_dir, job.message_id)
     early, job.early_runner = job.early_runner, None
     if early is not None and (early.process.poll() is not None or time.monotonic() - early.started > PRESTART_USE):
         early = None  # Ended, or close to giving up: a new runner instead.
+    # Never over a live runner: its runner.json and inbox go below. A prestarted runner's directory has no runner.json
+    # until its handoff (prestart_runner asked before it started there), so that one is read once, not waited for.
+    if here(directory, patient=early is None) and _handed(directory):
+        raise RunnerAlive(directory, runner_info(directory))
     ensure_private_dir(directory)
     for stale in (RUNNER, EXIT, WAKE, DONE):
         (directory / stale).unlink(missing_ok=True)
@@ -206,23 +233,53 @@ def start_runner(runtime, name: str, job, ctx) -> Path:
                "job": dump_job(job), "created_at": time.time()}
     if early is not None:
         handoff["prestart"] = early.nonce  # Only that runner takes it; any other waiting here ignores it.
-    write_json(directory / HANDOFF, handoff, ensure_ascii=False)
-    if early is not None:
         process, release = early.process, Path(runtime.script_path).resolve().parents[1]
+        # Its runner.json first, then the handoff it waits for: the runner finds itself named there and leaves the file
+        # alone (app/runner.py). Written by both at once, a read of it failed on ByteFuse; the Bridge took this runner,
+        # just handed its job, for dead and started a second one for the same job (T740).
+        _register(directory, process, release, job, name)
+        try:
+            write_json(directory / HANDOFF, handoff, ensure_ascii=False)
+        except BaseException:
+            _abandon(process)  # It may not take a job whose handoff the Bridge reports as failed.
+            (directory / RUNNER).unlink(missing_ok=True)
+            raise
     else:
+        write_json(directory / HANDOFF, handoff, ensure_ascii=False)
         process, release = _spawn(runtime, directory)
-    try:
-        register_runner(directory, process.pid, release, job.job_id, job.message_id, name)
-    except BaseException:
-        # A runner the bridge has no record of would run the job unwatched: none runs it.
-        _abandon(process)
-        (directory / HANDOFF).unlink(missing_ok=True)
-        raise
+        try:
+            _register(directory, process, release, job, name)
+        except BaseException:
+            (directory / HANDOFF).unlink(missing_ok=True)
+            raise
     try:
         queued_path(ctx.state_dir, job.message_id).unlink(missing_ok=True)  # As detached.forget_queued.
     except OSError as exc:  # The runner has the job: a copy left in queued/ is not queued again once it runs.
         runtime.log(f"queued copy of job #{job.job_id} not removed: {type(exc).__name__}")
     return directory
+
+
+def _handed(directory: Path) -> bool:
+    """A handoff is in ``directory``, so a live runner there may run its job. Without one, the live runner is a prestarted
+    one still waiting for its own (its Bridge stopped between naming it in runner.json and writing that): it runs nothing,
+    exits by itself, and ignores a handoff that does not name it. One that cannot be read counts as there."""
+    try:
+        read_steady(Path(directory) / HANDOFF)
+    except FileNotFoundError:
+        return False
+    except (OSError, ValueError):
+        return True
+    return True
+
+
+def _register(directory: Path, process, release: Path, job, name: str) -> None:
+    """register_runner for ``process``; a runner the bridge has no record of would run the job unwatched, so one whose
+    record cannot be written is ended before it can take the job, and what failed is raised."""
+    try:
+        register_runner(directory, process.pid, release, job.job_id, job.message_id, name)
+    except BaseException:
+        _abandon(process)
+        raise
 
 
 def await_handoff(directory: Path, nonce: str, wait: float | None = None) -> dict | None:

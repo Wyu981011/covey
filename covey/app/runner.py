@@ -25,8 +25,7 @@ from covey.core.background import CARD_CLOSE, CARD_UPDATES, RECORDS, RELAY, UPLO
 from covey.core.harness import backend_capabilities
 from covey.core.jobs import context_for_job, jobs_dir
 from covey.core.locks import configure_card_locks
-from covey.core.run_dir import HANDOFF, mark_done, mark_exit
-from covey.core.state import read_json
+from covey.core.run_dir import HANDOFF, mark_done, mark_exit, read_steady
 from covey.core.store import directory_store
 from covey.core.task_processes import TASK_DIR_ENV
 from covey.feishu.transport import configure_receipts
@@ -161,7 +160,7 @@ def _await(args, directory):
     builds its Bridge while the Bridge writes the job's card and record, then waits; the handoff is None when no
     job came. Otherwise the handoff is already in the run directory."""
     if not args.await_handoff:
-        return read_json(directory / HANDOFF), None
+        return read_steady(directory / HANDOFF), None  # Written by the Bridge just before it started this process.
     # Started while the bridge writes the job's card and record: this runner's slow start (its
     # imports, the records, its Bridge) is done by the time the job is handed to it.
     warm_records(directory.parents[1])  # run_dir: <state>/runs/<job>/
@@ -174,9 +173,13 @@ def _build(handoff, early, directory) -> _Setup:
     """The handed-off job ready to run here: this runner registered first, its Bridge (the early one when it runs
     the same script), timing, the context, the job loaded and registered, SIGTERM interrupting it."""
     fields = handoff["job"]["fields"]
-    # First, before anything slow: a bridge stopped mid-handoff still finds this runner alive.
-    runner_spawn.register_runner(directory, os.getpid(), Path(__file__).resolve().parents[2], fields.get("job_id"),
-                    fields.get("message_id", ""), handoff["harness"])
+    me = (directory, os.getpid(), Path(__file__).resolve().parents[2], fields.get("job_id"), fields.get("message_id", ""),
+          handoff["harness"])
+    # First, before anything slow: a bridge stopped mid-handoff still finds this runner alive. Not when runner.json says
+    # so already, as the Bridge writes it before a prestarted runner's handoff: the two replacing it at once made the
+    # Bridge's read of it fail on ByteFuse, and the Bridge took this runner for dead (T740).
+    if not runner_spawn.registered(*me):
+        runner_spawn.register_runner(*me)
     if early is None:
         warm_records(directory.parents[1])
     if early is not None and early[0] == handoff["script_path"]:

@@ -146,23 +146,23 @@ continued、done、failed、cancelled、interrupted：终态
 | 文件 | 内容 |
 | --- | --- |
 | `handoff.json` | 重建参数和序列化任务 |
-| `runner.json` | 任务进程身份和 release |
+| `runner.json` | 任务进程身份和 release；Bridge 写，任务进程只在它没写对自己时补写（`registered`） |
 | `wake.json` | 任务进程的身份；Bridge 每写一次收件箱就经 pidfd 发 SIGUSR1（`wake_runner`），旧 release 照旧轮询 |
 | `inbox/` → `acks/` | 点击、回答、补充、重启通知、转给主人的活问题（`show_question`）与确认 |
 | `requests/` → `replies/` | 续答入队请求 |
 | `done.json`、`exit.json` | 只剩产物上传时、退出时 |
 
 - 每条消息是原子写入的一个 JSON 文件，读方按文件名顺序取一条删一条。
-- 预先拉起：接着就运行的任务在建任务卡之前由 `prestart_runner` 先起任务进程，它预热后等写明同一随机串的 `handoff.json`，30 秒没等到就退出。
+- 预先拉起：接着就运行的任务在建任务卡之前由 `prestart_runner` 先起任务进程，它预热后等写明同一随机串的 `handoff.json`，30 秒没等到就退出。交给它时 `start_runner` 先写 `runner.json` 再写 `handoff.json`，任务进程拿到交接时 `runner.json` 已经写着自己，不再写一遍；两边同时替换这个文件时，ByteFuse 上 Bridge 那一读会失败，把刚接手的任务进程当成没起来。不是预先拉起的，Bridge 起进程后才知道 pid，仍是先写 `handoff.json`、起进程、再写 `runner.json`；任务进程读到时多半已写好，没写好（Bridge 起完进程就停了）才自己写。
 - 任务进程从不自己建任务，续答经 `RunnerLink.enqueue` 请 Bridge 入队。`runner_argv()` 把路径改成绝对路径，`runner_env()` 清理 `PYTHONPATH`。任务进程里的 `enqueue_chat_job`、`reserve_submission`、`TaskControls.requeue` 一开头就拒绝（`Runtime.refuse_new_job`，`任务进程不新建任务`），什么记录都不写、什么也不发。
 - 一轮的收尾只在 Bridge 跑（`app/detached.py` 的 `after_job`：知识条目、记忆、代发草稿、话题转交管家、协作、回带里的话题卡归属和专项回执、到点回来看）：任务进程退出后 `finish_detached` 跑一次；任务就在 Bridge 进程里跑时（没有任务进程，如测试），`JobDispatch` 在这一轮之后跑。任务进程也经 `JobDispatch._process_reply_job` 跑这一轮（它的 `runtime.detached()` 为假），`after_job` 在那里什么都不做：这些写的是别的记录、发的是别处的消息，转交管家还要排管家的一轮，任务进程只改本任务的卡和记录。在任务进程里跑过一遍时，转交管家发出了顶层消息，管家那一轮按任务进程自己的编号（#1）记成 `queued` 后被拒，没人排，部署一直等它。交给任务进程时 Bridge 记一笔 `turn-ends/<任务键>.json`（`end_due`），收尾做完删掉（`end_done`）；任务进程在没有 Bridge 看着时退出的（部署、重启的空档），下次启动在认领和中断标记之后补做（`end_stranded`，从 `handoff.json` 取任务），还活着的等它退出，Harness 已下架的或任务进程结束超过 `ENDS_KEPT`（24 小时）的丢弃不做。
 - 入队失败：记录已经写成 `queued` 而 `enqueue_reply_job` 抛错时（`publish_submission`、`requeue`），`TaskControls.not_queued` 把记录改成 `failed`（`没排上队，没有执行：<错误类型>`），卡换恢复卡（发不出卡就在话题里说一句），错误照旧抛给调用方；不留没人排的 `queued`（`restart_blockers` 会一直等它）。
 - 停止不只靠这一轮的线程：`cancel_reply_job_from_card` 设好 `cancel_event` 后、写卡和记录之前先 `hard_stop_later`，`HARD_STOP_AFTER`（5 秒）后后端进程还在就给它的进程组发 SIGTERM。平时这一轮的线程一两秒内自己看到停止、先关掉后端，这一下什么也不做；盘卡住时那条线程可能在记录锁上等几分钟，后端照样停。停止之后、后端还没做完时后端抛什么都按停止结算（`worker._turn_from_exception`）。
 - `SIGTERM` 是中断，不是停止（`app/runner.py` 的 `interrupt`）：没做完的一轮不结算（`leave_interrupted`），记录留在 `running`，退出后由 Bridge 标 `interrupted`；已做完的结果照常投递。
-- 没起来：退出时仍是 `queued` 且无 `exit.json` 时 `relaunch_unstarted` 再起一次；`start_runner` 抛错时 `not_started` 把记录写成 `failed`（`runner_start_failed`）并出恢复卡。
+- 没起来：`watch_until_exit` 看到任务进程没了，`relaunch_unstarted` 先再问一次它在不在，等 `RELAUNCH_DELAY`（2 秒）后在任务的锁里再问一遍，并重读记录：仍是 `queued`、目录里没有 `exit.json` 和 `done.json`、也没有这个任务的保存结果索引（`core/saved_results.py` 的 `run_began`）、收件箱是空的，才再起一次（每个任务一次，`runner_relaunched`），新进程的卡片 sequence 接着重读到的记录。结果分三种：还活着（`ALIVE`，日志 `task runner of job #N still alive: watched again`，回去接着看，不进 `finish_detached`）、再起了一个（`RELAUNCHED`）、都不是（`ENDED`，`finish_detached` 收尾）。不再起的（记录已不是 `queued`、已经再起过、收件箱里有东西）收尾前隔 `GONE_AGAIN`（0.5 秒）再看一次（`_gone`），`release_done` 等上传完的那条线程也一样：一次看的几回读都失败，不能把活着的任务进程的任务标成中断。`start_runner` 抛错时 `not_started` 把记录写成 `failed`（`runner_start_failed`）并出恢复卡。`start_runner` 清目录前先看里面有没有活着的任务进程（`runner_here`），有就什么都不动、抛 `RunnerAlive`：再起时当作还活着，第一次交接时当作认领到的接着看，不碰它的记录。目录里没有 `handoff.json` 的活进程不算：那是还在等自己那份交接的预先拉起的进程（它的 Bridge 写完 `runner.json` 没来得及写交接就停了），什么都不跑，30 秒后自己退出，也不接不写着它的交接。
 - `done.json`：Bridge 见到它（`job_done`）先交还调度槽位，同话题的下一条照常进行；点击仍转给活着的任务进程；outbox 和自动重试等它退出。
 - 遗留进程：任务进程把 `COVEY_TASK_DIR` 设为运行目录，每条命令都继承。后端返回后 `app/leftovers.py` 用 `core/task_processes.py` 找出带标记、已脱离任务进程的存活进程：搜索工具（`SEARCH_TOOLS`）先 SIGTERM 再 SIGKILL，其余只在执行过程里列出。内存看门狗也读这个标记，把告警发到任务所在的话题。
-- `runner_alive` 要求 pid 的启动时间、boot ID 和记录一致且 cmdline 含运行目录。
+- `runner_alive` 要求 pid 的启动时间、boot ID 和记录一致且 cmdline 含运行目录。读 `runner.json` 失败（`OSError`，或 JSON 不完整）而目录还在时，隔 10、40 毫秒再读（`read_steady`，`READ_PAUSES`），目录不在不等；认领时读 `handoff.json`、任务进程读交接、`end_stranded` 也这样读。决定再起一个或收尾的地方（`watch_until_exit`、`relaunch_unstarted`、`start_runner`、`prestart_runner`）用 `runner_here`：`runner.json` 说不活时，再看 `wake.json` 写的进程。
 - 到点回来看（`COVEY_REVISIT=1`，`app/revisits.py`）：一轮结束后 Bridge 读它检查点的 `revisit`（几分钟后、看什么），写 `revisits/<话题>.json`；`revisits` 线程每 30 秒看一遍，到点且话题没有在跑、排队或等回答的任务时，先在锁内记 `fired` 和这一轮的消息 ID（`revisit-…`），再在锁外像 `app/project_loop.py` 叫醒负责人那样把它当话题里的一条消息入队；记了没入队的 120 秒后重排，Bridge 停着时结束的那一轮由线程补结算。检查点写 `"unchanged": true` 又约了下一次的那一轮，任务进程里 `TurnDelivery` 不发（`revisits.silent`，同专项叫醒的 `silent`，保存的回复算已投递，也不回带）。没有变化以外的结果、最后一次和第 24 次照常投递。
 
 ### 重启认领

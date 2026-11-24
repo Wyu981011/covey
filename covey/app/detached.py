@@ -7,7 +7,8 @@ bridge forwards every click on that job's cards and every typed answer to its
 questions to the runner, so one process writes the job's card and record. The
 runner never starts a job itself: a continuation it needs is enqueued by the
 bridge on request. A runner that ends before its job begins ran nothing, so the
-bridge starts it once more before reporting the job. A restarted bridge adopts
+bridge starts it once more before reporting the job, after asking again whether it
+really ended and its job never began (relaunch_unstarted). A restarted bridge adopts
 runners that are still alive (same pid, start time and run directory), marks a
 job interrupted only when its runner is gone, and re-queues messages that were
 waiting in its queue.
@@ -44,14 +45,22 @@ from covey.core.jobs import (DEVICE_LOST_STATUS, SIGTERM_STATUS, context_for_job
 from covey.core.butler import traits_of
 from covey.core.deliveries import lost, topic_steer
 from covey.core.statuses import RUNNING
-from covey.core.run_dir import (DONE, EXIT, HANDOFF, INBOX, QUEUED, ack, live_dirs, live_keys as _live_keys,
-                                         queued_path, read_exit, restart_blockers as _restart_blockers, run_dir,
-                                         runner_alive as alive, runner_info, take)
+from covey.core.run_dir import (DONE, EXIT, HANDOFF, INBOX, QUEUED, READ_PAUSES, ack, live_dirs,
+                                         live_keys as _live_keys, queued_path, read_exit, read_steady,
+                                         restart_blockers as _restart_blockers, run_dir, runner_alive as alive,
+                                         runner_here as here, runner_info, take)
+from covey.core.saved_results import run_began
 from covey.app.policy_guard import requested
 from covey.app.runner_ipc import remote_control, serve_requests, write_inbox
-from covey.app.runner_spawn import compaction_launch, dump_job, load_job, start_runner
+from covey.app.runner_spawn import RunnerAlive, compaction_launch, dump_job, load_job, start_runner
 
 RELAUNCH_DELAY = 2.0
+# What relaunch_unstarted found once a runner looked gone: alive after all (a read of its files failed for a moment,
+# T740), so it is watched again; it ended before its job began and another runner has the job now; or neither, and
+# finish_detached settles the job.
+ALIVE, RELAUNCHED, ENDED = "alive", "relaunched", "ended"
+WATCH_AGAIN = 0.5  # The pause before a runner found ALIVE is watched again.
+GONE_AGAIN = 0.5  # A runner that looked gone is looked at once more this much later before its job is settled (_gone).
 ENDS = "turn-ends"  # <state>/turn-ends/<job>.json: a job handed to a task runner whose end no Bridge has run yet.
 ENDS_KEPT = 24 * 3600  # A runner that ended longer ago than this at a start has its end dropped, not run.
 
@@ -123,29 +132,40 @@ def run_detached(gateway, app, job, ctx) -> None:
                 return  # Still queued on disk: the next bridge queues it again.
             job.execution_started = True  # No longer queued: a queued message may steer into it.
             # Under the lock, so a click that missed the queued job waits for the runner to exist.
+            started = True
             try:
                 directory = job.detached_run_dir = start_runner(gateway.runtime, app.spec.name, job, ctx)
+            except RunnerAlive as exc:
+                # A live runner holds the job's run directory (its key) already: watched as an adopted one is, never
+                # joined by a second, and its files and record left as they are.
+                directory = job.detached_run_dir = exc.directory
+                started = False
             except Exception as exc:  # noqa: BLE001 - no runner has the job: it ends here
                 not_started(gateway, app, job, ctx, exc)
                 return
         timing.mark("spawned")
         timing.end_current("job_start")  # Its line: from the scheduler taking the job to this spawn.
         end_due(ctx.state_dir, job, app.runtime.log)  # Outside the job's lock and its start's timing: one small write.
-        app.runtime.log(f"task runner started job=#{job.job_id} pid={(runner_info(directory) or {}).get('pid')} dir={directory}")
+        pid = (runner_info(directory) or {}).get('pid')
+        app.runtime.log(f"task runner started job=#{job.job_id} pid={pid} dir={directory}" if started else
+                        f"task runner of job #{job.job_id} already alive pid={pid}: watched, not started again")
     progress, job.progress = job.progress, None  # The runner owns the card now; nothing here may write to it.
     if job.backend_control is None:
         job.backend_control = remote_control(app, ctx, directory, job.harness_capabilities)
     while watch_until_exit(gateway, app, job, ctx, directory, release=True):
-        if not relaunch_unstarted(gateway, app, job, ctx, directory, progress):
+        outcome = relaunch_unstarted(gateway, app, job, ctx, directory, progress)
+        if outcome == ENDED:
             finish_detached(gateway, app, job, ctx, directory)
             return
+        if outcome == ALIVE and gateway.runtime.shutdown.wait(WATCH_AGAIN):
+            return  # The runner keeps going; the next bridge adopts it.
 
 
 def watch_until_exit(gateway, app, job, ctx, directory: Path, *, release=False) -> bool:
-    """Serve the requests of the runner in ``directory`` while it lives and once more after: True once it
-    has exited. False when the bridge stops (the runner keeps going; the next bridge adopts it) or, with
-    ``release``, when its job is done and release_done has freed its topic while it uploads."""
-    while alive(directory):
+    """Serve the requests of the runner in ``directory`` while it lives (runner_here: its runner.json, else its wake.json)
+    and once more after: True once it has exited. False when the bridge stops (the runner keeps going; the next bridge
+    adopts it) or, with ``release``, when its job is done and release_done has freed its topic while it uploads."""
+    while here(directory):
         serve_requests(gateway, app, job, ctx, directory)
         if release and job_done(ctx, job, directory):
             release_done(gateway, app, job, ctx, directory)
@@ -179,8 +199,10 @@ def release_done(gateway, app, job, ctx, directory: Path) -> None:
     def watch():
         try:
             queue_lost(app, job, ctx)  # Those its runner has marked by now go before the topic's next message.
-            if watch_until_exit(gateway, app, job, ctx, directory):  # Else the next bridge adopts and releases it.
-                finish_detached(gateway, app, job, ctx, directory)
+            while watch_until_exit(gateway, app, job, ctx, directory):  # Else the next bridge adopts and releases it.
+                if _gone(gateway, app, job, directory) == ENDED:
+                    finish_detached(gateway, app, job, ctx, directory)
+                    break
         except Exception as exc:  # noqa: BLE001 - its job has ended; only the exit's bookkeeping is lost
             app.runtime.log(f"task runner exit of job #{job.job_id} not settled: {type(exc).__name__}")
         finally:
@@ -217,40 +239,79 @@ def not_started(gateway, app, job, ctx, exc) -> None:
         app.runtime.unregister_reply_job(job)
 
 
-def unstarted(record, directory: Path) -> bool:
-    """The runner ended before its job began: the record is still queued, so no model call,
-    worker card write or external task happened."""
-    return (record or {}).get("status") == "queued" and not (Path(directory) / EXIT).exists()
-
-
-def relaunch_unstarted(gateway, app, job, ctx, directory: Path, progress) -> bool:
-    """Start a runner that ended before its job began once more; True when one runs again."""
-    record = find_job_record(ctx.state_dir, job.message_id)
-    if job.runner_relaunched or not unstarted(record, directory):
+def unstarted(record, directory: Path, state_dir=None) -> bool:
+    """The runner ended before its job began: the record is still queued and nothing says a runner began the job, in
+    the run directory (exit.json, done.json) or, given ``state_dir``, in the saved results (the job's index, which a run
+    of it writes: core/saved_results.py run_began). So no model call, worker card write or external task happened."""
+    record = record or {}
+    if record.get("status") != "queued" or any((Path(directory) / name).exists() for name in (EXIT, DONE)):
         return False
+    return state_dir is None or not _began(state_dir, record.get("key"))
+
+
+def _began(state_dir, key) -> bool:
+    """run_began, asked again after each of READ_PAUSES while it says no: a look at the index as another process replaced
+    it could miss it on ByteFuse, as a read of runner.json did (T740)."""
+    for pause in READ_PAUSES:
+        if run_began(state_dir, key):
+            return True
+        time.sleep(pause)
+    return run_began(state_dir, key)
+
+
+def relaunch_unstarted(gateway, app, job, ctx, directory: Path, progress) -> str:
+    """The runner in ``directory`` looked gone (watch_until_exit): ALIVE when it is alive after all, RELAUNCHED when it
+    ended before its job began and a new runner has the job, else ENDED (finish_detached settles the job). Asked once
+    more after RELAUNCH_DELAY, under the job's lock, from what is there then: whether a runner is alive, the record and
+    the run directory (unstarted), the inbox; a runner not started again is looked at once more first (_gone). A new
+    runner's card continues past the sequence the record has then."""
+    if here(directory):
+        return _still_alive(app, job)
+    if job.runner_relaunched or not unstarted(find_job_record(ctx.state_dir, job.message_id), directory, ctx.state_dir):
+        return _gone(gateway, app, job, directory)
     def inbox_used():
         return any((Path(directory) / INBOX).glob("*.json"))
     if inbox_used():
-        return False  # A click or answer went to the dead runner: finish_detached hands it back.
-    if gateway.runtime.shutdown.wait(RELAUNCH_DELAY):
-        return False
+        return _gone(gateway, app, job, directory)  # A click or answer went to the dead runner: finish_detached hands it back.
+    stopping = gateway.runtime.shutdown.wait(RELAUNCH_DELAY)
     with job.execution_lock:
-        # Checked again after the wait: a new runner starts with an empty inbox.
-        if job.cancel_event.is_set() or inbox_used():
-            return False
+        # Asked again after the wait: the runner may have looked gone for a moment only, or begun its job meanwhile
+        # (T740: a second runner then failed at the job's saved results, and its failure took the first one's reply
+        # key); a new runner starts with an empty inbox.
+        if here(directory):
+            return _still_alive(app, job)
+        record = find_job_record(ctx.state_dir, job.message_id)
+        if stopping or job.cancel_event.is_set() or inbox_used() or not unstarted(record, directory, ctx.state_dir):
+            return ENDED
         job.runner_relaunched = True  # Saved in the handoff: a later bridge does not start it a third time.
         if progress is not None:
             job.progress = adopt(progress, record.get("card_sequence"))
         try:
             start_runner(gateway.runtime, app.spec.name, job, ctx)
+        except RunnerAlive:
+            job.runner_relaunched = False  # None started: start_runner found one alive there.
+            return _still_alive(app, job)
         except Exception as exc:  # noqa: BLE001 - finish_detached reports the job as not started
             app.runtime.log(f"task runner relaunch failed job=#{job.job_id}: {start_error(exc)}")
-            return False
+            return ENDED
         finally:
             job.progress = None
     app.runtime.log(f"task runner relaunched job=#{job.job_id} pid={(runner_info(directory) or {}).get('pid')}: "
             "the last one ended before the job started")
-    return True
+    return RELAUNCHED
+
+
+def _gone(gateway, app, job, directory: Path) -> str:
+    """ENDED when the runner in ``directory``, gone at the last look, is still gone GONE_AGAIN later, else ALIVE: one look
+    whose reads all failed for a moment must not settle a live runner's job (finish_detached marks it interrupted, hands
+    its inbox back and runs its end, T740)."""
+    gateway.runtime.shutdown.wait(GONE_AGAIN)
+    return _still_alive(app, job) if here(directory) else ENDED
+
+
+def _still_alive(app, job) -> str:
+    app.runtime.log(f"task runner of job #{job.job_id} still alive: watched again")
+    return ALIVE
 
 
 def finish_detached(gateway, app, job, ctx, directory: Path) -> None:
@@ -266,7 +327,7 @@ def finish_detached(gateway, app, job, ctx, directory: Path) -> None:
         outcome = read_exit(directory)
         app.runtime.log(f"task runner ended job=#{job.job_id} status={(record or {}).get('status')} exit={outcome.get('status', 'none')}")
         if record and record.get("status") in RUNNING:
-            start_failed = unstarted(record, directory)
+            start_failed = unstarted(record, directory, ctx.state_dir)
             # A runner a SIGTERM ended (a container shutting down) left its turn this way.
             cause = "sigterm" if not start_failed and record.get("status_message") == SIGTERM_STATUS else ""
             if not start_failed and record.get("status_message") == DEVICE_LOST_STATUS:
@@ -344,7 +405,7 @@ def end_stranded(gateway, ctx) -> None:
             if key in running:
                 continue  # Its runner lives: its own end (finish_detached) comes once it exits.
             directory = run_dir(ctx.state_dir, key)
-            handoff = read_json(directory / HANDOFF)
+            handoff = read_steady(directory / HANDOFF)
             app = gateway.apps.get(handoff.get("harness"))
             ended = read_exit(directory).get("finished_at") or saved.get("at") or 0
             if app is None or now - float(ended) > ENDS_KEPT:
@@ -437,7 +498,7 @@ def adopt_runners(gateway, ctx) -> set:
     kept = set()
     for directory in live_dirs(ctx.state_dir, alive):
         try:
-            handoff = read_json(directory / HANDOFF)
+            handoff = read_steady(directory / HANDOFF)  # A read that fails leaves a live runner's job to be interrupted.
             if handoff["harness"] not in gateway.apps:
                 # compat(ff57531): an older release's runner of a removed Harness finishes its job on its own; retire
                 # when no live task runner's Harness is out of the roster (compat_report: removed-harness-runners)
