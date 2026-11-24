@@ -44,3 +44,14 @@
 .cv .st-cell .st-pop.late{border-color:var(--line2);color:var(--t2)}
 /* 看板结论带：Covey 停推的那句单独一行 */
 .cv .nb-band .nb-stale{color:var(--t3)}
+
+/* 在做：转圈（T749，主人 11-24 定）。实心的小蓝点换成一圈细环在转：底环是状态色 30%，半圈弧是状态色，线宽 2px（Chrome 把 1.5px 的边框取整成 1px，太细），1.2 秒一圈、匀速。
+   侧栏 T 号块、专项头像角上的那颗略大（9px），中间填侧栏底色，压住下面的块；别处跟着原来的大小。
+   在做的个数不限，不算进“一屏同时在动的不超过 3 个”（docs/ui.md 第 9 节）；系统设了减少动态效果时不转，画回实心点 */
+.cv .dot.tone-running,.cv .a-project-avatar i.tone-running,.cv .a-lead i.tone-running{background:transparent;border:2px solid color-mix(in srgb,var(--c) 30%,transparent);
+  border-top-color:var(--c);border-right-color:var(--c);animation:spin 1.2s linear infinite}
+.cv .a-tlogo .dot.tone-running{width:9px;height:9px;right:-4px;bottom:-4px;background:var(--side)}
+.cv .a-project-avatar i.tone-running{width:8px;height:8px;right:-2px;bottom:-2px;background:var(--side)}
+@media (prefers-reduced-motion:reduce){
+  .cv .dot.tone-running,.cv .a-project-avatar i.tone-running,.cv .a-lead i.tone-running,.cv .a-tlogo .dot.tone-running{animation:none;border:0;background:var(--c)}
+}
