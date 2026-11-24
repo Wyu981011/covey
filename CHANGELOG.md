@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed 修复
 
+- 执行过程里 Antigravity 和 Codex 的每一步不再满屏是 `set -euo pipefail for v in http_proxy…`、光秃秃的 `schedule`：Antigravity 的命令写模型自己写的 toolSummary（agy 的流里没有，Bridge 从本机 agy 会话库里只读查出来），定时等待写回来做什么、多久以后；Codex 等没有说明字段的写命令第一行的 `# 注释`；都没有时显示去掉开头样板（strict 模式、清代理循环、赋值、cd、timeout、bash -c）以后真正在跑的命令。桥接规则要求 toolSummary 和这行注释用你的语言写。飞书任务卡、状态行和网页的过程一样。
 - 代答话题和开了脱敏的一轮不再读写 Harness 自带的记忆：Claude Code 关自动记忆，Codex 关 memories 并把代答线程标成不进记忆，联系人的话不会变成其他会话里的规矩。
 - 记忆核对“主人原话”时只认主人答的和补充的，不再把问题卡的题面当成他说的话（题面里的“要不要再”也不再当成纠正）。
 - 网页工作台看板顶上写“N 件事要你处理 · N 停住了”，下面却一张停住了的卡都没有：专项的成员话题在看板上折进专项的格子，推给网页的 `board` 是空的。现在每个算进“要你处理”的停住了，网页都画成卡（看板起算以前停的也是）；手上的事置顶时，专项格子被 Pin 着显示别的话题，成员的停住了也照样列出来。开了 `COVEY_PROJECT_AUTOWAKE=1` 时，专项成员话题停住了归负责人（回执会叫醒它），看板、手上的事、早晚汇总和网页都不再算进“要你处理”；可能卡住照样算。
@@ -27,6 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed (English)
 
+- 执行过程 of Antigravity and Codex turns no longer reads `set -euo pipefail for v in http_proxy…` step under step and a bare `schedule`: an Antigravity command leads with the toolSummary its model wrote (agy's stream leaves it out; the Bridge reads it, read only, from agy's conversation database on this machine), its timer says what it comes back to do and when; a command with no such field (Codex's) leads with the comment it begins with; without either a step reads as what it runs, past its wrappers and setup lines (strict mode, the proxy loop, assignments, cd, timeout, bash -c). The bridge rules ask for the toolSummary and that comment in the owner's language. The task card, its status line and the web page read alike.
 - A 代答 turn and a redacted one no longer read or write the Harness's own memory: Claude Code's auto memory off, Codex's memories off and the 代答 thread marked out of them, so a contact's words never become a rule of other sessions.
 - The memory's check of the owner's words takes only what he answered and added, never a question card's own words.
 - The web page's board said "N things need you · N stopped" and drew no stopped card: a project's member topics are folded into the project's cell on the board, so their `board` was empty. Every stop 要你处理 counts is now a card on the page (one that ended before the board's rules too), and 手上的事's pinned board lists a member's stop while its project's pinned cell shows another thread. With `COVEY_PROJECT_AUTOWAKE=1` a member topic's stop is its lead's (its receipt wakes the lead): the 看板, 手上的事, 早晚汇总 and the web page no longer count it among 要你处理; a member that may be stuck still counts.

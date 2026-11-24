@@ -26,9 +26,12 @@ from covey.core.butler_tool_specs import BUTLER_RULES_ENV
 
 # The one rule about language (5.9 row 13: said once in a turn's rules, which are all in Chinese). Commands' and subtasks'
 # descriptions show on the task card's 执行过程 (core/text.py step_action): the owner reads them, so they are in his
-# language too.
+# language too. Antigravity's calls say it in toolSummary (backends/agy/bridge.py tool_summary); a command with no such
+# field (Codex's) says it in a comment it begins with (core/text.py command_purpose): 2026-11-24 T738, their steps read
+# "set -euo pipefail for v in http_proxy…" one under another.
 LANGUAGE_RULE = ("写给人看的话都用用户提问的语言，用户用中文就写中文：最终回复、进度说明、总结，以及工具调用里写给人看的说明"
-                 "（命令和子任务的 description、待办条目，它们会显示在飞书任务卡的“执行过程”里）。")
+                 "（命令和子任务的 description、待办条目，它们会显示在飞书任务卡的“执行过程”里；工具调用的 toolSummary 也一样；"
+                 "命令没有这类说明字段时，命令第一行写一行注释 `# 这一步做什么`）。")
 
 # Scoped searches and stopping commands (5.9 row 12): the core's one sentence. The lines about walking a shared NAS
 # and its runaway searches are a deployment's (an extension's SETTINGS ``search_rules``, core/extensions.py), as is

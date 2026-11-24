@@ -596,12 +596,34 @@ class OperationGroupsTest(unittest.TestCase):
                                   "public_progress": True})
         text = json.dumps(trace_panel(trace, True), ensure_ascii=False)
         self.assertIn("<font color='grey'>截图话题", text)
-        self.assertIn("timeout 125s python3 -B …/scripts/run.py --x 1", text)
+        self.assertIn("python3 -B …/scripts/run.py --x 1", text)  # Not its time limit either (T738).
         self.assertIn("https://code.example.com/a/b/c/d/e", text)
-        for gone in ("/data", "tail -", "cut -c", "bash -lc", "2&gt;&amp;1"):
+        for gone in ("/data", "tail -", "cut -c", "bash -lc", "2&gt;&amp;1", "timeout 125s"):
             self.assertNotIn(gone, text)
         # The step keeps the whole command: core/text.py command_kind reads its kind from it.
         self.assertIn("cut -c1-60", trace.steps["c"]["detail"])
+
+    def test_codex_and_agy_commands_read_as_what_they_are_for(self):
+        """T738 (2026-11-24): 执行过程 of Codex and Antigravity turns read "set -euo pipefail for v in http_proxy https_proxy…" one
+        under another. A comment a command begins with is its purpose (the bridge rules ask for one, app/prompts.py); without
+        one a step reads as what it runs, past its wrappers and setup lines."""
+        trace = task_trace()
+        trace.public_progress = True
+        codex = CodexEventAdapter(trace.accept)
+        boiler = "set -euo pipefail\nfor v in http_proxy https_proxy all_proxy; do unset \"$v\"; done\nS=state/pool-a\n"
+        rows = [{"id": "p", "type": "commandExecution",
+                 "command": "/bin/bash -lc '# 看 a 池 7 台机器的在线状态\n" + boiler + "python3 tools/check.py'"},
+                {"id": "b", "type": "commandExecution", "command": "/bin/bash -lc '" + boiler + "svc-cli rollout status --pool a'"}]
+        for row in rows:
+            codex.item("item/started", row)
+        trace.accept("tool", {"id": "a", "name": "bash", "status": "running", "started_at": 1000, "public_progress": True,
+                              "detail": "set -e\nfor v in http_proxy https_proxy; do\n  unset \"$v\"\ndone\nmake -C build test"})
+        self.assertTrue(trace.steps["p"]["detail"].startswith("看 a 池 7 台机器的在线状态 · /bin/bash"))
+        text = json.dumps(trace_panel(trace, True), ensure_ascii=False)
+        for said in ("看 a 池 7 台机器的在线状态", "svc-cli rollout status --pool a", "make -C build test"):
+            self.assertIn(said, text)
+        for gone in ("pipefail", "http\\\\_proxy", "http_proxy", "unset"):
+            self.assertNotIn(gone, text)
 
     def test_an_ended_turn_without_records_has_nothing_to_unfold(self):
         # T320: "执行过程 · 无执行记录 · 用时 6 秒" over an empty 查看过程记录.

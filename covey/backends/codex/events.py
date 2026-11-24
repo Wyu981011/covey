@@ -7,6 +7,7 @@ import time
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.core.protocol import STEP_ENDED
 from covey.core.steps import Steps
+from covey.core.text import command_purpose
 from covey.core.usage import SubtaskReporter
 
 # The items published as steps, by type, and each one's step name.
@@ -82,6 +83,11 @@ class CodexEventAdapter:
             detail = ", ".join(str(c.get("path", "")) for c in (item.get("changes") or []))
         if kind == "webSearch":
             detail = (item.get("action") or {}).get("query") or detail
+        if kind == "commandExecution" and isinstance(detail, str):
+            # A command has no field for what it is for: the bridge rules ask Codex for a comment at its start
+            # (app/prompts.py LANGUAGE_RULE), which leads the detail as Claude Code's description does ("<purpose> · <command>").
+            purpose = command_purpose(detail)
+            detail = f"{purpose} · {detail}" if purpose else detail
         duration = item.get("durationMs")
         start = old.get("started_at", now - duration / 1000 if done and isinstance(duration, (int, float)) else now)
         self.steps.put({

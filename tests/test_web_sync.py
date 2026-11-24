@@ -1533,6 +1533,25 @@ class ExtrasTest(WebCase):
         self.assertNotIn("detail", rows["c2"])
         self.assertEqual((len(rows["r1"]["label"]), rows["r1"]["detail"]), (web_turns.LABEL_CHARS, long_path))
 
+    def test_a_command_without_a_purpose_is_labelled_by_what_it_runs_or_its_comment(self):
+        """T738 (2026-11-24): the page's 过程 of Antigravity and Codex turns read "set -euo pipefail for v in http_proxy https_proxy…"
+        row under row. A comment the command began with labels it; else what it runs, past its wrappers and setup lines; a
+        checkpoint write its title alone. The whole command is the detail."""
+        from covey.core.text import safe_text
+        boiler = "set -euo pipefail\nfor v in http_proxy https_proxy all_proxy; do unset \"$v\"; done\nS=state/pool-a\n"
+        snapshot = {"steps": {"a": {"title": "执行命令", "detail": safe_text(boiler + ".venv/bin/python tools/check.py --pool a", None),
+                                    "status": "done", "started": T0, "ended": T0 + 600},
+                              "b": {"title": "执行命令", "detail": safe_text("/bin/bash -lc '# 看 a 池的在线状态\n" + boiler + "python3 x.py'", None),
+                                    "status": "running", "started": T0 + 601},
+                              "c": {"title": "更新检查点", "detail": safe_text("/bin/bash -lc \"cat > /x/checkpoints/a.json\"", None),
+                                    "status": "done", "started": T0 + 602, "ended": T0 + 603}},
+                    "step_order": ["a", "b", "c"], "started_at": T0}
+        rows = {row["id"]: row for row in web_turns.steps_of(snapshot)}
+        self.assertEqual(rows["a"]["label"], "执行命令：.venv/bin/python tools/check.py --pool a")
+        self.assertTrue(rows["a"]["detail"].startswith("set -euo pipefail for v in http_proxy"))
+        self.assertEqual(rows["b"]["label"], "执行命令：看 a 池的在线状态")
+        self.assertEqual((rows["c"]["label"], rows["c"]["detail"]), ("更新检查点", '/bin/bash -lc "cat > /x/checkpoints/a.json"'))
+
     def test_a_quiet_running_turn_does_not_change_its_rev_every_second(self):
         self.topic(status="running", lines=(("user", "做一下"),))
         write_job(self.state, f"k-{TOPIC[:4]}", timings={"backend_started": T0})

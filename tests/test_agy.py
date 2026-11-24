@@ -13,7 +13,8 @@ from unittest import mock
 
 from support import FIXTURES
 from covey.app.unified import UnifiedBridgeApp
-from covey.backends.agy.bridge import (AntigravityEventAdapter, NOT_LOGGED_IN, models_from_listing, tool_inputs)
+from covey.backends.agy.bridge import (AntigravityEventAdapter, CONVERSATIONS, NOT_LOGGED_IN, models_from_listing, tool_inputs,
+                                      tool_summary)
 from covey.core.harness import RunCallbacks, RunInputs, RunRequest
 from covey.core.steer import SteerNotReady, SteerRefused
 
@@ -335,6 +336,95 @@ class AntigravityTests(unittest.TestCase):
             "tool_info": {"parameters": {"Url": "https://example.invalid/doc?token=PRIVATE#part"}}}}, 1.0)
         self.assertEqual(adapter.tools["step-4"]["detail"], "https://example.invalid/doc")
         self.assertEqual(adapter.tools["step-4"]["name"], "webfetch")
+
+
+class AgyStepWordsTests(unittest.TestCase):
+    """T738 (2026-11-24): 执行过程 of an Antigravity turn read "set -euo pipefail for v in http_proxy…" step under step and a bare
+    "schedule". agy's stream-json leaves a call's toolSummary out of its parameters (1.5.14: a run_command streams its CommandLine
+    alone); the call as agy keeps it in this machine's conversation database has it."""
+
+    CONVERSATION = "0d6c1f9e-1b2a-4c3d-8e9f-0a1b2c3d4e5f"
+    COMMAND = "set -euo pipefail\nfor v in http_proxy https_proxy; do unset \"$v\"; done\n.venv/bin/python tools/check.py --pool a"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name)
+        (self.home / CONVERSATIONS).mkdir(parents=True)
+
+    def database(self, rows):
+        """A conversation database in agy's shape: ``steps`` rows whose payload is protobuf bytes around the call's JSON."""
+        import sqlite3
+        db = sqlite3.connect(self.home / CONVERSATIONS / f"{self.CONVERSATION}.db")
+        db.execute("CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer, step_payload blob)")
+        for index, call in rows:
+            payload = b"\n\x18call_6767\x12\x0brun_command\x1a\xac\x04" + json.dumps(call, ensure_ascii=False).encode() + b":\xbf\x02\x12"
+            db.execute("INSERT INTO steps VALUES (?, 132, ?)", (index, payload))
+        db.commit()
+        db.close()
+
+    def run_rows(self, rows, home=True):
+        events = []
+        adapter = AntigravityEventAdapter(lambda kind, data: events.append((kind, data)))
+        adapter.home, adapter.conversation = (str(self.home) if home else None), self.CONVERSATION
+        for row in rows:
+            adapter.accept({"event": "step_update", "step_update": row}, 1.0)
+        return adapter.tools
+
+    def tool(self, index, name, parameters, state="ACTIVE"):
+        return {"step_index": index, "state": state, "step_type": "tool", "tool_name": name,
+                "tool_info": {"name": name, "parameters": parameters}}
+
+    def test_a_command_leads_with_its_calls_summary(self):
+        self.database([(5, {"CommandLine": "ls", "toolSummary": "别的调用"}),
+                       (6, {"CommandLine": self.COMMAND, "WaitMsBeforeAsync": 5000, "toolSummary": "看 a 池的在线状态"})])
+        steps = self.run_rows([self.tool(6, "run_command", {"CommandLine": self.COMMAND}),
+                               self.tool(6, "run_command", {"CommandLine": self.COMMAND}, "DONE")])
+        self.assertEqual(steps["step-6"]["detail"], "看 a 池的在线状态 · " + self.COMMAND)
+        self.assertEqual((steps["step-6"]["name"], steps["step-6"]["status"]), ("bash", "done"))
+
+    def test_without_its_summary_it_reads_as_what_it_runs(self):
+        from covey.core.text import safe_text, shown_command
+        self.database([(6, {"CommandLine": "other", "toolSummary": "不是这一条"})])
+        for home in (True, False):  # Not found, or a device's turn (no HOME of this machine).
+            with self.subTest(home=home):
+                detail = self.run_rows([self.tool(6, "run_command", {"CommandLine": self.COMMAND})], home)["step-6"]["detail"]
+                self.assertEqual(detail, self.COMMAND)
+                self.assertEqual(shown_command(safe_text(detail, None)), ".venv/bin/python tools/check.py --pool a")
+
+    def test_a_summary_written_down_after_the_start_is_found_at_the_end(self):
+        steps = self.run_rows([self.tool(6, "run_command", {"CommandLine": "make test"})])
+        self.assertEqual(steps["step-6"]["detail"], "make test")
+        self.database([(6, {"CommandLine": "make test", "toolSummary": "跑单测"})])
+        adapter = AntigravityEventAdapter(lambda kind, data: None)
+        adapter.home, adapter.conversation = str(self.home), self.CONVERSATION
+        adapter.accept({"event": "step_update", "step_update": self.tool(6, "run_command", {"CommandLine": "make test"})}, 1.0)
+        adapter.accept({"event": "step_update", "step_update": self.tool(6, "run_command", {"CommandLine": "make test"}, "DONE")}, 2.0)
+        self.assertEqual(adapter.tools["step-6"]["detail"], "跑单测 · make test")
+
+    def test_a_call_with_nothing_streamed_reads_its_own_row_only(self):
+        self.database([(8, {"toolSummary": "上一步的话"}), (9, {"toolSummary": "列出工作区"})])
+        steps = self.run_rows([self.tool(9, "mcp_bridge_workspaces_list", {}), self.tool(10, "mcp_bridge_workspaces_list", {})])
+        self.assertEqual((steps["step-9"]["detail"], steps["step-10"]["detail"]), ("列出工作区", ""))
+
+    def test_a_database_it_cannot_read_gives_nothing(self):
+        (self.home / CONVERSATIONS / f"{self.CONVERSATION}.db").write_bytes(b"not sqlite")
+        self.assertIsNone(tool_summary(str(self.home), self.CONVERSATION, 6, {"CommandLine": "ls"}))
+        self.assertIsNone(tool_summary(str(self.home), "not-a-uuid", 6, {"CommandLine": "ls"}))
+        self.assertIsNone(tool_summary(None, self.CONVERSATION, 6, {"CommandLine": "ls"}))
+
+    def test_a_schedule_says_what_it_comes_back_to_do_and_when(self):
+        steps = self.run_rows([self.tool(2, "schedule", {"DurationSeconds": 180, "Prompt": "查看第 2 批的严检结果"}),
+                               self.tool(3, "schedule", {"DurationSeconds": 5, "Prompt": "检查探针"}),
+                               self.tool(4, "schedule", {"DurationSeconds": 7200})])
+        self.assertEqual([(steps[k]["name"], steps[k]["detail"]) for k in ("step-2", "step-3", "step-4")],
+                         [("定时等待", "查看第 2 批的严检结果（3 分钟后）"), ("定时等待", "检查探针（5 秒后）"), ("定时等待", "2 小时后回来接着做")])
+
+    def test_newer_tool_names_read_as_the_others(self):
+        steps = self.run_rows([self.tool(1, "edit_file", {"Path": "/x/a.py"}), self.tool(2, "write_file", {"Path": "/x/b.md"}),
+                               self.tool(3, "update_steps", {"steps": []})])
+        self.assertEqual([steps[k]["name"] for k in ("step-1", "step-2", "step-3")], ["edit", "write", "更新计划"])
+        self.assertEqual(steps["step-1"]["detail"], "/x/a.py")
 
 
 class AgyTurnHookTests(unittest.TestCase):

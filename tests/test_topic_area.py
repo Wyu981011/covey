@@ -821,6 +821,9 @@ class RulesTest(AreaCase):
             self.assertEqual(text.count("用户提问的语言"), 1)
             self.assertIn(LANGUAGE_RULE, text)
         self.assertIn("工具调用里写给人看的说明（命令和子任务的 description、待办条目", LANGUAGE_RULE)
+        # T738: Antigravity says it in toolSummary, a command with no such field (Codex's) in a comment it begins with.
+        self.assertIn("toolSummary", LANGUAGE_RULE)
+        self.assertIn("命令第一行写一行注释 `# 这一步做什么`", LANGUAGE_RULE)
         for text in (butler_message("快照", "消息"), project_lead.lead_rules()):
             self.assertNotIn("用户提问的语言", text)
 

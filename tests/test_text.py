@@ -4,7 +4,8 @@ import sys
 import unittest
 from pathlib import Path
 
-from covey.core.text import redact, safe_text, short_count, shown_command, tool_detail
+from covey.core.text import (command_core, command_purpose, redact, safe_text, short_count, shown_command, step_label,
+                             tool_detail)
 
 
 class RedactTests(unittest.TestCase):
@@ -194,6 +195,71 @@ assert shown_command(command + ' | tail -1') == command
                 self.assertEqual(shown_command(safe_text(command, None)), safe_text(expected, None))
 
 
+# The shapes of the commands Antigravity and Codex ran on 2026-11-24 (T738), their names and paths made up: 执行过程 read
+# "set -euo pipefail for v in http_proxy https_proxy…" under one another.
+PROXIES = "for v in http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY; do unset \"$v\"; done"
+SAMPLES = (
+    # (command, what it runs)
+    ("set -euo pipefail\n" + PROXIES + "\nS=state/serving/pool-a\n.venv/bin/python tools/check.py --pool a --watch 10m",
+     ".venv/bin/python tools/check.py --pool a --watch 10m"),
+    ("set -e\nfor v in http_proxy https_proxy all_proxy; do\n  unset \"$v\"\ndone\nsvc-cli log search --since 10m | tail -n 20",
+     "svc-cli log search --since 10m | tail -n 20"),
+    ("/bin/bash -lc \"timeout --kill-after=2s 10s rg -n -i 'alpha|beta' /absolute/ws-root/notes.md\"",
+     "rg -n -i 'alpha|beta' /absolute/ws-root/notes.md"),
+    ("timeout --kill-after=2s 15s bash -c '\nset -euo pipefail\nBASE=/absolute/ws-root\ngit -C \"$BASE\" status --short\n'",
+     'git -C "$BASE" status --short'),
+    ("set -euo pipefail\nROOT=/absolute/ws-root\nPY=\"$ROOT/.venv/bin/python\"\n\necho \"=== NOW ===\"\ndate -u\n\"$PY\" scripts/status.py",
+     'date -u\n"$PY" scripts/status.py'),
+    ("cd /absolute/ws-root && timeout 60s python3 -m pytest -q tests/test_a.py", "python3 -m pytest -q tests/test_a.py"),
+    ("timeout --kill-after=2s 30s python3 - <<'PY'\nimport json\n# 这不是说明\nprint(1)\nPY",
+     "python3 - <<'PY'\nimport json\n# 这不是说明\nprint(1)\nPY"),
+    ("bash -euo pipefail -c 'git fetch origin && git log -1'", "git fetch origin && git log -1"),
+    ("pwd && sleep 10", "pwd && sleep 10"),  # Every command that does something stays.
+    ("env -u HTTPS_PROXY LANG=C nice -n 10 make -j8 all", "make -j8 all"),
+    ("for f in a.md b.md; do cat \"$f\"; done", 'for f in a.md b.md; do cat "$f"; done'),
+    ("(cd sub && make test)", "(cd sub && make test)"),
+    ("echo hello", "echo hello"),  # Nothing but setup: as it is.
+    ("R=/a/b/c/d/报告.txt", "R=/a/b/c/d/报告.txt"),
+)
+
+
+class CommandWordsTests(unittest.TestCase):
+    """T738 (2026-11-24): a command its model said nothing of in a field reads as what it runs, or as the comment it began with."""
+
+    def test_what_a_command_runs_is_past_its_wrappers_and_setup_lines(self):
+        for command, core in SAMPLES:
+            with self.subTest(command=command[:40]):
+                self.assertEqual(command_core(command), core)
+                self.assertEqual(command_purpose(command), "")
+
+    def test_a_comment_it_begins_with_is_what_it_is_for(self):
+        cases = (("# 看 7 台机器的在线状态\nset -euo pipefail\n" + PROXIES + "\npython3 tools/x.py", "看 7 台机器的在线状态"),
+                 ("set -euo pipefail\n# 搜 foo 的调用\nrg -n foo src", "搜 foo 的调用"),
+                 ("set -euo pipefail  # 严格模式\nrg -n foo src  # 搜 foo 的调用", "搜 foo 的调用"),
+                 ("/bin/bash -lc '# 跑单测\ntimeout 60s python3 -m pytest -q'", "跑单测"),
+                 ("#!/bin/bash\n# 重启服务\nsystemctl --user restart x", "重启服务"),
+                 ("rg -n '#notacomment' src", ""),
+                 ("echo a # not a purpose of anything that runs", ""))  # Nothing runs: the comment is the echo's.
+        for command, said in cases:
+            with self.subTest(command=command[:40]):
+                self.assertEqual(command_purpose(command), said)
+
+    def test_a_card_shows_the_purpose_else_what_runs(self):
+        boiler = SAMPLES[0][0]
+        self.assertEqual(shown_command(safe_text(boiler, None)), safe_text(".venv/bin/python tools/check.py --pool a --watch 10m", None))
+        self.assertEqual(shown_command(safe_text(SAMPLES[1][0], None)), "svc-cli log search --since 10m")  # Its tail trimmed.
+        self.assertEqual(shown_command(safe_text("# 看状态 [a] & b\n" + boiler, None)), safe_text("看状态 [a] & b", None))
+        self.assertNotIn("pipefail", shown_command(safe_text(boiler, None)))
+        step = {"title": "执行命令", "detail": safe_text(boiler, None)}
+        self.assertEqual(step_label(step), "执行命令 · " + safe_text(".venv/bin/python tools/check.py --pool a --watch 10m", None))
+
+    def test_a_long_or_cut_command_still_reads(self):
+        cut = "timeout 15s bash -c 'set -e\n" + PROXIES + "\npython3 run.py --step " + "x" * 600  # Cut before its quote ends.
+        self.assertEqual(command_core(cut), "python3 run.py --step " + "x" * 600)
+        self.assertEqual(command_core(""), "")
+        self.assertEqual(command_purpose(None), "")
+
+
 class ToolDetailTests(unittest.TestCase):
     CLAUDE = ("command", "file_path", "pattern", "url", "query")
     DSH = ("command", "path", "file_path", "pattern", "query", "url")
@@ -213,6 +279,16 @@ class ToolDetailTests(unittest.TestCase):
                 self.assertEqual(tool_detail(inputs, keys), "List files · ls -la")
                 self.assertEqual(tool_detail({"command": "ls"}, keys), "ls")
         self.assertEqual(tool_detail({"path": "a.py", "description": "Read it"}, self.DSH), "a.py")
+
+    def test_a_command_or_a_call_leads_with_what_the_model_said(self):
+        """T738: Antigravity's toolSummary (``said``) and a comment a command began with lead its detail as Claude's description does."""
+        self.assertEqual(tool_detail({"command": "# 看状态\nls"}, self.DSH), "看状态 · # 看状态\nls")
+        self.assertEqual(tool_detail({"command": "ls"}, self.DSH, said="列目录"), "列目录 · ls")
+        self.assertEqual(tool_detail({"command": "ls", "description": "List"}, self.CLAUDE, said="列目录"), "列目录 · ls")
+        self.assertEqual(tool_detail({"path": "a.py"}, self.DSH, said="读配置"), "读配置 · a.py")
+        self.assertEqual(tool_detail({"url": "https://example.invalid/a?token=x"}, self.DSH, said="看文档"),
+                         "看文档 · https://example.invalid/a")
+        self.assertEqual(tool_detail({}, self.DSH, "转给 T12", said="转给 T12"), "转给 T12")
 
     def test_a_url_loses_its_query_and_fragment(self):
         for keys in (self.CLAUDE, self.DSH):
