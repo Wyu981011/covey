@@ -459,6 +459,17 @@ def lead_tools(environ=None) -> tuple:
             + (asked if triage else ()))
 
 
+# The butler's tools a turn seldom needs. A Harness that fits a turn's tools in a budget (Antigravity, backends/agy/home.py)
+# loads the others up front first and lists these by name once the room is taken: they work the same, the model reads
+# one's schema when it calls it. Its budget is the skills' too, and over it agy drops the largest tool whole, which was
+# topic_start (T750: the butler forked a finished topic in its place).
+SECONDARY = frozenset({"topic_priority", "principle_save", "principle_delete", "principles_list", "settings_panel",
+                       *(tool["name"] for tool in KNOWLEDGE_TOOLS + HISTORY_TOOLS), TIDY_TOOL["name"]})
+# The tools that hand work to topics, what a turn of the butler or of a lead is for: such a Harness loads them first.
+HANDING = frozenset({"topic_start", "topic_send", "topic_fork", "project_send", "project_topic_start", "project_topic_send"})
+assert SECONDARY | HANDING <= set(ALL_NAMES + BUTLER_PROJECT_NAMES + PROJECT_NAMES) and not SECONDARY & HANDING
+
+
 def listed(environ) -> tuple:
     """The tools the MCP server lists in ``environ``: TOOLS, with the knowledge tools when COVEY_KNOWLEDGE is
     1 and history_search when COVEY_HISTORY_CMD is an absolute path; with COVEY_BUTLER_RULES=1 topic_start's

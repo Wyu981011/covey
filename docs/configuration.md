@@ -497,6 +497,7 @@
 | `COVEY_TRACK_JUDGE_MS` | `app/track_judge.py`（`limit_ms`） | 3000：小模型硬上限（毫秒，200 到 10000），超过按新开一件；问的是 Codex 或 Antigravity 自己的命令行时不设默认 10000（它们一次要 6 到 12 秒），设了就按设的 | 否 |
 | `COVEY_JUDGE_CODEX_MODEL` | `backends/codex/judge.py`（`choose`：没有 Claude Code 时小模型判断问 Codex 用的模型） | 空：轻量的判断用账号模型目录里 id 或说明写着轻量的第一个（如 `gpt-6-luna`），最低一档思考；整理专项用 Codex 自己的默认模型、`medium`。写一个目录里有的模型 id 就都用它（目录里没有的不用） | 否 |
 | `COVEY_JUDGE_AGY_MODEL` | `backends/agy/judge.py`（`choose`：没有 Claude Code 和 Codex 时小模型判断问 Antigravity 用的模型） | 空：轻量的判断用保存的模型目录里名字带 flash、lite 这类词的第一个（如 `gemini-3.8-flash`），最低一档；整理专项用 agy 自己的默认。写一个 `agy models` 列出的 id（带档位，如 `gemini-3.8-flash-low`）就都用它 | 否 |
+| `COVEY_AGY_EAGER_BYTES` | `backends/agy/home.py`（`eager_room`：管家和专项负责人跑在 Antigravity 上时，Bridge 的工具里预先加载的最多占多少字节，按描述加参数 schema 算；其余只在 agy 的提示里列名字，用到时模型先读说明再调）、`backends/agy/bridge.py`（`left_out` 的日志提到它） | 15000：交给话题的工具和其余常用的都预先加载，原则、知识条目、历史搜索这些排最后；`0`：全部只列名字。agy 的日志警告说丢了 Bridge 工具时调小 | 否 |
 | `COVEY_TRACK_JUDGE_WARM` | `app/track_judge.py`（`warm_enabled`；`Tracks.handle` 经 `warm` 调用，进程在 `app/track_standby.py`） | 空：开，收到管家消息时提前起好一个待命的 Claude Code 进程（空闲 10 分钟或 Bridge 停止时结束）；`0`、`off`、`false`、`no` 关，每次现起，慢约 1 秒 | 否 |
 | `COVEY_TRACK_JUDGE_HEDGE` | `app/track_judge.py`（`hedge`；`warm` 据此多留几个待命进程，`judge` 同时问它们，进程在 `app/track_standby.py`） | 2：同一问同时交给几个待命进程（1 到 3），第一个能用的答案算数；只在待命开着、通道是 `claude` 时有用 | 否 |
 | `COVEY_TRACK_JUDGE_SLIM` | `app/track_judge.py`（`slim_enabled`，给小模型的 Claude Code 命令行多两个选项） | 空：开，小模型的 Claude Code 带 `--setting-sources user --disable-slash-commands`，不读项目设置和技能清单；`0`、`off`、`false`、`no` 关 | 否 |

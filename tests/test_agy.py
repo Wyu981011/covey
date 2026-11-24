@@ -153,6 +153,113 @@ class AntigravityTests(unittest.TestCase):
         with home:
             self.assertEqual(home.note, "")
 
+    BUTLER_ENV = {"COVEY_BUTLER_RULES": "1", "COVEY_PROJECTS": "1", "COVEY_KNOWLEDGE": "1",
+                  "COVEY_HISTORY_CMD": "/absolute/history", "COVEY_PROJECT_TIDY": "suggest"}
+
+    def butler_home(self, **env):
+        """The butler's server in a private home with BUTLER_ENV's switches on: its eager tools, in order, and the
+        names it listed."""
+        from covey.backends.agy.home import PrivateHome
+        from covey.core.butler import mcp_config
+        (self.root / ".gemini" / "antigravity-cli").mkdir(parents=True, exist_ok=True)
+        with mock.patch.dict(os.environ, {**self.BUTLER_ENV, **env}):
+            config = mcp_config(Path(__file__).resolve().parents[1], self.root / "state", "om_1-1", sys.executable)
+            home = PrivateHome(self.root / "state", self.root, config, dict(os.environ))
+            with home as path:
+                bridge = json.loads((path / ".gemini" / "config" / "mcp_config.json").read_text())["mcpServers"]["bridge"]
+        self.assertTrue(all(tool == {"eager": True} for tool in (bridge.get("tools") or {}).values()))
+        return list(bridge.get("tools") or {}), home.listed["bridge"]
+
+    @staticmethod
+    def sizes(environ):
+        from covey.backends.agy.home import tool_size
+        from covey.core.butler_tool_specs import listed
+        return {tool["name"]: tool_size({"description": tool["description"], "inputSchema": tool["input_schema"]})
+                for tool in listed(environ)}
+
+    def test_the_butlers_tools_that_work_with_topics_are_loaded_up_front_and_the_others_named(self):
+        """T750: agy fits a turn's skills and MCP tools in one budget and drops the largest tool whole. With all 21 of
+        the butler's eager beside 62 skills topic_start was gone, and the butler forked a finished topic for each new
+        matter. Eager are those that hand work to topics, then the others but SECONDARY, within EAGER_BYTES."""
+        from covey.backends.agy.home import EAGER_BYTES
+        from covey.core.butler_tool_specs import SECONDARY
+        eager, names = self.butler_home()
+        sizes = self.sizes(self.BUTLER_ENV)
+        self.assertEqual(names, list(sizes))
+        self.assertEqual(eager[:4], ["topic_start", "topic_send", "topic_fork", "project_send"])
+        working = [name for name in names if name not in SECONDARY]
+        self.assertLessEqual(sum(sizes[name] for name in working), EAGER_BYTES,
+                             "the butler's tools that work with topics outgrew EAGER_BYTES: agy would not load the last "
+                             "of them up front; make their descriptions shorter, or measure agy's room again")
+        self.assertEqual(eager[:len(working)], sorted(working, key=lambda name: name not in {
+            "topic_start", "topic_send", "topic_fork", "project_send"}))
+        self.assertLessEqual(sum(sizes[name] for name in eager), EAGER_BYTES)
+        self.assertFalse({"knowledge_save", "knowledge_search", "history_search", "projects_tidy"} & set(eager))
+
+    def test_a_lower_room_keeps_the_tools_that_hand_work_on_and_none_names_them_all(self):
+        sizes = self.sizes(self.BUTLER_ENV)
+        room = sizes["topic_start"] + sizes["topic_send"]
+        eager, names = self.butler_home(COVEY_AGY_EAGER_BYTES=str(room))
+        self.assertEqual(eager, ["topic_start", "topic_send"])
+        eager, names = self.butler_home(COVEY_AGY_EAGER_BYTES="0")
+        self.assertEqual((eager, len(names)), ([], len(sizes)))
+        eager, _names = self.butler_home(COVEY_AGY_EAGER_BYTES="lots")  # Not a number: the default.
+        self.assertIn("project_send", eager)
+
+    def test_a_leads_tools_are_all_loaded_up_front(self):
+        from covey.backends.agy.home import EAGER_BYTES
+        lead = {"COVEY_PROJECT_LEAD": "p1", "COVEY_PROJECT_TRIAGE": "1", "COVEY_COLLAB": "1", "COVEY_PROJECT_AUTOWAKE": "1"}
+        self.assertLessEqual(sum(self.sizes(lead).values()), EAGER_BYTES,
+                             "a lead's tools outgrew EAGER_BYTES: agy would name the last of them only")
+
+    BLOCK = ("<mcp_servers>\nEach MCP server has a directory `<appDataDir>/mcp/<serverName>` containing tool schemas.\n"
+             "```\n# <serverName>\nEager:\n<toolName>\nLazy:\n<toolName>\n```\n"
+             "# bridge\nEager:\ntopics_list\n{eager}Lazy:\nknowledge_search\n# mine\nEager:\nmy_tool\n</mcp_servers>")
+
+    def conversation(self, *blobs):
+        """A conversation's database as agy keeps it: its model requests' rows (table gen_metadata), oldest first."""
+        import contextlib
+        import sqlite3
+        path = self.root / CONVERSATIONS / f"{SID}.db"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(sqlite3.connect(path)) as db:
+            db.execute("CREATE TABLE gen_metadata (idx integer, data blob, size integer NOT NULL DEFAULT 0, PRIMARY KEY (idx))")
+            db.executemany("INSERT INTO gen_metadata (idx, data) VALUES (?, ?)", enumerate(blobs))
+            db.commit()
+        return path
+
+    def test_left_out_names_the_bridge_tools_agys_latest_request_did_not_have(self):
+        from covey.backends.agy.bridge import left_out
+        listed = {"bridge": ["topics_list", "topic_start", "topic_send", "knowledge_search"]}
+        self.assertEqual(left_out(self.root, SID, listed), {})  # No conversation: nothing to say.
+        older = b"\x12\x08proto" + self.BLOCK.format(eager="topic_start\n").encode() + b"\x1a\x00"
+        latest = b"\x12\x08proto" + self.BLOCK.format(eager="topic_send\n").encode() + b"\x1a\x00"
+        self.conversation(older, latest, b"\x0a\x02ok")  # A small row after the request's.
+        self.assertEqual(left_out(self.root, SID, listed), {"bridge": ["topic_start"]})
+        self.assertEqual(left_out(self.root, SID, {"bridge": ["topics_list", "knowledge_search"]}), {})
+        self.assertEqual(left_out(self.root, SID, {"other": ["x", "y"]}), {"other": ["x", "y"]})  # Never started.
+        self.assertEqual(left_out(self.root, "not-a-uuid", listed), {})
+
+    def test_left_out_says_nothing_of_a_conversation_whose_requests_have_no_server_list(self):
+        from covey.backends.agy.bridge import left_out
+        self.conversation(b"\x12\x08no servers here")
+        self.assertEqual(left_out(self.root, SID, {"bridge": ["topic_start"]}), {})
+
+    def test_a_butler_turn_whose_tools_agy_left_out_says_which_in_the_log(self):
+        from covey.core.butler import mcp_config
+        (self.root / ".gemini" / "antigravity-cli").mkdir(parents=True, exist_ok=True)
+        self.conversation(self.BLOCK.format(eager="topic_send\n").encode())
+        config = mcp_config(Path(__file__).resolve().parents[1], self.root / "state", "om_1-1", sys.executable)
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "mcp_config": config})
+        with self.assertLogs("covey.backends.agy.bridge", level="WARNING") as logs:
+            result, *_rest = self.run_agy("ok", ctx=ctx)
+        self.assertFalse(result.is_error, result.text)
+        said = "\n".join(logs.output)
+        self.assertIn(f"out of conversation {SID}: ", said)
+        self.assertIn("topic_start", said)
+        self.assertNotIn("topics_list,", said)
+        self.assertIn("COVEY_AGY_EAGER_BYTES", said)
+
     def test_any_other_turn_keeps_the_real_home(self):
         _result, _events, _replies, _sessions, record = self.run_agy("ok")
         self.assertEqual(Path(record["home"]), self.root)
