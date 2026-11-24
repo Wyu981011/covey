@@ -11,12 +11,14 @@
   7. 发布（+release-create / +release-get），拿到线上地址
   8. 可见范围设成只有你（+access-scope-set）
   9. 写 Covey 的网页配置（web.json：base_url、key_file、page_url），告诉你怎么在 Covey 里打开 COVEY_WEB
+  10. 在你和机器人的私聊顶栏建（或原地更新）「工作台」标签，飞书内嵌打开网页；这一步以机器人身份做，失败只提示、不影响前面的结果
 
 用法：
   python3 web/deploy/miaoda/deploy.py --covey-state <Covey 状态目录> --dry-run     # 先看要做什么，不调任何接口
   python3 web/deploy/miaoda/deploy.py --covey-state <Covey 状态目录> --yes         # 真做
 常用参数：--profile（lark-cli 的 profile，默认用 lark-cli 的默认 profile）、--out-dir（web.json、密钥和进度文件放哪，默认 <状态目录>/web）、
   --name（应用名）、--app-id + --adopt-existing（接手一个已有的应用；会覆盖它的代码，慎用）。
+只补建私聊标签（老部署、或第 10 步当时没做成）：加 --only-chat-tab（见 main 里的参数说明）。
 退出码：0 做完；1 某一步失败；2 前提不满足（没登录、缺命令、参数不对）；3 发布在等审批。
 """
 from __future__ import annotations
@@ -64,6 +66,7 @@ class Ctx:
     state_path: Path
     state: dict = field(default_factory=dict)
     log: list = field(default_factory=list)
+    bot_profile: str = ""  # 建标签用的机器人 profile，只在内存里
 
     def save(self) -> None:
         if self.args.dry_run:
@@ -513,6 +516,219 @@ def step_config(ctx: Ctx) -> None:
     say(f"网页地址：{online}")
 
 
+# ---------- 私聊顶栏的「工作台」标签 ----------
+# 接口（飞书开放平台「会话标签页」，以机器人身份调；下面的结论来自官方文档，未在现网会话上实测）：
+#   POST /open-apis/im/v1/chats/{chat_id}/chat_tabs              添加；权限 im:chat 或 im:chat.tabs:write_only
+#   POST /open-apis/im/v1/chats/{chat_id}/chat_tabs/update_tabs  更新（要 tab_id）；同上
+#   GET  /open-apis/im/v1/chats/{chat_id}/chat_tabs/list_tabs    拉取；权限 im:chat、im:chat.tabs:read 或 im:chat:readonly 之一
+# 建和更新的响应里都带会话当前的全部标签（含 tab_id、tab_content.url），所以最小权限只加 im:chat.tabs:write_only，
+# 不另加 im:chat.tabs:read：幂等靠三层——先试拉取（机器人已有 im:chat:read 之类能读群的权限时多半能读）；
+# 读不了就用进度文件里记的 tab_id（或 --tab-id）直接更新；两样都没有才建，建完看响应里有没有同名的旧标签并提醒。
+# 标签是网址类型，tab_config.is_built_in 必须是 true，飞书才在客户端内嵌打开，不跳外部浏览器。
+TAB_NAME = "工作台"
+TAB_SCOPE = "im:chat.tabs:write_only"
+TAB_PATH = "/open-apis/im/v1/chats/{chat}/chat_tabs"
+
+
+class TabSkip(Exception):
+    """建标签这一步做不下去：message 给人看。不是错误，不改退出码。"""
+
+
+def tab_rerun(ctx: Ctx) -> str:
+    a = ctx.args
+    parts = ["python3 web/deploy/miaoda/deploy.py"]
+    parts.append(f"--covey-state {a.covey_state}" if a.covey_state else "--covey-state <Covey 状态目录>")
+    if a.bot_profile:
+        parts.append(f"--bot-profile {a.bot_profile}")
+    parts.append("--only-chat-tab --yes")
+    return " ".join(parts)
+
+
+def tab_error(env: dict, proc: subprocess.CompletedProcess) -> tuple[str, bool]:
+    """(给人看的原因, 是不是缺权限)。"""
+    err = env.get("error") or {}
+    code = err.get("code") if err else env.get("code")
+    msg = str(err.get("message") or env.get("msg") or (proc.stderr or proc.stdout or "").strip()[-300:])
+    low = (msg + " " + str(err.get("subtype") or "")).lower()
+    scope = err.get("subtype") == "missing_scope" or code in (99991672, 99991679) or "scope" in low or "permission" in low or "权限" in msg
+    return (f"{msg}（错误码 {code}）" if code else msg), scope
+
+
+def bot_api(ctx: Ctx, method: str, path: str, body: dict | None = None) -> dict:
+    """以机器人身份调一次飞书接口，返回响应里的 data；失败抛 TabFailed（带是否缺权限）。"""
+    cmd = ["lark-cli", "api", method, path, "--as", "bot", "--format", "json"]
+    if body is not None:
+        cmd += ["--data", json.dumps(body, ensure_ascii=False)]
+    if ctx.bot_profile:
+        cmd += ["--profile", ctx.bot_profile]
+    ctx.log.append(" ".join(cmd))
+    proc = subprocess.run(cmd, text=True, capture_output=True)
+    env = parse_envelope(proc.stdout) or parse_envelope(proc.stderr) or {}
+    code = env.get("code")
+    if proc.returncode != 0 or env.get("ok") is False or env.get("error") or (code not in (None, 0)):
+        reason, scope = tab_error(env, proc)
+        raise TabFailed(reason, scope)
+    d = env.get("data")
+    return d if isinstance(d, dict) else {}
+
+
+class TabFailed(Exception):
+    def __init__(self, reason: str, scope: bool = False):
+        super().__init__(reason)
+        self.scope = scope
+
+
+def tab_page_url(ctx: Ctx) -> str:
+    a = ctx.args
+    if a.page_url:
+        return a.page_url.strip()
+    online = (ctx.state.get("release") or {}).get("online_url") or ""
+    if online:
+        return online
+    path = Path(a.web_config) if a.web_config else ctx.out_dir / "web.json"
+    try:
+        return str(json.loads(path.read_text()).get("page_url") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def tab_chat_id(ctx: Ctx) -> str:
+    a = ctx.args
+    if a.chat_id:
+        return a.chat_id.strip()
+    if not a.covey_state:
+        raise TabSkip("没给 --covey-state（或 --chat-id），不知道你和机器人的私聊是哪一个。")
+    path = Path(a.covey_state) / "owner-chat.json"
+    try:
+        chat = str(json.loads(path.read_text()).get("chat_id") or "")
+    except (OSError, ValueError, AttributeError):
+        chat = ""
+    if not chat:
+        raise TabSkip(f"{path} 还不存在或里面没有 chat_id：你还没和机器人私聊过。先在飞书里给机器人发一句话。")
+    return chat
+
+
+def tab_bot_profile(ctx: Ctx) -> str:
+    """Covey 机器人自己的 lark-cli profile（bot-identity.json 的 profile，或 --bot-profile）。它可能不是妙搭部署用的
+    那个（--profile，你本人的登录）：标签要用机器人所在的应用，用错了会建到别的应用名下或报没在会话里。"""
+    a = ctx.args
+    ident = read_identity(a.covey_state)
+    profile = a.bot_profile or str(ident.get("profile") or "")
+    if not profile:
+        raise TabSkip("认不出 Covey 机器人用的 lark-cli profile（bot-identity.json 里没有 profile）：用 --bot-profile <名字> 指定。")
+    if not shutil.which("lark-cli"):
+        raise TabSkip("找不到 lark-cli。")
+    proc = subprocess.run(["lark-cli", "auth", "status", "--json", "--profile", profile], text=True, capture_output=True)
+    st = parse_envelope(proc.stdout) or {}
+    want = str(ident.get("app_id") or "")
+    if want and st.get("appId") and st["appId"] != want:
+        raise TabSkip(f"profile {profile} 的飞书应用和 Covey 的机器人不是同一个：用 --bot-profile 指定机器人那个。")
+    return profile
+
+
+def tab_body(url: str, tab_id: str = "", icon_key: str = "") -> dict:
+    config = {"is_built_in": True}
+    if icon_key:
+        config["icon_key"] = icon_key
+    tab = {"tab_name": TAB_NAME, "tab_type": "url", "tab_content": {"url": url}, "tab_config": config}
+    if tab_id:
+        tab["tab_id"] = tab_id
+    return {"chat_tabs": [tab]}
+
+
+def find_tab(tabs: list, wanted_id: str = "") -> dict | None:
+    named = [t for t in tabs if isinstance(t, dict) and t.get("tab_type") == "url" and t.get("tab_name") == TAB_NAME]
+    for t in named:
+        if wanted_id and t.get("tab_id") == wanted_id:
+            return t
+    if wanted_id:
+        for t in tabs:
+            if isinstance(t, dict) and t.get("tab_id") == wanted_id and t.get("tab_type") == "url":
+                return t
+    return named[0] if named else None
+
+
+def tab_ok(tab: dict, url: str) -> bool:
+    return ((tab.get("tab_content") or {}).get("url") == url and (tab.get("tab_config") or {}).get("is_built_in") is True)
+
+
+def step_chat_tab(ctx: Ctx) -> None:
+    """10. 私聊顶栏的「工作台」标签。做不成只打印原因和补救命令，不抛、不改 web.json、不改退出码。"""
+    try:
+        chat_tab(ctx)
+    except TabSkip as exc:
+        say(f"10. 私聊「{TAB_NAME}」标签：这次没建。{exc}\n    补上以后单独做这一步：{tab_rerun(ctx)}")
+    except TabFailed as exc:
+        extra = (f"机器人缺 {TAB_SCOPE} 权限：等 Covey 的「飞书应用待补」卡点「扫码自动补齐」，或在开发者后台给这个应用加上并发布新版本。"
+                 if exc.scope else "")
+        say(f"10. 私聊「{TAB_NAME}」标签：这次没建，飞书接口说：{exc}\n    {extra}\n    处理好以后单独做这一步：{tab_rerun(ctx)}")
+
+
+def chat_tab(ctx: Ctx) -> None:
+    a = ctx.args
+    if a.skip_chat_tab:
+        say("10. 私聊「工作台」标签：按 --skip-chat-tab 跳过")
+        return
+    url = tab_page_url(ctx)
+    if a.dry_run:
+        # 不调标签的任何接口（包括拉取），只说明会怎么做
+        chat = ""
+        try:
+            chat = tab_chat_id(ctx)
+        except TabSkip as exc:
+            say(f"10. 私聊「{TAB_NAME}」标签：[不执行] 现在做不了：{exc}（补上后再做：{tab_rerun(ctx)}）")
+            return
+        say(f"10. 私聊「{TAB_NAME}」标签：[不执行] 以机器人身份（profile 取 bot-identity.json 里的，或 --bot-profile）对会话 {chat} 先试拉取标签；"
+            f"没有同名标签就 POST {TAB_PATH.format(chat=chat)} 建，有就 .../update_tabs 原地更新，已一致就不动。"
+            f"标签网址：{url or '发布后的线上地址'}，tab_config.is_built_in=true（飞书内嵌打开）。")
+        return
+    if not url:
+        raise TabSkip("还没有网页地址（没发布、web.json 里也没有 page_url）：给 --page-url，或先把前面几步做完。")
+    if not url.startswith(("https://", "http://")):
+        raise TabSkip(f"网页地址 {url} 不是 http(s) 开头，飞书不收。")
+    chat = tab_chat_id(ctx)
+    ctx.bot_profile = tab_bot_profile(ctx)
+    path = TAB_PATH.format(chat=chat)
+    ledger = ctx.state.get("chat_tab") or {}
+    known_id = a.tab_id or (ledger.get("tab_id") if ledger.get("chat_id") in (None, "", chat) else "")
+    tabs, listed = [], False
+    try:
+        tabs = bot_api(ctx, "GET", path + "/list_tabs").get("chat_tabs") or []
+        listed = True
+    except TabFailed as exc:
+        say(f"    （读不了现有标签：{exc}；改用记下的 tab_id 判断）")
+    tab = find_tab(tabs, known_id) if listed else ({"tab_id": known_id} if known_id else None)
+    try:
+        if tab and (not listed or not tab_ok(tab, url)):
+            result = bot_api(ctx, "POST", path + "/update_tabs", tab_body(url, tab["tab_id"], (tab.get("tab_config") or {}).get("icon_key") or ""))
+            action = "已更新"
+        elif tab:
+            result, action = {"chat_tabs": tabs}, "已经是最新的，没动"
+        else:
+            result = bot_api(ctx, "POST", path, tab_body(url))
+            action = "已创建"
+    except TabFailed as exc:
+        if tab and not listed and not exc.scope:
+            raise TabFailed(f"{exc}（记下的 tab_id {tab['tab_id']} 可能已被删；去飞书里确认有没有「{TAB_NAME}」标签，没有就清掉进度文件里的 chat_tab 后重跑，有就用 --tab-id 指定）", False) from exc
+        raise
+    after = result.get("chat_tabs") or []
+    mine = find_tab(after, (tab or {}).get("tab_id", ""))
+    if not mine:
+        mine = next((t for t in after if isinstance(t, dict) and tab_ok(t, url) and t.get("tab_name") == TAB_NAME), None)
+    if mine and mine.get("tab_id"):
+        ctx.state["chat_tab"] = {"tab_id": mine["tab_id"], "url": url, "chat_id": chat}
+        ctx.save()
+    twins = [t for t in after if isinstance(t, dict) and t.get("tab_type") == "url" and t.get("tab_name") == TAB_NAME
+             and t.get("tab_id") != (mine or {}).get("tab_id")]
+    flag = (mine or {}).get("tab_config") or {}
+    say(f"10. 私聊「{TAB_NAME}」标签：{action}（{url}，飞书内嵌打开）")
+    if mine and "is_built_in" in flag and flag["is_built_in"] is not True:
+        say("    注意：飞书返回的标签 is_built_in 不是 true，客户端可能会跳外部浏览器；去飞书里看一眼。")
+    if twins:
+        say(f"    注意：会话里还有 {len(twins)} 个同名标签（tab_id {', '.join(str(t.get('tab_id')) for t in twins)}），"
+            "可以在飞书里手动删掉多的；之后更新用 --tab-id 指定要留的那个。")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="把 web/ 一键部署成你自己飞书里的妙搭全栈应用")
     ap.add_argument("--covey-state", help="Covey 的状态目录（读 bot-identity.json 里的主人；默认把 web.json、密钥和进度放到它下面的 web/）")
@@ -527,11 +743,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--web-config", help="Covey 的网页配置写到哪（默认 <out-dir>/web.json）")
     ap.add_argument("--release-wait", type=int, default=RELEASE_WAIT_SECONDS, help="发布最多等多少秒")
     ap.add_argument("--poll-seconds", type=float, default=10, help="查发布进度的间隔")
+    ap.add_argument("--only-chat-tab", action="store_true", help="只做第 10 步：给私聊顶栏建/更新「工作台」标签（老部署补建用；网址取进度文件、web.json 或 --page-url）")
+    ap.add_argument("--skip-chat-tab", action="store_true", help="不建私聊顶栏的「工作台」标签")
+    ap.add_argument("--bot-profile", default=None, help="Covey 机器人用的 lark-cli profile（建标签用机器人身份；默认读 <covey-state>/bot-identity.json 的 profile）")
+    ap.add_argument("--chat-id", default=None, help="你和机器人的私聊 chat_id（默认读 <covey-state>/owner-chat.json）")
+    ap.add_argument("--page-url", default=None, help="标签要打开的网页地址（默认用发布后的线上地址或 web.json 的 page_url）")
+    ap.add_argument("--tab-id", default=None, help="已有的「工作台」标签的 tab_id（机器人读不了现有标签、又没记录时用，避免建出第二个）")
     ap.add_argument("--dry-run", action="store_true", help="只列出要做的事和命令，不调用任何会写入的接口")
     ap.add_argument("--yes", action="store_true", help="确认真做（会建应用、改库、建密钥、发布）")
     a = ap.parse_args(argv)
     if not a.dry_run and not a.yes:
-        say("这会在你的飞书里建一个妙搭应用并发布。先加 --dry-run 看看要做什么，确认后加 --yes 真做。")
+        say(("这会在你和机器人的私聊顶栏建或更新「工作台」标签。" if a.only_chat_tab else "这会在你的飞书里建一个妙搭应用并发布。") + "先加 --dry-run 看看要做什么，确认后加 --yes 真做。")
         return 2
     out_dir = Path(a.out_dir) if a.out_dir else (Path(a.covey_state) / "web" if a.covey_state else None)
     if out_dir is None:
@@ -540,6 +762,10 @@ def main(argv: list[str] | None = None) -> int:
     ctx = Ctx(args=a, out_dir=out_dir, state_path=out_dir / "miaoda-deploy.json")
     if ctx.state_path.is_file():
         ctx.state = json.loads(ctx.state_path.read_text())
+    if a.only_chat_tab:
+        say(("【只看不做】" if a.dry_run else "") + "只补建私聊顶栏的「工作台」标签")
+        step_chat_tab(ctx)
+        return 0
     say(("【只看不做】" if a.dry_run else "") + f"部署 web/ 到妙搭（进度记在 {ctx.state_path}）")
     try:
         step_preflight(ctx)
@@ -553,6 +779,7 @@ def main(argv: list[str] | None = None) -> int:
         step_release(ctx)
         step_scope(ctx)
         step_config(ctx)
+        step_chat_tab(ctx)
     except StepFailed as exc:
         say(str(exc))
         return exc.code

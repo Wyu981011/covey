@@ -36,6 +36,7 @@
 | `drive:file:upload`、`space:folder:create` | 产物上传云空间 |
 | `docs:permission.member:create` | 产物文件夹给你权限 |
 | `application:application:self_manage` | 检查应用配置（自动补齐靠它读应用详情） |
+| `im:chat.tabs:write_only` | 私聊顶栏的「工作台」标签（网页工作台一键部署以机器人身份建，见 [web/README.md 的「部署」](../web/README.md#部署)）；免审核，默认就要。建和更新标签的响应里已带会话全部标签，所以不要 `im:chat.tabs:read` |
 | `im:message.pins:read`、`im:message.pins:write_only` | 置顶看板；`COVEY_PINNED_TOPICS=1` 或 `COVEY_PINNED_OVERVIEW=1` 时要 |
 | `im:chat.members:read` | 群聊免@ 选人；`COVEY_GROUP_ALL_MESSAGES=1` 时要 |
 | `im:message.group_msg` | 群聊免@ 收群里全部消息；`COVEY_GROUP_ALL_MESSAGES=1` 时要，要租户管理员审核 |
@@ -64,6 +65,7 @@ Bridge 自己检查上面的清单。缺了就在主人私聊里发一张「飞�
 - 读这两个接口要应用有 `application:application:self_manage`；没有时卡上只列这一项，补上后下次检查才看得到其余的。
 - 同一组缺项只发一次卡（`<state>/app-setup/state.json`）；点「不管了」后，缺项变了才再发。主人还没和机器人私聊过时不发。
 - 要租户管理员审核的权限（`im:message.group_msg`）单列在卡上、默认不申请，只缺它时不发卡；点「连同需审核的一起申请」才一起提交。
+- 老部署升级后清单多了 `im:chat.tabs:write_only`：缺这一项就发一张待补卡（同一组缺项只发一次，补上后不再提示）；点「扫码自动补齐」只加这一项权限（免审核，不提交管理员审核）。不用网页工作台的部署也会提示，点「不管了」即可，不影响别的功能。
 - 只增不删：应用里别的权限、事件和菜单项都不动。一级菜单放不下的菜单项不补，卡上说明。
 - 设 `COVEY_APP_CHECK=0` 不检查、不发卡。
 

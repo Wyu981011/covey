@@ -64,6 +64,22 @@ class ManifestTests(unittest.TestCase):
         self.assertIn("menu_enable:menu", legacy)
         self.assertIn("menu:digest_board", legacy)
 
+    def test_the_private_chat_tab_scope_is_default_and_the_only_one_added(self):
+        # 私聊顶栏「工作台」标签（网页的部署脚本 web/deploy 建）：建和更新只要 write_only，不加读权限，也不用审核。
+        bare = ids(manifest.required({}))
+        self.assertIn("scope:im:chat.tabs:write_only", bare)
+        self.assertNotIn("scope:im:chat.tabs:read", bare)
+        self.assertEqual([n.review for n in manifest.required({}) if n.name == "im:chat.tabs:write_only"], [False])
+
+    def test_an_old_deployment_lacking_only_the_tab_scope_is_offered_just_that_once(self):
+        old = {**FULL, "scopes": FULL["scopes"] - {"im:chat.tabs:write_only"}}
+        lacking, full = manifest.missing(SWITCHES, old)
+        self.assertEqual(ids(lacking), ["scope:im:chat.tabs:write_only"])
+        offer = manifest.offered(lacking, full)
+        self.assertEqual(ids(offer), ["scope:im:chat.tabs:write_only"])  # 免审：不用「连同需审核的一起申请」
+        self.assertEqual(manifest.plan(offer, remark="r")["scopes"], ["im:chat.tabs:write_only"])
+        self.assertEqual(manifest.missing(SWITCHES, FULL), ([], []))  # 补上以后不再缺
+
     def test_existing_bottom_menu_still_requires_menu_event_but_fresh_app_does_not(self):
         no_menu = {**FULL, "menu_enable": False, "menu_keys": [], "events": {manifest.MESSAGE_EVENT, manifest.READ_EVENT}}
         lacking, full = manifest.missing(SWITCHES, no_menu)

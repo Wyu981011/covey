@@ -40,7 +40,31 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 8. 可见范围设成只有你
 9. 写 Covey 的网页配置 `web.json`（`base_url` 指向应用的 `/openapi`，`key_file` 指向密钥文件，`page_url` 是网页地址，飞书卡片上的「打开网页」用它）
 
+10. 以**机器人身份**（`lark-cli --as bot`）在你和机器人的私聊顶栏建「工作台」标签，点开在飞书里内嵌打开网页（见下面的[私聊顶栏的「工作台」标签](#私聊顶栏的工作台标签)）。这一步做不成只提示，不影响前面 9 步
+
 做完后在 Covey 这边打开网页工作台：服务清单里设 `COVEY_WEB=1` 和 `COVEY_WEB_CONFIG=<脚本打印的 web.json 路径>`，再重新注册服务（Covey `docs/configuration.md`「改开关三步」）。一两分钟内网页上就有你私聊里最近的话题。
+
+## 私聊顶栏的「工作台」标签
+
+发布拿到线上地址后，脚本读 `<Covey 状态目录>/owner-chat.json` 里的 `chat_id`（你和机器人私聊过一次就有），用机器人调飞书「会话标签页」接口：
+
+- 没有「工作台」标签：`POST /open-apis/im/v1/chats/{chat_id}/chat_tabs` 建一个网址类型的标签，`tab_config.is_built_in` 为 `true`，飞书在窗口内嵌打开，不跳外部浏览器；
+- 已经有：网址变了、或 `is_built_in` 不是 `true`，用 `.../chat_tabs/update_tabs` 原地更新；已经一致就什么都不做。重跑不会建出第二个。
+
+**用哪个 profile。** 妙搭部署用你本人登录的 lark-cli profile（`--profile`），建标签要用 Covey 机器人自己的应用，可能不是同一个：脚本读 `<Covey 状态目录>/bot-identity.json` 的 `profile`（并核对那个 profile 的应用和 `app_id` 一致），认不出或对不上就不做并要你用 `--bot-profile <名字>` 指定，不会猜。
+
+**权限。** 机器人的飞书应用要有 `im:chat.tabs:write_only`（操作群会话标签页，免审核）。它已在 Covey 的默认权限清单里：升级 Bridge 后「飞书应用待补」卡会提示补这一项，点「扫码自动补齐」就行（见 [docs/feishu-app.md](../../../docs/feishu-app.md)）。不另要 `im:chat.tabs:read`：建和更新的响应里就带会话当前全部标签；脚本先试着拉取现有标签（机器人能读群时多半成功），读不了就用进度文件里记的 `tab_id`，两样都没有才新建，建完发现同名旧标签会提醒你删多的。手工建过「工作台」标签、机器人又读不了标签时，加 `--tab-id <旧标签的 tab_id>` 避免建出第二个。
+
+**降级。** 还没和机器人私聊过（没有 `owner-chat.json`）、机器人缺权限、接口报错或认不出 profile 时，脚本打印原因和补救命令，**不中断**部署、不改 `web.json`，退出码照旧。补齐后（或老部署第一次补建）单独做这一步，不碰妙搭：
+
+```bash
+# 看要做什么（不调标签接口）
+python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --only-chat-tab --dry-run
+# 真做；网址取进度文件或 web.json，也可 --page-url 指定；--bot-profile、--chat-id、--tab-id 见 --help
+python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --only-chat-tab --yes
+```
+
+不想要标签时加 `--skip-chat-tab`。
 
 ## 生成的文件
 
@@ -48,7 +72,7 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 
 | 文件 | 内容 |
 | --- | --- |
-| `miaoda-deploy.json` | 进度：应用 ID、做完了哪几步、最近一次发布。不含密钥 |
+| `miaoda-deploy.json` | 进度：应用 ID、做完了哪几步、最近一次发布、私聊「工作台」标签的 `tab_id`。不含密钥 |
 | `web-openapi.key` | 开放接口密钥，权限 600 |
 | `web.json` | Covey 的网页配置：`base_url`（开放接口）、`key_file`、`page_url`（网页地址，飞书卡片上的「打开网页」按钮用它） |
 | `repo/<应用 ID>/` | 应用代码仓库的本地副本 |

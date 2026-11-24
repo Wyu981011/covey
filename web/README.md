@@ -16,6 +16,12 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --yes
 ```
 
+部署脚本最后一步会在你和机器人的私聊顶栏建「工作台」标签（飞书内嵌打开，要机器人有 `im:chat.tabs:write_only` 权限）。老部署补建，或当时缺权限、还没私聊过没做成时，单独补一遍：
+
+```bash
+python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state --only-chat-tab --yes
+```
+
 自托管：装 Covey 时加 `./install --web`（要公网直连加 `./install --web-public <IP或域名>`）一步做完；也可以手动构建、备好密钥和配置，再按打印的开关改 Covey 的服务清单：
 
 ```bash

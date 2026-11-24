@@ -65,6 +65,11 @@ SCOPES = (
     ("space:folder:create", "产物上传云空间"),
     ("docs:permission.member:create", "产物文件夹给你权限"),
     ("application:application:self_manage", "检查应用配置"),
+    # 私聊顶栏的「工作台」标签（网页的部署脚本 web/deploy 以机器人身份建；docs/web.md）。建和改两个接口
+    # （POST .../chat_tabs、.../chat_tabs/update_tabs）只要这一项，不用审核；响应里就带会话当前全部标签。
+    # 拉取标签（list_tabs）另要 im:chat.tabs:read 或 im:chat:readonly，这里故意不加：deploy.py 先试拉取，
+    # 读不到就改用进度文件里记的 tab_id（或 --tab-id）更新，见 web/deploy 下该脚本的 README。
+    ("im:chat.tabs:write_only", "私聊顶栏的「工作台」标签（网页工作台）"),
 )
 PIN_SCOPES = (("im:message.pins:read", "置顶看板"), ("im:message.pins:write_only", "置顶看板"))
 GROUP_ALL_SCOPES = (("im:chat.members:read", "群聊免@ 选人"),)

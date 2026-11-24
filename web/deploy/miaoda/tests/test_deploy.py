@@ -186,6 +186,161 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(code, 0, text)
         self.assertEqual([c.split()[1] for c in self.writes()].count("+create"), 1)
 
+    # ---- 私聊顶栏的「工作台」标签 ----
+
+    CHAT = "oc_fake0000000000000000000000000001"
+    PAGE = "https://fake.example.com/app/app_demo01"
+
+    def covey_state(self, *, chat=True, profile="bot-prof", app_id="cli_fake"):
+        state = self.tmp / "covey-state"
+        state.mkdir(exist_ok=True)
+        (state / "bot-identity.json").write_text(json.dumps({"app_id": app_id, "owner": OWNER, "profile": profile}))
+        if chat:
+            (state / "owner-chat.json").write_text(json.dumps({"owner": OWNER, "chat_id": self.CHAT}))
+        return str(state)
+
+    def tab_calls(self) -> list[str]:
+        return self.fake().get("tab_calls", [])
+
+    def workbench_tabs(self) -> list[dict]:
+        return [t for t in self.fake().get("tabs", []) if t.get("tab_name") == "工作台"]
+
+    def test_full_run_makes_the_built_in_tab_as_the_bot_and_rerun_changes_nothing(self):
+        code, text = self.run_deploy("--yes", "--covey-state", self.covey_state())
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs"])
+        tabs = self.workbench_tabs()
+        self.assertEqual(len(tabs), 1)
+        self.assertEqual(tabs[0]["tab_type"], "url")
+        self.assertEqual(tabs[0]["tab_content"], {"url": self.PAGE})
+        self.assertIs(tabs[0]["tab_config"]["is_built_in"], True)  # 飞书内嵌打开，不跳外部浏览器
+        api = [c for c in self.fake()["calls"] if c.startswith("api ")]
+        self.assertTrue(all(" bot " in c and "--profile bot-prof" in c for c in api), api)  # 机器人身份和机器人的 profile，不是部署用的
+        state = json.loads((self.out / "miaoda-deploy.json").read_text())
+        self.assertEqual(state["chat_tab"]["tab_id"], tabs[0]["tab_id"])
+        self.assertNotIn("_bot_profile", state)
+        web_before = (self.out / "web.json").read_text()
+        code, text = self.run_deploy("--yes", "--covey-state", self.covey_state())
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs", "GET chat_tabs/list_tabs"])  # 第二次只读
+        self.assertEqual(len(self.workbench_tabs()), 1)
+        self.assertIn("没动", text)
+        self.assertEqual((self.out / "web.json").read_text(), web_before)
+
+    def test_changed_url_updates_in_place(self):
+        covey = self.covey_state()
+        self.run_deploy("--yes", "--covey-state", covey)
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", covey, "--page-url", "https://other.example.com/x")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls()[-1], "POST chat_tabs/update_tabs")
+        tabs = self.workbench_tabs()
+        self.assertEqual(len(tabs), 1)
+        self.assertEqual(tabs[0]["tab_content"]["url"], "https://other.example.com/x")
+        self.assertIs(tabs[0]["tab_config"]["is_built_in"], True)
+
+    def test_an_old_tab_without_is_built_in_is_updated_not_duplicated(self):
+        os.environ["FAKE_TABS_SEED"] = "1"
+        self.addCleanup(os.environ.pop, "FAKE_TABS_SEED", None)
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(), "--page-url", self.PAGE)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls(), ["GET chat_tabs/list_tabs", "POST chat_tabs/update_tabs"])
+        tabs = self.workbench_tabs()
+        self.assertEqual([(t["tab_id"], t["tab_content"]["url"], t["tab_config"]["is_built_in"]) for t in tabs], [("77", self.PAGE, True)])
+
+    def test_dry_run_names_the_plan_and_calls_no_tab_api(self):
+        code, text = self.run_deploy("--dry-run", "--covey-state", self.covey_state())
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls(), [])
+        self.assertFalse([c for c in self.fake()["calls"] if c.startswith("api ")])
+        self.assertIn("is_built_in=true", text)
+        self.assertIn("update_tabs", text)
+        code, text = self.run_deploy("--only-chat-tab", "--dry-run", "--covey-state", self.covey_state(), "--page-url", self.PAGE)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls(), [])
+
+    def test_no_owner_chat_yet_does_not_block_and_says_how_to_redo(self):
+        code, text = self.run_deploy("--yes", "--covey-state", self.covey_state(chat=False))
+        self.assertEqual(code, 0, text)
+        self.assertIn("还没和机器人私聊过", text)
+        self.assertIn("--only-chat-tab --yes", text)
+        self.assertEqual(self.tab_calls(), [])
+        self.assertTrue((self.out / "web.json").is_file())
+        self.assertIn("全部做完", text)
+
+    def test_missing_scope_does_not_block_and_names_it(self):
+        os.environ["FAKE_TABS_WRITE"] = "deny"
+        self.addCleanup(os.environ.pop, "FAKE_TABS_WRITE", None)
+        code, text = self.run_deploy("--yes", "--covey-state", self.covey_state())
+        self.assertEqual(code, 0, text)
+        self.assertIn("im:chat.tabs:write_only", text)
+        self.assertIn("--only-chat-tab --yes", text)
+        self.assertIn("--covey-state", text)
+        self.assertEqual(self.workbench_tabs(), [])
+        state = json.loads((self.out / "miaoda-deploy.json").read_text())
+        self.assertNotIn("chat_tab", state)
+        self.assertEqual(json.loads((self.out / "web.json").read_text())["page_url"], self.PAGE)
+
+    def test_other_api_errors_do_not_block_either(self):
+        os.environ["FAKE_TABS_WRITE"] = "error"
+        self.addCleanup(os.environ.pop, "FAKE_TABS_WRITE", None)
+        code, text = self.run_deploy("--yes", "--covey-state", self.covey_state())
+        self.assertEqual(code, 0, text)
+        self.assertIn("invalid chat_id", text)
+        self.assertNotIn("缺 im:chat.tabs:write_only", text)
+
+    def test_unreadable_tabs_fall_back_to_the_recorded_tab_id(self):
+        covey = self.covey_state()
+        self.run_deploy("--yes", "--covey-state", covey)  # 先建好并记下 tab_id
+        os.environ["FAKE_TABS_READ"] = "deny"
+        self.addCleanup(os.environ.pop, "FAKE_TABS_READ", None)
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", covey, "--page-url", "https://other.example.com/y")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls()[-2:], ["GET chat_tabs/list_tabs", "POST chat_tabs/update_tabs"])
+        self.assertEqual([t["tab_content"]["url"] for t in self.workbench_tabs()], ["https://other.example.com/y"])
+
+    def test_unreadable_tabs_with_tab_id_given_never_create_a_second(self):
+        os.environ["FAKE_TABS_READ"] = "deny"
+        os.environ["FAKE_TABS_SEED"] = "1"
+        self.addCleanup(os.environ.pop, "FAKE_TABS_READ", None)
+        self.addCleanup(os.environ.pop, "FAKE_TABS_SEED", None)
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(), "--page-url", self.PAGE, "--tab-id", "77")
+        self.assertEqual(code, 0, text)
+        self.assertNotIn("POST chat_tabs", self.tab_calls())
+        self.assertEqual(len(self.workbench_tabs()), 1)
+
+    def test_a_profile_of_another_app_is_not_used(self):
+        os.environ["FAKE_APP_ID"] = "cli_someone_else"
+        self.addCleanup(os.environ.pop, "FAKE_APP_ID", None)
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(), "--page-url", self.PAGE)
+        self.assertEqual(code, 0, text)
+        self.assertIn("不是同一个", text)
+        self.assertEqual(self.tab_calls(), [])
+
+    def test_no_known_bot_profile_asks_for_one(self):
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(profile=""), "--page-url", self.PAGE)
+        self.assertEqual(code, 0, text)
+        self.assertIn("--bot-profile", text)
+        self.assertEqual(self.tab_calls(), [])
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state(profile=""), "--page-url", self.PAGE,
+                                     "--bot-profile", "given")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(self.workbench_tabs()), 1)
+        self.assertTrue(any("--profile given" in c for c in self.fake()["calls"] if c.startswith("api ")))
+
+    def test_only_chat_tab_touches_nothing_else_and_reads_page_url_from_web_json(self):
+        self.out.mkdir()
+        (self.out / "web.json").write_text(json.dumps({"base_url": "https://x.example.com/openapi", "page_url": self.PAGE}))
+        code, text = self.run_deploy("--only-chat-tab", "--yes", "--covey-state", self.covey_state())
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.writes(), [])
+        self.assertFalse([c for c in self.fake()["calls"] if c.startswith("apps ")])
+        self.assertEqual([t["tab_content"]["url"] for t in self.workbench_tabs()], [self.PAGE])
+
+    def test_skip_chat_tab(self):
+        code, text = self.run_deploy("--yes", "--covey-state", self.covey_state(), "--skip-chat-tab")
+        self.assertEqual(code, 0, text)
+        self.assertEqual(self.tab_calls(), [])
+
     def test_render_schema(self):
         sql = deploy.render_schema("100000000042")
         self.assertTrue(sql.startswith("BEGIN;"))

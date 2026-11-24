@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""测试用的假 lark-cli：只认 deploy.py 用到的命令，状态记在 FAKE_LARK_STATE 指的 JSON 里，每次调用记一行到 calls。
+"""测试用的假 lark-cli：只认 deploy.py 用到的命令，状态记在 FAKE_LARK_STATE 指的 JSON 里，每次调用记一行到 calls（--as、--format 及其值 user、json 不记；bot 会留下）。
 
 环境变量：
   FAKE_LARK_STATE  状态文件（必需）
@@ -7,6 +7,10 @@
   FAKE_FAIL        create：+create 报 feature_not_available
   FAKE_RELEASE     pending：发布停在审批
   FAKE_MULTIENV    1：库是 dev/online 两套，建表后 +db-env-diff 有变更
+  FAKE_APP_ID      auth status 里的 appId（测 profile 对不对得上机器人）
+  FAKE_TABS_READ   deny：list_tabs 报缺权限
+  FAKE_TABS_WRITE  deny：建/改标签报缺权限；error：报别的错
+  FAKE_TABS_SEED   1：会话里已有一个旧的「工作台」标签（没有 is_built_in）
 """
 import json
 import os
@@ -72,6 +76,39 @@ def init_repo(target: Path):
     return remote
 
 
+def tabs_api(s, args):
+    """会话标签页的三个接口：建、更新、拉取。标签记在 s["tabs"]（初始只有消息和 Pin 两个内置的）。"""
+    method, path = args[1], args[2]
+    body = json.loads(opt(args, "--data", "{}"))
+    if "tabs" not in s:
+        s["tabs"] = [{"tab_id": "1", "tab_type": "message"}, {"tab_id": "2", "tab_type": "pin"}]
+        if os.environ.get("FAKE_TABS_SEED"):
+            s["tabs"].append({"tab_id": "77", "tab_name": "工作台", "tab_type": "url", "tab_content": {"url": "https://old.example.com/"}})
+    m = re.match(r"^/open-apis/im/v1/chats/(oc_\w+)/chat_tabs(/list_tabs|/update_tabs)?$", path)
+    if not m:
+        fail("unknown", f"假 lark-cli 不认识这个接口：{path}", 2)
+    s["tab_calls"] = s.get("tab_calls", []) + [f"{method} {path.split('/chats/')[1].split('/', 1)[1]}"]
+    if method == "GET" and m.group(2) == "/list_tabs":
+        if os.environ.get("FAKE_TABS_READ") == "deny":
+            out({"ok": False, "error": {"type": "api", "subtype": "missing_scope", "code": 99991672, "message": "missing im:chat.tabs:read"}}, 1)
+        out({"code": 0, "msg": "ok", "data": {"chat_tabs": s["tabs"]}})
+    if method != "POST":
+        fail("unknown", "bad method", 2)
+    if os.environ.get("FAKE_TABS_WRITE") == "deny":
+        out({"ok": False, "error": {"type": "api", "subtype": "missing_scope", "code": 99991672, "message": "need im:chat.tabs:write_only"}}, 1)
+    if os.environ.get("FAKE_TABS_WRITE") == "error":
+        out({"code": 232006, "msg": "invalid chat_id"}, 0)
+    for tab in body["chat_tabs"]:
+        if m.group(2) == "/update_tabs":
+            old = next((t for t in s["tabs"] if t["tab_id"] == tab["tab_id"]), None)
+            if old is None:
+                out({"code": 232001, "msg": "tab not found"}, 0)
+            old.update({k: v for k, v in tab.items() if k != "tab_id"})
+        else:
+            s["tabs"].append({**tab, "tab_id": str(100 + len(s["tabs"]))})
+    out({"code": 0, "msg": "ok", "data": {"chat_tabs": s["tabs"]}})
+
+
 def main():
     args = sys.argv[1:]
     s = load()
@@ -79,7 +116,12 @@ def main():
     stdin = sys.stdin.read() if "-" in args and not sys.stdin.isatty() else ""
     try:
         if args[:2] == ["auth", "status"]:
-            out({"verified": True, "identities": {"user": {"openId": os.environ.get("FAKE_OWNER", ""), "status": "ready"}}})
+            st = {"verified": True, "identities": {"user": {"openId": os.environ.get("FAKE_OWNER", ""), "status": "ready"}}}
+            if os.environ.get("FAKE_APP_ID"):
+                st["appId"] = os.environ["FAKE_APP_ID"]
+            out(st)
+        if args[:1] == ["api"]:
+            tabs_api(s, args)
         cmd = args[1] if args[:1] == ["apps"] else ""
         if cmd == "+create":
             if os.environ.get("FAKE_FAIL") == "create":
