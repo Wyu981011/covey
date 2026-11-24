@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from covey.app import owner_send, pins, project_lead, project_loop, revisits as revisit_rules, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
+from covey.app.project_facts import rebound
 from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, revisits, store, turn_source, web_sync
 from covey.core import owner_send as owner_send_records
 from covey.core import memory as core_memory
@@ -630,9 +631,10 @@ class Collector:
         ran = [record for record in records if not board_read.unrun(record)]
         # Waiting for 开始, it runs with what its launch card has chosen, not the binding it was given to wait with (the
         # default Harness and workspace of a reply that opened it, 2026-11-21 T622: Codex and the default workspace on the
-        # page, Claude Code · Opus 5.5 · covey on the card).
+        # page, Claude Code · Opus 5.5 · covey on the card). Else its binding's Harness, workspace and model (bound_model).
+        bound = bound_model(data, latest)
         choice = launch_choice(form) or {"workspace": str(data.get("workspace_name") or ""), "harness": str(data.get("harness_id") or ""),
-                                         "model": str((latest or {}).get("model") or ""), "model_name": model_name((latest or {}).get("model"))}
+                                         "model": bound, "model_name": model_name(bound)}
         body = {
             "number": number, "title": title, "project_key": (project["id"] if project else found.id if found else ""), "state": word,
             "workspace": choice["workspace"], "harness": choice["harness"],
@@ -1318,6 +1320,18 @@ def launch_choice(form) -> dict:
     return {"harness": harness, "model": model, "model_name": str(entry.get("display_name") or "") or model_name(model),
             "label": str(entry.get("label") or ""), "effort": str(form.get("selected_effort") or ""),
             "workspace": str(defaults.get("path") or defaults.get("workspace") or "")}
+
+
+def bound_model(topic, latest) -> str:
+    """The model ``topic`` (its topic.json) runs its next turn on, named on the page with the Harness and workspace it is
+    bound to (the chat box's 工作区 · Harness · 模型 line, the topic page's head): its binding's; for a topic.json that names
+    none (older topics), the one its ``latest`` task ran on, unless a 换配置 bound it anew since (app/project_facts.py
+    rebound). 2026-11-24 T724: a topic opened on Claude Code · opus, its turn stopped, switched to Antigravity · Gemini 4
+    Neon, and the page said Antigravity · Opus until its next turn ran: the binding's Harness, the stopped task's model."""
+    model = str(topic.get("model") or "")
+    if model or latest is None or rebound(topic, latest):
+        return model
+    return str(latest.get("model") or "")
 
 
 def start_link(state, topic, card) -> str:

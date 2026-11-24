@@ -166,6 +166,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - `maybe_stuck`：超过 `COVEY_PROGRESS_STUCK_MINUTES` 分钟没有动静；最新一步是还在跑的命令时不算。
   - `command`：只在最新一步是还在跑的命令时才有这个键，`{since, seconds, long}`（开始的时刻、已跑的秒数到分钟、是否已跑满卡住的分钟数），网页可写“在等一条命令跑完 · 已 38 分钟”；旧网页不认识这个键，不受影响。
 - **模型名**（v11）：`model_name` 是读得懂的名字（`core/model_names.py`：`router/claude-opus-5-5` → Opus 5.5，去掉路由前缀、预算后缀和 `[1m]`，`default` 为空串）；`model` 照旧是原值。
+  - 话题的 `harness`、`workspace`、`model` 都是它现在绑的（topic.json，和 `config` 同一个来源），下一句话就用它们；网页输入框下沿那行“工作区 · Harness · 模型”和话题页页头照它写。绑定里没写模型的老话题，取最近一轮跑过的任务的模型；换配置以后还没跑过的，不取换配置前那个任务的（`app/web_collect.py` 的 `bound_model`）。每一轮实际用的配置看那一轮的 `ran_with`。
 - **最后一轮的编号**（v12）：`last_seq` 是这次推的各轮里最大的 `seq`（没有轮次为 0）。网页收到后删掉这个话题 `seq` 比它大的轮次：在跑的一轮按“已有轮数 + 1”推，回答进来后编号可能落在更前面，原来那条“在跑”就再也不会被覆盖。收尾中的任务（回答已写进历史、记录还是“在跑”）不判“没发出去”，也不再画一条“在跑”的轮。
 - **什么时候进的专项**（v13）：专项的成员话题带 `joined_at`（秒）。专项报告只算这个话题加入以后结束的轮次，和专项卡的 token 同一个口径。
 - **话题要点**：开了[整理专项](projects.md#整理专项)时带 `gist`：`{essence, goal, involves, related, changed, updated_at}`，没有要点就没有这个字段。网页把 `goal` 当“目标”显示。

@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed 修复
 
+- 网页工作台：话题换了配置、下一轮还没跑时，输入框下沿那行和话题页页头不再把新的 Harness 和换之前那一轮的模型拼在一起（换到 Antigravity · Gemini 4 Neon 后显示“Antigravity · Opus”）；话题的模型和 Harness、工作区一样，取它现在绑的。
 - 网页工作台：输入框里 @ 一位名字很长的（长名字的专项负责人、长标题的话题），胶囊不再折成两行、撑高变形、右边空一块：名字只占一行，放不下就截断（话题截标题，负责人截专项名，T 号和“负责人”一直在），悬停看全名；胶囊和后面的字在同一条基线上，带胶囊的行和别的行一样高。手机上长胶囊不再把输入框撑出屏幕；你那句下面的去向放不下时换到下一行、名字太长截断，不再顶出气泡。
 
 ### Added (English)
@@ -21,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed (English)
 
+- Web page: after a topic's 换配置 and before its next turn, the line under the composer and the topic page's head no longer join the new Harness with the model of the turn before the switch ("Antigravity · Opus" after a switch to Antigravity · Gemini 4 Neon). A topic's model is the one it is bound to now, like its Harness and workspace.
 - Web page: the composer's @ pill for a long name (the lead of a long-named project, a topic with a long title) no longer wraps into two lines, grows taller and leaves a gap on its right. The name stays on one line and is cut short when it has no room (a topic's title or a lead's project name; the T number and 负责人 always show), the full name shows on hover, the pill sits on the text's baseline, and a line with a pill is as tall as the others. On a phone a long pill no longer pushes the composer off the screen, and the route under your message moves to its own line and cuts long names instead of running out of the bubble.
 
 ## [0.1.0] - 2026-11-23

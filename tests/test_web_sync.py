@@ -1691,6 +1691,34 @@ class ExtrasTest(WebCase):
                          {"model": "claude:opus-x", "effort": "max", "work_mode": "", "workspace": "", "run_mode": "worktree", "redaction": "on"})
         self.assertIsNone(web_switch.topic_config({}))
 
+    def test_a_switched_topic_names_the_model_it_is_bound_to_before_its_next_turn(self):
+        """2026-11-24 T724: a topic opened on Claude Code · opus, its turn stopped, 换配置 to Antigravity · Gemini 4 Neon. Until its
+        next turn ran, the chat box's 工作区 · Harness · 模型 line said Antigravity · Opus: the Harness its binding's, the model the
+        stopped task's. The topic names its binding's model, as its Harness and ``config`` do."""
+        self.topic()  # Claude Code; its one task ran on opus.
+        write_job(self.state, f"k-{TOPIC[:4]}", binding_revision=1)
+        switched = {"switches": [{"revision": 2, "from": {"harness_id": "claude", "model": "opus"},
+                                  "to": {"harness_id": "agy", "model": "gemini-4-neon"}}], "binding_revision": 2}
+        write_topic(self.state, topic_id=TOPIC, chat_id=CHAT, harness_id="agy", topic_number=7, workspace_name="ws1",
+                    model="gemini-4-neon", effort="xhigh", **switched)
+        self.sync.push_once(T0)
+        topic = [item["data"] for item in self.web.items("topic") if item["key"] == TOPIC][-1]
+        self.assertEqual((topic["harness"], topic["model"], topic["model_name"], topic["config"]["model"]),
+                         ("agy", "gemini-4-neon", "Gemini 4 Neon", "agy:gemini-4-neon"))
+
+    def test_a_topic_names_its_binding_model_else_its_last_tasks_unless_switched_since(self):
+        """bound_model (T724): the binding's model, which the next message runs on, though the last task ran on another (a
+        safety refusal's retry on an older model keeps the binding, app/policy_retry.py); a topic.json that names none (older
+        topics) says the last task's, unless a 换配置 to a Harness's own default model bound it anew since."""
+        latest = {"model": "claude-opus-4-8", "binding_revision": 1}
+        self.assertEqual(app_collect.bound_model({"harness_id": "claude", "model": "claude-opus-5-5", "binding_revision": 1}, latest),
+                         "claude-opus-5-5")
+        self.assertEqual(app_collect.bound_model({"harness_id": "claude"}, latest), "claude-opus-4-8")
+        self.assertEqual(app_collect.bound_model({"harness_id": "claude"}, None), "")
+        to_default = {"harness_id": "codex", "model": "", "binding_revision": 2, "switches": [{"revision": 2}]}
+        self.assertEqual(app_collect.bound_model(to_default, latest), "")
+        self.assertEqual(app_collect.bound_model(to_default, {"model": "gpt-6-luna", "binding_revision": 2}), "gpt-6-luna")
+
     def test_a_topic_says_its_last_turn_so_the_page_drops_a_stale_running_one(self):
         """2026-11-19 T552: a task pushed as running at seq count + 1 whose answer came in at a lower seq left that running row on
         the page for good (T519, T559 ...): the 专项报告 counted its tokens twice and drew it as running. The topic says its last
