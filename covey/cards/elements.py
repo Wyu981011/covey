@@ -130,6 +130,11 @@ def button_look(tone=""):
     return {"type": BUTTON_TYPES[tone], "size": "small"}
 
 
+def shown_width(text):
+    """``text``'s display width, what a card guesses of how wide it is drawn: a CJK character two, any other one."""
+    return sum(2 if ord(char) > 0x2e7f else 1 for char in str(text))
+
+
 def text_button(label, value, *, tone="", disabled=None):
     """A small borderless button for a row: ``tone`` "primary" (blue), "danger" (red) or plain."""
     return callback_button(label, value, style=f"{tone}_text" if tone else "text", disabled=disabled, size="small")

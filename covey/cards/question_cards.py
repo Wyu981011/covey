@@ -5,7 +5,7 @@ import re
 
 from covey.cards.board import OPEN_KIND
 from covey.cards.elements import (BUTTON_SPACING, button_look, button_row, callback, card, fold, grey, item, md, note, plain,
-                                  text_button, topic_button)
+                                  shown_width, text_button, topic_button)
 from covey.cards.review import compact_text, opening
 from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, peek, receipt, speaker_row, split_ask
 from covey.core import look, triage, turn_words
@@ -381,22 +381,50 @@ def _send_row(record, token):
         {"tag": "column", "width": "weighted", "weight": 1, "elements": [button]} for button in (submit, aside)]}
 
 
-def _pick_row(record, options):
-    """The options of a picks() card, a submit button each, one under another as wide as the card, then 不回答此题 under
-    them as wide as its label. Its words are the model's, of any length: in one row that was to wrap (flow, as
-    build_stop_action_row's fixed labels do) Feishu's desktop client squeezed three long options to "…" and pushed
-    不回答此题 past the card's edge (2026-11-24 T746); one under another none leaves the card, in a topic's side panel
-    and on a phone too, and each has the card's width before its label is cut. A button sends the form, so 补充说明 goes
-    with it; its value says which."""
+# How a picks() card lays out its buttons (pick_rows), by their labels' shown_width (a CJK character two). The owner,
+# 2026-11-24 (T746): short ones side by side as they were, many or long ones broken into rows.
+PICK_ROW = 56  # What one row of buttons may take, PICK_CHROME counted for each: about 380 px. A desktop card is up to 600 px
+# and does not wrap a row, so too long a one goes past its edge; a topic's side panel (272 px) and a phone wrap one.
+PICK_CHROME = 4  # What a small bordered button takes beyond its label: its padding, its border and the gap to the next.
+PICK_LONG = PICK_ROW // 2 - PICK_CHROME  # Wider than this, an option could not share a row with another as wide.
+
+
+def pick_rows(labels):
+    """The rows a picks() card puts its buttons in, ``labels`` being its options' and then 不回答此题's: their indexes in
+    order, as many to a row as PICK_ROW takes, so a single row when they all fit; None when an option is long
+    (PICK_LONG), the options then one under another."""
+    if any(shown_width(label) > PICK_LONG for label in labels[:-1]):
+        return None
+    rows, used = [[]], 0
+    for i, label in enumerate(labels):
+        if rows[-1] and used + shown_width(label) + PICK_CHROME > PICK_ROW:
+            rows.append([])
+            used = 0
+        rows[-1].append(i)
+        used += shown_width(label) + PICK_CHROME
+    return rows
+
+
+def _pick_rows(record, options):
+    """The buttons of a picks() card, a submit button an option then 不回答此题, as pick_rows lays them out: rows that
+    wrap (button_row), each button as wide as its label; with a long option, each option a row of its own as wide as
+    the card and 不回答此题 under them as wide as its label. Their words are the model's, of any length: in one row
+    Feishu's desktop client squeezed three long options to "…" and pushed 不回答此题 past the card's edge, and one under
+    another drew two short options as two bars across the card, three rows for three words (the owner, 2026-11-24
+    T746). A button sends the form, so 补充说明 goes with it; its value says which."""
     def pick(name, label, value, width):
-        return {"tag": "button", "text": plain(label[:100]), **button_look(), "width": width, "form_action_type": "submit",
-                "name": name, "behaviors": [{"type": "callback", "value": {
+        return {"tag": "button", "text": plain(label), **button_look(), **({"width": width} if width else {}),
+                "form_action_type": "submit", "name": name, "behaviors": [{"type": "callback", "value": {
                     "kind": "bridge_question", "topic_id": record["topic_id"], "token": record["token"], PICK: value}}]}
 
-    buttons = [pick(f"pick_{j}", o["label"], j, "fill") for j, o in enumerate(options)]
-    buttons.append(pick("pick_skip", SKIP_LABEL, SKIP_VALUE, "default"))
-    return {"tag": "column_set", "columns": [
-        {"tag": "column", "width": "weighted", "weight": 1, "vertical_spacing": BUTTON_SPACING, "elements": buttons}]}
+    labels = [o["label"][:100] for o in options]
+    rows = pick_rows(labels + [SKIP_LABEL])
+    buttons = [pick(f"pick_{j}", label, j, "" if rows else "fill") for j, label in enumerate(labels)]
+    buttons.append(pick("pick_skip", SKIP_LABEL, SKIP_VALUE, "" if rows else "default"))
+    if rows:
+        return [button_row([buttons[i] for i in row]) for row in rows]
+    return [{"tag": "column_set", "columns": [
+        {"tag": "column", "width": "weighted", "weight": 1, "vertical_spacing": BUTTON_SPACING, "elements": buttons}]}]
 
 
 def lead_notes(record):
@@ -469,7 +497,7 @@ def _question_fields(i, q, count=1, record=None, draft=None):
                                for o in options)
             elements.append({"tag": "markdown", "content": listed[:6000]})
     if options and record is not None:
-        elements.append(_pick_row(record, options))
+        elements.extend(_pick_rows(record, options))
     elif options:
         elements.append(
             {

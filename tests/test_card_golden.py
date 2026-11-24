@@ -396,6 +396,14 @@ def question_cards():
     # One question with options at the private chat's top level: a button per option (cards/question_cards.py picks).
     cards["card_top_pick"] = question_card({**question_record(questions=question_record()["questions"][:1], answers={}),
                                             TOP_COPY: True}, "T70")
+    # Its buttons by how wide their labels are (2026-11-24 T746): short ones in one row as above; too many for a row in
+    # rows, as many to a row as fit; with a long one, each option a row of its own as wide as the card.
+    cards["card_top_pick_rows"] = question_card({**question_record(answers={}, questions=[{
+        "id": "way", "question": "先做哪些？", "options": [{"label": "两项都做（推荐）"}, {"label": "只做任务进程预热"},
+                                                          {"label": "只做配置变更"}, {"label": "先不做"}]}]), TOP_COPY: True}, "T70")
+    cards["card_top_pick_long"] = question_card({**question_record(answers={}, questions=[{
+        "id": "run", "question": "接下来怎么跑？", "options": [{"label": "保留草稿，在新版组上继续跑完第 1 轮再决定（推荐）"},
+                                                            {"label": "回退到基线，重新从第 1 轮开始跑"}]}]), TOP_COPY: True}, "T70")
     # A 话题区's question at the top level (app/question_display.py mirror): the turn's output above the form.
     output = "## 两种做法\n\n- A：改看板，`pins.py`\n- B：改卡片 <x>"
     cards["mirror_pending"] = mirror_card(question_record(), "T436", output)
