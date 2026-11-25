@@ -175,7 +175,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `topics_search` | clues*、limit | 按线索找是哪个话题哪一轮做的 |
 | `topic_read` | topic*、job、turns | 读话题最近几轮：问题、结论、检查点、没答的问题 |
 | `workspaces_list` | 无 | 列工作区：名字、路径、用途、最近的话题 |
-| `topic_start` | title*、prompt*、workspace*、readonly*、user_requested*、why*、attachments、criteria、harness、model、effort、redaction | 为新的事开话题；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)） |
+| `topic_start` | title*、prompt*、workspace*、readonly*、user_requested*、why*、attachments、criteria、harness、model、effort、basis、redaction | 为新的事开话题；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)）；填了 harness、model、effort 要写 basis（见下面[点名配置的依据](#点名配置的依据)） |
 | `topic_send` | topic*、text*、note、title、criteria、attachments | 把主人的话追加给已有话题 |
 | `topic_fork` | topic*、title*、prompt*、attachments | 从已有话题分叉 |
 | `question_answer` | topic*、answers* | 替主人答选择题 |
@@ -184,6 +184,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `principle_delete` | id* | 删一条原则 |
 | `principles_list` | 无 | 列出原则 |
 | `settings_panel` | 无 | 在私聊发设置卡（`app/butler_panel.py`） |
+| `topics_switch` | topics*、basis*、harness、model、effort | 在私聊发批量换配置卡，主人点「确认更换」后才逐个换（[批量换配置](usage.md#批量换配置)） |
 | `knowledge_save` | scope*、kind*、text*、workspace、why、source_topic | 记一条知识条目（只有 `COVEY_KNOWLEDGE=1` 才列） |
 | `knowledge_update` | id*、text*、reason*、kind、why | 改写：新 id 取代旧 id（同上） |
 | `knowledge_drop` | id*、reason* | 作废一条（同上） |
@@ -196,6 +197,12 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 `topic_start` 开出的话题和同一个仓库里 30 分钟内还在做的话题标题相近时，回复末尾加“可能重复：T12《…》 也在同一个仓库做相近的事”，只提示，照常开（`app/repo_peers.py` 的 `duplicates`）。
 
 开了专项时 `topic_start`、`topic_send` 各多一个可选的 `project`（开专项、把话题转成专项）。开了专项时话题也能把只有管家能办的事交过来：私聊顶层一条“↪ T12 转给管家”，管家在它上面排一轮、按主人在话题里的原话办（[在话题里说开专项](projects.md#在话题里说开专项)）。查询类工具只读记录、不持记录锁；`question_answer` 和卡上点“提交回答”走同一条路。各工具的规则见[实现细节 · 工具的细节](butler-internals.md#工具的细节)。
+
+### 点名配置的依据
+
+管家和专项负责人开话题（`topic_start`、`project_topic_start`）时填了 `harness`、`model` 或 `effort`，或者用 `topics_switch` 批量换配置，都要写 `basis`：主人这一轮原话里连续的一段，或记下的原则编号（`p1a2b3c`）、这一轮带的记忆编号（`M12`），也可以是原则或专项记忆里的一段原文。Bridge 在执行前核对（`app/config_basis.py` 的 `check`，比较时不计空格、标点和大小写，短于 3 个字的不算），对不上就拒绝这次调用、说明原因，模型改为不填（用设置里的默认）或问主人。开出来的话题卡在配置那一行末尾写“按「…」”，主人一眼能看出这个配置是照哪句话选的；没填这几项的话题卡和以前一样。
+
+为什么要这样：主人说“监视进程这类给 Codex”，之后修代码、验收这类话题也被开到 Codex 上。原则只管它说的那一类事，工具说明、管家规则和记忆纠正规则里都写了这一条；Bridge 自己开话题（独立复核、网页开新话题）用的是设置卡里的配置，不经过这道核对。
 
 ### 按线索找话题
 

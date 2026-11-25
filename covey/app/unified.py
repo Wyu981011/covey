@@ -119,7 +119,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
     EARLY = ('workspace_manager', 'launch_model_picker', 'directory_picker', 'harness_switch', 'rewind')
     PANELS = ('proxy.panel', 'proxy.resend', 'proxy.owner_send', 'group_manager', 'redaction_panel', 'nodes.panel',
               'butler_panel', 'settings_hub', 'settings_hub.memory', 'overview', 'digest', 'app_setup', 'welcome',
-              'group_menu', 'project_tidy', 'review', 'collab.cards', 'web_login', 'fold_close')
+              'group_menu', 'project_tidy', 'review', 'collab.cards', 'web_login', 'fold_close', 'batch_switch')
 
     # What only the Bridge uses, built by _build_parts: at once in the Bridge (the default), on first use in a
     # task runner (``task_runner=True``), which rarely meets any of it.
@@ -128,7 +128,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
              'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'storage_alerts', 'digest',
              'topic_seen', 'app_setup', 'dispatch_cards', 'project_cards', 'projects', 'project_tidy',
              'project_loop', 'patrol', 'devices', 'nodes', 'web_sync', 'web_login', 'source_watch', 'extension_features', 'features', 'menu', 'group_menu', 'group_boards',
-             'welcome', 'revisits', 'review', 'collab', 'fold_close', 'owner_ledger')
+             'welcome', 'revisits', 'review', 'collab', 'fold_close', 'owner_ledger', 'batch_switch')
 
     def __init__(self, *, script_path, component_factory=components, task_runner=False):
         self.runtime = Runtime(script_path=script_path)
@@ -195,7 +195,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.group_manager import GroupManager
         from covey.app.group_menu import GroupMenu
         from covey.app.harness_switch import HarnessSwitch
-        from covey.app import butler_knowledge, butler_search, butler_panel, butler_tools, butler_topics
+        from covey.app import batch_switch, butler_knowledge, butler_search, butler_panel, butler_tools, butler_topics
         from covey.app.butler_env import ButlerEnv
         from covey.app.butler_panel import ButlerPanel
         from covey.app.butler_tools import ButlerTools
@@ -249,7 +249,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # Every tool core/butler_tool_specs.py names, by the module that runs it.
             self.butler_tools = ButlerTools(self.butler_env, handlers={**butler_tools.TOOLS, **butler_search.TOOLS,
                                                                  **butler_topics.TOOLS, **butler_panel.TOOLS,
-                                                                 **butler_knowledge.TOOLS, **PROJECT_BUTLER_TOOLS})
+                                                                 **butler_knowledge.TOOLS, **batch_switch.TOOLS,
+                                                                 **PROJECT_BUTLER_TOOLS})
             self.butler_search = butler_search.ButlerSearch(self.butler_env)  # Reads the checkpoints topics_search looks into.
             # 独立复核 on an answer card (app/review.py, COVEY_REVIEW=1): a read-only topic opened as the butler opens one.
             from covey.app.review import Review
@@ -257,6 +258,9 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # A fold closed by a click on its text (app/fold_close.py).
             from covey.app.fold_close import FoldClose
             self.fold_close = FoldClose(self.runtime, self.messenger)
+            # 批量换配置 (app/batch_switch.py): the card the butler's or a lead's topics_switch sends, and the owner's clicks on it.
+            from covey.app.batch_switch import BatchSwitch
+            self.batch_switch = BatchSwitch(self.runtime, self.topics, self.messenger)
             # The memory watchdog's alerts (service/memguard.py), to a task's topic or the owner's private chat.
             self.memguard_alerts = MemguardAlerts(self.runtime, self.messenger, self.voice)
             # The state directory's disk (app/storage_alerts.py): slow locks and reads watched, a refused write told once.

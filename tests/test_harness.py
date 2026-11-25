@@ -61,6 +61,7 @@ from covey.cards.board import KINDS as BOARD_KINDS
 from covey.cards.app_setup import SKIP as APP_SETUP_SKIP, START as APP_SETUP_START
 from covey.cards.welcome import KIND as WELCOME_KIND
 from covey.cards.web_login import KINDS as WEB_LOGIN_KINDS
+from covey.cards.batch_switch import KINDS as BATCH_SWITCH_KINDS
 from covey.cards.proxy_panel import KINDS as PROXY_PANEL_KINDS
 from covey.cards.proxy_resend import RESEND as PROXY_RESEND, SUGGEST as PROXY_SUGGEST
 from covey.cards.owner_send import (ASK as OWNER_SEND_ASK, DROP as OWNER_SEND_DROP, PICK as OWNER_SEND_PICK,
@@ -705,6 +706,7 @@ class RetiredHarnessTests(unittest.TestCase):
         private |= {OWNER_SEND, OWNER_SEND_DROP, OWNER_SEND_PICK,
                     OWNER_SEND_ASK}  # The 代发草稿 card (tests/test_owner_send.py, test_ask_first.py).
         private |= {FOLD_CLOSE_KIND}  # A click on 这一轮中途的汇报's text on a relay (tests/test_trace.py FoldCloseTest).
+        private |= BATCH_SWITCH_KINDS  # The 批量换配置 card (tests/test_batch_switch.py).
         clicks = [{'action_value': {'kind': kind, 'topic_id': self.topic.topic_id, 'job_id': 7, 'token': 'ab' * 8,
                                     'harness_id': GONE, 'binding_revision': 2}}
                   for kind in ACTIONS if kind not in private]

@@ -258,10 +258,14 @@ class AntigravityTests(unittest.TestCase):
         self.assertIn("project_send", eager)
 
     def test_a_leads_tools_are_all_loaded_up_front(self):
+        """All but SECONDARY (topics_switch, T786: a lead proposes a batch switch rarely; agy names it when the room is out)."""
         from covey.backends.agy.home import EAGER_BYTES
+        from covey.core.butler_tool_specs import SECONDARY
         lead = {"COVEY_PROJECT_LEAD": "p1", "COVEY_PROJECT_TRIAGE": "1", "COVEY_COLLAB": "1", "COVEY_PROJECT_AUTOWAKE": "1"}
-        self.assertLessEqual(sum(self.sizes(lead).values()), EAGER_BYTES,
+        sizes = self.sizes(lead)
+        self.assertLessEqual(sum(size for name, size in sizes.items() if name not in SECONDARY), EAGER_BYTES,
                              "a lead's tools outgrew EAGER_BYTES: agy would name the last of them only")
+        self.assertIn("topics_switch", sizes)
 
     BLOCK = ("<mcp_servers>\nEach MCP server has a directory `<appDataDir>/mcp/<serverName>` containing tool schemas.\n"
              "```\n# <serverName>\nEager:\n<toolName>\nLazy:\n<toolName>\n```\n"

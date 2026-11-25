@@ -52,7 +52,7 @@
 | 改外观先选样张、UI 拍板记录（改卡片和网页的样子之前先出 2~3 版让主人点选；定下的规则逐条机检） | `core/ui_samples.py`（选项的 `sample`：登记时读一次、清成点不动的）、`cards/question_cards.py` 的 `with_samples`、`scripts/ui_samples.py`（`golden` 取现在的样子、`check` 照 Bridge 的读法查）、`tests/test_ui_rules.py`（`MATRIX`：每条规则 × 管家、负责人、话题、专项的话题、网页开的话题） | [UI 规范 · 改外观先选样张](docs/ui.md#12-改外观先选样张)、[拍板记录](docs/ui.md#13-拍板记录) |
 | 补充 | `app/steering.py`、`core/deliveries.py`、`core/steer.py` | [补充投递](docs/architecture.md#补充投递) |
 | 主人撤回或编辑消息（`COVEY_SOURCE_WATCH`，默认开） | `app/source_watch.py`（读回、停止、补充）、`core/source_book.py`（登记的消息）、`cards/source_note.py` | [撤回与编辑](docs/architecture.md#撤回与编辑) |
-| 换配置 | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py` | [话题中途换配置](docs/architecture.md#话题中途换配置) |
+| 换配置；管家和负责人的批量换配置（`topics_switch`，发卡主人确认）；点名配置要有依据（`basis`） | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py`；批量 `app/batch_switch.py`、`cards/batch_switch.py`；依据 `app/config_basis.py`（`app/butler_tools.py` 的 `refusal` 里核对） | [话题中途换配置](docs/architecture.md#话题中途换配置)、[点名配置的依据](docs/butler.md#点名配置的依据) |
 | 回退一步（Claude） | `app/rewind.py`、`backends/claude/rewind.py` | [回退一步](docs/architecture.md#回退一步) |
 | 结果、投递与重投 | `app/turn_settle.py`、`app/worker.py`、`app/turn_delivery.py`、`app/redelivery.py`、`app/outbox.py` | [结果授权与投递](docs/architecture.md#结果授权与投递) |
 | 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；管家一轮的请求挂住时停下它、让后来的话先跑 `app/unstick.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
@@ -96,6 +96,7 @@
 | `app/auto_retry.py` | Automatic 检查并继续 after a turn that ended without a reply as one of KINDS |
 | `app/auto_upgrade.py` | 定时自动升级: with COVEY_AUTO_UPGRADE=HH:MM and an upgrader set up, the Bridge upgrades itself and the web page … |
 | `app/availability.py` | Separate local backend readiness from recently observed model access |
+| `app/batch_switch.py` | 批量换配置 (T786): the butler or a project's lead proposes switching several topics to another Harness, model or … |
 | `app/binding.py` | A topic's binding (Harness, model, budget, work mode, place and 敏感词脱敏) and what may change it |
 | `app/bot_menu.py` | The bot's custom menu (机器人自定义菜单): the owner's commands, since typed ones misfired |
 | `app/butler.py` | The butler's session, only in the private chat mode 管家 |
@@ -127,6 +128,7 @@
 | `app/collab_flow.py` | 协作的执行闭环 (docs/architecture.md 多参与者协作, COVEY_COLLAB=1 |
 | `app/compact_runner.py` | The butler's idle compaction runner: `bin/covey_runner.py --compact-only` |
 | `app/compaction.py` | The butler's compaction requests: its next turn compacts its native session first |
+| `app/config_basis.py` | Why a topic the butler or a project's lead opens, or a batch of topics it switches, names a Harness, model or … |
 | `app/detached.py` | Run each task in its own process so a bridge restart or deploy does not stop it |
 | `app/device_files.py` | Files between the hub and a device's topic, always through the device program |
 | `app/devices.py` | Devices at the app's edge |
@@ -298,6 +300,7 @@
 | `cards/answer_card.py` | What follows a finished turn's answer on its answer card in the topic and on its relay at the private chat's … |
 | `cards/app_setup.py` | The 飞书应用待补 card: what the app lacks, then the run's steps, then what it added |
 | `cards/artifact_panels.py` | The 产物 panels of a task card: Drive links and uploading state, and the older per-file send buttons |
+| `cards/batch_switch.py` | The 批量换配置 card: the topics the butler or a project's lead would switch to another Harness, model or budget … |
 | `cards/board.py` | The bot menu's 看板: what is going on in the owner's private chat now, in the 夜航 look |
 | `cards/butler_panel.py` | The 管家 settings card, in the bot menu panels' style |
 | `cards/card_cost.py` | What a card costs CardKit, which refuses one over its size (code 200860) |

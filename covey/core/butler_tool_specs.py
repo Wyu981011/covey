@@ -25,6 +25,11 @@ HARNESS_ARG = ("主人点名用哪个 Harness 时必须填（如“用 Claude Co
                "主人没点名就不填，用设置里的默认")
 MODEL_ARG = "主人点名用哪个模型时必须填，写模型名；主人没点名就不填，用设置里的默认"
 EFFORT_ARG = "主人点名思考预算时必须填（如“用高预算”“max”）；主人没点名就不填，用设置里的默认"
+# A preference holds for the kind of work it was said for (T786: "监视进程这类用 Codex" had other topics opened on Codex): a call
+# that names a Harness, model or budget says on what (app/config_basis.py checks it). Short: agy's room (backends/agy/home.py).
+BASIS_ARG = {"type": "string",
+             "description": "填了 harness、model、effort 时必填：主人这一轮原话里的一段，或原则、记忆编号（p1a2b3c、M12）。"
+                            "原则和记忆只管它说的那类事，别的事不套用；Bridge 会核对，话题卡上写明"}
 # 敏感词脱敏 of the new topic (app/butler_topics.py plan_start): the settings' default unless given; a topic that would redact on
 # a Harness that cannot is refused with what to ask the owner (T647 P0-8).
 REDACTION_ARG = {"type": "boolean",
@@ -96,6 +101,7 @@ TOOLS = (
          "harness": {"type": "string", "description": HARNESS_ARG},
          "model": {"type": "string", "description": MODEL_ARG},
          "effort": {"type": "string", "description": EFFORT_ARG},
+         "basis": BASIS_ARG,
          "redaction": REDACTION_ARG}}},
     {"name": "topic_send",
      "description": "把主人的话追加给一个已有话题（同一件事，几天前的也算）：它正在跑就作为补充，已经停了就开它的下一轮。"
@@ -132,6 +138,7 @@ TOOLS = (
      "description": "记下主人说的一条长期适用的原则或偏好（“以后……”“原则是……”“记住……”“都要……”），之后每个话题和你自己的每一轮"
                     "都会看到它，主人不用再重说。一次性的要求（只对这件事、这一轮）不记。scope 选 owner 是通用的、所有工作区都适用；"
                     "只对某个工作区（仓库、项目）成立的选 workspace 并写工作区名。text 用主人的说法概括成一句，最多 200 字，"
+                    "主人的话只管某一类事时照写那一类（如“监视进程这类用 Codex，其他任务照常”），不扩大成所有任务，"
                     "不写令牌、密码这类机密。同一组里已有意思相同的会返回已有的 id，不重复记。记下后在回复里说一句“已记下：……”。",
      "input_schema": {"type": "object", "required": ["scope", "text"], "properties": {
          "scope": {"type": "string", "enum": ["owner", "workspace"],
@@ -150,6 +157,18 @@ TOOLS = (
     {"name": "settings_panel",
      "description": "主人要看或改管家的设置时，在私聊里发出设置卡；设置只能由主人在卡上改，你不能改。",
      "input_schema": {"type": "object", "properties": {}}},
+    # 批量换配置 (app/batch_switch.py, T786): a card the owner confirms; nothing is switched by the call itself. A lead has it too
+    # (LEAD_SHARED), for its project's topics only.
+    {"name": "topics_switch",
+     "description": "主人要把几个已有话题一起换 Harness、模型或思考预算时用：Bridge 在私聊发一张批量换配置卡，逐个列出从什么换到什么，"
+                    "主人点「确认更换」后才换，你不能直接换。不填的项沿用话题原来的（换了 Harness 用设置里的默认）。"
+                    "发出后告诉主人卡在私聊里、点了才换。负责人只能换本专项的话题。",
+     "input_schema": {"type": "object", "required": ["topics", "basis"], "properties": {
+         "topics": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string"}, "description": "话题的 T 号"},
+         "harness": {"type": "string", "description": "换到哪个 Harness：claude、codex 等"},
+         "model": {"type": "string", "description": "换到哪个模型"},
+         "effort": {"type": "string", "description": "思考预算"},
+         "basis": {"type": "string", "description": "主人要换配置的原话里连续的一段，Bridge 会核对"}}}},
 )
 
 NAMES = tuple(tool["name"] for tool in TOOLS)
@@ -248,6 +267,7 @@ PROJECT_TOOLS = (
          "harness": {"type": "string", "description": HARNESS_ARG},
          "model": {"type": "string", "description": MODEL_ARG},
          "effort": {"type": "string", "description": EFFORT_ARG},
+         "basis": BASIS_ARG,
          "redaction": REDACTION_ARG}}},
     {"name": "project_topic_send",
      "description": "给一个已有话题加话：它正在跑就作为补充，已经停了就开它的下一轮。text 写要它补做或改的事。"
@@ -373,6 +393,8 @@ def current_name(name):
     """``name``, or the new name of a tool the list no longer has under it (RENAMED_TOOLS)."""
     return RENAMED_TOOLS.get(name, name) if isinstance(name, str) else name
 LEAD_READ = ("topics_list", "topic_read", "topics_search", "workspaces_list")  # What of TOOLS the lead has: it reads, the topics act.
+# What else of TOOLS the lead has: topics_switch only proposes, on a card the owner confirms (app/batch_switch.py).
+LEAD_SHARED = LEAD_READ + ("topics_switch",)
 
 
 # 专项 for the butler (COVEY_PROJECTS=1 in the server's environment, which the Bridge hands on: core/butler.py mcp_config):
@@ -458,7 +480,7 @@ def lead_tools(environ=None) -> tuple:
     if environ is not None and str(cenv.get(AUTOWAKE_ENV, "", environ)).strip() != "1":
         tools = tuple({**tool, "description": tool["description"].replace(WOKEN, NOT_WOKEN)}
                       if tool["name"] == "project_topic_start" else tool for tool in tools)
-    return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_READ) + tools + (CHECKLIST_TOOLS if collab else ())
+    return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_SHARED) + tools + (CHECKLIST_TOOLS if collab else ())
             + (asked if triage else ()))
 
 
@@ -466,7 +488,7 @@ def lead_tools(environ=None) -> tuple:
 # loads the others up front first and lists these by name once the room is taken: they work the same, the model reads
 # one's schema when it calls it. Its budget is the skills' too, and over it agy drops the largest tool whole, which was
 # topic_start (T750: the butler forked a finished topic in its place).
-SECONDARY = frozenset({"topic_priority", "principle_save", "principle_delete", "principles_list", "settings_panel",
+SECONDARY = frozenset({"topic_priority", "principle_save", "principle_delete", "principles_list", "settings_panel", "topics_switch",
                        *(tool["name"] for tool in KNOWLEDGE_TOOLS + HISTORY_TOOLS), TIDY_TOOL["name"]})
 # The tools that hand work to topics, what a turn of the butler or of a lead is for: such a Harness loads them first.
 HANDING = frozenset({"topic_start", "topic_send", "topic_fork", "project_send", "project_topic_start", "project_topic_send"})

@@ -50,6 +50,7 @@ from covey.cards.overview import DISMISS as OVERVIEW_DISMISS, UNDO as OVERVIEW_U
 from covey.cards.board import KINDS as BOARD_KINDS
 from covey.cards.app_setup import SKIP as APP_SETUP_SKIP, START as APP_SETUP_START
 from covey.cards.welcome import KIND as WELCOME_KIND
+from covey.cards.batch_switch import KINDS as BATCH_SWITCH_KINDS
 from covey.cards.web_login import KINDS as WEB_LOGIN_KINDS
 from covey.cards import launch_config
 from covey.cards.rewind import KINDS as REWIND_KINDS
@@ -105,6 +106,7 @@ class CardActionTableTest(unittest.TestCase):
         before_routing |= {FOLD_CLOSE_KIND}  # A click on the text of 这一轮中途的汇报 under a relay (app/fold_close.py).
         before_routing |= {OWNER_SEND, OWNER_SEND_DROP, OWNER_SEND_PICK,
                            OWNER_SEND_ASK}  # The 代发草稿 card (app/owner_send.py).
+        before_routing |= BATCH_SWITCH_KINDS  # The 批量换配置 card (app/batch_switch.py).
         init = next(node for node in ast.walk(ast.parse((PACKAGE / "app" / "app.py").read_text()))
                     if isinstance(node, ast.FunctionDef) and node.name == "__init__")
         components = {node.targets[0].attr: getattr(bridge_app, node.value.func.id) for node in ast.walk(init)
