@@ -170,6 +170,26 @@ def claude_enabled(manifest):
     return not isinstance(names, list) or 'claude' in names
 
 
+def harness_config_path(manifest):
+    """The harnesses.json of the service ``manifest``: its command's ``--harness-config``, else the data root's."""
+    command = [str(part) for part in manifest.get('command') or ()]
+    if '--harness-config' in command[:-1]:
+        return Path(command[command.index('--harness-config') + 1])
+    from covey.core.paths import data_home
+    return data_home() / 'harnesses.json'
+
+
+def dropped_row(manifest):
+    """What the service ``manifest`` has set up that this release no longer uses (core/dropped_config.py), a line each; said,
+    never a fault (the service runs without it). [] for none, and when it cannot be read."""
+    from covey.core.dropped_config import dropped, read_config, words
+    try:
+        command = [str(part) for part in manifest.get('command') or ()]
+        return words(dropped(read_config(harness_config_path(manifest)), command[3:], manifest.get('environment') or {}))
+    except (OSError, ValueError, TypeError, AttributeError):
+        return []
+
+
 def retention_row(manifest):
     """How long Claude Code keeps session transcripts for the service ``manifest`` (core/claude_retention.py: its settings,
     as the service's CLAUDE_CONFIG_DIR says), None without the Claude Harness. Read only: the setting is the user's."""
@@ -203,6 +223,8 @@ def diagnose(root, *, check_events=True, probe=False):
         row['switches'] = [list(pair) for pair in switches_set(manifest.get('environment') or {})]
         if (retention := retention_row(manifest)) is not None:
             row['claude_cleanup'] = retention  # Said on the 诊断 tab; never makes the service degraded.
+        if dropped := dropped_row(manifest):
+            row['dropped_config'] = dropped  # Set up and no longer used (an upgrade retired it): said, never degraded.
         if manifest['desired_state'] != 'running':
             row['status'] = 'stopped'
             services.append(row)

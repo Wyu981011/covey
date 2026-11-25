@@ -115,8 +115,16 @@ def provider_of(harness, model):
 
 def menu_name(provider, harness_title):
     """The provider as the 换配置 card's provider select names it: its own name, else its Harness's own login
-    (Claude 自带) or, for DeepSeek Harness, which runs only its gateway's models, the gateway (``menu``)."""
+    (Claude 自带) or, for DeepSeek Harness, which runs only its gateway's models, the gateway (``menu``). A Harness's own login
+    that is a gateway's account (core/same_account.py ``folded``) is named as that gateway: one account, one name."""
     if provider is None:
         return harness_title
+    if not provider.prefix:
+        from covey.core import same_account
+
+        names = same_account.folded(provider.harness)
+        gateway = gateways.named(names[0]) if names else None
+        if gateway is not None:
+            return gateway.display
     return provider.menu or provider.name or harness_title + " 自带"
 

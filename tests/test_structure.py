@@ -555,6 +555,9 @@ DYNAMIC_ENV = {
     ("covey/core/gateways.py", "self.base_url_env"), ("covey/core/gateways.py", "variable"),
     ("covey/core/gateways.py", "self.key_file_env"),
     ("covey/backends/gateway/connection.py", "gateway.key_env"),
+    ("covey/core/same_account.py", "gateway.key_env"), ("covey/core/same_account.py", "gateway.base_url_env"),
+    ("covey/core/same_account.py", "variable"),  # Codex's config.toml names its key's variable (env_key).
+    ("covey/core/dropped_config.py", "name"),  # dropped: IGNORED_ENV's, read only to name them.
 }
 
 

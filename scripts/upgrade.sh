@@ -2,7 +2,7 @@
 # 日常升级（docs/deploy.md 日常升级）：把 ./install 装的机器人换到上游的新提交。真正的部署还是 scripts/deploy_bridge.sh
 # （docs/deploy.md 升级与回滚），这里替你做它前后那几步：
 #
-#   scripts/upgrade.sh [--dry-run] [--state-dir DIR] [--ref REV] [--no-fetch] [--no-web]
+#   scripts/upgrade.sh [--dry-run] [--state-dir DIR] [--ref REV] [--no-fetch] [--no-web] [--allow-dropped-config]
 #   scripts/upgrade.sh --status [--json] [--state-dir DIR] [--ref REV]
 #
 #   1. 检出要干净（没提交的改动不会被部署，先提交或 git stash），git fetch 上游（--no-fetch 不取）；要升到的提交（--ref，默认
@@ -54,6 +54,8 @@ PRE_WORDS = {
     "command_diff": "这次要注册的启动命令和现网的不一样：照 docs/deploy.md「升级与回滚」手工部署",
     "rollback": "要部署的提交没包含现网的提交：{value}",
     "extension_env": "清单或终端里有 COVEY_EXTENSIONS / COVEY_EXTENSION_PATH：{value}",
+    "dropped_config": ("升级后这些配置不再生效（现网还在用）：{value}。看过、确认可以不要了，再加 --allow-dropped-config 运行"
+                       "（docs/deploy.md「升级不丢配置」）"),
 }
 
 
@@ -101,6 +103,8 @@ ap.add_argument("--no-fetch", action="store_true", help="不 git fetch，只用�
 ap.add_argument("--no-web", action="store_true", help="不动网页（默认：build.sh 自托管的网页跟着换成新 release 的）")
 ap.add_argument("--status", action="store_true", help="只查升级会换什么（git fetch，不部署、不动检出）")
 ap.add_argument("--json", action="store_true", help="和 --status 一起：最后一行输出 JSON（网页「版本与更新」、定时自动升级读它）")
+ap.add_argument("--allow-dropped-config", action="store_true",
+                help="新版本不再用现网的某些配置时也照常升级（先看 --dry-run 列出的是哪些）")
 ap.add_argument("--repo", default=str(ROOT), help=argparse.SUPPRESS)  # The checkout to upgrade (tests); this one by default.
 args = ap.parse_args(sys.argv[2:])
 repo = Path(args.repo).resolve()
@@ -339,6 +343,8 @@ deploy = [str(repo / "scripts" / "deploy_bridge.sh"), "--repo", str(repo), "--co
           "--workdir", values["--workdir"], "--profile", values["--profile"], "--app-id", values["--app-id"],
           "--state-dir", state, "--harness-config", values.get("--harness-config") or str(data / "harnesses.json")]
 tail = ["--", *options] if options else []
+if args.allow_dropped_config:
+    deploy.append("--allow-dropped-config")
 
 
 def run_deploy(*extra, run_dir):

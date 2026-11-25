@@ -2,8 +2,8 @@
 
 ``covey_doctor.py`` prints these lines instead of its JSON when its output is a terminal (or with ``--summary``); a pipe, a
 script and ``--json`` get the JSON as before. ``lines(report, ...)``: a title, the conclusion (都正常, or how many parts need a
-look), one row a part (the Manager, each service of the root, its switches, how long Claude Code keeps sessions, its
-devices, the self-hosted page, 等主人的账 and its 补发, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, and
+look), one row a part (the Manager, each service of the root, its switches, how long Claude Code keeps sessions, what it
+set up that this release no longer uses, its devices, the self-hosted page, 等主人的账 and its 补发, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, and
 where the full report is. A row's mark: ``✓`` fine, ``✗`` a fault, ``!`` to know, ``·`` only said.
 
 Only the report's fields are read: nothing is asked of a process, a model or Feishu here, and no value of an environment
@@ -128,6 +128,10 @@ def service_rows(row, state, root_arg) -> list:
         rows.append((OK, f"Claude Code 会话保留 {cleanup.get('days')} 天", ""))
     elif cleanup:
         rows.append((INFO, "没读出 Claude Code 保留会话几天（它默认只留 30 天）", ""))
+    dropped = [str(line) for line in row.get("dropped_config") or ()]
+    if dropped:
+        rows.append((NOTE, f"有 {len(dropped)} 项配置新版本不再用：" + "；".join(dropped),
+                     "照每项后面说的改掉；升级前 scripts/upgrade.sh --dry-run 会先列出新版本要丢的配置"))
     devices = _dict(row.get("devices"))
     if devices:
         found = _dict(devices.get("devices"))

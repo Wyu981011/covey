@@ -13,7 +13,7 @@ Harness 是执行任务的 Agent 程序。本篇按上手顺序写：有哪些�
 | DeepSeek Harness | 只有模型网关（无前缀）：没有给 dsh 用的网关就用不了 | 网关的个人密钥 |
 | Antigravity | 自己的登录（无前缀，写“Antigravity 自带”） | agy 的 Google 账号登录 |
 
-核心不带任何一家网关，网关由 `harnesses.json` 的 `gateways` 或扩展配置（[模型网关](#模型网关codex-与-dsh)）。已下线的 Harness 和供应商（`RETIRED_PREFIXES`）、旧话题会怎样，见[已下线的功能与旧配置](legacy.md)。
+核心不带任何一家网关，网关由 `harnesses.json` 的 `gateways` 或扩展配置（[模型网关](#模型网关codex-与-dsh)）。同一个账号只列一次：Harness 自己的登录（Claude Code 的 `ANTHROPIC_BASE_URL` 加 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`，进程环境里没有就读用户级 `settings.json` 的 `env`；Codex 的 `config.toml` 里 `model_provider` 指的那一项的 `base_url` 和 `env_key`）和它的某个模型网关地址相同、密钥也相同时，两者是同一账号（`core/same_account.py`，密钥只比摘要）。这时模型选择里只有网关这一个供应商：自带登录里网关也有的模型不再单列，其余的列在网关名下；它们的模型 id 不变，照旧用自带登录跑，停在上面的话题不受影响（`app/launch_models.py` 的 `fold_same_account`）。已下线的 Harness 和供应商（`RETIRED_PREFIXES`）、旧话题会怎样，见[已下线的功能与旧配置](legacy.md)。
 
 | ID（启动卡名称） | 运行方式 | 原生问答 | 执行中补充 | 原生图片 | 分叉的会话 | 原生会话位置 |
 | --- | --- | --- | --- | --- | --- | --- |

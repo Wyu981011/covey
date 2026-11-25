@@ -142,6 +142,15 @@ release 目录已存在时不重新打包，只重新注册，所以回滚很快
 - **排队**：真部署在部署前检查之前拿服务根下的 `deploy.lock`（`flock`，进程退出就释放，崩溃也一样；NFS 上同样互斥），一直持到结束；锁文件里写着谁拿着（`pid`、`host`、`commit`、`release_id`、`started`、`run_dir`、`task`）。别的部署正拿着时立刻退出，退出码 3，结果里的 `deploy_running` 是那位占用者，什么都不碰。等它部署完再跑一次就是排队。`--check-only` 不拿锁、不受它拦，只在 `pre.deploy_running` 里报有没有部署在跑（没有是 `null`）。
 - **不回退**：现网服务清单里的入口在 `$COVEY_DATA_HOME/releases/<id>/` 下时，现网的提交（release 里的 `RELEASE_MANIFEST`，没有就按 id）必须是 `--commit` 的祖先；扩展个数和现网一样时，每个 `--ext-commit` 也按顺序这样比。不是就拦下（`pre.rollback` 写明哪个提交没包含现网的哪个，或检出里没有现网的提交、要先 fetch），`--check-only` 也报。要部署的提交是从旧 `main` 拿的，先同步最新 `main`；真要回滚时加 `--allow-rollback`。现网不是从 `releases/` 下运行的（如 `./install` 直接跑检出）不比，`pre.live_release` 是 `null`。
 
+### 升级不丢配置
+
+新版本下线一个功能时，它的配置往往只是“读到了、不再用”：以前只在启动日志里记一行 `no longer used`，要等启动卡上少了供应商、话题报“已下线”才发现。现在部署前的预检会列出来（`core/dropped_config.py`）：
+
+- 列什么：Harness 参数里已下线的选项且带了值（默认 Harness 的在服务启动命令里，其余在 `harnesses.json` 的 `harnesses.<名字>.args`，如 Claude 网关档位的 `--claude-profiles`、Magpie 的 `--codex-magpie-url`）；`harnesses.json` 里还写着、或 `enabled_harnesses` 里启用的已下线 Harness；只给已下线 Harness 用的模型网关；服务环境里不再读的变量（`core/ignored_env.py` 的 `IGNORED_ENV`）。每项写明丢的是什么、改成什么。
+- 什么时候拦：只拦这次升级才丢的（新版本列出、现网 release 自己的清单里没有的），`pre.dropped_config` 逐项写出；现网早就不读的只计数（`pre.dropped_config_known`）。看过、确认不要了，加 `--allow-dropped-config` 再部署（`scripts/upgrade.sh` 也收这个参数）。现网 release 还没有这份清单（比它旧，或不是从 `releases/` 运行）时没有可比的，不拦。
+- 升级以后：`covey_doctor` 的报告每个服务多一个 `dropped_config`，终端摘要里一行“有 N 项配置新版本不再用”，只提示，不算故障。
+- 以后下线功能的人：值不再读的选项加进 `RETIRED_OPTIONS`；下线 Harness、网关能接的 Harness、环境变量照原来的表（`core/roster.py` 的 `RETIRED`、`core/gateways.py` 的 `RETIRED_GATEWAY_HARNESSES`、`IGNORED_ENV`）改，清单自己会读到。
+
 ### 核心和扩展分开检出
 
 核心在 `covey/` 检出，扩展在各自的库里（扩展库根下每个含 manifest 文件的目录是一个扩展包）。加 `--ext-repo <扩展检出>` 和 `--ext-commit <提交>`（默认 `HEAD`），都可重复，按先后配对（有几个扩展库就加几对）。`--repo`/`--commit` 仍是核心。release 的 `extensions/enabled` 列每个扩展检出根目录 `enabled` 文件里的包（没有这个文件就列它所有的包）；检出里没列的包随 release 带着但默认不启用，用 `covey_plugins.py enable` 打开（见[运维 · 扩展的装和卸](operations.md#扩展的装和卸)）。

@@ -67,13 +67,13 @@
 | 官方拒绝与停止 | `app/policy_guard.py`、`core/model_policy.py`、`backends/claude/policy.py`；cyber/bio 拒绝换旧模型重试一次 `app/policy_retry.py` | [policy-stop.md](docs/policy-stop.md) |
 | 任务进程与 `runs/` 协议 | `app/detached.py`、`app/runner_spawn.py`、`app/runner_ipc.py`、`app/runner.py`、`core/run_dir.py` | [排队与任务进程](docs/architecture.md#排队与任务进程)、[跨版本检查](docs/testing.md#任务进程协议与跨版本检查) |
 | 记录、状态与锁 | `core/jobs.py`、`core/statuses.py`、`core/store.py`、`core/locks.py` | [状态与并发](docs/architecture.md#状态与并发) |
-| Harness 与后端 | `core/harness.py`、`core/roster.py`、`core/providers.py`、`backends/<名字>/bridge.py` | [Harness 接口](docs/architecture.md#harness-接口)、[harnesses.md](docs/harnesses.md) |
+| Harness 与后端；同一账号的供应商只列一次 | `core/harness.py`、`core/roster.py`、`core/providers.py`、`backends/<名字>/bridge.py`；`core/same_account.py`、`app/launch_models.py` 的 `fold_same_account` | [Harness 接口](docs/architecture.md#harness-接口)、[harnesses.md](docs/harnesses.md) |
 | Skills（`./scripts/install_skills.sh` 把 `skills/*` 同步给 Codex 和 Claude Code；每个一个目录：`SKILL.md` 加 `agents/openai.yaml`） | `skills/harness-bridge-onboarding/`（带新人装机器人）、`skills/change-walkthrough/`（大改动的一页走读） | [deploy.md](docs/deploy.md) |
 | 扩展（`COVEY_EXTENSIONS` 或 `extensions/enabled` 启用的包，核心不按名字引用；扩展自带 README） | `core/extensions.py`（manifest 并进 `core/roster.py`、`core/providers.py` 的表，`features(app)` 并进 `app/unified.py` 的 `self.features`） | [扩展](docs/architecture.md#扩展) |
 | 节点与机器状况（`COVEY_NODE_LISTEN`） | `core/node_agent.py`（设备和本机上常驻的节点）、`core/nodes.py`（名单、口令、记录）、`core/node_rules.py`（告警规则）、`app/node_gateway.py`（TLS 服务）、`app/node_alerts.py`、`app/nodes.py`、`cards/node_cards.py` | [节点](docs/architecture.md#节点默认关)、[配置](docs/configuration.md#节点与机器状况默认关) |
 | 维护与备份 | `core/maintenance.py`（规则表在 `core/maintenance_rules.py`，备份在 `core/backup.py`）、`app/stale.py`、`core/migrate.py` | [备份、归档与维护](docs/operations.md#备份归档与维护) |
 | 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、状态目录写不进与慢锁慢读 `core/storage_watch.py`、`app/storage_alerts.py`、`service/doctor.py`（终端里的中文摘要 `service/doctor_words.py`；设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
-| 安装与日常升级（`./install`、`scripts/upgrade.sh`）；网页上升级和定时自动升级（`COVEY_AUTO_UPGRADE`） | `service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步、新装默认开飞书 SDK `ensure_feishu_sdk`、写 `upgrade.json`）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh`（`--status`，网页跟着升级 `service/web_upgrade.py`）；`app/self_upgrade.py`（`upgrade.json`、查和升级）、`app/auto_upgrade.py`（每天到点、遇忙推迟、不强切不回滚） | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级)、[定时自动升级](docs/deploy.md#定时自动升级) |
+| 安装与日常升级（`./install`、`scripts/upgrade.sh`）；网页上升级和定时自动升级（`COVEY_AUTO_UPGRADE`）；升级不丢配置（`--allow-dropped-config`） | `core/dropped_config.py`（部署预检 `pre.dropped_config`、诊断的 `dropped_config`）、`service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步、新装默认开飞书 SDK `ensure_feishu_sdk`、写 `upgrade.json`）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh`（`--status`，网页跟着升级 `service/web_upgrade.py`）；`app/self_upgrade.py`（`upgrade.json`、查和升级）、`app/auto_upgrade.py`（每天到点、遇忙推迟、不强切不回滚） | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级)、[定时自动升级](docs/deploy.md#定时自动升级) |
 
 ## 模块表
 
@@ -390,6 +390,7 @@
 | `core/devices.py` | Devices: other machines (Linux over ssh) a topic can work on instead of this one |
 | `core/diff.py` | Per-job workspace diff capture for shared Harness bridge jobs |
 | `core/dispatch_records.py` | The records of the 派发卡 |
+| `core/dropped_config.py` | What a deployment configured that this release no longer uses (T786 |
 | `core/env.py` | Environment variable names: `COVEY_<X>` is the name, `LARK_BRIDGE_<X>` the old one that still works |
 | `core/extensions.py` | Optional extension packages: which are enabled, where they are found, the data and features they add |
 | `core/failure.py` | Why a turn did not succeed and what can be done next, in plain words |
@@ -461,6 +462,7 @@
 | `core/revisits.py` | 到点回来看: a topic ends its turn with `revisit` in its checkpoint (when, and what to look at) and the Bridge … |
 | `core/roster.py` | The Harness backends the unified bot routes, in one table |
 | `core/run_dir.py` | The run directory of a job handed to a task runner, `<state>/runs/<job>/` |
+| `core/same_account.py` | Which providers of a Harness are one account (T786 |
 | `core/saved_results.py` | Private saved replies |
 | `core/scheduler.py` | Bounded concurrency across topics |
 | `core/serving.py` | The thread a local HTTP server serves on |
