@@ -330,13 +330,13 @@ class TurnTests(Base):
         hook = SimpleNamespace(turn=fake_turn)
         backend = ClaudeBackend()
         # Unredacted turn receives the hook's settings directly.
-        with mock.patch.object(extensions, "hook", return_value=hook), \
+        with mock.patch.object(extensions, "hooks", return_value=[("pkg", hook)]), \
                 mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran") as run_stream:
             self.assertEqual(backend.run(self.request()), "ran")
         self.assertEqual(run_stream.call_args.args[1].context.options[redaction.SETTINGS_ENV]["ANTHROPIC_BASE_URL"],
                          self.upstream.url)
         # Compact and handoff summary pass through the same hook.
-        with mock.patch.object(extensions, "hook", return_value=hook), \
+        with mock.patch.object(extensions, "hooks", return_value=[("pkg", hook)]), \
                 mock.patch("covey.backends.claude.runtime.compact_only", return_value=True) as compact_only, \
                 mock.patch("covey.backends.claude.handoff.summarize", return_value=("sum", "ok")) as summarize:
             self.assertTrue(backend.compact_session(self.request()))
@@ -356,7 +356,7 @@ class TurnTests(Base):
             captured["status"], captured["body"] = status, body
             return "redacted-ran"
 
-        with mock.patch.object(extensions, "hook", return_value=hook), \
+        with mock.patch.object(extensions, "hooks", return_value=[("pkg", hook)]), \
                 mock.patch("covey.backends.claude.runtime.run_stream", side_effect=capture_stream):
             self.assertEqual(backend.run(self.request()), "redacted-ran")
         self.assertNotEqual(captured["url"], self.upstream.url)

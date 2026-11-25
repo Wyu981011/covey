@@ -66,9 +66,13 @@ class HookTests(unittest.TestCase):
 
     @requires_extension()
     def test_the_company_extension_provides_every_hook(self):
-        for name in extensions.HOOK_NAMES:
+        for name in set(extensions.HOOK_NAMES) - OWN_HOOKS:
             self.assertIsNotNone(extensions.hook(name), name)
         self.assertRegex(extensions.setting("web_tenant_domain") or "", r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")  # A tenant's host.
+
+
+# A deployment's own package gives these (its own model sources, docs/architecture.md 扩展), not the company extension.
+OWN_HOOKS = {"claude_models"}
 
 
 class SearchRulesTests(unittest.TestCase):

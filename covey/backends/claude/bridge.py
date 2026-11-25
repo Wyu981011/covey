@@ -25,7 +25,7 @@ from covey.core.harness import BackendRuntime, HarnessCapabilities, HARNESS_REGI
 from covey.core.process import device_of
 from covey.core.process_env import child_process_env, process_device
 from covey.core.harness import BackendConfig, BridgeContext, HarnessSpec, RunRequest, RunResult, UUID_RE
-from covey.backends.claude.models import model_catalog
+from covey.backends.claude.models import model_catalog, with_extension_models
 from covey.backends.claude import redaction, rewind
 from covey.core.providers import retired_provider, retired_provider_notice
 
@@ -161,10 +161,10 @@ class ClaudeBackend(BackendRuntime):
             collab=True), ctx)
 
     def model_catalog(self, ctx):
-        return model_catalog(self, ctx, self.child_env(ctx))
+        return with_extension_models(model_catalog(self, ctx, self.child_env(ctx)))
 
     def refresh_model_catalog(self, ctx):
-        return model_catalog(self, ctx, self.child_env(ctx), refresh=True)
+        return with_extension_models(model_catalog(self, ctx, self.child_env(ctx), refresh=True))
 
     def normalize_model_settings(self, ctx, model, effort):
         if not model:
@@ -292,13 +292,13 @@ class ClaudeBackend(BackendRuntime):
 
 @contextlib.contextmanager
 def _extension_turn(ctx, env, *, run_id=""):
-    """Optional extension hook around a Claude Code turn (core/extensions.py ``claude_turn``)."""
-    hook = extensions.hook("claude_turn")
-    if hook is None:
+    """Optional extension hooks around a Claude Code turn (core/extensions.py ``claude_turn``): every enabled
+    package's, nested in the order they are enabled (the first is the outermost, so the last one's context and
+    environment reach Claude Code)."""
+    with contextlib.ExitStack() as stack:
+        for _package, hook in extensions.hooks("claude_turn"):
+            ctx, env = stack.enter_context(hook.turn(ctx, env, run_id=run_id))
         yield ctx, env
-        return
-    with hook.turn(ctx, env, run_id=run_id) as wrapped:
-        yield wrapped
 
 
 def redacted_stream(backend, request, env):
