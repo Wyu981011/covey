@@ -1,11 +1,15 @@
 /* 数据约定 v4 的可选字段：话题要点 gist、进度 progress、问题卡的回答 answers、没做成的一轮 failure。
  * Covey 推来的是 jsonb，形状不对就当没有（返回 undefined），页面拿不到就不画那一块。 */
 import {
+  CHECKLIST_STATES,
   FAILURE_ACTIONS,
   FAILURE_HOWS,
   RECOVER_ACTIONS,
+  type ChecklistItem,
+  type ChecklistState,
   type FailureAction,
   type OwnerSendDraft,
+  type ProjectNote,
   type SettingsAsks,
   type TopicRevisit,
   type TurnCriterion,
@@ -287,4 +291,37 @@ export function asksOf(v: unknown): SettingsAsks | undefined {
   const stuck: number | undefined = n(d.stuck);
   if (waiting === undefined || stopped === undefined || stuck === undefined) return undefined;
   return { waiting, stopped, stuck };
+}
+
+/* v40：专项的「进度」标签（Covey app/web_collect.py progress_fields）。数组才收，每条按类型过滤，形状不对的那条不要；
+ * 一条都不剩就当没推（undefined），页面写“这个专项还没有目标检查表” */
+const ITEM_ID = /^c[1-9][0-9]{0,3}$/u;
+const isState = (v: unknown): v is ChecklistState => (CHECKLIST_STATES as readonly unknown[]).includes(v);
+
+/** 目标检查表（≤20 条，Covey 的 MAX_ITEMS；这里放宽到 50）：id 是 c 加数字，criterion 不空；state 只认 open、done、blocked、dropped */
+export function checklistOf(v: unknown): ChecklistItem[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: ChecklistItem[] = [];
+  for (const x of v) {
+    const d: Record<string, unknown> = obj(x);
+    const id: string = str(d.id);
+    const criterion: string = clip(d.criterion, 400);
+    if (!ITEM_ID.test(id) || !criterion || !isState(d.state) || out.some((it: ChecklistItem) => it.id === id)) continue;
+    const needs: string[] = Array.isArray(d.needs) ? d.needs.filter((n: unknown): n is string => typeof n === 'string' && ITEM_ID.test(n)).slice(0, 12) : [];
+    out.push({ id, criterion, topic: clip(d.topic, 64), needs, evidence: clip(d.evidence, 400), gap: clip(d.gap, 400), state: d.state, at: finite(d.at) ?? 0 });
+  }
+  return out.length ? out.slice(0, 50) : undefined;
+}
+
+/** 里程碑、决定日志（各最新 10 条，旧的在前）：text 不空才要 */
+export function projectNotesOf(v: unknown): ProjectNote[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: ProjectNote[] = [];
+  for (const x of v) {
+    const d: Record<string, unknown> = obj(x);
+    const text: string = clip(d.text, 400);
+    if (!text) continue;
+    out.push({ id: clip(d.id, 32), at: finite(d.at) ?? 0, kind: clip(d.kind, 20) || 'note', text });
+  }
+  return out.length ? out.slice(-10) : undefined;
 }

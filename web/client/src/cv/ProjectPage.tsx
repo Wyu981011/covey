@@ -7,6 +7,7 @@ import { newOpId, useReport, useSnapshot } from '@client/src/hooks/use-workbench
 import { shortTime } from '@client/src/lib/workbench-format';
 import { Conversation } from './Conversation';
 import ProjectGraph from './ProjectGraph';
+import ProjectProgress from './ProjectProgress';
 import ProjectRail from './ProjectRail';
 import { PaneHandle } from './PaneHandle';
 import { PROJECT_RAIL } from './panes';
@@ -25,11 +26,11 @@ import { byUpdated, fmtTok, hhmm, isRunning, isWaiting, toneOf, type ToneKey } f
 import { listTone } from './topicText';
 import './projects.css';
 
-/** rail：手机和窄屏没有右栏，此刻、记忆、文件放进“记忆与文件”标签 */
-type View = 'chat' | 'graph' | 'report' | 'rail';
+/** rail：手机和窄屏没有右栏，此刻、记忆、文件放进“记忆与文件”标签；progress：目标检查表的进度（v40，只读） */
+type View = 'chat' | 'graph' | 'progress' | 'report' | 'rail';
 
 const ProjectTabs: React.FC<{ base: string; view: View; mobile?: boolean; rail?: boolean }> = ({ base, view, mobile, rail }) => {
-  const items: [View, string, string][] = [['chat', '', '对话'], ['graph', '/graph', '全图'], ['report', '/report', '报告']];
+  const items: [View, string, string][] = [['chat', '', '对话'], ['graph', '/graph', '全图'], ['progress', '/progress', '进度'], ['report', '/report', '报告']];
   if (mobile) {
     return (
       <div className="mseg">
@@ -158,12 +159,22 @@ const ProjectPage: React.FC = () => {
   if (!snap) return null;
   if (!p) return <Navigate to="/" replace />;
   const rest: string = loc.pathname.slice(`/projects/${encodeURIComponent(key)}`.length);
-  const asked: View = rest.startsWith('/graph') ? 'graph' : rest.startsWith('/report') ? 'report' : rest.startsWith('/rail') ? 'rail' : 'chat';
+  const asked: View = rest.startsWith('/graph')
+    ? 'graph'
+    : rest.startsWith('/progress')
+      ? 'progress'
+      : rest.startsWith('/report')
+        ? 'report'
+        : rest.startsWith('/rail')
+          ? 'rail'
+          : 'chat';
   const base: string = `/projects/${encodeURIComponent(key)}`;
   const topics: SnapshotTopic[] = ownTopics(snap, p);
   const lead: SnapshotTopic | undefined = leadOf(snap, p);
   // 电脑上右栏常驻，“记忆与文件”只是对话；没有负责人那一路时也没有右栏
   const view: View = asked === 'rail' && (desktop || !lead) ? 'chat' : asked;
+  // 报告、记忆与文件、进度有自己的头部，不画磁贴
+  const bare: boolean = view === 'report' || view === 'rail' || view === 'progress';
   const m: ProjectMetrics = metrics(rep, p, topics);
   // 专项的胶囊：话题里最急的那件（话题按列表的颜色读，和专项一览、侧栏一致）；都不急时是专项自己的状态，灰色
   const { tone: pillTone, text: pillText } = projectPill(p, topics.map(listTone), lead);
@@ -191,10 +202,12 @@ const ProjectPage: React.FC = () => {
       />
       {isHalted(p) ? <HaltBar key={p.key} p={p} /> : <ProjectOps key={p.key} p={p} wrap />}
       {desktop ? null : <ProjectTabs base={base} view={view} mobile rail={!!lead} />}
-      {view === 'chat' && !lead && !desktop ? null : view === 'report' || view === 'rail' ? null : desktop ? <MetricStrip m={m} topics={topics} /> : <MetricLine m={m} topics={topics} />}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, marginTop: view === 'report' || view === 'rail' ? 0 : desktop ? 10 : 4 }}>
+      {view === 'chat' && !lead && !desktop ? null : bare ? null : desktop ? <MetricStrip m={m} topics={topics} /> : <MetricLine m={m} topics={topics} />}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, marginTop: bare ? (view === 'progress' ? 8 : 0) : desktop ? 10 : 4 }}>
         {view === 'graph' ? (
           <ProjectGraph p={p} topics={topics} lead={lead} m={m} />
+        ) : view === 'progress' ? (
+          <ProjectProgress p={p} snap={snap} lead={lead} base={base} />
         ) : view === 'report' ? (
           <ProjectReport p={p} topics={topics} lead={lead} m={m} rep={rep} />
         ) : view === 'rail' ? (

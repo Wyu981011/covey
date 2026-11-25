@@ -517,6 +517,35 @@ export interface SnapshotProject {
   library: LibraryItem[];
   updated_at: number;
   counts: { topics: number; waiting: number; running: number };
+  /** v40：负责人的目标检查表（「进度」标签）；旧 Covey、负责人还没写时没有 */
+  checklist?: ChecklistItem[];
+  /** v40：负责人记的里程碑和收尾，最新 10 条，旧的在前 */
+  milestones?: ProjectNote[];
+  /** v40：决定日志，最新 10 条，旧的在前 */
+  decisions?: ProjectNote[];
+}
+
+/** 目标检查表的状态（Covey core/project_checklist.py STATES）：open 没满足、done 满足、blocked 卡住、dropped 不做了 */
+export const CHECKLIST_STATES = ['open', 'done', 'blocked', 'dropped'] as const;
+export type ChecklistState = (typeof CHECKLIST_STATES)[number];
+/** v40：目标检查表的一条（docs/web.md 专项条目）。topic 是交付话题的 key（还没派是空串）；needs 是它等的条目 id；
+ * at 是条目最后改动的时刻（秒），不是完成时刻 */
+export interface ChecklistItem {
+  id: string;
+  criterion: string;
+  topic: string;
+  needs: string[];
+  evidence: string;
+  gap: string;
+  state: ChecklistState;
+  at: number;
+}
+/** v40：专项记录里的一条进展或决定：kind 是 milestone、finish（里程碑），决定日志里多是 note */
+export interface ProjectNote {
+  id: string;
+  at: number;
+  kind: string;
+  text: string;
 }
 
 export interface SnapshotTopic {
