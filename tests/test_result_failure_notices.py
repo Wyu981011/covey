@@ -6,7 +6,6 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from support import requires_extension
 from covey.core.result import (DETAILS, ERROR_CODES, FAILURES, NOTICE, RECOVERY_DEFAULT, ExecutionOutcome,
                                         VerifiedRootReply)
 from covey.core.saved_results import display_saved_reply
@@ -20,7 +19,6 @@ class FixedFailureNoticeTests(unittest.TestCase):
         self.assertLessEqual(set(FAILURES), ERROR_CODES)
         self.assertTrue(all("{label}" in text for text in FAILURES.values()))
 
-    @requires_extension()
     def test_each_fixed_error_code_has_a_specific_safe_detail_without_rewriting_root(self):
         details = {
             "child_error": ("子任务", "失败"),
@@ -53,9 +51,10 @@ class FixedFailureNoticeTests(unittest.TestCase):
             "model_blocked": ("安全拒绝", "不是限流"),
             "redaction_failed": ("敏感词脱敏", "没有发给模型服务"),
             "read_only_refused": ("群成员只读", "后端没有启动"),
+            "request_hung": ("长时间没有回应", "停下了这一轮"),
         }
         self.assertEqual(set(details), set(ERROR_CODES) - {""})
-        reply = VerifiedRootReply("maso", "11111111-2222-4333-8444-555555555555",
+        reply = VerifiedRootReply("claude", "11111111-2222-4333-8444-555555555555",
             "synthetic-session", ("synthetic-user",), ("synthetic-root",), "  Exact root body\nfinal line  ")
         generic = ExecutionOutcome("failed").notice()
         for code, tokens in details.items():

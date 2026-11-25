@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from unittest import mock
 
-from support import REPO, make_context, quiet, requires_extension
+from support import REPO, extension_enabled, make_context, quiet
 from support.fake_backends import FakeBackend
 from support.fake_backends import RecordingBackend
 from support.world import TopicFixture, build_claude_app
@@ -310,19 +310,23 @@ class StartOrderTest(unittest.TestCase):
 
 
 class WorkerTargetsTest(unittest.TestCase):
-    @requires_extension()
     def test_each_optional_feature_adds_its_worker_only_when_on(self):
+        # Run with and without the company extension (dev/test.sh full and core), so a core change that adds a worker
+        # fails here in either: only 代答's workers and menu item come from the extension.
+        proxy = extension_enabled()
+        # The state directory's disk (app/storage_alerts.py) is watched on every deployment.
         always = ["scheduler", "cards", "menu", "maintenance", "connections", "availability", "outbox", "policy",
-                  "memguard", "proxy", "proxy-in"]
+                  "memguard", "storage-alerts", *(["proxy", "proxy-in"] if proxy else [])]
         on = {"COVEY_PINNED_OVERVIEW": "1"}
         # The butler's workers and menu key, unless the deployment rules it out (docs/butler.md 私聊模式).
         main, ruled_out = ["main-tools", "main-search"], {"COVEY_BUTLER": "0"}
         # The Feishu app's check (app/app_setup.py), on unless COVEY_APP_CHECK=0; the owner's recalled or edited messages
-        # (app/source_watch.py), on unless COVEY_SOURCE_WATCH=0.
-        app_setup = ["app-setup", "source-watch"]
+        # (app/source_watch.py), on unless COVEY_SOURCE_WATCH=0; 等主人的账's 对账 (app/owner_ledger.py Reconcile), on
+        # unless COVEY_LEDGER_RECONCILE=0.
+        app_setup = ["app-setup", "source-watch", "owner-ledger"]
         # 工作区 and 脱敏 are tabs of 设置 since 2026-11-09; their old keys open it there.
-        menu = ["weekly_usage", "proxy_settings", "manage_groups", "bridge_settings", "manage_workspaces",
-                "redaction_dashboard"]
+        menu = ["weekly_usage", *(["proxy_settings"] if proxy else []), "manage_groups", "bridge_settings",
+                "manage_workspaces", "redaction_dashboard"]
         for env, extra in (({}, main + app_setup), (on, ["overview", *main, *app_setup]),
                            (ruled_out, app_setup)):
             with self.subTest(env=sorted(env)), mock.patch.dict(os.environ, env):
