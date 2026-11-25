@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -10,7 +10,7 @@ import { engineText } from './lib';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 import { onOpenSwitch } from './switchOpen';
-import { changedFields, fromConfig, leadData, switchBlock, type SwitchSel } from './switchConfig';
+import { changedFields, fromConfig, leadData, popRoom, switchBlock, type SwitchSel } from './switchConfig';
 import './launch.css';
 import './composer.css';
 
@@ -44,6 +44,7 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
   const [message, setMessage] = useState<string>('');
   const alive = useRef<boolean>(true);
   const wrap = useRef<HTMLSpanElement | null>(null);
+  const pop = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     alive.current = true;
     return () => {
@@ -93,6 +94,24 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
       document.removeEventListener('keydown', esc);
     };
   }, [open, phase]);
+  // 面板往上长，最高只到对话区上沿（再往上被裁掉、被话题头盖住，T97）：开着时量一次，窗口、输入框、对话区变了再量
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const area: Element | null | undefined = wrap.current?.closest('.conv');
+    const fit = (): void => {
+      if (pop.current && area) pop.current.style.setProperty('--cfg-room', `${popRoom(pop.current.getBoundingClientRect().bottom, area.getBoundingClientRect().top)}px`);
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    const ro: ResizeObserver | null = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+    const anchor: Element | null | undefined = pop.current?.offsetParent;
+    if (ro && area) ro.observe(area);
+    if (ro && anchor) ro.observe(anchor);
+    return () => {
+      window.removeEventListener('resize', fit);
+      ro?.disconnect();
+    };
+  }, [open]);
 
   const model: LaunchModel | undefined = all && config ? all.models.find((m: LaunchModel) => m.key === config.model) : undefined;
   const label: string = [
@@ -178,7 +197,7 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
         {open ? <ChevronUp /> : <ChevronDown />}
       </button>
       {open ? (
-        <div className="cfg-pop" role="dialog" aria-label={lead ? '换负责人的配置' : '换配置'}>
+        <div className="cfg-pop" ref={pop} role="dialog" aria-label={lead ? '换负责人的配置' : '换配置'}>
           <div className="cfg-head">
             <b>{lead ? '换负责人的配置' : '换配置'}</b>
             <span className="t3">{lead ? '同飞书专项卡上的「换配置」' : '同飞书话题里的「换配置」'}</span>
