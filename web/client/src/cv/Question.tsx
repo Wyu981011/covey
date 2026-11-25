@@ -4,7 +4,7 @@ import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
 import type { OutboxView, QuestionItem, QuestionOption, QuestionView } from '@shared/api.interface';
 import { newOpId, useSendOutbox } from '@client/src/hooks/use-workbench';
 import { errorText } from '@client/src/lib/workbench-format';
-import { SEND_KEY } from './composerText';
+import { BREAK_KEY, SEND_KEY } from './composerText';
 import { opWords } from './opWords';
 
 const REC = /[（(]?推荐[）)]?/u;
@@ -216,7 +216,7 @@ export function useQuestionForm(topicKey: string, question: QuestionView | null,
 /** 有题在等时，底部输入框的占位文字和下面那行小字 */
 export function composerWords(form: QuestionForm, text: string): { placeholder: string; hint: string } {
   const q: QuestionView | null = form.question;
-  const enter = `${SEND_KEY} 提交回答 · Enter 换行`;
+  const enter = `${SEND_KEY} 提交回答 · ${BREAK_KEY} 换行`;
   if (!q || !q.questions.length) return { placeholder: '写你的回答', hint: enter };
   if (form.single) {
     const item: QuestionItem = q.questions[0];

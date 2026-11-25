@@ -59,9 +59,29 @@ test('选中几行一起缩进', () => {
   assert.equal(r.end, r.value.length);
 });
 
-test('发送键和文件大小', () => {
-  assert.equal(C.sendKey('MacIntel'), '⌘+Enter');
-  assert.equal(C.sendKey('Linux x86_64'), 'Ctrl+Enter');
+// T761：和飞书聊天一样，收着时 Enter 发送、Shift / Ctrl / ⌘ / Alt + Enter 换行；放大后（和触屏手机上）几种 Enter 都换行
+const key = (mods = '', extra = {}) => ({
+  key: 'Enter', shiftKey: mods.includes('s'), ctrlKey: mods.includes('c'), metaKey: mods.includes('m'), altKey: mods.includes('a'), ...extra,
+});
+test('收着时 Enter 发送，带修饰键的 Enter 换行', () => {
+  assert.equal(C.enterAction(key(), true), 'send');
+  for (const m of ['s', 'c', 'm', 'a', 'cs']) assert.equal(C.enterAction(key(m), true), 'break', m);
+});
+test('放大后几种 Enter 都换行，不发送', () => {
+  for (const m of ['', 's', 'c', 'm', 'a']) assert.equal(C.enterAction(key(m), false), 'break', m);
+});
+test('组字时的回车、别的键交给编辑器', () => {
+  assert.equal(C.enterAction(key('', { isComposing: true }), true), null);
+  assert.equal(C.enterAction(key('', { keyCode: 229 }), true), null);
+  assert.equal(C.enterAction({ ...key(), key: 'a' }, true), null);
+});
+test('源码框里在光标处换行', () => {
+  assert.deepEqual(C.lineBreak('ab', 1, 1), { value: 'a\nb', start: 2, end: 2 });
+  assert.deepEqual(C.lineBreak('abc', 1, 2), { value: 'a\nc', start: 2, end: 2 });
+});
+
+test('提示语和文件大小', () => {
+  assert.equal(C.ENTER_HINT, 'Enter 发送 · Shift+Enter 换行');
   assert.equal(C.fmtSize(500), '500 B');
   assert.equal(C.fmtSize(12 * 1024), '12 KB');
   assert.equal(C.fmtSize(3.4 * 1024 * 1024), '3.4 MB');

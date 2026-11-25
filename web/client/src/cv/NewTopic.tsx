@@ -3,7 +3,7 @@ import { Head } from './Shell';
 import { summaryTags, useLaunchBox } from './launch';
 import { Composer } from './Composer';
 import { LaunchNote, LaunchPanel } from './LaunchPanel';
-import { SEND_KEY } from './composerText';
+import { BREAK_KEY, SEND_KEY } from './composerText';
 import './launch.css';
 
 /** 新话题页：和飞书私聊里点「开始任务」一样，选好就直接开工。输入框和对话里的同一个（边写边渲染、放大、附件、草稿按本页存） */
@@ -32,7 +32,7 @@ const NewTopicPage: React.FC = () => {
               launch={box}
               launchOnly
               extra={summaryTags(box.data, box.sel).join(' · ')}
-              hint={`${SEND_KEY} 开始任务 · Enter 换行 · 可以粘贴截图、拖文件进来`}
+              hint={`${SEND_KEY} 开始任务 · ${BREAK_KEY} 换行 · 可以粘贴截图、拖文件进来`}
             />
           </div>
           <div style={{ marginTop: 8 }}>

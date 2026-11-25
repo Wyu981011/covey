@@ -17,9 +17,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 - Pi 和 DeepSeek Harness 也能当管家和专项负责人：Pi 用它自带的 MCP 接 Bridge 工具，负责人那一轮只留 read、grep、find、ls；DeepSeek Harness 用自带的 `dsh-mcp-client`，负责人那一轮用 read-only 权限预设。核心的五个 Harness 在设置卡「配置」的管家、专项负责人两段都能选了。管家没选 Harness 时的顺序不变（Claude Code → Codex → Antigravity，然后才是它们）。
 - 记忆自己长（`COVEY_MEMORY_LEARN=1`，要 `COVEY_MEMORY=1`）：一轮结束后 Bridge 自己读主人的话，引用核对过的长期要求直接记下（通用的、工作区的记成原则），答案卡上能“不对”；记下这一轮用到了哪几条，放不下时最近用过的先带；晚间汇总的“你反复说的”先生效（它总结的）；新增“整理记忆”，收起专项里办完的、被替代的、很久没用的当前决定（能撤销），把反复的选择提炼成约定；把 Codex、Claude Code 自己记的偏好收进候选；每轮的记忆块能用 `bin/covey_memory.py search` 按需查放不下的和答过的题。
 
+### Changed 变更
+
+- 网页工作台输入框的回车和飞书聊天一样：Enter 发送，Shift+Enter（或 Ctrl / ⌘ + Enter）换行；点「放大」编辑时几种 Enter 都换行，点发送钮才发；手机上回车换行、点发送钮发。原来是 Enter 换行、⌘/Ctrl+Enter 发送。
+
 ### Fixed 修复
 
 - 网页工作台点击发顿：“已同步”等状态点的脉冲动的是阴影，浏览器每帧都要在主线程重算样式、重绘（页面静止时也每秒 60 次，话题越多越重），点击要和它抢主线程；改成只动透明度。侧栏“要你处理 / 在做”两组的行在鼠标移上去时也先取对话，和其它话题行一样。
+- 网页工作台输入框里按 Shift+Enter 换行后，行首打的 `* `、`- `、`1. `、`# ` 不变成列表、标题，发出去成了 `\*`：Shift+Enter 原来是段内的软换行，后面的字不算段首。现在几种换行都另起一段，和原来的 Enter 一样。
 - 管家跑在 Antigravity 上时有时没有 `topic_start`，只好拿 `topic_fork` 分叉一个不相干的已完成话题来开新的事（T749、T750 就是这样开出来的）：agy 把一轮的 skills 和 MCP 工具算进同一份预算，超了从最大的开始整个丢掉、不报，装了很多 skills 时管家 21 个工具里最大的 `topic_start` 就没了。现在 Bridge 只把交给话题的工具和其余常用的预先加载（最多 15000 字节，`COVEY_AGY_EAGER_BYTES` 可改），原则、知识条目、历史搜索这些只在 agy 的提示里列名字，用到时照样能调；一轮结束后 agy 还是丢了 Bridge 工具的，日志里记一条警告，写明是哪几个。
 - 话题 🔁 换配置到另一个 Harness、还没在新 Harness 上跑完一轮时，管家的 `topic_fork` 说它“还没有结束的任务，不能分叉”：它只找话题当前 Harness 的任务。现在找这个话题在所有 Harness 上最近结束的那一轮。
 - 专项记忆不再被别的专项的事串进来：在一个专项的话题里迁移、核对另一个专项的记忆（问“〔条目 id〕这条以后怎么算”）时答的题，以前记成这个专项的当前决定、每轮都带，晚间整理记忆还会把题面里引的别的专项的规矩当成这个专项的约定提炼出来。现在这种题一记下就是历史记录；整理记忆不经模型先收起它们（卡上写“别的专项的 N 条”）和已经照着改到对应条目里的问答，告诉模型还有哪些别的专项、对记忆的一次性处理不算这个专项的做法，提炼的约定要来自不同时候的选择（一张问题卡上的几题算一次），也不能是别的专项某一条的复述。
@@ -48,9 +53,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 - Pi and DeepSeek Harness can be the butler and a project's lead: Pi takes the Bridge's tools through its built-in MCP and a lead's turn keeps only read, grep, find and ls; DeepSeek Harness takes them through its bundled `dsh-mcp-client` and a lead's turn runs on its read-only permission preset. All five core Harnesses are on the 设置 card's butler and lead sections now; a butler with none named still falls back Claude Code, Codex, Antigravity first.
 - Memory that learns by itself (`COVEY_MEMORY_LEARN=1`, with `COVEY_MEMORY=1`): after a turn the Bridge reads the owner's own words and writes down what he asks from now on (quote-checked; general and workspace ones as principles), with 不对 on the answer card; which lines a turn used is noted and orders what fits; the evening digest's repeated corrections take effect at once as 它总结的; a nightly 整理记忆 puts away a project's decisions that are done, replaced or unused (undoable) and distills rules from repeated choices; what Codex and Claude Code noted of the owner on their own comes in as candidates; a turn looks up what its memory block could not carry with `bin/covey_memory.py search`.
 
+### Changed (English)
+
+- The web workbench's composer takes Enter the way Feishu chat does: Enter sends, Shift+Enter (or Ctrl / ⌘ + Enter) starts a new line; while expanded every Enter starts a new line and only the send button sends; on phones Return starts a new line. It used to be Enter for a new line and ⌘/Ctrl+Enter to send.
+
 ### Fixed (English)
 
 - Web page clicks no longer stall: the pulse of the 已同步 dot and other status dots animated box-shadow, so the browser recalculated styles and repainted on the main thread every frame (60 times a second even when idle, heavier with more topics); it now animates opacity only. Rows of the sidebar's 要你处理 and 在做 groups prefetch their conversation on hover like the other topic rows.
+- In the web workbench's composer, `* `, `- `, `1. ` or `# ` typed after Shift+Enter did not become a list or a heading and went out as `\*`: Shift+Enter made a soft line break inside the paragraph, so the new line did not start a block. Every way of starting a new line now starts a new block, as Enter always did.
 - The butler on Antigravity sometimes had no `topic_start` and opened each new matter by forking an unrelated finished topic with `topic_fork` instead (T749 and T750 were opened that way): agy fits a turn's skills and MCP tools in one budget and, over it, drops the largest whole without a word, and with many skills installed `topic_start`, the largest of the butler's 21 tools, was gone. The Bridge now has agy load up front only the tools that hand work to topics and the others in common use (at most 15000 bytes, `COVEY_AGY_EAGER_BYTES`); the principles, knowledge entries, history search and the like are named in agy's prompt only and still work when called. A turn whose request still lacked Bridge tools leaves a warning in the log that names them.
 - A topic moved to another Harness with 🔁 换配置 that had not finished a turn there yet could not be forked: the butler's `topic_fork` looked at the jobs of the topic's current Harness alone and said it had no finished turn. It now forks from the topic's latest finished turn on whichever Harness it ran.
 - A project's memory no longer takes in another project's matters: the answers to a card that sorted out another project's memory ("how does line 〔id〕 count from now on?", as a migration asks) were noted as this project's current decisions, carried every turn, and the evening 整理记忆 distilled the other project's rules quoted in them into rules of this one. Such an answer is now history as it is noted; 整理记忆 puts these answers away without the model, with those already carried out on the line they were about (the card says 别的专项的 N 条), tells the model the other projects and that a one-off handling of the memory is not this project's practice, and keeps a rule only when its decisions were made at different times (one card's questions count once) and it does not restate a line of another project.
