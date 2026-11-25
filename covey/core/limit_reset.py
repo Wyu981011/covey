@@ -11,6 +11,9 @@
 - ``evidence``: the few fields of a row worth keeping to see the real format, no more than ``EVIDENCE_CHARS``.
 - ``fault_in``: whether an API error's status or words name a passing server fault: 529/overloaded, 500, 502, 503,
   504, a connection reset, a stream idle timeout.
+- ``account_fault``: what such an error is when its words are about the account, not the server: a gateway in front of
+  the model can answer a lost sign-in or a spent quota with a 5xx, which Claude Code calls "a server-side issue, usually
+  temporary"; no retry helps until someone signs in again or the quota is back.
 """
 from __future__ import annotations
 
@@ -22,6 +25,11 @@ from zoneinfo import ZoneInfo
 FAULT_STATUSES = frozenset({500, 502, 503, 504, 529})
 FAULT_WORDS = re.compile(r"overloaded_error|\bECONNRESET\b|stream idle timeout|connection reset"
                          r"|API Error: (?:500|502|503|504|529)\b", re.I)
+# The account's words in a server fault (``account_fault``): a sign-in the upstream no longer takes, then a spent quota.
+SIGN_IN_WORDS = re.compile(r"could not authenticate|sign in again|log ?in again|re-?authenticate|authentication_error"
+                           r"|invalid (?:x-)?api[ _-]?key|unauthori[sz]ed", re.I)
+SPENT_WORDS = re.compile(r"insufficient_quota|quota (?:exceeded|exhausted|used up)|exceeded your (?:current )?quota"
+                         r"|credit balance is too low|out of credits|额度(?:已)?用(?:完|尽)|余额不足", re.I)
 EVIDENCE_KEYS = ("type", "subtype", "error", "isApiErrorMessage", "quotaLimits", "rate_limit_info", "api_error_status",
                  "terminal_reason", "is_error")
 EVIDENCE_CHARS = 2000
@@ -123,3 +131,14 @@ def evidence(row):
 def fault_in(status, text):
     """Whether an API error with this HTTP ``status`` (or None) and these words is a passing server fault."""
     return status in FAULT_STATUSES or bool(FAULT_WORDS.search(str(text or "")))
+
+
+def account_fault(text):
+    """``authentication_error`` or ``quota_exhausted`` when an API error that came as a server fault says in ``text`` that
+    it is the account's (a sign-in the upstream no longer takes, a spent quota); "" otherwise."""
+    text = str(text or "")
+    if SIGN_IN_WORDS.search(text):
+        return "authentication_error"
+    if SPENT_WORDS.search(text):
+        return "quota_exhausted"
+    return ""
