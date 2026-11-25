@@ -69,13 +69,15 @@ def follow_up(job) -> bool:
 
 
 def quick_hold(ctx, job) -> int:
-    """How many seconds ``job``, a message the owner sent in a topic's thread that starts at once, holds its task card
+    """How many seconds ``job``, a message the owner sent in a topic's thread (or on the web page) that starts at once, holds its task card
     back (``quick_seconds``; app/cards.py Cards.reveal sends it once the turn has run them, made its first step or
     asks, app/worker.py only its answer card when it answered before): a follow-up (``follow_up``) in a topic's own
     turn (core/placement.py TOPIC_ROLE, MEMBER_ROLE) whose answer goes on its own in its thread, not a 代答 topic's.
     0 for any other: its card at once."""
     seconds = quick_seconds()
-    if (not seconds or not str(job.message_id or "").startswith("om_") or not follow_up(job)
+    # The owner's words: a Feishu message (om_), or the web page's (web-<op_id>, core/web_sync.py PREFIX): its card from the task
+    # runner too, so the page's say is acknowledged without waiting for the card's create and send (2026-11-25 T765, about 1 s).
+    if (not seconds or not str(job.message_id or "").startswith(("om_", "web-")) or not follow_up(job)
             or proxy_topic(ctx)):
         return 0
     try:

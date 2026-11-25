@@ -134,7 +134,7 @@
 
 ### 追问只发答案卡
 
-话题里的追问（`app/submission.py` 的 `quick_hold`：主人在话题串里发的、话题答过至少一次（`follow_up`）、马上开工的一轮，话题自己的角色，回答单独发在串里，不是代答话题）先不发任务卡，和管家那一轮一样记 `job.card_deferred`，另记 `card_after` 秒（`COVEY_QUICK_ANSWER_SECONDS`，默认 10，0 关）。任务卡什么时候出：
+话题里的追问（`app/submission.py` 的 `quick_hold`：主人在话题串里或网页上（消息 id `web-<op_id>`）发的、话题答过至少一次（`follow_up`）、马上开工的一轮，话题自己的角色，回答单独发在串里，不是代答话题）先不发任务卡，和管家那一轮一样记 `job.card_deferred`，另记 `card_after` 秒（`COVEY_QUICK_ANSWER_SECONDS`，默认 10，0 关）。任务卡什么时候出：
 
 - 状态行每次刷新时（`Cards.reveal`、`held_due`）：跑满 `card_after` 秒，或者执行过程有了第一步（工具调用、进展说明、子任务），当场发卡，已有的步骤随即画上（`queue_trace`）。
 - 模型问问题时先发卡再问（`app/interaction.py`，`Cards.reveal_held`）。

@@ -331,6 +331,20 @@ class Collector:
         self.mark("")
         return items
 
+    def collect_touched(self, chat, topics, now) -> list:
+        """A look of its own at ``topics``, the ones the page just acted on (WebSync.touch_once): those alone are built, with the
+        board's reading the last quick look left in ``shared`` (it reads the board again soon after: Collector.touch). One whose read is
+        stuck in a left-behind thread is left to the quick look. ``groups`` says whose each item is and when it was read."""
+        state = self.look_begins(chat, now)
+        out = self.shared.alive_stuck()
+        self.mark("projects")
+        self.read_projects(state, chat)
+        groups, _, _ = self.build_each(state, chat, [topic for topic in topics if topic not in out], now)
+        self.shared.built([topic for topic, _, _ in groups])
+        self.groups = groups
+        self.mark("")
+        return [each for _, _, mine in groups for each in mine]
+
     def collect_pass(self, chat, now, full, skip=(), sent=None) -> tuple:
         """One step of the full pass (WebSync.pass_once, its own thread: a slow read here holds up no quick look). When ``full`` and
         none is under way a pass starts: the board read again, every topic with a job written in the last TOPIC_DAYS days, the

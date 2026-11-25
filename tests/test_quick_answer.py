@@ -60,6 +60,13 @@ class HoldTest(ButlerCase):
         with mock.patch.object(submission, "proxy_topic", return_value=True):
             self.assertEqual(submission.quick_hold(self.ctx, follow_up()), 0)  # A 代答 topic's reply goes to others.
 
+    def test_the_owners_words_from_the_web_page_hold_their_card_too(self):
+        """T765 (2026-11-25): a say on the web page (web-<op_id>) is the owner's follow-up as a Feishu message is: its card comes from
+        the task runner, so the page's operation is acknowledged without the card's create and send (about 1 s)."""
+        self.assertEqual(submission.quick_hold(self.ctx, follow_up(message_id="web-0b5c")), submission.QUICK_SECONDS)
+        for other in ("recover-0b5c", "answer-0b5c", "ask-0b5c"):
+            self.assertEqual(submission.quick_hold(self.ctx, follow_up(message_id=other)), 0, other)  # Not the owner's words.
+
     def test_only_a_held_card_not_sent_yet_is_a_quick_one(self):
         self.assertTrue(quick_held(held()))
         self.assertFalse(quick_held(follow_up(card_deferred=True)))  # A butler turn's hold.

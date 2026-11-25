@@ -63,6 +63,34 @@ def clicked_message() -> str:
 
 
 @contextmanager
+def collecting():
+    """Off a card lane, the way a lane handles a click: inside this block ``after_ack`` keeps its work in the list it yields,
+    [(work, report, beside)], for the caller to run once it has acknowledged what it was doing (app/web_sync.py: an operation
+    of the web page, acknowledged at /sync/ack before the new task's card and the notices are sent, as a card click is)."""
+    previous = getattr(_click, "pending", None)
+    pending = []
+    _click.pending = pending
+    try:
+        yield pending
+    finally:
+        _click.pending = previous
+
+
+def run_follow_ups(pending, log):
+    """Run the work ``collecting`` kept, in order; one that raises is logged and reported as a lane's follow-up is (``reporting``)."""
+    for work, report, _ in pending:
+        try:
+            work()
+        except Exception as exc:  # noqa: BLE001 - acknowledged already: its follow-up reports instead
+            log(f"web op follow-up error: {type(exc).__name__}")
+            if report is not None:
+                try:
+                    report(exc)
+                except Exception as error:  # noqa: BLE001
+                    log(f"web op follow-up failure not reported: {type(error).__name__}")
+
+
+@contextmanager
 def reporting(report):
     """Inside this block, a follow-up that fails calls ``report(exc)``: the reply its click's handler
     would have sent had the failure happened before the acknowledgement."""

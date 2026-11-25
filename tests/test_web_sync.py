@@ -18,7 +18,7 @@ from unittest import mock
 
 from support.records import write_job, write_topic
 
-from covey.app import answers as answer_words, source_watch, web_ops, web_said, web_sync as app_web, web_collect as app_collect, web_pairing as app_pairing
+from covey.app import answers as answer_words, card_lanes, source_watch, web_ops, web_said, web_sync as app_web, web_collect as app_collect, web_pairing as app_pairing
 from covey.app.web_sync import WebError, WebSync
 from covey.app import project_lead, web_turns
 from covey.core import butler_opened, http_upstream, model_names, placement, project_library, project_memory, project_proposals, projects, triage, web_sync
@@ -53,6 +53,7 @@ class Web:
 
     def __init__(self, test):
         self.upserts, self.acks, self.outbox, self.seen, self.fail = [], [], [], [], 0
+        self.waited = None  # True: a page that knows the inbox's ``wait`` (data contract: docs/web.md 更快的取数); None: an older one.
         self.uploads = {}  # id -> (meta, [part bytes]): the files the owner uploaded on the page (data contract v21).
         self.server = LoopbackServer(self.handle, "web-fake").__enter__()
         test.addCleanup(self.server.__exit__)
@@ -69,6 +70,8 @@ class Web:
         elif handler.path.startswith("/sync/inbox"):
             after = int(handler.path.split("after=")[1].split("&")[0])
             answer = {"items": [row for row in self.outbox if row["seq"] > after and row.get("state", "new") == "new"]}
+            if self.waited is not None:
+                answer["waited"] = self.waited
         elif handler.path.startswith("/sync/upload"):
             query = dict(part.split("=", 1) for part in handler.path.split("?", 1)[1].split("&"))
             found = self.uploads.get(query["id"])
@@ -964,7 +967,7 @@ class InboxTest(WebCase):
             self.sync.inbox_once()
         self.assertEqual(order[:4], [("run", "op-s1", 0), ("push", 0), ("run", "op-s2", 1), ("push", 1)])
         self.assertEqual([r["op_id"] for r in self.web.acks], ["op-s1", "op-s2"])
-        self.assertTrue(any(line.startswith("web op settings seq=1 run=") for line in self.logs))
+        self.assertTrue(any(line.startswith("web op settings seq=1 queue=") and " run=" in line and " ack=" in line for line in self.logs))
 
     def test_the_inbox_goes_again_at_once_after_new_operations(self):
         waits = []
@@ -1047,7 +1050,9 @@ class InboxTest(WebCase):
         self.web.op("reopen", 2, "op-12", project=PID)
         self.web.op("reopen", 3, "op-13", project="nosuchproject")
         self.sync.inbox_once()
-        self.assertEqual([r["state"] for r in self.web.acks], ["done", "done", "failed"])
+        # The unknown project's is in a lane of its own (OpLanes): acknowledged in its own time, the project's two in order.
+        self.assertEqual({r["op_id"]: r["state"] for r in self.web.acks}, {"op-11": "done", "op-12": "done", "op-13": "failed"})
+        self.assertEqual([r["op_id"] for r in self.web.acks if r["op_id"] != "op-13"], ["op-11", "op-12"])
         self.assertEqual(self.reload()["state"], "active")
         projects.update(self.state, PID, lambda record: record.update(state="done"))
         self.web.op("reopen", 4, "op-14", project=PID)
@@ -1426,9 +1431,9 @@ class SwitchTest(WebCase):
         self.assertEqual(context_for_topic(ctx, {"chat_id": CHAT, "chat_type": "p2p", "message_id": "om_real"}, lambda w: w).reply_to_message_id, "om_real")
         self.assertTrue(web_sync.is_web_message("web-x") and not web_sync.is_web_message("om_web-x"))
 
-    def test_on_there_are_three_threads(self):
+    def test_on_there_are_four_threads(self):
         """The quick looks, the full pass (its own thread since T673: a slow read there holds up no quick look) and the inbox."""
-        self.assertEqual([name for name, _ in self.sync.threads()], ["web-push", "web-pass", "web-inbox"])
+        self.assertEqual([name for name, _ in self.sync.threads()], ["web-push", "web-pass", "web-inbox", "web-touch"])
 
     def test_the_bridge_lists_the_threads_only_with_the_switch(self):
         from covey.app.unified import UnifiedBridgeApp
@@ -2622,3 +2627,203 @@ class RoomTest(WebCase):
         self.assertEqual(self.turn(TOPIC, 2)["relayed_at"], int(T0 + 5))
         self.assertNotIn("relayed_at", self.turn(TOPIC, 1))
         self.assertNotIn("relayed_at", self.turn(BUTLER, 2))
+
+
+class OpLaneTest(WebCase):
+    """T765 (2026-11-25): the page's operations are acknowledged as soon as each is done, their follow-ups after (as a card click's,
+    app/card_lanes.py after_ack), in order within a topic and side by side across topics; one still running is not failed."""
+
+    def wait_for(self, check, seconds=3.0):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if check():
+                return True
+            time.sleep(0.02)
+        return check()
+
+    def test_an_answers_follow_up_runs_after_its_ack(self):
+        self.topic()
+        self.question()
+        order = []
+
+        def submit(ctx, chat, token, fields, event):
+            order.append(("answer", len(self.web.acks)))
+            card_lanes.after_ack(lambda: order.append(("follow-up", len(self.web.acks))))
+        self.app.questions.submit_answer = submit
+        self.web.op("answer", 1, "op-a1", TOPIC, token=TOKEN, answers={"q1": "A"})
+        self.sync.inbox_once()
+        self.assertTrue(self.wait_for(lambda: len(order) == 2))
+        self.assertEqual(order, [("answer", 0), ("follow-up", 1)])  # The ack went out between the answer and its task card.
+        self.assertEqual(self.web.acks[0]["state"], "done")
+
+    def test_a_follow_up_that_raises_is_logged_after_a_done_ack(self):
+        self.topic()
+        self.question()
+
+        def submit(ctx, chat, token, fields, event):
+            card_lanes.after_ack(lambda: 1 / 0)
+        self.app.questions.submit_answer = submit
+        self.web.op("answer", 1, "op-a2", TOPIC, token=TOKEN, answers={"q1": "A"})
+        self.sync.inbox_once()
+        self.assertTrue(self.wait_for(lambda: any("web op follow-up error: ZeroDivisionError" in line for line in self.logs)))
+        self.assertEqual(self.web.acks[0]["state"], "done")
+
+    def test_a_slow_operation_holds_its_topic_not_the_others(self):
+        release = threading.Event()
+        ran = []
+
+        def run(row):
+            ran.append(row["op_id"])
+            if row["topic_key"] == "slow":
+                release.wait(5)
+            return "done", "ok"
+        self.web.op("say", 1, "op-s1", "slow", text="a")
+        self.web.op("say", 2, "op-s2", "slow", text="b")
+        self.web.op("say", 3, "op-f1", "fast", text="c")
+        with mock.patch.object(app_web, "OP_WAIT", 0.3), mock.patch.object(self.sync.ops, "run", side_effect=run):
+            self.sync.inbox_once()
+            self.assertTrue(self.wait_for(lambda: [r["op_id"] for r in self.web.acks] == ["op-f1"]))
+            self.assertNotIn("op-s2", ran)  # Behind the slow one in its own topic.
+            release.set()
+            self.assertTrue(self.wait_for(lambda: len(self.web.acks) == 3))
+        self.assertEqual([r["op_id"] for r in self.web.acks], ["op-f1", "op-s1", "op-s2"])
+
+    def test_one_still_running_is_left_alone_and_acked_with_its_outcome(self):
+        """2026-11-23 15:28: a step stuck on the network disk was left behind, the next one failed its say as uncertain, and the say
+        had opened its turn all the same. Now a step skips what is still being done; that ends with its own ack."""
+        release = threading.Event()
+
+        def run(row):
+            release.wait(5)
+            return "done", "已开下一轮"
+        self.web.op("say", 1, "op-r1", TOPIC, text="接着做")
+        with mock.patch.object(app_web, "OP_WAIT", 0.1), mock.patch.object(self.sync.ops, "run", side_effect=run):
+            self.assertEqual(self.sync.inbox_once(), 1)
+            self.assertEqual(self.sync.inbox_once(), 0)  # Handed out again (still new on the page), still running here.
+            self.assertEqual(self.web.acks, [])
+            release.set()
+            self.assertTrue(self.wait_for(lambda: len(self.web.acks) == 1))
+        self.assertEqual((self.web.acks[0]["state"], self.web.acks[0]["message"]), ("done", "已开下一轮"))
+        self.assertEqual(self.sync.ledger.get("op-r1")["state"], "done")
+
+    def test_one_taken_by_an_earlier_process_is_still_failed_as_uncertain(self):
+        self.sync.ledger = web_sync.Ledger(self.state)
+        self.sync.ledger.take("op-u1", 1)
+        self.web.op("say", 1, "op-u1", TOPIC, text="a")
+        self.sync.inbox_once()
+        self.assertEqual(self.web.acks[0]["state"], "failed")
+        self.assertIn("结果不确定", self.web.acks[0]["message"])
+
+    def test_every_operation_logs_where_its_seconds_went(self):
+        self.topic()
+        self.web.op("seen", 1, "op-w1", TOPIC)
+        self.web.outbox[-1]["created_at"] = datetime.datetime.fromtimestamp(time.time() - 2, datetime.timezone.utc).isoformat()
+        self.sync.inbox_once()
+        line = next(line for line in self.logs if line.startswith("web op seen seq=1 "))
+        for part in ("wait=", "queue=", "run=", "push=", "ack="):
+            self.assertIn(part, line)
+        self.assertGreaterEqual(int(line.split("wait=")[1].split("ms")[0]), 1500)
+
+    def test_the_inbox_asks_with_wait_and_goes_at_once_after_a_held_request(self):
+        self.sync.inbox_once()
+        self.assertIn("wait=8", [path for _, path, _ in self.web.seen if path.startswith("/sync/inbox")][-1])
+        self.assertEqual(self.sync.inbox_pause(), web_sync.POLL_SECONDS)  # An older page answers at once: poll_seconds as before.
+        self.web.waited = True
+        self.sync.inbox_once()
+        self.assertEqual(self.sync.inbox_pause(), 0)
+
+    def test_what_an_operation_touched_is_pushed_by_the_touch_thread(self):
+        self.topic()
+        self.sync.load_sent()
+        self.web.op("seen", 1, "op-t1", TOPIC)
+        self.sync.inbox_once()
+        self.assertTrue(self.wait_for(lambda: self.sync.touch_event.is_set()))
+        self.assertGreater(self.sync.touch_once(), 0)
+        self.assertIn(TOPIC, [item["key"] for item in self.web.items("topic")])
+        self.assertTrue(any(line.startswith("web sync touch steps=") for line in self.logs) or self.sync.pace.seconds.get("touch"))
+
+    def test_an_older_read_of_a_topic_is_never_posted_after_a_newer_one(self):
+        item = lambda rev: {"type": "topic", "key": TOPIC, "rev": rev, "data": {}}  # noqa: E731
+        with self.sync.backlog_lock:
+            self.assertEqual(self.sync.fresh_items([(TOPIC, 7, [item("after-answer")])]), [item("after-answer")])
+            self.assertEqual(self.sync.fresh_items([(TOPIC, 5, [item("before-answer")])]), [])  # The quick look read it before the touch.
+            self.assertEqual(self.sync.fresh[TOPIC], 7)
+
+
+class KeepAliveTest(unittest.TestCase):
+    """core/http_upstream.py KeepAlive: one connection per thread and host; one the server closed while idle is replaced once."""
+
+    def serve(self, close_each=False):
+        import http.server
+        conns = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def setup(self):
+                super().setup()
+                conns.append(self.client_address)
+
+            def do_GET(self):
+                body = b'{"items": []}'
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                self.close_connection = close_each  # Kept alive as far as the client knows, then closed: an idle timeout.
+
+            def log_message(self, *args):
+                pass
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}/sync/inbox?after=1", conns
+
+    def kept(self):
+        import http.client
+        kept = http_upstream.KeepAlive(factory=lambda host, port, timeout: http.client.HTTPConnection(host, port, timeout=timeout))
+        self.addCleanup(kept.close)
+        return kept
+
+    def test_requests_share_one_connection(self):
+        url, conns = self.serve()
+        kept = self.kept()
+        for _ in range(3):
+            self.assertEqual(kept.send("GET", url, None, {}, 5), (200, b'{"items": []}'))
+        self.assertEqual(len(conns), 1)
+
+    def test_a_thread_takes_the_connection_another_left_idle(self):
+        """The page's operations are acknowledged from short-lived lane threads (app/web_sync.py OpLanes)."""
+        url, conns = self.serve()
+        kept = self.kept()
+        for _ in range(3):
+            worker = threading.Thread(target=kept.send, args=("GET", url, None, {}, 5))
+            worker.start()
+            worker.join(5)
+        self.assertEqual(len(conns), 1)
+
+    def test_a_connection_closed_while_idle_is_replaced_once(self):
+        url, conns = self.serve(close_each=True)
+        kept = self.kept()
+        for _ in range(3):
+            self.assertEqual(kept.send("GET", url, None, {}, 5)[0], 200)
+        self.assertEqual(len(conns), 3)
+
+    def test_no_answer_is_an_os_error(self):
+        kept = self.kept()
+        with self.assertRaises(OSError):
+            kept.send("GET", "http://127.0.0.1:9/sync/inbox", None, {}, 2)
+
+
+class PaceTest(unittest.TestCase):
+    def test_a_line_a_minute_with_the_step_times(self):
+        lines, now = [], [0.0]
+        pace = app_web.Pace(lines.append, every=60, clock=lambda: now[0])
+        for at, seconds in ((0, 0.2), (20, 3.0), (40, 1.0)):
+            now[0] = at
+            pace.note("push", seconds)
+        self.assertEqual(lines, [])
+        now[0] = 61
+        pace.note("push", 0.5)
+        self.assertEqual(lines, ["web sync push steps=4 p50=1000ms p90=3000ms max=3000ms"])

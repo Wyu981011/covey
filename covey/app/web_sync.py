@@ -2,11 +2,13 @@
 questions to the web page (网页应用) and fetches what the page sent, which app/web_ops.py does. Off by default: without the switch
 there is no thread and no request.
 
-- ``WebSync`` (app/unified.py PARTS ``web_sync``, a feature object: ``threads()``, none without the switch): three supervised threads.
+- ``WebSync`` (app/unified.py PARTS ``web_sync``, a feature object: ``threads()``, none without the switch): four supervised threads.
   ``web-push`` (the quick looks, ``push_hot``) builds the hot items (``Collector.collect_hot``, app/web_collect.py), keeps those whose ``rev``
   (core/web_sync.py) differs from what was sent, and posts them to /sync/upsert in batches, then a batch of what the pass read; ``web-pass``
   (``pass_once``) reads the full pass a slice a step into that backlog; ``web-inbox`` asks /sync/inbox, writes each operation's seq and op_id
-  into the ledger before it is done, does it (``Ops.run``) and acknowledges it at /sync/ack. A failed request backs off (2, 4 ... 30 seconds)
+  into the ledger before it is done and hands it to its lane (``OpLanes``: a topic's in order, topics side by side), which does it
+  (``Ops.run``), acknowledges it at /sync/ack at once and then runs what it left for after the ack (app/card_lanes.py ``after_ack``);
+  ``web-touch`` (``touch_once``) builds what an operation touched and pushes it at once, not at the quick look's turn. A failed request backs off (2, 4 ... 30 seconds)
   and touches no other thread.
 - What is read, and how often: every ``push_seconds``, and at once when this process wrote a job or a question (core/store.py listen: an
   answer on a card), only the running tasks, the pending questions and the tasks waiting for 开始 on a launch card (three index queries, the
@@ -32,18 +34,21 @@ there is no thread and no request.
 Rule 1 (AGENTS.md): no lock is held across a request; records are read, not locked."""
 from __future__ import annotations
 
+import collections
+import functools
+import itertools
 import json
 import threading
 import time
 from pathlib import Path
 
-from covey.app import web_images, web_memory
+from covey.app import card_lanes, web_images, web_memory
 from covey.app.web_collect import Collector, Shared
 from covey.app.web_ops import Ops
 from covey.app.web_push_client import Client, WebError
 from covey.core import avatars, store, web_sync
 from covey.core.loops import Stuck, Worker
-from covey.core.state import read_object, write_json
+from covey.core.state import epoch_seconds, read_object, write_json
 
 FULL_SECONDS = web_sync.FULL_SECONDS  # A full pass starts this long after the last one ended (its own thread reads it a slice a step).
 STEP_BYTES = web_sync.BATCH_BYTES  # What a quick look sends of the pass's items (the backlog) after its own: one batch.
@@ -62,6 +67,69 @@ BUSY_EVERY = 60  # A quick look given up for a busy store is logged the first ti
 MAX_LEFT = 3  # Left-behind steps still stuck: with this many no new thread is started until one of them ends, or LEFT_WAIT has passed.
 LEFT_WAIT = 300  # Seconds waited at MAX_LEFT; then the next step runs in a new thread anyway (an open stuck for good must not stop the push).
 IMAGES_WAIT = 300  # Seconds images are held back after the page did not take one (push_images).
+INBOX_WAIT = 8  # Seconds a page that knows ``wait`` holds an empty /sync/inbox (it answers ``waited``); within the client's TIMEOUT.
+OP_WAIT = 5.0  # Seconds an inbox step waits for the operations it handed to their lanes before it asks again.
+PACE_SECONDS = 60.0  # A quick look's and a touch's step times are logged once this often (Pace).
+PACED = ("push",)  # The loops whose step times are logged by loop(); a touch logs its own (from its wake, not its wait).
+
+
+class Pace:
+    """How long the steps of a loop took, one line a minute: ``web sync push steps=N p50=…ms p90=…ms max=…ms`` (2026-11-25 T765:
+    the quick look meant to run every second ran about every 3 s, and nothing said so)."""
+
+    def __init__(self, log, every=PACE_SECONDS, clock=time.monotonic) -> None:
+        self.log, self.every, self.clock = log, every, clock
+        self.seconds, self.since = {}, {}
+
+    def note(self, label, seconds) -> None:
+        now = self.clock()
+        self.seconds.setdefault(label, []).append(seconds)
+        since = self.since.setdefault(label, now)
+        if now - since >= self.every:
+            got = sorted(self.seconds.pop(label))
+            self.since[label] = now
+            at = lambda share: got[min(len(got) - 1, int(len(got) * share))] * 1000  # noqa: E731
+            self.log(f"web sync {label} steps={len(got)} p50={at(0.5):.0f}ms p90={at(0.9):.0f}ms max={got[-1] * 1000:.0f}ms")
+
+
+class OpLanes:
+    """The page's operations in order within a lane (a topic, a project, the chat) and side by side across lanes: a thread for each
+    lane that has work, gone once it has none (one stuck on the network disk holds its lane, not the others). ``put`` gives the
+    Event set once that work has run."""
+
+    def __init__(self, log) -> None:
+        self.log = log
+        self.lock = threading.Lock()
+        self.lanes = {}  # lane -> deque of (work, done); present while its thread runs
+        self.count = itertools.count(1)
+
+    def put(self, lane, work) -> threading.Event:
+        done = threading.Event()
+        with self.lock:
+            start = lane not in self.lanes
+            if start:
+                self.lanes[lane] = collections.deque()
+            self.lanes[lane].append((work, done))
+        if start:
+            threading.Thread(target=self.drain, args=(lane,), name=f"web-op-{next(self.count)}", daemon=True).start()
+        return done
+
+    def drain(self, lane) -> None:
+        while True:
+            with self.lock:
+                items = self.lanes[lane]
+                if not items:
+                    del self.lanes[lane]
+                    return
+                work, done = items[0]
+            try:
+                work()
+            except Exception as exc:  # noqa: BLE001 - one operation must not end its lane
+                self.log(f"web op lane error: {type(exc).__name__}")
+            finally:
+                done.set()
+                with self.lock:
+                    items.popleft()
 
 
 class WebSync:
@@ -76,6 +144,11 @@ class WebSync:
         self.images = None  # web_images.WebImages, made once the state directory is known (images_ready)
         self.collector = Collector(env, None, runtime.log, shared=self.shared)  # The quick looks' (push_hot).
         self.passer = Collector(env, None, runtime.log, shared=self.shared)  # The pass's (pass_once).
+        # What the page just acted on, built and pushed in a thread of its own (touch_once) instead of waiting for the quick look: that one
+        # builds every running topic, about 3 s a look on the dev machine and now and then a minute on a stuck read (2026-11-25 T765).
+        self.toucher = Collector(env, None, runtime.log, shared=self.shared)
+        self.touch_due, self.touch_lock, self.touch_event = set(), threading.Lock(), threading.Event()
+        self.post_lock = threading.Lock()  # Choosing what is fresh and posting it, one thread at a time (push_hot, touch_once).
         self.images_ready()
         self.ops = Ops(env, hear, fetch=self.client.request, login=login)
         self.sent = {}  # (type, key) -> the rev pushed last.
@@ -97,6 +170,10 @@ class WebSync:
         self.memory_stamps, self.memory_lock, self.memory_failed = None, threading.Lock(), 0  # The 记忆 item (push_memory).
         self.asks_failed, self.asks_tried, self.asks_full = 0, None, False  # The 要你处理 item (push_asks): failures in a row, the rev tried last, a pass began.
         self.ledger = None
+        self.op_lanes = OpLanes(runtime.log)  # The page's operations (inbox_once, do_op).
+        self.inflight, self.inflight_lock = {}, threading.Lock()  # op_id -> monotonic time it was handed to its lane, until it is acknowledged.
+        self.inbox_waited = False  # The page held the last /sync/inbox (it knows ``wait``): the next one goes at once.
+        self.pace = Pace(runtime.log)  # The quick looks' and the touches' step times, logged once a minute.
         self.down = {}  # thread name -> failures in a row.
         self.images_wait, self.images_down = 0.0, 0  # push_images: no sending before this time; failures in a row.
 
@@ -110,8 +187,13 @@ class WebSync:
         return (("web-push", lambda ctx: self.run_push()),
                 ("web-pass", lambda ctx: self.loop("pass", self.pass_once, lambda: PASS_PAUSE, self.start_over_pass,
                                                    lambda: self.passer.moved, where=lambda: self.passer.doing)),
-                ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, lambda: self.client.known("poll_seconds", web_sync.POLL_SECONDS),
-                                                    again=True)))
+                ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, self.inbox_pause, again=True)),
+                ("web-touch", lambda ctx: self.loop("touch", self.touch_once, lambda: 0, self.start_over_touch, lambda: self.toucher.moved,
+                                                    stuck=HOT_STUCK_SECONDS, where=lambda: self.toucher.doing)))
+
+    def inbox_pause(self) -> float:
+        """Seconds between two asks of the inbox: none after one the page held (it waits for the next operation itself), else poll_seconds."""
+        return 0 if self.inbox_waited else self.client.known("poll_seconds", web_sync.POLL_SECONDS)
 
     def run_push(self) -> None:
         """The quick looks' thread: every push_seconds, and at once (HOT_GAP apart at most) when this process wrote a job or a question."""
@@ -139,7 +221,10 @@ class WebSync:
         while not self.runtime.shutdown.is_set():
             backing = False
             try:
+                began = time.monotonic()
                 got = worker.call(step, limit, moved)
+                if label in PACED:
+                    self.pace.note(label, time.monotonic() - began)
                 if self.down.pop(label, 0):
                     self.runtime.log(f"web sync {label} recovered")
                 wait = 0 if again and got else seconds()
@@ -257,15 +342,13 @@ class WebSync:
                 if name:
                     each["data"]["avatar"] = name
                     each["rev"] = web_sync.rev(each["data"])
-        urgent = []
+        with self.post_lock:  # Held while its batches are posted: the touch thread posts between two looks, not inside one.
+            return self.post_hot(collector, sent)
+
+    def post_hot(self, collector, sent) -> int:
+        """push_hot's posting, under ``post_lock``: the look's fresh items, a batch of the backlog, the deletions, then 要你处理."""
         with self.backlog_lock:
-            for whose, seq, mine in collector.groups:
-                self.fresh[whose] = max(self.fresh.get(whose, 0), seq)
-                for each in mine:
-                    name = (each["type"], each["key"])
-                    self.backlog.pop(name, None)
-                    if sent.get(name) != each["rev"]:
-                        urgent.append(each)
+            urgent = self.fresh_items(collector.groups)
             later, size = [], 0
             for name, (each, whose, seq) in list(self.backlog.items()):
                 if seq < self.fresh.get(whose, 0) or sent.get(name) == each["rev"]:
@@ -321,6 +404,80 @@ class WebSync:
             self.push_asks(collector, full)
             collector.mark("")
         return count
+
+    def fresh_items(self, groups) -> list:
+        """Under ``backlog_lock``: of ``groups`` [(whose, seq, items)], the items the page should get. A read older than the newest
+        the page has of its topic is left out whole (the quick look's read from before an answer must not follow the touch's read
+        after it); the others are marked the newest, taken off the backlog, and kept when the page does not have their rev."""
+        out = []
+        for whose, seq, mine in groups:
+            if seq < self.fresh.get(whose, 0):
+                continue
+            self.fresh[whose] = seq
+            for each in mine:
+                name = (each["type"], each["key"])
+                self.backlog.pop(name, None)
+                if self.sent.get(name) != each["rev"]:
+                    out.append(each)
+        return out
+
+    def touch_soon(self, topics) -> None:
+        """The page acted on ``topics``: the touch thread builds and pushes them at once (touch_once)."""
+        with self.touch_lock:
+            self.touch_due |= {str(topic) for topic in topics if topic}
+        self.touch_event.set()
+
+    def touch_once(self, now=None) -> int:
+        """Waits up to a second for topics the page acted on (touch_soon), builds just those (Collector.collect_touched: the board's
+        reading the last quick look left) and posts them; how many items went out. Each topic's read has its seq as every read has."""
+        if not self.touch_event.wait(1.0):
+            return 0
+        self.touch_event.clear()
+        woke = time.monotonic()
+        with self.touch_lock:
+            topics, self.touch_due = self.touch_due, set()
+        chat = self.runtime.access.owner_chat()
+        if not topics or not chat or not self.env.state_dir:
+            return 0
+        if not self.sent_loaded:
+            return 0  # The quick look loads what the page has first; it builds these too (Collector.touch).
+        toucher = self.toucher
+        toucher.touching = set(topics)
+        try:
+            with store.bounded(HOT_WAIT):
+                toucher.collect_touched(chat, sorted(topics), time.time() if now is None else now)
+        except store.Busy:
+            self.touch_soon(topics)  # The quick look builds them all the same; this one tries again.
+            return 0
+        if toucher is not self.toucher:
+            return 0  # Left behind while it looked: what it read is old.
+        toucher.mark("posting")
+        count = 0
+        with self.post_lock:
+            with self.backlog_lock:
+                items = self.fresh_items(toucher.groups)
+            for batch in web_sync.batches(items):
+                self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
+                toucher.moved = time.monotonic()
+                with self.backlog_lock:
+                    for each in batch:
+                        self.sent[(each["type"], each["key"])] = each["rev"]
+                count += len(batch)
+                self.sent_changed = True
+        toucher.touching = set()
+        toucher.mark("")
+        self.pace.note("touch", time.monotonic() - woke)
+        return count
+
+    def start_over_touch(self) -> None:
+        """After a touch was left behind (a read stuck on the network disk): a new collector for it, the topics it had taken back in
+        the queue but the one it is stuck on (the quick look builds that one when its read comes back)."""
+        old = self.toucher
+        self.leave_out(old, "touch")
+        self.toucher = Collector(self.env, None, self.runtime.log, self.images, shared=self.shared)
+        again = set(getattr(old, "touching", ()) or ()) - self.shared.alive_stuck()
+        if again:
+            self.touch_soon(again)
 
     def pass_once(self, now=None) -> int:
         """One step of the full pass (Collector.collect_pass), in its own thread: when one is due (FULL_SECONDS after the last ended) it
@@ -601,66 +758,115 @@ class WebSync:
     # -- inbox ----------------------------------------------------------------------------------------------------------
 
     def inbox_once(self) -> int:
-        """Fetch, do and acknowledge the page's operations; how many were new."""
+        """Fetch the page's operations and hand each to its lane (``OpLanes``: in order within a topic, side by side across topics),
+        which does it, acknowledges it at once and only then runs what it left for after the acknowledgement (``after_ack``: the
+        new task's card, the notices) and pushes what it touched (``touch_soon``). This step waits up to OP_WAIT seconds for what it
+        handed out; one still running after that goes on in its lane and acknowledges itself. How many were new.
+
+        The ledger has each before it is done (``take``): one of a step left behind that is still running is skipped (``inflight``)
+        and acknowledged by that step when it ends, with its real outcome; one taken and never finished by this process (a restart)
+        is failed as uncertain and never done again. With ``wait`` (INBOX_WAIT) a page that knows it (``waited`` in its answer,
+        data contract: docs/web.md 更快的取数) holds the request until an operation comes; an older page answers at once, and the
+        next ask waits poll_seconds as before."""
         if not self.env.state_dir:
             return 0
         if self.ledger is None:
             self.ledger = web_sync.Ledger(self.env.state_dir)
         ledger = self.ledger
-        data = self.client.request("GET", f"/sync/inbox?after={ledger.after()}&limit=100")
-        results, fresh, wanted = [], 0, False
-
-        def flush(timing=None) -> None:
-            """What the page reads before it sees done (the new settings, the tidy list), then the ack of the results so far: one
-            operation's ack does not wait for the ones after it in the same batch."""
-            nonlocal results, wanted
-            began = time.monotonic()
-            if wanted:  # Only after an operation that changed them: an empty poll reads no file (T673).
-                chat = self.runtime.access.owner_chat()
-                if chat:
-                    self.push_settings(chat, time.time())
-                    self.push_tidy(time.time())
-                    self.push_memory()
-                wanted = False
-            pushed = time.monotonic()
-            if results:
-                self.client.request("POST", "/sync/ack", {"results": results})
-                ledger.acked([each["op_id"] for each in results])
-                if timing is not None:  # Content-free: where the seconds of a page's change go (docs/web.md).
-                    self.runtime.log(f"web op {timing[0]} seq={timing[1]} run={timing[2]:.0f}ms push={(pushed - began) * 1000:.0f}ms "
-                                     f"ack={(time.monotonic() - pushed) * 1000:.0f}ms")
-            results = []
-
+        data = self.client.request("GET", f"/sync/inbox?after={ledger.after()}&limit=100&wait={INBOX_WAIT:g}")
+        fetched = time.time()
+        self.inbox_waited = data.get("waited") is True
+        late, handed, fresh = [], [], 0
         for row in data.get("items") or ():
             op_id, seq = str(row.get("op_id") or ""), row.get("seq")
             if not op_id or not isinstance(seq, int) or isinstance(seq, bool):
                 continue
-            known = ledger.get(op_id)
-            timing = None
+            with self.inflight_lock:
+                if op_id in self.inflight:
+                    continue  # Being done (a lane, or a step left behind): it is acknowledged when it ends.
+                known = ledger.get(op_id)
+                if known is None:
+                    ledger.take(op_id, seq)
+                    self.inflight[op_id] = time.monotonic()
             if known is None:
                 fresh += 1
-                ledger.take(op_id, seq)
-                ran = time.monotonic()
-                state, message = self.ops.run(row)
-                ledger.finish(op_id, state, message)
-                timing = (str(row.get("kind") or ""), seq, (time.monotonic() - ran) * 1000)
-                if row.get("topic_key"):
-                    self.collector.touch(row["topic_key"])
-                opened = self.ops.opened_topic(row)
-                if opened:  # Else the page waits a minute for the topic it has just opened.
-                    self.collector.touch(opened)
-                self.wake.set()  # The quick look builds what the operation touched now, not at its next tick.
-                if row.get("kind") in ("settings", "launch"):  # A launch changes what the next one preselects.
-                    self.settings_due = wanted = True  # Pushed below, before the ack: the page reads the new settings when it sees done.
-                if row.get("kind") == "tidy_decide":
-                    self.tidy_stamps, wanted = None, True  # Pushed below, before the ack, as the settings are.
-                if row.get("kind") == "memory_edit":
-                    self.memory_stamps, wanted = None, True  # The 记忆 tab reads its change when it sees done.
-            elif known.get("state") == "received":
+                handed.append(self.op_lanes.put(self.lane_of(row), functools.partial(self.do_op, row, fetched)))
+                continue
+            if known.get("state") == "received":
                 ledger.finish(op_id, "failed", "这条执行到一半没有结果（Covey 重启或卡住了），结果不确定，没有重发")
             saved = ledger.get(op_id)
-            results.append({"seq": seq, "op_id": op_id, "state": saved["state"], "message": saved["message"]})
-            if timing is not None and timing[0] in ("settings", "launch", "tidy_decide", "memory_edit"):
-                flush(timing)  # Acked at once, not after the rest of the batch.
-        flush()
+            late.append({"seq": seq, "op_id": op_id, "state": saved["state"], "message": saved["message"]})
+        if late:  # Done before and not acknowledged (the page did not take the ack), or failed as uncertain just now.
+            self.client.request("POST", "/sync/ack", {"results": late})
+            ledger.acked([each["op_id"] for each in late])
+        deadline = time.monotonic() + OP_WAIT
+        for done in handed:
+            if not done.wait(max(0.0, deadline - time.monotonic())):
+                break
         return fresh
+
+    @staticmethod
+    def lane_of(row) -> str:
+        """The lane of an operation: its topic's, its project's, else the one of the chat-wide ones (settings, launch, tidy, memory)."""
+        if row.get("topic_key"):
+            return "topic:" + str(row["topic_key"])
+        if row.get("project_key"):
+            return "project:" + str(row["project_key"])
+        return "chat"
+
+    def do_op(self, row, fetched) -> None:
+        """One operation in its lane: done, written down, acknowledged, then its follow-ups and the push of what it touched.
+        A content-free line says where its seconds went (``wait``: from the page's row to this fetch, by the two clocks)."""
+        ledger, op_id, seq, kind = self.ledger, str(row["op_id"]), row["seq"], str(row.get("kind") or "")
+        began = time.monotonic()
+        queued = (began - self.inflight.get(op_id, began)) * 1000
+        try:
+            with card_lanes.collecting() as later:
+                state, message = self.ops.run(row)
+            ledger.finish(op_id, state, message)
+            ran = time.monotonic()
+            touched = [str(row["topic_key"])] if row.get("topic_key") else []
+            opened = self.ops.opened_topic(row)
+            if opened:  # Else the page waits a minute for the topic it has just opened.
+                touched.append(opened)
+            for topic in touched:
+                self.collector.touch(topic)
+            self.wake.set()  # The quick look builds what the operation touched now, not at its next tick.
+            if kind in ("settings", "launch", "tidy_decide", "memory_edit"):
+                self.before_ack(kind)  # The page reads the new settings, the tidy list, the memory when it sees done.
+            pushed = time.monotonic()
+            try:
+                self.client.request("POST", "/sync/ack", {"results": [{"seq": seq, "op_id": op_id, "state": state, "message": ledger.get(op_id)["message"]}]})
+                ledger.acked([op_id])
+            except WebError as exc:  # The page hands the row out again: the next step acknowledges it from the ledger.
+                self.runtime.log(f"web op {kind} seq={seq} ack failed: {self.why(exc) or type(exc).__name__}")
+            acked = time.monotonic()
+            written = epoch_seconds(row.get("created_at")) if row.get("created_at") else None
+            wait = f"wait={max(0.0, fetched - written) * 1000:.0f}ms " if written else ""
+            self.runtime.log(f"web op {kind} seq={seq} {wait}queue={queued:.0f}ms run={(ran - began) * 1000:.0f}ms "
+                             f"push={(pushed - ran) * 1000:.0f}ms ack={(acked - pushed) * 1000:.0f}ms")
+        finally:
+            with self.inflight_lock:
+                self.inflight.pop(op_id, None)
+        if touched:
+            self.touch_soon(touched)  # What the page acts on is on it now, before the follow-ups' cards (an answer: its question closes).
+        if later:
+            card_lanes.run_follow_ups(later, self.runtime.log)
+            if touched:
+                self.touch_soon(touched)  # And what they made (the answer's new turn).
+
+    def before_ack(self, kind) -> None:
+        """What the page must read when it sees done: the settings and the tidy list for a change of either (a launch changes what the
+        next one preselects), the memory for its tab."""
+        chat = self.runtime.access.owner_chat()
+        if not chat:
+            return
+        if kind in ("settings", "launch"):
+            self.settings_due = True
+        self.push_settings(chat, time.time())
+        if kind == "tidy_decide":
+            self.tidy_stamps = None
+        if kind == "memory_edit":
+            self.memory_stamps = None
+        self.push_tidy(time.time())
+        self.push_memory()
