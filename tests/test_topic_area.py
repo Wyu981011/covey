@@ -384,6 +384,28 @@ class MirrorTest(MirrorCase):
         self.assertIn("这一轮输出", json.dumps(send.call_args.kwargs["card"], ensure_ascii=False))
         self.assertEqual(read_object(self.path)["mirror_output"], "")
 
+    def test_a_question_of_a_topic_opened_on_the_web_page_goes_up(self):
+        """T762 (2026-11-25): T753, opened on the web page, copied none of its three questions to the top level: no
+        request of the butler opened it, so it had no 话题区 target, though its topic card is at the top level."""
+        from covey.core.topics import topic_file
+
+        display = self.app_.questions.display
+        web = "e" * 64
+        write_json(topic_file(self.ctx.state_dir, web), {
+            "topic_id": web, "chat_id": CHAT, "root_id": "om_web_root", "topic_number": 753, "harness_id": "claude",
+            "origin": {"kind": "web", "request": "web-op1", "title": "看看视觉"}})
+        record = {**self.record, "token": "q-web", "topic_id": web}
+        write_json(self.ctx.state_dir / "questions" / "q-web.json", record)
+        sends = self.app.messenger.create_and_send_card
+        sends.reset_mock()
+        turn = make_job(job_id=self.job.job_id, chat_id=CHAT, message_id="web-op1", topic_id=web, user_text="看看视觉")
+        mid = display.mirror(self.tctx, record, "两版样稿", job=turn)
+        self.assertTrue(mid)
+        self.assertEqual(sends.call_args.kwargs["reply_to_message_id"], "")  # At the top level.
+        self.assertIn("用哪个做法", json.dumps(sends.call_args.args[2], ensure_ascii=False))
+        self.assertEqual(read_object(self.ctx.state_dir / "questions" / "q-web.json")["mirror_message_id"], mid)
+        self.assertEqual(routed_topic(self.ctx.state_dir, CHAT, mid), web)  # Quoting it answers there.
+
     def test_a_project_topic_s_question_goes_up_though_no_request_of_the_butler_opened_it(self):
         """The owner, 2026-11-19: a question the lead handed on to him (T538's, 09:59) went to the topic's thread alone,
         and so had every question of a project's topic: they are opened by the lead, never by a request of the butler, so

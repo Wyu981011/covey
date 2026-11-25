@@ -18,9 +18,11 @@ core/placement.py's row says (``after_turn``: question_copy, conclusion, stop):
   检查并继续 and 看原因 under them, redrawn in place once clicked (app/relay_stops.py).
 
 Every turn of a 话题区 relays, the ones his answers or his messages in
-its thread started too (``area_target``: the latest request that opened or handed on to it); a topic the butler
-never touched does not. A project's member topic relays only a turn the owner waits for (app/relay_targets.py
-``awaited_target``: its lead handed it on in a turn the owner was in), its conclusion or its stop, never its question;
+its thread started too (``area_target``: the latest request that opened or handed on to it), and every turn of one the
+owner opened on the web page, whose topic card is at the top level too (app/relay_targets.py ``web_root``); any other
+topic the butler never touched does not. A project's member topic relays only a turn the owner waits for
+(app/relay_targets.py ``awaited_target``: its lead handed it on in a turn the owner was in), its conclusion or its stop,
+never its question;
 the lead's receipt of it says so (app/project_loop.py after_runner), so the lead does not tell it again.
 
 Where it goes (app/relay_targets.py): the butler's card is in the owner's message's thread,

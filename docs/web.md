@@ -365,7 +365,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 **`launch`**：`payload` 带 `text`（第一行当标题）、`model`（`launch.models` 的 `key`）、`effort`、`work_mode`、`redaction`（`on`/`off`）、`workspace`、`run_mode`。
 
 - 只认主人；校验同启动卡的“开始任务”，不过回 failed 写原因。
-- 开法同管家直接开工的话题：私聊顶层一张话题卡，第一轮就是你写的话；这次选择记成这个私聊的“上次开始任务”，下一张启动卡和网页的预选都跟着变。
+- 开法同管家直接开工的话题：私聊顶层一张话题卡，第一轮就是你写的话；这次选择记成这个私聊的“上次开始任务”，下一张启动卡和网页的预选都跟着变。之后每一轮的结论、等你回答的问题和停住也和管家开的话题一样回到私聊顶层（[结论回到顶层](butler.md#结论回到顶层)）。
 - 独立 worktree 只有启动卡能建：这样的话题出一张按网页选择填好的启动卡，在飞书话题里点开始任务。
 - 每一步记在 `<state>/web/launches/<op_id>.json`，同一条操作再来不会开第二个话题。回执“已开 T23「标题」：直接开工”，网页按 T 号跳过去。
 - 带附件（v25）：`payload.files` 同 `say`。开话题之前先全部取回，放在 `<state>/web/launches/<op_id>.files/`，有一个取不到就回 failed、什么都不开；开好后搬进新话题的 `incoming_media/`，第一轮的话按飞书附件的格式列出它们。

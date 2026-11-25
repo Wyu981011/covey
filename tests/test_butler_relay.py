@@ -109,6 +109,38 @@ class TargetTest(Case):
         self.opened("t1", plan={"start": True}, job_key="gone")
         self.assertIsNone(relay_target(self.state, self.job()))
 
+    def test_a_topic_the_owner_opened_on_the_web_page_relays_every_turn_quoting_its_topic_card(self):
+        """T762 (the owner, 2026-11-25: T753回复的内容没发到私聊区): a topic opened on the web page has its topic card
+        at the top level, as one the butler opens at once (app/web_launch.py), but no request of the butler, so none of
+        T753's five turns relayed and none of its three questions was copied up."""
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT, root_id="om_web_root",
+                   origin={"kind": "web", "request": "web-op1", "title": "看看视觉"})
+        for job_id, message_id in ((9, "web-op1"), (10, "answer-tok"), (11, "om_typed_in_topic")):
+            self.assertEqual({"chat_id": CHAT, "reply_to": "om_web_root", "label": "T410", "token": "web-op1",
+                              "kind": "follow", "topic_id": TOPIC, "main_key": ""},
+                             relay_target(self.state, self.job(message_id=message_id, job_id=job_id)), message_id)
+        send = self.send()
+        self.assertEqual("sent", relay(self.state, self.job(message_id="answer-tok", job_id=10), DONE, send=send,
+                                       text=REPLY))
+        chat, _, key, reply_to, _, _ = send.call_args.args
+        self.assertEqual((CHAT, job_key("answer-tok", 10), ""), (chat, key, reply_to))  # Its own, at the top level.
+        # Once the butler hands it work, its turns relay through that request, as any 话题区's do.
+        self.opened("t2", topic_id=TOPIC, answer={"ok": True, "data": {"topic_id": TOPIC, "steered": False}})
+        self.assertEqual(("follow", "t2", OWNER),
+                         tuple(relay_target(self.state, self.job(message_id="om_later", job_id=12))[k]
+                               for k in ("kind", "token", "reply_to")))
+
+    def test_a_topic_from_the_web_page_of_another_chat_or_without_its_card_is_not(self):
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id="oc_other", root_id="om_web_root",
+                   origin={"kind": "web", "request": "web-op1"})
+        self.assertIsNone(relay_target(self.state, self.job(message_id="web-op1")))
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT, root_id="web-op1",
+                   origin={"kind": "web", "request": "web-op1"})
+        self.assertIsNone(relay_target(self.state, self.job(message_id="web-op1")))
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT, root_id="om_root",
+                   origin={"kind": "launch"})
+        self.assertIsNone(relay_target(self.state, self.job(message_id="om_typed_in_topic")))
+
 
 class CardTest(unittest.TestCase):
     def test_a_long_reply_is_shown_whole(self):
