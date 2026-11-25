@@ -1,0 +1,110 @@
+// 外槽 + 圆角画布、浅色的字和侧栏 T 号（T753）：样式表里这几条规则还在、没被改回去。跑：npm run test:canvas
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const cv = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src', 'cv');
+const { default: postcss } = await import('postcss');
+
+/** 按顶层的逗号拆选择器：:is(a,b) 里的逗号不拆 */
+const split = (selector) => {
+  const parts = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of selector) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      parts.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  return [...parts, cur.trim()];
+};
+
+/** 一份样式表里每条规则的完整选择器（嵌套的 & 换成外层的）→ 它的声明 */
+const rules = (file) => {
+  const out = [];
+  const full = (r) => {
+    const own = split(r.selector);
+    if (r.parent?.type !== 'rule') return own;
+    const outer = full(r.parent);
+    return outer.flatMap((o) => own.map((s) => (s.includes('&') ? s.replaceAll('&', o) : `${o} ${s}`)));
+  };
+  postcss.parse(readFileSync(join(cv, file), 'utf8')).walkRules((r) => {
+    const decls = {};
+    r.each((d) => { if (d.type === 'decl') decls[d.prop] = d.value; });
+    out.push({ selectors: full(r), decls });
+  });
+  return out;
+};
+/** 选择器里有 selector 的那几条规则的声明，后写的盖前写的 */
+const at = (list, selector) => Object.assign({}, ...list.filter((r) => r.selectors.includes(selector)).map((r) => r.decls));
+
+test('浅色不用 antialiased：Mac 上它削细浅底深字的常规体；深色照旧开，浅色里彩底白字的小块也照旧开', () => {
+  const css = rules('covey.css');
+  assert.equal(at(css, '.cv')['-webkit-font-smoothing'], 'antialiased', '深色（默认）开');
+  assert.equal(at(css, '.cv.light')['-webkit-font-smoothing'], 'auto');
+  assert.equal(at(css, '.cv.light')['-moz-osx-font-smoothing'], 'auto');
+  const white = css.find((r) => r.selectors.some((s) => s.startsWith('.cv.light :is(') && s.includes('.a-tbadge') && s.includes('.btn.pri')));
+  assert.ok(white, '实心 T 号、主按钮这些彩底白字在浅色里另写');
+  assert.equal(white.decls['-webkit-font-smoothing'], 'antialiased');
+});
+
+test('浅色界面正文灰（--t2）加深到 #353a46', () => {
+  assert.equal(at(rules('covey.css'), '.cv.light')['--t2'], '#353a46');
+});
+
+test('句子和标题里的数字用比例数字，表格和代码里的仍等宽；根上默认还是等宽', () => {
+  const css = rules('covey.css');
+  assert.equal(at(css, '.cv')['font-variant-numeric'], 'tabular-nums');
+  const prose = css.find((r) => r.decls['font-variant-numeric'] === 'normal');
+  assert.ok(prose, '有一条比例数字的规则');
+  for (const part of ['.mdans .prose', '.um-tx', '.ov2-head', '.hd h1', '.a-tt']) assert.ok(prose.selectors[0].includes(part), part);
+  assert.equal(at(css, '.cv .mdans .prose :is(table,pre,code)')['font-variant-numeric'], 'tabular-nums');
+});
+
+test('电脑上主区是一块圆角画布：四周留 8px、圆角 12px、--bg 换成画布色；侧栏铺在外槽上；手机不变', () => {
+  const css = rules('layout-a.css');
+  const main = at(css, '.cv:not(.m) .main');
+  assert.equal(main.margin, '8px 8px 8px 0');
+  assert.equal(main['border-radius'], '12px');
+  assert.equal(main.overflow, 'clip', '画布里铺满的东西（页头的渐变）不越过圆角');
+  assert.equal(main.background, 'var(--bg)');
+  assert.equal(main['--bg'], 'var(--s1)', '画布是面板色，画布里拿 --bg 当遮罩的跟着换');
+  assert.equal(at(rules('covey.css'), '.cv.light')['--s1'], '#ffffff', '浅色是白画布');
+  assert.equal(at(css, '.cv:not(.m):not(.light)')['--side'], '#060709', '深色电脑上外槽压暗，比画布暗一截');
+  assert.equal(at(css, '.cv:not(.m) .app').background, 'var(--side)', '外槽就是侧栏的底色，侧栏状态点的遮罩（--side）对得上');
+  const side = at(css, '.cv:not(.m) .side');
+  assert.equal(side.background, 'transparent');
+  assert.equal(side['border-right'], '0');
+  assert.equal(at(css, '.cv:not(.m) :is(.a-rail,.rp)').background, 'transparent', '右栏并进画布');
+  assert.ok(!css.some((r) => r.selectors.some((s) => /\.cv\.m\b/u.test(s) && /\.main\b/u.test(s)) && r.decls['border-radius']), '手机不画圆角画布');
+});
+
+test('侧栏的 T 号是同色浅底彩字，选中的那个是实心底白字；颜色从 --tc 来，别处照旧实心', () => {
+  const side = rules('sidebar.css');
+  const tint = at(side, '.cv .a-side .a-tlogo .a-tbadge:not(.none)');
+  assert.match(tint.background, /color-mix\(.*var\(--tc\)/u);
+  assert.match(tint.color, /color-mix\(.*var\(--tc\)/u);
+  const on = at(side, '.cv .a-side .a-tp.on .a-tlogo .a-tbadge:not(.none)');
+  assert.equal(on.background, 'var(--tc)');
+  assert.equal(on.color, '#fff');
+  const light = at(side, '.cv.light .a-side .a-tlogo .a-tbadge:not(.none)');
+  assert.match(light.background, /color-mix\(.*var\(--tc\).*transparent\)/u, '和透明混，融进外槽（和白混会比外槽还亮）');
+  assert.equal(light['-webkit-font-smoothing'], 'auto', '浅底深字不削细');
+  assert.equal(at(side, '.cv.light .a-side .a-tp.on .a-tlogo .a-tbadge:not(.none)').background, 'var(--tc)');
+  assert.equal(at(rules('badge.css'), '.cv .a-tbadge').background, 'var(--tc)', '别处是实心块');
+  assert.match(readFileSync(join(cv, 'RoleAvatar.tsx'), 'utf8'), /'--tc': color/u, 'TopicBadge 把颜色放进 --tc');
+});
+
+test('输入框下沿的上下文用量有一条细进度条，过八成变橙', () => {
+  const css = rules('composer.css');
+  assert.equal(at(css, '.cv .cp-ctxbar').width, '32px');
+  assert.equal(at(css, '.cv .cp-ctxbar i').background, 'var(--a1)');
+  assert.equal(at(css, '.cv .cp-ctxbar.full i').background, 'var(--wait)');
+  const src = readFileSync(join(cv, 'Conversation.tsx'), 'utf8');
+  assert.match(src, /pct >= 80 \? ' full' : ''/u);
+});

@@ -72,6 +72,21 @@ if scenario == "logged-out" or spent == "logged-out":
     sys.exit(1)
 if scenario == "garbage":
     print("not json", flush=True); sys.exit(0)
+if json.loads(record["stdin"] or "{}").get("message", {}).get("content") == "/compact":
+    # agy 1.5.16 with slash commands on (2026-11-25): a checkpoint step with its request's usage, an empty response. On a
+    # conversation too short to compact (``compact-short``) the model answers the words instead.
+    emit({"event": "init", "conversation_id": sid, "init": {"cwd": os.getcwd(), "tools": ["run_command"]}})
+    step(2, "DONE", "user_input")
+    if os.environ.get("FAKE_AGY_COMPACT") == "short":
+        step(3, "DONE", "agent_response", text_delta="Context summary", usage={
+            "input_tokens": 2290, "output_tokens": 482, "thinking_tokens": 436, "cache_read_tokens": 17575})
+        result("SUCCESS", "Context summary"); sys.exit(0)
+    if os.environ.get("FAKE_AGY_COMPACT") == "fail":
+        result("ERROR", error="compaction failed"); sys.exit(1)
+    step(3, "DONE", "system_message", duration_seconds=0.0003)
+    step(4, "DONE", "checkpoint", duration_seconds=30.0, usage={
+        "input_tokens": 3125, "output_tokens": 2598, "thinking_tokens": 130, "cache_read_tokens": 69866})
+    result("SUCCESS", ""); sys.exit(0)
 emit({"event": "init", "conversation_id": "11111111-2222-4333-8444-555555555555" if scenario == "mismatch" else sid,
       "init": {"cwd": os.getcwd(), "tools": ["run_command", "view_file"], "permission_mode": "always-proceed"}})
 step(0, "DONE", "user_input")

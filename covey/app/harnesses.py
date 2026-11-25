@@ -23,6 +23,14 @@ from covey.core.store import directory_store
 from covey.feishu.messenger import Voice
 
 
+def chat_records(state_dir, topic_id: str, chat_id: str, **filters) -> list[dict[str, Any]]:
+    """The topic's chat jobs in ``chat_id`` on every Harness it ran on, newest first; ``filters`` (indexed fields, such
+    as status) narrow what is copied."""
+    records = [r for _, r in directory_store(Path(state_dir) / "jobs").query(topic_id=topic_id, chat_id=chat_id, **filters)
+               if r.get("kind", "chat") == "chat"]
+    return sorted(records, key=lambda r: (str(r.get("updated_at") or r.get("created_at") or ""), int(r.get("job_id") or 0)), reverse=True)
+
+
 def components(name):
     """The spec, a new backend and a new session store of a roster Harness."""
     entry = HARNESSES.get(name)
@@ -158,10 +166,9 @@ class Harness:
 
     def topic_records(self, ctx: BridgeContext, chat_id: str, **filters) -> list[dict[str, Any]]:
         """This Harness's chat jobs of the topic, newest first; ``filters`` (indexed fields, such as
-        status) narrow what is copied."""
-        records = [r for _, r in directory_store(ctx.state_dir / "jobs").query(topic_id=ctx.topic_id, chat_id=chat_id, **filters)
-                   if self.runs_jobs_of(r) and r.get("kind", "chat") == "chat"]
-        return sorted(records, key=lambda r: (str(r.get("updated_at") or r.get("created_at") or ""), int(r.get("job_id") or 0)), reverse=True)
+        status) narrow what is copied. A topic 🔁 换配置 moved here has its turns before on the other Harness:
+        ``chat_records`` has them all."""
+        return [r for r in chat_records(ctx.state_dir, ctx.topic_id, chat_id, **filters) if self.runs_jobs_of(r)]
 
     def topic_record(self, ctx, chat_id, job_id):
         """Copy only the requested, topic-scoped job for card navigation."""

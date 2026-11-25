@@ -1469,3 +1469,100 @@ class StageNotesTest(unittest.TestCase):
         self.assertEqual(with_stage_notes(" 只有回答 ", []), "只有回答")
         self.assertTrue(with_stage_notes("", notes).startswith(STAGE_HEADING))
         self.assertEqual(stage_notes(None), [])
+
+
+class StageNotesFoldTest(unittest.TestCase):
+    def test_the_stage_reports_under_a_reply_are_a_closed_fold(self):
+        from covey.cards.review import reply_shown
+        from covey.core.trace import with_stage_notes
+
+        shown = reply_shown(with_stage_notes("最终回答", [(None, "x" * 300), (None, "y" * 400)]), "relay_reply")
+        self.assertEqual([part["tag"] for part in shown], ["markdown", "collapsible_panel"])
+        self.assertEqual(shown[0]["content"], "最终回答")
+        self.assertFalse(shown[1]["expanded"])
+        self.assertIn("这一轮中途的汇报", shown[1]["header"]["title"]["content"])
+        self.assertEqual(len(reply_shown("没有汇报的回答")), 1)
+
+
+class FoldCloseTest(unittest.TestCase):
+    """这一轮中途的汇报 on a relay closes on a click on its text (app/fold_close.py), the owner 2026-11-25."""
+
+    def relay(self):
+        from covey.cards.relay_card import relay_card
+        from covey.core.trace import with_stage_notes
+
+        built, _ = relay_card("T5", "done", text=with_stage_notes("答", [(None, "x" * 300)]))
+        return built
+
+    def test_the_relay_s_fold_text_is_a_button_and_a_question_copy_s_is_not(self):
+        from covey.app import fold_close
+        from covey.cards.review import reply_shown
+        from covey.core.trace import with_stage_notes
+
+        built = self.relay()
+        self.assertTrue(fold_close.has_fold(built))
+        panel = fold_close._folds(built)[0]
+        self.assertEqual((panel["element_id"], panel["expanded"]), ("relay_reply_s0", False))
+        self.assertIn("点正文收起", panel["header"]["title"]["content"])
+        plain = reply_shown(with_stage_notes("答", [(None, "x" * 300)]), "mirror_output")  # A question's copy.
+        self.assertNotIn("interactive_container", str(plain))
+        self.assertEqual(plain[1]["element_id"], "mirror_output_stages")
+        self.assertFalse(fold_close.has_fold({"body": {"elements": plain}}))
+
+    def test_each_close_takes_a_new_id_of_at_most_20_characters_and_a_second_click_closes_past_both(self):
+        from covey.app import fold_close
+
+        built = self.relay()
+        once = fold_close.closed(built, "relay_reply_s0")
+        panel = fold_close._folds(once)[0]
+        self.assertEqual((panel["element_id"], panel["expanded"]), ("relay_reply_s1", False))
+        self.assertEqual(panel["elements"][0]["behaviors"][0]["value"]["fold"], "relay_reply_s1")
+        self.assertEqual(fold_close._folds(built)[0]["element_id"], "relay_reply_s0")  # Its input untouched.
+        # The same click twice (the card changed in between): past both numbers, never one the client has seen.
+        self.assertEqual(fold_close._folds(fold_close.closed(once, "relay_reply_s0"))[0]["element_id"], "relay_reply_s2")
+        self.assertEqual(fold_close._folds(fold_close.closed(built, "relay_reply_s7"))[0]["element_id"], "relay_reply_s8")
+        self.assertIsNone(fold_close.closed(built, "other_s0"))
+        self.assertIsNone(fold_close.closed(built, "relay_reply_stages"))
+        self.assertIsNone(fold_close.closed(built, "relay_reply_s" + "9" * 7))  # Past CardKit's 20 characters.
+        self.assertLessEqual(len("relay_reply_s" + "9" * 6 + "1"), 20)
+
+    def test_a_click_writes_the_card_again_closed_from_the_copy_its_artifacts_are_kept_in(self):
+        import tempfile
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from covey.app import answer_cards, fold_close
+
+        built = self.relay()
+        with tempfile.TemporaryDirectory() as directory:
+            state = Path(directory)
+            messenger = mock.Mock()
+            messenger.patch_card.return_value = True
+            feature = fold_close.FoldClose(SimpleNamespace(log=lambda *_: None), messenger)
+            ctx = SimpleNamespace(state_dir=state, profile="p")
+            raw = {"kind": "bridge_fold_close", "fold": "relay_reply_s0"}
+            self.assertIsNone(feature.claim(ctx, {}, {"kind": "other"}, True))
+            self.assertEqual(feature.claim(ctx, {"message_id": "om_1"}, raw, False), "owner_only")
+            with mock.patch("covey.app.fold_close.after_ack", lambda call: call()):
+                self.assertEqual(feature.claim(ctx, {"message_id": "om_1"}, raw, True), "fold_close")  # Not kept.
+                messenger.patch_card.assert_not_called()
+                fold_close.remember(state, "om_0", {"body": {"elements": []}}, "job-1")  # No such fold: not kept.
+                self.assertFalse(fold_close.path_of(state, "om_0").exists())
+                # Kept as sent, and again by app/answer_cards.py with its 产物 since written: that copy is the one closed.
+                fold_close.remember(state, "om_1", built, "job-1")
+                newer = {**built, "marker": "产物 uploaded"}
+                answer_cards.register(state, "job-1", "relay", "om_1", newer, "done")
+                feature.claim(ctx, {"message_id": "om_1"}, raw, True)
+            sent = messenger.patch_card.call_args.args[2]
+            self.assertEqual(sent["marker"], "产物 uploaded")
+            self.assertEqual(fold_close._folds(sent)[0]["element_id"], "relay_reply_s1")
+            self.assertEqual(fold_close._folds(answer_cards.kept_card(state, "job-1", "om_1"))[0]["element_id"], "relay_reply_s1")
+            from covey.core.state import read_object
+
+            self.assertEqual(fold_close._folds(read_object(fold_close.path_of(state, "om_1"))["card"])[0]["element_id"],
+                             "relay_reply_s1")
+            # Feishu refused: nothing kept changes, so the next click closes from the same card.
+            messenger.patch_card.return_value = False
+            with mock.patch("covey.app.fold_close.after_ack", lambda call: call()):
+                feature.claim(ctx, {"message_id": "om_1"}, {**raw, "fold": "relay_reply_s1"}, True)
+            self.assertEqual(fold_close._folds(answer_cards.kept_card(state, "job-1", "om_1"))[0]["element_id"], "relay_reply_s1")

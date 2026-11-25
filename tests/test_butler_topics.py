@@ -692,6 +692,23 @@ class TopicForkTest(ButlerTopicsCase):
         self.assertFalse(answer["ok"])
         self.assertIn("topic_send", answer["text"])
 
+    def test_a_topic_moved_to_another_harness_forks_from_the_turn_it_finished_on_the_one_before(self):
+        # 🔁 换配置 moved it after that turn and it has not run since: its finished turn is the other Harness's job.
+        data = self.finished()
+        finished = find_job_record(self.ctx.state_dir, "main-" + butler_opened.request_token(SimpleNamespace(id="open")))
+        self.assertEqual(finished["status"], "done")
+        path = self.ctx.state_dir / "topics" / data["topic_id"] / "topic.json"
+        topic = json.loads(path.read_text())
+        other = next(name for name in self.app.apps if name != topic["harness_id"])
+        topic.update(harness_id=other, binding_revision=2)
+        write_json(path, topic)
+        answer = self.fork(data)
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual(answer["data"]["source_job_id"], finished["job_id"])
+        fork = load_topic(self.ctx.state_dir, answer["data"]["topic_id"])
+        self.assertEqual((fork["forked_from"]["job_id"], fork["harness_id"]), (finished["job_id"], other))
+        self.assertEqual(self.job("fork-1").topic_id, answer["data"]["topic_id"])  # Its first turn, where the source is now.
+
 
 class HandoffTest(ButlerTopicsCase):
     """What a topic gets from the butler (app/butler_handoff.py): the Bridge's note, the butler's task, the

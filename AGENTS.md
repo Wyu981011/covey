@@ -123,6 +123,7 @@
 | `app/directory_picker.py` | Bounded directory browsing: one listing or name search at a time, never on the event threads |
 | `app/dispatch_cards.py` | 派发卡, when COVEY_DISPATCH_CARD=1 |
 | `app/doctor_panel.py` | The 设置 card's 诊断 tab: what service/doctor.py finds of this deployment, in a few lines |
+| `app/fold_close.py` | A fold closed by a click on its text: 这一轮中途的汇报 under a relay |
 | `app/forks.py` | Forks: a new topic that continues from another topic, opened by the butler's topic_fork |
 | `app/form_cards.py` | Form cards: a card with a record of its own that every click on it reads |
 | `app/group_boards.py` | 手上的事, the pinned board and 早晚汇总 in each personal group |
@@ -534,6 +535,7 @@
 | 文件 | 管什么 |
 | --- | --- |
 | `backends/agy/bridge.py` | Antigravity (Google's `agy` CLI): Gemini and the other models of the owner's Google account, headless |
+| `backends/agy/compaction.py` | Compacting an agy conversation between turns: `/compact` in an agy process of its own |
 | `backends/agy/home.py` | agy's private home for one turn that takes the Bridge's tools (`options["mcp_config"]`, the butler's) |
 | `backends/agy/judge.py` | One question to Antigravity and nothing else |
 

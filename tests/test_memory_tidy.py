@@ -1,7 +1,11 @@
 """整理记忆 (COVEY_MEMORY_LEARN=1, app/memory_tidy.py, core/project_memory.py settle and unsettle, cards/digest.py
 memory_elements, app/digest.py memory_click): a project's lines put away as done, superseded or unused and put back by 撤销, the
 rules the model distilled carried as 它总结的 until 确认长期 makes them the owner's, the carried candidates nobody used let go,
-and the evening digest's part with its buttons."""
+and the evening digest's part with its buttons.
+
+ElsewhereTest is what went wrong once: a topic of one project asked the owner, on one card, how eight lines of another
+project's memory should count from now on (a migration), the answers were noted as the first project's 当前决定, and that night's
+整理 left six of them there and wrote two of the other project's rules into the first as its own."""
 from __future__ import annotations
 
 import json
@@ -16,7 +20,7 @@ from support import make_context
 from covey.app import memory_candidates, memory_tidy
 from covey.app.track_standby import Failed
 from covey.cards.digest import MEMORY_KIND, digest_card, digest_text, memory_elements
-from covey.core import memory, memory_usage, project_memory, projects
+from covey.core import memory, memory_usage, principles, project_memory, projects
 from covey.core.state import write_json
 
 ON = {memory.ENV: "1", memory.LEARN_ENV: "1", projects.ENV: "1", projects.MEMORY_ENV: "1"}
@@ -118,7 +122,7 @@ class RunTest(Case):
         self.assertEqual([line["part"] for line in self.asked[0]["lines"]], ["当前决定"] * 5)
         self.assertEqual(self.asked[0]["rules"], ["用中文回复"])
         view = memory_tidy.view_of(run)
-        self.assertEqual(view["away"], {"idle": 0, "done": 1, "superseded": 1})
+        self.assertEqual(view["away"], {"idle": 0, "done": 1, "superseded": 1, "foreign": 0})
         self.assertEqual([rule["text"] for rule in view["rules"]], ["发网关镜像都先发预发"])
 
     def test_a_line_nobody_used_for_long_goes_without_the_model_and_one_used_stays(self):
@@ -170,6 +174,93 @@ class RunTest(Case):
         self.assertEqual(len(memory_candidates.carried(self.state, "")[0]), 2)
 
 
+OTHER = "f6e5d4c3b2a1"
+CARD = "0f0e0d0c0b0a0908"  # The migration card's question record.
+
+
+class ElsewhereTest(Case):
+    """A topic of this project (网关) sorted out the memory of another project (回放, ``OTHER``) on one question card."""
+
+    BASELINE = "回放口径（主人定）：每次回放另抽新的 50 个请求，新旧两版一起跑，抖动导致的差也算差，不拿抖动解释变差的请求。"
+    SERVICE = "评估时不能把“挪给下游”直接算作合理的减少，要核实下游真的接住了，并说清每个指标的含义和判定方法。"
+
+    def setUp(self):
+        super().setUp()
+        projects.create(self.state, projects.new_record(chat_id=CHAT, name="回放", goal="回放工具上线", project_id=OTHER,
+                                                        now=NOW))
+        self.theirs = [project_memory.add(self.state, OTHER, text, "decision", "lead", now=NOW - 3 * DAY)[0]["id"]
+                       for text in (self.BASELINE, self.SERVICE)]
+
+    def migration(self, token=CARD):
+        """The card as an older release noted it: a 当前决定 for each of 回放's lines, 长期都照这条做, each then carried out on
+        its line by a correction whose origin names the question (as the migration's script wrote it)."""
+        lines = [{"index": i, "item": f"memory-{entry}",
+                  "text": f"主人答：回放专项的记忆〔{entry}〕「{text}」这条以后怎么算？→长期都照这条做（推荐）"}
+                 for i, (entry, text) in enumerate(zip(self.theirs, (self.BASELINE, self.SERVICE)), 1)]
+        project_memory.note_answers(self.state, PID, {"token": token, "topic_id": "ab" * 16}, lines, now=NOW - 2 * DAY)
+        for entry in self.theirs:
+            project_memory.fix(self.state, OTHER, entry, "confirm", now=NOW - 2 * DAY,
+                               origin={"message_id": "om_card", "question": token, "item": f"memory-{entry}"})
+        return [project_memory.answer_id(token, i) for i in (1, 2)]
+
+    def facts(self, entry):
+        return memory.describe(next(row for row in project_memory.stored(self.state, PID) if row["id"] == entry))
+
+    def test_a_card_that_sorted_out_another_projects_memory_goes_without_the_model_and_gives_no_rule(self):
+        card = self.migration()
+        for text in ("主人答：网关先发预发吗？→先发预发（推荐）", "主人答：这次网关也先发预发吗？→先发预发", "主人答：网关超时设多少？→30 秒"):
+            self.line(text)
+        tidy = self.tidy({"rules": [{"text": "每次回放另抽新的50个请求，新旧两版一起跑", "from": card}]})
+        run = tidy.run(self.ctx, CHAT, NOW, now=NOW)
+        self.assertFalse(set(card) & {line["id"] for line in self.asked[0]["lines"]})  # The model never reads them.
+        self.assertEqual(self.asked[0]["others"], ["回放"])
+        self.assertEqual([(self.facts(entry)["valid"], self.facts(entry)["layer"]) for entry in card], [("done", memory.HISTORY)] * 2)
+        self.assertEqual(run["projects"][0]["settled"], [[card[0], {}, "foreign"], [card[1], {}, "foreign"]])
+        self.assertEqual(run["projects"][0]["rules"], [])
+        self.assertEqual(memory_tidy.view_of(run)["away"], {"idle": 0, "done": 0, "superseded": 0, "foreign": 2})
+        tidy.decide(self.ctx, run["id"], "undo")
+        self.assertEqual([self.facts(entry)["part"] for entry in card], [memory.DECISION] * 2)
+
+    def test_an_answer_carried_out_on_another_line_goes_as_done_and_one_that_corrected_itself_stays(self):
+        mine = self.line("网关用 A 方案部署", source="lead")
+        token = "0123456789abcdef"
+        project_memory.note_answers(self.state, PID, {"token": token}, [
+            {"index": 1, "item": "keep", "text": "主人答：网关用 A 方案那条以后怎么算？→长期都照这条做"},
+            {"index": 2, "item": "scope", "text": "主人答：超时只管预发吗？→只管预发"}], now=NOW - DAY)
+        project_memory.fix(self.state, PID, mine, "confirm", origin={"message_id": "om_card", "question": token, "item": "keep"},
+                           now=NOW)
+        second = project_memory.answer_id(token, 2)
+        project_memory.fix(self.state, PID, second, "scope", origin={"message_id": "om_card", "question": token, "index": 2},
+                           applies="只在预发", now=NOW)
+        run = self.tidy().run(self.ctx, CHAT, NOW, now=NOW)
+        self.assertEqual(run["projects"][0]["settled"], [[project_memory.answer_id(token, 1), {}, "done"]])
+        self.assertEqual(self.facts(second)["part"], memory.DECISION)  # Its own correction holds nothing elsewhere.
+        self.assertEqual(self.facts(mine)["part"], memory.RULE)
+
+    def test_a_rule_from_the_answers_of_one_card_is_left_out(self):
+        token = "0123456789abcdef"
+        project_memory.note_answers(self.state, PID, {"token": token}, [
+            {"index": 1, "item": "a", "text": "主人答：第一批也先发预发吗？→先发预发"},
+            {"index": 2, "item": "b", "text": "主人答：第二批也先发预发吗？→先发预发"}], now=NOW - DAY)
+        a1, a2 = self.line("主人答：网关先发预发吗？→先发预发（推荐）"), self.line("主人答：这次网关也先发预发吗？→先发预发")
+        one = [project_memory.answer_id(token, 1), project_memory.answer_id(token, 2)]
+        run = self.tidy({"rules": [{"text": "每一批都先发预发", "from": one}, {"text": "发网关镜像都先发预发", "from": [a1, a2]}]}
+                        ).run(self.ctx, CHAT, NOW, now=NOW)
+        self.assertEqual([rule["text"] for rule in run["projects"][0]["rules"]], ["发网关镜像都先发预发"])
+        self.assertNotIn("每一批都先发预发", self.parts())
+        self.assertIn(f"memory tidy rule left out project={PID}: its decisions were made at one time", self.logs)
+
+    def test_a_rule_that_restates_another_projects_line_is_left_out(self):
+        ids = [self.line(f"主人答：第 {i} 批网关灰度怎么验？→另抽新的 50 个请求，新旧两版一起跑") for i in range(3)]
+        run = self.tidy({"rules": [{"text": "每次回放另抽新的50个请求，新旧两版一起跑，抖动导致的差也算差", "from": ids[:2]},
+                                   {"text": "网关每批灰度都先在预发跑一遍冒烟再放量", "from": ids[1:]}]}).run(self.ctx, CHAT, NOW, now=NOW)
+        self.assertEqual([rule["text"] for rule in run["projects"][0]["rules"]], ["网关每批灰度都先在预发跑一遍冒烟再放量"])
+        self.assertIn(f"memory tidy rule left out project={PID}: it restates another project's line", self.logs)
+        self.assertTrue(memory_tidy.borrowed("每批回放都带上旧版", [(principles.same_key("每批回放都带上旧版。"), set())]))
+        self.assertFalse(memory_tidy.borrowed("发布前先跑冒烟", [(principles.same_key("发布前先跑冒烟测试"),
+                                                                 memory_tidy.pairs("发布前先跑冒烟测试"))]))  # Too short to tell.
+
+
 class CardTest(Case):
     VIEW = {"run": "t0a1b2c3d", "away": {"idle": 1, "done": 8, "superseded": 3}, "expired": 2, "undone": False,
             "rules": [{"project": PID, "name": "网关", "entry": "e1", "text": "发网关镜像都先发预发", "state": "open"}]}
@@ -183,6 +274,8 @@ class CardTest(Case):
         self.assertEqual([(value["op"], value.get("entry")) for value in buttons(elements)],
                          [("undo", None), ("confirm", "e1"), ("wrong", "e1")])
         self.assertTrue(all(value["kind"] == MEMORY_KIND and value["run"] == "t0a1b2c3d" for value in buttons(elements)))
+        elsewhere = {**self.VIEW, "away": {"idle": 0, "done": 2, "superseded": 0, "foreign": 6}}
+        self.assertIn("收起 8 条：办完的 2 条、别的专项的 6 条", json.dumps(memory_elements({"memory_tidy": elsewhere}), ensure_ascii=False))
 
     def test_decided_and_undone_are_grey_lines_and_none_without_the_part(self):
         view = {**self.VIEW, "undone": True, "rules": [{**self.VIEW["rules"][0], "state": "confirmed"}]}

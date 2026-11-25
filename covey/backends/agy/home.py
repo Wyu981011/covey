@@ -9,10 +9,18 @@ conversations and everything else agy or a command writes go through the links t
 file at the top of the home (or of those two directories) stays in the private one and goes with it.
 
 Each Bridge server waits for its tools longer than core/butler_requests.py waits for an answer (``TOOL_SECONDS``),
-and lists its tools eagerly (``tools.<name>.eager``): without it agy names an MCP tool in a file the model must read
-first, the way Claude Code's tool search did, under which a Bridge tool was once called with no arguments. The names
-are what the server answers to ``tools/list`` before the turn (``tool_names``); when it says nothing in time, the
-tools are still there, only not eager.
+and lists the tools a turn works with eagerly (``tools.<name>.eager``): agy gives the model those as tools of their own,
+and names the others in its prompt, in a file the model must read before it calls one, the way Claude Code's tool
+search did, under which a Bridge tool was once called with no arguments. The tools are what the server answers to
+``tools/list`` before the turn (``listed_tools``); when it says nothing in time, they are still there, only not eager.
+
+Not all of them, though: agy fits a turn's skills and MCP tools in one budget and, over it, drops the largest whole,
+from the declarations and from the list in its prompt alike, without a word (1.5.16: 62 skills and the butler's 21
+tools, and topic_start, 5.4 KB, was gone; the butler forked a finished topic for each new matter instead, T750). Eager
+are therefore the tools a turn works with, those that hand work to topics first and core/butler_tool_specs.py
+SECONDARY last (``eager_names``), until they would take more than ``EAGER_BYTES`` (``COVEY_AGY_EAGER_BYTES``); agy names
+the rest, which costs it a line each.
+backends/agy/bridge.py ``left_out`` says after the turn when agy dropped some all the same.
 """
 from __future__ import annotations
 
@@ -23,18 +31,24 @@ import shutil
 import subprocess
 import tempfile
 
+from covey.core import env as cenv
+from covey.core.butler_tool_specs import HANDING, SECONDARY
 from covey.core.state import ensure_private_dir
 
 TOOL_SECONDS = 150  # Above core/butler_requests.py's 120 seconds.
 LIST_SECONDS = 10  # How long the server may take to list its tools before the turn.
 GEMINI, CONFIG, MCP_FILE = ".gemini", "config", "mcp_config.json"
 PROTOCOL = "2025-06-18"
+# What a server's eager tools may take (``tool_size``). The butler's that work with topics take 14.7 KB with the
+# projects on; on 1.5.16 that and the others by name fit beside 62 skills (40 KB of them), all 21 eager did not.
+EAGER_ENV = "COVEY_AGY_EAGER_BYTES"
+EAGER_BYTES = 15000
 
 
-def tool_names(server, env, timeout=LIST_SECONDS) -> list:
-    """The names a stdio MCP server ``server`` ({command, args, env}) lists, started with ``env`` and its own env on
-    top; [] when it does not answer in ``timeout`` or not as MCP. Its stdin is closed after the three messages, so it
-    ends."""
+def listed_tools(server, env, timeout=LIST_SECONDS) -> list:
+    """The tools ({name, description, inputSchema}) a stdio MCP server ``server`` ({command, args, env}) lists, started
+    with ``env`` and its own env on top; [] when it does not answer in ``timeout`` or not as MCP. Its stdin is closed
+    after the three messages, so it ends."""
     lines = [{"jsonrpc": "2.0", "id": 1, "method": "initialize",
               "params": {"protocolVersion": PROTOCOL, "capabilities": {}, "clientInfo": {"name": "covey", "version": "1"}}},
              {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -53,19 +67,47 @@ def tool_names(server, env, timeout=LIST_SECONDS) -> list:
             continue
         if isinstance(answer, dict) and answer.get("id") == 2:
             tools = (answer.get("result") or {}).get("tools") or []
-            return [tool["name"] for tool in tools if isinstance(tool, dict) and isinstance(tool.get("name"), str)]
+            return [tool for tool in tools if isinstance(tool, dict) and isinstance(tool.get("name"), str)]
     return []
 
 
-def agy_servers(config, env) -> dict:
-    """``config`` (an --mcp-config: {"mcpServers": {name: {command, args, env}}}) as agy's mcp_config.json entries."""
-    servers = {}
+def tool_size(tool) -> int:
+    """About what ``tool`` takes of agy's budget: its description and input schema (compact JSON), in UTF-8 bytes."""
+    schema = json.dumps(tool.get("inputSchema") or {}, ensure_ascii=False, separators=(",", ":"))
+    return len(str(tool.get("description") or "").encode()) + len(schema.encode())
+
+
+def eager_names(tools, room) -> list:
+    """The names of ``tools`` agy is to load up front: those that hand work to topics (HANDING), then the others but
+    SECONDARY, then SECONDARY, each in the server's order, until the next would take the eager ones past ``room``
+    bytes (``tool_size``)."""
+    names, used = [], 0
+    for tool in sorted(tools, key=lambda tool: (tool["name"] in SECONDARY, tool["name"] not in HANDING)):  # Stable.
+        used += tool_size(tool)
+        if used > room:
+            break
+        names.append(tool["name"])
+    return names
+
+
+def eager_room(env) -> int:
+    """EAGER_BYTES, or COVEY_AGY_EAGER_BYTES of ``env`` when it is a whole number (0: every tool by name only)."""
+    value = str(cenv.get(EAGER_ENV, "", env) or "").strip()
+    return int(value) if value.isdigit() else EAGER_BYTES
+
+
+def agy_servers(config, env) -> tuple[dict, dict]:
+    """``config`` (an --mcp-config: {"mcpServers": {name: {command, args, env}}}) as agy's mcp_config.json entries, and
+    the names of the tools each server listed ({name: [tool]})."""
+    servers, listed, room = {}, {}, eager_room(env)
     for name, server in ((config or {}).get("mcpServers") or {}).items():
-        eager = {tool: {"eager": True} for tool in tool_names(server, env)}
+        tools = listed_tools(server, env)
+        listed[name] = [tool["name"] for tool in tools]
+        eager = {tool: {"eager": True} for tool in eager_names(tools, room)}
         servers[name] = {"command": server["command"], "args": list(server.get("args") or ()),
                          "env": dict(server.get("env") or {}), "timeoutSeconds": TOOL_SECONDS,
                          **({"tools": eager} if eager else {})}
-    return servers
+    return servers, listed
 
 
 def linked(source: Path, target: Path, keep: str) -> None:
@@ -82,12 +124,14 @@ def linked(source: Path, target: Path, keep: str) -> None:
 class PrivateHome:
     """``with PrivateHome(state_dir, home, config, env) as path``: the turn's HOME, removed on the way out. ``home`` is
     the real one, ``config`` the turn's --mcp-config, ``env`` the turn's environment (the servers start with it).
-    ``note``: why the owner's own servers are not there, "" when they are (or there are none)."""
+    ``note``: why the owner's own servers are not there, "" when they are (or there are none). ``listed``: the tools
+    each of ``config``'s servers listed, {server: [name]}."""
 
     def __init__(self, state_dir, home, config, env):
         self.state_dir, self.home, self.config, self.env = Path(state_dir), Path(home), config, env
         self.path = None
         self.note = ""
+        self.listed = {}
 
     def __enter__(self) -> Path:
         tmp = self.state_dir / "tmp"
@@ -100,7 +144,8 @@ class PrivateHome:
             linked(real, self.path / GEMINI, CONFIG)
             linked(real / CONFIG, self.path / GEMINI / CONFIG, MCP_FILE)
             own = self.owner_servers(real / CONFIG / MCP_FILE)
-            data = {"mcpServers": {**own, **agy_servers(self.config, self.env)}}
+            servers, self.listed = agy_servers(self.config, self.env)
+            data = {"mcpServers": {**own, **servers}}
             target = self.path / GEMINI / CONFIG / MCP_FILE
             descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(descriptor, "w") as handle:

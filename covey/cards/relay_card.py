@@ -97,7 +97,9 @@ def relay_card(label, outcome, *, text="", question="", reason="", inputs=None, 
         shown_change = change or delivery
         line = shown_change if isinstance(shown_change, dict) and shown_change else None  # Its 改动 is a line of the foot.
         shown = drop_part_heading(body)  # Its first words say it: no "## 结论" row over them.
-        reply = reply_shown(shown) if shown.strip() else []  # Whole (the owner, 2026-11-22: 不折叠，直接展示全文).
+        # Whole (the owner, 2026-11-22: 不折叠，直接展示全文); its 这一轮中途的汇报 folded, closed by a click on its text too
+        # (app/fold_close.py: the Bridge keeps the card as sent, app/relay_send.py).
+        reply = reply_shown(shown, closable=True) if shown.strip() else []
         ending = foot(inputs, outputs, change=line)
         # As the topic's answer card (cards/answer_card.py tail): a commit not found and the criteria not met out on the card,
         # the rest to look up in one fold (an older release's 改动 string among it), then the foot, 独立复核 under it, and

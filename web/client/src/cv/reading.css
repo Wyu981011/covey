@@ -1,14 +1,14 @@
 /* 读的排版（covey docs/ui.md 2.4 正文排版）：话题页的回答、大厅和专项页的负责人对话。一轮分三层：回答正文直接铺在底上是主角
    （夜航 v2 起不套面板），回答表格和过程行退成灰色的上下文。数值改这里，同时改规范。 */
 .cv{
-/* 正文 14/1.7，段距 8，铺满对话列（T623：主人嫌字大、不够密；回答和你说的话右边对齐） */
+/* 正文 15/1.78，段距 12（方案 X：回答像读文章，对话列收到 740px，见 v3.css），回答和你说的话右边对齐 */
 .mdans{max-width:none;margin:0}
-.mdans .prose{font-size:14px;line-height:1.7}
-.mdans p{margin:0 0 8px;line-height:1.7}
+.mdans .prose{font-size:15px;line-height:1.78}
+.mdans p{margin:0 0 12px;line-height:1.78}
 .mdans .prose>:first-child{margin-top:0}
 .mdans .prose>:last-child{margin-bottom:0}
 /* 标题比正文大，上空大、下空小，跟着它的那段 */
-.mdans h1,.mdans h2{font-size:16px;font-weight:600;line-height:1.45;margin:18px 0 6px}
+.mdans h1,.mdans h2{font-size:17.5px;font-weight:600;line-height:1.45;margin:22px 0 8px}
 .mdans h3{font-size:15px;font-weight:600;line-height:1.5;margin:14px 0 6px}
 .mdans h4,.mdans h5,.mdans h6{font-size:14px;font-weight:600;line-height:1.55;margin:12px 0 4px}
 .mdans ul,.mdans ol{margin:2px 0 10px;padding-left:20px}
@@ -118,3 +118,12 @@
 .cv .afiles-go{width:12px;height:12px;flex:none;color:var(--t3)}
 .cv .afiles-sz{flex:none;font-size:12px;color:var(--t3)}
 .cv .afiles-err{min-width:0;font-size:12px;color:var(--st-stopped);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 在跑的一轮折成一行（T753，chatTurn.tsx livefold）：转圈、N 步、本轮用时、现在在做哪一步，点开是瀑布图 */
+.cv .fold.livefold{display:flex;width:100%;height:auto;min-height:36px;padding:7px 12px;gap:10px;border-radius:12px;background:var(--s2);box-shadow:none;color:var(--t2);font-size:13px;text-align:left}
+.cv .fold.livefold:hover{background:var(--s3)}
+.cv .livefold b{font-weight:600;color:var(--t1);flex:none}
+.cv .livefold .lf-t{font:12px var(--mono);color:var(--t3);flex:none}
+.cv .livefold .lf-now{flex:1;min-width:0;color:var(--t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cv .livefold svg{width:14px;height:14px;color:var(--t3);flex:none}
+.cv .livefold .dot{flex:none;margin:0}
+

@@ -455,7 +455,9 @@ class DeliverTest(Case):
         send = self.deliver(self.job(progress=SimpleNamespace(), tool_trace=trace))
         body = json.dumps(send.call_args.kwargs["card"]["body"], ensure_ascii=False)
         self.assertIn("基线组已经补跑起来了", body)
-        self.assertIn(STAGE_HEADING, body)
+        self.assertIn("这一轮中途的汇报", body)  # In a closed fold under the answer, not open on the card.
+        self.assertNotIn(STAGE_HEADING, body)
+        self.assertIn('"expanded": false', body)
         self.assertNotIn("我先看下文件", body)
         self.assertLess(body.index("两种做法都行"), body.index("基线组已经补跑起来了"))  # The answer first.
         self.assertIn("两种做法都行，先用第一种", str(send.call_args.kwargs["card"]["body"]["elements"][1]))

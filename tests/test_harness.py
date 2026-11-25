@@ -36,6 +36,7 @@ from covey.app.availability import observe, snapshot
 from covey.app.card_actions import ACTIONS
 from covey.app.detached import queued_path, restart_blockers
 from covey.cards.launch_config import SUBMIT_PREFIX
+from covey.cards.review import FOLD_CLOSE_KIND
 from covey.app.launch_models import available_models
 from covey.app.harnesses import components
 from covey.app.prompts import resume_reminders
@@ -703,6 +704,7 @@ class RetiredHarnessTests(unittest.TestCase):
         private |= set(TIDY_KINDS)  # 整理专项's cards, the private chat's or a topic card's 移出 (tests/test_project_tidy.py).
         private |= {OWNER_SEND, OWNER_SEND_DROP, OWNER_SEND_PICK,
                     OWNER_SEND_ASK}  # The 代发草稿 card (tests/test_owner_send.py, test_ask_first.py).
+        private |= {FOLD_CLOSE_KIND}  # A click on 这一轮中途的汇报's text on a relay (tests/test_trace.py FoldCloseTest).
         clicks = [{'action_value': {'kind': kind, 'topic_id': self.topic.topic_id, 'job_id': 7, 'token': 'ab' * 8,
                                     'harness_id': GONE, 'binding_revision': 2}}
                   for kind in ACTIONS if kind not in private]

@@ -430,6 +430,29 @@ def copies(state_dir, key, status, *, force=False) -> list:
             if entry.get("where") == COPY and entry.get("token") and (force or entry.get("status") != status)]
 
 
+def kept_card(state_dir, key, message_id) -> dict | None:
+    """The card the job ``key``'s answer card ``message_id`` was last written with, as kept here; None when it is not
+    kept (a question's copy keeps none)."""
+    for entry in read_object(record_path(state_dir, key)).get("cards") or ():
+        if entry.get("message_id") == message_id and isinstance(entry.get("card"), dict):
+            return copy.deepcopy(entry["card"])
+    return None
+
+
+def keep_card(state_dir, key, message_id, built) -> None:
+    """``built``, written to the job ``key``'s answer card ``message_id`` by another (app/fold_close.py), kept as its card,
+    so the next 产物 or memory write starts from it."""
+    path = record_path(state_dir, key)
+    with resource_lock("answer-cards", str(path)):
+        saved = read_object(path)
+        entries = [entry for entry in saved.get("cards") or () if entry.get("message_id") == message_id]
+        if not entries:
+            return
+        for entry in entries:
+            entry["card"] = built
+        write_json(path, saved, ensure_ascii=False)
+
+
 def holds_files(state_dir, key) -> bool:
     """Whether an answer card of the job ``key`` shows its 产物 (the task card then does not)."""
     return any(entry.get("where") in ("answer", "tail") for entry in read_object(record_path(state_dir, key)).get("cards") or ())

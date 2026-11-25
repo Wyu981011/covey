@@ -18,6 +18,12 @@ when the meta has none. The question record as it was answered (every question, 
 补充说明) is kept whole in ``answers/<token>.json`` (``answer_record``): the entry's text is the line a turn carries, at most
 ``ANSWER_TEXT`` characters; the file is what it was cut from.
 
+Some lines are read across projects (``across``). A question that names an entry of another project's memory by its id
+(``quoted``) sorts out that project's memory, as a migration asks how each of its lines counts: its answer is not a decision of
+the project it was asked in (app/project_context.py notes it as history at once, ``note_answers`` with ``valid``). A question a
+correction of some line names in its origin (``carried_out``) was carried out on that line, which holds what was decided from
+then on; 整理记忆 (app/memory_tidy.py) puts the answer away.
+
 Limits: a text of at most ``TEXT`` characters (``ANSWER_TEXT`` for an answer's), ``MAX_ENTRIES`` live entries, ``MAX_BYTES`` for
 the file; past one the oldest tombstone goes first, then the oldest answer (its record stays in answers/), then the lead's
 oldest fact or contact, then the lead's oldest other entry, the owner's own words last, never the style line (``_victim``). A
@@ -410,9 +416,10 @@ def add(state_dir, project_id, text, kind="fact", source="lead", *, now=None, al
 def note_answers(state_dir, project_id, record, lines, *, now=None) -> list:
     """The owner's answers to one question card: the question record ``record`` (its ``token``, ``topic_id``, ``job_id``,
     ``questions``, ``answers``, ``supplement``) kept whole in answers/<token>.json the first time, and each of ``lines``
-    ({index, item, text}: the question's place from 1, its id and the line a turn carries) an entry of its own, a decision of
-    ``owner_answer`` whose id is ``answer_id``, its origin in the meta. An answer that is there already, or that the owner
-    deleted, is not noted again. [(the entry, whether it is new)], one a line. ValueError for a record with no token."""
+    ({index, item, text, valid?}: the question's place from 1, its id and the line a turn carries) an entry of its own, a
+    decision of ``owner_answer`` whose id is ``answer_id``, its origin in the meta; one with ``valid`` (``SETTLED``) is history
+    from the start, never carried. An answer that is there already, or that the owner deleted, is not noted again. [(the
+    entry, whether it is new)], one a line. ValueError for a record with no token."""
     stamp = time.time() if now is None else now
     token = str(record.get("token") or "")
     path = answer_path(state_dir, project_id, token)
@@ -434,10 +441,11 @@ def note_answers(state_dir, project_id, record, lines, *, now=None) -> list:
                               "topic": str(record.get("topic_id") or ""), "job": job})
             entry = {"id": entry_id, "text": clean(line["text"], ANSWER_TEXT), "kind": "decision", "source": "owner_answer",
                      "at": stamp, "deleted": 0}
+            settled = {"valid": line["valid"]} if line.get("valid") in SETTLED else {}
             if entry["text"]:
                 rows.append(entry)
-                meta[entry_id] = {"origin": origin}
-                out.append(({**entry, "origin": origin}, True))
+                meta[entry_id] = {"origin": origin, **settled}
+                out.append(({**entry, "origin": origin, **settled}, True))
         return out
     return _edit(state_dir, project_id, edit, None, stamp)
 
@@ -535,6 +543,56 @@ def answer_record(state_dir, project_id, token) -> dict:
         return read_object(answer_path(state_dir, project_id, token))
     except ValueError:
         return {}
+
+
+# An entry's id written in a text as a word of its own: six hex digits (``add``'s), an answer's (``answer_id``) or the token
+# of its question record.
+QUOTE = re.compile(r"(?<![0-9A-Za-z])([0-9a-f]{16}(?:-[0-9]{1,3})?|[0-9a-f]{6})(?![0-9A-Za-z])")
+
+
+def across(state_dir) -> dict:
+    """Every project's memory at once, for what is read across projects (``ids``, ``carried_out``): project id -> its entries
+    as ``entries`` gives them (tombstones too, with their meta), then what a full memory let go (``archived``)."""
+    return {record["id"]: [*entries(state_dir, record), *archived(state_dir, record["id"])]
+            for record in projects.records(state_dir)}
+
+
+def ids(found) -> dict:
+    """Entry id -> its project, of ``found`` (``across``'s); an answer's entry is there by its question record's token too."""
+    out = {}
+    for pid, rows in found.items():
+        for row in rows:
+            out[row["id"]] = pid
+            answer = ANSWER_ID.fullmatch(row["id"])
+            if answer:
+                out[answer.group(1)] = pid
+    return out
+
+
+def quoted(known, project_id, text) -> list:
+    """The projects but ``project_id`` an entry of whose memory ``text`` names by its id (``known`` is ``ids``'s), the first
+    named first."""
+    out = []
+    for word in QUOTE.findall(str(text or "")):
+        pid = known.get(word)
+        if pid and pid != project_id and pid not in out:
+            out.append(pid)
+    return out
+
+
+def carried_out(found) -> dict:
+    """The questions a correction of a line came from (``fix`` whose ``origin`` names the question record and the question,
+    as a migration that asked the owner how each line counts writes it), of ``found`` (``across``'s): (token, the question's
+    id) and (token, its place) -> the refs "<project>:<entry>" of the lines corrected."""
+    out = {}
+    for pid, rows in found.items():
+        for row in rows:
+            for fix in row.get("fixes") or (row.get("meta") or {}).get("fixes") or ():
+                origin = _origin(fix.get("origin"))
+                for key in (origin.get("item"), origin.get("index")) if origin.get("question") else ():
+                    if key:
+                        out.setdefault((origin["question"], key), set()).add(f"{pid}:{row['id']}")
+    return out
 
 
 def version(rows) -> str:

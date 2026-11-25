@@ -180,7 +180,7 @@
 - 表单内容要变时整卡原位替换，经 `app/launch.py` 的 `rebuild_launch_card`：卡锁内先登记新表单（新 token）再 PUT 整卡；只换卡面用 `app/form_cards.py` 的 `replace_form_card`。CardKit 确认后旧表单记 `replaced`（`replaced_by` 指向新表单），旧卡上点“开始任务”按新表单启动；未确认时新表单记 `unpublished`，永不启动。
 - 两卡式或 schema 3 之前的启动卡（`retired_form`）不再启动任务，点了只回复一句，什么都不改。
 
-不属于任何话题的主人卡片在话题路由之前由 `PANELS` 表处理（见下节第 3 步），kind 都在 `ACTIONS`，除欢迎卡的「发这句」外都不建任务。它们多数由机器人菜单（`app/bot_menu.py`）发到主人私聊；菜单同一项再点、它的卡还是私聊里最新的顶层消息时，卡经自己的记录原地收起或展开（`MenuPanel.toggle`）。
+不属于任何话题的主人卡片在话题路由之前由 `PANELS` 表处理（见下节第 3 步），kind 都在 `ACTIONS`，除欢迎卡的「发这句」外都不建任务。它们多数由机器人菜单（`app/bot_menu.py`）发到主人私聊；菜单同一项再点、它的卡还是私聊里最新的顶层消息时，卡经自己的记录原地收起或展开（`MenuPanel.toggle`）。回带卡上“这一轮中途的汇报”展开后点正文（`bridge_fold_close`，`app/fold_close.py`）也在这里认领：Bridge 用发出时记下的卡（`fold-cards/`，同一张卡也在 `answer-cards/` 记着时用那份）在回执之后整卡改写，折叠换下一个 ID（`<element_id>_s<n>`）收起，不建任务。
 
 | 卡 | kind | 处理（outcome 以处理者的名字开头，群成员点了是 `owner_only`） |
 |---|---|---|

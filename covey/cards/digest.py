@@ -58,7 +58,7 @@ HARVEST_TITLE = "Codex 和 Claude Code 自己记的"
 HARVEST_HINT = "它们各自记下、只有自己的话题用得上的关于你的偏好。点「记下」才变成所有话题都带的原则，不点不生效。"
 MEMORY_KIND = "bridge_digest_memory"  # 整理记忆's 「撤销」 / 「确认长期」 / 「不对」: ``run``, ``op`` undo, confirm or wrong, ``project``, ``entry``.
 MEMORY_TITLE = "整理记忆"
-MEMORY_AWAY = {"done": "办完的", "superseded": "被新回答替代的", "idle": "很久没用的"}
+MEMORY_AWAY = {"done": "办完的", "foreign": "别的专项的", "superseded": "被新回答替代的", "idle": "很久没用的"}
 MEMORY_HINT = "只收起不删除：收起的不再每轮带，用查记忆还能查到。新约定先照着做（标“它总结的”），点「确认长期」才算你说的。"
 MEMORY_RULE_DONE = {"confirmed": "已确认，以后算你说的", "dropped": "已撤下"}
 GO_LINE = "在菜单「看板」上点「继续」接着做"  # What a project a guard paused waits for (cards/board.py PROJECT_GO_KIND).
@@ -262,9 +262,10 @@ def candidate_part(title, rows, hint):
 
 
 def away_line(part) -> str:
-    """整理记忆's count of what it put away: ``收起 12 条：办完的 8 条、被新回答替代的 3 条、很久没用的 1 条``; '' with none."""
+    """整理记忆's count of what it put away: ``收起 14 条：办完的 8 条、别的专项的 2 条、被新回答替代的 3 条、很久没用的 1 条``; ''
+    with none."""
     away = part.get("away") or {}
-    counts = [(MEMORY_AWAY[key], int(away.get(key) or 0)) for key in ("done", "superseded", "idle")]
+    counts = [(MEMORY_AWAY[key], int(away.get(key) or 0)) for key in MEMORY_AWAY]
     total = sum(count for _, count in counts)
     if not total:
         return ""

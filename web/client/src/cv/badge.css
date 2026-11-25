@@ -1,5 +1,5 @@
 /* 话题头像（T 号）：大厅、侧栏共用（T645）。covey docs/ui.md 第 4 节“话题头像”：28px 高的圆角块按比例缩，深色底白色粗体，
    宽度跟着号码走；底色是 look.gen.ts 的 topicColor（covey core/look.py topic_color）。各处的大小在用它的地方另写。 */
 .cv .a-tbadge{display:inline-flex;align-items:center;justify-content:center;flex:none;box-sizing:border-box;height:22px;min-width:22px;padding:0 6px;
-  border-radius:6px;color:#fff;font-size:11.5px;font-weight:700;line-height:1;letter-spacing:0;font-variant-numeric:tabular-nums}
+  border-radius:6px;background:var(--tc);color:#fff;font-size:11.5px;font-weight:700;line-height:1;letter-spacing:0;font-variant-numeric:tabular-nums}
 .cv .a-tbadge.none{background:var(--s3);color:var(--t2)}

@@ -10,16 +10,18 @@ from __future__ import annotations
 
 import dataclasses
 import signal
+import sys
 import threading
 import time
 from pathlib import Path
 
 from covey.app import runner_ipc, runner_spawn
 from covey.app import idle_compaction as idle
-from covey.app.butler import COMPACT_INSTRUCTIONS
+from covey.app.butler import COMPACT_INSTRUCTIONS, RELEASE
 from covey.app.unified import UnifiedBridgeApp
 from covey.core.harness import RunCallbacks, RunInputs, RunRequest
-from covey.core.jobs import context_for_job
+from covey.core.butler import mcp_config
+from covey.core.jobs import context_for_job, job_key
 from covey.core.locks import resource_lock
 from covey.core.process import JobCancelled, process_identity
 from covey.core.state import read_object, write_json
@@ -52,8 +54,14 @@ def compact_main(directory) -> int:
         if cancel.is_set():
             outcome = idle.CANCELLED
         elif session:
+            tools = {}
+            if getattr(app.backend, "compact_with_tools", False) is True:
+                # The turn's own MCP servers (app/butler.py butler_turn): the compaction's request then starts with the
+                # turn's prompt, tools and all, and reads it from the cache (backends/agy/compaction.py).
+                tools = {"mcp_config": mcp_config(RELEASE, target.state_dir, job_key(job.message_id, job.job_id),
+                                                  sys.executable)}
             target = dataclasses.replace(target, options={**target.options, "compact_first": True,
-                                                          "compact_instructions": COMPACT_INSTRUCTIONS})
+                                                          "compact_instructions": COMPACT_INSTRUCTIONS, **tools})
 
             def observe(process):
                 if process is not None:

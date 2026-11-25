@@ -20,7 +20,7 @@ from __future__ import annotations
 from covey.cards import ui
 from covey.core.text import literal
 from covey.cards.elements import (CARD_BYTES, CARD_NODES, fits, grey, item, md, note, panel_header, plain,
-                                            row, section, styled_panel, tag, text_button)
+                                            row, section, shown_width, styled_panel, tag, text_button)
 from covey.cards.launch_config import (DEFAULT, Setting, tap, harness_setting, known, listed,
                                                 redaction_setting, run_mode_setting, setting_line, setting_row, settings_block,
                                                 tier_rows, workspace_setting)
@@ -274,14 +274,9 @@ def shown_value(setting):
     return dict(setting.options).get(setting.current, setting.current or '未选')
 
 
-def width(text):
-    """``text``'s display width: a CJK character two, any other one."""
-    return sum(2 if ord(char) > 0x2e7f else 1 for char in str(text))
-
-
 def wide(setting):
     """Whether ``setting``'s choice is too long for half a card (a workspace's name, 子 Agent's words)."""
-    return width(shown_value(setting)) > WIDE
+    return shown_width(shown_value(setting)) > WIDE
 
 
 def lines(settings_):

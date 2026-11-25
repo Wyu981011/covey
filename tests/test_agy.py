@@ -15,7 +15,8 @@ from support import FIXTURES
 from covey.app.unified import UnifiedBridgeApp
 from covey.backends.agy.bridge import (AntigravityEventAdapter, CONVERSATIONS, NOT_LOGGED_IN, models_from_listing, tool_inputs,
                                       tool_summary)
-from covey.core.harness import RunCallbacks, RunInputs, RunRequest
+from covey.app import idle_compaction
+from covey.core.harness import RunCallbacks, RunInputs, RunRequest, backend_capabilities
 from covey.core.steer import SteerNotReady, SteerRefused
 
 RUN = "33333333-3333-4333-8333-333333333333"
@@ -152,6 +153,113 @@ class AntigravityTests(unittest.TestCase):
         home = PrivateHome(self.root / "state", self.root, {"mcpServers": {"bridge": server}}, dict(os.environ))
         with home:
             self.assertEqual(home.note, "")
+
+    BUTLER_ENV = {"COVEY_BUTLER_RULES": "1", "COVEY_PROJECTS": "1", "COVEY_KNOWLEDGE": "1",
+                  "COVEY_HISTORY_CMD": "/absolute/history", "COVEY_PROJECT_TIDY": "suggest"}
+
+    def butler_home(self, **env):
+        """The butler's server in a private home with BUTLER_ENV's switches on: its eager tools, in order, and the
+        names it listed."""
+        from covey.backends.agy.home import PrivateHome
+        from covey.core.butler import mcp_config
+        (self.root / ".gemini" / "antigravity-cli").mkdir(parents=True, exist_ok=True)
+        with mock.patch.dict(os.environ, {**self.BUTLER_ENV, **env}):
+            config = mcp_config(Path(__file__).resolve().parents[1], self.root / "state", "om_1-1", sys.executable)
+            home = PrivateHome(self.root / "state", self.root, config, dict(os.environ))
+            with home as path:
+                bridge = json.loads((path / ".gemini" / "config" / "mcp_config.json").read_text())["mcpServers"]["bridge"]
+        self.assertTrue(all(tool == {"eager": True} for tool in (bridge.get("tools") or {}).values()))
+        return list(bridge.get("tools") or {}), home.listed["bridge"]
+
+    @staticmethod
+    def sizes(environ):
+        from covey.backends.agy.home import tool_size
+        from covey.core.butler_tool_specs import listed
+        return {tool["name"]: tool_size({"description": tool["description"], "inputSchema": tool["input_schema"]})
+                for tool in listed(environ)}
+
+    def test_the_butlers_tools_that_work_with_topics_are_loaded_up_front_and_the_others_named(self):
+        """T750: agy fits a turn's skills and MCP tools in one budget and drops the largest tool whole. With all 21 of
+        the butler's eager beside 62 skills topic_start was gone, and the butler forked a finished topic for each new
+        matter. Eager are those that hand work to topics, then the others but SECONDARY, within EAGER_BYTES."""
+        from covey.backends.agy.home import EAGER_BYTES
+        from covey.core.butler_tool_specs import SECONDARY
+        eager, names = self.butler_home()
+        sizes = self.sizes(self.BUTLER_ENV)
+        self.assertEqual(names, list(sizes))
+        self.assertEqual(eager[:4], ["topic_start", "topic_send", "topic_fork", "project_send"])
+        working = [name for name in names if name not in SECONDARY]
+        self.assertLessEqual(sum(sizes[name] for name in working), EAGER_BYTES,
+                             "the butler's tools that work with topics outgrew EAGER_BYTES: agy would not load the last "
+                             "of them up front; make their descriptions shorter, or measure agy's room again")
+        self.assertEqual(eager[:len(working)], sorted(working, key=lambda name: name not in {
+            "topic_start", "topic_send", "topic_fork", "project_send"}))
+        self.assertLessEqual(sum(sizes[name] for name in eager), EAGER_BYTES)
+        self.assertFalse({"knowledge_save", "knowledge_search", "history_search", "projects_tidy"} & set(eager))
+
+    def test_a_lower_room_keeps_the_tools_that_hand_work_on_and_none_names_them_all(self):
+        sizes = self.sizes(self.BUTLER_ENV)
+        room = sizes["topic_start"] + sizes["topic_send"]
+        eager, names = self.butler_home(COVEY_AGY_EAGER_BYTES=str(room))
+        self.assertEqual(eager, ["topic_start", "topic_send"])
+        eager, names = self.butler_home(COVEY_AGY_EAGER_BYTES="0")
+        self.assertEqual((eager, len(names)), ([], len(sizes)))
+        eager, _names = self.butler_home(COVEY_AGY_EAGER_BYTES="lots")  # Not a number: the default.
+        self.assertIn("project_send", eager)
+
+    def test_a_leads_tools_are_all_loaded_up_front(self):
+        from covey.backends.agy.home import EAGER_BYTES
+        lead = {"COVEY_PROJECT_LEAD": "p1", "COVEY_PROJECT_TRIAGE": "1", "COVEY_COLLAB": "1", "COVEY_PROJECT_AUTOWAKE": "1"}
+        self.assertLessEqual(sum(self.sizes(lead).values()), EAGER_BYTES,
+                             "a lead's tools outgrew EAGER_BYTES: agy would name the last of them only")
+
+    BLOCK = ("<mcp_servers>\nEach MCP server has a directory `<appDataDir>/mcp/<serverName>` containing tool schemas.\n"
+             "```\n# <serverName>\nEager:\n<toolName>\nLazy:\n<toolName>\n```\n"
+             "# bridge\nEager:\ntopics_list\n{eager}Lazy:\nknowledge_search\n# mine\nEager:\nmy_tool\n</mcp_servers>")
+
+    def conversation(self, *blobs):
+        """A conversation's database as agy keeps it: its model requests' rows (table gen_metadata), oldest first."""
+        import contextlib
+        import sqlite3
+        path = self.root / CONVERSATIONS / f"{SID}.db"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.closing(sqlite3.connect(path)) as db:
+            db.execute("CREATE TABLE gen_metadata (idx integer, data blob, size integer NOT NULL DEFAULT 0, PRIMARY KEY (idx))")
+            db.executemany("INSERT INTO gen_metadata (idx, data) VALUES (?, ?)", enumerate(blobs))
+            db.commit()
+        return path
+
+    def test_left_out_names_the_bridge_tools_agys_latest_request_did_not_have(self):
+        from covey.backends.agy.bridge import left_out
+        listed = {"bridge": ["topics_list", "topic_start", "topic_send", "knowledge_search"]}
+        self.assertEqual(left_out(self.root, SID, listed), {})  # No conversation: nothing to say.
+        older = b"\x12\x08proto" + self.BLOCK.format(eager="topic_start\n").encode() + b"\x1a\x00"
+        latest = b"\x12\x08proto" + self.BLOCK.format(eager="topic_send\n").encode() + b"\x1a\x00"
+        self.conversation(older, latest, b"\x0a\x02ok")  # A small row after the request's.
+        self.assertEqual(left_out(self.root, SID, listed), {"bridge": ["topic_start"]})
+        self.assertEqual(left_out(self.root, SID, {"bridge": ["topics_list", "knowledge_search"]}), {})
+        self.assertEqual(left_out(self.root, SID, {"other": ["x", "y"]}), {"other": ["x", "y"]})  # Never started.
+        self.assertEqual(left_out(self.root, "not-a-uuid", listed), {})
+
+    def test_left_out_says_nothing_of_a_conversation_whose_requests_have_no_server_list(self):
+        from covey.backends.agy.bridge import left_out
+        self.conversation(b"\x12\x08no servers here")
+        self.assertEqual(left_out(self.root, SID, {"bridge": ["topic_start"]}), {})
+
+    def test_a_butler_turn_whose_tools_agy_left_out_says_which_in_the_log(self):
+        from covey.core.butler import mcp_config
+        (self.root / ".gemini" / "antigravity-cli").mkdir(parents=True, exist_ok=True)
+        self.conversation(self.BLOCK.format(eager="topic_send\n").encode())
+        config = mcp_config(Path(__file__).resolve().parents[1], self.root / "state", "om_1-1", sys.executable)
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "mcp_config": config})
+        with self.assertLogs("covey.backends.agy.bridge", level="WARNING") as logs:
+            result, *_rest = self.run_agy("ok", ctx=ctx)
+        self.assertFalse(result.is_error, result.text)
+        said = "\n".join(logs.output)
+        self.assertIn(f"out of conversation {SID}: ", said)
+        self.assertIn("topic_start", said)
+        self.assertNotIn("topics_list,", said)
+        self.assertIn("COVEY_AGY_EAGER_BYTES", said)
 
     def test_any_other_turn_keeps_the_real_home(self):
         _result, _events, _replies, _sessions, record = self.run_agy("ok")
@@ -336,6 +444,73 @@ class AntigravityTests(unittest.TestCase):
             "tool_info": {"parameters": {"Url": "https://example.invalid/doc?token=PRIVATE#part"}}}}, 1.0)
         self.assertEqual(adapter.tools["step-4"]["detail"], "https://example.invalid/doc")
         self.assertEqual(adapter.tools["step-4"]["name"], "webfetch")
+
+
+    def test_each_root_request_says_the_context_the_next_one_starts_from(self):
+        # What the butler's compaction threshold reads (app/butler.py compact_butler): input, cache reads and output.
+        _result, events, *_ = self.run_agy("ok")
+        usage = [d for k, d in events if k == "token_usage"]
+        self.assertEqual([d.get("context_tokens") for d in usage], [13187 + 0 + 91, 2249 + 11130 + 41])
+
+    def compact(self, how="", ctx=None):
+        os.environ["FAKE_AGY_SCENARIO"] = "ok"
+        os.environ["FAKE_AGY_COMPACT"] = how
+        processes = []
+        done = self.backend.compact_session(RunRequest(ctx or self.ctx, "", session_id=SID, callbacks=RunCallbacks(
+            process=processes.append), inputs=RunInputs(threading.Event(), run_id=RUN)))
+        path = self.root / "record.json"
+        record = json.loads(path.read_text()) if path.exists() else {}
+        return done, record, processes
+
+    def test_the_idle_compaction_is_agys_own_compact_with_slash_commands_on(self):
+        done, record, processes = self.compact()
+        self.assertTrue(done)
+        self.assertEqual(json.loads(record["stdin"]), {"event": "user", "message": {"content": "/compact"}})
+        self.assertEqual(record["argv"], ["--output-format", "stream-json", "--input-format", "stream-json",
+                                          "--dangerously-skip-permissions", "--conversation", SID,
+                                          "--model", "gemini-3.8-pro-high", "--effort", "high"])
+        self.assertTrue(processes)  # The runner records the process, so 停止 can stop it.
+
+    def test_a_conversation_agy_did_not_compact_is_no_compaction(self):
+        for how in ("short", "fail"):
+            with self.subTest(how=how):
+                self.assertFalse(self.compact(how)[0])
+
+    def test_the_idle_compaction_runs_in_the_butlers_home_with_its_tools(self):
+        config = {"mcpServers": {"bridge": {"command": sys.executable, "args": ["-c", "pass"]}}}
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "mcp_config": config})
+        done, record, _ = self.compact(ctx=ctx)
+        self.assertTrue(done)
+        self.assertIn("bridge", record["mcp"]["mcpServers"])
+        self.assertNotEqual(record["home"], str(self.root))
+
+    def test_a_turn_asked_to_compact_first_compacts_then_runs(self):
+        os.environ["FAKE_AGY_COMPACT"] = ""
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "compact_first": True})
+        result, events, replies, _sessions, _record = self.run_agy("ok", session=SID, ctx=ctx)
+        self.assertFalse(result.is_error, result.text)
+        steps = [d for k, d in events if k == "tool" and d.get("id") == "compact-before-turn"]
+        self.assertEqual([d["status"] for d in steps], ["running", "done"])
+        self.assertIn("压缩前上下文 7.30 万 token", steps[-1]["detail"])
+        usage = [d for k, d in events if k == "token_usage"]
+        self.assertEqual(usage[-1]["input_tokens"], 3125 + 69866 + 13187 + 0 + 2249 + 11130)
+        self.assertEqual(usage[-1]["context_tokens"], 2249 + 11130 + 41)  # The compaction's is not the context after it.
+
+    def test_a_failed_compaction_first_leaves_the_turn_as_it_was(self):
+        os.environ["FAKE_AGY_COMPACT"] = "fail"
+        ctx = dataclasses.replace(self.ctx, options={**self.ctx.options, "compact_first": True})
+        result, events, *_ = self.run_agy("ok", session=SID, ctx=ctx)
+        self.assertFalse(result.is_error, result.text)
+        step = [d for k, d in events if k == "tool" and d.get("id") == "compact-before-turn"][-1]
+        self.assertEqual(step["status"], "failed")
+        self.assertIn("本轮按原上下文继续", step["detail"])
+
+    def test_it_compacts_here_and_not_on_a_device(self):
+        self.assertTrue(backend_capabilities(self.backend, self.ctx).compaction)
+        device = dataclasses.replace(self.ctx, device="box")
+        self.assertFalse(backend_capabilities(self.backend, device).compaction)
+        self.assertFalse(self.backend.compact_session(RunRequest(device, "", session_id=SID)))
+        self.assertEqual(idle_compaction.idle_seconds(self.backend), 180.0)
 
 
 class AgyStepWordsTests(unittest.TestCase):

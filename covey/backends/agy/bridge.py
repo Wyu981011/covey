@@ -16,7 +16,8 @@ and the same conversation goes on in a new process with the supplement as its me
 job's reply is the last process's answer.
 
 The butler's turn (``options["mcp_config"]``, its Bridge tools) runs with a home of its own whose MCP config adds them
-(backends/agy/home.py): agy reads MCP servers from one file in the home and from nowhere a turn could name.
+(backends/agy/home.py): agy reads MCP servers from one file in the home and from nowhere a turn could name. agy may
+still leave some out of what its model gets (its budget for skills and MCP tools); the log says which (``left_out``).
 
 An extension's ``agy_turn`` hook (core/extensions.py) may give a turn on this machine the environment its first process
 runs with and, when a process ends failed on a spent quota, a limit or a sign-in (SWITCHED), another one to go on in
@@ -47,7 +48,8 @@ import subprocess
 import threading
 import time
 
-from covey.backends.agy.home import PrivateHome
+from covey.backends.agy import compaction as agy_compaction
+from covey.backends.agy.home import EAGER_ENV, PrivateHome
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
                                 JobCancelled, LEAD, TOOL_LIMIT, UUID_RE, for_device)
 from covey.core import env as cenv
@@ -171,6 +173,60 @@ def tool_summary(home, conversation, index, parameters):
     return None
 
 
+# The MCP servers and their tools as agy's prompt lists them, in each model request it keeps (table gen_metadata): after
+# a line "# <server>" the tools it loads up front under "Eager:" and those it names only under "Lazy:" (1.5.16).
+SERVERS_OPEN, SERVERS_CLOSE = b"<mcp_servers>", b"</mcp_servers>"
+GEN_ROWS = 16  # Of the newest rows, looked through for the latest request: a request's row is followed by small ones.
+
+
+def listed_in_prompt(block, server):
+    """The tools ``block`` (the text of a ``<mcp_servers>`` block) names under the line "# ``server``"; None when it
+    has no such line."""
+    lines = [line.strip() for line in block.splitlines()]
+    if f"# {server}" not in lines:
+        return None
+    names = set()
+    for line in lines[lines.index(f"# {server}") + 1:]:
+        if line.startswith("#") or line.startswith("</"):
+            break
+        if line and line not in ("Eager:", "Lazy:"):
+            names.add(line)
+    return names
+
+
+def left_out(home, conversation, listed):
+    """Of ``listed`` ({server: [tool]}, what the Bridge's servers listed for the turn, backends/agy/home.py), the tools
+    agy did not give its model in the conversation's latest request, {server: [tool]}: neither up front nor by name, all
+    of a server's when the request has no line for it (it did not start). Read from
+    ``<home>/.gemini/antigravity-cli/conversations/<conversation>.db``, read only; {} for anything it cannot read or
+    find, a request without the block among them, and nothing is said."""
+    if not home or not listed or not isinstance(conversation, str) or not UUID_RE.fullmatch(conversation):
+        return {}
+    path = Path(home) / CONVERSATIONS / f"{conversation}.db"
+    block = None
+    try:
+        if not path.is_file():
+            return {}
+        with contextlib.closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0.2)) as db:
+            for (data,) in db.execute("SELECT data FROM gen_metadata ORDER BY idx DESC LIMIT ?", (GEN_ROWS,)):
+                at = data.rfind(SERVERS_OPEN) if isinstance(data, (bytes, bytearray)) else -1
+                if at >= 0:
+                    end = data.find(SERVERS_CLOSE, at)
+                    block = bytes(data[at:end if end >= 0 else None]).decode("utf-8", "replace")
+                    break
+    except (sqlite3.Error, OSError, ValueError):
+        return {}
+    if block is None:
+        return {}
+    missing = {}
+    for server, names in listed.items():
+        named = listed_in_prompt(block, server)
+        gone = [name for name in names if named is None or name not in named]
+        if gone:
+            missing[server] = gone
+    return missing
+
+
 def schedule_words(parameters):
     """A schedule call (agy's timer) as 执行过程 says it: what it comes back to do and when, "查看波次 2C 的结果（3 分钟后）"."""
     prompt = " ".join(str((parameters or {}).get("Prompt") or "").split())
@@ -236,8 +292,9 @@ class AntigravityEventAdapter:
 
     def accept(self, row, now):
         if row.get("event") == "result":
-            if not self.counted:  # No model request said its usage: the turn's total, untimed.
-                self.add_usage((row.get("result") or {}).get("usage") if isinstance(row.get("result"), dict) else None)
+            if not self.counted:  # No model request said its usage: the turn's total, untimed, not a context.
+                self.add_usage((row.get("result") or {}).get("usage") if isinstance(row.get("result"), dict) else None,
+                               context=False)
             return
         step = row.get("step_update")
         if row.get("event") != "step_update" or not isinstance(step, dict):
@@ -290,11 +347,15 @@ class AntigravityEventAdapter:
         self.notes.to_notes(now)
         self.segment += 1
 
-    def add_usage(self, usage, seconds=None):
+    def add_usage(self, usage, seconds=None, *, context=True):
+        """One request's usage into the turn's counts. ``context``: the request is the root conversation's, so what it
+        read and wrote is the context the next request starts from (``context_tokens``, which the butler's compaction
+        threshold reads, app/butler.py compact_butler)."""
         counts = usage_counts(usage)
         if counts is not None and self.tokens.add(*counts, 0, seconds=seconds):
             self.counted = True
-            self.emit("token_usage", self.tokens.payload())
+            size = sum(value for value in counts if type(value) is int) if context else 0
+            self.emit("token_usage", self.tokens.payload(**({"context_tokens": size} if size > 0 else {})))
 
 
 SLUG_RE = re.compile(r"[a-z][a-z0-9]*(?:[-._][a-z0-9]+)+")
@@ -347,9 +408,34 @@ class AntigravityBackend(BackendRuntime):
         # rate_limit_retry, fault_retry: what stream_outcome tells apart in agy's error. bridge_tools: the butler's tools through
         # a home of its own (backends/agy/home.py), a lead's turn held to reading by READ_ONLY_SETTINGS. ask_once:
         # backends/agy/judge.py (this machine's only: DEVICE_OFF).
+        # compaction: agy's own /compact (backends/agy/compaction.py), on this machine's conversations only.
         here = not device_of(ctx)
         return for_device(HarnessCapabilities(steering=here, steer_reads=here, bridge_tools=True, rate_limit_retry=True,
-                                              fault_retry=True, ask_once=True), ctx)
+                                              fault_retry=True, ask_once=True, compaction=here), ctx)
+
+    # The butler's idle compaction (app/idle_compaction.py): how long after a turn it starts, and that it runs with the
+    # butler's tools (the turn's MCP servers), so its request starts with the same prompt as the turn and reads it from
+    # the cache (backends/agy/compaction.py).
+    compact_idle_seconds = agy_compaction.COMPACT_IDLE_SECONDS
+    compact_with_tools = True
+
+    def compact_session(self, request):
+        """``/compact`` on ``request.session_id`` and nothing else (the butler's idle compaction), in a turn's
+        environment: the agy_turn hook's and, with ``mcp_config``, the butler's home."""
+        ctx = request.context
+        if device_of(ctx) or not request.session_id:
+            return False  # A device's conversation is on the device.
+        self.normalize_model_settings(ctx, ctx.model, ctx.effort)
+        argv, env = self.argv(ctx, request.session_id), self.environment(ctx)
+        homes = Homes(ctx)
+        try:
+            with extension_turn(ctx, env, run_id=request.inputs.run_id) as (env, _switch):
+                done, _usage = agy_compaction.compact(ctx, argv, homes.env(env), request.session_id,
+                                                      cancel_event=request.inputs.cancel_event,
+                                                      process_observer=request.observers.process)
+                return done
+        finally:
+            homes.close()
 
     def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None):
         """One question to agy and nothing else (backends/agy/judge.py): the answer's text, or AskFailed."""
@@ -427,8 +513,10 @@ class AntigravityBackend(BackendRuntime):
         homes = Homes(ctx)
         try:
             with extension_turn(ctx, env, run_id=request.inputs.run_id) as (env, switch):
-                return run_stream(request, argv, stdin, homes.env(env),
-                                  switch=None if switch is None else lambda failure: homes.switched(switch(failure)))
+                result = run_stream(request, argv, stdin, homes.env(env),
+                                    switch=None if switch is None else lambda failure: homes.switched(switch(failure)))
+                homes.check(result.session_id)
+                return result
         finally:
             homes.close()
 
@@ -482,6 +570,24 @@ class Homes:
             return None
         env, note = found
         return self.env(env), note
+
+    def check(self, conversation):
+        """Say in the log which of the Bridge's tools agy left out of ``conversation``'s latest request (``left_out``):
+        the turn ran without them, and its model could not know they were there."""
+        home = self.home
+        if home is None or device_of(self.ctx):
+            return
+        try:
+            missing = left_out(home.home, conversation, home.listed)
+        except Exception:  # Only a note: the turn's result stands.
+            logging.getLogger(__name__).debug("agy tools check failed", exc_info=True)
+            return
+        for server, names in missing.items():
+            logging.getLogger(__name__).warning(
+                "agy left %d of the %s server's %d tools out of conversation %s: %s. agy fits a turn's skills and MCP "
+                "tools in one budget and drops the largest first; a lower %s lists more of them by name only "
+                "(backends/agy/home.py), fewer skills leave more room", len(names), server, len(home.listed[server]),
+                conversation, ", ".join(names), EAGER_ENV)
 
     def close(self):
         home, self.home = self.home, None
@@ -821,6 +927,11 @@ def run_stream(request, argv, stdin, env, switch=None):
         pass
     try:
         state.invalidate()
+        if ctx.options.get("compact_first") and expected_session:
+            # A compaction the butler's idle one did not take in time: before the turn, in its environment.
+            agy_compaction.compact_before_turn(ctx, argv, env, expected_session, adapter.steps,
+                                               add_usage=lambda usage: adapter.add_usage(usage, context=False),
+                                               cancel_event=cancel_event, process_observer=request.observers.process)
         while True:
             left = 0 if deadline is None else max(1, int(deadline - time.monotonic()))
             # Where this process keeps its conversations (its HOME, the account the agy_turn hook gave it): a tool step's

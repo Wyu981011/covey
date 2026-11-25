@@ -40,6 +40,10 @@
      标题对成一条线；状态点在右下角（同专项头像），灰色的状态不画；空闲、已停止的话题头像淡一些 */
   .a-tlogo { position:relative; flex:none; display:inline-flex; }
   .a-tlogo .a-tbadge { height:18px; min-width:calc(var(--tw, 4) * 1ch + 9px); padding:0 4px; border-radius:5px; font-size:10.5px; }
+  /* 侧栏一列几十个 T 号（T753）：实心彩块排成一竖条，抢过了标题和右下角的状态点。这里改成同一颜色的浅底彩字，
+     颜色还认得出是哪个话题，分量降下来；选中的那个仍是实心底白字 */
+  .a-tlogo .a-tbadge:not(.none) { background:color-mix(in srgb, var(--tc) 28%, transparent); color:color-mix(in srgb, var(--tc) 48%, #fff); font-weight:600; }
+  .a-tp.on .a-tlogo .a-tbadge:not(.none) { background:var(--tc); color:#fff; font-weight:700; }
   .a-tlogo .dot { position:absolute; right:-3px; bottom:-3px; width:7px; height:7px; margin:0; box-shadow:0 0 0 2px var(--side); }
   .a-tp.dim .a-tbadge { opacity:.55; }
   .a-tspace { visibility:hidden; }
@@ -47,7 +51,33 @@
   &.mini .a-tlogo .a-tbadge { min-width:0; padding:0 3px; font-size:9.5px; }
   .sidelink { font-size:12px; font-weight:500; }
 
-  :is(.a-nav, .a-tp, .a-gname, .a-chev, .a-more, .a-archive-toggle, .sidelink):focus-visible {
+  /* 状态分组（T753，StatusGroups.tsx）：要你处理 / 在做两组在专项上面；每行两行字，右边等了多久或第几步 */
+  .ss { display:flex; flex-direction:column; }
+  .ss-h { text-decoration:none; }
+  .ss-h > b { font:600 11px/18px var(--mono); color:var(--t3); letter-spacing:0; }
+  .ss-h.act > b { min-width:18px; padding:0 6px; border-radius:99px; background:var(--a1); color:#fff; text-align:center; }
+  .ss-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; column-gap:8px; row-gap:1px; align-items:center; padding:5px 8px; border-radius:7px; color:var(--t1); text-decoration:none; }
+  .ss-row:hover { background:var(--hover); }
+  .ss-row.on { background:var(--sel); }
+  .ss-row.on .a-tlogo .a-tbadge:not(.none) { background:var(--tc); color:#fff; font-weight:700; }
+  .ss-av { position:relative; display:inline-flex; font-size:10.5px; font-weight:700; width:calc(var(--tw, 4) * 1ch + 9px); }  /* 和 T 号块同字号，1ch 一样宽 */
+  .ss-av .dot { position:absolute; left:13px; bottom:-3px; width:7px; height:7px; margin:0; box-shadow:0 0 0 2px var(--side); }
+  .ss-t { min-width:0; font-size:13px; font-weight:500; line-height:20px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ss-m { font:11px/20px var(--mono); color:var(--t3); white-space:nowrap; }
+  .ss-s { grid-column:2 / 4; min-width:0; font-size:11.5px; line-height:16px; color:var(--t3); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ss-more { display:block; padding:2px 8px 4px calc(var(--tw, 4) * 1ch + 25px); font-size:11.5px; color:var(--t3); text-decoration:none; }
+  a.ss-more:hover { color:var(--t1); }
+
+  :is(.a-nav, .a-tp, .a-gname, .a-chev, .a-more, .a-archive-toggle, .sidelink, .ss-row, .ss-h):focus-visible {
     outline:2px solid var(--a1); outline-offset:-2px; border-radius:6px;
   }
 }
+/* 浅色的侧栏 T 号（T753）：浅底和透明混，融进外槽（和白混会比外槽还亮，像贴了张白纸）；字是七成二本色加黑，
+   12 种颜色在外槽上最低 5.5:1、悬停时最低 5.1:1 */
+.cv.light .a-side .a-tlogo .a-tbadge:not(.none) { background:color-mix(in srgb, var(--tc) 16%, transparent); color:color-mix(in srgb, var(--tc) 72%, #000);
+  -webkit-font-smoothing:auto; -moz-osx-font-smoothing:auto; }
+.cv.light .a-side .a-tp.on .a-tlogo .a-tbadge:not(.none) { background:var(--tc); color:#fff; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }
+/* 浅色电脑上侧栏选中的那行是白底、一圈细边，和白画布呼应（外槽上的 7% 灰几乎看不出选中了哪行）；入口行的品牌色竖条留着 */
+.cv.light:not(.m) .a-side :is(.a-tp.on, .a-grph.on, .ss-row.on) { background:#fff; box-shadow:0 0 0 1px rgba(20,25,45,.06), 0 1px 2px rgba(20,25,45,.06); }
+.cv.light:not(.m) .a-side .row.on { background:#fff; box-shadow:inset 2px 0 0 var(--a1), 0 0 0 1px rgba(20,25,45,.06), 0 1px 2px rgba(20,25,45,.06); }
+.cv.light .a-side .ss-row.on .a-tlogo .a-tbadge:not(.none) { background:var(--tc); color:#fff; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; }

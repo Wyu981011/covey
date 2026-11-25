@@ -18,7 +18,8 @@ import { ctxLimitOk, fmtDur, fmtWindow, harnessName, hhmm, isRunning, isWaiting,
 import { FailBox, stopWords } from './Timeline';
 import { opLine, opWords } from './opWords';
 import { AgentTurn, ChatRound, OwnerBubble } from './chatTurn';
-import { saidLabel, shownText, stopPressing } from './topicText';
+import { progressNote, saidLabel, shownText, stopPressing } from './topicText';
+import { Dot, useTick } from './ui';
 import { JumpRail } from './JumpRail';
 import { oneLine, type Mark } from './jumpMarks';
 import { withoutImageLine } from './TurnImages';
@@ -37,6 +38,34 @@ import {
 
 /** 没有协作时用同一个空数组（免得每次重算对话的分组） */
 const NO_COLLABS: CollabView[] = [];
+
+/** 输入框上沿的运行胶囊（T753，学 Granola、Persona）：话题在跑时写它此刻在干什么（progressNote：在等一条命令跑完 · 已 59 分钟），
+ *  没有细节时写阶段或“在做”；可能卡住时换成可能卡住的点。自己每秒刷新，不带着整段对话重画 */
+const LivePill: React.FC<{ topic: SnapshotTopic }> = ({ topic }) => {
+  const now: number = useTick(1000);
+  const note = progressNote(topic.progress, now);
+  return (
+    <div className={`livepill${note.stuck ? ' stuck' : ''}`} role="status">
+      <Dot tone={note.stuck ? 'stuck' : 'running'} />
+      <span>{note.text || topic.progress?.phase || '在做'}</span>
+    </div>
+  );
+};
+
+/** 输入框下沿的上下文用量（T753）：知道窗口多大时前面一条细进度条，过八成变橙（快满了，下一轮可能先压缩）；不知道时只写用了多少 */
+const ContextMeter: React.FC<{ used: number; limit: number }> = ({ used, limit }) => {
+  const pct: number = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  return (
+    <span className="cp-ctx" title={limit > 0 ? `上下文已用 ${pct}%` : undefined}>
+      {limit > 0 ? (
+        <span className={`cp-ctxbar${pct >= 80 ? ' full' : ''}`} aria-hidden="true">
+          <i style={{ width: `${pct}%` }} />
+        </span>
+      ) : null}
+      {limit > 0 ? `上下文 ${Math.round(used / 1000)}K / ${fmtWindow(limit)}` : `上下文 ${Math.round(used / 1000)}K`}
+    </span>
+  );
+};
 
 /** 刚发出的一句话：状态按 outbox 行走（发送中 → 已发出，等 Covey → 已执行 / 没办成：原因，opWords.ts），没办成的可以关掉 */
 const PendingBubble: React.FC<{ p: Pending; row: OutboxView | undefined; onClose: () => void }> = ({ p, row, onClose }) => {
@@ -776,6 +805,7 @@ export const Conversation: React.FC<{
         </button>
       ) : null}
       </div>
+      {running && topic && !butler ? <LivePill topic={topic} /> : null}
       <Composer
         key={topicKey}
         topicKey={topicKey}
@@ -792,7 +822,7 @@ export const Conversation: React.FC<{
         config={config ?? ownConfig}
         sendLabel={answering ? '提交回答' : '发送'}
         onStop={running && !butler && !stopPending ? stop : undefined}
-        extra={extra !== undefined ? extra : topic?.context ? (ctxLimitOk(topic.context) ? `上下文 ${Math.round(topic.context.used / 1000)}K / ${fmtWindow(topic.context.limit)}` : `上下文 ${Math.round(topic.context.used / 1000)}K`) : undefined}
+        extra={extra !== undefined ? extra : topic?.context ? <ContextMeter used={topic.context.used} limit={ctxLimitOk(topic.context) ? topic.context.limit : 0} /> : undefined}
       />
     </div>
   );

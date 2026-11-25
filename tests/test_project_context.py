@@ -24,6 +24,7 @@ from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.app import project_context, project_facts, project_lead, project_loop
 from covey.app.prompts import PROJECT_CHARS, bridge_rules, project_block
 from covey.core import backup, project_library as library, project_memory as memory, projects
+from covey.core import memory as core_memory
 from covey.core.maintenance import maintain, plan_maintenance
 from covey.core.state import DAY, read_object, write_json
 
@@ -214,6 +215,40 @@ class AnswerTest(Case):
         os.unlink(projects.record_path(self.state, PID))
         project_context.remember_answer(self.state, MEMBER, record, self.logs.append)
         self.assertEqual(len(self.logs), 1)
+
+    def test_a_question_about_another_projects_memory_is_history_from_the_start(self):
+        # A topic of this project asked, on one card, how each line of another project's memory counts (a migration); the
+        # answers became this project's 当前决定 and its turns carried them.
+        other = "f6e5d4c3b2a1"
+        projects.create(self.state, projects.new_record(chat_id=CHAT, name="回放", project_id=other, now=NOW))
+        theirs = memory.add(self.state, other, "每批回放都要带上旧版一起跑", "decision", "lead")[0]["id"]
+        mine = memory.add(self.state, PID, "账单表按日期分区", "decision", "lead")[0]["id"]
+        token = "0123456789abcdef"
+        questions = [{"id": f"memory-{theirs}", "header": f"记忆 {theirs}",
+                      "question": f"回放专项的记忆〔{theirs}〕「每批回放都要带上旧版一起跑」这条以后怎么算？"},
+                     {"id": "pilot", "question": f"第一次真实试点选哪个？（回放专项 {other}）"},
+                     {"id": "own", "question": f"这个专项的记忆〔{mine}〕以后怎么算？"}]
+        record = {"token": token, "questions": questions,
+                  "answers": {question["id"]: {"answers": ["长期都照这条做"]} for question in questions}}
+        project_context.remember_answer(self.state, MEMBER, record, self.logs.append)
+        facts = {row["id"]: core_memory.describe(row) for row in memory.stored(self.state, PID)}
+        self.assertEqual((facts[f"{token}-1"]["valid"], facts[f"{token}-1"]["layer"]), ("done", core_memory.HISTORY))
+        self.assertEqual([facts[f"{token}-{i}"]["part"] for i in (2, 3)], [core_memory.DECISION] * 2)  # Naming a project is not it.
+        self.assertEqual(self.logs, [f"project memory answer 1 noted as history: it names project {other}'s lines"])
+        carried = core_memory.project_view(memory.entries(self.state, self.record()), PID)["kept"]
+        self.assertNotIn(f"project:{PID}:{token}-1", {item["ref"] for item in carried})
+
+    def test_only_a_word_like_an_id_reads_the_other_projects_and_a_failed_read_notes_as_before(self):
+        plain = {"token": "0123456789abcdef", "questions": [{"id": "a", "question": "按日期还是按租户分区？"}],
+                 "answers": {"a": {"answers": ["按日期"]}}}
+        with mock.patch.object(memory, "across", side_effect=AssertionError("read")):
+            project_context.remember_answer(self.state, MEMBER, plain, self.logs.append)
+        with mock.patch.object(memory, "across", side_effect=OSError("nas")):
+            project_context.remember_answer(self.state, MEMBER, {**plain, "token": "fedcba9876543210", "questions": [
+                {"id": "a", "question": "〔abc123〕这条还要吗？"}]}, self.logs.append)
+        rows = memory.stored(self.state, PID)
+        self.assertEqual([core_memory.describe(row)["part"] for row in rows], [core_memory.DECISION] * 2)
+        self.assertEqual(self.logs, ["project memory answers not read against the other projects: OSError"])
 
 
 class SubmittedAnswerTest(QuestionFixture, unittest.TestCase):

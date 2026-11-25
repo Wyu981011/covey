@@ -37,9 +37,9 @@ from covey.app.answers import (NOTE_EMPTY, AnswerIncomplete, SKIPPED, TITLE_CHAR
                                         picked_fields)
 from covey.app.questions import scoped_question
 from covey.app.task_card import StreamingCard
-from covey.cards.question_cards import (ASK_HEADLINE, PICK, SKIP_ALL_KIND, SKIP_LABEL, STATUS_LABEL, TOP_COPY,
-                                                 question_card,
-                                                 question_element)
+from covey.cards.question_cards import (ASK_HEADLINE, PICK, PICK_CHROME, PICK_LONG, PICK_ROW, SKIP_ALL_KIND, SKIP_LABEL,
+                                        STATUS_LABEL, TOP_COPY, pick_rows, question_card, question_element)
+from covey.cards.elements import shown_width
 from covey.cards.review import question_preview, recent_user_questions
 from covey.app.interaction import _cancel_live_question
 from covey.cards.streaming import build_stream_card
@@ -979,6 +979,28 @@ class SkipAllTest(QuestionFixture, unittest.TestCase):
         self.assertEqual(submit.call_args.args[2:4], (self.token, {"skip_0": True, "supplement": "换个方向"}))
 
 
+class PickRowsTest(unittest.TestCase):
+    """pick_rows: how many buttons a row of a picks() card takes, by their labels' display width (2026-11-24 T746)."""
+
+    def test_buttons_that_fit_take_one_row(self):
+        self.assertEqual(pick_rows(["表格", "列表", SKIP_LABEL]), [[0, 1, 2]])
+        self.assertEqual(pick_rows(["现在发布（推荐）", "先不发布", SKIP_LABEL]), [[0, 1, 2]])
+        self.assertEqual(pick_rows(["Schedule later", "Do not schedule", SKIP_LABEL]), [[0, 1, 2]])  # One a letter.
+
+    def test_a_row_takes_up_to_pick_row_and_the_next_starts_after(self):
+        half = "一" * (PICK_LONG // 2)  # Two of them and their chrome are a whole row.
+        self.assertEqual(shown_width(half) * 2 + PICK_CHROME * 2, PICK_ROW)
+        self.assertEqual(pick_rows([half, half, SKIP_LABEL]), [[0, 1], [2]])
+        self.assertEqual(pick_rows(["一" * 8, "二" * 8, "三" * 8, "四" * 8, SKIP_LABEL]), [[0, 1], [2, 3, 4]])
+
+    def test_an_option_wider_than_half_a_row_puts_each_on_a_row_of_its_own(self):
+        self.assertEqual(PICK_LONG, 24)  # Twelve CJK characters.
+        self.assertIsNotNone(pick_rows(["一" * 12, "二", SKIP_LABEL]))
+        self.assertIsNone(pick_rows(["一" * 12 + "x", "二", SKIP_LABEL]))
+        self.assertIsNone(pick_rows(["二", "x" * (PICK_LONG + 1), SKIP_LABEL]))
+        self.assertIsNotNone(pick_rows(["二", "x" * PICK_LONG, SKIP_LABEL]))
+
+
 class TopLevelPickTest(QuestionFixture, unittest.TestCase):
     """A question with options, one picked (cards/question_cards.py picks): each option a button that answers at once,
     on a top-level copy (batch 5, 2026-11-07: the dropdown took four steps, and iOS's picker could not be cancelled)
@@ -1038,6 +1060,37 @@ class TopLevelPickTest(QuestionFixture, unittest.TestCase):
         self.assertEqual(pick_buttons(question_element({**record, "questions": [{**record["questions"][0],
                                                                                   "options": [{"label": "长" * 150}]}]}))[0]["text"]["content"],
                          "长" * 100)
+
+    def pick_row_sets(self, labels):
+        """The rows of buttons a picks() form with options ``labels`` draws: each row's button names, in order."""
+        record = {**self.record, "questions": [{"id": "a", "question": "怎么办？", "options": [{"label": l} for l in labels]}]}
+        form = question_element(record)
+        sets = [e for e in form["elements"] if e.get("tag") == "column_set" and pick_buttons(e)]
+        return form, sets
+
+    def test_short_options_stand_side_by_side_in_one_row(self):
+        """The owner, 2026-11-24 (T746): one under another, 现在发布（推荐） and 先不发布 were two bars across the card and
+        不回答此题 a small button under them, three rows for three words. Short ones stand in one row that wraps, each as
+        wide as its label, as they did before."""
+        form, sets = self.pick_row_sets(["现在发布（推荐）", "先不发布"])
+        self.assertEqual(len(sets), 1)
+        row = sets[0]
+        self.assertEqual(row["flex_mode"], "flow")
+        self.assertEqual([c["width"] for c in row["columns"]], ["auto"] * 3)
+        self.assertEqual([b["name"] for b in pick_buttons(row)], ["pick_0", "pick_1", "pick_skip"])
+        self.assertTrue(all("width" not in b for b in pick_buttons(form)))
+
+    def test_many_short_options_break_into_rows_that_fit(self):
+        """Four options that together are too wide for a row: rows that wrap, in order, none past PICK_ROW, 不回答此题
+        last; no bar across the card."""
+        labels = ["两项都做（推荐）", "只做任务进程预热", "只做配置变更", "先不做"]
+        form, sets = self.pick_row_sets(labels)
+        self.assertEqual([[b["name"] for b in pick_buttons(row)] for row in sets],
+                         [["pick_0", "pick_1", "pick_2"], ["pick_3", "pick_skip"]])
+        for row in sets:
+            self.assertEqual(row["flex_mode"], "flow")
+            self.assertLessEqual(sum(shown_width(b["text"]["content"]) + PICK_CHROME for b in pick_buttons(row)), PICK_ROW)
+        self.assertTrue(all("width" not in b for b in pick_buttons(form)))
 
     def test_other_cards_keep_the_dropdown(self):
         other = {"id": "b", "question": "顺序？", "options": [{"label": "先后"}]}

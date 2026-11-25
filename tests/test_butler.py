@@ -1474,8 +1474,9 @@ class IdleCompactionTest(ButlerUnifiedCase):
             detached._compact_when_idle(self.app, self.claude, self.job, self.claude.harness.context)
         self.assertTrue(any('idle compaction not scheduled' in line for line in self.lines))
 
-    def compact(self, result):
-        """``compact_main`` on the marker a start wrote, its Bridge stubbed; (exit status, the backend's request)."""
+    def compact(self, result, tools=False):
+        """``compact_main`` on the marker a start wrote, its Bridge stubbed; (exit status, the backend's request).
+        ``tools``: a backend that compacts with the butler's tools (``compact_with_tools``, agy's)."""
         self.ask()
         self.done(self.job)
         pointer = self.target.session_path
@@ -1484,6 +1485,8 @@ class IdleCompactionTest(ButlerUnifiedCase):
         self.started()[1].set()
         self.assertEqual(self.start(), 0)
         backend = mock.Mock()
+        if tools:
+            backend.compact_with_tools = True
         if isinstance(result, BaseException):
             backend.compact_session.side_effect = result
         else:
@@ -1518,6 +1521,21 @@ class IdleCompactionTest(ButlerUnifiedCase):
                     self.ctx, CHAT, time.time())}))
                 text = session.take_snapshot(self.ctx, CHAT, job_key('om_9', 9), full=False)
                 self.assertEqual('：全部]' in text, whole)
+
+    def test_a_backend_that_compacts_with_the_butlers_tools_gets_them(self):
+        # agy's compaction request reads the turn's prompt from the cache only with the same tools (backends/agy/compaction.py).
+        status, request = self.compact(True, tools=True)
+        self.assertEqual(status, idle_compaction.DONE)
+        config = request.context.options['mcp_config']
+        self.assertEqual(config, butler.mcp_config(session.RELEASE, self.state, job_key('om_1', self.job.job_id),
+                                                        sys.executable))
+
+    def test_how_long_a_topic_stays_idle_is_the_backends_when_it_says(self):
+        self.assertEqual(idle_compaction.idle_seconds(SimpleNamespace(compact_idle_seconds=180.0)), 180.0)
+        for backend in (SimpleNamespace(), mock.Mock(), SimpleNamespace(compact_idle_seconds=True),
+                        SimpleNamespace(compact_idle_seconds=-1)):
+            with self.subTest(backend=backend):
+                self.assertEqual(idle_compaction.idle_seconds(backend), idle_compaction.IDLE_SECONDS)
 
     def test_a_failed_compaction_is_the_next_turns_and_a_stopped_one_comes_back_as_it_was(self):
         status, _ = self.compact(False)
