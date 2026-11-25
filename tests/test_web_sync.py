@@ -1398,7 +1398,9 @@ class SeenTest(WebCase):
         self.web.op("seen", 4, "op-s9", "")
         self.web.op("seen", 5, "op-s0", TOPIC)
         self.sync.inbox_once()
-        self.assertEqual([r["state"] for r in self.web.acks], ["failed"] * 4 + ["done"])
+        # Topics' operations run side by side and are acknowledged as each is done (T765): by operation, not in order.
+        self.assertEqual({r["op_id"]: r["state"] for r in self.web.acks},
+                         {"op-s6": "failed", "op-s7": "failed", "op-s8": "failed", "op-s9": "failed", "op-s0": "done"})
         self.assertTrue(all(r["message"] for r in self.web.acks))
         self.assertEqual(list(read_seen(self.state)), [TOPIC])
 

@@ -172,7 +172,7 @@ class LaunchCardTests(LaunchCardCase):
         self.assertEqual(options['model']['initial_option'],'maso:maso-model')
         self.assertEqual(options['workspace']['initial_option'],name)
         self.assertEqual(options['run_mode']['initial_option'],'worktree')
-        self.assertTrue(options['effort']['initial_option'].endswith(':top_minus_one'))
+        self.assertTrue(options['effort']['initial_option'].endswith(':xhigh'))  # 推荐's level by name (docs/ui.md 13 U5).
         # A click the client still sends from the previous card starts its replacement, as recorded there.
         with self.assertRaisesRegex(ValueError,'不在 git 仓库'):
             submit_launch_form(self.child,self.target,self.submit)
@@ -419,7 +419,7 @@ class LaunchConfigTests(UnifiedCase):
         self.assertEqual(len(self.process().calls), 1)
         _, record = self.current()
         self.assertEqual(record['selected_model'], 'claude:claude-model')
-        self.assertEqual(selected_effort(record, '1:top_minus_one'), 'top_minus_one')
+        self.assertEqual(selected_effort(record, '1:top_minus_one'), 'xhigh')  # The level 推荐 names (docs/ui.md 13 U5).
 
     def test_unknown_source_owner_model_and_started_topics_cannot_mutate(self):
         self.prepare()

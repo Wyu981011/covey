@@ -110,9 +110,11 @@ class ModelOrderTests(UnifiedCase):
             self.assertEqual(record['selected_model'], saved)
             listed = list(record['models'])
             self.assertEqual(listed, [saved] + [key for key in fixed if key != saved])  # listed first, the rest fixed.
-            # The model select: the saved model's Harness and provider only, in that order.
+            # The model select: the saved model's Harness and provider only, in that order; Claude Code's "Default
+            # (recommended)" names no model, so the card lists it no more (docs/ui.md 13 U5), though the menu keeps it.
             same = [key for key in listed if key.split(':')[0] == saved.split(':')[0]
-                    and record['models'][key].get('provider', '') == record['models'][saved].get('provider', '')]
+                    and record['models'][key].get('provider', '') == record['models'][saved].get('provider', '')
+                    and key != 'claude:default']
             self.assertEqual([o['value'] for o in element['options']], same)
         harnesses = [key.split(':', 1)[0] for key in fixed]
         self.assertEqual([name for name, _ in itertools.groupby(harnesses)], sorted(NAMES, key=harness_rank))  # One block each.
@@ -186,7 +188,8 @@ class ModelOrderTests(UnifiedCase):
         for saved, model, budget in (('maso:gpt56_sol_reasoning_xhigh', 'maso:gpt56_sol', 'xhigh'),
                                      ('maso:gpt56_sol_reasoning_max', 'maso:gpt56_sol', 'max'),
                                      ('maso:es1-grape-g61s_reasoning_max', 'maso:es1-grape-g61s_reasoning_xhigh', 'max'),
-                                     ('maso:gpt56_sol', 'maso:gpt56_sol', 'top_minus_one')):  # A model: its 推荐.
+                                     # A model: the level its 推荐 names (docs/ui.md 13 U5).
+                                     ('maso:gpt56_sol', 'maso:gpt56_sol', 'xhigh')):
             with self.subTest(saved):
                 save_record(self.ctx.state_dir / 'launch-defaults.json', {'model_choice': saved, 'effort': 'top_minus_one'})
                 card = build_launch_card(self.child.topics, self.target)
@@ -343,19 +346,19 @@ class MasoLaunchTests(InChat, UnifiedCase):
                          ('maso:gpt56_sol', '1:max'))
         self.assertEqual(self.launch_form(token)['selected_effort'], 'max')
         self.assertEqual(self.start(token).model, 'gpt56_sol_reasoning_max')
-        # Another model chosen on the card starts from its 推荐, as before.
+        # Another model chosen on the card starts from the level its 推荐 names (docs/ui.md 13 U5).
         card, token, _ = self.remembered_launch_card('other')
         self.click(token, MODEL_ACTION, 'maso:es1-grape-g61s_reasoning_xhigh', redraw=False)
         _, ctx, path, revision = self.picker.queue.get_nowait()
         with FakeCardKit() as lark:
             self.picker.process(ctx, path, revision)
-        self.assertEqual(selects(lark.last.card)['effort']['initial_option'], '1:top_minus_one')
-        # A saved budget the model doesn't offer, or a malformed one, falls back to its 推荐.
+        self.assertEqual(selects(lark.last.card)['effort']['initial_option'], '1:xhigh')
+        # A saved budget the model doesn't offer, or a malformed one, falls back to that level.
         for n, last in enumerate(('default', ['max'], None)):
             with self.subTest(last=last):
                 save_defaults(self.ctx.state_dir, {'model_choice': 'maso:es1-grape-g61s_reasoning_xhigh', 'effort': last})
                 card = self.remembered_launch_card(f'fallback-{n}')[0]
-                self.assertEqual(selects(card)['effort']['initial_option'], '1:top_minus_one')
+                self.assertEqual(selects(card)['effort']['initial_option'], '1:xhigh')
 
     @requires_extension()
     def test_each_chat_keeps_its_own_last_budget(self):
@@ -368,7 +371,9 @@ class MasoLaunchTests(InChat, UnifiedCase):
         self.assertEqual(selects(card)['effort']['initial_option'], '1:max')  # The most recent launch anywhere.
         self.click(token, BUDGET_ACTION, '1:default')
         self.assertEqual(self.start(token).model, 'gpt56_sol')
-        for chat, budget in (('chat', '1:max'), ('oc_group', '1:default'), ('oc_new', '1:default')):
+        # 模型原生默认, tapped on a card sent before, still starts the model as it is; the next cards draw it as the level
+        # 推荐 names, since they list no 模型原生默认 (docs/ui.md 13 U5).
+        for chat, budget in (('chat', '1:max'), ('oc_group', '1:xhigh'), ('oc_new', '1:xhigh')):
             with self.subTest(chat=chat):
                 self.chat = chat
                 card, token, _ = self.remembered_launch_card(chat + '-next')
@@ -431,7 +436,7 @@ class MasoLaunchTests(InChat, UnifiedCase):
     def test_a_model_with_budget_presets_only_offers_no_native_default(self):
         token = self.card('grape', 'maso:es1-grape-g61s_reasoning_xhigh')
         self.click(token, BUDGET_ACTION, '1:default')
-        self.assertEqual(self.launch_form(token)['selected_effort'], 'top_minus_one')
+        self.assertEqual(self.launch_form(token)['selected_effort'], 'xhigh')  # 推荐's level by name (docs/ui.md 13 U5).
 
     @requires_extension()
     def test_a_card_sent_before_the_update_never_starts_another_budget(self):

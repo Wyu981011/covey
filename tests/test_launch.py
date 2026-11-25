@@ -536,14 +536,16 @@ class RecentUseTests(ChatLaunchCase):
         self.assertEqual(order[:3], ['dsh:dsh-model', 'codex:codex-model', 'claude:claude-model'])
         self.assertEqual(order[3:], [key for key in fixed if key not in order[:3]])  # Not used lately: as before.
         self.assertEqual((chosen['model']['initial_option'], chosen['effort']['initial_option']), ('dsh:dsh-model', '1:xhigh'))
-        # Chosen on the card, Codex comes with low (2 of its 3 launches), not 推荐; a model never used with 推荐.
+        # Chosen on the card, Codex comes with low (2 of its 3 launches), not 推荐; a model never used with the level 推荐
+        # names: the card lists no 推荐 (docs/ui.md 13 U5).
         moved = self.choose_model({**event, 'form_value': {'model': 'codex:codex-model'}})
         record = self.launch_form(moved['action_name'][len(SUBMIT_PREFIX):])
         self.assertEqual((record['selected_model'], record['selected_effort']), ('codex:codex-model', 'low'))
         self.assertEqual(list(record['models']), order)  # The new card lists them as the first did.
         moved = self.choose_model({**moved, 'form_value': {'model': 'maso:maso-model'}})
         record = self.launch_form(moved['action_name'][len(SUBMIT_PREFIX):])
-        self.assertEqual(record['selected_effort'], effort_options(record['models']['maso:maso-model'])[1])
+        self.assertEqual(effort_options(record['models']['maso:maso-model'])[1], 'top_minus_one')
+        self.assertEqual(record['selected_effort'], 'xhigh')
 
     def test_each_chat_lists_its_own_and_a_new_chat_everyones(self):
         self.launch('chat', 'direct-1', 'claude:claude-model', 'max', self.root / 'direct')
