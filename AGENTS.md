@@ -53,7 +53,7 @@
 | 换配置 | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py` | [话题中途换配置](docs/architecture.md#话题中途换配置) |
 | 回退一步（Claude） | `app/rewind.py`、`backends/claude/rewind.py` | [回退一步](docs/architecture.md#回退一步) |
 | 结果、投递与重投 | `app/turn_settle.py`、`app/worker.py`、`app/turn_delivery.py`、`app/redelivery.py`、`app/outbox.py` | [结果授权与投递](docs/architecture.md#结果授权与投递) |
-| 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
+| 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；管家一轮的请求挂住时停下它、让后来的话先跑 `app/unstick.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
 | 设置卡与机器人菜单 | `app/bot_menu.py`、`app/menu_panel.py`、`app/settings_hub.py`（标签「记忆」`app/memory_panel.py`、「能做什么」`app/about_panel.py`、「诊断」`app/doctor_panel.py`）、`feishu/events.py` | [机器人菜单](docs/usage.md#机器人菜单) |
 | 欢迎卡（新部署只发一次，`COVEY_WELCOME`）和 `./install` 等第一句回答 | `app/welcome.py`、`cards/welcome.py`、`core/welcome.py`（记录、`first_answer`）、`service/installer.py` 的 `wait_answer` | [第一次使用](docs/usage.md#第一次使用)、[第一个回答](docs/install.md#第一个回答) |
 | 代答 | `app/proxy.py`（批次）、`app/proxy_intake.py`（收消息）、`app/proxy_topics.py`（联系人话题）、`app/proxy_commands.py`（查找、群成员）、`app/proxy_send.py`（读回和发送器接口；发送器 `extensions/covey_internal/proxy_sender.py`、`extensions/covey_internal/proxy_login.py`）、`core/proxy.py` | [proxy.md](docs/proxy.md)、[代答](docs/architecture.md#代答) |
@@ -70,7 +70,7 @@
 | 扩展（`COVEY_EXTENSIONS` 或 `extensions/enabled` 启用的包，核心不按名字引用；扩展自带 README） | `core/extensions.py`（manifest 并进 `core/roster.py`、`core/providers.py` 的表，`features(app)` 并进 `app/unified.py` 的 `self.features`） | [扩展](docs/architecture.md#扩展) |
 | 节点与机器状况（`COVEY_NODE_LISTEN`） | `core/node_agent.py`（设备和本机上常驻的节点）、`core/nodes.py`（名单、口令、记录）、`core/node_rules.py`（告警规则）、`app/node_gateway.py`（TLS 服务）、`app/node_alerts.py`、`app/nodes.py`、`cards/node_cards.py` | [节点](docs/architecture.md#节点默认关)、[配置](docs/configuration.md#节点与机器状况默认关) |
 | 维护与备份 | `core/maintenance.py`（规则表在 `core/maintenance_rules.py`，备份在 `core/backup.py`）、`app/stale.py`、`core/migrate.py` | [备份、归档与维护](docs/operations.md#备份归档与维护) |
-| 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、`service/doctor.py`（终端里的中文摘要 `service/doctor_words.py`；设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
+| 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、状态目录写不进与慢锁慢读 `core/storage_watch.py`、`app/storage_alerts.py`、`service/doctor.py`（终端里的中文摘要 `service/doctor_words.py`；设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
 | 安装与日常升级（`./install`、`scripts/upgrade.sh`） | `service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh` | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级) |
 
 ## 模块表
@@ -231,6 +231,7 @@
 | `app/steer_interrupt.py` | A supplement the model has not read yet: how long it has waited, and stopping the command that holds it back |
 | `app/steer_receipts_flow.py` | What became of a supplement, on its receipt card |
 | `app/steering.py` | Supplements (补充) to a task of this topic: which task takes one, and how it gets there |
+| `app/storage_alerts.py` | The state directory's disk at the Bridge |
 | `app/strangers.py` | The one line a person who is not the owner gets for writing to the bot in private |
 | `app/stuck_check.py` | 看看: a read-only look at a turn that may be stuck, from the button under its task card's status line, answered … |
 | `app/subagent_recovery.py` | What a failed or interrupted Claude turn's subagents delivered, for the next turn |
@@ -262,6 +263,7 @@
 | `app/turn_images.py` | Images a running task shows its owner at once: a login QR code, a screenshot he has to act on |
 | `app/turn_settle.py` | How a finished turn ended, settled before anything is delivered (rule 5's core) |
 | `app/unified.py` | The Bridge: one Feishu ingress, immutable topic routes, one app per Harness |
+| `app/unstick.py` | A butler's or a lead's turn whose model request hangs no longer holds up what the owner said after it (T784) |
 | `app/web_collect.py` | 网页工作台同步的收集: `Collector` reads the records of the owner's chat and makes the items (topics, turns, questions … |
 | `app/web_files.py` | 网页上传的附件 (docs/web.md, COVEY_WEB=1 |
 | `app/web_images.py` | The images of a turn on the web page |
@@ -463,6 +465,7 @@
 | `core/statuses.py` | The status machines of the records |
 | `core/steer.py` | What became of a supplement sent into a running task, and which are urgent |
 | `core/steps.py` | The steps an adapter publishes as `tool` events (a tool call, a command, a compaction) and the words a model … |
+| `core/storage_watch.py` | What this process saw of its disk going wrong, kept in memory for the health snapshot, the diagnostics and … |
 | `core/store.py` | Indexed JSON records with legacy-compatible reads and isolated invalid files |
 | `core/switches.py` | The optional switches: what a new service starts with, the 演示套餐, and which a service has set |
 | `core/task_processes.py` | What a task's commands leave running once its Harness has closed, found by the marker its runner puts in its … |

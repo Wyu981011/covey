@@ -122,6 +122,24 @@ def end_unread(state_dir, job_key, since=0.0):
     return ended
 
 
+def unread_of(state_dir, job_key, since=0.0):
+    """The supplements of the running task ``job_key`` sent and not read yet (read only; ``end_unread`` is its end's):
+    files last written before ``since`` (the turn's start, less CLOCK_SLACK) are not read."""
+    found = []
+    since = float(since or 0) - CLOCK_SLACK
+    for path in sorted((Path(state_dir) / "interaction-deliveries").glob("*.json")):
+        try:
+            if path.stat().st_mtime < since:
+                continue
+        except OSError:
+            continue
+        record = read_delivery(path)
+        if (isinstance(record, dict) and record.get("job_key") == job_key and record.get("status") == "sent"
+                and not record.get("merged") and not record.get("target_ended")):
+            found.append(record)
+    return found
+
+
 def marked(record) -> bool:
     """Whether ``record`` waits to be queued as a turn of its own: a butler supplement's ``requeue_auto``, or a topic's
     message's that went in as it arrived, ``requeue_next`` (``on_arrival``; its own name, so a release before it, which

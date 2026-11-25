@@ -20,7 +20,7 @@ ERROR_CODES = frozenset({"", "child_error", "child_aborted", "child_unknown", "s
     "protocol_error", "session_guard", "process_exit", "identity_mismatch", "output_missing", "storage_failed",
     "max_turns", "budget_exceeded", "authentication_error", "rate_limited", "workspace_routing_timeout",
     "workdir_missing", "background_timeout", "quota_exhausted", "model_blocked", "redaction_failed",
-    "read_only_refused", "server_fault"}) | POLICY_CODES
+    "read_only_refused", "server_fault", "request_hung"}) | POLICY_CODES
 
 
 # What the user can do next, where a failure has a clear way on. The plain words replace
@@ -61,6 +61,8 @@ STATUS_MESSAGES = {
     "model_blocked": "模型服务因安全拒绝拦截了当前账号，本轮没有产出回复",
     "background_timeout": "已到任务的时间上限，后台任务已停止，发出最后一条完整回复",
     "cancelled": "任务已停止，发出停止前最后一条完整回复",
+    # Stopped by the Bridge, not the owner: a butler's turn quiet that long while his next words waited (app/unstick.py).
+    "request_hung": "模型请求长时间没有回应，Bridge 停下了这一轮",
 }
 INCOMPLETE_STATUS = "本轮执行未全部完成，原生会话不可续接"
 # The detail after a failure's label (ExecutionOutcome.summary: Claude Code and the failure card), by error
@@ -95,6 +97,7 @@ DETAILS = {
     "workdir_missing": "本话题的工作目录不存在，后端没有启动。恢复该目录后可点“检查并继续”，或在主聊天新开话题选择其他目录。",
     "background_timeout": "回复之后仍有后台任务在运行，已到任务的时间上限，机器人已停止执行进程和这些后台任务。",
     "redaction_failed": "本话题开着敏感词脱敏，但本轮没法脱敏，没有发给模型服务。",
+    "request_hung": "模型请求长时间没有回应，而主人后来的消息在等它：Bridge 停下了这一轮，让那些消息先跑。",
     "read_only_refused": "这个群的群成员只读，这个 Harness 做不到只读，后端没有启动。",
 }
 # The whole failure text of Codex and dsh by error code (core/reply_state.failure_text), the Harness that

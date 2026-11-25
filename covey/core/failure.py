@@ -68,6 +68,8 @@ OWN = {
     "model_blocked": ("账号因多次安全拒绝被模型服务暂时拦住了（一般次日解除），重试不会成功；可以换个模型接着做",
                       (SWITCH_MODEL,)),
     "authentication_error": ("模型服务不认当前的登录或权限，需要重新登录或检查授权", (DIAGNOSE,)),
+    "request_hung": ("模型请求长时间没有回应，Bridge 停下了这一轮，好让你后来的话先跑；可以接着做，或先看原因",
+                     (CONTINUE, DIAGNOSE)),
     "workspace_routing_timeout": ("连不上模型服务（工作区路由超时），可能是网络或代理的问题", (RETRY, DIAGNOSE)),
     "workdir_missing": ("本话题的工作目录不在了，这一轮没有开始；恢复目录后可以接着做", (CONTINUE,)),
     "redaction_failed": ("本话题开着敏感词脱敏，这一轮没法脱敏，没有发给模型；问题解决后可以重试", (RETRY,)),
