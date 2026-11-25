@@ -17,6 +17,7 @@ import uuid
 
 from covey.core.harness import JobCancelled
 from covey.core.process import cleanup_group, device_of, process_identity, spawn_process, stop_group
+from covey.core.protocol import queue_note
 
 
 STDERR_LINES = 40  # The CLI's last lines of stderr kept for the failure log (``ClaudeProcess.stderr_tail``).
@@ -55,8 +56,80 @@ TRANSPORT_FAILURES = {
     "initialize_rejected": "Claude initialization failed",
     "initialize_unexpected_event": "Unexpected Claude initialization event",
     "initialize_timeout": "Claude initialization timed out",
+    "queue_timeout": "Claude command's queue went quiet or past its limit",
     "device_offline": "Claude's device connection is down; the input was not sent",
 }
+
+
+INITIALIZE_SECONDS = 30  # For the CLI's answer to initialize, from its start or from when its command's queue let it go.
+# A Claude command (a wrapper script given as ``--claude-cmd``) that holds the CLI back until its gateway has a free seat says
+# so on stderr, one line at least every QUEUE_SILENCE seconds while it waits, then once more as it starts the CLI:
+#   covey queue: {"ahead": 1, "running": 3, "cap": 3, "limit": 3600, "name": "<gateway>"}
+#   covey queue: {"admitted": true}
+# ``ahead``: commands before it; ``running``/``cap``: seats taken and in all; ``limit``: the most seconds it waits before
+# it gives up (exits) by itself; all optional. initialize waits as long as the lines keep coming, never past ``limit``
+# (at most QUEUE_LIMIT), and then INITIALIZE_SECONDS more; a command that says nothing waits INITIALIZE_SECONDS as before.
+QUEUE_LINE = "covey queue:"
+QUEUE_SILENCE = 30
+QUEUE_LIMIT = 4 * 3600
+QUEUE_NAME_CHARS = 40
+
+
+def queue_line(text):
+    """The fields of a command's QUEUE_LINE ``text`` (see above), only those it may say and of their types; None for
+    any other line."""
+    if not text.startswith(QUEUE_LINE):
+        return None
+    try:
+        data = json.loads(text[len(QUEUE_LINE):])
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if data.get("admitted") is True:
+        return {"admitted": True}
+    info = {key: data[key] for key in ("ahead", "running", "cap")
+            if type(data.get(key)) is int and 0 <= data[key] < 100_000}
+    if type(data.get("limit")) in (int, float) and data["limit"] > 0:
+        info["limit"] = data["limit"]
+    if isinstance(data.get("name"), str) and data["name"].strip():
+        info["name"] = data["name"].strip()[:QUEUE_NAME_CHARS]
+    return info
+
+
+def initialize_deadline(started, deadline, queue):
+    """When initialize, started at ``started`` (time.monotonic()) with ``deadline`` so far, gives up, given its command's
+    last QUEUE_LINE ``queue`` ((fields, when it came) or None): INITIALIZE_SECONDS after the command said its turn came;
+    while it waits, QUEUE_SILENCE after its last line, but no later than its ``limit`` (at most QUEUE_LIMIT) and
+    INITIALIZE_SECONDS more. Never earlier than ``deadline``."""
+    if queue is None:
+        return deadline
+    info, seen = queue
+    if info.get("admitted"):
+        return max(deadline, seen + INITIALIZE_SECONDS)
+    limit = min(info.get("limit") or QUEUE_LIMIT, QUEUE_LIMIT)
+    return max(deadline, min(seen + QUEUE_SILENCE, started + limit + INITIALIZE_SECONDS))
+
+
+class QueueNotes:
+    """``initialize``'s ``on_queue`` for a turn: each new QUEUE_LINE as the main task's progress_note (core/protocol.py
+    queue_note), which the status line shows, through ``emit`` and ``flush``; ``end`` ends a wait the command did not say
+    was over."""
+
+    def __init__(self, emit, flush):
+        self.emit, self.flush = emit, flush
+        self.since = self.last = None
+
+    def __call__(self, queue):
+        if self.since is None:
+            self.since = int(time.time() * 1000)
+        self.last = queue
+        self.emit("progress_note", queue_note(queue, self.since))
+        self.flush()
+
+    def end(self):
+        if self.last is not None and not self.last.get("admitted"):
+            self({"admitted": True})
 
 
 _REASONS = {message: reason for reason, message in TRANSPORT_FAILURES.items()}
@@ -147,6 +220,7 @@ class ClaudeProcess:
             stderr=subprocess.DEVNULL if self.device else subprocess.PIPE,
         )
         self.stderr_tail = collections.deque(maxlen=STDERR_LINES)
+        self.queue = None  # (the command's last QUEUE_LINE fields, time.monotonic() it came), None before one.
         self.stderr_reader = None
         if not self.device:
             self.stderr_reader = threading.Thread(target=self._drain_stderr, args=(env,), daemon=True, name="claude-stderr")
@@ -164,10 +238,16 @@ class ClaudeProcess:
             raise
 
     def _drain_stderr(self, env):
-        """Keep the CLI's last STDERR_LINES lines of stderr, credentials hidden, and never let its pipe fill."""
+        """Keep the CLI's last STDERR_LINES lines of stderr, credentials hidden, and never let its pipe fill; its command's
+        QUEUE_LINE goes to ``queue`` instead."""
         try:
             for line in iter(lambda: self.process.stderr.readline(4096), b""):
-                text = scrub(line.decode("utf-8", "replace").rstrip(), env)
+                text = line.decode("utf-8", "replace").rstrip()
+                queued = queue_line(text)
+                if queued is not None:
+                    self.queue = (queued, time.monotonic())
+                    continue
+                text = scrub(text, env)
                 if text:
                     self.stderr_tail.append(text)
         except (OSError, ValueError):
@@ -262,10 +342,12 @@ class ClaudeProcess:
         except queue.Empty:
             return None
 
-    def initialize(self, hooks=None):
+    def initialize(self, hooks=None, on_queue=None):
         """The initialize control request and its answer; ``hooks`` (backends/claude/hooks.py registration), when
-        given, registers the turn's SDK hook callbacks."""
+        given, registers the turn's SDK hook callbacks. While the command waits in its queue (QUEUE_LINE) the answer is
+        waited for longer (``initialize_deadline``); ``on_queue`` is called, here, with each new QUEUE_LINE's fields."""
         rid = str(uuid.uuid4())
+        # The request waits in the pipe while the command is queued: the CLI reads it once it runs.
         self.send(
             {
                 "type": "control_request",
@@ -273,8 +355,18 @@ class ClaudeProcess:
                 "request": {"subtype": "initialize", "forwardSubagentText": True, **({"hooks": hooks} if hooks else {})},
             }
         )
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
+        started = time.monotonic()
+        deadline, told = started + INITIALIZE_SECONDS, None
+        while True:
+            queue = self.queue
+            deadline = initialize_deadline(started, deadline, queue)
+            if queue is not None and queue[0] != told:
+                told = queue[0]
+                if on_queue is not None:
+                    on_queue(dict(told))
+            if time.monotonic() >= deadline:
+                raise transport_error("queue_timeout" if queue is not None and not queue[0].get("admitted")
+                                      else "initialize_timeout")
             row = self.receive()
             if row is None:
                 continue
@@ -289,11 +381,13 @@ class ClaudeProcess:
             # No user input has been submitted; a result or tool request here
             # cannot be attributed to this job.
             if row.get("type") not in {"system", "rate_limit_event"}:
+                queue = self.queue
+                if row.get("type") in {"bridge_eof", "bridge_error"} and queue is not None and not queue[0].get("admitted"):
+                    raise transport_error("queue_timeout")  # The command gave up waiting (its limit) before the CLI ran.
                 raise transport_error("initialize_unexpected_event")
             self.prelude.append(row)
             if len(self.prelude) > 64:
                 raise ValueError("Too many Claude initialization events")
-        raise transport_error("initialize_timeout")
 
     def end_input(self):
         with self.write_lock:

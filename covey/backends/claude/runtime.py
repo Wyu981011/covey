@@ -20,8 +20,8 @@ from covey.backends.claude.completion import ClaudeReplyState, result_failure
 from covey.backends.claude.control import ClaudeControl
 from covey.backends.claude.events import ClaudeEventAdapter
 from covey.backends.claude.hooks import TurnHooks
-from covey.backends.claude.process import (ClaudeProcess, IMAGE_FRAME, failure_event, save_transport_details, transport_error,
-                                                    transport_failure_details)
+from covey.backends.claude.process import (ClaudeProcess, IMAGE_FRAME, QueueNotes, failure_event, save_transport_details,
+                                           transport_error, transport_failure_details)
 from covey.core.attachments import MAX_IMAGE_BYTES, read_images
 from covey.core.completion import CompletionBudget
 from covey.core.harness import JobCancelled
@@ -255,7 +255,9 @@ def run_stream(backend, request, env):
         process = spawn()
         stage = "initialize"
         hooks = TurnHooks(ctx)  # The subagents' rules, the Bridge's tools refused to them, the butler's one reminder.
-        process.initialize(hooks.registration())
+        queue = QueueNotes(emit, flush_events)
+        process.initialize(hooks.registration(), on_queue=queue)
+        queue.end()
         control = ClaudeControl(process, state, emit, hooks)
         control.foreground = adapter.foreground_commands
         for row in process.prelude:

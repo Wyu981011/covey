@@ -10,7 +10,7 @@ from covey.core.metrics import clock_text, duration, step_age, took_text
 from covey.core.text import safe_text, step_event, step_label
 from covey.core import turn_words
 from covey.core.progress import BACKGROUND_CHARS, activity_line, ago_words, background_words, command_words, eta_words, stuck_words, usual_words
-from covey.core.turn_words import RUNNING, STUCK, UNSET_PHASES
+from covey.core.turn_words import BOARD, RUNNING, STUCK, UNSET_PHASES
 
 
 THINKING = "模型思考或生成回复中"
@@ -133,6 +133,7 @@ class Facts(NamedTuple):
     # The background tasks that keep the turn open after its reply (core/progress.py background_tasks): their descriptions,
     # '' for one without; the line under 现在： says what the turn still waits for.
     background: tuple = ()
+    queue: dict | None = None  # The backend's command waits for a free seat at its gateway (job.backend_queue).
 
 
 def quiet_note(facts):
@@ -239,6 +240,19 @@ def retry_summary(retry, elapsed, epoch):
             f"本次模型请求尚未成功，{suffix}。\n{reason}可使用停止按钮结束等待。")
 
 
+def queue_summary(queue, elapsed, epoch):
+    """The main task's command waits for a free seat at its gateway: since when, how many seats are taken and how many
+    wait before it, and the longest it waits (when the command says)."""
+    where = safe_text(queue["name"], 40) + " " if queue.get("name") else ""
+    seats = (f"{where}{int(queue['running'])}/{int(queue['cap'])} 路在跑" if "running" in queue and "cap" in queue
+             else f"{where}暂无空位")
+    ahead = f"，前面还有 {int(queue['ahead'])} 个" if "ahead" in queue else ""
+    waited = f" · 已等 {clock_text(max(0, epoch - queue['since'] / 1000))}" if queue.get("since") else ""
+    limit = f"（最长等 {int(queue['limit']) // 60} 分钟）" if queue.get("limit") else ""
+    return (f"{BOARD['queued']} · 已运行 {took_text(elapsed)}{waited}\n"
+            f"{NOW}等空位：{seats}{ahead}，轮到就开始{limit}。\n可使用停止按钮结束等待。")
+
+
 def status_summary(facts):
     """The status line in full (the record's ``long_task_summary``): the device's link when it is down, else the
     turn's own (``_summary``) and, for a device's checkpoint past what is mirrored, the line that says so."""
@@ -253,10 +267,12 @@ def status_summary(facts):
 
 
 def _summary(facts):
-    """A retry, else the model's question waiting for its answer, else what the trace says, else phase and process
-    health."""
+    """A retry, else the wait for a seat, else the model's question waiting for its answer, else what the trace says,
+    else phase and process health."""
     if facts.retry and not facts.waiting:
         return retry_summary(facts.retry, facts.elapsed, facts.epoch)
+    if facts.queue and not facts.waiting:
+        return queue_summary(facts.queue, facts.elapsed, facts.epoch)
     if facts.waiting:
         return (WAITING + facts.question if facts.native_question_active
                 else "正在整理本轮结果，完成后将展示需要确认的内容。")
@@ -269,7 +285,7 @@ def _summary(facts):
 def status_text(facts):
     """The status line a tick writes to the card (TaskMonitor.update): the summary, or, for a short task
     without a trace, its last checkpoint event or a moving ellipsis."""
-    if (facts.retry or facts.long_mode or facts.waiting or facts.traced
+    if (facts.retry or facts.queue or facts.long_mode or facts.waiting or facts.traced
             or (facts.device and (turn_words.device_status(facts.device) or turn_words.device_over(facts.device)))):
         return status_summary(facts)
     if facts.last_event != "尚无阶段进展":

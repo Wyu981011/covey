@@ -73,6 +73,7 @@ class TaskMonitor:
         self.last_checkpoint = None
         self.long_mode = False
         self.last_retry = None
+        self.last_queue = None
         self.reconnects = 0  # How many returns of the device's link were written to the trace.
         # The checkpoint's steps and delivery (core/checkpoint.py), and when the Bridge saw each step start and end,
         # kept on the job's record once the checkpoint had them (``step_fields``).
@@ -125,8 +126,8 @@ class TaskMonitor:
                 self.shown_stuck = found["maybe_stuck"]  # Not retried when the write fails: the card shows the line.
                 self.stuck(self.shown_stuck)
             retry = facts.retry
-            retry_changed = retry != self.last_retry
-            self.last_retry = dict(retry)
+            retry_changed = retry != self.last_retry or facts.queue != self.last_queue
+            self.last_retry, self.last_queue = dict(retry), dict(facts.queue or {})
             self.persist(
                 elapsed_seconds=int(facts.elapsed),
                 last_progress_age_seconds=int(facts.quiet),
@@ -186,11 +187,11 @@ class TaskMonitor:
                     if stamp is not None]
             quiet = max(0, min(ages + [quiet] if self.progress_seen or not ages else ages))
         question = str(cp.get("question") or "").strip()
-        retry = self.job.backend_retry
+        retry, queue = self.job.backend_retry, self.job.backend_queue
         device = self.device_facts()
         steps, step_doing = step_text(self.steps, self.step_times, wall)
         waiting = cp.get("requires_user") is True and bool(question)
-        found = self.progress(wall, quiet, elapsed, waiting or bool(retry), alive)
+        found = self.progress(wall, quiet, elapsed, waiting or bool(retry) or bool(queue), alive)
         return Facts(
             elapsed=elapsed, quiet=quiet, alive=alive, finished=alive is False and returncode == 0,
             phase=self.phase, last_event=self.last_event,
@@ -200,7 +201,7 @@ class TaskMonitor:
             traced=self.job.tool_trace is not None, wall=wall,
             stirred=(self.progress_seen or self.output_at is not None or self.reasoning_at is not None
                      or self.requested_at is not None),
-            retry=retry, epoch=time.time(), long_mode=self.long_mode or elapsed >= self.long_after,
+            retry=retry, queue=queue, epoch=time.time(), long_mode=self.long_mode or elapsed >= self.long_after,
             frame=self.frame, steps=steps, step_doing=step_doing, device=device, progress=found,
             stuck_after=self.stuck_after, background=self.background,
         ), changed

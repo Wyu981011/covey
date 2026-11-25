@@ -85,7 +85,7 @@ class EveryCardTest(unittest.TestCase):
 
     def test_running_it_counts_from_the_backend_request(self):
         job = types.SimpleNamespace(timings={"backend_requested": REQUESTED}, backend_process=None, tool_trace=None,
-                                    backend_retry={}, native_question_active=False)
+                                    backend_retry={}, backend_queue={}, native_question_active=False)
         monitor = TaskMonitor(job, Path("/nonexistent/checkpoint.json"), None, None, None, None, None,
                               clock=lambda: 5.0, wall=lambda: REQUESTED + 125)
         facts, _ = monitor.facts(7.0)
