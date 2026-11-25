@@ -13,6 +13,15 @@
 5. **公共核心的改动对所有使用者生效**：改锁、记录与状态、调度、投递、服务管理（见下文「最容易改坏的规则」）时，开关关着的行为要和原来一样，并跑全量。
 6. 部署照 [部署新版本](docs/deploy.md#部署新版本) 的步骤。
 
+## 收敛期
+
+2026-11-25 到 2026-12-09 不加新概念，先把已有的补齐：入口（管家、负责人、话题、网页开的话题）× Harness × 界面（飞书卡片、网页工作台）里漏掉的格，由 `tests/test_matrix.py` 一格一格核对；默认关的开关定下删、转正还是保留，主人拍板前不改默认。
+
+- **什么算新概念**：新的环境变量或命令行参数、卡片按钮 kind、管家或负责人的 Bridge 工具、Harness、模型来源、名词表（[docs/glossary.md](docs/glossary.md)）里的词。清单在 `tests/golden/concepts.json`，`test_structure` 的 `ConceptFreezeTest` 核对，多一个就失败。
+- **确需新增**：先问主人；主人同意后在清单的 `approved` 里加一项 `{kind, name, by, why}`，`by` 写谁在哪个话题或哪个工作包同意的。主人已选定的这一批优化（P0-A 到 P1-F）里要加的，`by` 写工作包号。
+- **去掉一个**：随时可以，`python3 -B scripts/concepts.py --write` 把它从清单去掉。
+- 收敛期过后新增也照样登记：`python3 -B scripts/concepts.py --write`，和改动一起提交，新概念在 diff 里看得见。
+
 # 代码地图
 
 先在这里找文件，再 `grep -n` 定位、按行号范围读。路径相对 `covey/`，`bin/` 只是入口壳。结构、数据流和不变量见 [架构与开发说明](docs/architecture.md)（先读[分层与包职责](docs/architecture.md#分层与包职责)、[一条消息的数据流](docs/architecture.md#一条消息的数据流)、[卡片点击的数据流](docs/architecture.md#卡片点击的数据流)），跨模块的分工见它的[代码位置](docs/architecture.md#代码位置)。
@@ -635,6 +644,7 @@
 - 改公共核心或 `runs/` 协议（规则 10）：先跑 `scripts/cross_release.py run --old <现网 release> --out <目录>` 再 `compare`；`tests/golden/run_dir.json` 有 diff 就是改了协议（`docs/testing.md` 任务进程协议与跨版本检查）。
 - 新读环境变量或加命令行参数：在 `docs/configuration.md` 的「环境变量与选项一览」加一行（`test_structure` 的 `InventoryTest` 核对）。
 - 加、删、搬模块或改了模块 docstring 首句：`python3 -B scripts/code_map.py --write`（`--check` 只检查）。
+- 加、删环境变量、命令行参数、按钮 kind、Bridge 工具、Harness、模型来源或名词：`python3 -B scripts/concepts.py --check`，见上文[收敛期](#收敛期)。
 - `pyflakes covey bin tests extensions`（只许 2 条有意的未使用导入）；`bash -n scripts/*.sh`。
 
 ## 省 token

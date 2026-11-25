@@ -851,6 +851,51 @@ class CodeMapTest(unittest.TestCase):
         self.assertEqual(sorted(modules - listed), [])
 
 
+
+def load_concepts():
+    spec = importlib.util.spec_from_file_location("concepts", REPO / "scripts/concepts.py")
+    concepts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(concepts)
+    return concepts
+
+
+class ConceptFreezeTest(unittest.TestCase):
+    """AGENTS.md 收敛期: every setting, card button kind, Bridge tool, Harness, provider and glossary word of the core is
+    on tests/golden/concepts.json (scripts/concepts.py), so a new concept is added in sight, and in the 收敛期 only with
+    who allowed it."""
+
+    def test_the_core_has_the_concepts_the_list_keeps_and_no_other(self):
+        concepts = load_concepts()
+        listed = concepts.load()
+        text = concepts.report(listed, concepts.compare(listed, concepts.current()), concepts.frozen(listed))
+        self.assertEqual(text, "", "\n" + text)
+
+    def test_every_approved_concept_says_who_allowed_it_and_why(self):
+        concepts = load_concepts()
+        for entry in concepts.load()["approved"]:
+            self.assertIn(entry.get("kind"), concepts.KINDS, entry)
+            for field in ("name", "by", "why"):
+                self.assertTrue(str(entry.get(field) or "").strip(), (field, entry))
+
+    def test_in_the_freeze_write_refuses_a_new_concept_and_after_it_takes_it(self):
+        concepts = load_concepts()
+        listed = {"freeze": {"since": "2026-11-25", "until": "2026-12-09"},
+                  "concepts": {kind: ["old"] for kind in concepts.KINDS},
+                  "approved": [{"kind": "tools", "name": "allowed", "by": "T1", "why": "w"}]}
+        now = {kind: ["old"] for kind in concepts.KINDS} | {"tools": ["allowed", "new", "old"], "terms": []}
+        self.assertTrue(concepts.frozen(listed, concepts.datetime.date(2026, 12, 9)))
+        self.assertFalse(concepts.frozen(listed, concepts.datetime.date(2026, 12, 10)))
+        diff = concepts.compare(listed, now)
+        self.assertEqual(diff["added"], {"tools": ["new"]})
+        self.assertEqual(diff["removed"], {"terms": ["old"]})
+        self.assertIn("先问主人", concepts.report(listed, diff, True))
+        out, refused = concepts.written(listed, now, True)
+        self.assertEqual(refused, ["tools:new"])
+        self.assertEqual((out["concepts"]["tools"], out["concepts"]["terms"]), (["old"], []))
+        self.assertEqual([entry["name"] for entry in out["approved"]], ["allowed"])
+        out, refused = concepts.written(listed, now, False)
+        self.assertEqual((refused, out["concepts"]["tools"], out["approved"]), ([], ["allowed", "new", "old"], []))
+
 class StandardLibraryTest(unittest.TestCase):
     """The core needs nothing but Python (pyproject.toml lists no dependencies) and CI installs nothing else: what a
     module of the core, its scripts or its tests imports as it loads is the standard library or this tree's own.
