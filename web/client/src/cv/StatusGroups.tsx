@@ -1,15 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { ChevronRight } from 'lucide-react';
 import type { SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { prefetchTurns } from '@client/src/hooks/use-workbench';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
+import { pref, setPref } from './lib';
 import { Dot } from './ui';
 import type { Asks } from './projectData';
-import { sinceWords, statusGroups, type StatusRow } from './statusGroups';
-
-/** 每组最多列几行，多的写“还有 N 个”（要你处理的链到看板） */
-const SHOWN = 6;
+import { shownRows, sinceWords, statusGroups, type StatusRow } from './statusGroups';
 
 /** 鼠标移上去（手机按下）就先取这个话题的对话，点下去时多半已经在了（同侧栏话题行 TopicRow）；专项行没有对话可取 */
 const Row: React.FC<{ r: StatusRow; now: number; on: boolean }> = ({ r, now, on }) => {
@@ -35,12 +34,22 @@ const Row: React.FC<{ r: StatusRow; now: number; on: boolean }> = ({ r, now, on 
   );
 };
 
-/** 侧栏顶上的「要你处理」「在做」两组（statusGroups.ts）。两组都空时什么也不画 */
+/** 侧栏顶上的「要你处理」「在做」两组（statusGroups.ts）。两组都空时什么也不画。
+ *  每组收着时最多列 SHOWN 行（多出 1 个就直接列出，shownRows）：要你处理多的链到看板；在做多的写“还有 N 个在做 · T 号”，
+ *  点开列全、再点「收起」，展开与否记在这台浏览器上（同“更早的专项”） */
 export const StatusGroups: React.FC<{ a: Asks; data: SnapshotResponse; running: SnapshotTopic[]; act: number; now: number }> = ({ a, data, running, act, now }) => {
   const loc = useLocation();
+  const [runAll, setRunAll] = useState<boolean>(() => pref('ss.running', '0') === '1');
   const g = statusGroups(a, data, running);
   if (!g.act.length && !g.running.length) return null;
   const on = (r: StatusRow): boolean => loc.pathname === r.to;
+  const actN: number = shownRows(g.act.length, false);
+  const runN: number = shownRows(g.running.length, runAll);
+  const folds: boolean = shownRows(g.running.length, false) < g.running.length;
+  const toggleRun = (): void => {
+    setPref('ss.running', runAll ? '0' : '1');
+    setRunAll(!runAll);
+  };
   return (
     <div className="ss" aria-label="按状态">
       {g.act.length ? (
@@ -49,8 +58,8 @@ export const StatusGroups: React.FC<{ a: Asks; data: SnapshotResponse; running: 
             <span>要你处理</span>
             <b>{act || g.act.length}</b>
           </Link>
-          {g.act.slice(0, SHOWN).map((r: StatusRow) => <Row key={r.key} r={r} now={now} on={on(r)} />)}
-          {g.act.length > SHOWN ? <Link to="/" className="ss-more">还有 {g.act.length - SHOWN} 件，在看板里</Link> : null}
+          {g.act.slice(0, actN).map((r: StatusRow) => <Row key={r.key} r={r} now={now} on={on(r)} />)}
+          {g.act.length > actN ? <Link to="/" className="ss-more">还有 {g.act.length - actN} 件，在看板里</Link> : null}
         </>
       ) : null}
       {g.running.length ? (
@@ -59,8 +68,16 @@ export const StatusGroups: React.FC<{ a: Asks; data: SnapshotResponse; running: 
             <span>在做</span>
             <b>{g.running.length}</b>
           </div>
-          {g.running.slice(0, SHOWN).map((r: StatusRow) => <Row key={r.key} r={r} now={now} on={on(r)} />)}
-          {g.running.length > SHOWN ? <span className="ss-more">还有 {g.running.length - SHOWN} 个在做</span> : null}
+          {g.running.slice(0, runN).map((r: StatusRow) => <Row key={r.key} r={r} now={now} on={on(r)} />)}
+          {g.running.length > runN ? (
+            <button type="button" className="ss-more" aria-expanded={false} onClick={toggleRun}>
+              <span>还有 {g.running.length - runN} 个在做</span>
+              <span className="ss-ids">{g.running.slice(runN).map((r: StatusRow) => (r.number ? `T${r.number}` : r.title)).join('、')}</span>
+              <ChevronRight aria-hidden="true" />
+            </button>
+          ) : runAll && folds ? (
+            <button type="button" className="ss-more" aria-expanded onClick={toggleRun}>收起</button>
+          ) : null}
         </>
       ) : null}
     </div>

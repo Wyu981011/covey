@@ -1,7 +1,7 @@
 // 侧栏的状态分组（T753，client/src/cv/statusGroups.ts）：和看板同一口径、每行写什么。跑：npm run test:status
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { statusGroups, sinceWords } from '../client/src/cv/statusGroups.ts';
+import { statusGroups, sinceWords, shownRows, SHOWN } from '../client/src/cv/statusGroups.ts';
 
 const topic = (key, tone, extra = {}) => ({ key, kind: 'topic', number: Number(key.slice(1)), title: `话题${key}`, tone, updated_at: 1000, project_key: null, ...extra });
 const snap = {
@@ -59,4 +59,15 @@ test('等了多久的字：刚刚、分、小时、天', () => {
   assert.equal(sinceWords(39 * 60 + 5), '39 分');
   assert.equal(sinceWords(3 * 3600 + 10), '3 小时');
   assert.equal(sinceWords(2 * 86400), '2 天');
+});
+
+test('每组收着时列几行：多出 1 个直接列出，多出 2 个以上才折；展开了列全（T768：在做 7 个只列了 6 个）', () => {
+  assert.equal(SHOWN, 6);
+  assert.equal(shownRows(0, false), 0);
+  assert.equal(shownRows(6, false), 6);
+  assert.equal(shownRows(7, false), 7, '7 个在做不再折成“还有 1 个在做”');
+  assert.equal(shownRows(8, false), 6);
+  assert.equal(shownRows(20, false), 6);
+  assert.equal(shownRows(8, true), 8);
+  assert.equal(shownRows(20, true), 20);
 });

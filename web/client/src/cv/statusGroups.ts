@@ -77,6 +77,15 @@ export function statusGroups(a: Asks, snap: Snap, running: SnapshotTopic[]): Sta
   };
 }
 
+/** 每组收着时最多列几行 */
+export const SHOWN = 6;
+
+/** 一组列几行：展开了列全；收着时多出来的只有 1 个也直接列出（折成一行“还有 1 个”和列出来一样高，还看不到是谁），
+ *  多出 2 个以上才只列 SHOWN 行、其余折起来 */
+export function shownRows(total: number, open: boolean): number {
+  return open || total <= SHOWN + 1 ? total : SHOWN;
+}
+
 /** 右边的“等了多久”：刚刚、N 分、N 小时、N 天 */
 export function sinceWords(sec: number): string {
   if (sec < 60) return '刚刚';
