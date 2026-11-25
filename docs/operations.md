@@ -415,6 +415,7 @@ python3 -B bin/covey_maintenance.py --restore /absolute/bridge-NNN.tar.gz --dest
 | --- | --- |
 | `runner.json` | 进程号、启动时间、boot ID、release、任务编号、Harness |
 | `wake.json` | 任务进程能接 SIGUSR1：Bridge 写收件箱后用它立即唤醒（旧 release 的任务进程没有它） |
+| `runner.lock` | 运行锁：跑这个任务的任务进程一直持着，同一任务的第二个任务进程拿不到就什么都不跑（空文件；设了 `COVEY_LOCK_ROOT` 时在那里，不在运行目录） |
 | `done.json` | 卡片更新完、只剩产物上传时写入；Bridge 见到就放开这个话题，同话题的下一条照常开始 |
 | `exit.json` | 退出时写入 |
 | `runner.log` | 任务进程的日志 |
@@ -422,6 +423,7 @@ python3 -B bin/covey_maintenance.py --restore /absolute/bridge-NNN.tar.gz --dest
 - 运行目录在任务结束 7 天后由空闲维护删除。单看 `runner.json` 判断不了进程是否还活着，要看 `exit.json` 或进程列表。
 - 任务结束后，任务进程还会等产物上传最多 30 分钟、卡片更新最多 60 秒再退出。
 - Bridge 一侧的日志：`task runner started job=#N pid=... dir=...`（交给任务进程）、`adopted task runner job=#N pid=...`（重启后认领仍存活的）、`task runner done job=#N`、`task runner ended job=#N status=... exit=...`（`exit=none` 表示没有 `exit.json`，进程被杀或崩溃）。`task runner of job #N still alive: watched again` 是看着像退出了、再问时还活着（读 `runner.json` 一时失败），没有再起第二个；`task runner relaunched job=#N` 是任务没开始就退出、再起了一次。
+- 任务进程一侧（`runner.log`）：`task runner job=#N pid=... ran nothing: another task runner holds its run directory` 是同一任务已有一个任务进程持着运行锁在跑，这个什么都没做就退出了，任务和卡不受影响；`runs without a run lock` 是锁文件建不出来或文件系统不支持加锁，照旧跑（没有运行锁之前就是这样）。同一任务的 `runner.log` 里出现两行 `task runner job=#N harness=… pid=…`（两个不同的 pid）说明有两个任务进程都跑了它，属于故障，查 Bridge 日志里同一任务的 `relaunched` 行。
 - 管家空闲时的压缩进程也是 `covey_runner.py`，命令行带 `--run-dir <state>/main-thread/compacting/<管家话题> --compact-only`：不建任务、不出卡、不算 `restart_blockers`。Bridge 重启时停掉上一个 Bridge 留下的这种进程，请求放回去。
 
 操作：

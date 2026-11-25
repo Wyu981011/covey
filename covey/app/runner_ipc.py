@@ -23,7 +23,7 @@ from covey.app.card_actions import BOT_ONLY, click_kind
 from covey.core.jobs import context_for_job
 from covey.core.process import process_identity
 from covey.core.run_dir import (ACKS, INBOX, REPLIES, REQUESTS, WAKE, ack, await_reply, op_time, post, run_dir,
-                                         runner_alive as alive, take)
+                                         runner_alive as alive, runner_here as here, take)
 from covey.core.steer import SteerNotReady, SteerRefused, SteerUncertain
 from covey.cards.launch_config import SUBMIT_PREFIX
 from covey.app.policy_guard import requested
@@ -193,7 +193,8 @@ def runner_for(runtime, state_dir: Path, *, job_id=None, key="") -> Path | None:
             directory = job.detached_run_dir
         key = job.message_id
         if directory is not None:
-            return directory if alive(directory) else None
+            # runner_here: the runner this Bridge watches may be named by its wake.json or run lock only (T814).
+            return directory if here(directory) else None
     if not key:
         return None
     directory = run_dir(state_dir, key)

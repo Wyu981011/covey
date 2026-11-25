@@ -747,7 +747,9 @@ class RetiredHarnessTests(unittest.TestCase):
             'token': 'cd' * 8, 'topic_id': self.topic.topic_id, 'chat_id': 'chat', 'job_id': 2, 'job_key': 'old-running',
             'status': 'pending', 'native_live_question': True, 'request_id': 'que_1', 'questions': [],
             'live_question_proof': {'version': 1, 'backend': GONE}}))
-        with mock.patch('covey.app.detached.alive', side_effect=lambda d: Path(d).name == live.name):
+        is_live = lambda d, **_: Path(d).name == live.name
+        with mock.patch('covey.app.detached.alive', side_effect=is_live), \
+                mock.patch('covey.app.detached.here', side_effect=is_live):
             self.assertEqual([b['key'] for b in restart_blockers(self.state)], ['old-running'])
             recover_question_delivery(self.ctx, [a.questions for a in self.app.apps.values()], self.app.runtime.log)
             self.app.notify_stale_jobs(self.ctx)

@@ -25,7 +25,8 @@ from covey.core.background import CARD_CLOSE, CARD_UPDATES, RECORDS, RELAY, UPLO
 from covey.core.harness import backend_capabilities
 from covey.core.jobs import context_for_job, jobs_dir
 from covey.core.locks import configure_card_locks
-from covey.core.run_dir import HANDOFF, mark_done, mark_exit, read_steady
+from covey.app.runtime import print_log
+from covey.core.run_dir import HANDOFF, hold_run_lock, mark_done, mark_exit, read_steady, release_run_lock
 from covey.core.store import directory_store
 from covey.core.task_processes import TASK_DIR_ENV
 from covey.feishu.transport import configure_receipts
@@ -142,17 +143,35 @@ def runner_main(argv=None) -> int:
     handoff, early = _await(args, directory)
     if handoff is None:
         return 0  # No job came: nothing ran and nothing is left behind.
-    setup = _build(handoff, early, directory)
-    inbox = _serve(setup, directory)
-    status = "finished"
+    if not _locked(handoff, directory):
+        return 0  # Another runner runs this job: nothing ran here and nothing of its run directory changed.
     try:
-        setup.gateway.process_reply_job(setup.job, setup.ctx)
-    except BaseException as exc:  # noqa: BLE001 - always leave an exit record
-        status = "error:" + type(exc).__name__
-        setup.gateway.runtime.log(f"task runner failed: {type(exc).__name__}")
+        setup = _build(handoff, early, directory)
+        inbox = _serve(setup, directory)
+        status = "finished"
+        try:
+            setup.gateway.process_reply_job(setup.job, setup.ctx)
+        except BaseException as exc:  # noqa: BLE001 - always leave an exit record
+            status = "error:" + type(exc).__name__
+            setup.gateway.runtime.log(f"task runner failed: {type(exc).__name__}")
+        finally:
+            _finish(setup, directory, inbox, status)
     finally:
-        _finish(setup, directory, inbox, status)
+        release_run_lock(directory)
     return 0
+
+
+def _locked(handoff, directory) -> bool:
+    """This runner holds its run directory's lock (core/run_dir.py hold_run_lock), before it writes anything there: False
+    when another process kept it the whole RUN_LOCK_WAIT, a runner of the same job that runs it, so this one leaves (T814:
+    a Bridge that took a live runner for gone started a second one, and both wrote the job's card). A lock that cannot be
+    taken at all leaves the runner as runners were before it."""
+    held, job = hold_run_lock(directory), f"job=#{handoff['job']['fields'].get('job_id')} pid={os.getpid()}"
+    if held is None:
+        print_log(f"task runner {job} runs without a run lock: it could not be taken")
+    elif held is False:
+        print_log(f"task runner {job} ran nothing: another task runner holds its run directory")
+    return held is not False
 
 
 def _await(args, directory):

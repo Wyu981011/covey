@@ -494,9 +494,11 @@ def close_forms_sent_after_handoff(app, job, ctx, directory: Path) -> None:
 
 
 def adopt_runners(gateway, ctx) -> set:
-    """Watch every live runner again and re-queue waiting jobs; returns the keys kept running."""
+    """Watch every live runner again and re-queue waiting jobs; returns the keys kept running. Live as runner_here says:
+    a runner whose runner.json names another process (one its Bridge started in the same moment, which ran nothing) is
+    still found by its wake.json or its run lock."""
     kept = set()
-    for directory in live_dirs(ctx.state_dir, alive):
+    for directory in live_dirs(ctx.state_dir, here):
         try:
             handoff = read_steady(directory / HANDOFF)  # A read that fails leaves a live runner's job to be interrupted.
             if handoff["harness"] not in gateway.apps:

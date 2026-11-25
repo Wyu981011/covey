@@ -1,4 +1,5 @@
 import contextlib
+import io
 import json
 import os
 import signal
@@ -265,7 +266,9 @@ class ReloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             job.detached_run_dir = Path(tmp)
             target = SimpleNamespace(state_dir=Path(tmp), topic_id="t")
-            with mock.patch.object(runner_ipc, "alive", return_value=True), \
+            # A job this Bridge watches: runner_here says whether its runner is there (runner.json, wake.json, run lock).
+            with mock.patch.object(runner_ipc, "here", return_value=True), \
+                    mock.patch.object(runner_ipc, "alive", side_effect=AssertionError("runner.json alone asked")), \
                     mock.patch.object(runner_ipc, "write_inbox") as inbox, \
                     mock.patch.object(runner_ipc, "directory_store", side_effect=AssertionError("records read")):
                 self.assertTrue(runner_ipc.forward_card_action(runtime, target, {"chat_id": "chat", "event_id": "e"},
@@ -274,7 +277,8 @@ class ReloadTests(unittest.TestCase):
             # Another topic's or chat's click on that number, or a runner not alive, reads the records as before.
             for event, target_topic, is_alive in (({"chat_id": "other"}, "t", True), ({"chat_id": "chat"}, "u", True),
                                                   ({"chat_id": "chat"}, "t", False)):
-                with mock.patch.object(runner_ipc, "alive", return_value=is_alive), \
+                with mock.patch.object(runner_ipc, "here", return_value=is_alive), \
+                        mock.patch.object(runner_ipc, "alive", return_value=is_alive), \
                         mock.patch.object(runner_ipc, "directory_store") as store:
                     store.return_value.query.return_value = []
                     self.assertFalse(runner_ipc.forward_card_action(
@@ -443,6 +447,19 @@ class PrestartTests(unittest.TestCase):
             runner_spawn.prestart_runner(self.runtime, self.job, self.ctx)  # Never the submission's failure.
         self.assertEqual((self.job.early_runner, self.logs), (None, ["task runner prestart unavailable: OSError"]))
 
+    def test_start_runner_never_clears_a_directory_whose_run_lock_a_runner_holds(self):
+        # T814: neither runner.json nor wake.json named the live runner (not readable, or naming another process), and
+        # start_runner cleared its directory and started a second runner of the job.
+        directory = run_files(self.state, "m7", folders=(rd.INBOX,), handoff={"its": "own"})
+        (directory / rd.INBOX / "1-a.json").write_text("{}")
+        holder = LockHolder(directory)
+        self.addCleanup(holder.stop)
+        with self.popen(None) as popen, self.assertRaises(runner_spawn.RunnerAlive):
+            runner_spawn.start_runner(self.runtime, "codex", self.job, self.ctx)
+        popen.assert_not_called()
+        self.assertEqual(json.loads((directory / rd.HANDOFF).read_text()), {"its": "own"})
+        self.assertTrue((directory / rd.INBOX / "1-a.json").exists())
+
     def test_a_runner_catches_up_with_the_job_and_question_records_on_a_thread_from_its_start(self):
         # S34: its first query read 927 job records from NAS (2.3 s), before the backend started; S46: it
         # starts from the Bridge's .index instead (core/store.py), reading only what it later asks for.
@@ -589,6 +606,95 @@ class RunnerFinishTests(unittest.TestCase):
             task_runner._finish(setup, Path("/nonexistent"), inbox, "finished")
         self.assertEqual(order, ["done", "inbox", "settle", "exit"])
         app.steering.settle_held_at_end.assert_called_once_with("ctx", job)
+
+
+class LockHolder:
+    """Another process that holds ``directory``'s run lock as the task runner running its job does (core/run_dir.py
+    hold_run_lock: flock LOCK_EX on runner.lock, opened as core/file_lock.py open_lock opens it), written out here from
+    the protocol, not by calling it; its command line names the directory, as a runner's does."""
+
+    def __init__(self, directory):
+        code = ("import fcntl, sys, time; from pathlib import Path; from covey.core.file_lock import open_lock; "
+                "fd = open_lock(Path(sys.argv[1]) / 'runner.lock'); fcntl.flock(fd, fcntl.LOCK_EX); "
+                "print(True, flush=True); time.sleep(120)")
+        self.process = subprocess.Popen([sys.executable, "-B", "-c", code, str(directory)], stdout=subprocess.PIPE,
+                                        text=True, cwd=REPO, start_new_session=True,
+                                        env={**os.environ, "PYTHONPATH": str(REPO)})
+        if self.process.stdout.readline().strip() != "True":
+            self.stop()
+            raise AssertionError("the stand-in runner did not take the run lock")
+
+    def stop(self):
+        if self.process.poll() is None:
+            self.process.kill()
+        self.process.wait()
+        self.process.stdout.close()
+
+
+class RunLockTests(unittest.TestCase):
+    """The run lock (T814): one task runner of a job runs it, whatever the Bridge read, or failed to read, of its files."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.directory = run_files(Path(tmp.name) / "state", "m7")
+        self.addCleanup(rd.release_run_lock, self.directory)
+
+    def holder(self):
+        holder = LockHolder(self.directory)
+        self.addCleanup(holder.stop)
+        return holder
+
+    def test_a_second_runner_of_the_job_is_turned_away_and_a_dead_runners_lock_holds_up_nothing(self):
+        holder = self.holder()
+        self.assertTrue(rd.run_lock_held(self.directory))
+        started = time.monotonic()
+        self.assertIs(rd.hold_run_lock(self.directory, wait=0.3), False)
+        self.assertGreaterEqual(time.monotonic() - started, 0.3)  # It tried the whole wait, not once.
+        self.assertNotIn(str(self.directory), rd._held)
+        holder.process.send_signal(signal.SIGKILL)  # However a runner ends, the OS lets go of its lock.
+        holder.process.wait()
+        self.assertFalse(rd.run_lock_held(self.directory))
+        self.assertIs(rd.hold_run_lock(self.directory, wait=0), True)
+        # Its holder asked about its own lock says yes without opening the file again (on NFS that would let go of it).
+        with mock.patch.object(rd, "open_lock", side_effect=AssertionError("opened")):
+            self.assertTrue(rd.run_lock_held(self.directory))
+        rd.release_run_lock(self.directory)
+        self.assertFalse(rd.run_lock_held(self.directory))
+
+    def test_the_bridges_look_makes_no_lock_file_and_never_turns_a_starting_runner_away(self):
+        self.assertFalse(rd.run_lock_held(self.directory))
+        self.assertFalse((self.directory / rd.RUN_LOCK).exists())  # A directory no runner with the lock started in.
+        self.assertIs(rd.hold_run_lock(self.directory, wait=0), True)
+        rd.release_run_lock(self.directory)
+        stop, looks = threading.Event(), []
+
+        def look():
+            while not stop.is_set():
+                looks.append(rd.run_lock_held(self.directory))
+                time.sleep(0.001)
+        looker = threading.Thread(target=look, name="bridge-looks")
+        looker.start()
+        try:
+            wait_for(self, lambda: len(looks) > 20)
+            self.assertIs(rd.hold_run_lock(self.directory, wait=2), True)  # The looks hold the lock a moment only.
+            wait_for(self, lambda: looks[-1] is True)
+        finally:
+            stop.set()
+            looker.join(5)
+        self.assertIn(False, looks)
+
+    def test_runner_here_counts_a_held_run_lock_when_neither_file_names_a_live_runner(self):
+        run_files(self.directory, runner={"pid": 999999999, "job_id": 7, "key": "m7"})  # Named there, and gone.
+        self.assertFalse(rd.runner_here(self.directory))
+        holder = self.holder()
+        self.assertFalse(rd.runner_alive(self.directory))  # runner.json alone says gone ...
+        self.assertTrue(rd.runner_here(self.directory))  # ... its run lock says otherwise.
+        self.assertTrue(rd.runner_here(self.directory, patient=False))
+        self.assertEqual(rd.live_dirs(self.directory.parents[1], rd.runner_here), [self.directory])
+        self.assertEqual(rd.live_dirs(self.directory.parents[1]), [])
+        holder.stop()
+        self.assertFalse(rd.runner_here(self.directory))
 
 
 class RunnerProcess:
@@ -914,6 +1020,60 @@ class BridgeSideTests(UnifiedCase):
             kept = detached.adopt_runners(self.app, ctx)
         self.assertEqual(kept, {"task-7"})
         self.assertEqual(self.app.runtime.jobs.queue.get_nowait().detached_run_dir, directory)
+
+    def test_a_runner_whose_files_cannot_be_read_but_holds_its_run_lock_is_never_started_again_or_settled(self):
+        # T814: the Bridge read the runner it had just handed a job as gone (pid=None) and started the job's runner once
+        # more 2 s later while the first ran on; both wrote its card (300315 Duplicate ID again and again). Here runner.json cannot be read through every look, and there is no wake.json yet, as for a runner
+        # still starting: only its run lock says it is there, and no file read decides that.
+        app, ctx, job = self.unstarted_job()
+        directory = run_files(ctx.state_dir, job.message_id, folders=(rd.INBOX, rd.ACKS),
+                              handoff={"harness": app.spec.name, "job": runner_spawn.dump_job(job)},
+                              runner={"pid": 999999999, "job_id": 7, "key": job.message_id})
+        holder = LockHolder(directory)
+        self.addCleanup(holder.stop)
+        job.detached_run_dir = directory
+        shutdown = self.fast_polling()
+        watcher, returned = self.watching(app, ctx, job)
+        with failing_reads(directory / rd.RUNNER, 10 ** 6), \
+                mock.patch.object(runner_spawn.subprocess, "Popen", side_effect=OSError(11, "unavailable")) as popen, \
+                mock.patch.object(type(app.controls), "show_recovery_card", return_value=True) as recovery:
+            watcher.start()
+            self.assertTrue(returned.is_set() or shutdown.wait_rounds("runner-watch", 3))
+            self.assertFalse(returned.is_set())  # Still watching the live runner ...
+            self.assertEqual(find_job_record(ctx.state_dir, job.message_id)["status"], "queued")  # ... its job not settled.
+            self.assertTrue((directory / rd.RUNNER).exists())  # Its directory not cleared for a second one.
+            upsert_job_record(ctx.state_dir, job.message_id, status="done")
+            run_files(directory, exit={"status": "finished"})
+            holder.stop()
+            self.assertTrue(returned.wait(10))
+        popen.assert_not_called()
+        recovery.assert_not_called()
+        self.assertEqual(find_job_record(ctx.state_dir, job.message_id)["status"], "done")
+        self.assertFalse(any("relaunched" in line for line in self.logs))
+
+    def test_a_restart_adopts_a_runner_its_run_lock_names_when_runner_json_names_another(self):
+        # T814: runner.json may name a runner the Bridge started in the same moment that found the job's runner holding
+        # the lock and ran nothing; a restart that went by runner.json alone left the live runner's job to be interrupted.
+        app, ctx, directory, stub = self.running_job()
+        stub.stop()
+        holder = LockHolder(directory)
+        self.addCleanup(holder.stop)
+        self.assertEqual(detached.adopt_runners(self.app, ctx), {"task-7"})
+        self.assertEqual(self.app.runtime.jobs.queue.get_nowait().detached_run_dir, directory)
+
+    def test_a_click_goes_to_the_runner_this_bridge_watches_when_only_its_run_lock_names_it(self):
+        app, ctx, directory, stub = self.running_job()
+        stub.stop()
+        holder = LockHolder(directory)
+        self.addCleanup(holder.stop)
+        job = runner_spawn.load_job(json.loads((directory / rd.HANDOFF).read_text())["job"])
+        job.detached_run_dir = directory
+        app.runtime.jobs.register(job)
+        with mock.patch.object(type(app.controls), "cancel_reply_job_from_card") as local:
+            self.click(kind="bridge_job_stop", job_id=7)
+        local.assert_not_called()  # The Bridge did not take the click on the runner's card for itself.
+        sent = [json.loads(p.read_text()) for p in sorted((directory / rd.INBOX).glob("*.json"))]
+        self.assertEqual([s["event"]["action_value"]["kind"] for s in sent], ["bridge_job_stop"])
 
     def test_a_second_run_of_the_same_job_fails_at_its_saved_results_and_saves_nothing(self):
         # Why T740's second runner failed before its backend started: the job's index holds the first run's id. The rule
@@ -1405,6 +1565,28 @@ class RunnerTests(UnifiedCase):
             task_runner.runner_main(["--run-dir", str(directory)])
         self.assertEqual(json.loads((directory / rd.RUNNER).read_text()), named)
         self.assertEqual(find_job_record(ctx.state_dir, "task")["status"], "cancelled")
+
+    def test_a_second_runner_of_a_job_runs_nothing_and_changes_nothing_in_its_run_directory(self):
+        # T814: two runners of one job each wrote its card and record. The one that comes second finds the run lock held
+        # and leaves before it writes anything; once the first is gone, a runner of the job takes the lock and runs it.
+        directory, ctx = self.handoff()
+        holder = LockHolder(directory)
+        self.addCleanup(holder.stop)
+        files = lambda: {str(p.relative_to(directory)): p.read_bytes() for p in directory.rglob("*") if p.is_file()}
+        before, out = files(), io.StringIO()
+        with self.stopped_at_once(), mock.patch.object(rd, "RUN_LOCK_WAIT", 0.2, create=True), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(task_runner.runner_main(["--run-dir", str(directory)]), 0)
+        self.assertEqual(files(), before)  # No runner.json, wake.json, done.json or exit.json of its own.
+        self.assertEqual(find_job_record(ctx.state_dir, "task")["status"], "queued")  # The job not run here.
+        self.assertIn("task runner job=#7", out.getvalue())
+        self.assertIn("ran nothing: another task runner holds its run directory", out.getvalue())
+        holder.stop()
+        with self.stopped_at_once():
+            task_runner.runner_main(["--run-dir", str(directory)])
+        self.assertEqual(find_job_record(ctx.state_dir, "task")["status"], "cancelled")
+        self.assertEqual(json.loads((directory / rd.EXIT).read_text())["status"], "finished")
+        self.assertFalse(rd.run_lock_held(directory))  # Let go of at its end.
 
     def test_a_prestarted_runner_and_its_bridge_never_replace_runner_json_at_once(self):
         # T740 (ByteFuse): the Bridge wrote runner.json after the handoff and the prestarted runner wrote it again on
