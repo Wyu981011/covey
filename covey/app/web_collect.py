@@ -14,7 +14,7 @@ from pathlib import Path
 
 from covey.app import owner_send, pins, project_lead, project_loop, revisits as revisit_rules, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
 from covey.app.project_facts import rebound
-from covey.core import board_read, collab, collab_records, look, project_library, project_memory, projects, revisits, store, turn_source, web_sync
+from covey.core import board_read, collab, collab_records, look, project_checklist, project_library, project_memory, projects, revisits, store, turn_source, web_sync
 from covey.core import owner_send as owner_send_records
 from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
@@ -57,6 +57,8 @@ START_WORDS = "在启动卡上点开始，这一轮才会开工"
 LIVE = ("running", "cancel_requested")  # The statuses whose turn has a topic.data progress.
 REPLY_MESSAGE = re.compile(r"collab-([0-9a-f]{24})-reply-\d+")  # core/collab.py reply_message: the integrator's continuation turn.
 CONTINUED_WORDS = "（协作的答复到齐，接着汇总）"  # What the page shows of the long prompt the Bridge wrote for that turn.
+NOTES_SHOWN = 10  # The newest milestones and decisions a project item carries (its 进度 tab on the page, docs/web.md 专项条目).
+CHECKLIST_SHOWN = ("id", "criterion", "topic", "needs", "evidence", "gap", "state", "at")  # What an item of the 目标检查表 carries.
 
 
 def estimate_of(job, turn) -> None:
@@ -1185,7 +1187,8 @@ class Collector:
             item = web_sync.item("project", pid, {
                 "title": str(record.get("name") or ""), "goal": project_lead.lead_goal(record), "status": word, "status_reason": why,
                 "lead_topic_key": lead, "topic_keys": members, "memory": memory, "memory_version": version, "library": library,
-                "started_at": web_pairing.moment(record.get("created_at")), "updated_at": web_pairing.moment(record.get("updated_at"))})
+                "started_at": web_pairing.moment(record.get("created_at")), "updated_at": web_pairing.moment(record.get("updated_at")),
+                **progress_fields(record)})
             with self.shared.lock:
                 self.shared.project_rows[pid] = (basis, item)
             out.append(item)
@@ -1320,6 +1323,30 @@ def project_stamp(state, pid) -> tuple:
             continue
         out.append((stat.st_ino, stat.st_mtime_ns, stat.st_size))
     return tuple(out)
+
+
+def progress_fields(record) -> dict:
+    """What a project's 进度 tab is drawn from (docs/web.md 专项条目): its 目标检查表 as ``checklist`` (core/project_checklist.py items;
+    ``topic`` is the topic id, the page's topic key), the newest NOTES_SHOWN of its milestone and finish notes as ``milestones`` and of
+    its decision log as ``decisions``, each {id, at, kind, text}. A field the record has nothing for is left out, so a page from before
+    reads the item as it did; the item is built again when the record changes (Collector.project_items: ``web_sync.rev``)."""
+    out = {}
+    checklist = [{key: item[key] for key in CHECKLIST_SHOWN} for item in project_checklist.items(record)]
+    if checklist:
+        out["checklist"] = checklist
+    for field, source, kinds in (("milestones", "notes", ("milestone", "finish")), ("decisions", "decisions", None)):
+        rows = [note_row(row) for row in record.get(source) or ()
+                if isinstance(row, dict) and str(row.get("text") or "").strip() and (kinds is None or row.get("kind") in kinds)]
+        if rows:
+            out[field] = rows[-NOTES_SHOWN:]
+    return out
+
+
+def note_row(row) -> dict:
+    """A note of a project record (app/project_lead.py entry) as the page reads it: {id, at, kind, text}."""
+    at = row.get("at")
+    return {"id": str(row.get("id") or ""), "at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else 0,
+            "kind": str(row.get("kind") or "note"), "text": str(row["text"])}
 
 
 def launch_choice(form) -> dict:

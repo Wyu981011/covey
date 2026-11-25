@@ -13,9 +13,11 @@ import {
   type SettingsResponse,
   type TidyResponse,
   artifactsOf,
+  type ChecklistItem,
   type HomeResponse,
   type LibraryItem,
   type MemoryItem,
+  type ProjectNote,
   type OutboxRequest,
   type OutboxResponse,
   type OutboxView,
@@ -53,7 +55,8 @@ import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
 import { wake, waitFor } from './workbench.wake';
 import {
-  answersOf, asksOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectOpShape, recoverShape, revisitCancelShape, revisitOf,
+  answersOf, asksOf, checklistOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectNotesOf, projectOpShape, recoverShape,
+  revisitCancelShape, revisitOf,
 } from './workbench.v4';
 
 interface TopicRow {
@@ -641,6 +644,10 @@ export class WorkbenchQueryService {
     const projects: SnapshotProject[] = asRows<ProjectRow>(projectRes).map((p: ProjectRow): SnapshotProject => {
       const d: Record<string, unknown> = obj(p.data);
       const own: Light[] = counted.filter((t: Light) => (t.project_key || null) === p.key && t.kind !== 'lead');
+      // v39：「进度」标签的三样，按类型过滤；没推的不带这个键
+      const checklist: ChecklistItem[] | undefined = checklistOf(d.checklist);
+      const milestones: ProjectNote[] | undefined = projectNotesOf(d.milestones);
+      const decisions: ProjectNote[] | undefined = projectNotesOf(d.decisions);
       return {
         key: p.key,
         avatar: str(d.avatar),
@@ -660,6 +667,9 @@ export class WorkbenchQueryService {
           waiting: own.filter((t: Light) => t.state === '等你').length,
           running: own.filter((t: Light) => t.state === '在做').length,
         },
+        ...(checklist ? { checklist } : {}),
+        ...(milestones ? { milestones } : {}),
+        ...(decisions ? { decisions } : {}),
       };
     });
     const asked: SettingsAsks | undefined = asksOf(asks);
