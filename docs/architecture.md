@@ -222,6 +222,7 @@ continued、done、failed、cancelled、interrupted：终态
 | `revisits/` | 到点回来看（`COVEY_REVISIT`）：每个话题一个，等到点（`pending`）或那一轮已排出（`fired`） | Bridge | `revisit`，进程内 |
 | `limit-notices/` | 几个话题同一原因停下的合并提示（`COVEY_LIMIT_NOTICE`）：每组（私聊、Harness、原因）一个，`sending` → `sent` 或 `uncertain`，不再发第二次 | Bridge（outbox 循环） | `record`（锁内不调飞书） |
 | `answer-cards/` | 单独发出的答案卡：要发的卡（`outgoing`）、发出的卡和产物状态 | 两者 | `answer-cards`，跨进程；锁内只读写这个文件 |
+| `fold-cards/` | 带“这一轮中途的汇报”折叠的回带卡，按消息一个，点正文收起时改写（`app/fold_close.py`）；同一张卡也记在 `answer-cards/` 时以那份为准、两份一起改 | Bridge | 无：点击在这张卡所在的卡片队列里依次跑 |
 | 表单目录（`launch-forms/` 等）、`cards/.locks/` | 卡的 card_id、sequence、表单状态；卡片锁文件 | 发卡的进程 | 卡片锁 |
 | `groups/` | 群记录 | Bridge | `group`，进程内 |
 

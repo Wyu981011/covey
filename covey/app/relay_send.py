@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from covey.app import answer_cards
+from covey.app import answer_cards, fold_close
 from covey.app.relay_targets import ask_for, turn_card
 from covey.cards.answer_card import tail as answer_tail, tail_card
 from covey.cards.pages import Paged, fits
@@ -233,6 +233,8 @@ def _send(state_dir, taken, key, target, outcome, send, made, profile, log):
                 sent += tails
     except Exception as exc:  # noqa: BLE001 - it may have gone out: never sent again
         ok, error = False, type(exc).__name__
+    if ok and sent and built is not None:
+        fold_close.remember(state_dir, sent[-1], built, key)  # Its 这一轮中途的汇报 closes on a click on its text.
     if ok and sent and built is not None and facts.get("files"):
         # Its 产物 brought up to date once uploaded (app/answer_cards.py refresh).
         answer_cards.register(state_dir, key, "relay", sent[-1], built, facts.get("files_status"))

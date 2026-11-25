@@ -103,6 +103,7 @@ NOT_BACKED_UP = {
     "limit-notices": "the once-only record of a notice already sent: a restore sends nothing again",
     "stranger-replies": "marks of the one line a day a person who is not the owner got, kept 7 days",
     "answer-cards": "answer cards of the last 7 days, for their 产物 links",
+    "fold-cards": "relays of the last 7 days whose 这一轮中途的汇报 closes on its text: without them only its title closes it",
     "job-diffs": "each turn's diff report, up to 200 MiB, uploaded to the cloud space",
     "artifact-drive": "the uploads of 产物 to the cloud space",
     "artifact-upload": "files on their way to the cloud space",

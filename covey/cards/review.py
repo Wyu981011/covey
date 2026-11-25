@@ -435,22 +435,42 @@ def reply_size(text):
     return len(lines), len("".join(body.split())), tables
 
 
-def reply_shown(text, element_id=FOLD_ID, *, label="") -> list:
+def reply_shown(text, element_id=FOLD_ID, *, label="", closable=False) -> list:
     """A reply (Markdown) whole on its card, ``label`` grey before it ("这一轮输出"): the owner, 2026-11-22, after the
     folds he tried (露一截 with a line under it, then the answer itself opening with a round arrow): 不折叠，直接展示全文.
     A reply too large for a card goes as Markdown before it (the callers' CARD_TEXT_BYTES and ANSWER_CARD_BYTES). One
     element in a list, or two when the reply ends with what the turn reported on its way (core/trace.py with_stage_notes):
     those go in a closed fold after it, titled with their size (the owner, 2026-11-25: 这一轮中途的汇报 太长，默认折叠，点一下
-    展开、再点标题收起)."""
+    展开). ``closable``: a click on the fold's text closes it too (``stages_fold``), on a card the Bridge keeps and patches
+    (the relay's, app/fold_close.py); elsewhere (a question's copy, which CardKit holds) only its title closes it."""
     main, stages = split_stages(text)
     shown = [md(labelled(main, label), element_id=element_id)]
     if stages:
-        from covey.cards.elements import collapsible
-
-        chars = len("".join(stages.split()))
-        shown.append(collapsible(element_id + "_stages", f"这一轮中途的汇报 · 约 {max(10, round(chars / 10) * 10)} 字（点开看）",
-                                 [md(stages)], quiet=True, spacing="6px"))
+        shown.append(stages_fold(stages, element_id + (STAGES_CLOSABLE + "0" if closable else STAGES_SUFFIX), closable))
     return shown
+
+
+STAGES_SUFFIX = "_stages"
+# A fold whose text closes it is <element_id>_s<n>: each close draws it under the next n, since the client keeps a fold
+# open or closed by its ID (docs/cards.md 启动卡和换配置卡), and an element ID is at most 20 characters (CardKit).
+STAGES_CLOSABLE = "_s"
+FOLD_CLOSE_KIND = "bridge_fold_close"  # A click on the text of a fold of 这一轮中途的汇报: app/fold_close.py closes it.
+
+
+def stages_fold(stages, fold_id, closable=False) -> dict:
+    """这一轮中途的汇报 closed under its size. ``closable``: its text is one button (FOLD_CLOSE_KIND, naming ``fold_id``)
+    whose click closes it where the owner has read to, not at the title he scrolled past (the owner, 2026-11-25: 随便点
+    一下这个过程项的文字，它自己就能折起来)."""
+    from covey.cards.elements import collapsible
+
+    chars = len("".join(stages.split()))
+    text = md(stages)
+    if closable:
+        text = {"tag": "interactive_container", "width": "fill", "padding": "0px 0px 0px 0px", "has_border": False,
+                "background_style": "default", "elements": [text],
+                "behaviors": [{"type": "callback", "value": {"kind": FOLD_CLOSE_KIND, "fold": fold_id}}]}
+    title = f"这一轮中途的汇报 · 约 {max(10, round(chars / 10) * 10)} 字（点开看" + ("，点正文收起）" if closable else "）")
+    return collapsible(fold_id, title, [text], quiet=True, spacing="6px")
 
 
 def split_stages(text) -> tuple:

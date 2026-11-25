@@ -241,6 +241,8 @@ ACTIONS = {
     # 停止这次协作 on the 协作卡 (cards/collab_card.py KIND, COVEY_COLLAB=1): the owner's, taken before topic routing
     # (app/collab_cards.py claim); it stops the collaboration's asks and starts no task.
     "bridge_collab_stop": CardAction("停止这次协作"),
+    # A click on the text of a fold under a relay (cards/review.py reply_shown): closes it (app/fold_close.py); starts no task.
+    "bridge_fold_close": CardAction("收起折叠的内容"),
 }
 # 整理专项's cards (cards/project_proposal.py KINDS, COVEY_PROJECT_TIDY): the proposal card, its rename form, the 整理专项 card,
 # 移出 on a topic's card and the 设置 card's 整理专项. The Bridge takes them before topic routing (app/project_tidy.py claim).
