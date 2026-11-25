@@ -530,6 +530,12 @@
    "name": "COVEY_BUTLER_HUNG_MINUTES",
    "by": "P0-C 工作包（专项「Covey 体验与同事痛点」，T784）",
    "why": "管家一轮的模型请求挂住时停下它、让主人后来的话先跑：停下前等几分钟，0 只提示不停下"
+  },
+  {
+   "kind": "settings",
+   "name": "COVEY_LEDGER_RECONCILE",
+   "by": "P0-A（T782，专项「Covey 体验与同事痛点」）",
+   "why": "等主人的账定时对账补发缺的问题卡；0 关掉线程，是公共核心新后台线程的退路"
   }
  ]
 }

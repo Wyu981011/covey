@@ -210,6 +210,26 @@ class AsksTest(unittest.TestCase):
         view = reader.view(SimpleNamespace(state_dir=self.state), CHAT, self.now)
         return view, overview_card(view, self.now)
 
+    def test_the_ledger_is_what_every_card_counts(self):
+        """等主人的账 (app/owner_ledger.py): the 看板, 手上的事 and the web page count from it, each thing once with its card."""
+        from covey.app import owner_ledger
+        from covey.app.web_collect import Collector
+        from covey.core import projects
+        for switches in ({}, ON):
+            with self.subTest(board=bool(switches)), mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1",
+                                                                                  **switches}):
+                looked = pins.board_look(self.state, CHAT, self.now)
+                ledger = owner_ledger.of(self.state, CHAT, self.now, looked, proposals=True)
+                counts = ledger.counts()
+                self.assertEqual({key: counts[key] for key in ("waiting", "stopped", "stuck")},
+                                 {"waiting": 1, "stopped": 3, "stuck": 1})
+                self.assertEqual(ledger.asks.counts(), Collector.asked(self.state, CHAT, self.now, looked).counts())
+                keys = [entry.key for entry in ledger.entries()]
+                self.assertEqual(len(keys), len(set(keys)))
+                self.assertEqual(ledger.missing(), ())
+                self.assertEqual(self.counted(self.board()[1])[0], ledger.asks.count())
+                self.assertEqual(self.counted(self.overview()[1])[0], ledger.asks.count())
+
     def test_the_board_and_both_overviews_count_the_same_and_list_it(self):
         from covey.core import board_read, projects
         number = {topic: n for n, topic in self.topics.items()}

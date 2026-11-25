@@ -3,7 +3,7 @@
 ``covey_doctor.py`` prints these lines instead of its JSON when its output is a terminal (or with ``--summary``); a pipe, a
 script and ``--json`` get the JSON as before. ``lines(report, ...)``: a title, the conclusion (都正常, or how many parts need a
 look), one row a part (the Manager, each service of the root, its switches, how long Claude Code keeps sessions, its
-devices, the self-hosted page, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, and
+devices, the self-hosted page, 等主人的账 and its 补发, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, and
 where the full report is. A row's mark: ``✓`` fine, ``✗`` a fault, ``!`` to know, ``·`` only said.
 
 Only the report's fields are read: nothing is asked of a process, a model or Feishu here, and no value of an environment
@@ -140,6 +140,32 @@ def service_rows(row, state, root_arg) -> list:
         else:
             rows.append((NOTE, "设备读不出来", "看 docs/operations.md「多设备」"))
     rows += web_rows(_dict(row.get("web_selfhost")))
+    rows += ledger_rows(_dict(row.get("owner_ledger")), state_arg)
+    return rows
+
+
+LEDGER_WORDS = (("waiting", "等你"), ("stopped", "停住了"), ("stuck", "可能卡住"), ("result", "有结果"))
+
+
+def ledger_rows(ledger, state_arg="") -> list:
+    """等主人的账's rows (service/doctor.py ledger_row): what it counted at the last 对账, the cards not in the chat, and the
+    tries at sending them again; [] before any 对账."""
+    if not ledger:
+        return []
+    counts = _dict(ledger.get("counts"))
+    said = "、".join(f"{words} {int(counts.get(key) or 0)}" for key, words in LEDGER_WORDS if counts.get(key))
+    at = clock(ledger.get("checked_at"))
+    rows = [(INFO, f"等你的事：{said or '没有'}" + (f"（{at} 对的账）" if at else ""), "")]
+    missing = list(ledger.get("missing") or ())
+    if missing:
+        rows.append((NOTE, f"有 {len(missing)} 张卡没到聊天里，对账会补发",
+                     f"python3 -B bin/covey_ledger.py{state_arg}"))
+    tries = int(ledger.get("tries") or 0)
+    if tries:
+        failed = int(ledger.get("failed") or 0)
+        rows.append((NOTE if failed else INFO,
+                     f"对账补发过 {tries} 次卡：发出 {int(ledger.get('ok') or 0)} 次" + (f"，没发出 {failed} 次" if failed else ""),
+                     f"python3 -B bin/covey_ledger.py{state_arg}" if failed else ""))
     return rows
 
 

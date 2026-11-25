@@ -128,7 +128,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
              'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'storage_alerts', 'digest',
              'topic_seen', 'app_setup', 'dispatch_cards', 'project_cards', 'projects', 'project_tidy',
              'project_loop', 'patrol', 'devices', 'nodes', 'web_sync', 'web_login', 'source_watch', 'extension_features', 'features', 'menu', 'group_menu', 'group_boards',
-             'welcome', 'revisits', 'review', 'collab', 'fold_close')
+             'welcome', 'revisits', 'review', 'collab', 'fold_close', 'owner_ledger')
 
     def __init__(self, *, script_path, component_factory=components, task_runner=False):
         self.runtime = Runtime(script_path=script_path)
@@ -212,6 +212,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.weekly_usage import WeeklyUsage
         from covey.app.welcome import Welcome
         from covey.app.revisits import Revisits
+        from covey.app.owner_ledger import Reconcile as OwnerLedger
         from covey.app.collab_flow import Collaboration
         from covey.app.workspace_manager import WorkspaceManager
         with self.parts_lock:
@@ -318,12 +319,15 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.collab = Collaboration(self.runtime, self.topics, self.messenger, self.voice)
             # The web page's say/stop with a collaboration (app/web_ops.py) reach it through the butler's env, as WebSync's Ops does.
             self.butler_env.collab = self.collab
+            # 等主人的账's 对账 (app/owner_ledger.py): one thread unless COVEY_LEDGER_RECONCILE=0, sending again a card the
+            # ledger has and the chat lacks.
+            self.owner_ledger = OwnerLedger(self.runtime, self.butler_env)
             features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.storage_alerts, self.proxy,
                         self.group_manager, self.overview, self.topic_seen, self.butler_tools,
                         self.butler_search, self.settings_hub, self.butler, self.digest, self.app_setup, self.welcome,
                         self.dispatch_cards, self.project_cards, self.projects, self.project_tidy,
                         self.project_loop, self.patrol, self.devices, self.nodes, self.web_sync, self.source_watch,
-                        self.revisits, self.collab, *self.extension_features)
+                        self.revisits, self.collab, self.owner_ledger, *self.extension_features)
             # The bot menu's items (app/bot_menu.py): each answers in the owner's private chat, its card
             # replacing the one it sent before, or folding and unfolding it while it is the newest (``menu_folds()``).
             self.menu = BotMenu(self.runtime, INBOUND_DIR,

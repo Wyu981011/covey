@@ -82,6 +82,7 @@ Covey 里每个概念只有一个中文名和一个英文名。界面、提示�
 | 放置 | placement | 一轮的回复放在哪。 |
 | 回带 | relay | 话题的结论发回聊天区。 |
 | 后台线程 | worker thread | Bridge 进程里的线程（如 ProjectLoop）。文档里写全“后台线程”，不单写“线程”。 |
+| 等主人的账、对账、补发 | owner ledger、reconcile、resend | 等主人的事（等你、停住了、可能卡住、有结果）的一本账，各处都从它数；Bridge 定时核对它，没到聊天里的卡再发一次（`app/owner_ledger.py`）。界面上说“等你的事”“补发”。 |
 | 轮次来源 | turn source | 一轮是怎么来的、话是谁的（`core/turn_source.py`）；只由 Bridge 写，没有就照原来。 |
 | 来源等级 | level | Bridge 按真实入口给一句话的等级：主人的原话（`owner`）或别的（`agent`）。 |
 

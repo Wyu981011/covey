@@ -133,6 +133,15 @@ def devices_row(state_dir):
             'devices': rows, 'advice': 'a device that is not passed: covey_devices.py --state-dir <state> check <alias>'}
 
 
+def ledger_row(state_dir):
+    """等主人的账 as the Bridge's last 对账 left it (core/owner_ledger.py summary: its counts, the cards missing from the chat,
+    the tries at sending them again and how many went out); None before any 对账, so the report is the same as before.
+    Read only, never makes the service degraded."""
+    from covey.core import owner_ledger
+    record = owner_ledger.read(Path(state_dir))
+    return owner_ledger.summary(record) if record else None
+
+
 def web_selfhost_row(manifest):
     """The self-hosted page's check (service/web_selfhost.py ``check``) for a running service whose manifest has COVEY_WEB_SELFHOST=1;
     None otherwise, so nothing is asked and the report is the same as before. Never makes the service degraded."""
@@ -211,6 +220,8 @@ def diagnose(root, *, check_events=True, probe=False):
             row['devices'] = found
         if (found := web_selfhost_row(manifest)) is not None:
             row['web_selfhost'] = found  # Like devices: said, never makes the service degraded.
+        if (found := ledger_row(manifest['state_dir'])) is not None:
+            row['owner_ledger'] = found  # 等主人的账 and its 补发: said, never makes the service degraded.
         if check_events and (health or {}).get('event_transport') == 'sdk':
             # COVEY_EVENT_TRANSPORT=sdk: there is no lark-cli bus; the Bridge's own consumers say whether they are up.
             consumers = (health or {}).get('consumers') or {}

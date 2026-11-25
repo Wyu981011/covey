@@ -503,6 +503,16 @@ cancelled、superseded：终态
 - **自动重试**（`app/auto_retry.py`，见[自动重试](reference.md#自动重试)）按 `KINDS` 分限流、临时故障（`server_fault`）、本轮未全部完成、重启打断四种，各有次数上限，相加不相乘；做了实事的限流或故障重试把次数清零，在恢复时间重试后连续没有进展就停（`MAX_IDLE`）。恢复时间由 `core/limit_reset.py` 从 Claude 的输出读出，经 `RunResult.limit` 到 `plan`。到点时锁内 `pending` → `submitting`，锁外重试，状态只按 `AUTO_RETRY_TRANSITIONS` 前进；唯一例外是官方拒绝的停止直接转 `cancelled`。官方安全拒绝后换旧模型重试一次（`app/policy_retry.py`，[policy-stop.md](policy-stop.md#换旧模型重试一次)）不走 `auto_retry_state`，另用 `policy_retry_state` 和 `POLICY_RETRY_TRANSITIONS`（同样两步），由 `policy_retry.tick` 经 `TaskControls.requeue(fallback=…)` 排上。
 - **重跑还是拒绝**：什么都没保存的一轮按原快照重新排队；有保留候选的拒绝重跑；候选全部作废、从没授权过的（`withdrawn_unauthorized`）算没保存。各后端的投递不变量由 `test_backend_contract` 验证。
 
+## 等主人的账
+
+等主人的事（等你、停住了、可能卡住、有结果）记在一本账上，看板、手上的事、早晚汇总、网页和管家的快照都从它数，同一时刻说同一个数；每件事一条，带着打开它的那张卡。Bridge 定时对账：账上有、聊天里没有卡的，再发一次，发了几次、发出几次都记下来，诊断里查得到。
+
+- **账**（`app/owner_ledger.py` 的 `of`）：从读者已经做过的那次看板读取（`app/pins.py` 的 `PinnedTopics.look`）出发，取等我（`core/board_read.py` 的 `waits`）、要你处理（`Asks`：主人私聊里带整理专项等你定的提议，群里没有）和有结果（`unseen`）。每件事一条（`core/owner_ledger.py` 的 `Entry`）：`what`（问题、等开始、提议、停住的结果、护栏停住的专项、可能卡住、没看的结果）、稳定的 `key`（`what:id`）、话题、从什么时候起、打开它的卡。话题停住的结果算停住了，不再算有结果。`counts` 和各卡顶上的数一致（`tests/test_owner_ledger.py`、`tests/test_unseen_results.py` 的 `test_the_ledger_is_what_every_card_counts` 核对）。
+- **没到聊天里的卡**（`unshown`）：问题还在等主人答，没交给负责人分流（不是 `held`，负责人答过的也不算），问了至少 `GRACE`（180 秒），不超过 `MISSING_AGE`（2 天），但卡从没发出去（`display_pending`，或没有 `question_message_id`）。`board_read.asks` 对它是假，所以以前哪张卡都不数它，也没人补发，主人就看不见。现在它作为 `missing` 记在账上，卡到了之前不计数。
+- **对账**（`Reconcile`，`owner-ledger` 后台线程，`COVEY_LEDGER_RECONCILE` 秒一次，默认 300，`0` 不起线程）：对主人私聊和每个个人群做一次账，把计数和缺卡写进 `<state>/owner-ledger.json`。缺的卡用它自己的 Harness 再发一次（`app/triage.py` 的 `show`：在跑的问题交给任务进程发，检查点问题由 Bridge 发，并补顶层副本），发出去后把因为卡没到而记成失败的任务改回等回答（`mend`）。三种不归对账发：交给主人但卡没到的分流问题，归 `app/triage.py` 的定时扫；要先送结果的，归 outbox；任务已经不再等它的，归过期关闭。
+- **补发只做有限次**：每次先在记录里记一次尝试，再在锁外发；发完记结果（发出 / 没发出和原因），持记录锁时不发飞书请求（规则 1、2）。同一张卡最多 `TRIES`（3）次，两次之间隔 `RESEND_EVERY`（600 秒）；发出过的不再发。记录只有 Bridge 写，保留最近 200 条尝试，`totals` 一直累计。
+- **查**：设置卡「诊断」和 `covey_doctor.py` 的摘要多一行“等你的事”，有缺卡、补发没发出时标橙（`service/doctor.py` 的 `ledger_row`）；`python3 -B bin/covey_ledger.py --state-dir <状态目录> [--json]` 只读列出按记录现在数到的每件事、上次对账缺的卡和每次补发。
+
 ## 代答
 
 实现见[代答](proxy.md)，用户行为见[代答](usage.md#代答)，配置见[代答的配置](configuration.md#代答)。它落在全局规则上的地方：

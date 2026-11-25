@@ -21,6 +21,7 @@
 | [记忆](#记忆) | `COVEY_MEMORY=1`（`./install` 写） | 你在话题里说的长期要求一轮结束后记下，答案卡底部露一行和“升为全局”“不对”按钮；设置卡多「记忆」标签 | `COVEY_MEMORY=0` |
 | [知识条目](#知识条目与历史搜索) | `COVEY_KNOWLEDGE=1`（`./install` 写） | 说“记一下”的事记成条目，那一轮结束时卡上说记下了；话题首轮带上，汇总多一节 | `COVEY_KNOWLEDGE=0` |
 | [专项的进阶](projects.md#使用者概览) | `COVEY_PROJECT_AUTOWAKE=1`、`COVEY_PROJECT_ASK=1`、`COVEY_PROJECT_MEMORY=1`、`COVEY_PROJECT_TRIAGE=1`（`./install` 写，都要 `COVEY_PROJECTS=1`） | 依次是：话题一轮结束就叫醒负责人（负责人多跑几轮，多花些 token）；专项停住时发卡问你继续、收尾还是停；专项有自己的记忆和资料库；话题的选择题先给负责人分流 | 各设成 `0` |
+| [等你的事补卡](architecture.md#等主人的账) | `COVEY_LEDGER_RECONCILE`（默认每 300 秒） | 要你回答的问题卡没发出去时，几分钟内自动补发到它的话题（最多 3 次）；补发了几次、发出几次见设置卡「诊断」和 `bin/covey_ledger.py` | `COVEY_LEDGER_RECONCILE=0`（只记账不补发也不起线程） |
 | 撤回与编辑 | `COVEY_SOURCE_WATCH`（默认开） | 撤回一条已变成任务的消息，任务跟着停；编辑后任务收到改后的内容 | `COVEY_SOURCE_WATCH=0` |
 | [任务在跑时发的话补充给它](usage.md#追问排队与并行) | `COVEY_TOPIC_STEER`（默认开） | 话题里任务在跑时发一句，那张卡变成回执“已补充到 #N，不另开一轮”，你那句话上加一个 ✅ 表情（DONE），不再排成下一轮 | `COVEY_TOPIC_STEER=0`（照旧排成下一轮） |
 | [追问只发答案卡](usage.md#追问排队与并行) | `COVEY_QUICK_ANSWER_SECONDS`（默认 10） | 话题里追问一句、它不用工具几秒内就答完时，串里只有答案卡，没有任务卡 | `COVEY_QUICK_ANSWER_SECONDS=0`（每轮先出任务卡） |
@@ -483,6 +484,7 @@
 | `COVEY_BUTLER_RULES`（旧名 COVEY_MAIN_BUTLER、LARK_BRIDGE_MAIN_BUTLER） | `app/prompts.py`（`butler_on`）、`core/butler.py`（`mcp_config` 交给管家的 MCP 服务）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此换 `topic_start` 的工具说明） | 空：关；`1` 把管家规则的前两条换成管家规则（只快答和分派），`topic_start` 的工具说明同步 | 否 |
 | `COVEY_DISPATCH_CARD`（旧名 COVEY_MAIN_DISPATCH_CARD、LARK_BRIDGE_MAIN_DISPATCH_CARD） | `app/dispatch_cards.py`（`enabled`；`app/butler_topics.py` 的 `dispatch_card` 和 `app/relay_send.py` 的 `dispatch_note` 据此调用，`threads()` 据此起 `dispatch_cards` 后台线程） | 空：关；`1` 开派发卡：管家转给已有话题后在提问的串里发一张活卡片，刷新到结论回带后缩成一行（开新话题不发） | 否 |
 | `COVEY_STEER_URGENT_SECONDS` | `app/steer_interrupt.py`（`urgent_seconds`，任务进程和 Bridge 都读） | `20`：急的补充（带“马上”“立刻”“停”“过期”这类词）送达这么多秒还没被读到，就停掉模型正在等的那条命令（推送、部署这类不停），见[架构 · 补充投递](architecture.md#补充投递)；`0` 关自动打断，回执卡上的“打断它，马上读”照常 | 否 |
+| `COVEY_LEDGER_RECONCILE` | `app/owner_ledger.py`（`every`：`threads()` 据此起 `owner-ledger` 后台线程，两次对账之间的秒数） | 300：每 5 分钟对一次账，把没到聊天里的问题卡补发（最多 3 次，见[架构 · 等主人的账](architecture.md#等主人的账)）；`0` 关：不起线程、不写 `owner-ledger.json`，各处计数和原来一样 | 否 |
 | `COVEY_SOURCE_WATCH` | `app/source_watch.py`（`enabled`：`note` 据此登记主人的消息，`threads()` 据此起 `source-watch` 后台线程） | 开：主人撤回或编辑了变成任务或补充的消息，任务随之停下或收到改后的内容（见[架构 · 撤回与编辑](architecture.md#撤回与编辑)）；`0` 关：不读回消息，和原来一样按收到时的原文做 | 否 |
 | `COVEY_QUIET_HOURS` | `core/quiet_hours.py`（`window`、`quiet`：`app/tidy_proposals.py` 的 `propose` 夜里先不发实时判断的提议卡、`release` 早上发，`app/node_alerts.py` 的 `deliver_all` 夜里不发不严重的告警） | 空：按 `COVEY_DIGEST_TIMES` 从最后一个时间到第一个时间（`09:30,21:30` 是 21:30 到 09:30；只有一个时间或没设时没有夜里）；`HH:MM-HH:MM` 设定时段（Asia/Shanghai，含开始、不含结束）；`off` 或 `0`（或写错）：没有，每张卡马上发（以前的做法） | 否 |
 | `COVEY_RELAY_MERGE_SECONDS` | `app/relay_send.py`（`merge_seconds`、`send_merged`；`app/butler_relay.py` 的 `relay` 只对“完成”的回带用它） | 20：“完成”的回带发出时聊天里还有别的话题的任务在跑、在排队，或已有回带在等，就等这么多秒，期间等着的合成一条「N 个话题做完了」；没有别的在做时照旧马上发。`0`：关，每条马上发（以前的做法）；0 到 45 以外和非整数按 20 | 否 |
@@ -611,6 +613,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--state-dir` | `core/workspaces.py` | 见 `--help` | 否 |
 | `--json` | `service/plugins.py`（`bin/covey_plugins.py`） | `list` 的 JSON 输出；子命令 `list`、`enable`、`disable`、`doctor` 见[扩展](architecture.md#扩展)的「装和卸」 | 否 |
 | `--state`、`--topic`、`--workspace`、`--owner`、`--redacted`、`--limit`、`--json` | `core/memory_search.py`（`bin/covey_memory.py search`，记忆自己长的查记忆） | 状态目录（必填）、这一轮的话题、按哪个工作区查（默认话题自己的）、带上全局的、带上来自脱敏话题的、最多几条（8）、JSON 输出 | 否 |
+| `--state-dir`、`--json` | `app/owner_ledger.py`（`bin/covey_ledger.py`：等主人的账，只读） | 状态目录（必填）；`--json` JSON 输出。见[架构 · 等主人的账](architecture.md#等主人的账) | 否 |
 | `--state-dir`、`--no-probe`、`--json` | `service/device_check.py`（`bin/covey_devices.py`） | 见 `--help`；见[多设备](#多设备开发中默认关)的「自检」 | 否 |
 | `--root`、`--extra-root` | `backends/codex/workspace_reader.py` | 见 `--help` | 否 |
 | `--notes` | `backends/claude/tool_guard.py`（`bin/covey_tool_guard.py`：代答话题 Claude Code 的 PreToolUse 钩子，Bridge 自己写进那一轮的 `--settings`） | 空：编辑工具哪里都不能写；Bridge 给的是联系人的笔记目录 | 否 |

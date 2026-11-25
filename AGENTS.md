@@ -38,6 +38,7 @@
 | 话题与回带 | `app/butler_topics.py`（新话题的 Harness、模型、预算在 `app/butler_model_choice.py`；请求幂等账本 `core/butler_opened.py`）、`app/butler_relay.py`、`app/relay_targets.py`、`app/relay_send.py`；停住卡的原因、按钮和点击 `app/relay_stops.py` | [butler.md](docs/butler.md) |
 | 引用卡片接着说（顶层引用结论卡、问题卡副本等直达话题的那句话上的表情） | `app/butler_reactions.py` 的 `top_message`、`top_queued` 等，接入点在 `app/submission.py`、`app/steering.py`、`app/questions.py`、`app/held_notes.py`、`app/task_controls.py` | [引用卡片接着说的表情](docs/architecture.md#引用卡片接着说的表情) |
 | 看板、Pin、手上的事 | `app/pins.py`、`app/status_cards.py`、`app/overview.py`、`core/board_read.py` | [手上的事](docs/usage.md#手上的事)、[配置](docs/configuration.md#手上的事与话题看板) |
+| 等主人的账（各处“等你”的同一个数）与对账补卡（`COVEY_LEDGER_RECONCILE`，默认开） | `app/owner_ledger.py`（`of`：看板、手上的事、早晚汇总、网页都从它数；`Reconcile`：缺的问题卡补发）、`core/owner_ledger.py`（条目、`owner-ledger.json`、补发次数）、诊断 `service/doctor.py` 的 `ledger_row`、`bin/covey_ledger.py` | [等主人的账](docs/architecture.md#等主人的账) |
 | 整理专项与话题要点（`COVEY_PROJECT_TIDY`） | `app/project_tidy.py`（`ProjectTidy` 协调器：`__init__` 里组装下面各部件，自己管线程和话题要点收集；部件不继承、只调更下面的）、`app/tidy_facts.py`（记录读写的纯函数，最底层）、`app/tidy_state.py`（共享状态 `busy`/`progress`/`counted`/`handed`）、`app/tidy_words.py`（话题在卡上的字样与链接）、`app/tidy_apply.py`（照办：建、归进、移出、合并、拆、收起）、`app/tidy_proposals.py`（提议新专项、提议卡与跟着归并更新）、`app/tidy_realtime.py`（实时归并、新专项扫一遍）、`app/tidy_run.py`（定时/手动整理与整理卡）、`app/tidy_clicks.py`（卡片点击，`claim` 是入口）、`app/tidy_web.py`（网页面板）、`app/project_sorter.py`（小模型读什么、补要点）、`core/topic_gist.py`（话题要点）、`core/project_proposals.py`（提议与主人的决定）、`cards/project_proposal.py`、`app/projects.py` 的 `gather`、`app/project_members.py` 的 `join_topic`/`leave_topic` | [projects.md](docs/projects.md#整理专项)、[配置](docs/configuration.md#整理专项) |
 | 专项（`COVEY_PROJECTS=1`）：负责人、专项卡、问题分流、停住后问主人、满额腾位置、话题转给管家、负责人用哪个 Harness | `core/projects.py`、`app/project_lead.py`、`app/lead_harness.py`（负责人的 Harness、模型和预算：新建时选、专项卡与网页换配置）、`app/project_tools.py`、`app/project_loop.py`（`make_room`）、`app/butler_asks.py`、`app/project_cards.py`、`cards/project_card.py`、`app/triage.py`、`core/project_memory.py`、`core/project_library.py` | [projects.md](docs/projects.md)、[架构 · 专项](docs/architecture.md#专项第-2-期开发中默认关) |
 | 多参与者协作（`COVEY_COLLAB`，开发中）：轮次来源、交付归属、协作的状态表；执行闭环（发起、咨询通道、派发、落账、续接、到期、停止、对账）和咨询轮的硬只读 | `core/turn_source.py`（来源、行为表 `behavior`、`refusal`、来源等级 `provenance`）、`core/collab.py`（`route`、状态表、限额、幂等键、通道和消息 id）；来源闸在 `app/job_dispatch.py` 的 `refuse_source` 和 `app/worker.py` 开跑前；`core/collab_records.py`（记录）、`app/collab_flow.py`（`Collaboration`：线程、检查点的 `collab_ask`、`start`/`clarify`/`stop`）、`app/collab_checks.py`（预检）、`app/collab_channel.py`（通道、分叉、咨询轮的文字）；硬只读 `CONSULT`：`app/tool_limits.py`、`backends/claude/argv.py`、`backends/codex/consult.py` | [多参与者协作](docs/architecture.md#多参与者协作开发中默认关)、[执行闭环](docs/architecture.md#执行闭环) |
@@ -173,6 +174,7 @@
 | `app/nodes.py` | 节点 at the Bridge: the gateway the nodes dial, the hub's own node, the alerts |
 | `app/outbox.py` | Resume delivery of authorized saved replies only |
 | `app/overview.py` | 手上的事: one card in the owner's private chat with the bot, pinned (Pin 消息), that lists what waits for the owner … |
+| `app/owner_ledger.py` | 等主人的账 at the Bridge (docs/architecture.md 等主人的账 |
 | `app/owner_send.py` | 代发: a message a topic drafted, sent as the owner by the 代答 sender once the owner confirmed it on its card |
 | `app/patrol.py` | The feature object of "what the butler would have told the owner", COVEY_PATROL=shadow |
 | `app/patrol_judge.py` | The second layer: the small model reads the candidates app/patrol_rules.py found and says, for each, drop it … |
@@ -419,6 +421,7 @@
 | `core/node_rules.py` | The rules that turn a node's samples into alerts, as pure functions |
 | `core/nodes.py` | Nodes (节点): the machines that keep a connection to this hub, the hub itself included, and what they report |
 | `core/one_shot.py` | One question to a Harness CLI and nothing else |
+| `core/owner_ledger.py` | 等主人的账: what waits for the owner in a chat, one entry a thing with the card it is opened on, and the record of … |
 | `core/owner_send.py` | 代发 records: a message a topic drafted for the owner to send as themselves, sent only once the owner confirmed … |
 | `core/paths.py` | Resolve service storage independently of the execution workspace |
 | `core/patrol.py` | What the butler noticed and would have done: records and numbers, no judging |
@@ -613,7 +616,7 @@
 
 ### bin
 
-入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_install.py`、`covey_install_browser.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
+入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
 
 改名前的入口名留作转发壳，服务清单、开机钩子和各部署的脚本还在用：`bridge_app_setup.py`、`bridge_doctor.py`、`bridge_main_mcp.py`、`bridge_memguard.py`、`bridge_pairing.py`、`bridge_service.py`、`bridge_service_install.py`、`covey_main_mcp.py`、`lark_app_console.py`、`lark_bridge_maintenance.py`、`lark_bridge_paths.py`、`lark_bridge_workspaces.py`、`lark_feishu_web.py`、`lark_harness_bridge.py`、`lark_install_browser.py`、`lark_task_runner.py`、`lark_workspace_reader.py`。
 <!-- code-map:end -->

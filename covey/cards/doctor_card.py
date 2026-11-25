@@ -84,6 +84,21 @@ def cleanup_row(found) -> tuple:
     return INFO, "没读出 Claude Code 保留会话几天", f"{found.get('path') or 'settings.json'} 读不了或不是 JSON；Claude Code 默认只留 30 天"
 
 
+LEDGER_WORDS = (("waiting", "等你"), ("stopped", "停住了"), ("stuck", "可能卡住"), ("result", "有结果"))
+
+
+def ledger_row(found) -> tuple:
+    """等主人的账 (``owner_ledger`` of the summary, app/owner_ledger.py): what it counted at the last 对账, and the cards it
+    sent again; to know (orange) while a card is missing from the chat or a try did not go out."""
+    counts = found.get("counts") if isinstance(found.get("counts"), dict) else {}
+    said = "、".join(f"{words} {int(counts.get(key) or 0)}" for key, words in LEDGER_WORDS if counts.get(key)) or "没有等你的事"
+    tries, failed, missing = int(found.get("tries") or 0), int(found.get("failed") or 0), int(found.get("missing") or 0)
+    detail = "｜".join(filter(None, [said, f"{missing} 张卡没到聊天里，对账会补发" if missing else "",
+                                     f"补发过 {tries} 次，发出 {int(found.get('ok') or 0)} 次" if tries else "",
+                                     f"{clock(found.get('checked_at'))} 对的账" if clock(found.get("checked_at")) else ""]))
+    return (None if missing or failed else True), "等你的事都有卡" if not missing else "有卡没到聊天里", detail
+
+
 def boot_row(boot) -> tuple:
     status, mode = boot.get("status"), boot.get("mode")
     if status == "ready" and boot.get("autostart") is False:
@@ -118,7 +133,8 @@ def doctor_rows(data) -> list:
         return [(False, "这次没查成", "读服务配置时出错；在服务器上运行 covey_doctor.py 看完整报告")]
     rows = [manager_row(data.get("manager") or {}), service_row(data.get("service")),
             *([switch_row(data["service"])] if data.get("service") else []),
-            *([cleanup_row(data["claude_cleanup"])] if data.get("claude_cleanup") else []), boot_row(data.get("boot") or {}),
+            *([cleanup_row(data["claude_cleanup"])] if data.get("claude_cleanup") else []),
+            *([ledger_row(data["owner_ledger"])] if data.get("owner_ledger") else []), boot_row(data.get("boot") or {}),
             *harness_rows(data.get("harnesses"))]
     if data.get("others"):
         rows.append((INFO, f"同一服务根下还有 {data['others']} 个机器人", "它们的情况见 covey_doctor.py"))
