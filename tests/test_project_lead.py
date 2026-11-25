@@ -25,7 +25,7 @@ from covey.app import projects as projects_app
 from covey.app.butler_tools import ButlerTools
 from covey.backends.claude.argv import stream_argv
 from covey.backends.claude.bridge import ClaudeBackend
-from covey.core import butler_mcp, butler, butler_tool_specs, project_memory, project_proposals, projects
+from covey.core import butler_mcp, butler, butler_tool_specs, checkpoint, project_memory, project_proposals, projects
 from covey.core import butler_settings as settings
 from covey.core.jobs import job_key
 from covey.core.harness import CONSULT, LEAD as HELD, READ, TOOL_LIMIT  # LEAD here is the lead topic's id.
@@ -986,6 +986,25 @@ class HandoffTest(unittest.TestCase):
         self.assertEqual(butler_handoff.shown(lead, "做这个", ()), "做这个")
         prompt = butler_handoff.handoff_prompt(butler_handoff.START, label="T41", title="导出", task="做这个", owner=lead)
         self.assertNotIn("主人原话", prompt)
+
+    def test_a_leads_topic_is_told_only_what_must_be_asked_not_to_ask_about_every_choice(self):
+        # P0-B: the note said "需要主人定的事（选择、部署……）照常提问" and its topics asked about every choice.
+        lead = butler_handoff.Asked(lead="迁移账单")
+        for kind in (butler_handoff.START, butler_handoff.NEXT):
+            text = butler_handoff.note(kind, label="T41", title="导出", owner=lead)
+            self.assertNotIn("选择、部署", text)
+            self.assertIn(checkpoint.ASK_SHORT + "照常问主人", text)
+            self.assertIn("其余能撤回、有推荐的按推荐做，在结论里写明怎么改回", text)
+
+    def test_a_handoff_need_not_say_never_to_ask(self):
+        # P0-B: handoffs had to say "never ask" themselves. The butler's and the lead's tools that open a topic say the
+        # topic knows when to ask, and so does the lead's rule on writing a handoff.
+        self.assertIn(checkpoint.ASK_SHORT, butler_tool_specs.ASK_NOTE)
+        self.assertIn("不用写“严禁发问题卡”", butler_tool_specs.ASK_NOTE)
+        tools = {tool["name"]: tool for tool in (*butler_tool_specs.TOOLS, *butler_tool_specs.PROJECT_TOOLS)}
+        for name in ("topic_start", "topic_fork", "project_topic_start"):
+            self.assertIn(butler_tool_specs.ASK_NOTE, tools[name]["input_schema"]["properties"]["prompt"]["description"], name)
+        self.assertIn("什么时候问主人话题自己知道，不用写“严禁发问题卡”", project_lead.lead_rules())
 
     def test_the_butlers_notes_are_as_they_were(self):
         owner = butler_handoff.Asked()

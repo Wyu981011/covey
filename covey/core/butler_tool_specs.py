@@ -9,10 +9,14 @@ Every handler answers {"ok": bool, "text": what the model reads, "data": {...}};
 from __future__ import annotations
 
 from covey.core import env as cenv
+from covey.core.checkpoint import ASK_SHORT
 
 TOPIC = {"type": "string", "description": "话题：T 号（如 T412）或 topic_id"}
+# What a handoff need not say (core/checkpoint.py ASK_RULE): every topic is told when to ask the owner.
+ASK_NOTE = (f"什么时候问主人话题自己知道（{ASK_SHORT}才问，其余按推荐做、写明怎么改回；要方案的先交完整方案），"
+            "不用写“严禁发问题卡”“别问我”这类话")
 TASK = ("交给话题的任务说明：做什么、范围、约束，用主人的说法；不含路由用语（开话题、放到哪个 T 号、转给谁）和本机路径。"
-        "主人原话和附件由 Bridge 附上")
+        "主人原话和附件由 Bridge 附上。" + ASK_NOTE)
 ATTACHMENTS = {"description": "可选，主人这条消息的附件交给它哪些：all 全部（默认）、none 不给、或序号列表（如 [\"图片 1\", \"文件 2\"]，"
                               "或按附件块里的先后写 [1, 3]）。这一轮里主人又补充了消息时，补充的附件接在后面连着数"
                               "（第一条有图片 1，补充里的图片 1 就是图片 2）。一条消息拆成几件事时，用它把附件分给对应的话题",
@@ -236,7 +240,7 @@ PROJECT_TOOLS = (
                     "话题一律直接开工。",
      "input_schema": {"type": "object", "required": ["title", "prompt", "workspace", "readonly", "why"], "properties": {
          "title": {"type": "string", "description": "话题的标题，说是哪件事：中文、中文标点，20 字以内"},
-         "prompt": {"type": "string", "description": "交给话题的任务说明"},
+         "prompt": {"type": "string", "description": "交给话题的任务说明。" + ASK_NOTE},
          "workspace": {"type": "string", "description": "工作区名（workspaces_list 里的），不是任意路径"},
          "readonly": {"type": "boolean", "description": "只查看、只回答，不改任何文件、不执行有副作用的命令时为 true"},
          "user_requested": {"type": "boolean", "description": "主人在这个专项里亲口要求做这件事为 true；你自己推断的为 false"},

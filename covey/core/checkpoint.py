@@ -66,8 +66,28 @@ def release_user_wait(path: Path, *, drop_questions: bool = False) -> None:
     write_private_text(path, json.dumps(data, ensure_ascii=False))
 
 
-# What every turn carries (5.9 row 7): when to write, the fields, how to ask the user, recovery and files. It names no
-# file: each turn's message gives the checkpoint file. The JSON is the same as before the split; only the words moved.
+# When a turn asks the owner at all (ASK_RULE): only what he must decide, ASK_SHORT, is asked; what can be undone and has a
+# clear best choice is done that way and said in the conclusion with how to change it back; a request for a plan gets the
+# whole plan first (PLAN_RULE): a question whose 推荐 option is all but always picked only stops the turn until the owner
+# clicks it, and a plan asked about piece by piece before it is given leaves him choosing what he does not know yet. The
+# butler's and a lead's handoffs name ASK_SHORT (core/butler_tool_specs.py ASK_NOTE, app/butler_handoff.py lead_note), so
+# they need not write "never ask" into a task themselves.
+ASK_SHORT = "部署、删除、花钱、对外发送、占机器"
+ASK_KINDS = ("部署上线和发布、删除和其他撤不回的操作（覆盖别人的改动、改线上数据、强推）、花钱、"
+             "对外发送（以主人身份发消息、发到别人看得到的地方）、占机器（长时间占 GPU 或集群、起长期运行的服务、大量下载或写盘）")
+ASK_RULE = (
+    f"- 什么时候问主人（问题卡、AskUserQuestion、request_user_input 都算）：{ASK_KINDS}照常问，主人这一轮明说要他自己定的也问。"
+    "能自己查清的事先查，不问。其余能撤回、你有明确推荐的不问（实现细节、命名、默认值、先后顺序、几种做法挑一种、"
+    "需求有几种理解时挑最可能的一种），按推荐直接做，在结论里写一行“按 X 做了；要改成 Y，回一句就行”，"
+    "有更直接的改回办法（开关、配置项、要 revert 的提交号）就写那个。"
+    "要问的留到最后：不等答案也能做的先做完，再把要问的合成一次问，不在半路停下来等。")
+PLAN_RULE = (
+    "- 主人要的是方案、设计或提案（“出个方案”“怎么做好”“先讨论一下”）时，这一轮先交完整方案，不先发问题卡问细节："
+    "推荐的做法写全（做什么、怎么做、为什么、代价和风险、备选为什么不选），缺的信息按最合理的假设写并标明是假设；"
+    "长的写成文档登记进 artifacts，回复里写要点。待定项列在方案后面，每项写你的推荐和不选它的代价，主人看完会在话题里接着说；"
+    "待定项里有照常要问的那几类，才写进 questions。")
+# What every turn carries (5.9 row 7): when to write, the fields, when and how to ask the user, recovery and files. It names
+# no file: each turn's message gives the checkpoint file. The JSON is the same as before the split; only the words moved.
 CHECKPOINT_RULES = "\n".join((
     "这是执行约定（检查点）：",
     "- 何时写：多阶段或长时间的任务，在开始执行、完成阶段、提交外部任务和等待用户时，把完整 JSON 写入本轮消息里"
@@ -78,17 +98,18 @@ CHECKPOINT_RULES = "\n".join((
     "completed（已完成步骤列表；子 Agent 返回后记一句它的结论，长报告写成文件、登记进 artifacts）、artifacts（产物绝对路径列表）、external_tasks（外部任务 ID/查询方式列表）、"
     "next_step（下一步）、requires_user（布尔值）、question（待用户回答的问题摘要）、updated_at（ISO 时间）。"
     "不要把密钥写入检查点。",
+    ASK_RULE,
     "- 要用户决策时：保存 requires_user=true 和非空的 question 摘要。有多个待回答项时，另写 questions 数组，每题单独一个对象："
     '{"id":"稳定且唯一的标识","header":"短标题","question":"完整问题","options":[{"label":"选项","description":"说明"}]}；'
     '可以多选的题另加 "multiple":true，问题卡才给多选下拉框，否则只能单选；自由回答可省略 options；'
     "不要把多个独立决策合并进单个 question 输入框。"
     '题目不带背景看不懂时，另加 "context":"一句背景：这题在改什么、为什么现在问"，问题卡把它写在题目下面。'
-    "能自己查清的事先查，不问。"
     "单选题里你有把握哪个更稳妥时，把它排第一，在 label 末尾加“（推荐）”（一题只标一个），"
     "并在它的 description 里用一句话写不选它的代价。卡住了才来问的，在 question 里写清缺什么、已经试过什么、各是什么结果。",
     "- 用户怎么答：正常答题时，全部问题得到明确回答后再继续。只有一个待回答问题时，可告知用户直接回复本话题；"
     "有多个问题时，正常回答需在问题卡片中逐题作答并点击“提交回答”。用户也可以不逐题回答、只发补充说明（反馈原问题或更改需求）："
     "收到这种回答时应重新评估，不能把未回答部分视为同意或授权，也不能将补充说明仅当作漏答而坚持要求填完原表单。",
+    PLAN_RULE,
     "- 最终回复先交代已形成的方案、依据和必要的决策背景，再列出待确认问题；没有形成方案或说明时应明确说明缺少什么，"
     "不得声称已有方案或编造内容。",
     "- 不要在后端进程中无限等待输入；等待长命令期间也应保留查询外部任务的方法。恢复或重试时（没有检查点也一样）先核查"

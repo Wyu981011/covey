@@ -38,7 +38,7 @@
 | 早晚汇总 | `app/digest.py`、`cards/digest.py`；晚间汇总的“你反复说的” `app/memory_candidates.py`，“本周找你” `app/weekly_usage.py` 的 `reached` | [早晚汇总](docs/usage.md#早晚汇总)、[配置](docs/configuration.md#早晚汇总) |
 | 启动卡与工作区 | `app/launch.py`、`app/launch_submit.py`、`app/model_picker.py`、`app/directory_picker.py`、`core/workspaces.py` | [开始一个任务](docs/usage.md#开始一个任务) |
 | 任务卡与执行过程 | `app/cards.py`、`app/task_card.py`、`core/trace.py`、`cards/streaming.py` | [cards.md](docs/cards.md)、[执行指标口径](docs/architecture.md#执行指标口径) |
-| 问题卡与回答 | `app/questions.py`、`app/native_questions.py`、`app/checkpoint_questions.py`、`app/answers.py`（提交回答 `with_note`）、`cards/question_cards.py` | [问题与回答](docs/architecture.md#问题与回答) |
+| 问题卡与回答；什么时候问（部署、删除、花钱、对外发送、占机器才问，其余按推荐做；方案先交完整的） | `app/questions.py`、`app/native_questions.py`、`app/checkpoint_questions.py`、`app/answers.py`（提交回答 `with_note`）、`cards/question_cards.py`；问不问 `core/checkpoint.py` 的 `ASK_RULE`、`PLAN_RULE`，派活那头 `core/butler_tool_specs.py` 的 `ASK_NOTE`、`app/butler_handoff.py` 的 `lead_note`；问得多不多 `scripts/question_stats.py` | [问题与回答](docs/architecture.md#问题与回答)、[问题卡问得多不多](docs/operations.md#问题卡问得多不多) |
 | 补充 | `app/steering.py`、`core/deliveries.py`、`core/steer.py` | [补充投递](docs/architecture.md#补充投递) |
 | 主人撤回或编辑消息（`COVEY_SOURCE_WATCH`，默认开） | `app/source_watch.py`（读回、停止、补充）、`core/source_book.py`（登记的消息）、`cards/source_note.py` | [撤回与编辑](docs/architecture.md#撤回与编辑) |
 | 换配置 | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py` | [话题中途换配置](docs/architecture.md#话题中途换配置) |

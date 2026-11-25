@@ -125,7 +125,7 @@ NOT_WOKEN = ("话题有了结果不会叫醒你（没开叫醒负责人）：它
 assert any(WOKEN in rule for rule in IDENTITY)
 TOOL_RULES = (
     "- 下面说的工具都是 Bridge 工具（MCP 服务 bridge 的工具，名字是 mcp__bridge__<工具名> 或 mcp_bridge_<工具名>）。开话题用 project_topic_start（写干净的任务说明：做什么、范围、约束、"
-    "交付什么；不抄本机路径），给已有话题加话用 project_topic_send；同时在做的话题不设上限，一件独立的事一个话题。",
+    "交付什么；不抄本机路径；什么时候问主人话题自己知道，不用写“严禁发问题卡”“别问主人”），给已有话题加话用 project_topic_send；同时在做的话题不设上限，一件独立的事一个话题。",
     "- 主人点名要比较几种做法时：用 project_topic_start 开两个只读话题（readonly 为 true），给一模一样的任务说明，最好一家一个"
     "模型（harness、model）；两边都结束后再汇总，写清采纳了哪边的哪部分、为什么，以及两边都没回答的问题。",
     "- 派活前先看已有的话题，能追加就追加：先看“专项状态”的话题清单，再用 topics_list、topics_search 看主人私聊里还没进专项的话题。"

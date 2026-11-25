@@ -218,7 +218,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 `app/butler_handoff.py`。交给话题的每一轮（开、下一轮、补充、分叉），模型收到 `handoff_prompt`，卡、历史和串里显示主人原话（`shown`、`thread_line`）。
 
 - **Bridge 的说明**（`note`，开头 `[Bridge 说明]`）：你在哪个话题；这件事是管家按主人哪条消息交来的；路由已经办完，直接做事；你的回复就是结论。
-- **任务说明**：管家写的 `prompt`/`text`，后跟“管家补充：note”。
+- **任务说明**：管家写的 `prompt`/`text`，后跟“管家补充：note”。不用写“别发问题卡”：话题每一轮的执行约定里有[什么时候问](architecture.md#什么时候问)，`topic_start` 的 `prompt` 说明也这样告诉管家；负责人交来的，说明里只点部署、删除、花钱、对外发送、占机器照常问。
 - **主人原话**（`asked`）：管家这一轮记录的 `user_text` 加运行中收到的补充，按时间引用。
 - **附件**（`carry`）：只认管家话题 `incoming_media/` 或 `<state>/incoming_media/` 下的文件（`core/attachments.py` 的 `parse_attachment_block`），按参数 `attachments`（`all`、`none`、序号）挑出，硬链接或复制到目标话题的 `incoming_media/`。补充只送文字。
 

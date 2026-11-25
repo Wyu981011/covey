@@ -287,6 +287,31 @@ python3 -B bin/covey_devices.py --state-dir "$STATE_DIR" list                 # 
 
 `core/harness_probe.py` 的 `probe(名字)` 对 Claude 跑 `claude -p`、对 Codex 跑 `codex exec`（短超时，一次最便宜的问法），返回 `ok`、`reason`（`ok|not_installed|not_logged_in|network|timeout|other`）和 `detail`。安装器、`covey_doctor --probe-harnesses` 用它；`covey_doctor` 不带参数时只读缓存（`<数据根>/harness-probe/<名字>.json`，通过 6 小时、失败 10 分钟，换了命令或代理设置作废）。Bridge 里默认不探测，设 `COVEY_HARNESS_PROBE=1`（可写进服务清单）后，可用性检查把结果放进健康检查的 `model_access.preflight.<名字>.probe`，缓存里是“没登录”的 Harness 在启动卡上不可用（沿用现有的“模型后端尚未登录”提示），网络、超时等不挡任务。
 
+### 问题卡问得多不多
+
+改了话题什么时候问主人的规则（[问题与回答 · 什么时候问](architecture.md#什么时候问)）以后，用同一个脚本比改之前和之后各一段时间。只读，不改状态目录：
+
+```bash
+python3 -B scripts/question_stats.py --state "$STATE_DIR" --window 2026-11-11:2026-11-25 --window 2026-12-01:2026-12-07
+python3 -B scripts/question_stats.py --state "$STATE_DIR" --window 2026-12-01:2026-12-07 --daily   # 再按天各一行
+python3 -B scripts/question_stats.py --state "$STATE_DIR" --json                                   # 最近 7 天，JSON
+ssh <host> python3 - --state /absolute/path/to/state --window 2026-12-01:2026-12-07 < scripts/question_stats.py  # 别的机器，只用标准库
+```
+
+每个时间窗（本地日期，两头都算）一段：
+
+| 数 | 怎么算 |
+| --- | --- |
+| 问题卡、卡/天 | 时间窗里建的问题记录（`questions/*.json`），一条记录是一张卡，不管几道题 |
+| 每百轮 | 问题卡数 ÷ 同期轮次（`jobs/*.json` 的 `created_at`）× 100；用得多的那周不会显得问得多 |
+| 选推荐率 | 答案带“推荐”的题 ÷ 全部题。可撤回、有推荐的不再问以后，它和“其他”类的题数应该一起降 |
+| 不回答 | 答“不回答此题”的题（点不处理的也算） |
+| 第一轮就问 | 话题第一轮就发的卡，方案还没给就先问的多在这里 |
+| 负责人替答 | 专项负责人分流替主人答掉的卡 |
+| 按类别 | 每道题按标题和题面的词归到部署、删除、花钱、对外发送、占机器（这几类照常问），都不像的是其他；只是粗分，前后用的是同一套词 |
+
+读记录有总时限（`--seconds`，默认 60），网络盘上卡住没读到的记成“未读”另行列出，这时的数偏少。
+
 ## 日志
 
 | 文件 | 谁写 | 内容与轮转 |
