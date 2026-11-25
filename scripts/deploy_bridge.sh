@@ -135,7 +135,8 @@ def status(code_dir):
 
 
 def runners():
-    """pid -> job number of live task runners whose --run-dir is under this bot's runs/."""
+    """pid -> job number of live task runners whose --run-dir is under this bot's runs/ (None when its runner.json was
+    not read: a prestarted runner before its handoff)."""
     found = {}
     for proc in glob.glob("/proc/[0-9]*/cmdline"):
         try:
@@ -154,6 +155,25 @@ def runners():
             job = None
         found[int(proc.split("/")[2])] = job
     return found
+
+
+def runner_jobs(jobs):
+    """Job numbers in order, the ones whose runner.json was not read (None) last: sorted() alone raised TypeError
+    on a None among numbers, and the post-checks ended there."""
+    return sorted(jobs, key=lambda job: (job is None, job if isinstance(job, int) else 0))
+
+
+def adopted_pids(text):
+    """The pids of the task runners the new Bridge's log says it adopted (app/detached.py adopt_runners)."""
+    return {int(pid) for pid in re.findall(r"adopted task runner job=#\S+ pid=(\d+)", text)}
+
+
+def not_adopted(live, text):
+    """The live runners of ``live`` (pid -> job number) the new Bridge has not adopted yet. One without a job number (a
+    prestarted runner whose handoff never came) has nothing to adopt: it stays in runners_before, not waited for."""
+    adopted = adopted_pids(text)
+    return {pid: job for pid, job in live.items()
+            if job is not None and pid not in adopted and os.path.exists(f"/proc/{pid}")}
 
 
 def log_after_start(release_id):
@@ -421,15 +441,14 @@ pending = {}
 while started and time.time() < deadline:
     _, after = log_after_start(release_id)
     text = "\n".join(after or [])
-    pending = {pid: job for pid, job in live_runners.items()
-               if f"adopted task runner job=#{job} pid={pid}" not in text and os.path.exists(f"/proc/{pid}")}
+    pending = not_adopted(live_runners, text)
     if not pending:
         break
     time.sleep(3)
 text = "\n".join(after or [])
 post["adopted"] = sorted(int(m) for m in re.findall(r"adopted task runner job=#(\d+)", text))
 post["not_adopted_alive"] = {str(pid): job for pid, job in pending.items()}
-post["ended_meanwhile"] = sorted(job for pid, job in live_runners.items() if not os.path.exists(f"/proc/{pid}"))
+post["ended_meanwhile"] = runner_jobs(job for pid, job in live_runners.items() if not os.path.exists(f"/proc/{pid}"))
 now = status(release)
 st = now.get("status") or {}
 pid = (st.get("process") or {}).get("pid")

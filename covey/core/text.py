@@ -357,6 +357,13 @@ def cut(text, limit, *, beyond=False, strip=False):
     return (kept.rstrip() if strip else kept) + "…"
 
 
+def error_reason(exc, limit=160):
+    """What an exception said, for a log line and a card: its kind, then its message with what looks like a secret
+    hidden (redact), on one line and cut to ``limit`` characters; just its kind when it said nothing."""
+    said = cut(redact(exc), limit, strip=True)
+    return f"{type(exc).__name__}: {said}" if said else type(exc).__name__
+
+
 def last_line(text):
     """The last non-blank line of ``text``, stripped ("" when there is none)."""
     lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]

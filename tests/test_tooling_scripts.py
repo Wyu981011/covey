@@ -349,6 +349,41 @@ def tree(root):
     return {str(p.relative_to(root)): p.read_text() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
+def deploy_functions(*names):
+    """The named functions of deploy_bridge.sh's Python, on their own (its post-checks need a live deploy to reach)."""
+    import ast
+    import re
+    text = DEPLOY.read_text()
+    source = text[text.index("<<'PY'\n") + len("<<'PY'\n"):text.rindex("\nPY\n")]
+    tree = ast.parse(source)
+    found = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    space = {"re": re, "os": os}
+    exec(compile(ast.Module(body=found, type_ignores=[]), str(DEPLOY), "exec"), space)
+    return [space[name] for name in names]
+
+
+class DeployPostCheckTests(unittest.TestCase):
+    """T784: a live runner whose runner.json was not read has no job number; the post-checks crashed on it."""
+
+    def test_runner_jobs_sort_with_an_unknown_job_number_last(self):
+        runner_jobs, = deploy_functions("runner_jobs")
+        self.assertEqual(runner_jobs([12, None, 3, None]), [3, 12, None, None])
+        self.assertEqual(runner_jobs([]), [])
+
+    def test_only_numbered_live_runners_not_in_the_log_are_waited_for(self):
+        adopted_pids, not_adopted = deploy_functions("adopted_pids", "not_adopted")
+        text = ("12:00 adopted task runner job=#41 pid=1001\n"
+                "12:00 adopted task runner job=#42 pid=None\n"
+                "12:01 adopted task runner job=#43 pid=1003")
+        self.assertEqual(adopted_pids(text), {1001, 1003})
+        self.assertEqual(adopted_pids(""), set())
+        alive, gone = os.getpid(), 2 ** 22 + 7  # Above pid_max: no such process.
+        with mock.patch("os.path.exists", side_effect=lambda path: path == f"/proc/{alive}"):
+            self.assertEqual(not_adopted({alive: 44, gone: 45}, text), {alive: 44})
+            self.assertEqual(not_adopted({alive: None}, text), {})  # A prestarted runner: nothing to adopt.
+            self.assertEqual(not_adopted({alive: 41}, f"adopted task runner job=#41 pid={alive}"), {})
+
+
 class AssembleReleaseTests(unittest.TestCase):
     """scripts/assemble_release.py on small fake repositories: the release has the shape of the old single repository."""
 
