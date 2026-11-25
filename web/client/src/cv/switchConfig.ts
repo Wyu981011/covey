@@ -1,5 +1,5 @@
 /**
- * 话题页换配置（Covey 数据约定 v20，T616）的纯函数：面板的初值、和话题现在的配置比有没有变化、什么情况网页上换不了。
+ * 话题页换配置（Covey 数据约定 v20，T616）的纯函数：面板的初值、和话题现在的配置比有没有变化、什么情况网页上换不了、面板最高多高。
  * v36 起专项负责人也能换（同飞书专项卡上的「换配置」）：只列能当负责人的模型（bridge_tools），不换工作区和运行方式。
  * 不碰 DOM、不引别的模块（只有类型）：防回归 scripts/switch-config.test.mjs。
  */
@@ -46,4 +46,15 @@ export function switchBlock(d: LaunchData, base: SwitchSel, sel: SwitchSel, runn
     return '新建独立 worktree 要在飞书的换配置卡上做';
   }
   return '';
+}
+
+/** 面板最矮多高（px）：再矮标题、一行选项和确认那一行就放不下了 */
+export const POP_MIN = 120;
+/** 面板顶上和对话区上沿之间留的空（px） */
+export const POP_AIR = 8;
+
+/** 换配置面板最高能多高（px，T97）：面板贴着配置栏往上长，对话区（.conv，overflow:hidden）上沿以上的部分会被裁掉、
+ *  被话题头盖住，所以从面板下沿量到对话区上沿再留一点空；最矮 POP_MIN，再高由样式表的上限管（电脑 min(70vh,620px)、手机 60vh） */
+export function popRoom(popBottom: number, areaTop: number): number {
+  return Math.max(POP_MIN, Math.floor(popBottom - areaTop - POP_AIR));
 }

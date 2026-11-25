@@ -1,6 +1,9 @@
-// 话题页换配置（T616，Covey v20）：初值、有没有变化、网页上换不了的情况。跑：npm run test:switch
+// 话题页换配置（T616，Covey v20）：初值、有没有变化、网页上换不了的情况；面板不被裁掉、不被挡住（T97）。跑：npm run test:switch
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import * as S from '../client/src/cv/switchConfig.ts';
 
 const m = (key, extra = {}) => ({
@@ -73,4 +76,91 @@ test('负责人换不了的情况', () => {
   // 普通话题照旧：不看 bridge_tools
   assert.equal(S.switchBlock(L, base, { ...base, model: 'pi:gpt' }, false), '');
   assert.equal(S.switchBlock(L, base, { ...base, model: 'pi:gpt' }, false, false), '');
+});
+
+test('面板最高到对话区上沿，留一点空；再矮也留得下标题和确认那一行', () => {
+  // 面板下沿在 760，对话区上沿在 60：最高 760 - 60 - 8
+  assert.equal(S.popRoom(760, 60), 692);
+  assert.equal(S.popRoom(760.9, 60.2), 692, '取整往下，不多出半个像素被裁');
+  // 手机矮屏（390×560）：面板下沿 377，对话区从话题头下面的 52 起，原来 60vh = 336 的面板顶上被话题头盖住 11px
+  assert.equal(S.popRoom(377, 52), 317);
+  // 输入框放大以后上面几乎没地方：不缩成一条
+  assert.equal(S.popRoom(150, 60), S.POP_MIN);
+  assert.equal(S.popRoom(0, 60), S.POP_MIN);
+});
+
+// 样式表：client/src/cv 下全部 .css，嵌套的 & 换成外层选择器（v2.css、v3.css 是嵌套写的）
+const cv = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src', 'cv');
+const { default: postcss } = await import('postcss');
+const split = (selector) => {
+  const parts = [];
+  let depth = 0;
+  let cur = '';
+  for (const ch of selector) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      parts.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  return [...parts, cur.trim()];
+};
+const sheets = readdirSync(cv).filter((f) => f.endsWith('.css'));
+const rules = sheets.flatMap((file) => {
+  const out = [];
+  const full = (r) => {
+    const own = split(r.selector);
+    if (r.parent?.type !== 'rule') return own;
+    const outer = full(r.parent);
+    return outer.flatMap((o) => own.map((x) => (x.includes('&') ? x.replaceAll('&', o) : `${o} ${x}`)));
+  };
+  postcss.parse(readFileSync(join(cv, file), 'utf8')).walkRules((r) => {
+    if (r.parent?.type === 'atrule' && r.parent.name === 'keyframes') return;
+    const decls = {};
+    r.each((d) => { if (d.type === 'decl') decls[d.prop] = d.value; });
+    out.push({ file, selectors: full(r), decls });
+  });
+  return out;
+});
+/** 选择器最后一段（最右边的那个元素）是不是带 cls 这个类；伪元素（::before）不算那个元素本身 */
+const lands = (selector, cls) => {
+  const last = selector.split(/[\s>+~]+/u).filter(Boolean).pop() ?? '';
+  return !last.includes('::') && new RegExp(`\\.${cls}(?![\\w-])`, 'u').test(last.replace(/:(?:not|is|where|has)\([^)]*\)/gu, ''));
+};
+const at = (selector) => Object.assign({}, ...rules.filter((r) => r.selectors.includes(selector)).map((r) => r.decls));
+
+test('换配置面板浮在输入框上面：输入框和配置栏那一行都不许裁掉溢出（T753 给输入框加 overflow:hidden，电脑上面板整块看不见，T97）', () => {
+  const clip = /\b(hidden|clip|auto|scroll)\b/u;
+  for (const cls of ['composer', 'bar', 'cfg']) {
+    for (const r of rules) {
+      for (const sel of r.selectors.filter((x) => lands(x, cls))) {
+        for (const prop of ['overflow', 'overflow-x', 'overflow-y']) {
+          assert.doesNotMatch(r.decls[prop] ?? '', clip, `${r.file} 的 ${sel} 设了 ${prop}:${r.decls[prop]}`);
+        }
+      }
+    }
+  }
+  // 选择器判断本身：带类的元素算，它里面的元素和伪元素不算
+  assert.ok(lands('.cv:not(.m) .composer', 'composer'));
+  assert.ok(lands('.cv div.composer', 'composer'));
+  assert.ok(!lands('.cv .composer .bar', 'composer'));
+  assert.ok(!lands('.composer::before', 'composer'));
+  assert.ok(!lands('.cv:not(.composer) .x', 'composer'));
+});
+
+test('圆角还是底座自己画：去掉 overflow:hidden 以后底座的灰底不露出输入框的圆角', () => {
+  assert.equal(at('.cv:not(.m) .composer')['border-radius'], '18px');
+  assert.equal(at('.cv:not(.m) .composer .bar')['border-radius'], '0 0 17px 17px');
+  assert.equal(at('.cv:not(.m) .composer .cp-drop')['border-radius'], '17px');
+});
+
+test('面板最高不过对话区上沿（--cfg-room），放不下时确认那一行贴在面板底上', () => {
+  assert.match(at('.cv .cfg-pop')['max-height'], /var\(--cfg-room/u);
+  assert.match(at('.cv .mcfg .cfg-pop')['max-height'], /var\(--cfg-room/u);
+  assert.equal(at('.cv .cfg-pop')['overflow-y'], 'auto');
+  const foot = at('.cv .cfg-foot');
+  assert.equal(foot.position, 'sticky');
+  assert.equal(foot.bottom, '0');
+  assert.equal(foot.background, 'var(--s1)', '有底色：滚上去的选项不透出来');
 });
