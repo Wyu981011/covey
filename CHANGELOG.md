@@ -29,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed 修复
 
+- 网页工作台发完一段多行长消息后，输入框清空了，白框却还卡在近半屏高（电脑上最高到窗口的四成、手机三成），要再打字才缩回去。输入框按编辑区的高定自己的高，发出后清空编辑区的那一步晚于量高度，量到的还是刚发出去那段字的高。现在先清空再量，发完立刻回到一行高；话题页、大厅和手机都一样。
 - 网页工作台点输入框下面的配置胶囊（「工作区 … · Harness · 模型」）换不了配置：箭头翻上了，面板却不出来。电脑上输入框为了底座的圆角裁掉了伸出去的内容，浮在它上面的换配置面板被整块裁掉，专项负责人、普通话题和失败轮次上的「换个模型」都受影响（手机不受影响）。现在输入框不裁，底座自己收圆角；面板按输入框的位置固定定位，放大编辑或输入框长高时也整块看得见，放不下就在面板里滚。
 - 记忆开关只认新名 `COVEY_MEMORY`、`COVEY_MEMORY_LEARN`：改名前的 Manager 拉起服务时只带服务清单里的 `LARK_BRIDGE_MEMORY`，记忆整个被当成关（网页没有「记忆」页、每轮不带记忆）。现在和别的开关一样新旧名都认。
 - 网页工作台左侧跳得点不准：侧栏「在做」、专项和专项里的话题原来按最近更新时间排，在跑的话题每写一次进度就换位，现在在跑的按编号排、专项按不算在跑话题的最近活动排；鼠标在侧栏里时列表先不动，移出或停着不动 5 秒再更新。对话区左边的刻度条：指着的那条要挪过边几像素才换，点下去跳到预览卡上那条（按下、松开跨了两条也算数），去掉旁边几条跟着伸缩的放大镜，鼠标在上面时来了新一轮刻度不整体挪。
@@ -78,6 +79,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed (English)
 
+- Web page: after a long multi-line message was sent, the chat box was empty but stayed nearly half a screen tall (up to 40% of the window on a computer, 30% on a phone) until something was typed. The box takes its height from its editor, and the editor was cleared after the height was measured, so it measured the text just sent. Now the editor is cleared first, and the box is one line tall again as soon as the message goes, on a topic page, in the hall and on a phone alike.
 - Web page: the config pill under the chat box (workspace · Harness · model) opened nothing: its arrow turned up but the switch panel stayed hidden. On a computer the chat box clipped what stuck out of it (for its base's rounded corners), and the panel floats above the box, so it was clipped whole, for a project's lead, an ordinary topic and a failed turn's 换个模型 alike (phones were fine). The box no longer clips, its base rounds its own corners, and the panel is placed fixed by the box, so it shows whole while 放大编辑 or with a tall draft too, scrolling inside when it does not fit.
 - The memory switches read only `COVEY_MEMORY` and `COVEY_MEMORY_LEARN`: a Manager from before the rename starts services with the manifest's `LARK_BRIDGE_MEMORY` alone, and the memory was off as a whole (no 记忆 tab on the page, no memory in a turn). They now read either spelling, as every other switch does.
 - Web workbench: the left side moved under the pointer. The sidebar's running group, its projects and their topics were sorted by last update, which a running topic changes on every progress write; running topics now sort by number and projects by the latest activity of their topics that are not running, and the sidebar holds still while the mouse is in it (it catches up when the mouse leaves or rests for 5 s). The conversation's jump rail keeps the tick it points at until the pointer is a few pixels past its edge, a click jumps to the tick the preview card shows (also when press and release land on two ticks), the magnifier ripple is gone, and the rail does not shift when a new turn arrives under the pointer.
