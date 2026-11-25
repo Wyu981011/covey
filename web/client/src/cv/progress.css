@@ -1,0 +1,137 @@
+/* 专项的「进度」标签（v39，ProjectProgress.tsx）：颜色只用 token，深浅两种模式同一套；状态色配图标和字，不单靠颜色。
+   做完绿 --done、在做蓝 --run、等你琥珀 --wait、将要做和不做了是中性灰 --t3 */
+.cv .k-done{--c:var(--done)}
+.cv .k-doing{--c:var(--run)}
+.cv .k-next{--c:var(--t3)}
+.cv .k-owner{--c:var(--wait)}
+.cv .k-dropped{--c:var(--t3)}
+
+.cv .pg-wrap{position:relative;flex:1;display:flex;min-height:0;min-width:0}
+.cv .pg{flex:1;min-width:0;overflow:auto;padding:0 14px 14px;display:flex;flex-direction:column;gap:10px;font-size:13px}
+.cv .pg>*{flex:none}
+.cv .pg button{font:inherit;color:inherit;text-align:left}
+.cv .pg-muted{color:var(--t3);font-size:12px;margin:4px 0}
+.cv .pg-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .pg-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--c);margin-right:6px;flex:none}
+.cv .pg-h{margin:0 0 6px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:0;color:var(--t1)}
+.cv .pg-h em{font-style:normal;margin-left:5px}
+.cv .pg-h .pg-hint{margin-left:auto;padding-left:10px;font-weight:400;color:var(--t3);font-size:11px;text-align:right}
+
+/* 顶上一行：多少条、分段条（段间 2px 缝）、图例 */
+.cv .pg-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;min-height:30px}
+.cv .pg-bar{display:flex;gap:2px;width:260px;height:10px}
+.cv .pg-bar i{background:var(--c);border-radius:4px;min-width:4px}
+.cv .pg-lg{color:var(--t2);white-space:nowrap}
+.cv .pg-lg b{color:var(--c)}
+.cv .pg-lg em{font-style:normal;font-weight:600;color:var(--t1)}
+.cv .pg-fresh{margin-left:auto;color:var(--t3);font-size:12px}
+
+/* 等你带 */
+.cv .pg-band{display:flex;align-items:stretch;gap:10px;background:var(--s1);border:1px solid var(--line);border-left:4px solid var(--wait);border-radius:10px;padding:8px 10px}
+.cv .pg-band.calm{border-left-color:var(--line2)}
+.cv .pg-band .pg-bh{font-weight:600;display:flex;align-items:center;white-space:nowrap;padding-right:4px}
+.cv .pg-band .pg-bh em{font-style:normal;margin-left:4px}
+.cv .pg-band .pg-ocs{display:flex;flex-wrap:wrap;gap:8px;flex:1;min-width:0;align-items:center}
+.cv .pg-band .pg-oc{display:flex;gap:8px;align-items:center;background:color-mix(in srgb,var(--wait) 10%,transparent);border:0;border-radius:8px;padding:6px 10px;flex:1 1 280px;max-width:400px;cursor:pointer;min-width:0}
+.cv .pg-band .pg-oc:hover{background:color-mix(in srgb,var(--wait) 16%,transparent)}
+.cv .pg-band .pg-oi{width:20px;height:20px;border-radius:50%;background:var(--wait);color:var(--s1);font-weight:700;display:grid;place-items:center;flex:none}
+.cv .pg-band .pg-ob{display:flex;flex-direction:column;min-width:0;flex:1}
+.cv .pg-band .pg-ot{display:flex;gap:6px;align-items:center;font-weight:600;min-width:0}
+.cv .pg-band .pg-od{color:var(--t2);font-size:12px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cv .pg-band .pg-ou{color:var(--t3);font-size:11px}
+.cv .pg-band .pg-go{margin-left:auto;color:var(--accent-t);font-size:12px;white-space:nowrap}
+.cv .pg-band .pg-tails{margin-left:auto;display:flex;flex-direction:column;gap:3px;justify-content:center;flex:0 1 380px;min-width:0}
+.cv .pg-band .pg-tlh{color:var(--t3);font-size:11px}
+.cv .pg-band .pg-tl{font-size:12px;color:var(--t2);cursor:pointer;background:none;border:0;padding:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.cv .pg-band .pg-tl b{color:var(--wait);margin-right:4px}
+
+/* 三栏和右栏 */
+.cv .pg-main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:10px;align-items:start}
+.cv .pg-left{display:flex;flex-direction:column;gap:10px;min-width:0}
+.cv .pg-cols{display:grid;grid-template-columns:1.25fr 1fr .9fr;gap:10px;align-items:start}
+.cv .pg-col,.cv .pg-dep,.cv .pg-rail section,.cv .pg-empty{background:var(--s1);border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
+.cv .pg-col .pg-cb{display:flex;flex-direction:column}
+.cv .pg .pg-ic{color:var(--c);font-weight:700;width:12px;text-align:center;flex:none}
+.cv .pg .pg-id{font-variant-numeric:tabular-nums;color:var(--t2);min-width:26px;flex:none}
+.cv .pg .pg-tm{font-size:11px;color:var(--t3);white-space:nowrap;font-variant-numeric:tabular-nums;flex:none}
+.cv .pg-dr{display:flex;align-items:center;gap:6px;height:26px;cursor:pointer;border-radius:5px;padding:0 4px;background:none;border:0;width:100%;min-width:0}
+.cv .pg-dr:hover,.cv .pg-card:hover{background:var(--hover)}
+.cv .pg-dr.gone .pg-t,.cv .pg-dr.gone .pg-id{color:var(--t3);text-decoration:line-through}
+.cv .pg-dr .pg-t{flex:1}
+.cv .pg-dr .pg-tail{font-size:11px;color:var(--wait);border:1px solid color-mix(in srgb,var(--wait) 55%,transparent);border-radius:4px;padding:0 4px;white-space:nowrap;flex:none}
+.cv .pg-dr .pg-ul{font-size:11px;white-space:nowrap;color:var(--t2);border-left:3px solid var(--c);padding-left:4px;flex:none}
+.cv .pg-card{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:8px;cursor:pointer;min-width:0}
+.cv .pg-card .pg-ch{display:flex;gap:6px;align-items:center;font-weight:600;min-width:0}
+.cv .pg-card .pg-cm{display:flex;gap:6px;align-items:center;margin-top:5px;font-size:12px;color:var(--t2);min-width:0}
+.cv .pg-card .pg-ph{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.cv .pg-card .pg-live{color:var(--run);font-size:12px;white-space:nowrap}
+.cv .pg-card .pg-live i{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--run);margin-right:4px}
+.cv .pg-card .pg-ended{font-size:11px;color:var(--t2);background:var(--s3);border-radius:4px;padding:0 5px;white-space:nowrap}
+.cv .pg-card .pg-steps{display:flex;align-items:center;gap:6px;margin-top:5px;font-size:11px;color:var(--t3)}
+.cv .pg-card .pg-sb{flex:1;height:6px;background:var(--s4);border-radius:3px;overflow:hidden}
+.cv .pg-card .pg-sb i{display:block;height:100%;background:var(--run);border-radius:3px}
+.cv .pg .pg-kv{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:5px;font-size:12px;color:var(--t2)}
+.cv .pg .pg-kv>span:first-child{color:var(--t3);font-size:11px;min-width:58px}
+.cv .pg .pg-nx{margin-top:5px;font-size:12px;color:var(--t2);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cv .pg .pg-sub{color:var(--t3);font-size:11px;margin:10px 0 4px;border-bottom:1px solid var(--line)}
+.cv .pg .pg-pv{font-size:12px;line-height:1.9;display:flex;align-items:center;gap:4px;min-width:0}
+.cv .pg-pv .pg-chip{flex:0 1 auto}
+.cv .pg-pw{flex:none;white-space:nowrap;color:var(--t2)}
+.cv .pg .pg-pi{padding-left:14px}
+.cv .pg-chip{display:inline-flex;gap:3px;align-items:center;font-size:11px;border:1px solid var(--line);border-left:3px solid var(--c);border-radius:4px;padding:0 5px;color:var(--t1);background:var(--s1);white-space:nowrap;cursor:pointer;max-width:190px;min-width:0}
+.cv .pg-chip b{color:var(--c)}
+.cv .pg-chip .pg-ct{color:var(--t3);overflow:hidden;text-overflow:ellipsis;min-width:0}
+
+/* 依赖图 */
+.cv .pg-depw{overflow-x:auto}
+.cv .pg-depw svg{display:block;stroke:none;fill:none;max-width:none}
+.cv .pg-edge{fill:none;stroke:var(--line2);stroke-width:1.5}
+.cv .pg-edge.hot{stroke:var(--run);stroke-width:2}
+.cv .pg-arh{fill:var(--t3)}
+.cv .pg-node{cursor:pointer;outline:none}
+.cv .pg-node rect{fill:color-mix(in srgb,var(--c) 9%,var(--s1));stroke:var(--c);stroke-width:1.5}
+.cv .pg-node:hover rect,.cv .pg-node:focus-visible rect{stroke-width:2.5}
+.cv .pg-node text{font-size:12px;fill:var(--t1)}
+.cv .pg-node .pg-ni{fill:var(--c);font-weight:700}
+.cv .pg-node .pg-nid{fill:var(--t2);font-weight:600}
+
+/* 右栏 */
+.cv .pg-rail{display:flex;flex-direction:column;gap:10px;min-width:0}
+.cv .pg-dc{display:flex;gap:6px;align-items:center;font-size:12px;min-height:24px;white-space:nowrap;overflow:hidden}
+.cv .pg-dc .pg-dq{color:var(--t2);overflow:hidden;text-overflow:ellipsis;min-width:0;flex:1}
+.cv .pg-dc .pg-da{font-weight:600;flex:0 1 auto;max-width:48%;overflow:hidden;text-overflow:ellipsis}
+.cv .pg-day .pg-dd{color:var(--t3);font-size:11px;margin:6px 0 2px;border-bottom:1px solid var(--line)}
+.cv .pg-ms{display:flex;gap:6px;align-items:baseline;font-size:12px;padding:2px 0}
+.cv .pg-ms .pg-mt{color:var(--t2);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cv .pg-ms .pg-fin{font-size:11px;color:var(--done);border:1px solid color-mix(in srgb,var(--done) 50%,transparent);border-radius:4px;padding:0 4px;flex:none}
+.cv .pg-empty b{font-size:14px}
+.cv .pg-empty p{margin:6px 0 0;font-size:12px}
+
+/* 详情抽屉：沿用全图的 .drawer（电脑在右侧，手机是底部的半屏） */
+.cv .drawer.pg-drw{width:420px}
+.cv .pg-dh{display:flex;align-items:center;gap:8px;font-size:15px}
+.cv .pg-dh .pg-ic{color:var(--c);font-weight:700}
+.cv .pg-st{font-size:11px;color:var(--c);border:1px solid color-mix(in srgb,var(--c) 50%,transparent);border-radius:4px;padding:0 6px}
+.cv .pg-x{margin-left:auto;color:var(--t3);cursor:pointer}
+.cv .pg-dsub{color:var(--t3);font-size:12px;margin-top:4px}
+.cv .pg-dbody{overflow-y:auto;flex:1;padding:4px 16px 16px}
+.cv .pg-dbody .pg-dl{font-size:11px;color:var(--t3);margin:12px 0 3px}
+.cv .pg-dbody .pg-dv{font-size:13px;color:var(--t2);white-space:pre-wrap;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:3px;align-items:flex-start}
+.cv .pg-dbody .pg-dv a{color:var(--t1);display:inline-flex;gap:6px;align-items:center}
+.cv .pg-dbody .pg-chip{max-width:100%}
+.cv .pg-say{margin-top:16px;width:100%;justify-content:center}
+.cv .pg-sayn{font-size:11px;margin:6px 0 0}
+
+@media (max-width:1279px){
+  .cv .pg-main{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:1023px){
+  .cv .pg{padding:8px 10px 72px}
+  .cv .pg-cols{grid-template-columns:minmax(0,1fr)}
+  .cv .pg-band{flex-direction:column}
+  .cv .pg-band .pg-ocs,.cv .pg-band .pg-tails{flex:none;margin-left:0;max-width:100%}
+  .cv .pg-band .pg-oc{flex:1 1 100%;max-width:none}
+  .cv .pg-bar{width:100%}
+  .cv .pg-fresh{margin-left:0}
+  .cv .drawer.pg-drw{width:100%}
+}

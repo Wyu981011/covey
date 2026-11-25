@@ -1875,6 +1875,58 @@ class ExtrasTest(WebCase):
         self.assertEqual([(row["kind"], row.get("topic_number"), row["name"]) for row in data["library"]], [("link", 8, "设计稿"), ("image", None, "shot.png")])
         self.assertEqual(data["started_at"], self.record["created_at"])
 
+    def checklist(self, *rows):
+        projects.update(self.state, PID, lambda record: record.update(checklist={"items": list(rows), "next": len(rows) + 1}))
+
+    def test_a_project_carries_its_checklist_with_topic_keys(self):
+        """The page's 进度 tab (docs/web.md 专项条目): the 目标检查表 as the lead keeps it; ``topic`` is the topic's key on the page,
+        ``needs`` and ``state`` as written, and nothing of the lead's (``job``)."""
+        self.thread(OTHER, "对账", 8, status="done")
+        self.checklist({"id": "c1", "criterion": "新库能写", "topic": OTHER, "needs": [], "evidence": "提交 a1b2c3d", "gap": "",
+                        "state": "done", "at": T0, "job": "k-dddd"},
+                       {"id": "c2", "criterion": "对账一致", "topic": "", "needs": ["c1", "x9"], "evidence": "", "gap": "只差主人点头",
+                        "state": "blocked", "at": T0 + 1, "job": "k-dddd"})
+        self.sync.push_once(T0 + 5)
+        data = self.web.items("project")[-1]["data"]
+        self.assertEqual(data["checklist"], [
+            {"id": "c1", "criterion": "新库能写", "topic": OTHER, "needs": [], "evidence": "提交 a1b2c3d", "gap": "", "state": "done", "at": T0},
+            {"id": "c2", "criterion": "对账一致", "topic": "", "needs": ["c1"], "evidence": "", "gap": "只差主人点头", "state": "blocked",
+             "at": T0 + 1}])
+        self.assertIn(OTHER, {item["key"] for item in self.web.items("topic")})
+
+    def test_a_changed_checklist_alone_builds_the_project_again(self):
+        self.checklist({"id": "c1", "criterion": "新库能写", "topic": "", "needs": [], "evidence": "", "gap": "", "state": "open", "at": T0})
+        self.sync.push_once(T0 + 5)
+        self.assertEqual(self.sync.push_once(T0 + 6), 0)
+        self.checklist({"id": "c1", "criterion": "新库能写", "topic": "", "needs": [], "evidence": "提交 a1b2c3d", "gap": "", "state": "done",
+                        "at": T0 + 7})
+        self.assertEqual(self.sync.push_once(T0 + 8), 1)
+        data = self.web.items("project")[-1]["data"]
+        self.assertEqual([(row["state"], row["evidence"], row["at"]) for row in data["checklist"]], [("done", "提交 a1b2c3d", T0 + 7)])
+
+    def test_a_project_without_a_checklist_or_notes_carries_none_of_them(self):
+        """An older page reads the item as before: no key for what the record has nothing of (a note is no milestone)."""
+        project_lead.append(self.state, PID, "notes", project_lead.entry("派出了 T8", kind="thread"), project_lead.NOTES_KEPT)
+        self.sync.push_once(T0 + 5)
+        data = self.web.items("project")[-1]["data"]
+        self.assertFalse({"checklist", "milestones", "decisions"} & set(data))
+
+    def test_milestones_are_the_milestone_and_finish_notes_and_decisions_the_newest_ten(self):
+        for number, kind in enumerate(("note", "milestone", "thread", "finish", "milestone"), 1):
+            project_lead.append(self.state, PID, "notes", {"id": f"n{number}", "at": T0 + number, "text": f"第 {number} 条", "kind": kind},
+                                project_lead.NOTES_KEPT)
+        for number in range(1, 13):
+            project_lead.append(self.state, PID, "decisions", {"id": f"d{number}", "at": T0 + number, "text": f"决定 {number}",
+                                                                "kind": "note", "report": False}, project_lead.DECISIONS_KEPT)
+        self.sync.push_once(T0 + 20)
+        data = self.web.items("project")[-1]["data"]
+        self.assertEqual(data["milestones"], [{"id": "n2", "at": T0 + 2, "kind": "milestone", "text": "第 2 条"},
+                                              {"id": "n4", "at": T0 + 4, "kind": "finish", "text": "第 4 条"},
+                                              {"id": "n5", "at": T0 + 5, "kind": "milestone", "text": "第 5 条"}])
+        self.assertEqual([row["id"] for row in data["decisions"]], [f"d{number}" for number in range(3, 13)])
+        self.assertEqual(data["decisions"][-1], {"id": "d12", "at": T0 + 12, "kind": "note", "text": "决定 12"})
+        self.assertNotIn("checklist", data)
+
 
 class LeadTest(WebCase):
     """The lead's conversation is a topic of kind lead; the page can speak to it."""
