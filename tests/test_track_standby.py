@@ -44,7 +44,7 @@ seen = 0
 for line in sys.stdin:
     seen += 1
     with open(os.environ["FAKE_RECORD"], "a") as f:
-        f.write(json.dumps({{"argv": sys.argv[1:], "cwd": os.getcwd(), "line": json.loads(line)}}) + "\\n")
+        f.write(json.dumps({{"pid": os.getpid(), "argv": sys.argv[1:], "cwd": os.getcwd(), "line": json.loads(line)}}) + "\\n")
     if mode == "slow_first" and index == 1 and seen == 2:  # The first process started never answers the question.
         time.sleep(30)
     if mode == "bad_first" and index == 1 and seen == 2:
@@ -139,14 +139,25 @@ class StandbyTest(Base):
     def test_a_standby_is_primed_with_an_invented_message_and_answers_one_question(self):
         self.assertTrue(track_judge.warm(self.backend, self.ctx))
         self.ready()
+        first = self.started()[0]
         verdict = self.ask()
         self.assertEqual((verdict.route, verdict.target, verdict.why), ("merge", 1, "ok"))
-        lines = self.lines()
+        # Taking a standby immediately primes its replacement. Observe that process too, so this
+        # assertion does not depend on whether it reached the shared record before the answer.
+        self.assertEqual(self.started_count(2), 2)
+        deadline = time.monotonic() + 3
+        while len(self.lines()) < 3 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        recorded = self.lines()
+        lines = [line for line in recorded if line["pid"] == first]
         self.assertEqual(len(lines), 2)
         self.assertEqual(lines[0]["line"]["message"]["content"], track_standby.PRIME)
         self.assertNotIn(SECRET, json.dumps(lines[0]))
         self.assertEqual(json.loads(lines[1]["line"]["message"]["content"])["message"], SECRET)
-        self.assertEqual(len(self.started()), 1, "the question did not start a process of its own")
+        replacement = [line for line in recorded if line["pid"] != first]
+        self.assertEqual(len(replacement), 1)
+        self.assertEqual(replacement[0]["line"]["message"]["content"], track_standby.PRIME)
+        self.assertNotIn(SECRET, json.dumps(replacement))
 
     def test_the_argv_is_the_one_shots_with_stream_json_in_and_out(self):
         track_judge.warm(self.backend, self.ctx)
