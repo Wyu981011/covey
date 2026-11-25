@@ -5,10 +5,10 @@ clicks that way), so a new button kind is added here first, with the BridgeApp c
 that takes it (``handler``: app/app.py dispatches a topic's click by it). Launch forms,
 pickers, the workspace manager, 换配置 (app/harness_switch.py) and 回退
 (app/rewind.py) are matched before this table and are not in it. The 代答设置 card's kinds, the
-重新发送 card's, the 代发草稿 card's, 群管理's, the 脱敏 tab's (the retired 敏感词看板's 换口令 too), the 管家 settings card's, the 设置 card's tabs, 手上的事's
+重新发送 card's, the 代发草稿 card's, the 批量换配置 card's, 群管理's, the 脱敏 tab's (the retired 敏感词看板's 换口令 too), the 管家 settings card's, the 设置 card's tabs, 手上的事's
 这些都不用回答了, 飞书应用待补's, the welcome card's, a group's menu card and the shared session's control are here but never reach a task, so
 they name no handler: the Bridge handles them before topic routing (app/proxy_panel.py, app/proxy_resend.py,
-app/owner_send.py, app/group_manager.py, app/redaction_panel.py, app/butler_panel.py, app/settings_hub.py, app/memory_panel.py,
+app/owner_send.py, app/batch_switch.py, app/group_manager.py, app/redaction_panel.py, app/butler_panel.py, app/settings_hub.py, app/memory_panel.py,
 app/overview.py, app/digest.py, app/app_setup.py, app/welcome.py, app/group_menu.py, app/collab_cards.py, app/web_login.py). The enabled extensions' kinds (core/extensions.py CARD_KINDS) are
 added below, bot_only, their features claiming the clicks.
 """
@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 
 from covey.cards.launch_config import SUBMIT_PREFIX
+from covey.cards.batch_switch import LABELS as batch_labels
 from covey.cards.project_proposal import LABELS as tidy_labels
 from covey.core import extensions
 
@@ -250,6 +251,8 @@ ACTIONS = {
 # 整理专项's cards (cards/project_proposal.py KINDS, COVEY_PROJECT_TIDY): the proposal card, its rename form, the 整理专项 card,
 # 移出 on a topic's card and the 设置 card's 整理专项. The Bridge takes them before topic routing (app/project_tidy.py claim).
 ACTIONS.update({kind: CardAction(label) for kind, label in tidy_labels.items()})
+# The 批量换配置 card (app/batch_switch.py): 确认更换, 取消, 再试没换的, the Bridge's before topic routing (PANELS).
+ACTIONS.update({kind: CardAction(label) for kind, label in batch_labels.items()})
 ACTIONS.update({kind: CardAction(label, bot_only=True) for kind, label in extensions.card_kinds().items()})
 BOT_ONLY = frozenset(kind for kind, action in ACTIONS.items() if action.bot_only)
 # What a click on a retired button gets instead (app/task_controls.py retired_action).

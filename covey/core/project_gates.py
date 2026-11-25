@@ -50,9 +50,14 @@ def texts(questions) -> list:
     return [text for text in found if isinstance(text, str) and text.strip()]
 
 
+SAMPLE = "样张"  # A question that shows the owner samples of a card (core/ui_samples.py) asks his taste: always his.
+
+
 def hits(questions) -> list:
-    """The gate words in ``questions``, once each, in the order they come."""
-    found = []
+    """The gate words in ``questions``, once each, in the order they come; SAMPLE first when an option carries a sample."""
+    asked = questions if isinstance(questions, (list, tuple)) else ()
+    found = [SAMPLE] if any(isinstance(q, dict) and any(isinstance(o, dict) and o.get("sample") for o in q.get("options") or ())
+                            for q in asked) else []
     for text in texts(questions):
         for word in WORDS:
             if word in text and word not in found:

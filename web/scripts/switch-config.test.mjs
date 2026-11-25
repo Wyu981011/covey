@@ -164,3 +164,20 @@ test('面板最高不过对话区上沿（--cfg-room），放不下时确认那�
   assert.equal(foot.bottom, '0');
   assert.equal(foot.background, 'var(--s1)', '有底色：滚上去的选项不透出来');
 });
+
+// T789：换配置面板按输入框的框固定定位（对话区 overflow:hidden，放大编辑时 absolute 的面板上半截被裁掉）
+const P = await import('../client/src/cv/popPlace.ts');
+test('面板贴着输入框上沿往上、和输入框一样宽，最多高到视口顶', () => {
+  // 电脑 1440×900：输入框上沿 794，左 278 宽 800
+  assert.deepEqual(P.popPlace({ top: 794, left: 278, width: 800 }, 900), { left: 278, width: 800, bottom: 114, room: 778 });
+  // 放大编辑：输入框上沿 270（对话区里上面只剩 50 像素），面板照样能有 254 像素高，不靠对话区给地方
+  assert.deepEqual(P.popPlace({ top: 270, left: 290, width: 800 }, 900), { left: 290, width: 800, bottom: 638, room: 254 });
+  // 手机的配置栏一行，间隔 6
+  assert.deepEqual(P.popPlace({ top: 690.4, left: 10, width: 370 }, 844, 6), { left: 10, width: 370, bottom: 160, room: 676 });
+});
+
+test('输入框跑出视口时面板不跟着跑出去：上沿按视口夹住，地方不会是负的', () => {
+  assert.equal(P.popPlace({ top: -40, left: 0, width: 300 }, 800).room, 0);
+  assert.equal(P.popPlace({ top: -40, left: 0, width: 300 }, 800).bottom, 808);
+  assert.equal(P.popPlace({ top: 1200, left: 0, width: 300 }, 800).bottom, 8);
+});

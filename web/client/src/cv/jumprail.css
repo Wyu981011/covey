@@ -8,10 +8,10 @@
 .cv .jr-t.hv i{background:var(--a1)}
 .cv .jr-t:focus-visible{outline:none}
 .cv .jr-t:focus-visible i{outline:2px solid var(--a1);outline-offset:2px}
-@media (prefers-reduced-motion:reduce){.cv .jr-t i{transition:none}}
+@media (prefers-reduced-motion:reduce){.cv .jr-t i,.cv .jr-card{transition:none}}
 
 .cv .jr-card{position:absolute;left:46px;z-index:4;width:340px;max-width:calc(100% - 60px);pointer-events:none;
-  padding:10px 14px 11px;border-radius:12px;background:var(--s1);border:1px solid var(--line2);
+  padding:10px 14px 11px;border-radius:12px;background:var(--s1);border:1px solid var(--line2);transition:top .1s ease-out;
   box-shadow:0 10px 30px -8px rgba(0,0,0,.35),0 2px 6px rgba(0,0,0,.08)}
 .cv.light .jr-card{box-shadow:0 10px 30px -10px rgba(20,25,45,.22),0 2px 6px rgba(20,25,45,.06)}
 .cv .jr-h{display:flex;align-items:baseline;gap:10px}

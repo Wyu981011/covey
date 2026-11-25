@@ -482,8 +482,8 @@ class Steering(SteerForms, SteerReceiptFlow, SteerInterrupt):
         ``requeue_next``, each queued as its receipt's 重新排队 would queue it. Not after a stop (the owner stopped the turn and what
         came with it) or for a record from before its ``requeue`` was saved: those are said as before. Returns the
         records it marked."""
-        if job.cancel_event.is_set():
-            return []
+        if job.cancel_event.is_set() and not getattr(job, "hung_stop", None):
+            return []  # The owner's stop. The Bridge's of a hung turn (app/unstick.py) is for what waited to run.
         found = []
         for record in records:
             if not record.get("requeue") or not record.get("mid"):

@@ -6,6 +6,7 @@ from __future__ import annotations
 from covey.core.trace import task_trace
 from covey.core.turn_words import SEED_NEXT, device_restarted, retry_hint
 
+import dataclasses
 import datetime as _dt
 import functools
 import json
@@ -31,7 +32,7 @@ from covey.cards.review import stopped_sentence
 from covey.core.state import write_json
 from covey.core.logs import append_private_text
 from covey.core.butler import worded
-from covey.app import auto_retry, butler_reactions, butler_relay, butler_reply, butler_tracks, policy_retry, project_lead, track_digest
+from covey.app import auto_retry, butler_reactions, butler_relay, butler_reply, butler_tracks, policy_retry, project_lead, track_digest, unstick
 from covey.app.turn_delivery import TurnDelivery, outgoing_markdown, show_outcome
 from covey.app.turn_images import TurnImages
 from covey.app.turn_settle import TurnResult, settle_turn
@@ -106,7 +107,18 @@ def _task_monitor(ctx, job, *, cards, runtime, record_job_state, send_text, pref
         starting=STARTING.format(starting) if starting else "",
         state=lambda phase, asking: cards.show_running_summary(ctx, job, phase, asking),
         images=images, history=_earlier_turns(ctx, job, runtime.log),
-        stuck=(lambda on: cards.show_stuck(ctx, job, on)) if callable(getattr(cards, "show_stuck", None)) else None)
+        stuck=(lambda on: cards.show_stuck(ctx, job, on)) if callable(getattr(cards, "show_stuck", None)) else None,
+        watch=lambda facts: unstick.check(ctx, job, facts, reply=_waiting_line(cards), log=runtime.log))
+
+
+def _waiting_line(cards):
+    """``reply(ctx, chat_id, message_id, text)`` for app/unstick.py: a line under a message that waits behind a quiet
+    butler turn, in the voice of the task card's writer; None without a messenger."""
+    messenger, voice = getattr(cards, "messenger", None), getattr(cards, "voice", None)
+    if messenger is None or voice is None:
+        return None
+    return lambda ctx, chat_id, mid, text: messenger.reply(dataclasses.replace(ctx, reply_to_message_id=mid), chat_id, text,
+                                                           voice.key("hung-wait", mid), voice=voice)
 
 
 def _earlier_turns(ctx, job, log):
@@ -253,6 +265,11 @@ def _turn_from_exception(exc, job, settling) -> dict:
         text = device_restarted(str(exc))
         return {"status": "failed", "status_message": text, "final_text": worded(f"任务 #{job.job_id}：{text}", job)}
     stopped = getattr(job, "cancel_event", None) is not None and job.cancel_event.is_set()
+    if getattr(job, "hung_stop", None) and (isinstance(exc, JobCancelled) or (stopped and not settling)):
+        # Stopped by the Bridge, not the owner: its model request hung while his next words waited (app/unstick.py).
+        text = unstick.stopped_text(job)
+        return {"status": "failed", "status_message": unstick.HUNG_STATUS,
+                "final_text": worded(f"任务 #{job.job_id}：{text}", job)}
     if isinstance(exc, JobCancelled) or (stopped and not settling):
         # A stop before the backend finished cancels the turn whatever the backend raised as it stopped (its process
         # may have been stopped from outside, app/task_controls.py hard_stop_later). Like a finished card since P1: no "直接回复本话题即可继续" (repo review U10).

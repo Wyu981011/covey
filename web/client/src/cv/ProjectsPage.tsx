@@ -48,7 +48,7 @@ interface View {
   rank: number;
 }
 
-/** 简报卡（v40）：背景一句、每个动作一行（状态和负责人那句话）、话题数和检查表数；点了进专项的「简报」。
+/** 简报卡（v41）：背景一句、每个动作一行（状态和负责人那句话）、话题数和检查表数；点了进专项的「简报」。
  * 负责人还没写简报的专项只写检查表数（有检查表时），目标在上面的 .pl-goal 里 */
 const BriefBlock: React.FC<{ b: Brief; base: string }> = ({ b, base }) => {
   const foot: string = `${b.members.length} 个话题（${b.liveN} 在跑）${b.total ? ` · 检查表 ${b.met}/${b.total} 满足` : ''}`;

@@ -78,6 +78,10 @@ class CodexVerifiedReplyTests(CodexRunCase):
             ({"message": SECRET, "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 502}}}, "server_fault"),
             ({"message": SECRET, "codexErrorInfo": {"responseTooManyFailedAttempts": {"httpStatusCode": 529}}},
              "server_fault"),
+            # A 5xx whose words are the account's is not a passing fault (T784).
+            ({"message": "502: could not authenticate this account; sign in again",
+              "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 502}}}, "authentication_error"),
+            ({"message": "insufficient_quota", "codexErrorInfo": "internalServerError"}, "quota_exhausted"),
             # Any other status is the request refused: never retried.
             ({"message": SECRET, "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 400}}}, "transport_error"),
             ({"message": SECRET, "codexErrorInfo": {"responseStreamConnectionFailed": {"httpStatusCode": 404}}},

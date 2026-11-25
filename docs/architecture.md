@@ -86,6 +86,26 @@ feishu/events.py consume：每个订阅一个 lark-cli 消费者，逐行交给�
  → done.json、exit.json → Bridge 的 finish_detached 收尾，未结束的记录标 interrupted，原卡换恢复卡；再跑这一轮的收尾 after_job
 ```
 
+### 主人消息的去向
+
+主人的每条消息（飞书 `om_…`，网页 `web-<op_id>`）进来以后只有下面这些去向，`core/inbound_ledger.py` 的 `where(state_dir, message_id)` 读出来，只读：不加锁、不发请求、不建目录。`bin/covey_inbound.py where <id>` 和 `recent` 是它的命令行（`--state` 必填）。
+
+| 去向 | 记录 | 主人看得见 |
+| --- | --- | --- |
+| 变成一轮（话题里的、管家的、网页发的） | `jobs/<消息 id>.json`（任务键就是消息 id）；条目的 `job` | 任务卡、答案卡、表情 |
+| 开跑前并进排队的任务、或排队卡送进在做的任务（`COVEY_TOPIC_STEER`） | 本条的任务记录 `status=cancelled` 加 `merged_into_job_id`；补充的送达记录 | 补充回执卡、DONE |
+| 管家的补充送进在做的一轮 | 送达记录 `interaction-deliveries/`；条目的 `supplement`（话题和任务号） | 开了同时做几件事是并进的表情；没开的现在也补上这个表情（以前没有） |
+| 当成问题的回答 / 暂存等答案 | 问题记录、`held-notes/`；条目的 `answer`、`held_note` | 问题卡、暂存卡 |
+| 停止词 | 条目的 `stop_word` | 停止的回复 |
+| 斜杠命令、扩展认领 | 条目的 `command`、`extension` | 命令的卡 |
+| 没处理：群里只有 @、没有读得出的内容、机器人身份未知、配对在群里 | 条目的 `ignored` 和原因（`Access.ignore`，只记主人的，群里没 @ 的不记） | 读不出内容的现在回一句；其余只有日志 |
+| 被拒绝：话题冻结、回答被拒 | 条目的 `refused` | 话题里有说明 |
+| 入队出错、没排上队 | 条目的 `error`、`not_queued` | 出错的现在回一句；没排上队本来就有说明 |
+| 收下后没处理完（重启在中间） | 条目有 `at`、没有 `fate`，也没有任务记录 | 重放时发现的，回一句让主人再发（`lost`，只一次） |
+| 重复投递 | 不新建；以第一次的记录为准 | 无需 |
+
+条目是每条消息在 `inbound-messages/<sha256(消息 id)>` 里的一小段 JSON（原来是空标记，同一个文件，7 天后维护清掉，备份不收）：`at`、`chat_id`、`text`（前 40 字）、`fate`、`reason`、`topic_id`、`job_id`。写它尽力而为：从不抛错，只持进程内的一把小锁，锁内不发请求；读口先看任务记录和送达记录，再看条目，所以升级前的消息只要任务记录还在也查得到。一条消息的条目没有 `fate`、没有任务记录，过了 `STALE_SECONDS`（120 秒）就算“收下后没处理完”。
+
 ### 谁被服务
 
 `app/access.py` 的 `Access`（`Runtime.access`，任务进程里也有）是唯一的判断处，别处不比较 open_id。
@@ -148,6 +168,7 @@ continued、done、failed、cancelled、interrupted：终态
 | `handoff.json` | 重建参数和序列化任务 |
 | `runner.json` | 任务进程身份和 release；Bridge 写，任务进程只在它没写对自己时补写（`registered`） |
 | `wake.json` | 任务进程的身份；Bridge 每写一次收件箱就经 pidfd 发 SIGUSR1（`wake_runner`），旧 release 照旧轮询 |
+| `runner.lock` | 运行锁：任务进程拿到交接后加排他锁（flock），一直持到退出；设了 `COVEY_LOCK_ROOT` 时锁文件在那里（`core/file_lock.py` 的 `open_lock`） |
 | `inbox/` → `acks/` | 点击、回答、补充、重启通知、转给主人的活问题（`show_question`）与确认 |
 | `requests/` → `replies/` | 续答入队请求 |
 | `done.json`、`exit.json` | 只剩产物上传时、退出时 |
@@ -159,10 +180,11 @@ continued、done、failed、cancelled、interrupted：终态
 - 入队失败：记录已经写成 `queued` 而 `enqueue_reply_job` 抛错时（`publish_submission`、`requeue`），`TaskControls.not_queued` 把记录改成 `failed`（`没排上队，没有执行：<错误类型>`），卡换恢复卡（发不出卡就在话题里说一句），错误照旧抛给调用方；不留没人排的 `queued`（`restart_blockers` 会一直等它）。
 - 停止不只靠这一轮的线程：`cancel_reply_job_from_card` 设好 `cancel_event` 后、写卡和记录之前先 `hard_stop_later`，`HARD_STOP_AFTER`（5 秒）后后端进程还在就给它的进程组发 SIGTERM。平时这一轮的线程一两秒内自己看到停止、先关掉后端，这一下什么也不做；盘卡住时那条线程可能在记录锁上等几分钟，后端照样停。停止之后、后端还没做完时后端抛什么都按停止结算（`worker._turn_from_exception`）。
 - `SIGTERM` 是中断，不是停止（`app/runner.py` 的 `interrupt`）：没做完的一轮不结算（`leave_interrupted`），记录留在 `running`，退出后由 Bridge 标 `interrupted`；已做完的结果照常投递。
+- 同一个任务同时只有一个任务进程在跑（运行锁）：任务进程读到交接后、写任何东西之前对 `runner.lock` 加排他锁（`hold_run_lock`），一直持到退出，进程不管怎么结束，锁都由系统放掉。`RUN_LOCK_WAIT`（3 秒）内拿不到，说明这个任务已有一个任务进程在跑：它在 `runner.log` 记一行 `task runner job=#N pid=… ran nothing: another task runner holds its run directory` 就退出，不写 `runner.json`、`wake.json`、`done.json`、`exit.json`，不碰记录和卡。Bridge 看锁（`run_lock_held`）只试着加一下共享锁、马上放开，不建锁文件；任务进程加锁时会重试，不会因为碰上 Bridge 这一看就放弃。锁文件建不出来或文件系统不支持加锁时，任务进程记一行 `runs without a run lock` 照旧跑，只靠 Bridge 的判断（和没有运行锁之前一样）。同一进程问自己持有的锁不再打开文件：NFS 上锁属于进程，关掉同一文件的另一个描述符会把锁一起放掉。旧 release 的任务进程不加这把锁，对它们只有 `runner.json`、`wake.json` 两个文件说了算。
 - 没起来：`watch_until_exit` 看到任务进程没了，`relaunch_unstarted` 先再问一次它在不在，等 `RELAUNCH_DELAY`（2 秒）后在任务的锁里再问一遍，并重读记录：仍是 `queued`、目录里没有 `exit.json` 和 `done.json`、也没有这个任务的保存结果索引（`core/saved_results.py` 的 `run_began`）、收件箱是空的，才再起一次（每个任务一次，`runner_relaunched`），新进程的卡片 sequence 接着重读到的记录。结果分三种：还活着（`ALIVE`，日志 `task runner of job #N still alive: watched again`，回去接着看，不进 `finish_detached`）、再起了一个（`RELAUNCHED`）、都不是（`ENDED`，`finish_detached` 收尾）。不再起的（记录已不是 `queued`、已经再起过、收件箱里有东西）收尾前隔 `GONE_AGAIN`（0.5 秒）再看一次（`_gone`），`release_done` 等上传完的那条线程也一样：一次看的几回读都失败，不能把活着的任务进程的任务标成中断。`start_runner` 抛错时 `not_started` 把记录写成 `failed`（`runner_start_failed`）并出恢复卡。`start_runner` 清目录前先看里面有没有活着的任务进程（`runner_here`），有就什么都不动、抛 `RunnerAlive`：再起时当作还活着，第一次交接时当作认领到的接着看，不碰它的记录。目录里没有 `handoff.json` 的活进程不算：那是还在等自己那份交接的预先拉起的进程（它的 Bridge 写完 `runner.json` 没来得及写交接就停了），什么都不跑，30 秒后自己退出，也不接不写着它的交接。
 - `done.json`：Bridge 见到它（`job_done`）先交还调度槽位，同话题的下一条照常进行；点击仍转给活着的任务进程；outbox 和自动重试等它退出。
 - 遗留进程：任务进程把 `COVEY_TASK_DIR` 设为运行目录，每条命令都继承。后端返回后 `app/leftovers.py` 用 `core/task_processes.py` 找出带标记、已脱离任务进程的存活进程：搜索工具（`SEARCH_TOOLS`）先 SIGTERM 再 SIGKILL，其余只在执行过程里列出。内存看门狗也读这个标记，把告警发到任务所在的话题。
-- `runner_alive` 要求 pid 的启动时间、boot ID 和记录一致且 cmdline 含运行目录。读 `runner.json` 失败（`OSError`，或 JSON 不完整）而目录还在时，隔 10、40 毫秒再读（`read_steady`，`READ_PAUSES`），目录不在不等；认领时读 `handoff.json`、任务进程读交接、`end_stranded` 也这样读。决定再起一个或收尾的地方（`watch_until_exit`、`relaunch_unstarted`、`start_runner`、`prestart_runner`）用 `runner_here`：`runner.json` 说不活时，再看 `wake.json` 写的进程。
+- `runner_alive` 要求 pid 的启动时间、boot ID 和记录一致且 cmdline 含运行目录。读 `runner.json` 失败（`OSError`，或 JSON 不完整）而目录还在时，隔 10、40 毫秒再读（`read_steady`，`READ_PAUSES`），目录不在不等；认领时读 `handoff.json`、任务进程读交接、`end_stranded` 也这样读。决定再起一个或收尾的地方（`watch_until_exit`、`relaunch_unstarted`、`start_runner`、`prestart_runner`），以及重启认领（`adopt_runners`）和 Bridge 正看着的任务的点击转发（`runner_for`）用 `runner_here`：`runner.json` 说不活时，再看 `wake.json` 写的进程，最后看运行锁有没有人持着。前两个都是读 NAS 上的文件，ByteFuse 上读一次可能失败；锁不靠读文件，所以几次读都失败时 Bridge 也不会把还在跑的任务进程当成没了，清它的目录再起一个（两个任务进程写同一张卡，卡片更新会被飞书以 300315 Duplicate ID 反复拒绝）。
 - 到点回来看（`COVEY_REVISIT=1`，`app/revisits.py`）：一轮结束后 Bridge 读它检查点的 `revisit`（几分钟后、看什么），写 `revisits/<话题>.json`；`revisits` 线程每 30 秒看一遍，到点且话题没有在跑、排队或等回答的任务时，先在锁内记 `fired` 和这一轮的消息 ID（`revisit-…`），再在锁外像 `app/project_loop.py` 叫醒负责人那样把它当话题里的一条消息入队；记了没入队的 120 秒后重排，Bridge 停着时结束的那一轮由线程补结算。检查点写 `"unchanged": true` 又约了下一次的那一轮，任务进程里 `TurnDelivery` 不发（`revisits.silent`，同专项叫醒的 `silent`，保存的回复算已投递，也不回带）。没有变化以外的结果、最后一次和第 24 次照常投递。
 
 ### 重启认领
@@ -170,7 +192,7 @@ continued、done、failed、cancelled、interrupted：终态
 `UnifiedBridgeApp.main` 先拿状态目录的实例锁，迁移旧记录（`core/migrate.py`），在后台线程预读任务和问题记录（`warm_records`，下面第 1 步要读全部，和 `init_target` 的飞书调用同时读），再 `init_target` 核对应用身份；开着 `COVEY_EVENT_TRANSPORT=sdk` 时紧接着连上事件长连接（`start_intake`，见[事件长连接走 SDK](#事件长连接走-sdk默认关)）。然后：
 
 1. `recover_question_delivery` 核对问题记录；`recover_worktree_launches` 把建 worktree 时被打断的启动卡换回表单。
-2. `adopt_runners` 按 `handoff.json` 认领存活任务进程，往 inbox 写 `bridge_restarted`；再排上 `queued/` 里的任务。
+2. `adopt_runners` 按 `handoff.json` 认领存活任务进程（`runner_here`：`runner.json` 写的那个进程没了，`wake.json` 或运行锁说还有一个在跑也认领），往 inbox 写 `bridge_restarted`；再排上 `queued/` 里的任务。
 3. `recover_stale_jobs` 把其余未结束记录标 `interrupted`；`close_retired_jobs`；`release_started_launches` 排上已绑定话题里还在 `waiting_workspace` 的消息；`queue_stranded` 排上任务进程留下的补充；`end_stranded` 补做 `turn-ends/` 里任务进程在没有 Bridge 看着时退出的那几轮的收尾（`after_job`，日志 `turn end run at start job=#N`），只读这一个通常为空的目录。
 
 这三步做完才起后台线程和事件消费者：认领、标中断和核对问题都要在处理第一个点击或消息之前。所以这几步的耗时，就是重启后点卡片没反应（lark-cli 收事件）或先收下、稍后才处理（SDK 收事件）的时间。为让它在几秒内，这几步遵守：
@@ -287,7 +309,30 @@ CardKit 只接受比同一张卡已有写入（含结果不确定的）都大的
 - **查找**：`COVEY_EXTENSION_PATH`（`os.pathsep` 分隔的目录），没设时是仓库根的 `extensions/`。有启用的包时才把这些目录幂等地放到 `sys.path` 前面。
 - **`<包>.manifest`**：只放纯数据（`dict`、`list`、`str`），不导入 `covey`（它会被扩展的隔离解释器里的 `core/roster.py` 间接导入，也要避免循环）。可选的几项：`HARNESSES`（名字 → `module`、`store`、`store_module`、`live_questions`、`paused_questions`、`after`、`devices`，字段同 `RosterEntry`；`devices` 为真时它的进程要经 `core/process.py` 的 `spawn_process` 带上下文起、不在本机路径里留这一轮的东西，设备才能声明它；`after` 是它在 `NAMES` 里排在哪个 Harness 之后，启动卡和换配置卡的 Harness 顺序跟着它，不写就接在最后）、`PROVIDERS`（字典列表，字段同 `Provider`）、`RETIRED_PREFIXES`、`RETIRED_HARNESSES`，以及核心读的几张小表：`WORK_MODES`（模式 ID → [名称, 说明]）和 `DEFAULT_WORK_MODE`（`core/defaults.py`）、`AGENT_DIRS`（Agent 在工作区里放工作副本的隐藏目录，`app/artifact_policy.py` 不上传）、`IGNORED_ENV`（不再读取的变量 → [Harness, 替代选项]，`core/ignored_env.py`）。`core/roster.py`、`core/providers.py` 的纯函数 `merged` 把它们接在核心表后面，`NAMES`、`LIVE_QUESTIONS`、`PAUSED_QUESTIONS` 从合并后的表派生。
 - **`<包>.features`**（可选）：`features(app)` 返回功能对象的列表，形状同 `app/unified.py` 的 `self.features`：可有 `threads()`、`menu_items()`、`menu_folds()`；排在核心功能后面。
-- **钩子和设置**（`core/extensions.py` 的 `HOOK_NAMES`、`SETTING_NAMES`）：manifest 的 `HOOKS`（钩子名 → 包内模块的点分名）让核心在需要时才导入那个模块：`proxy_sender`（`app/proxy.py`：代答发送器，有 `Sender`、`ProxyLogin`、`tool_dir`、`send_problem`）、`service_hosting`（`service/install.py`：`MODES` 模式名 → `install(root, args)`，`add_arguments(parser)`，可选 `auto_mode()` 适用时返回模式名，给 `--mode auto` 用）、`deploy_check`（`service/plugins.py` 的 `deploy-check`：`check(harness_config)` 返回 `{'problems': [...], 'notes': [...]}`，在要部署的 release 里跑，`scripts/deploy_bridge.sh --ext-repo` 的预检有问题就拦下；每个启用的包都问，用 `extensions.hooks(名字)`，不只取第一个）、`claude_turn`（`backends/claude/bridge.py`：包裹单轮 Claude Code 的上下文管理器 `turn(ctx, env, run_id=...) -> (ctx, env)`，在 `run`、`compact_session` 和 `handoff_summary` 外层执行；每个启用的包都包一层（`extensions.hooks`），先启用的在外层，每层拿到外面那层给的 `(ctx, env)`；若写入 `SETTINGS_ENV` 的 `ANTHROPIC_BASE_URL`，脱敏中继自动串在其内层；若在 `ctx.options` 的 `claude_turn_hooks`（`backends/claude/argv.py` 的 `TURN_HOOKS`）放 Claude Code 的 hooks（事件名 → matcher 组的列表，和 Claude Code 的 settings 同一写法），它们并进这一轮唯一的 `--settings`，代答轮（只有它的工具守卫）和协作咨询轮不加）、`agy_turn`（`backends/agy/bridge.py`：包裹本机一轮 Antigravity 的上下文管理器 `turn(ctx, env, run_id=...) -> (env, switch)`，`env` 是第一个 agy 进程的环境；某个进程以额度用完、限流或没登录失败（`SWITCHED`）时问 `switch(failure)`，给回 `(env, note)` 就在那个环境里接着同一个对话、`note` 写进执行过程，`None` 照旧失败；一轮最多换 `MAX_SWITCHES` 次，设备上的轮次不问；管家那一轮的私有主目录叠在钩子给的 HOME 上，换环境时重建。核心不认识账号，几个 Google 账号怎么轮换是扩展的事，见 [harnesses.md](harnesses.md#antigravity)）。`SETTINGS`（名字 → str）给核心几处写死过的部署细节：`web_tenant_domain`、`contact_notes`、`contact_notes_dir`、`contact_notes_hint`、`invite_url`（别人私聊时那句话里的安装说明链接，`app/strangers.py`），以及共享盘上才用得着的搜索规则 `search_rules`（桥接规则里讲限定搜索范围、按进程组停命令的几行，每行一条，替换核心的一句“搜索限定目录并设超时”，`app/prompts.py` 的 `search_rules`）和 `search_reminder`（续接轮提醒里的那一句，`resume_reminders`）；核心不认识的名字会让 manifest 读不进来，所以扩展要在带这两个名字的核心之后才加。也可以放包自己的 `<包名>.<名字>`（`setting` 照读，扩展自己用）。`extensions.hook(名字)` 没有扩展提供时是 `None`，`extensions.setting(名字, 默认)` 给默认值。没有发送器时不起代答后台线程、没有菜单项和设置卡标签；没有 `service_hosting` 时安装器只有 `--mode systemd|launchd|manager|auto`（见 [服务托管](operations.md#服务托管)）。
+- **钩子和设置**（`core/extensions.py` 的 `HOOK_NAMES`、`SETTING_NAMES`）：manifest 的 `HOOKS`（钩子名 → 包内模块的点分名）让核心在需要时才导入那个模块：`proxy_sender`（`app/proxy.py`：代答发送器，有 `Sender`、`ProxyLogin`、`tool_dir`、`send_problem`）、`service_hosting`（`service/install.py`：`MODES` 模式名 → `install(root, args)`，`add_arguments(parser)`，可选 `auto_mode()` 适用时返回模式名，给 `--mode auto` 用）、`deploy_check`（`service/plugins.py` 的 `deploy-check`：`check(harness_config)` 返回 `{'problems': [...], 'notes': [...]}`，在要部署的 release 里跑，`scripts/deploy_bridge.sh --ext-repo` 的预检有问题就拦下；每个启用的包都问，用 `extensions.hooks(名字)`，不只取第一个）、`claude_turn`（`backends/claude/bridge.py`：包裹单轮 Claude Code 的上下文管理器 `turn(ctx, env, run_id=...) -> (ctx, env)`（每个启用的包都问，按启用顺序嵌套），在 `run`、`compact_session` 和 `handoff_summary` 外层执行；每层拿到外面那层给的 `(ctx, env)`；若写入 `SETTINGS_ENV` 的 `ANTHROPIC_BASE_URL`，脱敏中继自动串在其内层；若在 `ctx.options` 的 `claude_turn_hooks`（`backends/claude/argv.py` 的 `TURN_HOOKS`）放 Claude Code 的 hooks（事件名 → matcher 组的列表，和 Claude Code 的 settings 同一写法），它们并进这一轮唯一的 `--settings`，代答轮（只有它的工具守卫）和协作咨询轮不加）、`agy_turn`（`backends/agy/bridge.py`：包裹本机一轮 Antigravity 的上下文管理器 `turn(ctx, env, run_id=...) -> (env, switch)`，`env` 是第一个 agy 进程的环境；某个进程以额度用完、限流或没登录失败（`SWITCHED`）时问 `switch(failure)`，给回 `(env, note)` 就在那个环境里接着同一个对话、`note` 写进执行过程，`None` 照旧失败；一轮最多换 `MAX_SWITCHES` 次，设备上的轮次不问；管家那一轮的私有主目录叠在钩子给的 HOME 上，换环境时重建。核心不认识账号，几个 Google 账号怎么轮换是扩展的事，见 [harnesses.md](harnesses.md#antigravity)）。`SETTINGS`（名字 → str）给核心几处写死过的部署细节：`web_tenant_domain`、`contact_notes`、`contact_notes_dir`、`contact_notes_hint`、`invite_url`（别人私聊时那句话里的安装说明链接，`app/strangers.py`），以及共享盘上才用得着的搜索规则 `search_rules`（桥接规则里讲限定搜索范围、按进程组停命令的几行，每行一条，替换核心的一句“搜索限定目录并设超时”，`app/prompts.py` 的 `search_rules`）和 `search_reminder`（续接轮提醒里的那一句，`resume_reminders`）；核心不认识的名字会让 manifest 读不进来，所以扩展要在带这两个名字的核心之后才加。也可以放包自己的 `<包名>.<名字>`（`setting` 照读，扩展自己用）。`extensions.hook(名字)` 没有扩展提供时是 `None`，`extensions.setting(名字, 默认)` 给默认值。没有发送器时不起代答后台线程、没有菜单项和设置卡标签；没有 `service_hosting` 时安装器只有 `--mode systemd|launchd|manager|auto`（见 [服务托管](operations.md#服务托管)）。
+- **自己的模型来源走扩展**（例如让 Claude Code 经自己的中转、包装命令跑一组模型，和官方账号并存、按话题选；核心不恢复已下线的 Claude 网关档位，见 [legacy.md](legacy.md)）：三步都在扩展里。① manifest 的 `PROVIDERS` 为 `claude` 声明一个带 `prefix` 的供应商，这组模型的 slug 都以它开头，核心据此给模型标签；这个来源就是 Claude Code 自己登录的那个账号时（比如本机 Claude Code 本来就登录在这个中转上），写 `"own_login": True`，模型选择里两者只列一次、用这个供应商的名字（`core/same_account.py`，同一账号不拆成两个供应商）；② `claude_models` 钩子（`backends/claude/models.py` 的 `with_extension_models`）的 `models()` 返回 `catalog_row` 形状的行，并进 Claude 的模型目录（启动卡、换配置卡的选项）；slug 不以**同一个包**为 `claude` 声明的前缀开头的行丢掉并记一次日志，钩子抛错或超过 5 秒也只记一次日志、不影响原生目录，目录里已有的 slug 不被覆盖；③ `claude_turn` 钩子按 `ctx.model` 换 `ctx.backend_cmd`、环境和真正发给 Claude Code 的模型名，核心只把所选模型照常放进 `ctx.model`，不解释它们。多个包都有 `claude_turn` 时全部生效，按启用顺序嵌套（排前面的在外层，最后一个包改过的 `ctx` 和环境到达 Claude Code），所以每个包只改自己的模型，不认识的 `ctx.model` 原样放行。没有包提供时目录和一轮的行为不变。最小示例（路径是占位）：
+
+  ```python
+  # /absolute/extensions/acme_relay/manifest.py
+  PROVIDERS = [{"key": "acme", "harness": "claude", "name": "Acme", "prefix": "acme/", "access": "包装命令 /absolute/bin/acme-claude"}]
+  HOOKS = {"claude_models": "acme_relay.models", "claude_turn": "acme_relay.turn"}
+
+  # /absolute/extensions/acme_relay/models.py
+  from covey.backends.claude.models import catalog_row   # 扩展可以导入 covey
+  def models():
+      return [catalog_row("acme/sonnet-x", "Acme Sonnet X", "经 Acme 中转", ["low", "high"], "")]
+
+  # /absolute/extensions/acme_relay/turn.py
+  import contextlib, dataclasses
+  @contextlib.contextmanager
+  def turn(ctx, env, *, run_id=""):
+      if str(ctx.model or "").startswith("acme/"):
+          ctx = dataclasses.replace(ctx, backend_cmd=["/absolute/bin/acme-claude"], model=ctx.model.removeprefix("acme/"))
+          env = {**env, "ACME_TOKEN_FILE": "/absolute/acme.token"}
+      yield ctx, env
+  ```
+
+  个人扩展进 release：`scripts/deploy_bridge.sh --ext-repo` 可重复，每个扩展库一个（`--ext-commit` 按顺序配对），所以个人扩展可以放在自己的库里、和公司扩展一起部署；扩展库内的包由 `scripts/assemble_release.py` 放进 `extensions/`。部署侧细节（同名包冲突、启用写在哪）待在真实部署里核实。
 - **功能对象和卡片按钮**：包的 `features` 模块的 `features(app)` 返回功能对象，接在核心功能后面（后台线程、菜单项同核心功能）；这些对象还可以有 `handle_event(ctx, event, owner)`（顶层消息，在管家和话题路由之前，认领返回 True）、`claim(ctx, event, raw, owner)`（卡片点击，在核心控制器之前，不是自己的返回 `None`）和 `close()`（Bridge 停止时）。manifest 的 `CARD_KINDS`（按钮 kind → 名称）并进 `app/card_actions.py` 的 `ACTIONS`（`bot_only`）。已下线功能（如 Paseo）留下的兼容项：`app/card_actions.py` 的 `MOVED_CARDS` 让点旧卡片的人收到一句“已下线”，不崩溃、不执行；`core/extensions.py` 的 `RETIRED_ENV` 列出这些功能的环境变量，还设着时启动日志记一行、忽略。
 - **失败要响**：启用了的包导入失败、manifest 形状不对、Harness 名或供应商（Harness 加前缀）或已下线前缀与核心或别的扩展重复，都抛带包名的 `ExtensionError`，Bridge 启动即失败，不静默跳过。
 - **核心不按名字引用扩展**：核心代码里不出现扩展的包名、Harness 名或供应商；要区别对待靠 manifest 的字段、`HarnessSpec` 上的能力字段（`refuses_questions`：原生问题能否被拒绝；`native_default_model`：任务记录里的空模型是否表示后端自己的默认）或后端对象上的方法（模型目录菜单的 `catalog_hidden`、`catalog_live(models, state_dir)`、`catalog_view(models)`，由 `app/launch_models.py` 的 `catalog_filter` 读）。
@@ -314,6 +359,7 @@ CardKit 只接受比同一张卡已有写入（含结果不确定的）都大的
 - 交接摘要：旧绑定有会话、它的后端有 `handoff_summary`（Claude、Codex：`backends/<名字>/handoff.py`；Antigravity、dsh 的命令行只能续接、不能分叉，没有）时，`SwitchHandoff.summary` 经 `Topics.apps` 找到旧绑定的 app，按 `from` 的模型、预算、工作目录调它（本轮的 `cancel_event` 传进去），结果写 `handoff/summary-r<版本>.md`，同一版本再跑首轮时直接读文件；有摘要时原文只给 `SUMMARY_ROUNDS`（1）轮，没有时 `HANDOFF_ROUNDS`（3）轮，每条由 `capped` 截到 `MESSAGE_CHARS`。`from.redaction` 或话题现在的脱敏为真时经中继（读不出不做；Codex 不能脱敏，这时不写）。没有会话、后端不支持、`from` 没有 `redaction`（之前换的）、有 `rewind_keep`、原目录不在、本轮会被拒（`ready`：新工作目录不在、脱敏拒绝）、失败或超时都退回 3 轮，日志一行 `switch summary …`。旧会话不能再续接时也不分叉它（`refused_session`）：这个会话最近一轮任务的记录有 `policy_retry` 或 `policy_stop`（被安全拒绝停过，或是拒绝后换旧模型的重试，分叉会把被拒的对话再发给拒绝它的模型），或 `session_is_blocked`（`core/session_guard.py`，读不出也算）为真；`switch_topic` 记的是会话指针，策略守卫停下的会话被封但指针还在。这几种在任务卡上各有一行说明（`REFUSED`，按原因：`policy_stop` 的 `kind` 是 `refusal` 写“被安全拒绝停过”，是 `fallback` 写“因官方模型降级停过”，只有 `policy_retry` 写“是安全拒绝后换旧模型的重试”，会话被封写“已禁止续接”），然后退回 3 轮。`ready` 在 `refused_session` 之前看：本轮会被拒时不写这行，免得说原文交给了不会开跑的新模型。等摘要时任务卡执行过程里有一行机器人说明（`WAITING`），之后改成结果；等摘要时点了停止或收到 SIGTERM，说明改成“已停止，没有写交接摘要”（`STOPPED`），`Runs.generate_reply_for_worker` 在开跑前看到 `cancel_event` 就抛 `JobCancelled`，新 Harness 不启动，这一轮按停止或中断结束；中继统计里摘要单独一行（`run_id` 为 `handoff-r<版本>`）。
 - 交接块：`switch_handoff(show=)` 把 `cards/switch_form.py` 的 `handoff_block` 交给 `Runs._handoff_block`，它用 `Cards.set_task_element(before=<正文>)` 放在任务卡答案的上方，同一个 ID（`switch_handoff`）原地替换：等摘要时一次，交接完一次（有摘要时是折叠、点开是摘要，没有时写 `WHY_WORDS` 里的原因或后端给的结果，停了写已停止）；本轮会被拒（`ready` 为假）时不放。管家的窄卡不换配置，没有这一块。
 - 消息恰好在换配置时到达：`reserve_submission` 抛 `HarnessChanged`，`BridgeApp.handle_event` 按新绑定再路由一次。
+- 批量换配置（`app/batch_switch.py`、`cards/batch_switch.py`，[用法](usage.md#批量换配置)）：管家或负责人的 `topics_switch` 先逐个话题规划（`plan`：同 Harness 且没点名模型时沿用话题自己的模型，不查当天的菜单；否则照 `topic_start` 用 `butler_model_choice.resolve` 找模型和预算），写 `<state>/batch-switch/<请求 token>.json`，再在私聊发卡，同一请求再来只回存下的答复。点击在 `PANELS` 里认领（只认主人、一个事件一次），确认后在 `after_ack` 里逐个调 `switch_topic`：每行先记 `switching` 再换，结果记 `done`、`failed`（可“再试没换的”）或 `stale`（卡发出后 `harness_id` / `binding_revision` 变了，不再动它）；换配置不持这张卡的记录锁，卡用消息卡更新（`patch_card`）整卡重画。配置要有依据（`basis`），见[点名配置的依据](butler.md#点名配置的依据)。
 
 ### 回退一步
 
@@ -415,6 +461,17 @@ read、refused、withdrawn：终态
 
 ## 问题与回答
 
+### 什么时候问
+
+每一轮的执行约定（`core/checkpoint.py` 的 `CHECKPOINT_RULES`）里有两条管模型问不问：
+
+- `ASK_RULE`：部署上线和发布、删除和其他撤不回的操作、花钱、对外发送、占机器（`ASK_KINDS`，简称 `ASK_SHORT`）照常问，主人这一轮明说要自己定的也问；其余能撤回、有明确推荐的不问，按推荐做，结论里写一行“按 X 做了；要改成 Y，回一句就行”（有开关、配置项、提交号就写那个）。要问的留到最后合成一次问，不在半路停下来等。问题卡、Claude 的 `AskUserQuestion`、Codex 的 `request_user_input` 都照这条。
+- `PLAN_RULE`：主人要方案、设计、提案时，先交完整方案（推荐做法写全，缺的信息按假设写并标出），待定项列在方案后面，不先发问题卡问细节；待定项里有照常要问的那几类才进 `questions`。
+
+管家和负责人派活时不用自己写“别发问题卡”：开话题的工具说明（`core/butler_tool_specs.py` 的 `ASK_NOTE`，在 `topic_start`、`topic_fork`、`project_topic_start` 的 `prompt` 上）和负责人规则都告诉它话题自己知道什么时候问；负责人交给话题的 Bridge 说明（`app/butler_handoff.py` 的 `lead_note`）只点 `ASK_SHORT` 照常问。Bridge 不替模型答题，卡片也没有默认答案：这只是模型问不问的规则。问得多不多用 `scripts/question_stats.py` 比，见[运维 · 问题卡问得多不多](operations.md#问题卡问得多不多)。
+
+### 记录与状态
+
 用户看到的见[回答模型的问题](usage.md#回答模型的问题)。`questions/<token>.json`，token 是 `sha256(任务消息ID-request_id)` 的前 16 位。`core/statuses.py` 的 `QUESTION_TRANSITIONS`：
 
 ```text
@@ -441,6 +498,7 @@ cancelled、superseded：终态
 - 提交回答是表单唯一的发送按钮（只发补充说明、先问一句已并进来）：`interaction_action` 先过 `app/answers.py` 的 `with_note`，写了补充说明时没答的题记为“不回答此题”，只写补充说明就是每题都不答（`answer_message` 用 `UNANSWERED_NOTE` 做标题，告诉模型这可能是反馈、疑问或新要求）；没写补充说明时 `form_answers` 照旧要每题都处理。交不了（`AnswerIncomplete`）时 `refuse_on_card` 把点的那张卡（话题里的卡或顶层副本）原地重画，原因写在表单下，这次点击带的字段放进不存盘的 `draft`，重画时填回输入框和下拉框，打的字不丢；任务卡上的表单不单独重画，退回话题里的小卡（`show_answer_notice`）。旧卡上的只发补充说明（`bridge_question_skip`）和先问一句（`bridge_question_ask`）都走 `skip_all`：选了什么都不算，只发补充说明，补充说明是空的就在卡上拒绝并重画成新样子。
 - 不处理（`bridge_question_set_aside`，`Questions.set_aside`）：只在 `aside_offered` 为真的表单上（话题的问题，不是 `native_live_question`、`native_paused_question` 那种只等这一个回答的会话），和提交回答并排、一样宽的按钮。卡锁内 `pending → set_aside`，存下每题“不回答此题”的答案（`set_aside_answers`，即只写补充说明却没写补充说明）、`response_kind: set_aside`，什么都不发。读 `pending` 的地方（等我的 `asks`、`pending_questions`、话题消息当回答、暂存消息、收起旧问题、每日维护）自然都不再算它；网页把只剩它的 `waiting_user` 任务读成结束了的一轮（`core/board_read.py` 的 `set_aside`）。撤销（`bridge_question_restore`，`restore`）`set_aside → pending`，去掉存的答案和时刻。话题下一轮（`publish_submission` 里的 `acknowledge_waiting_answer` 先调 `take_set_aside`，话题锁内、只改记录）把它转 `answered`（`continuation_job_id` 是这一轮），请求前面加 `set_aside_message`，暂存消息照回答的样子 `claim_held` 一起带上，卡和暂存消息卡另起线程重画。`retire_open_questions` 连它一起作废。
 - 还有 N 件等你：主人自己答完一组题（`answered`，`response_kind` 不是反馈）或点了不处理（`set_aside`）后，`QuestionDisplay.paint` 在问题卡所在的私聊（或个人群）算一次 `overview.waiting_count`（`board_read.waits` 的 `count`，看板和手上的事数的同一个数）；不是 0 就把 `others_waiting`（不存盘）放进画卡的记录，`question_card` 在已答的卡下加一行灰字，有看板（`app_manifest.board`）时旁边「去看板」（`bridge_board_open`，`Digest.claim`：发一张新的看板卡）。点击重画（`clicked_card`、`copy_card`）不算这个数，那一次画出来的卡没有这行。
+- 样张（[UI 规范 · 改外观先选样张](ui.md#12-改外观先选样张)）：检查点问题的选项带 `sample`（卡片 JSON 文件的绝对路径）时，`CheckpointQuestions.defer` 用 `core/ui_samples.py` 的 `carry` 读一次文件，把清成点不动的元素存进问题记录代替路径；`question_card` 在第一道题上方画出各版（`with_samples`，整卡超大小从最后一版往前不画），答完就不画。带样张的问题不放在任务卡上（`deliver` 单独发卡），专项的话题问的不交负责人（`core/project_gates.py` 的 `SAMPLE`）。
 - 先问一句现在只在代发草稿卡上（[代答 · 代发](proxy.md#代发)）：`Questions.queue_ask` 把 `ask_message` 写进历史，`enqueue_chat_job(steer=True)` 排成消息 id 为 `ask-…` 的一轮；`acknowledge_waiting_answer` 见到 `ask-` 不动在等回答的任务。问题卡上的先问一句已去掉，旧记录里留下的 `asked_first` 不再读。
 
 ## 撤回与编辑
@@ -491,6 +549,16 @@ cancelled、superseded：终态
 - **outbox**：`app/outbox.py` 定时扫描已授权、未送达、未暂停、到时的记录，从不运行 Harness；可重试的失败指数退避，用完转 `paused` 等用户处理。
 - **自动重试**（`app/auto_retry.py`，见[自动重试](reference.md#自动重试)）按 `KINDS` 分限流、临时故障（`server_fault`）、本轮未全部完成、重启打断四种，各有次数上限，相加不相乘；做了实事的限流或故障重试把次数清零，在恢复时间重试后连续没有进展就停（`MAX_IDLE`）。恢复时间由 `core/limit_reset.py` 从 Claude 的输出读出，经 `RunResult.limit` 到 `plan`。到点时锁内 `pending` → `submitting`，锁外重试，状态只按 `AUTO_RETRY_TRANSITIONS` 前进；唯一例外是官方拒绝的停止直接转 `cancelled`。官方安全拒绝后换旧模型重试一次（`app/policy_retry.py`，[policy-stop.md](policy-stop.md#换旧模型重试一次)）不走 `auto_retry_state`，另用 `policy_retry_state` 和 `POLICY_RETRY_TRANSITIONS`（同样两步），由 `policy_retry.tick` 经 `TaskControls.requeue(fallback=…)` 排上。
 - **重跑还是拒绝**：什么都没保存的一轮按原快照重新排队；有保留候选的拒绝重跑；候选全部作废、从没授权过的（`withdrawn_unauthorized`）算没保存。各后端的投递不变量由 `test_backend_contract` 验证。
+
+## 等主人的账
+
+等主人的事（等你、停住了、可能卡住、有结果）记在一本账上，看板、手上的事、早晚汇总、网页和管家的快照都从它数，同一时刻说同一个数；每件事一条，带着打开它的那张卡。Bridge 定时对账：账上有、聊天里没有卡的，再发一次，发了几次、发出几次都记下来，诊断里查得到。
+
+- **账**（`app/owner_ledger.py` 的 `of`）：从读者已经做过的那次看板读取（`app/pins.py` 的 `PinnedTopics.look`）出发，取等我（`core/board_read.py` 的 `waits`）、要你处理（`Asks`：主人私聊里带整理专项等你定的提议，群里没有）和有结果（`unseen`）。每件事一条（`core/owner_ledger.py` 的 `Entry`）：`what`（问题、等开始、提议、停住的结果、护栏停住的专项、可能卡住、没看的结果）、稳定的 `key`（`what:id`）、话题、从什么时候起、打开它的卡。话题停住的结果算停住了，不再算有结果。`counts` 和各卡顶上的数一致（`tests/test_owner_ledger.py`、`tests/test_unseen_results.py` 的 `test_the_ledger_is_what_every_card_counts` 核对）。
+- **没到聊天里的卡**（`unshown`）：问题还在等主人答，没交给负责人分流（不是 `held`，负责人答过的也不算），问了至少 `GRACE`（180 秒），不超过 `MISSING_AGE`（2 天），但卡从没发出去（`display_pending`，或没有 `question_message_id`）。`board_read.asks` 对它是假，所以以前哪张卡都不数它，也没人补发，主人就看不见。现在它作为 `missing` 记在账上，卡到了之前不计数。
+- **对账**（`Reconcile`，`owner-ledger` 后台线程，`COVEY_LEDGER_RECONCILE` 秒一次，默认 300，`0` 不起线程）：对主人私聊和每个个人群做一次账，把计数和缺卡写进 `<state>/owner-ledger.json`。缺的卡用它自己的 Harness 再发一次（`app/triage.py` 的 `show`：在跑的问题交给任务进程发，检查点问题由 Bridge 发，并补顶层副本），发出去后把因为卡没到而记成失败的任务改回等回答（`mend`）。三种不归对账发：交给主人但卡没到的分流问题，归 `app/triage.py` 的定时扫；要先送结果的，归 outbox；任务已经不再等它的，归过期关闭。
+- **补发只做有限次**：每次先在记录里记一次尝试，再在锁外发；发完记结果（发出 / 没发出和原因），持记录锁时不发飞书请求（规则 1、2）。同一张卡最多 `TRIES`（3）次，两次之间隔 `RESEND_EVERY`（600 秒）；发出过的不再发。记录只有 Bridge 写，保留最近 200 条尝试，`totals` 一直累计。
+- **查**：设置卡「诊断」和 `covey_doctor.py` 的摘要多一行“等你的事”，有缺卡、补发没发出时标橙（`service/doctor.py` 的 `ledger_row`）；`python3 -B bin/covey_ledger.py --state-dir <状态目录> [--json]` 只读列出按记录现在数到的每件事、上次对账缺的卡和每次补发。
 
 ## 代答
 
@@ -632,8 +700,8 @@ cancelled、superseded：终态
 - **看板** `core/board_read.py` 的 `groups` 收一个 `cells`（`read` 带，来自 `core/projects.py` 的 `cells`，没取消的专项的话题 → 负责人 id）：一个专项一格，格的键是负责人话题 id。同一格里最新的问题在等；在做的取先在跑再排队、再取最新（任务号是 Bridge 的全局计数，跨话题也能比）；结果取各话题最新一条里“主人没看过的最后结束的那条”，没有就取最后结束的。所以一条没看过的旧结果不会被一条看过的新结果盖掉，但一格只钉一个。手上的事、早晚汇总直接读任务记录，现在还不并格。
 - **负责人的运行**（`app/project_lead.py`、`app/project_tools.py`，只在 `is_lead` 的话题里）：
   - **一轮** `butler_turn` 对负责人走 `lead_turn`：消息头是 `lead_rules`（身份、工具、风格、留给第 3 期专员的做法层 `PRACTICE`，分层拼接）加**状态包**（目标与完成标准、话题清单：状态、一句话、交付物，专项记忆（含近 30 天主人删掉的，别记回去）、资料库索引（`COVEY_PROJECT_MEMORY=1` 才有）、风格、自上次唤醒以来的收件箱、近 10 条决定），再是这一轮自己的消息。新会话给全部，续接的会话只给会变的部分（话题清单、风格、收件箱、决定）。
-  - **会话只是缓存**：不做摘要压缩（`compact_butler` 跳过负责人）。上一轮 `input_tokens` 超 15 万、话题空闲超 24 小时、或换了模型，`worker` 的 `_start_turn` 经 `settle_session` 清掉会话指针，这一轮新开会话、状态包给全。
-  - **工具**：负责人只读（`core/harness.py` 的 `LEAD`，各 Harness 自己落实）：Claude Code 只给内置的 `Read`、`Grep`、`Glob`（`backends/claude/argv.py` 变成 `--tools`；MCP 工具不属内置工具，不受影响），Codex 跑只读轮（`backends/codex/bridge.py`，Bridge 工具服务设成自动批准），Antigravity 带只拒写文件、跑命令和读网址的规则（`backends/agy/bridge.py` 的 `READ_ONLY_SETTINGS`），DeepSeek Harness 用 read-only 权限预设（`backends/dsh/bridge.py` 的 `LEAD_ARGS`）；再加 Bridge 工具 `topics_list`、`topic_read`、`topics_search`、`workspaces_list` 和 `project_*`。MCP 配置里有 `COVEY_PROJECT_LEAD`（专项 id）时服务只列这些，管家的列表一个字不变。`project_topic_start`、`project_topic_send` 走 `butler_topics` 的 `topic_start`、`topic_send`（负责人的任务调用时开出来的话题带 `project: {role: thread}`，写在绑定里，第一轮排队之前；同时在做的话题不设上限，风格里也没有“派活”档，旧记录的 `style.spawn` 照读不用）；`project_topic_send` 发给还不在任何专项的普通话题时，先用 `app/projects.py` 的 `join_topic`（`by: lead`）把它收进本专项再加话（`app/project_tools.py` 的 `take_in`；别的专项的话题、负责人话题、管家、代答话题和主人移出过专项的 `never_auto` 话题拒绝），负责人规则要它派活前先看专项里和私聊里已有的话题，能追加就追加；`project_topic_stop` 停专项里的一个话题（主人对管家说“停掉 T1”，管家用 `project_send` 交给负责人）：先用 `project_cards.stop_tasks` 停它排队和在跑的任务（转给任务进程，同停止专项），再用 `binding.retire_open_questions` 收掉它等主人回答的问题（`cancel_reason: lead_stop`，卡上写“负责人按你的意思停了这个话题”）并把等回答的任务记录记为 `cancelled`；话题仍在专项的话题清单里、算结束，只能停本专项的话题，专项已结束时拒绝；`project_note`（专项卡上一句，`report` 标要告诉主人的，按风格过滤）、`project_goal`（负责人写给主人看的目标和完成标准，记在 `lead_goal`，网页专项标题下显示它；记录的 `goal` 仍是开专项时的话，状态包里没写过就提醒一句）、`project_remember`、`project_style`、`project_finish`（还有话题在做时拒绝）写记录的 `notes`、`decisions`、`style`，`project_remember`、`project_style` 的记忆条目写进 `projects/<id>/memory.json`（见下面“记忆”）；`project_answer`、`project_escalate`（问题分流，`COVEY_PROJECT_TRIAGE=1`）只在开关开着时列给负责人，关着时直接调也只回答“问题分流没有开”（见下面的问题分流）。开协作（`COVEY_COLLAB=1`）时多一个 `project_checklist`（目标检查表，纯函数在 `core/project_checklist.py`），`project_finish` 多第三道门 `checklist_gate`（还有没满足的条目或没处理的协作缺口就拒），`project_answer` 要写 `evidence`，由 `app/triage.py` 的 `grounds` 逐条核对；同样只在开着协作时，`project_goal` 多可选的 `background`，`project_checklist` 多 `actions`，`project_topic_start`、`project_topic_send` 多可选的 `action`、`item`（项目简报，纯函数在 `core/project_actions.py`：动作的增改校验、不存的状态、话题挂到动作和条目上）；使用者看到的见[负责人对照目标跟进](projects.md#负责人对照目标跟进)和[分流的依据](projects.md#分流的依据)。
+  - **会话只是缓存**：不做摘要压缩（`compact_butler` 跳过负责人）。上一轮结束时对话超 30 万（`context_tokens`，下一个请求从这么长开始；不看 `input_tokens`，那是这一轮每个请求各读一遍对话加起来的，一轮几十个请求就远超，负责人会每轮新开会话、吃不上缓存；旧记录没有 `context_tokens` 时才用它）、话题空闲超 24 小时、或换了模型，`worker` 的 `_start_turn` 经 `settle_session` 清掉会话指针，这一轮新开会话、状态包给全。
+  - **工具**：负责人只读（`core/harness.py` 的 `LEAD`，各 Harness 自己落实）：Claude Code 只给内置的 `Read`、`Grep`、`Glob`（`backends/claude/argv.py` 变成 `--tools`；MCP 工具不属内置工具，不受影响），Codex 跑只读轮（`backends/codex/bridge.py`，Bridge 工具服务设成自动批准），Antigravity 带只拒写文件、跑命令和读网址的规则（`backends/agy/bridge.py` 的 `READ_ONLY_SETTINGS`），DeepSeek Harness 用 read-only 权限预设（`backends/dsh/bridge.py` 的 `LEAD_ARGS`）；再加 Bridge 工具 `topics_list`、`topic_read`、`topics_search`、`workspaces_list`、`topics_switch`（只发批量换配置卡，主人确认才换，只能换本专项的话题；`core/butler_tool_specs.py` 的 `LEAD_SHARED`）和 `project_*`。MCP 配置里有 `COVEY_PROJECT_LEAD`（专项 id）时服务只列这些，管家的列表一个字不变。`project_topic_start`、`project_topic_send` 走 `butler_topics` 的 `topic_start`、`topic_send`（负责人的任务调用时开出来的话题带 `project: {role: thread}`，写在绑定里，第一轮排队之前；同时在做的话题不设上限，风格里也没有“派活”档，旧记录的 `style.spawn` 照读不用）；`project_topic_send` 发给还不在任何专项的普通话题时，先用 `app/projects.py` 的 `join_topic`（`by: lead`）把它收进本专项再加话（`app/project_tools.py` 的 `take_in`；别的专项的话题、负责人话题、管家、代答话题和主人移出过专项的 `never_auto` 话题拒绝），负责人规则要它派活前先看专项里和私聊里已有的话题，能追加就追加；`project_topic_stop` 停专项里的一个话题（主人对管家说“停掉 T1”，管家用 `project_send` 交给负责人）：先用 `project_cards.stop_tasks` 停它排队和在跑的任务（转给任务进程，同停止专项），再用 `binding.retire_open_questions` 收掉它等主人回答的问题（`cancel_reason: lead_stop`，卡上写“负责人按你的意思停了这个话题”）并把等回答的任务记录记为 `cancelled`；话题仍在专项的话题清单里、算结束，只能停本专项的话题，专项已结束时拒绝；`project_note`（专项卡上一句，`report` 标要告诉主人的，按风格过滤）、`project_goal`（负责人写给主人看的目标和完成标准，记在 `lead_goal`，网页专项标题下显示它；记录的 `goal` 仍是开专项时的话，状态包里没写过就提醒一句）、`project_remember`、`project_style`、`project_finish`（还有话题在做时拒绝）写记录的 `notes`、`decisions`、`style`，`project_remember`、`project_style` 的记忆条目写进 `projects/<id>/memory.json`（见下面“记忆”）；`project_answer`、`project_escalate`（问题分流，`COVEY_PROJECT_TRIAGE=1`）只在开关开着时列给负责人，关着时直接调也只回答“问题分流没有开”（见下面的问题分流）。开协作（`COVEY_COLLAB=1`）时多一个 `project_checklist`（目标检查表，纯函数在 `core/project_checklist.py`），`project_finish` 多第三道门 `checklist_gate`（还有没满足的条目或没处理的协作缺口就拒），`project_answer` 要写 `evidence`，由 `app/triage.py` 的 `grounds` 逐条核对；同样只在开着协作时，`project_goal` 多可选的 `background`，`project_checklist` 多 `actions`，`project_topic_start`、`project_topic_send` 多可选的 `action`、`item`（项目简报，纯函数在 `core/project_actions.py`：动作的增改校验、不存的状态、话题挂到动作和条目上）；使用者看到的见[负责人对照目标跟进](projects.md#负责人对照目标跟进)和[分流的依据](projects.md#分流的依据)。
   - **记忆** `projects/<id>/memory.json`（`core/project_memory.py`，只用标准库；使用者怎么看见见 [projects.md 专项记忆与资料库](projects.md#专项记忆与资料库)）：条目 `{id, text, kind, source, at, deleted}`，格式和旧版一样；`kind` 是 `decision`、`constraint`、`contact`、`fact`、`style` 之一（负责人工具旧名 `practice`、`pitfall` 记成 `constraint`），`source` 是写进来的那条路定的（`lead`、`owner`、`owner_answer`、`owner_fix`，模型说什么都不算）。
     - **限额与删除顺序**：一条至多 200 字（`TEXT`），问答的一条至多 600 字（`ANSWER_TEXT`）；活条目至多 120 条（`MAX_ENTRIES`）、文件至多 64 KB（`MAX_BYTES`），墓碑至多 20 个、30 天后清掉。超了按 `VICTIMS` 的顺序删最旧的：墓碑、问答（`owner_answer`、`owner_fix`）、负责人记的事实和联系人、负责人记的其他条目、主人自己的话，风格行（主人最后一次定的汇报风格）从不删。删活条目不是丢：连同它的旁路字段写进 `memory-archive.json`（留最近 300 条，`ARCHIVE_ENTRIES`），这个文件读不出来时这次写入失败、记忆保持原样。用户的“删”写墓碑（`deleted` 是删的时间，文字留着），状态包列出近 30 天的墓碑，负责人的 `project_remember` 也拒绝记回去。
     - **旁路与按题留底**：旧版本不认识的东西写在旁边的 `memory-meta.json`（条目 id → `META_KEYS`：出处 `origin`、`asserted_by`、`recorded_by`、层 `layer`、`applies`、`valid`、`superseded_by`、`fixes`），旧版本改写 `memory.json` 丢不掉它们；旧版本不读也不写 meta、archive 和 `answers/`。你答问题卡，每道答了的题记一条决定（`kind=decision`、`source=owner_answer`，条目 id 是问题记录的标识加题号，同一份回答只记一次、删掉的不再记回来），整份问题记录原样存进 `answers/<token>.json`（`answer_record`），条目文字截短了也能查回原文。
@@ -771,7 +839,7 @@ cancelled、superseded：终态
 已实现（`app/butler_asks.py`，`COVEY_PROJECTS=1` 且管家开着；使用者怎么看见见[在话题里说开专项](projects.md#在话题里说开专项)）：
 
 - 话题在这一轮的检查点里写 `ask_butler`：`{ask, why}`，只写要办什么和自己的理解。这条规则（`RULE`）只放进主人发起的那一轮的消息（`offered`）。
-- Bridge 先核对这一轮是主人发起的（`direct`）：任务的消息是 Bridge 收进来的主人消息（飞书消息 `om_…` 的发送者是主人，或网页 `say` 的 `web-…`），来源是旧来源或 `owner`。唤醒轮、协作轮、到点回来看、回答的续接（`answer-…`）、管家和负责人转来的（`main-…`）、自动重试（`app/auto_retry.py` 的计数、`policy_retry`）都不能转交；自动重试写了的，话题串里说一句没转。
+- Bridge 先核对这一轮是主人发起的（`direct`）：任务的消息是 Bridge 收进来的主人消息（飞书消息 `om_…` 的发送者是主人，或网页 `say` 的 `web-…`），或主人自己对这个话题问题的回答（`answer-<token>`，`owner_answer`：问题记录在，回答不是管家的 `question_answer`（`main-…`）也不是负责人的 `project_answer`（`lead-…`、分流记成负责人答了）），来源是旧来源或 `owner`。唤醒轮、协作轮、到点回来看、管家或负责人替主人答的题、管家和负责人转来的（`main-…`）、自动重试（`app/auto_retry.py` 的计数、`policy_retry`）都不能转交；自动重试写了的，话题串里说一句没转。回答转交的，`handover` 的 `origin` 另带问题的 `question`。
 - 核对过的，Bridge 先在私聊顶层发一条机器人的文字消息（“↪ T12 转给管家”“你在 T12 说：<原话>”“T12 的理解：<ask>”），再在这条消息上给管家排一轮（`queue_turn`：`keep_topic`、记成管家的消息、写历史、`enqueue_chat_job`），来源是 `handover`：`asserted_by` 是 `owner`，`recorded_by` 是 `bridge`，`origin` 是那个话题和主人那句话的消息 id，`level` 是 `owner`。`handover` 不进在跑的管家那一轮（`steers` 为假），排在它后面。管家读到的是主人原话（按消息 id 从话题的历史取，`owner_words`；取不到用任务记录），话题的理解只作附注；管家照常判断（规则 `app/prompts.py` 的 `ASKED_RULE`），开专项仍走它自己的工具（`topic_start` 带 `project`），归进已有专项用 `project_send` 的 `topics`。
 - `handover` 在 `RUNS` 里。比兼容基线早的 release 不认识 `turn_source`，照主人的消息跑；兼容基线那一版认识它但不在 `RUNS`，回滚到它时排着的转交轮记为取消、不跑。
 

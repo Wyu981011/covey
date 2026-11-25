@@ -28,6 +28,7 @@ from covey.core.attachments import (ATTACHMENTS_HEADER, FAILED_HEADER, ListedAtt
 from covey.core.deliveries import CLOCK_SLACK, read_delivery
 from covey.core.jobs import find_job_record
 from covey.core.butler import butler_topic_id
+from covey.core.checkpoint import ASK_SHORT
 from covey.core.metrics import timings_of
 from covey.core.state import ensure_private_dir, epoch_seconds
 from covey.core.text import stamp
@@ -240,7 +241,10 @@ def _spaced(name):
 def lead_note(kind, name, project, noun) -> str:
     """The note when the lead of the project ``project`` (a name) hands the work on: the topic is one of that project's topics."""
     head = f"{NOTE} 你在{noun}{name}，这是专项「{project}」的一个话题。"
-    done = "你的回复就是这一轮的结论，由 Bridge 处理，不用转述给谁。需要主人定的事（选择、部署、对外发送、花钱、删东西）照常提问。"
+    done = ("你的回复就是这一轮的结论，由 Bridge 处理，不用转述给谁。"
+            f"{ASK_SHORT}照常问主人，部署除外；其余能撤回、有推荐的按推荐做，在结论里写明怎么改回（执行约定里的“什么时候问主人”）。"
+            "部署：合进主干后不单独问主人、也不自己部署，在检查点 delivery 写提交、deployed 留空，负责人把专项里合进去的攒成一批"
+            "一次问主人；负责人转来“主人已同意部署这一批”时照它部署，部署前的检查照常做。")
     if kind == STEER:
         return (f"{NOTE} 专项「{project}」的负责人给{name or '本' + noun}转来补充，你仍在这一轮里：把它并进手上的工作。")
     if kind == NEXT:

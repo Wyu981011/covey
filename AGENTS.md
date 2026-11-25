@@ -13,6 +13,15 @@
 5. **公共核心的改动对所有使用者生效**：改锁、记录与状态、调度、投递、服务管理（见下文「最容易改坏的规则」）时，开关关着的行为要和原来一样，并跑全量。
 6. 部署照 [部署新版本](docs/deploy.md#部署新版本) 的步骤。
 
+## 收敛期
+
+2026-11-25 到 2026-12-09 不加新概念，先把已有的补齐：入口（管家、负责人、话题、网页开的话题）× Harness × 界面（飞书卡片、网页工作台）里漏掉的格，由 `tests/test_matrix.py` 一格一格核对；默认关的开关定下删、转正还是保留，主人拍板前不改默认。
+
+- **什么算新概念**：新的环境变量或命令行参数、卡片按钮 kind、管家或负责人的 Bridge 工具、Harness、模型来源、名词表（[docs/glossary.md](docs/glossary.md)）里的词。清单在 `tests/golden/concepts.json`，`test_structure` 的 `ConceptFreezeTest` 核对，多一个就失败。
+- **确需新增**：先问主人；主人同意后在清单的 `approved` 里加一项 `{kind, name, by, why}`，`by` 写谁在哪个话题或哪个工作包同意的。主人已选定的这一批优化（P0-A 到 P1-F）里要加的，`by` 写工作包号。
+- **去掉一个**：随时可以，`python3 -B scripts/concepts.py --write` 把它从清单去掉。
+- 收敛期过后新增也照样登记：`python3 -B scripts/concepts.py --write`，和改动一起提交，新概念在 diff 里看得见。
+
 # 代码地图
 
 先在这里找文件，再 `grep -n` 定位、按行号范围读。路径相对 `covey/`，`bin/` 只是入口壳。结构、数据流和不变量见 [架构与开发说明](docs/architecture.md)（先读[分层与包职责](docs/architecture.md#分层与包职责)、[一条消息的数据流](docs/architecture.md#一条消息的数据流)、[卡片点击的数据流](docs/architecture.md#卡片点击的数据流)），跨模块的分工见它的[代码位置](docs/architecture.md#代码位置)。
@@ -29,6 +38,7 @@
 | 话题与回带 | `app/butler_topics.py`（新话题的 Harness、模型、预算在 `app/butler_model_choice.py`；请求幂等账本 `core/butler_opened.py`）、`app/butler_relay.py`、`app/relay_targets.py`、`app/relay_send.py`；停住卡的原因、按钮和点击 `app/relay_stops.py` | [butler.md](docs/butler.md) |
 | 引用卡片接着说（顶层引用结论卡、问题卡副本等直达话题的那句话上的表情） | `app/butler_reactions.py` 的 `top_message`、`top_queued` 等，接入点在 `app/submission.py`、`app/steering.py`、`app/questions.py`、`app/held_notes.py`、`app/task_controls.py` | [引用卡片接着说的表情](docs/architecture.md#引用卡片接着说的表情) |
 | 看板、Pin、手上的事 | `app/pins.py`、`app/status_cards.py`、`app/overview.py`、`core/board_read.py` | [手上的事](docs/usage.md#手上的事)、[配置](docs/configuration.md#手上的事与话题看板) |
+| 等主人的账（各处“等你”的同一个数）与对账补卡（`COVEY_LEDGER_RECONCILE`，默认开） | `app/owner_ledger.py`（`of`：看板、手上的事、早晚汇总、网页都从它数；`Reconcile`：缺的问题卡补发）、`core/owner_ledger.py`（条目、`owner-ledger.json`、补发次数）、诊断 `service/doctor.py` 的 `ledger_row`、`bin/covey_ledger.py` | [等主人的账](docs/architecture.md#等主人的账) |
 | 整理专项与话题要点（`COVEY_PROJECT_TIDY`） | `app/project_tidy.py`（`ProjectTidy` 协调器：`__init__` 里组装下面各部件，自己管线程和话题要点收集；部件不继承、只调更下面的）、`app/tidy_facts.py`（记录读写的纯函数，最底层）、`app/tidy_state.py`（共享状态 `busy`/`progress`/`counted`/`handed`）、`app/tidy_words.py`（话题在卡上的字样与链接）、`app/tidy_apply.py`（照办：建、归进、移出、合并、拆、收起）、`app/tidy_proposals.py`（提议新专项、提议卡与跟着归并更新）、`app/tidy_realtime.py`（实时归并、新专项扫一遍）、`app/tidy_run.py`（定时/手动整理与整理卡）、`app/tidy_clicks.py`（卡片点击，`claim` 是入口）、`app/tidy_web.py`（网页面板）、`app/project_sorter.py`（小模型读什么、补要点）、`core/topic_gist.py`（话题要点）、`core/project_proposals.py`（提议与主人的决定）、`cards/project_proposal.py`、`app/projects.py` 的 `gather`、`app/project_members.py` 的 `join_topic`/`leave_topic` | [projects.md](docs/projects.md#整理专项)、[配置](docs/configuration.md#整理专项) |
 | 专项（`COVEY_PROJECTS=1`）：负责人、专项卡、问题分流、停住后问主人、满额腾位置、话题转给管家、负责人用哪个 Harness | `core/projects.py`、`app/project_lead.py`、`app/lead_harness.py`（负责人的 Harness、模型和预算：新建时选、专项卡与网页换配置）、`app/project_tools.py`、`app/project_loop.py`（`make_room`）、`app/butler_asks.py`、`app/project_cards.py`、`cards/project_card.py`、`app/triage.py`、`core/project_memory.py`、`core/project_library.py` | [projects.md](docs/projects.md)、[架构 · 专项](docs/architecture.md#专项第-2-期开发中默认关) |
 | 多参与者协作（`COVEY_COLLAB`，开发中）：轮次来源、交付归属、协作的状态表；执行闭环（发起、咨询通道、派发、落账、续接、到期、停止、对账）和咨询轮的硬只读 | `core/turn_source.py`（来源、行为表 `behavior`、`refusal`、来源等级 `provenance`）、`core/collab.py`（`route`、状态表、限额、幂等键、通道和消息 id）；来源闸在 `app/job_dispatch.py` 的 `refuse_source` 和 `app/worker.py` 开跑前；`core/collab_records.py`（记录）、`app/collab_flow.py`（`Collaboration`：线程、检查点的 `collab_ask`、`start`/`clarify`/`stop`）、`app/collab_checks.py`（预检）、`app/collab_channel.py`（通道、分叉、咨询轮的文字）；硬只读 `CONSULT`：`app/tool_limits.py`、`backends/claude/argv.py`、`backends/codex/consult.py` | [多参与者协作](docs/architecture.md#多参与者协作开发中默认关)、[执行闭环](docs/architecture.md#执行闭环) |
@@ -38,13 +48,14 @@
 | 早晚汇总 | `app/digest.py`、`cards/digest.py`；晚间汇总的“你反复说的” `app/memory_candidates.py`，“本周找你” `app/weekly_usage.py` 的 `reached` | [早晚汇总](docs/usage.md#早晚汇总)、[配置](docs/configuration.md#早晚汇总) |
 | 启动卡与工作区 | `app/launch.py`、`app/launch_submit.py`、`app/model_picker.py`、`app/directory_picker.py`、`core/workspaces.py` | [开始一个任务](docs/usage.md#开始一个任务) |
 | 任务卡与执行过程 | `app/cards.py`、`app/task_card.py`、`core/trace.py`、`cards/streaming.py` | [cards.md](docs/cards.md)、[执行指标口径](docs/architecture.md#执行指标口径) |
-| 问题卡与回答 | `app/questions.py`、`app/native_questions.py`、`app/checkpoint_questions.py`、`app/answers.py`（提交回答 `with_note`）、`cards/question_cards.py` | [问题与回答](docs/architecture.md#问题与回答) |
+| 问题卡与回答；什么时候问（部署、删除、花钱、对外发送、占机器才问，其余按推荐做；方案先交完整的） | `app/questions.py`、`app/native_questions.py`、`app/checkpoint_questions.py`、`app/answers.py`（提交回答 `with_note`）、`cards/question_cards.py`；问不问 `core/checkpoint.py` 的 `ASK_RULE`、`PLAN_RULE`，派活那头 `core/butler_tool_specs.py` 的 `ASK_NOTE`、`app/butler_handoff.py` 的 `lead_note`；问得多不多 `scripts/question_stats.py` | [问题与回答](docs/architecture.md#问题与回答)、[问题卡问得多不多](docs/operations.md#问题卡问得多不多) |
+| 改外观先选样张、UI 拍板记录（改卡片和网页的样子之前先出 2~3 版让主人点选；定下的规则逐条机检） | `core/ui_samples.py`（选项的 `sample`：登记时读一次、清成点不动的）、`cards/question_cards.py` 的 `with_samples`、`scripts/ui_samples.py`（`golden` 取现在的样子、`check` 照 Bridge 的读法查）、`tests/test_ui_rules.py`（`MATRIX`：每条规则 × 管家、负责人、话题、专项的话题、网页开的话题） | [UI 规范 · 改外观先选样张](docs/ui.md#12-改外观先选样张)、[拍板记录](docs/ui.md#13-拍板记录) |
 | 补充 | `app/steering.py`、`core/deliveries.py`、`core/steer.py` | [补充投递](docs/architecture.md#补充投递) |
 | 主人撤回或编辑消息（`COVEY_SOURCE_WATCH`，默认开） | `app/source_watch.py`（读回、停止、补充）、`core/source_book.py`（登记的消息）、`cards/source_note.py` | [撤回与编辑](docs/architecture.md#撤回与编辑) |
-| 换配置 | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py` | [话题中途换配置](docs/architecture.md#话题中途换配置) |
+| 换配置；管家和负责人的批量换配置（`topics_switch`，发卡主人确认）；点名配置要有依据（`basis`） | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py`；批量 `app/batch_switch.py`、`cards/batch_switch.py`；依据 `app/config_basis.py`（`app/butler_tools.py` 的 `refusal` 里核对） | [话题中途换配置](docs/architecture.md#话题中途换配置)、[点名配置的依据](docs/butler.md#点名配置的依据) |
 | 回退一步（Claude） | `app/rewind.py`、`backends/claude/rewind.py` | [回退一步](docs/architecture.md#回退一步) |
 | 结果、投递与重投 | `app/turn_settle.py`、`app/worker.py`、`app/turn_delivery.py`、`app/redelivery.py`、`app/outbox.py` | [结果授权与投递](docs/architecture.md#结果授权与投递) |
-| 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
+| 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；管家一轮的请求挂住时停下它、让后来的话先跑 `app/unstick.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
 | 设置卡与机器人菜单 | `app/bot_menu.py`、`app/menu_panel.py`、`app/settings_hub.py`（标签「记忆」`app/memory_panel.py`、「能做什么」`app/about_panel.py`、「诊断」`app/doctor_panel.py`）、`feishu/events.py` | [机器人菜单](docs/usage.md#机器人菜单) |
 | 欢迎卡（新部署只发一次，`COVEY_WELCOME`）和 `./install` 等第一句回答 | `app/welcome.py`、`cards/welcome.py`、`core/welcome.py`（记录、`first_answer`）、`service/installer.py` 的 `wait_answer` | [第一次使用](docs/usage.md#第一次使用)、[第一个回答](docs/install.md#第一个回答) |
 | 代答 | `app/proxy.py`（批次）、`app/proxy_intake.py`（收消息）、`app/proxy_topics.py`（联系人话题）、`app/proxy_commands.py`（查找、群成员）、`app/proxy_send.py`（读回和发送器接口；发送器 `extensions/covey_internal/proxy_sender.py`、`extensions/covey_internal/proxy_login.py`）、`core/proxy.py` | [proxy.md](docs/proxy.md)、[代答](docs/architecture.md#代答) |
@@ -56,13 +67,13 @@
 | 官方拒绝与停止 | `app/policy_guard.py`、`core/model_policy.py`、`backends/claude/policy.py`；cyber/bio 拒绝换旧模型重试一次 `app/policy_retry.py` | [policy-stop.md](docs/policy-stop.md) |
 | 任务进程与 `runs/` 协议 | `app/detached.py`、`app/runner_spawn.py`、`app/runner_ipc.py`、`app/runner.py`、`core/run_dir.py` | [排队与任务进程](docs/architecture.md#排队与任务进程)、[跨版本检查](docs/testing.md#任务进程协议与跨版本检查) |
 | 记录、状态与锁 | `core/jobs.py`、`core/statuses.py`、`core/store.py`、`core/locks.py` | [状态与并发](docs/architecture.md#状态与并发) |
-| Harness 与后端 | `core/harness.py`、`core/roster.py`、`core/providers.py`、`backends/<名字>/bridge.py` | [Harness 接口](docs/architecture.md#harness-接口)、[harnesses.md](docs/harnesses.md) |
+| Harness 与后端；同一账号的供应商只列一次 | `core/harness.py`、`core/roster.py`、`core/providers.py`、`backends/<名字>/bridge.py`；`core/same_account.py`、`app/launch_models.py` 的 `fold_same_account` | [Harness 接口](docs/architecture.md#harness-接口)、[harnesses.md](docs/harnesses.md) |
 | Skills（`./scripts/install_skills.sh` 把 `skills/*` 同步给 Codex 和 Claude Code；每个一个目录：`SKILL.md` 加 `agents/openai.yaml`） | `skills/harness-bridge-onboarding/`（带新人装机器人）、`skills/change-walkthrough/`（大改动的一页走读） | [deploy.md](docs/deploy.md) |
 | 扩展（`COVEY_EXTENSIONS` 或 `extensions/enabled` 启用的包，核心不按名字引用；扩展自带 README） | `core/extensions.py`（manifest 并进 `core/roster.py`、`core/providers.py` 的表，`features(app)` 并进 `app/unified.py` 的 `self.features`） | [扩展](docs/architecture.md#扩展) |
 | 节点与机器状况（`COVEY_NODE_LISTEN`） | `core/node_agent.py`（设备和本机上常驻的节点）、`core/nodes.py`（名单、口令、记录）、`core/node_rules.py`（告警规则）、`app/node_gateway.py`（TLS 服务）、`app/node_alerts.py`、`app/nodes.py`、`cards/node_cards.py` | [节点](docs/architecture.md#节点默认关)、[配置](docs/configuration.md#节点与机器状况默认关) |
 | 维护与备份 | `core/maintenance.py`（规则表在 `core/maintenance_rules.py`，备份在 `core/backup.py`）、`app/stale.py`、`core/migrate.py` | [备份、归档与维护](docs/operations.md#备份归档与维护) |
-| 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、`service/doctor.py`（终端里的中文摘要 `service/doctor_words.py`；设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
-| 安装与日常升级（`./install`、`scripts/upgrade.sh`） | `service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh` | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级) |
+| 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、状态目录写不进与慢锁慢读 `core/storage_watch.py`、`app/storage_alerts.py`、`service/doctor.py`（终端里的中文摘要 `service/doctor_words.py`；设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
+| 安装与日常升级（`./install`、`scripts/upgrade.sh`）；网页上升级和定时自动升级（`COVEY_AUTO_UPGRADE`）；升级不丢配置（`--allow-dropped-config`） | `core/dropped_config.py`（部署预检 `pre.dropped_config`、诊断的 `dropped_config`）、`service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步、新装默认开飞书 SDK `ensure_feishu_sdk`、写 `upgrade.json`）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh`（`--status`，网页跟着升级 `service/web_upgrade.py`）；`app/self_upgrade.py`（`upgrade.json`、查和升级）、`app/auto_upgrade.py`（每天到点、遇忙推迟、不强切不回滚） | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级)、[定时自动升级](docs/deploy.md#定时自动升级) |
 
 ## 模块表
 
@@ -83,7 +94,9 @@
 | `app/artifact_policy.py` | What of a task's artifacts may be published |
 | `app/artifacts.py` | Publish only explicitly recorded, bounded artifacts of a task |
 | `app/auto_retry.py` | Automatic 检查并继续 after a turn that ended without a reply as one of KINDS |
+| `app/auto_upgrade.py` | 定时自动升级: with COVEY_AUTO_UPGRADE=HH:MM and an upgrader set up, the Bridge upgrades itself and the web page … |
 | `app/availability.py` | Separate local backend readiness from recently observed model access |
+| `app/batch_switch.py` | 批量换配置 (T786): the butler or a project's lead proposes switching several topics to another Harness, model or … |
 | `app/binding.py` | A topic's binding (Harness, model, budget, work mode, place and 敏感词脱敏) and what may change it |
 | `app/bot_menu.py` | The bot's custom menu (机器人自定义菜单): the owner's commands, since typed ones misfired |
 | `app/butler.py` | The butler's session, only in the private chat mode 管家 |
@@ -115,6 +128,7 @@
 | `app/collab_flow.py` | 协作的执行闭环 (docs/architecture.md 多参与者协作, COVEY_COLLAB=1 |
 | `app/compact_runner.py` | The butler's idle compaction runner: `bin/covey_runner.py --compact-only` |
 | `app/compaction.py` | The butler's compaction requests: its next turn compacts its native session first |
+| `app/config_basis.py` | Why a topic the butler or a project's lead opens, or a batch of topics it switches, names a Harness, model or … |
 | `app/detached.py` | Run each task in its own process so a bridge restart or deploy does not stop it |
 | `app/device_files.py` | Files between the hub and a device's topic, always through the device program |
 | `app/devices.py` | Devices at the app's edge |
@@ -164,6 +178,7 @@
 | `app/nodes.py` | 节点 at the Bridge: the gateway the nodes dial, the hub's own node, the alerts |
 | `app/outbox.py` | Resume delivery of authorized saved replies only |
 | `app/overview.py` | 手上的事: one card in the owner's private chat with the bot, pinned (Pin 消息), that lists what waits for the owner … |
+| `app/owner_ledger.py` | 等主人的账 at the Bridge (docs/architecture.md 等主人的账 |
 | `app/owner_send.py` | 代发: a message a topic drafted, sent as the owner by the 代答 sender once the owner confirmed it on its card |
 | `app/patrol.py` | The feature object of "what the butler would have told the owner", COVEY_PATROL=shadow |
 | `app/patrol_judge.py` | The second layer: the small model reads the candidates app/patrol_rules.py found and says, for each, drop it … |
@@ -213,6 +228,7 @@
 | `app/runs.py` | Runs: one job's turn on its Harness's backend |
 | `app/runtime.py` | Process-wide Bridge state, one object passed by reference to every part that needs it |
 | `app/saved_send.py` | A turn's saved reply, paused question or canonical text sent the same way on its first send and on each … |
+| `app/self_upgrade.py` | 网页上点一下就升级: whether this deployment has a newer version, and its upgrade started from the page and carried on … |
 | `app/sessions.py` | Sessions: one Harness's native-session pointer of a topic |
 | `app/settings_hub.py` | The 设置 card: the bot menu's 设置 (event key MENU_KEY) puts the butler's settings on one page, 配置, the workspace … |
 | `app/source_watch.py` | The owner recalled or edited a message the Bridge acts on |
@@ -222,6 +238,7 @@
 | `app/steer_interrupt.py` | A supplement the model has not read yet: how long it has waited, and stopping the command that holds it back |
 | `app/steer_receipts_flow.py` | What became of a supplement, on its receipt card |
 | `app/steering.py` | Supplements (补充) to a task of this topic: which task takes one, and how it gets there |
+| `app/storage_alerts.py` | The state directory's disk at the Bridge |
 | `app/strangers.py` | The one line a person who is not the owner gets for writing to the bot in private |
 | `app/stuck_check.py` | 看看: a read-only look at a turn that may be stuck, from the button under its task card's status line, answered … |
 | `app/subagent_recovery.py` | What a failed or interrupted Claude turn's subagents delivered, for the next turn |
@@ -253,6 +270,7 @@
 | `app/turn_images.py` | Images a running task shows its owner at once: a login QR code, a screenshot he has to act on |
 | `app/turn_settle.py` | How a finished turn ended, settled before anything is delivered (rule 5's core) |
 | `app/unified.py` | The Bridge: one Feishu ingress, immutable topic routes, one app per Harness |
+| `app/unstick.py` | A butler's or a lead's turn whose model request hangs no longer holds up what the owner said after it (T784) |
 | `app/web_collect.py` | 网页工作台同步的收集: `Collector` reads the records of the owner's chat and makes the items (topics, turns, questions … |
 | `app/web_files.py` | 网页上传的附件 (docs/web.md, COVEY_WEB=1 |
 | `app/web_images.py` | The images of a turn on the web page |
@@ -283,6 +301,7 @@
 | `cards/answer_card.py` | What follows a finished turn's answer on its answer card in the topic and on its relay at the private chat's … |
 | `cards/app_setup.py` | The 飞书应用待补 card: what the app lacks, then the run's steps, then what it added |
 | `cards/artifact_panels.py` | The 产物 panels of a task card: Drive links and uploading state, and the older per-file send buttons |
+| `cards/batch_switch.py` | The 批量换配置 card: the topics the butler or a project's lead would switch to another Harness, model or budget … |
 | `cards/board.py` | The bot menu's 看板: what is going on in the owner's private chat now, in the 夜航 look |
 | `cards/butler_panel.py` | The 管家 settings card, in the bot menu panels' style |
 | `cards/card_cost.py` | What a card costs CardKit, which refuses one over its size (code 200860) |
@@ -372,6 +391,7 @@
 | `core/devices.py` | Devices: other machines (Linux over ssh) a topic can work on instead of this one |
 | `core/diff.py` | Per-job workspace diff capture for shared Harness bridge jobs |
 | `core/dispatch_records.py` | The records of the 派发卡 |
+| `core/dropped_config.py` | What a deployment configured that this release no longer uses (T786 |
 | `core/env.py` | Environment variable names: `COVEY_<X>` is the name, `LARK_BRIDGE_<X>` the old one that still works |
 | `core/extensions.py` | Optional extension packages: which are enabled, where they are found, the data and features they add |
 | `core/failure.py` | Why a turn did not succeed and what can be done next, in plain words |
@@ -383,6 +403,7 @@
 | `core/history_storage.py` | A topic's history: appending a turn's rows (append_history), reading the latest ones and rounds … |
 | `core/http_upstream.py` | Requests a local relay or gateway sends on to its upstream, and the answer it passes back |
 | `core/ignored_env.py` | Backend parameters the environment no longer sets, and the two whose old values a service must not keep |
+| `core/inbound_ledger.py` | 主人消息的去向: where each message the owner sent went, as one read |
 | `core/jobs.py` | Shared durable job-state helpers for the Feishu bridge scripts |
 | `core/knowledge.py` | 知识条目: short entries the owner asked to be remembered ("记一下"), kept in one place so every Harness reads them … |
 | `core/limit_reset.py` | When a model limit resets, and what a passing server fault looks like, read off Claude Code's own output … |
@@ -408,6 +429,7 @@
 | `core/node_rules.py` | The rules that turn a node's samples into alerts, as pure functions |
 | `core/nodes.py` | Nodes (节点): the machines that keep a connection to this hub, the hub itself included, and what they report |
 | `core/one_shot.py` | One question to a Harness CLI and nothing else |
+| `core/owner_ledger.py` | 等主人的账: what waits for the owner in a chat, one entry a thing with the card it is opened on, and the record of … |
 | `core/owner_send.py` | 代发 records: a message a topic drafted for the owner to send as themselves, sent only once the owner confirmed … |
 | `core/paths.py` | Resolve service storage independently of the execution workspace |
 | `core/patrol.py` | What the butler noticed and would have done: records and numbers, no judging |
@@ -442,6 +464,7 @@
 | `core/revisits.py` | 到点回来看: a topic ends its turn with `revisit` in its checkpoint (when, and what to look at) and the Bridge … |
 | `core/roster.py` | The Harness backends the unified bot routes, in one table |
 | `core/run_dir.py` | The run directory of a job handed to a task runner, `<state>/runs/<job>/` |
+| `core/same_account.py` | Which providers of a Harness are one account (T786 |
 | `core/saved_results.py` | Private saved replies |
 | `core/scheduler.py` | Bounded concurrency across topics |
 | `core/serving.py` | The thread a local HTTP server serves on |
@@ -455,6 +478,7 @@
 | `core/statuses.py` | The status machines of the records |
 | `core/steer.py` | What became of a supplement sent into a running task, and which are urgent |
 | `core/steps.py` | The steps an adapter publishes as `tool` events (a tool call, a command, a compaction) and the words a model … |
+| `core/storage_watch.py` | What this process saw of its disk going wrong, kept in memory for the health snapshot, the diagnostics and … |
 | `core/store.py` | Indexed JSON records with legacy-compatible reads and isolated invalid files |
 | `core/switches.py` | The optional switches: what a new service starts with, the 演示套餐, and which a service has set |
 | `core/task_processes.py` | What a task's commands leave running once its Harness has closed, found by the marker its runner puts in its … |
@@ -474,6 +498,7 @@
 | `core/turn_export_rows.py` | The rows of a turn export |
 | `core/turn_source.py` | 轮次来源: what started a turn, as a field only the Bridge writes, so no reader guesses it from a message id or a … |
 | `core/turn_words.py` | The words the cards, the pinned board and the butler say about a turn and a topic, in one place |
+| `core/ui_samples.py` | 样张: a checkpoint question's option may carry `sample`, the absolute path of a JSON file with a card (schema … |
 | `core/updates.py` | Per-task coalesced UI updates, isolated from backend event handling |
 | `core/usage.py` | Numeric-only output throughput |
 | `core/web_backup.py` | 自托管网页的数据库备份与恢复: the page's own PGlite database in the daily backup and back out of it |
@@ -531,6 +556,7 @@
 | `service/pairing.py` | Issue a one-time owner pairing code for an explicitly configured bot app |
 | `service/plugins.py` | Extensions (插件) from the command line |
 | `service/web_selfhost.py` | 自托管网页工作台的准备和托管参数: what `COVEY_WEB_SELFHOST=1` asks of the Manager (`wanted`, `spec` |
+| `service/web_upgrade.py` | The self-hosted web page brought along when scripts/upgrade.sh upgrades the Bridge |
 
 ### backends/agy
 
@@ -603,7 +629,7 @@
 
 ### bin
 
-入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_install.py`、`covey_install_browser.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
+入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_inbound.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
 
 改名前的入口名留作转发壳，服务清单、开机钩子和各部署的脚本还在用：`bridge_app_setup.py`、`bridge_doctor.py`、`bridge_main_mcp.py`、`bridge_memguard.py`、`bridge_pairing.py`、`bridge_service.py`、`bridge_service_install.py`、`covey_main_mcp.py`、`lark_app_console.py`、`lark_bridge_maintenance.py`、`lark_bridge_paths.py`、`lark_bridge_workspaces.py`、`lark_feishu_web.py`、`lark_harness_bridge.py`、`lark_install_browser.py`、`lark_task_runner.py`、`lark_workspace_reader.py`。
 <!-- code-map:end -->
@@ -635,9 +661,11 @@
 - 动了扩展里用隔离解释器的后端或它导入的 `core/` 模块：再按扩展自己的 README 用那个解释器跑它的测试和 `--check-runtime`。核心测试另在 `COVEY_EXTENSIONS=''` 下跑一次全量，确认没有扩展也过。
 - 不改行为的改动：改前在基线上录两次 `scripts/golden_trace.py record`，改后录一次再 `compare --noise`；搬模块前跑 `scripts/test_map.py patches <模块>`，看哪些测试按旧路径打补丁（`docs/testing.md` 副作用轨迹与补丁清单）。
 - 新测试在旧代码上该失败：`scripts/test_map.py prove --base <提交>`；部署用 `scripts/deploy_bridge.sh`（先 `--check-only`）。
+- 改卡片或网页的样子：先照 [docs/ui.md 第 12 节](docs/ui.md#12-改外观先选样张) 出样张让主人点选；`tests/test_ui_rules.py`（[拍板记录](docs/ui.md#13-拍板记录)）不过就是把定好的样子改回去了，不靠 `GOLDEN_CARDS=update` 绕过。
 - 改公共核心或 `runs/` 协议（规则 10）：先跑 `scripts/cross_release.py run --old <现网 release> --out <目录>` 再 `compare`；`tests/golden/run_dir.json` 有 diff 就是改了协议（`docs/testing.md` 任务进程协议与跨版本检查）。
 - 新读环境变量或加命令行参数：在 `docs/configuration.md` 的「环境变量与选项一览」加一行（`test_structure` 的 `InventoryTest` 核对）。
 - 加、删、搬模块或改了模块 docstring 首句：`python3 -B scripts/code_map.py --write`（`--check` 只检查）。
+- 加、删环境变量、命令行参数、按钮 kind、Bridge 工具、Harness、模型来源或名词：`python3 -B scripts/concepts.py --check`，见上文[收敛期](#收敛期)。
 - `pyflakes covey bin tests extensions`（只许 2 条有意的未使用导入）；`bash -n scripts/*.sh`。
 
 ## 省 token

@@ -30,6 +30,7 @@ controls that state shows.
 
 from __future__ import annotations
 
+import dataclasses
 import time
 from typing import Any
 
@@ -61,7 +62,7 @@ from covey.app.diag_summary import DiagSummary
 from covey.app.worker import process_bridge_reply_job
 from covey.core.harness import BridgeContext, HarnessBackend, HarnessSpec, SessionStore
 from covey.app import butler_reactions, devices as device_turns, project_context, project_loop, source_watch
-from covey.core import device_reap, turn_words
+from covey.core import device_reap, inbound_ledger, storage_watch, turn_words
 from covey.core.run_dir import run_dir
 from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.core.jobs import context_for_job, record_bridge_job_state, recover_stale_jobs
@@ -255,6 +256,11 @@ class BridgeApp:
                                              "hidden_mentions": access.own_ids()} if group else {}))
         timing.mark("enrich")
         if not enriched.text:
+            if access.is_owner(sender):
+                # Nothing the model can read (a type of message not supported): said, as the owner has no other sign of it.
+                inbound_ledger.note(ctx.state_dir, message_id, "ignored", reason="no_text", event=event)
+                self.reply(dataclasses.replace(ctx, reply_to_message_id=message_id), chat_id,
+                           "这条消息里没有我读得出的内容（可能是不支持的消息类型），没有处理。", self.key("no-text", message_id))
             return
         ctx = ctx if routed else self.submission.event_context(ctx, enriched.event)
         timing.mark("context")
@@ -285,7 +291,16 @@ class BridgeApp:
         submit = dict(prompt_content=prompt, received_at=received_at, sender_id=sender, steer=supplement is None,
                       **({"hold": hold} if hold else {}), **({"top": top} if top else {}))
         try:
-            job = self.submission.enqueue_chat_job(ctx, content, chat_id, message_id, **submit)
+            try:
+                job = self.submission.enqueue_chat_job(ctx, content, chat_id, message_id, **submit)
+            except HarnessChanged:
+                raise
+            except Exception as exc:
+                # Never queued and nothing said yet: the owner is told, and the error goes on as before.
+                inbound_ledger.note(ctx.state_dir, message_id, "error", reason=type(exc).__name__)
+                self.say_not_queued(ctx, access, sender, chat_id, message_id)
+                raise
+            self.note_inbound(ctx, message_id, job, event)
             # Gone into the task before it, it is watched as a supplement of that task (a recall or an edit follows).
             source_watch.note(self, ctx, event, message_id, chat_id, sender, enriched.text,
                               steered=getattr(job, "cancelled_before_start", False) is True)
@@ -293,6 +308,22 @@ class BridgeApp:
             # 换配置 committed while this message was read: it goes to the topic's Harness now, once (its
             # history line is the topic's, already written).
             self.resubmit(enriched.event, content, chat_id, message_id, submit)
+
+    def say_not_queued(self, ctx, access, sender, chat_id, message_id):
+        if not access.is_owner(sender):
+            return
+        try:
+            self.reply(ctx, chat_id, "这条消息没能排上队（出错了），没有变成任何一轮，请稍后再发一次。",
+                       self.key("not-queued", message_id))
+        except Exception:  # noqa: BLE001 - the original error is the one that matters
+            pass
+
+    def note_inbound(self, ctx, message_id, job, event):
+        """The owner's message queued as ``job`` (or not queued: None, its reason already said) in the message ledger."""
+        if job is None:
+            inbound_ledger.note(ctx.state_dir, message_id, "not_queued", topic_id=ctx.topic_id, event=event)
+        else:
+            inbound_ledger.note(ctx.state_dir, message_id, "job", topic_id=ctx.topic_id, job_id=job.job_id, event=event)
 
     def resubmit(self, event, content, chat_id, message_id, submit):
         app = None
@@ -361,6 +392,7 @@ class BridgeApp:
         if isinstance(exc, ValueError):
             self.messenger.reply(ctx, chat_id, f"{label}未完成：{exc}", self.key("action-invalid", source), voice=self.voice)
             return
+        storage_watch.note_failure(exc, "card action " + str(raw.get("kind") or ""))
         self.runtime.log(f"card action failed: {exc}")
         self.messenger.reply(ctx, chat_id, f"{label}暂未完成，请稍后重试。" + ("回答已保存时请先查看提交状态，避免重复发送。" if raw.get("kind") in ANSWER_KINDS else "已完成的任务结果仍保留。"),
                              self.key("action-failure", source), voice=self.voice)

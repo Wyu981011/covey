@@ -15,7 +15,7 @@ from covey.app import answer_cards, butler_tools
 from covey.cards.answer_card import CHANGE_ID, tail
 from covey.cards import question_cards
 from covey.cards.relay_card import DONE, relay_card
-from covey.core.checkpoint import (ACCEPTANCE_RULE, CHECKPOINT_RULES, DELIVERY_PART, DELIVERY_RULE, IMAGES_RULE, MAX_STEPS,
+from covey.core.checkpoint import (ACCEPTANCE_RULE, ASK_KINDS, ASK_RULE, ASK_SHORT, CHECKPOINT_RULES, PLAN_RULE, DELIVERY_PART, DELIVERY_RULE, IMAGES_RULE, MAX_STEPS,
                                    STEPS_RULE, checked, checkpoint_delivery, checkpoint_rules, checkpoint_steps, change_summary,
                                    clock_steps, delivery_commits, images_note, shows_change, step_words)
 from covey.core.longtask import TaskMonitor
@@ -43,13 +43,13 @@ class RulesTest(unittest.TestCase):
             self.assertIn(words, added)
 
     def test_every_turn_carries_a_few_lines_and_the_rest_only_where_it_is_used(self):
-        # 5.9 row 7: one paragraph of 1623 characters with a dozen fields mixed, on every turn. Now a head and seven lines
-        # (when to write, the fields, how to ask), and steps, delivery and show_images apart.
+        # 5.9 row 7: one paragraph of 1623 characters with a dozen fields mixed, on every turn. Now a head and nine lines
+        # (when to write, the fields, when and how to ask, a plan first), and steps, delivery and show_images apart.
         lines = CHECKPOINT_RULES.split("\n")
         self.assertEqual(lines[0], "这是执行约定（检查点）：")
-        self.assertLessEqual(len(lines), 8)
+        self.assertLessEqual(len(lines), 10)
         self.assertTrue(all(line.startswith("- ") for line in lines[1:]))
-        for words in ("- 何时写：", "- 字段：", "- 要用户决策时：", "- 用户怎么答："):
+        for words in ("- 何时写：", "- 字段：", "- 什么时候问主人", "- 要用户决策时：", "- 用户怎么答：", "- 主人要的是方案"):
             self.assertEqual(sum(line.startswith(words) for line in lines), 1, words)
         # The JSON is the same: every field it had, under the same name.
         for field in ("phase", "completed", "artifacts", "external_tasks", "next_step", "requires_user", "question",
@@ -68,6 +68,32 @@ class RulesTest(unittest.TestCase):
                       "不得重复提交已存在的训练/部署等外部任务", "没有检查点也一样", "发送文件入口", "不代表已经发送",
                       "不要自己用 lark-cli", "urgent", "让本轮保持运行", "只提了合并请求的留空"):
             self.assertIn(words, checkpoint_rules(), words)
+
+    def test_only_what_the_owner_must_decide_is_asked_and_the_rest_is_done_the_recommended_way(self):
+        # P0-B: most questions had their 推荐 option picked, and handoffs had to say "never ask". A turn asks only
+        # ASK_SHORT's kinds; what can be undone and has a clear best choice is done that way, with how to change it back
+        # in the conclusion; what must be asked waits for the end.
+        self.assertIn(ASK_RULE, CHECKPOINT_RULES)
+        for kind in ASK_SHORT.split("、"):
+            self.assertIn(kind, ASK_KINDS, kind)
+        for words in (ASK_KINDS + "照常问", "AskUserQuestion", "request_user_input", "能自己查清的事先查，不问。",
+                      "能撤回、你有明确推荐的不问", "按推荐直接做", "要改成 Y，回一句就行", "revert 的提交号",
+                      "要问的留到最后", "合成一次问"):
+            self.assertIn(words, ASK_RULE, words)
+        # Asked the old way below it: the form, and 推荐 kept for what is still asked.
+        lines = CHECKPOINT_RULES.split("\n")
+        self.assertEqual(lines.index(ASK_RULE) + 1, next(i for i, line in enumerate(lines) if line.startswith("- 要用户决策时：")))
+        self.assertIn("（推荐）", CHECKPOINT_RULES)
+
+    def test_a_request_for_a_plan_gets_the_whole_plan_before_any_question(self):
+        # P0-B: a request for a plan was met with a row of questions on details not decided yet. The plan first, what is
+        # open after it.
+        self.assertIn(PLAN_RULE, CHECKPOINT_RULES)
+        for words in ("先交完整方案，不先发问题卡问细节", "代价和风险", "按最合理的假设写并标明是假设", "登记进 artifacts",
+                      "待定项列在方案后面", "不选它的代价", "照常要问的那几类，才写进 questions"):
+            self.assertIn(words, PLAN_RULE, words)
+        lines = CHECKPOINT_RULES.split("\n")
+        self.assertLess(lines.index(PLAN_RULE), next(i for i, line in enumerate(lines) if line.startswith("- 最终回复")))
 
     def test_a_stuck_turn_says_what_it_tried(self):
         # #14: collie's BLOCKED report says what was tried; a question that only says "选哪个" leaves the owner guessing.

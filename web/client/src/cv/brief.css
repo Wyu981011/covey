@@ -1,4 +1,4 @@
-/* 专项的「简报」标签（v40，ProjectBrief.tsx）：颜色只用 token，深浅两种模式同一套；状态色配图标和字，不单靠颜色。
+/* 专项的「简报」标签（v41，ProjectBrief.tsx）：颜色只用 token，深浅两种模式同一套；状态色配图标和字，不单靠颜色。
    类名一律 pb- 开头（全局有 .kv、.tl、svg{width:16px} 这类规则，第一期吃过亏）；任务图的 SVG 尺寸写在元素上。
    做完绿 --done、在做蓝 --run、等你琥珀 --wait、卡住和停住红 --fail、待核对 --accent-t、将要做和不做了灰 --t3 */
 .cv .pb-s-done,.cv .pb-k-done{--c:var(--done)}

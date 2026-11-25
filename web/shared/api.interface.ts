@@ -6,8 +6,8 @@ export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 export const TOPIC_STATES = ['等你', '在做', '做完', '已停止', '失败', '空闲'] as const;
 export type TopicState = (typeof TOPIC_STATES)[number];
 
-/** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload */
-export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo', 'revisit_cancel', 'memory_edit'] as const;
+/** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload；upgrade（v39）：检查更新、全部更新，见 UpgradePayload */
+export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo', 'revisit_cancel', 'memory_edit', 'upgrade'] as const;
 export type OutboxKind = (typeof OUTBOX_KINDS)[number];
 export const isOutboxKind = (v: string): v is OutboxKind =>
   (OUTBOX_KINDS as readonly string[]).includes(v);
@@ -286,9 +286,9 @@ export interface TopicProgress {
   slow_step?: TopicSlowStep | null;
   /** 最新一步是还在跑的命令时才有：几时开始、已跑几秒（到分钟）、是否已跑满卡住的分钟数 */
   command?: TopicCommand;
-  /** v40：检查点里的下一步，≤120 字（专项「简报」里 session 行的“下一步”） */
+  /** v41：检查点里的下一步，≤120 字（专项「简报」里 session 行的“下一步”） */
   next_step?: string;
-  /** v40：检查点 requires_user 时的 question，≤160 字：话题在等主人答什么 */
+  /** v41：检查点 requires_user 时的 question，≤160 字：话题在等主人答什么 */
   waiting?: string;
 }
 export interface TopicSlowStep {
@@ -521,24 +521,24 @@ export interface SnapshotProject {
   library: LibraryItem[];
   updated_at: number;
   counts: { topics: number; waiting: number; running: number };
-  /** v39：负责人的目标检查表（「进度」标签）；旧 Covey、负责人还没写时没有 */
+  /** v40：负责人的目标检查表（「进度」标签）；旧 Covey、负责人还没写时没有 */
   checklist?: ChecklistItem[];
-  /** v39：负责人记的里程碑和收尾，最新 10 条，旧的在前 */
+  /** v40：负责人记的里程碑和收尾，最新 10 条，旧的在前 */
   milestones?: ProjectNote[];
-  /** v39：决定日志，最新 10 条，旧的在前 */
+  /** v40：决定日志，最新 10 条，旧的在前 */
   decisions?: ProjectNote[];
-  /** v40：负责人写的背景（≤300 字）；没写就没有这个键 */
+  /** v41：负责人写的背景（≤300 字）；没写就没有这个键 */
   background?: string;
-  /** v40：动作（含 dropped，网页不画 dropped）；没写就没有这个键 */
+  /** v41：动作（含 dropped，网页不画 dropped）；没写就没有这个键 */
   actions?: BriefAction[];
-  /** v40：没处理的协作缺口；没有就没有这个键 */
+  /** v41：没处理的协作缺口；没有就没有这个键 */
   gaps?: ProjectGap[];
 }
 
-/** v40：动作的状态只有 open、dropped（Covey core/project_actions.py）；做完、在做、等你这些是网页按条目和话题算的，不存 */
+/** v41：动作的状态只有 open、dropped（Covey core/project_actions.py）；做完、在做、等你这些是网页按条目和话题算的，不存 */
 export const ACTION_STATES = ['open', 'dropped'] as const;
 export type ActionStoredState = (typeof ACTION_STATES)[number];
-/** v40：负责人拆出的一个动作。items 是检查表条目 id；topics 是话题 key（也认 T 号）；title ≤30 字，note ≤80 字（负责人那一句现状）；
+/** v41：负责人拆出的一个动作。items 是检查表条目 id；topics 是话题 key（也认 T 号）；title ≤30 字，note ≤80 字（负责人那一句现状）；
  * at 是动作最后改动的时刻（秒） */
 export interface BriefAction {
   id: string;
@@ -549,7 +549,7 @@ export interface BriefAction {
   state: ActionStoredState;
   at: number;
 }
-/** v40：一条没处理的协作缺口：thread 是报缺口的话题（key 或 T 号），text ≤200 字 */
+/** v41：一条没处理的协作缺口：thread 是报缺口的话题（key 或 T 号），text ≤200 字 */
 export interface ProjectGap {
   id: string;
   thread: string;
@@ -560,7 +560,7 @@ export interface ProjectGap {
 /** 目标检查表的状态（Covey core/project_checklist.py STATES）：open 没满足、done 满足、blocked 卡住、dropped 不做了 */
 export const CHECKLIST_STATES = ['open', 'done', 'blocked', 'dropped'] as const;
 export type ChecklistState = (typeof CHECKLIST_STATES)[number];
-/** v39：目标检查表的一条（docs/web.md 专项条目）。topic 是交付话题的 key（还没派是空串）；needs 是它等的条目 id；
+/** v40：目标检查表的一条（docs/web.md 专项条目）。topic 是交付话题的 key（还没派是空串）；needs 是它等的条目 id；
  * at 是条目最后改动的时刻（秒），不是完成时刻 */
 export interface ChecklistItem {
   id: string;
@@ -571,7 +571,7 @@ export interface ChecklistItem {
   gap: string;
   state: ChecklistState;
   at: number;
-  /** v40，都可选（旧 Covey 不推）：title 是 ≤24 字的短标题；waiting_on 写过才有，'owner' 是下一步在主人手上、空串是写过“不在主人手上”
+  /** v41，都可选（旧 Covey 不推）：title 是 ≤24 字的短标题；waiting_on 写过才有，'owner' 是下一步在主人手上、空串是写过“不在主人手上”
    * （没有这个键就退回按缺口文字推断）；done_at 是转成 done 的时刻（秒，非 0 才有）；topics 是参与这一条的几个话题（key 或 T 号，
    * 不含 topic 自己时 topic 仍是主要的那个） */
   title?: string;
@@ -579,7 +579,7 @@ export interface ChecklistItem {
   done_at?: number;
   topics?: string[];
 }
-/** v39：专项记录里的一条进展或决定：kind 是 milestone、finish（里程碑），决定日志里多是 note */
+/** v40：专项记录里的一条进展或决定：kind 是 milestone、finish（里程碑），决定日志里多是 note */
 export interface ProjectNote {
   id: string;
   at: number;
@@ -1166,7 +1166,7 @@ export interface SettingsData {
   asks?: SettingsAsks;
   tabs: SettingsTab[];
   feishu: string;
-  /** v34：这个 Covey 认的网页操作；有 project_finish、project_stop、memory_undo 才画收尾、停止和记忆的「不对」，有 revisit_cancel（v35）才画定时回看的「取消」 */
+  /** v34：这个 Covey 认的网页操作；有 project_finish、project_stop、memory_undo 才画收尾、停止和记忆的「不对」，有 revisit_cancel（v35）才画定时回看的「取消」，有 upgrade（v39）才画「版本与更新」 */
   ops?: string[];
   config?: SettingsConfigPage | SettingsError;
   /** v21 及以前：新话题、管家两页（v22 起并进 config） */
@@ -1192,8 +1192,9 @@ export const SETTINGS_WHATS = [
 export type SettingsWhat = (typeof SETTINGS_WHATS)[number];
 /** v15：proxy 的 op */
 export const PROXY_OPS = ['enable', 'disable', 'row', 'pause', 'resume', 'remove'] as const;
-/** 同步条目 type=settings 的 key；settings 是设置快照，usage 是本周用量（v15），tidy 是整理专项的建议（v16） */
-export const SETTINGS_KEYS = ['settings', 'usage', 'tidy', 'asks', 'memory'] as const;
+/** 同步条目 type=settings 的 key；settings 是设置快照，usage 是本周用量（v15），tidy 是整理专项的建议（v16），asks 是要你处理（v34），
+ * memory 是主记忆（v37），upgrade 是版本与更新（v39） */
+export const SETTINGS_KEYS = ['settings', 'usage', 'tidy', 'asks', 'memory', 'upgrade'] as const;
 export const isSettingsKey = (v: string): boolean => (SETTINGS_KEYS as readonly string[]).includes(v);
 
 /** v16：整理专项的建议。kind 对应的标签词、按钮字由 Covey 给（tag、verb），headline、from 也是 Covey 拼好的 */
@@ -1387,4 +1388,71 @@ export interface MemoryEditPayload {
   base?: string;
   knowledge_kind?: string;
   why?: string;
+}
+
+/* v39：版本与更新（设置条目 key upgrade）。只有配了升级器的 Covey 才推，同时 settings.ops 里才有 upgrade */
+/** 网页工作台：kind 是怎么部署的；current 已是 latest 那一版；manual 不是部署脚本建的，升级不动它 */
+export interface UpgradeWeb {
+  kind: 'selfhost' | 'miaoda' | string;
+  current: boolean;
+  manual: boolean;
+}
+/** 一个新提交：repo 是仓库目录名（covey、covey-internal），at 秒 */
+export interface UpgradeChange {
+  repo: string;
+  sha: string;
+  subject: string;
+  at: number;
+}
+/** 正在跑的升级：started_at 秒，log 是升级输出的文件（Covey 那台机器上的路径） */
+export interface UpgradeRunning {
+  op_id: string;
+  started_at: number;
+  log: string;
+}
+/** 上一次从网页点的升级：done 全好；partial Bridge 升好了、网页没更新上；failed 没升成。tail 是升级输出最后几行 */
+export interface UpgradeLast {
+  state: 'done' | 'partial' | 'failed' | string;
+  message: string;
+  at: number;
+  release?: string;
+  log?: string;
+  tail?: string[];
+}
+export interface UpgradeData {
+  /** Bridge 现在跑的 release */
+  live: string;
+  /** 升级会部署的 release；没查过、查不到是空串 */
+  latest: string;
+  /** 升级会换东西（Bridge 或网页） */
+  available: boolean;
+  /** Bridge 会换 */
+  bridge: boolean;
+  /** null：没有网页工作台 */
+  web: UpgradeWeb | null;
+  /** 新提交数（两个库合计） */
+  count: number;
+  /** 最新的至多 20 个，新的在前 */
+  changes: UpgradeChange[];
+  /** 上次检查的时刻，秒；0 没查过 */
+  checked_at: number;
+  checking: boolean;
+  /** 上次查失败的原因 */
+  error: string;
+  /** 现在不能升级的原因；空串能升级 */
+  blocked: string;
+  running: UpgradeRunning | null;
+  last: UpgradeLast | null;
+}
+/** GET /api/upgrade：sync_state 里 name='upgrade' 的那一行；Covey 没推过是 null */
+export interface UpgradeResponse {
+  rev: string;
+  data: UpgradeData;
+  at: string;
+}
+/** outbox kind=upgrade 的 payload（v39）：不带 topic_key、project_key。check 马上查一次；run 查过再在独立进程里开始升级 */
+export const UPGRADE_ACTIONS = ['check', 'run'] as const;
+export type UpgradeAction = (typeof UPGRADE_ACTIONS)[number];
+export interface UpgradePayload {
+  action: UpgradeAction;
 }

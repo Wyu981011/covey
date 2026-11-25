@@ -11,12 +11,15 @@ op id, ``<time_ns>-<hex8>``, read once, oldest first. A job waiting for its turn
 """
 from __future__ import annotations
 
+import errno
+import fcntl
 import os
 import re
 import secrets
 import time
 from pathlib import Path
 
+from covey.core.file_lock import open_lock
 from covey.core.jobs import job_path, running_job_records
 from covey.core.statuses import RUNNING
 from covey.core.process import process_identity
@@ -40,6 +43,18 @@ OP = re.compile(r"[0-9]+-[0-9a-f]+")
 # replacing it failed for a moment, and the Bridge took the runner it had just handed a job for dead and started a
 # second one for the same job (T740). A directory that is not there is not waited for.
 READ_PAUSES = (0.01, 0.04)
+# A task runner holds its run directory's lock (flock on runner.lock, through core/file_lock.py open_lock, so in
+# COVEY_LOCK_ROOT when that is set) from taking its handoff to its exit, and the OS lets go of it when the runner ends
+# however it ends. A second runner of the same job finds it held and runs nothing (hold_run_lock); the Bridge asks it
+# last in runner_here, so a runner whose runner.json and wake.json cannot be read for a while is still alive to it
+# (T814: a Bridge that took a live runner for gone started a second one, and both wrote the job's card). Runners of
+# releases before it hold no lock: for them the two files alone answer, as before.
+RUN_LOCK = "runner.lock"
+# How long a runner tries for the lock before it leaves the job to the one that holds it. A Bridge's look at the lock
+# (run_lock_held) holds it for a moment only; a runner that has the job holds it for the whole job.
+RUN_LOCK_WAIT = 3.0
+_BUSY = {errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES}
+_held: dict = {}  # The run directories whose lock this process holds (absolute path -> descriptor).
 
 
 def _stem(state_dir: Path, key: str) -> str:
@@ -99,12 +114,71 @@ def runner_alive(directory: Path) -> bool:
 
 def runner_here(directory: Path, *, patient: bool = True) -> bool:
     """A live task runner holds ``directory``: the one its runner.json names (runner_alive), else the one its wake.json does
-    (a runner writes its identity there once it serves its inbox, app/runner_ipc.py accept_wake), read once. Asked where a
-    wrong no starts a second runner of a job or settles a live one's (app/detached.py, app/runner_spawn.py start_runner):
-    two files, so a read of one that fails still leaves the other. ``patient`` False: runner.json is read once too, for a
-    directory where its absence is the rule (a prestarted runner's, before its handoff)."""
+    (a runner writes its identity there once it serves its inbox, app/runner_ipc.py accept_wake), read once, else one
+    holds its run lock (run_lock_held). Asked where a wrong no starts a second runner of a job or settles a live one's
+    (app/detached.py, app/runner_spawn.py start_runner, app/runner_ipc.py runner_for): two files and a lock, so a read of
+    the files that fails still leaves the lock, which no file read decides. ``patient`` False: runner.json is read once
+    too, for a directory where its absence is the rule (a prestarted runner's, before its handoff)."""
     info = runner_info(directory) if patient else _read_once(Path(directory) / RUNNER)
-    return names_alive(directory, info) or names_alive(directory, _read_once(Path(directory) / WAKE))
+    return (names_alive(directory, info) or names_alive(directory, _read_once(Path(directory) / WAKE))
+            or run_lock_held(directory))
+
+
+def hold_run_lock(directory: Path, wait: float | None = None):
+    """In a task runner that has its handoff, before it writes anything of the job: take ``directory``'s run lock and hold
+    it until release_run_lock (or the process's end). True when held; False when another process held it all ``wait``
+    seconds (RUN_LOCK_WAIT): a runner of this job runs it, and this one must run nothing and change nothing there; None
+    when no lock can be taken there (its file cannot be made, or the filesystem refuses locks), and the runner goes on as
+    runners did before the lock."""
+    key = str(Path(directory).absolute())
+    if key in _held:
+        return True
+    try:
+        fd = open_lock(Path(key) / RUN_LOCK)
+    except (OSError, ValueError):
+        return None
+    deadline = time.monotonic() + (RUN_LOCK_WAIT if wait is None else wait)
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in _BUSY and time.monotonic() < deadline:
+                time.sleep(0.02)
+                continue
+            os.close(fd)
+            return False if exc.errno in _BUSY else None
+        _held[key] = fd
+        return True
+
+
+def release_run_lock(directory: Path) -> None:
+    """The runner is done with ``directory``: its run lock goes (the process's end would let go of it as well)."""
+    fd = _held.pop(str(Path(directory).absolute()), None)
+    if fd is not None:
+        os.close(fd)
+
+
+def run_lock_held(directory: Path) -> bool:
+    """A task runner holds ``directory``'s run lock (hold_run_lock): True when this process does, or another refuses it a
+    shared lock now. False when no lock file is there (no runner of a release with the lock was started there) or it
+    cannot be asked. This process never opens a lock it holds: on NFS a lock is the process's, and closing another
+    descriptor of the file would let go of it."""
+    key = str(Path(directory).absolute())
+    if key in _held:
+        return True
+    try:
+        fd = open_lock(Path(key) / RUN_LOCK, create=False)
+    except (OSError, ValueError):
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except OSError as exc:
+        return exc.errno in _BUSY
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
 
 
 def _read_once(path: Path):
@@ -142,16 +216,18 @@ def argv_dirs(root: Path) -> set[str] | None:
 
 
 def _asked(root: Path, alive) -> list[Path]:
-    """The entries of ``root`` to ask ``alive`` about: with runner_alive only those argv_dirs names, by name;
-    with another test (a caller's or a test's), every one, as before argv_dirs."""
-    named = argv_dirs(root) if alive is runner_alive else None
+    """The entries of ``root`` to ask ``alive`` about: with runner_alive or runner_here only those argv_dirs names (a
+    runner that holds a run lock has its run directory in its argv too), by name; with another test (a caller's or a
+    test's), every one, as before argv_dirs."""
+    named = argv_dirs(root) if alive in (runner_alive, runner_here) else None
     if named is not None:
         return [root / name for name in sorted(named)]
     return sorted(root.iterdir()) if root.is_dir() else []
 
 
 def live_dirs(state_dir: Path, alive=runner_alive) -> list[Path]:
-    """The run directories whose task runner is alive (``alive``), absolute, by name: those a Bridge adopts at its start."""
+    """The run directories whose task runner is alive (``alive``; the Bridge's start asks runner_here), absolute, by name:
+    those a Bridge adopts at its start."""
     return [directory for directory in (entry.absolute() for entry in _asked(Path(state_dir) / RUNS, alive))
             if directory.is_dir() and alive(directory)]
 

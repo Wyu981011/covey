@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import owner_send, pins, project_lead, project_loop, revisits as revisit_rules, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
+from covey.app import owner_ledger, owner_send, pins, project_lead, project_loop, revisits as revisit_rules, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
 from covey.app.project_facts import rebound
 from covey.core import board_read, collab, collab_records, look, project_actions, project_checklist, project_library, project_memory, projects, revisits, store, turn_source, turn_words, web_sync
 from covey.core import owner_send as owner_send_records
@@ -723,9 +723,7 @@ class Collector:
         (``looked``: app/pins.py PinnedTopics, its topics taken off left out); None when it cannot be read. Its ``counts`` are
         the page's numbers (data contract v34 ``asks``) and its 停住了 the topics ``board_groups`` says it of."""
         try:
-            off = dict(looked.dismissed)
-            found = board_read.waits(state, chat, now, off=off)
-            return looked.asks(state, chat, found, now, off, proposals=True)
+            return owner_ledger.of(state, chat, now, looked, proposals=True).asks  # 等主人的账 (app/owner_ledger.py).
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             return None
 

@@ -73,6 +73,18 @@ class Reading(unittest.TestCase):
         self.assertFalse(limit_reset.fault_in(400, "invalid request"))
         self.assertFalse(limit_reset.fault_in(None, ""))
 
+    def test_a_fault_whose_words_are_the_accounts_is_not_a_passing_one(self):
+        """T784: a gateway's lost sign-in came as a 502 "server-side issue, usually temporary", 77 times in a day."""
+        said = ("API Error: 502 Claude Code could not authenticate this account; sign in again in the-gateway. "
+                "This is a server-side issue, usually temporary — try again in a moment.")
+        self.assertEqual(limit_reset.account_fault(said), "authentication_error")
+        self.assertEqual(limit_reset.account_fault('API Error: 503 {"error":{"type":"insufficient_quota"}}'),
+                         "quota_exhausted")
+        self.assertEqual(limit_reset.account_fault("网关返回 500：今日额度已用完"), "quota_exhausted")
+        for passing in ("API Error: 500", "Request timed out. If the API is slow to answer, set API_TIMEOUT_MS",
+                        'API Error: 529 {"type":"overloaded_error"}', ""):
+            self.assertEqual(limit_reset.account_fault(passing), "")
+
 
 class Stream(unittest.TestCase):
     def setUp(self):
@@ -119,6 +131,17 @@ class Stream(unittest.TestCase):
         answer = self.finish([INIT, error], rc=1)
         self.assertEqual((answer.outcome.status, answer.outcome.error_code), ("failed", "server_fault"))
         self.assertEqual(answer.limit["evidence"][0]["error"], "server_error")
+        # A fault whose words are the account's: no retry helps (T784).
+        signed_out = {**error, "uuid": "s", "message": {"id": "s", "content": [{"type": "text", "text":
+                      "API Error: 502 Claude Code could not authenticate this account; sign in again in the-gateway."}]}}
+        answer = self.finish([INIT, signed_out], rc=1)
+        self.assertEqual((answer.outcome.status, answer.outcome.error_code), ("failed", "authentication_error"))
+        self.assertEqual(answer.limit["evidence"][0]["error"], "server_error")  # Its row is kept all the same.
+        self.assertEqual(result_failure(result(is_error=True, api_error_status=502,
+                                               result="API Error: 502 Claude Code could not authenticate this account")),
+                         ("failed", "authentication_error"))
+        self.assertEqual(result_failure(result(is_error=True, api_error_status=503, result="insufficient_quota")),
+                         ("failed", "quota_exhausted"))
         # A rate limit wins over a fault; a 400 is neither.
         self.assertEqual(self.finish([INIT, error, limited_row()], rc=1).outcome.error_code, "rate_limited")
         self.assertEqual(result_failure(result(is_error=True, api_error_status=400)), ("failed", "root_failed"))

@@ -9,7 +9,7 @@ how its session lives. Only a lead topic's turn (core/butler.py ``is_lead``) com
 - ``lead_rules``: the lead's rules in layers (identity, tools, style, and the practice layer phase 3 fills for a
   specialist: nothing now).
 - ``settle_session`` (app/worker.py ``_start_turn``): the session is dropped, and the pack sent again, when the previous
-  turn read over ``RESET_TOKENS``, the topic has been idle ``RESET_IDLE`` seconds, or the model changed.
+  turn's conversation ended over ``RESET_TOKENS``, the topic has been idle ``RESET_IDLE`` seconds, or the model changed.
 - ``lead_turn`` (app/butler.py ``butler_turn``): the turn's context (its Bridge tools, the turn held to reading on
   whichever Harness it runs: LEAD, ``held``) and message (rules, pack, then the turn's own message).
 - The inbox, ``projects/<id>/inbox/<n>.json`` ({id, kind, thread, text, at, taken_by}): receipts of what happened since
@@ -26,6 +26,7 @@ Rules 1 and 6 (AGENTS.md): the records are written under their own lock and noth
 from __future__ import annotations
 
 import dataclasses
+import re
 import secrets
 import sys
 import time
@@ -37,7 +38,7 @@ from covey.app.triage_view import pack_block
 from covey.core import board_read, butler, collab, devices, project_actions, project_checklist, project_library, project_memory, projects, triage
 from covey.core import memory as core_memory
 from covey.core import turn_source
-from covey.core.checkpoint import read_checkpoint
+from covey.core.checkpoint import checked, checkpoint_delivery, delivery_commits, read_checkpoint, short_commit
 from covey.core.harness import CONSULT, LEAD, PROXY, READ, TOOL_LIMIT
 from covey.core.jobs import job_key, job_path, read_job_record, topic_job_records
 from covey.core.locks import resource_lock
@@ -48,7 +49,9 @@ from covey.core.topics import topic_file, topic_label, topic_title
 from covey.core.turn_words import RESULTS, UNSET_PHASES
 from covey.core.web_sync import PREFIX as WEB_PREFIX
 
-RESET_TOKENS = 150_000  # A previous turn that read more than this: the next starts a new session.
+# A previous turn whose conversation ended over this (its context_tokens): the next starts a new session. The leads' on
+# one day (T776) ended between 99K and 316K; 300K lets all but the longest go on and read the cache.
+RESET_TOKENS = 300_000
 RESET_IDLE = 24 * 3600  # Idle this long: the cached prompt is long gone, a new session costs no more.
 DECISIONS = 10  # Entries of the decision log in the pack.
 NOTES_KEPT, DECISIONS_KEPT = 100, 50  # What the record keeps of each list (the memory is core/project_memory.py's).
@@ -124,7 +127,7 @@ NOT_WOKEN = ("话题有了结果不会叫醒你（没开叫醒负责人）：它
 assert any(WOKEN in rule for rule in IDENTITY)
 TOOL_RULES = (
     "- 下面说的工具都是 Bridge 工具（MCP 服务 bridge 的工具，名字是 mcp__bridge__<工具名> 或 mcp_bridge_<工具名>）。开话题用 project_topic_start（写干净的任务说明：做什么、范围、约束、"
-    "交付什么；不抄本机路径），给已有话题加话用 project_topic_send；同时在做的话题不设上限，一件独立的事一个话题。",
+    "交付什么；不抄本机路径；什么时候问主人话题自己知道，不用写“严禁发问题卡”“别问主人”），给已有话题加话用 project_topic_send；同时在做的话题不设上限，一件独立的事一个话题。",
     "- 主人点名要比较几种做法时：用 project_topic_start 开两个只读话题（readonly 为 true），给一模一样的任务说明，最好一家一个"
     "模型（harness、model）；两边都结束后再汇总，写清采纳了哪边的哪部分、为什么，以及两边都没回答的问题。",
     "- 派活前先看已有的话题，能追加就追加：先看“专项状态”的话题清单，再用 topics_list、topics_search 看主人私聊里还没进专项的话题。"
@@ -142,7 +145,11 @@ TOOL_RULES = (
     "收进来的话题做完不等于专项完成：主人在里面说过话或你派过活之前它也会拒绝，先汇报现状、等主人。"
     "收过尾的专项，主人再在里面说话就会自动重开，按主人的新要求接着做。主人要停专项里的某个话题（包括停掉"
     "一个还在等主人回答的话题），用 project_topic_stop：它停掉那个话题排队和在跑的任务、收掉它等主人回答的问题，话题仍记在专项里、算结束。",
-    "- 部署、发布、对外发送、花钱、删东西、不可逆的操作，你没有工具，也不要替主人决定：这些在话题里做，话题会照旧问主人。"
+    "- 部署攒批：专项的话题合进主干后不各自问部署，“专项状态”的“合进待部署”列着它们。该合的都合了、主人要用了，或攒了半天，"
+    "就一次问主人要不要部署这一批（主人在场的这一轮直接在回复里问，叫醒你的轮用 project_note 标 report）：列出话题、提交和各自的自检，"
+    "一句话说部署会动什么。主人点头后用 project_topic_send 交给其中一个话题（或 project_topic_start 开一个）部署这一批，任务说明写明"
+    "“主人已同意部署这一批”和提交清单。不要每合一个就问一次，也不要没问主人就派部署。",
+    "- 发布、对外发送、花钱、删东西、不可逆的操作，你没有工具，也不要替主人决定：这些在话题里做，话题会照旧问主人。"
     "话题里问到主人的选择题，不由你答（分流还没开）。",
     "- 对主人说话要克制：这一轮的回复只有主人在场触发的轮才会发给他；叫醒你的轮，回复不发，要说的话用 project_note 并标 report。",
     "- 主人在场的这一轮里你开的话题、给话题加的话，那一轮结束时 Bridge 会把它的结论（或它停了）直接发给主人；"
@@ -329,6 +336,54 @@ def member_rows(state_dir, record) -> list:
 def live_members(state_dir, record) -> list:
     """The labels of the members with a turn running or waiting for the owner."""
     return [row["label"] for row in member_rows(state_dir, record) if row["live"]]
+
+
+# A delivery's ``deployed`` that says it was not deployed (an empty one says nothing at all).
+NOT_DEPLOYED = re.compile(r"(?:未|没|没有|不|尚未|暂未|还没有?|待|等[^，。；,;]{0,12})\s*(?:部署|上线|发布)|not (?:yet )?deployed"
+                          r"|^\s*(?:无|none|n/?a|-|—|否|no)\s*$", re.IGNORECASE)
+DEPLOY_ROWS = 12  # The 合进待部署 lines a pack shows; the rest counted.
+
+
+def deployed(delivery) -> bool:
+    """Whether a checkpoint's ``delivery`` says its turn deployed something."""
+    words = str((delivery or {}).get("deployed") or "").strip()
+    return bool(words) and not NOT_DEPLOYED.search(words)
+
+
+def waiting_deploys(state_dir, record) -> list:
+    """部署攒批: the member topics' ended turns that merged commits (their checkpoint's ``delivery``, kept on the job record) and that no
+    deploy came after, oldest first: [{label, commits, checked, ended}]. A turn whose delivery says it deployed covers every turn that ended
+    before it started (a deploy takes the trunk as it is), whichever topic it was in."""
+    rows, deploys = [], []
+    for topic_id in record.get("threads") or ():
+        if not isinstance(topic_id, str):
+            continue
+        label = topic_label(state_dir, topic_id) or topic_id[:8]
+        for job in topic_job_records(state_dir, topic_id):
+            if job.get("status") not in ENDED and job.get("status") != "continued":
+                continue
+            delivery = checkpoint_delivery({"delivery": job.get("delivery")})
+            if not delivery:
+                continue
+            if deployed(delivery):
+                deploys.append(epoch_seconds(job.get("created_at")) or 0)
+            elif delivery_commits(delivery):
+                rows.append({"label": label, "commits": delivery_commits(delivery), "checked": checked(delivery),
+                             "ended": epoch_seconds(job.get("updated_at")) or 0})
+    last = max(deploys, default=0)
+    return sorted((row for row in rows if row["ended"] > last), key=lambda row: row["ended"])
+
+
+def deploy_block(state_dir, record) -> str:
+    """The pack's 合进待部署 (TOOL_RULES 部署攒批), '' when nothing waits."""
+    rows = waiting_deploys(state_dir, record)
+    if not rows:
+        return ""
+    lines = [f"- {row['label']} · " + " ".join(short_commit(c) for c in row["commits"][:4])
+             + (f" 等 {len(row['commits'])} 个提交" if len(row["commits"]) > 4 else "")
+             + f" · {'已自检' if row['checked'] else '未自检'} · {stamp(row['ended'])} 合进" for row in rows[-DEPLOY_ROWS:]]
+    more = f"（另有更早的 {len(rows) - DEPLOY_ROWS} 轮没列）" if len(rows) > DEPLOY_ROWS else ""
+    return (f"合进待部署（{len(rows)} 轮，按部署攒批一次问主人）{more}：\n" + "\n".join(lines))
 
 
 def thread_line(row) -> str:
@@ -616,6 +671,9 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
                + ("\n" + "\n".join(map(thread_line, rows)) if rows else ""))
     if collab_on:
         out += [brief_block(state_dir, record, rows, full=full), checklist_block(state_dir, record, rows)]
+    waiting = deploy_block(state_dir, record)
+    if waiting:
+        out.append(waiting)
     view = core_memory.project_view(project_memory.entries(state_dir, record), record["id"], redacted=redacted,
                                     since=None if full else since)
     memory = memory_lines(view)
@@ -658,15 +716,20 @@ def previous_turn(state_dir, topic_id, key):
 
 
 def rebuild_reason(state_dir, topic_id, key, model, now=None) -> str:
-    """Why the lead's session must be built again ('' when it may go on): the previous turn read over RESET_TOKENS, the
-    topic was idle over RESET_IDLE, or the model is not the previous turn's."""
+    """Why the lead's session must be built again ('' when it may go on): the previous turn ended with its conversation
+    over RESET_TOKENS, the topic was idle over RESET_IDLE, or the model is not the previous turn's.
+
+    The conversation's size is the previous turn's ``context_tokens`` (what its next request would start from), not its
+    ``input_tokens``: those add up every request of the turn, each of which read the whole conversation again (T776: a
+    lead turn of 41 steps on a 200K conversation had read 918K, and every turn of the lead started a new session, its
+    first request reading nothing from the cache). A record without it (one from before the counts) falls back to them."""
     last = previous_turn(state_dir, topic_id, key)
     if last is None:
         return ""
-    tokens = last.get("input_tokens")
-    tokens = tokens if type(tokens) is int else last.get("context_tokens")
+    tokens = last.get("context_tokens")
+    tokens = tokens if type(tokens) is int else last.get("input_tokens")
     if type(tokens) is int and tokens > RESET_TOKENS:
-        return f"上一轮读了 {tokens} token"
+        return f"上一轮结束时对话有 {tokens} token"
     ended = board_read.ended_at(last)
     if ended and now_of(now) - ended > RESET_IDLE:
         return "空闲超过 24 小时"

@@ -11,7 +11,7 @@ from covey.core.harness import backend_capabilities
 from covey.core.loops import every
 from covey.core.model_names import readable_model
 from covey.core import gateways
-from covey.core.providers import RETIRED_PREFIXES, menu_name, provider_of
+from covey.core.providers import RETIRED_PREFIXES, menu_name, own_account, provider_of
 from covey.core.roster import NAMES
 from covey.core.state import read_json, read_object, write_json
 
@@ -240,6 +240,33 @@ def available_models(topics, ctx):
                 row = {**row, 'display_name': row['display_name'] + '（' + row['unavailable_reason'] + '）'}
             result[name + ':' + model] = {**row, **source, 'harness': name, 'model': model,
                                           'label': model_label(app.spec.title, {**row, **source}), **route, **modes}
+    return fold_same_account(result)
+
+
+def fold_same_account(result):
+    """``result`` with each Harness's own login shown once when another provider of it is the same account
+    (core/providers.py ``own_account``, T786): the own login's entries a folded gateway offers too (by name) leave the menu, the others are listed
+    under the gateway, so the provider select has one entry for the account. Their ids are unchanged: they still run on the
+    Harness's own login, which is that account; a topic on one runs as before."""
+    for name in {entry['harness'] for entry in result.values()}:
+        names = own_account(name)
+        if not names:
+            continue
+        theirs = [entry for entry in result.values() if entry['harness'] == name and entry.get('provider') in names]
+        if not theirs:
+            continue
+        offered = {gateway_free(str(entry.get('display_name') or '')) for entry in theirs}
+        first = theirs[0]
+        for key, entry in list(result.items()):
+            provider = provider_of(name, entry['model'])
+            if entry['harness'] != name or provider is None or provider.prefix:
+                continue  # Another Harness's, or a gateway's.
+            if gateway_free(str(entry.get('display_name') or '')) in offered:
+                del result[key]
+                continue
+            moved = {**entry, 'provider': first['provider'], 'provider_title': first['provider_title'],
+                     'source': first.get('source') or first['provider_title']}
+            result[key] = {**moved, 'label': model_label(str(entry.get('title') or name), moved)}
     return result
 
 

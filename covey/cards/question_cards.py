@@ -8,7 +8,7 @@ from covey.cards.elements import (BUTTON_SPACING, button_look, button_row, callb
                                   shown_width, text_button, topic_button)
 from covey.cards.review import compact_text, opening
 from covey.cards.ui import BODY_PADDING, BODY_SPACING, banded, peek, receipt, speaker_row, split_ask
-from covey.core import look, triage, turn_words
+from covey.core import look, triage, turn_words, ui_samples
 from covey.core.stale import STALE_NOTE
 from covey.core.text import literal
 
@@ -491,7 +491,8 @@ def _question_fields(i, q, count=1, record=None, draft=None):
     if background:  # Read on a phone, a question alone did not say what it would change (T604 #14).
         elements.append(note("背景：" + literal(background)))
     options = q.get("options") or []
-    if options:
+    # A question with samples says each option's description over its sample (``samples_shown``), not again here.
+    if options and not ui_samples.has(q):
         if any(o.get("description") for o in options):
             listed = "\n".join(f"- **{o['label']}**" + (f"：{o['description']}" if o.get("description") else "")
                                for o in options)
@@ -568,11 +569,76 @@ def question_card(record, topic="", title="", *, rowed=False):
                else settled_title(record))
     row = [speaker_row({"who": who, "doing": "waiting"}, outcome="waiting",
                        tag=SETTLED_TAGS.get(record.get("status")), url="")] if own_row else []
-    elements = [*row, element, *others_row(record)]
-    if record.get('refusal'):
-        elements.append({"tag": "markdown", "content": "⚠️ " + record['refusal']})
     look_of = dict(padding=BODY_PADDING, spacing=BODY_SPACING) if own_row else {}
-    return banded(card(elements, summary, default_width=True, **look_of))  # The badge's colours.
+
+    def drawn(shown):
+        elements = [*row, *shown, element, *others_row(record)]
+        if record.get('refusal'):
+            elements.append({"tag": "markdown", "content": "⚠️ " + record['refusal']})
+        return banded(card(elements, summary, default_width=True, **look_of))  # The badge's colours.
+    if not (form and ui_samples.any_of(record["questions"])):
+        return drawn([])
+    return with_samples(record, drawn)
+
+
+# 样张 (core/ui_samples.py, docs/ui.md 12): what the open form's question card draws above its first question.
+SAMPLES_HEAD = "下面 {n} 版样张由卡片 JSON 画成，样张里的按钮点不动；选哪一版，点最下面对应的选项。"
+SAMPLE_LEFT_OUT = "这版样张放不下这张卡，没有画"
+# What one card may hold (scripts/cardkit_check.py LIMITS: 30 KB of JSON, 200 tagged nodes), a little kept free.
+CARD_BYTES, CARD_NODES = 29_000, 195
+
+
+def sample_blocks(record, left_out=()):
+    """Each sample of ``record``'s questions (core/ui_samples.py ``kept``) as the card draws it: (elements, colours), its
+    option's label in bold, the option's description in grey under it and then the sample, or why it is not drawn (a note
+    ``carry`` kept, or SAMPLE_LEFT_OUT for the ``left_out`` ones, by their order)."""
+    blocks = []
+    many = len(record["questions"]) > 1
+    for i, q in enumerate(record["questions"]):
+        for option in q.get("options") or ():
+            kept = ui_samples.kept(option)
+            if not kept:
+                continue
+            index = len(blocks)
+            label = f"{question_header(q) or f'第 {i + 1} 题'} · " if many else ""
+            head = f"**{label}{literal(str(option.get('label') or ''))}**"
+            if option.get("description"):
+                head += "\n" + grey(literal(str(option["description"])))
+            shown = [] if index in left_out else kept.get("elements") or []
+            why = SAMPLE_LEFT_OUT if index in left_out else kept.get("note", "")
+            colors = (kept.get("colors") or {}) if shown else {}
+            blocks.append(([md(head), *shown, *([note(why)] if why else [])], colors))
+    return blocks
+
+
+def with_samples(record, drawn):
+    """The open question card ``drawn(shown)`` draws with ``shown`` above the form: SAMPLES_HEAD, then each sample block
+    (``sample_blocks``) after a thin rule, a rule under the last; the last samples left out while the card is over
+    CARD_BYTES or CARD_NODES. The samples' own colours join the card's config."""
+    carried = _options_with_samples(record)
+    count = len(carried)
+    drawable = [index for index, option in enumerate(carried) if ui_samples.kept(option).get("elements")]
+    left_out = []
+    while True:
+        blocks = sample_blocks(record, left_out)
+        shown = [note(SAMPLES_HEAD.format(n=count))]
+        for elements, _ in blocks:
+            shown += [{"tag": "hr"}, *elements]
+        built = drawn([*shown, {"tag": "hr"}])
+        colors = {}
+        for _, own in blocks:
+            colors.update({name: value for name, value in own.items() if name not in colors})
+        if colors:
+            style = built.setdefault("config", {}).setdefault("style", {})
+            style["color"] = {**colors, **style.get("color", {})}
+        if (ui_samples.size(built) <= CARD_BYTES and ui_samples.nodes(built) <= CARD_NODES) or len(left_out) >= len(drawable):
+            return built
+        left_out.append(drawable[len(drawable) - 1 - len(left_out)])
+
+
+def _options_with_samples(record) -> list:
+    """The options of ``record``'s questions that carry a sample, in the order ``sample_blocks`` draws them."""
+    return [option for q in record["questions"] for option in q.get("options") or () if ui_samples.kept(option)]
 
 
 SETTLED_TAGS = {"answered": ("已回答", "grey"), SET_ASIDE: ("不处理", "grey"), "cancelled": ("已取消", "grey"),

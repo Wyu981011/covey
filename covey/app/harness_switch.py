@@ -38,7 +38,7 @@ from covey.cards import switch_form
 from covey.cards.elements import notice_card
 from covey.cards.project_card import SWITCH_LEAD
 from covey.cards.launch_config import PAGES
-from covey.core.menu_choice import budget_effort, chosen_work_mode, effort_options, parse_budget, tier_pick
+from covey.core.menu_choice import budget_effort, chosen_work_mode, effort_options, parse_budget, named_budget, tier_pick
 from covey.cards.switch_form import (BUDGET, CANCEL, CONFIRM, HARNESS, MODEL, PAGE, PROVIDER, REDACTION,
                                               RUN_MODE, WORK_MODE, WORKSPACE, build_switch_card)
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
@@ -267,7 +267,7 @@ class HarnessSwitch(CardActionQueue):
         if kind == WORK_MODE and option in (choice.get("work_modes") or ()):
             record["selected_work_mode"] = option
         elif kind == BUDGET and (budget := parse_budget(option, record["config_revision"], choice)) is not None:
-            record["selected_effort"] = budget
+            record["selected_effort"] = budget  # 推荐 or 模型原生默认 tapped on a card sent before stays as tapped.
         elif kind == WORKSPACE and option in (record.get("workspaces") or ()):
             record["selected_workspace"] = option
         elif kind == RUN_MODE and option in RUN_MODES:
@@ -315,8 +315,10 @@ class HarnessSwitch(CardActionQueue):
         """The budget a model comes with on the card: the topic's for its own model, else the one the chat
         usually gives it, else the model's default."""
         if key == record["current"]["key"] and record["current"].get("budget"):
-            return record["current"]["budget"]
-        return (record.get("usual_efforts") or {}).get(key) or effort_options(record["models"][key])[1]
+            return record["current"]["budget"]  # The topic's own, as it is bound.
+        # By the level it runs (docs/ui.md 13 U5): the card lists no 推荐 or 模型原生默认.
+        return named_budget(record["models"][key], (record.get("usual_efforts") or {}).get(key)
+                            or effort_options(record["models"][key])[1])
 
     def open(self, ctx, event, raw):
         chat, click = str(event.get("chat_id") or ""), str(event.get("event_id") or event.get("message_id") or "")
@@ -369,7 +371,8 @@ class HarnessSwitch(CardActionQueue):
                     self.tell(app, target, chat, NO_OTHER_HARNESS, "no-other", click, top)
                     return
                 if picked:
-                    sel = sel._replace(selected=picked, effort=sel.usual.get(picked) or effort_options(choices[picked])[1])
+                    sel = sel._replace(selected=picked, effort=named_budget(
+                        choices[picked], sel.usual.get(picked) or effort_options(choices[picked])[1]))
             current = choices.get(sel.key, {})
             mode, run_mode = str(topic.get("work_mode") or ""), run_mode_of(topic.get("workdir") or "")
             record = {"token": token, "topic_id": target.topic_id, "chat_id": chat, "job_id": raw.get("job_id"),

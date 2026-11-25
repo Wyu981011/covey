@@ -1,4 +1,4 @@
-/* 专项的「进度」标签（v39，ProjectProgress.tsx）：颜色只用 token，深浅两种模式同一套；状态色配图标和字，不单靠颜色。
+/* 专项的「进度」标签（v40，ProjectProgress.tsx）：颜色只用 token，深浅两种模式同一套；状态色配图标和字，不单靠颜色。
    做完绿 --done、在做蓝 --run、等你琥珀 --wait、将要做和不做了是中性灰 --t3 */
 .cv .k-done{--c:var(--done)}
 .cv .k-doing{--c:var(--run)}

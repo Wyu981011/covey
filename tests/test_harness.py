@@ -61,6 +61,7 @@ from covey.cards.board import KINDS as BOARD_KINDS
 from covey.cards.app_setup import SKIP as APP_SETUP_SKIP, START as APP_SETUP_START
 from covey.cards.welcome import KIND as WELCOME_KIND
 from covey.cards.web_login import KINDS as WEB_LOGIN_KINDS
+from covey.cards.batch_switch import KINDS as BATCH_SWITCH_KINDS
 from covey.cards.proxy_panel import KINDS as PROXY_PANEL_KINDS
 from covey.cards.proxy_resend import RESEND as PROXY_RESEND, SUGGEST as PROXY_SUGGEST
 from covey.cards.owner_send import (ASK as OWNER_SEND_ASK, DROP as OWNER_SEND_DROP, PICK as OWNER_SEND_PICK,
@@ -705,6 +706,7 @@ class RetiredHarnessTests(unittest.TestCase):
         private |= {OWNER_SEND, OWNER_SEND_DROP, OWNER_SEND_PICK,
                     OWNER_SEND_ASK}  # The 代发草稿 card (tests/test_owner_send.py, test_ask_first.py).
         private |= {FOLD_CLOSE_KIND}  # A click on 这一轮中途的汇报's text on a relay (tests/test_trace.py FoldCloseTest).
+        private |= BATCH_SWITCH_KINDS  # The 批量换配置 card (tests/test_batch_switch.py).
         clicks = [{'action_value': {'kind': kind, 'topic_id': self.topic.topic_id, 'job_id': 7, 'token': 'ab' * 8,
                                     'harness_id': GONE, 'binding_revision': 2}}
                   for kind in ACTIONS if kind not in private]
@@ -745,7 +747,9 @@ class RetiredHarnessTests(unittest.TestCase):
             'token': 'cd' * 8, 'topic_id': self.topic.topic_id, 'chat_id': 'chat', 'job_id': 2, 'job_key': 'old-running',
             'status': 'pending', 'native_live_question': True, 'request_id': 'que_1', 'questions': [],
             'live_question_proof': {'version': 1, 'backend': GONE}}))
-        with mock.patch('covey.app.detached.alive', side_effect=lambda d: Path(d).name == live.name):
+        is_live = lambda d, **_: Path(d).name == live.name
+        with mock.patch('covey.app.detached.alive', side_effect=is_live), \
+                mock.patch('covey.app.detached.here', side_effect=is_live):
             self.assertEqual([b['key'] for b in restart_blockers(self.state)], ['old-running'])
             recover_question_delivery(self.ctx, [a.questions for a in self.app.apps.values()], self.app.runtime.log)
             self.app.notify_stale_jobs(self.ctx)

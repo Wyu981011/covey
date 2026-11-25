@@ -50,7 +50,11 @@ HOOK_NAMES = {
     "service_hosting": "service/install.py: other ways to host the Manager (MODES: name -> install(root, args); optional auto_mode() -> a mode name when it applies, for --mode auto)",
     "deploy_check": "service/plugins.py: the package's checks before a deploy, run in the release being deployed (check(harness_config) -> {'problems': [...], 'notes': [...]}; every package's, not only the first)",
     "claude_turn": "backends/claude/bridge.py: context manager around a Claude Code turn (turn(ctx, env, run_id=...) -> (ctx, env); "
-                   "every package's, the first outermost; ctx.options may carry Claude Code hooks, backends/claude/argv.py TURN_HOOKS)",
+                   "every package's, nested in enabled order, the first outermost; ctx.options may carry Claude Code hooks, "
+                   "backends/claude/argv.py TURN_HOOKS)",
+    "claude_models": "backends/claude/models.py: models() -> list of backends/claude/models.py catalog_row dicts, added to the "
+                     "Claude Harness's model catalog; each slug must start with a prefix the same package's PROVIDERS declare "
+                     "for claude (else the row is dropped), and the package's claude_turn runs the chosen model",
     "agy_turn": "backends/agy/bridge.py: context manager around an Antigravity turn on this machine (turn(ctx, env, "
                 "run_id=...) -> (env, switch): the first process's environment, and switch(failure) -> (env, note) or "
                 "None, asked when a process failed as SWITCHED)",
@@ -70,7 +74,7 @@ SETTING_NAMES = {
 # compat: variables of features that were taken out -> the feature; still set, they are ignored and the Bridge logs one
 # line for each (``unused_env``). Paseo (the covey_paseo extension) was taken out.
 RETIRED_ENV = {"COVEY_PASEO_FLEET": "Paseo"}
-PROVIDER_FIELDS = {"key", "harness", "name", "prefix", "access", "menu"}
+PROVIDER_FIELDS = {"key", "harness", "name", "prefix", "access", "menu", "own_login"}  # own_login: a bool (T786).
 
 
 class ExtensionError(RuntimeError):
@@ -232,6 +236,8 @@ def read(package: str) -> Extension:
         if not all(isinstance(provider.get(k), str) for k in ("key", "harness", "name", "prefix", "access")):
             raise ExtensionError(package, f"a PROVIDERS item needs the strings key, harness, name, prefix, "
                                           f"access, got {provider!r}")
+        if not isinstance(provider.get("own_login", False), bool):
+            raise ExtensionError(package, f"a PROVIDERS item's own_login is true or false, got {provider!r}")
     modes = _mapping(package, getattr(manifest, "WORK_MODES", {}), "WORK_MODES")
     if not all(isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(t, str) for t in v)
                for v in modes.values()):
@@ -333,6 +339,14 @@ def _hook_module(extension: Extension, name: str):
     except Exception as error:
         raise ExtensionError(extension.package, f"cannot import hook {name} ({module}): "
                                                 f"{type(error).__name__}: {error}") from error
+
+
+def hook_module(package: str, name: str):
+    """The module of hook ``name`` of the enabled package ``package``."""
+    for extension in manifests():
+        if extension.package == package and name in extension.hooks:
+            return _hook_module(extension, name)
+    raise KeyError((package, name))
 
 
 def hook(name: str):

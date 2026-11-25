@@ -52,6 +52,8 @@ def tier_pick(choices, selected, harness=None, provider=None, prefer=None):
     pool = [key for key, entry in choices.items()
             if harness_of(key, entry) == (current if harness is None else harness)
             and (provider is None or entry.get('provider', '') == provider)]
+    # Never Claude Code's "Default (recommended)" while the pool has a model that names itself (explicit).
+    pool = [key for key in pool if key.partition(':')[2] != NATIVE] or pool
     if not pool:
         return None
     if prefer is None:
@@ -98,17 +100,19 @@ def budget_options(choice):
 
 
 def plain_budgets(choice):
-    """The 设置 card's 思考预算 options of ``choice``: its levels from the highest, each by its name; not 推荐 or
-    模型原生默认, which do not say what they run (the owner asked them off, T615). A model without levels keeps its one
-    模型自动管理."""
+    """The 思考预算 options of ``choice`` on every card (设置, 代答, the launch card, 换配置) and the web page: its levels
+    from the highest, each by its name; not 推荐 or 模型原生默认, which do not say what they run (the owner asked them off
+    the 设置 card, T615, then off the launch and 换配置 cards too). A model without levels keeps its one 模型自动管理.
+    effort_options keeps the whole list: a card sent before may still send one of them."""
     options = budget_options(choice)[0]
     return [option for option in options if option[0] not in (RECOMMENDED, 'default')] or options
 
 
 def plain_budget(choice, effort=''):
-    """The budget a 设置 row saves for ``choice`` when the model changes under it: ``effort`` where plain_budgets
-    offers it, else the level 推荐 names now, else the highest one that is no orchestration mode; 'default' (模型自动管理)
-    for a model without levels."""
+    """The budget by name a card keeps for ``choice``: ``effort`` where plain_budgets offers it, else the level 推荐
+    names now (the one 推荐 runs, budget_effort), else the highest one that is no orchestration mode; 'default'
+    (模型自动管理) for a model without levels. A 设置 row saves it when the model changes under it; the launch and 换配置
+    cards keep named_budget, which never picks a level nobody named."""
     levels = [value for value, _ in plain_budgets(choice)]
     if effort in levels:
         return effort
@@ -123,19 +127,49 @@ def plain_budget(choice, effort=''):
     return next((level for level in levels if level not in ORCHESTRATION_MODES), levels[0])
 
 
+def named_budget(choice, effort=''):
+    """The budget by name the launch and 换配置 cards keep for ``effort`` on ``choice``: ``effort`` where plain_budgets
+    offers it; 推荐 or 模型原生默认 (an option of a card sent before, a chat's usual one, a topic's binding) the level 推荐
+    names now, the one 推荐 runs (budget_effort); '' when the model has no such level, so the card asks for one as it
+    did for 推荐 there. Unlike plain_budget it never picks a level nobody named: 开始任务 never silently runs high."""
+    levels = [value for value, _ in plain_budgets(choice)]
+    if effort in levels:
+        return effort
+    default = effort_options(choice)[1]  # A model with one budget needs no choice: that one.
+    if default in levels:
+        return default
+    try:
+        recommended = choice.get('recommended') or recommended_effort(choice.get('levels') or [])
+    except ValueError:
+        recommended = ''
+    return recommended if recommended in levels else ''
+
+
 def explicit(choices):
     """``choices`` without the entries that name no model of their own (NATIVE, Claude Code's "Default
     (recommended)": whichever model it picks), as the 设置 card's 模型 rows list them (T615)."""
     return {key: entry for key, entry in choices.items() if key.partition(':')[2] != NATIVE}
 
 
+def offered_models(choices, keep=''):
+    """The models a launch or 换配置 card lists: ``choices`` without Claude Code's "Default (recommended)" (explicit, as
+    the 设置 card lists them, T615), but ``keep`` (the card's selected one: a topic bound to it, a card sent before) and
+    the entry of a Harness that has no other."""
+    named = explicit(choices)
+    covered = {harness_of(key, entry) for key, entry in named.items()}
+    return {key: entry for key, entry in choices.items()
+            if key in named or key == keep or harness_of(key, entry) not in covered}
+
+
 def effort_text(choice, selected):
-    """How the summary names the budget ``selected`` (an effort_options value)."""
+    """How the summary names the budget ``selected`` (an effort_options value): by the level it runs (plain_budget), as
+    the 思考预算 row lists them."""
     if not choice.get('levels'):
         return '模型自动管理'
-    options, default = budget_options(choice)
-    labels = dict(options)
-    return labels.get(selected if selected in labels else default, '未选')
+    every = dict(budget_options(choice)[0])
+    if selected in every and selected not in dict(plain_budgets(choice)):
+        return every[selected]  # Chosen before (a topic's binding, a card sent before): as it was.
+    return dict(plain_budgets(choice)).get(named_budget(choice, selected), '未选')
 
 
 def work_modes(choice, selected, *, known=True):

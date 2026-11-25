@@ -21,7 +21,7 @@ from typing import NamedTuple
 from covey.cards.elements import fold, grey, md, panel_header, plain, styled_panel
 from covey.core.defaults import WORK_MODES
 from covey.core.menu_choice import (budget_options, effort_text, explicit, model_provider, model_tiers, models_of,
-                                    plain_budgets, tiers, work_modes)
+                                    offered_models, named_budget, plain_budgets, tiers, work_modes)
 from covey.core.workspaces import RUN_MODES
 
 MODEL_ACTION = 'bridge_launch_model'
@@ -160,10 +160,15 @@ def model_settings(choices, model, *, kinds, revision, effort, work_mode=''):
     """The Harness, 供应商 and 模型 settings (model_tiers) around ``model``, its 思考预算 (values as the budget
     select's, ``revision``:value) and, for a model with work modes, 工作模式; ``kinds`` the five callback
     kinds."""
-    harness, provider, harnesses, providers, models = model_tiers(choices, model)
+    # Only what says what it runs (docs/ui.md 13 U5): no "Default (recommended)" (but the selected one), no 推荐 or
+    # 模型原生默认; a budget saved as one of them is drawn as the level it runs.
+    harness, provider, harnesses, providers, models = model_tiers(offered_models(choices, model), model)
     choice = choices.get(model, {})
-    options, default = budget_options(choice)
-    effort = effort if effort in dict(options) else default
+    options, every = plain_budgets(choice), dict(budget_options(choice)[0])
+    if effort in every and effort not in dict(options):
+        options = [*options, (effort, every[effort])]  # Chosen before (a topic's binding, a card sent before): as it was.
+    elif effort not in every:
+        effort = named_budget(choice, effort)
     settings = [Setting('harness', 'Harness', kinds[0], harness, list(harnesses.items())),
                 Setting('provider', '供应商', kinds[1], provider, list(providers.items())),
                 Setting('model', '模型', kinds[2], model, list(models.items())),

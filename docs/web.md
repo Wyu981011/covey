@@ -101,7 +101,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 ## 网页上能做什么
 
 - **看**：每个专项（目标、话题、记忆、资料库、报告）、每个话题（状态、每一轮的你说和它答、执行过程、计划、用量、失败原因、图片），管家和专项负责人的对话也各是一个话题。状态色、“要你处理”“停住了”的算法和飞书的看板一致；Covey 推了 `asks`（v34）时，看板、侧栏和手机标签栏上“要你处理”的数就用它，和飞书看板、「手上的事」同一个数。
-  - 管家、负责人和话题页的一轮画法一样：你说的话靠右、带浅色底（答题的那句是“问题 → 选择”的表），回答上面一行是谁和几点，再一颗“工具 N · 用时”点开看过程；回答下面一行是复制按钮和这一轮的输入（Harness、供应商、模型、思考、脱敏、工作区）、输出（用时、速度、token、缓存命中）；话题页没有单独的“第 N 轮”列表，上面只多一块总览。电脑上对话区左边有一列刻度，一句你说的话一条，鼠标停上去看那句和回答的开头，点一下跳过去，也能用上下键和回车；找话题里的话用左上角的搜索。
+  - 管家、负责人和话题页的一轮画法一样：你说的话靠右、带浅色底（答题的那句是“问题 → 选择”的表），回答上面一行是谁和几点，再一颗“工具 N · 用时”点开看过程；回答下面一行是复制按钮和这一轮的输入（Harness、供应商、模型、思考、脱敏、工作区）、输出（用时、速度、token、缓存命中）；话题页没有单独的“第 N 轮”列表，上面只多一块总览。电脑上对话区左边有一列刻度，一句你说的话一条，鼠标停上去看那句和回答的开头，点一下跳到卡片上的那句（手抖挪过一两像素不换，按下松开不在同一条上也算数；鼠标在刻度上时来了新一轮，刻度也不整体挪），也能用上下键和回车；找话题里的话用左上角的搜索。
 - **大厅**：你、管家和各专项的负责人在一条时间线上，和飞书私聊顶层一样：管家的回答、负责人对你说的话、话题做完发到私聊的结论（收成一行，点开看全文）、等你回答的问题、专项建好和结束。顶上一排是成员：管家一直在，每个没结束的专项多一位负责人。
   - 不 @ 时这句话交给管家，由它判断自己答、开话题还是转给负责人；输入 @ 选一位负责人就直接交给它。你那句话下面写着最后交给了谁（“→ 管家 → T12”）；交错了就 @ 对的人再说一句。
   - 每条消息旁有“引用”，选中一段文字也能只引用这段：引用话题的结论就是对那个话题说，引用负责人的话就是对负责人说；再 @ 一位就交给 @ 的那位，引用的内容一起带上。话题不能 @。
@@ -123,7 +123,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - 有要你定的：一条一块（原因、目标、话题），直接点照办或「不用」；标题栏「收起」收成一行“要你定 N 条”，来了新建议再展开。
   - 定好的（24 小时内）一行一条：标签、动作、几个话题、结果（已拆出、不用、没做成……），照办了的带「去专项」；点一行看原因、话题和没做成的原因。有要你定的时它们收在底下“已定 N 条”里。
   - 都定好了：收成一行“都定好了 · … 等 N 条”，没做成的标红；「展开」看一行一条，「知道了」从看板收走，有新建议或哪条的结果变了再出来。收起和「知道了」只记在这台设备的浏览器里。
-- **专项的简报**（v40，第一期 v39 的「进度」并进来；负责人写了[目标检查表](projects.md#负责人对照目标跟进)时）：专项页在「全图」和「报告」之间的标签叫「简报」（手机上同样一个；地址 `/brief`，旧的 `/progress` 仍能打开，跳到简报），只读，一页看清专项做到哪了，自上而下：
+- **专项的简报**（v41，第一期 v40 的「进度」并进来；负责人写了[目标检查表](projects.md#负责人对照目标跟进)时）：专项页在「全图」和「报告」之间的标签叫「简报」（手机上同样一个；地址 `/brief`，旧的 `/progress` 仍能打开，跳到简报），只读，一页看清专项做到哪了，自上而下：
   - **头部**：专项名、背景（负责人用 `project_goal` 写的）、目标，一行统计：几个动作、各状态几个、话题数、检查表几条满足。
   - **动作**：一个动作一张卡。状态（等你、在做、做完、待核对、将要做）由页面按条目和话题现算，和 Bridge 同一套规则（[项目简报](projects.md#负责人对照目标跟进)），除了颜色还有图标和字；下面是负责人写的一句现状、程序写的一行“自动”（最近哪个话题几点做了什么、还没满足哪几条），和这个动作的话题（session）：每个一行，写状态、阶段、第几步、下一步、在等你什么、最后结论，在跑和等你的排前面，更早的收成一排 T 号，做完的动作只留 T 号；「检查表 x/y」展开看条目的证据、缺口和尾巴；挂在这个动作的话题上的协作缺口标 ⚠。
   - **session 的位置和影响**：每个话题一行“位置”（交付哪几条、前置、解锁），点开抽屉最上面是完整的：前置（再往前的写一行）→ 它交付的条目 → 它解锁的条目，和几句影响（对所在动作、对后面的条目、对整个专项）；下面是步骤清单（最新一轮的 `plan`）、「打开话题」。没挂到条目上的话题写“只挂在动作 3，没对应检查表条目”。
@@ -179,7 +179,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - `slow_step`：当前这步已经比平均每步慢时是 `{number, since, seconds, usual}`，此时 `eta_seconds` 为 null，网页可写“第 3 步已做 35 分钟，此前平均每步约 6 分钟”；否则为 null。
   - `maybe_stuck`：超过 `COVEY_PROGRESS_STUCK_MINUTES` 分钟没有动静；最新一步是还在跑的命令时不算。
   - `command`：只在最新一步是还在跑的命令时才有这个键，`{since, seconds, long}`（开始的时刻、已跑的秒数到分钟、是否已跑满卡住的分钟数），网页可写“在等一条命令跑完 · 已 38 分钟”；旧网页不认识这个键，不受影响。
-  - `next_step`、`waiting`（v40，都可选）：从这一轮的检查点读，网页的简报写“下一步”“在等你什么”。`next_step` 是检查点的下一步（至多 120 字，Bridge 垫的“检查任务要求与已有状态”和“无”不推）；`waiting` 是检查点 `requires_user` 为真时的 `question`（至多 160 字）。没有就不带键；任务卡、看板读的 `core/progress.py` 输出不变（`app/web_collect.py` 的 `checkpoint_fields` 加的）。
+  - `next_step`、`waiting`（v41，都可选）：从这一轮的检查点读，网页的简报写“下一步”“在等你什么”。`next_step` 是检查点的下一步（至多 120 字，Bridge 垫的“检查任务要求与已有状态”和“无”不推）；`waiting` 是检查点 `requires_user` 为真时的 `question`（至多 160 字）。没有就不带键；任务卡、看板读的 `core/progress.py` 输出不变（`app/web_collect.py` 的 `checkpoint_fields` 加的）。
 - **模型名**（v11）：`model_name` 是读得懂的名字（`core/model_names.py`：`router/claude-opus-5-5` → Opus 5.5，去掉路由前缀、预算后缀和 `[1m]`，`default` 为空串）；`model` 照旧是原值。
   - 话题的 `harness`、`workspace`、`model` 都是它现在绑的（topic.json，和 `config` 同一个来源），下一句话就用它们；网页输入框下沿那行“工作区 · Harness · 模型”和话题页页头照它写。绑定里没写模型的老话题，取最近一轮跑过的任务的模型；换配置以后还没跑过的，不取换配置前那个任务的（`app/web_collect.py` 的 `bound_model`）。每一轮实际用的配置看那一轮的 `ran_with`。
 - **最后一轮的编号**（v12）：`last_seq` 是这次推的各轮里最大的 `seq`（没有轮次为 0）。网页收到后删掉这个话题 `seq` 比它大的轮次：在跑的一轮按“已有轮数 + 1”推，回答进来后编号可能落在更前面，原来那条“在跑”就再也不会被覆盖。收尾中的任务（回答已写进历史、记录还是“在跑”）不判“没发出去”，也不再画一条“在跑”的轮。
@@ -263,11 +263,11 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 - `goal`（v11）是负责人用 `project_goal` 写的目标，没写过为空串（开专项时的那句话常常只是安排，不当目标显示）。另带 `started_at`。
 - `memory` 每条带 `id`、`said_by`（你说的、它总结的）、`origin`（`{at}`）；`library` 每条带 `kind`（file、link、image、video）、`size`（知道才给）、`topic_number`（知道才给）。
-- `checklist`、`milestones`、`decisions`（v39，都可选，记录里没有就不带这个键）是「进度」（现在并进「简报」）的数据：
+- `checklist`、`milestones`、`decisions`（v40，都可选，记录里没有就不带这个键）是「进度」（现在并进「简报」）的数据：
   - `checklist` 是负责人的目标检查表，每条 `{id, criterion, topic, needs, evidence, gap, state, at}`：`topic` 是交付话题的 key（还没派话题是空串），`needs` 是它等的条目 id，`state` 是 open、done、blocked、dropped 之一，`at` 是条目最后改动的时刻（不是完成时刻）。
   - `milestones` 是负责人记的 milestone 和收尾（finish）两种进展，`decisions` 是决定日志，各取最新 10 条、旧的在前，每条 `{id, at, kind, text}`。
   - 检查表或记录一改，这个专项条目就重推。
-- `background`、`actions`、`gaps` 和检查表条目的几个新字段（v40，都可选，没有就不带键，旧网页照旧）是「简报」的数据：
+- `background`、`actions`、`gaps` 和检查表条目的几个新字段（v41，都可选，没有就不带键，旧网页照旧）是「简报」的数据：
   - `background`：负责人用 `project_goal` 的 `background` 写的背景（至多 300 字的一段话，不是对象）。
   - `actions`：负责人拆的动作，全部都推，含 `dropped` 的（页面不画它们），每个 `{id, title, note, items, topics, state, at}`：`id` 是 `a1`、`a2`……，`title` 至多 30 字，`note` 是负责人写的一句现状（至多 80 字），`items` 是检查表条目 id，`topics` 是话题的 key，`state` 是 `open` 或 `dropped`，`at` 是最后改动的时刻。动作的状态不推，页面按条目和话题现算。
   - `gaps`：没处理的协作缺口，每个 `{id, thread, text, at}`：`id` 是 `g` 加六位（负责人 `close_gaps` 用的那个），`thread` 是汇总方续接的话题的 key（可为空串），`text` 至多 200 字。开了协作才有；缺口一来、一关，这个专项条目就重推（Bridge 看收件箱目录的变动）。
@@ -287,7 +287,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - 部署有代答发送器时多一页 `proxy`（v15）：开关、网页登录、发不出去的原因、模型的几行、白名单（名字、私聊或群 @我、暂停没有、来自哪个群）。名字会进网页应用的库。
   - `ops`（v34）：这个 Covey 收的网页操作（`core/web_sync.py` 的 `KINDS`，就是下面操作表里的那些）。网页只在列着某个操作时才画它的按钮（专项的「收尾」「停止」、记忆的「不对」、定时回看的「取消」）；旧 Covey 不推 `ops`，这些按钮就不画，不会点了才回“不认识的操作”。
 - **`launch`**（v17）：`settings` 条目另带的启动卡选项，用启动卡同一套函数读（`app/web_launch.py` 的 `catalog`）。
-  - `models[]` 按启动卡的菜单顺序，每个带 `key`、`harness`、`harness_title`、`provider`、`provider_title`、`label`、`budgets[]`（各档按名字，和设置卡一样没有“推荐”“模型原生默认”，`app/web_launch.py` 用 `plain_budgets`；`default_budget`、`start_budget`、`preselect.effort` 是其中说得出名字的一档，开始任务和换配置的检查仍认启动卡的整张表，是它的超集）、`default_budget`、`start_budget`（选到这个模型时卡上预选哪一档）、`redaction`（能不能脱敏）、`bridge_tools`（v36：能不能当专项负责人，即它的 Harness 能接 Bridge 工具）、`work_modes` 和 `work_mode_texts`。
+  - `models[]` 按启动卡的菜单顺序（和启动卡一样不列 Claude Code 的“Default (recommended)”，`core/menu_choice.py` 的 `offered_models`），每个带 `key`、`harness`、`harness_title`、`provider`、`provider_title`、`label`、`budgets[]`（各档按名字，和设置卡一样没有“推荐”“模型原生默认”，`app/web_launch.py` 用 `plain_budgets`；`default_budget`、`start_budget`、`preselect.effort` 是其中说得出名字的一档，开始任务和换配置的检查仍认启动卡的整张表，是它的超集）、`default_budget`、`start_budget`（选到这个模型时卡上预选哪一档）、`redaction`（能不能脱敏）、`bridge_tools`（v36：能不能当专项负责人，即它的 Harness 能接 Bridge 工具）、`work_modes` 和 `work_mode_texts`。
   - `workspaces[]`（最近用过的在前，设备上的带 `device` 和那台设备声明的 `harnesses`）、`run_modes[]`、`preselect`（现在开一张启动卡会预选的）。
   - 网页照卡的两条规则联动：换 Harness 或供应商时，当前模型在新范围里就不动，否则取这个顺序里的第一个；换模型时取它的 `start_budget`。
 - **key `tidy`**（v16，开了整理专项时）：网页的“整理专项 · 要你定 N 条”面板读它。
@@ -306,7 +306,13 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **key `asks`**（v34）：“要你处理”的几个数，`{waiting, stopped, stuck}`，和飞书看板、「手上的事」同一个算法（`core/board_read.py` 的 `Asks.counts`：等你含管家、负责人的题和整理专项要你定的建议，停住了含护栏停住的专项，点了“不管了”的不算）。
   - 推的线程每一步看完话题就算一次（`app/web_collect.py` 的 `counted`），变了就紧跟着这一步的话题单独一个请求推（`app/web_sync.py` 的 `push_asks`），所以和话题条目一起变；网页快照接口把它和话题一起给页面。
   - 网页有它就用它的数，没有（旧 Covey，或这几个数不全是非负整数）时照旧按条目自己数。比 v34 旧的网页拒收这个 key 时只记日志（第一次和每第十次），同样的数等下一次全量对时再试，不耽误话题。
-
+- **key `upgrade`**（v39，`app/self_upgrade.py` 的 `view`）：网页的「版本与更新」读它，见[版本与更新](#版本与更新)。只有这台 Covey 配了升级器（数据根里有 `upgrade.json`）才推，`ops` 里也才有 `upgrade`；没配时什么都不推，网页不画这一块。
+  - `live`：Bridge 现在跑的 release；`latest`：升级会部署的 release（没查过、查不到是空串）；`available`：升级会换东西（Bridge，或升级会更新、还不是这一版的网页）且没在升级；`bridge`：Bridge 会换。
+  - `web`：`{kind, current, manual}`，`kind` 是网页的部署方式（自托管是 `selfhost`，部署到全栈应用平台的是安装器给的另一个值，核心只照着转给网页）；`current` 网页已是 `latest` 的；`manual` 网页不是部署脚本建的，升级不动它（网页上说照部署时的办法更新）。没有网页工作台时是 null。
+  - `count`：新提交数（两个库合计，不含测试地图这类）；`changes`：最新的至多 20 个 `{repo, sha, subject, at}`，新的在前（`repo` 是 `covey` 或扩展的库名，`at` 秒）。
+  - `checked_at`（秒，没查过是 0）、`checking`、`error`（上次查没成功的原因，成功是空串，旧的结果照留）、`blocked`（现在不能升级的原因，比如检出有没提交的改动；能升级是空串）。
+  - `running`：在升级时 `{op_id, started_at, log}`，否则 null。`last`：上一次从网页点的升级 `{state, message, at, release, log, tail}`，`state` 是 `done`（Bridge 和网页都好了）、`partial`（Bridge 升好了、网页没更新上）、`failed`；`tail` 是升级输出的最后几行。没有是 null。
+  - 单独一个请求推：查完、升级开始和结束（两个文件和升级进程变了，推的线程每一步看几个 stat）、全量对时、`upgrade` 操作回执之前。比 v39 旧的网页拒收这个 key 时只记日志。
 ### 网页发回的操作
 
 `web-inbox` 线程 GET `/sync/inbox?after=<seq>&wait=8`（取到新操作就立刻再取一次）。认 `wait` 的网页（回的 JSON 带 `"waited": true`，见[更快的取数](#更快的取数可选参数)）没有新操作时把请求挂住，等到有了再回，Covey 拿到回音马上再问；不认的旧网页马上回，Covey 照旧隔 `poll_seconds`（默认 0.5 秒）再问。
@@ -336,6 +342,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | `project_finish`（v34） | `project_key`：专项的「收尾」，同停住卡的“收尾”，见下 |
 | `project_stop`（v34） | `project_key`：专项的「停止」，同专项卡的“停止专项”、停住卡的“停”，见下 |
 | `memory_edit`（v37） | 不带 `topic_key`、`project_key`，`payload` 是 `{action, …}`：改主记忆，同飞书设置卡「记忆」，见下 |
+| `upgrade`（v39） | 不带 `topic_key`、`project_key`，`payload` 是 `{action}`：`check` 查新版本、`run` 升级，见[版本与更新](#版本与更新)；没配升级器时回 failed |
 | `revisit_cancel`（v35） | `topic_key`，`payload` 是 `{set_at}`：取消话题的 Covey 定时回看，同飞书看板的「取消」，见下 |
 | `memory_undo`（v34） | `topic_key`，`payload` 是 `{job_id, entry_id}`：撤销这一轮刚记下的一条记忆，同答案卡上的「不对」，见下 |
 | `login` | 自托管网页的“用飞书登录”：`op_id` 是 `login-<request_id>`，`payload` 是 `{request_id, code, browser, os, ip, at}`；Covey 在私聊发确认卡（[网页登录确认](#网页登录确认)），回执只说卡发出了；主人的决定由 Covey 推 `type` 为 `login` 的条目（`key` 是 `request_id`，`data` 是 `{decision: approved \| denied, decided_at}`）告诉网页 |
@@ -411,6 +418,17 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - `node_add`（`name`、`title`、`ssh`）：只能经 ssh（不用 ssh 的方式要显示一次性口令，口令不进网页的库）。ssh 在单独的线程里跑，最长 90 秒，结果写进 `<state>/web/node-joins.json`。`node_remove`（`alias`）：同卡片，本机不能移除。`refresh`：什么都不改，只让设置马上重推。
 - `proxy`（`op`）：`enable`、`disable`、`row`（`kind`、`option`）、`pause`、`resume`、`remove`（`contact`），和代答卡同一处。按名字查找添加、去登录留在飞书。
 - 其余回 failed“这一项网页上只读”。
+
+### 版本与更新
+
+网页上点一下就把这台 Covey 升到最新：Bridge 和网页工作台一起（只升 Bridge 时网页还是旧的，网页上的新功能看不到）。代码在 `app/self_upgrade.py`，网页读 `settings` 的 `upgrade` 条目。
+
+- **谁会升级**：核心不知道一个部署该怎么升级（带扩展的 release 由扩展的安装器升级，见 [deploy.md 升级与回滚](deploy.md#升级与回滚)），由能升级它的安装器在数据根写 `upgrade.json`：`{"by", "status": [命令], "run": [命令]}`，两个命令的第一个词都是绝对路径。`status` 只查不改（取两个库的新提交，不拉、不换），最后一行输出 `{live, latest, bridge, web, count, changes, blocked}`；`run` 升级（拉代码、预检、换 Bridge、更新网页），退出码 0 全好、4 Bridge 好了网页没好、3 另一个部署在跑、别的是没做成。covey-internal 的 `./install` 装好、`./install upgrade` 升级好后写它（`./install status --json`、`./install upgrade`）。**没有这个文件时什么都不做**：不起线程、`ops` 里没有 `upgrade`、不推条目，只装核心的部署和以前一样。
+- **查新版本**：有升级器时多一个 `web-upgrade` 线程，Bridge 起来 2 分钟后查一次，之后每 6 小时一次，网页点了升级、升级结束 30 秒后再查一次（网页不再提示刚装上的版本）；网页上的「检查更新」（`upgrade` 的 `check`）马上查。一次最多 180 秒、同时只查一次，升级在跑时不查（它在拉检出）。结果在 `<状态目录>/upgrade/status.json`，查不成时写 `error`、旧的结果照留。
+- **升级**（`upgrade` 的 `run`）：先查一次；已经是最新、`blocked` 不空、已经在升级时回 failed 并写原因。否则在自己的会话里起升级进程（`start_new_session`，和任务进程一样，Bridge 重启停不到它）：外面包一层，输出写进 `<数据根>/deploy-runs/<时间>-page/upgrade.log`，结束时把退出码、结束时间和最后几行写进 `<状态目录>/upgrade/run.json`。回执马上回“开始升级…”。升级里的部署会重启 Bridge，在跑的任务不中断；新的 Bridge 从 `run.json` 读进度和结果，推给网页。升级进程不见了又没写结果时，网页说“结果不确定，看日志”。
+- 这条操作走自己的车道，查的这一两分钟不挡设置、开新话题这些。
+- 只有核心、在 git 检出里 `./install` 装的部署，安装器和 `scripts/upgrade.sh` 写一份用 `scripts/upgrade.sh --status --json` 和 `scripts/upgrade.sh` 的 `upgrade.json`（`by` 是 `covey`；不覆盖扩展写的），自托管网页跟着升级，见 [deploy.md 日常升级](deploy.md#日常升级)。
+- 网页上的查和升级，与[定时自动升级](deploy.md#定时自动升级)（`COVEY_AUTO_UPGRADE`，`app/auto_upgrade.py`）用的是同一个升级器（`self_upgrade.shared`），同时只查一次；定时升级起的那次在 `run.json` 里 `by` 是 `auto`，日志在 `deploy-runs/<时间>-auto/`。
 
 ### 更快的取数（可选参数）
 
@@ -507,5 +525,6 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v36 | 专项负责人的 `config`，`switch` 接受负责人（只换模型、预算、脱敏）；`launch.models` 的 `bridge_tools`；负责人那一轮“换个模型”的 `how` 是 `switch`；`settings.config` 的 `lead`（专项负责人一段） |
 | v37 | `settings` 的 `memory` 条目（主记忆：全局和各工作区的原则、知识条目、候选，用量，下一轮预览）；`memory_edit` 操作 |
 | v38 | 取数的可选参数（见[更快的取数](#更快的取数可选参数)）：`/sync/inbox` 的 `wait` 和响应的 `waited`；`/api/snapshot` 的 `since` 和响应的 `cursor`、`partial`、`keys`；`/api/outbox/:opId` 的 `wait`。推送的条目没有变化 |
-| v39 | 专项条目的 `checklist`、`milestones`、`decisions`（专项页的「进度」标签），都可选 |
-| v40 | 专项条目的 `background`、`actions`、`gaps`，`checklist` 条目的 `title`、`waiting_on`、`done_at`、`topics`；话题 `progress` 的 `next_step`、`waiting`（专项页的「简报」标签），都可选。**上游的 v39 是「版本与更新」（`upgrade`），和我们第一期的 v39 撞号：合上游时和上游的 v39 一起重新编号**（我们的 v39、v40 顺延，文中的 v39、v40 一并改） |
+| v39 | `settings` 的 `upgrade` 条目和 `upgrade` 操作（[版本与更新](#版本与更新)：查新版本，点一下升级 Bridge 和网页）；只在数据根有 `upgrade.json` 时有，`ops` 里也才有 `upgrade` |
+| v40 | 专项条目的 `checklist`、`milestones`、`decisions`（专项页的「进度」标签），都可选 |
+| v41 | 专项条目的 `background`、`actions`、`gaps`，`checklist` 条目的 `title`、`waiting_on`、`done_at`、`topics`；话题 `progress` 的 `next_step`、`waiting`（专项页的「简报」标签），都可选。**上游的 v39 是「版本与更新」（`upgrade`），和我们第一期的 v39 撞号：合上游时和上游的 v39 一起重新编号**（我们的 v39、v40 顺延，文中的 v39、v40 一并改） |

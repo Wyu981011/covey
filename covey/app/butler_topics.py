@@ -35,7 +35,7 @@ import re
 import time
 from pathlib import Path
 
-from covey.app import dispatch_cards, butler_handoff, repo_peers
+from covey.app import config_basis, dispatch_cards, butler_handoff, repo_peers
 from covey.app.forks import FINISHED, fork_token
 from covey.app.harnesses import chat_records
 from covey.app.butler_env import arg_text, reply
@@ -278,15 +278,17 @@ def plan_start(env, args, settings, *, ask=False):
 
 
 def config_line(env, plan):
-    """The topic card's configuration: Harness · 模型 · 思考预算 · 工作区 (· 设备) · 运行方式 (· 脱敏); 设备 the title of the
-    device a workspace there is on, as the launch card names it."""
+    """The topic card's configuration: Harness · 模型 · 思考预算 · 工作区 (· 设备) · 运行方式 (· 脱敏) (· 按「…」); 设备 the
+    title of the device a workspace there is on, as the launch card names it; 按「…」 what the call named its Harness, model or
+    budget on (app/config_basis.py), when it named one."""
     app = env.topics.apps[plan["harness"]]
     model = app.cards.model_label(app.harness.context, plan["model"]) if plan["model"] else ""
     model = model.split(" · ", 1)[-1] if model else (plan["model"] or "默认模型")
     return (app.spec.title, model, "思考预算 " + (plan["effort"] or unnamed_budget(env, app, plan)),
             "工作区 " + plan["workspace"],
             *(["设备 " + plan["device_title"]] if plan.get("device_title") else []),
-            RUN_MODES[plan["run_mode"]], *(["脱敏"] if plan["redaction"] else []))
+            RUN_MODES[plan["run_mode"]], *(["脱敏"] if plan["redaction"] else []),
+            *([config_basis.line(plan["basis"])] if plan.get("basis") else []))
 
 
 def unnamed_budget(env, app, plan):
@@ -320,10 +322,18 @@ def topic_start(env, request):
     if record.get("answer"):
         return record["answer"]  # The same request: the same topic, nothing sent again.
     if not record.get("plan"):
+        shown = ""
+        if config_basis.named(args) and arg_text(args.get("basis")):
+            # What the model's call named its Harness, model or budget on (app/butler_tools.py refused one without, T786).
+            lead = lead_of(env, request)
+            shown = config_basis.check(env.state_dir, request.job_key, args.get("basis"),
+                                       project_id=lead[0] if lead else "")[0]
         settings = butler_settings.load(env.state_dir)
         plan = plan_start(env, args, settings, ask=True)
         if isinstance(plan, str):
             return reply(False, plan)
+        if shown:
+            plan["basis"] = shown
         # A worktree takes minutes to check out; the launch card creates it and survives a restart. A device's workspace
         # runs in 原目录 only: with 独立 worktree in the settings the owner's click on the launch card starts it there.
         plan["start"] = plan["run_mode"] == "direct" and not plan.get("worktree_wanted")

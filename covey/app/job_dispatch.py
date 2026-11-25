@@ -15,6 +15,7 @@ from covey.core.jobs import (context_for_job, find_job_record, harness_of, runni
 from covey.core.statuses import RUNNING
 from covey.core.state import utc_now_iso
 from covey.core.store import directory_store
+from covey.core.text import error_reason
 from covey.core.topics import load_topic, read_topic
 
 BACKEND_UNAVAILABLE = '后端暂不可用，任务尚未执行。'
@@ -71,7 +72,10 @@ class JobDispatch:
             app.harness.ensure_started(record_ctx)
             timing.mark('ready')
         except (OSError, ValueError, RuntimeError) as exc:
-            app.record_job_state(record_ctx, job, 'failed', '后端初始化失败：' + type(exc).__name__)
+            # What it said, not only its kind: "ValueError" alone left the owner and the log nothing to go on.
+            reason = error_reason(exc)
+            self.runtime.log(f'backend startup failed job=#{job.job_id} harness={name}: {reason}')
+            app.record_job_state(record_ctx, job, 'failed', '后端初始化失败：' + reason)
             app.runtime.unregister_reply_job(job)
             app.messenger.reply(record_ctx, job.chat_id, BACKEND_UNAVAILABLE, app.key('startup-failed', job.message_id), voice=app.voice)
             app.controls.show_recovery_card(record_ctx, find_job_record(ctx.state_dir, job.message_id))

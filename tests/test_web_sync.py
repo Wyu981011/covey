@@ -1398,7 +1398,9 @@ class SeenTest(WebCase):
         self.web.op("seen", 4, "op-s9", "")
         self.web.op("seen", 5, "op-s0", TOPIC)
         self.sync.inbox_once()
-        self.assertEqual([r["state"] for r in self.web.acks], ["failed"] * 4 + ["done"])
+        # Topics' operations run side by side and are acknowledged as each is done (T765): by operation, not in order.
+        self.assertEqual({r["op_id"]: r["state"] for r in self.web.acks},
+                         {"op-s6": "failed", "op-s7": "failed", "op-s8": "failed", "op-s9": "failed", "op-s0": "done"})
         self.assertTrue(all(r["message"] for r in self.web.acks))
         self.assertEqual(list(read_seen(self.state)), [TOPIC])
 
@@ -1942,7 +1944,7 @@ class ExtrasTest(WebCase):
                                   "at": T0 + 1, "job": "k-lead"}], "closed": {}, "next": "c3", "at": T0 + 1, "job": "k-lead"}, **fields))
 
     def test_a_project_carries_its_background_its_actions_and_the_newer_fields_of_its_items(self):
-        """The page's 简报 (docs/web.md 专项条目 v40): ``background`` and ``actions`` (the dropped too, nothing of the lead's ``job``), the item's
+        """The page's 简报 (docs/web.md 专项条目 v41): ``background`` and ``actions`` (the dropped too, nothing of the lead's ``job``), the item's
         ``title``, ``waiting_on`` (written: '' too), ``done_at`` and ``topics`` only on an item that has them."""
         self.thread(OTHER, "对账", 8, status="done")
         self.brief()
@@ -2011,7 +2013,7 @@ class ExtrasTest(WebCase):
         return path
 
     def test_a_running_topic_says_its_next_step_and_what_it_waits_for_from_its_checkpoint(self):
-        """Data contract v40: ``progress`` carries ``next_step`` (120 characters) and ``waiting`` (the question while ``requires_user``, 160),
+        """Data contract v41: ``progress`` carries ``next_step`` (120 characters) and ``waiting`` (the question while ``requires_user``, 160),
         each only when the checkpoint has one: not the seed's next step, not "无"; core/progress.py's own fields are as they were."""
         self.topic(status="running", lines=(("user", "做一下"),))
         path = self.checkpoint(next_step="补测试" + "试" * 200, requires_user=True, question="用哪个库？" + "问" * 200)

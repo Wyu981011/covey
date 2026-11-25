@@ -54,6 +54,17 @@ test('在做：写现在这一步和第几步，有开着的题的不算在做',
   assert.equal(g.running[0].since, undefined);
 });
 
+test('在做按编号大的在前，同步改了 updated_at 也不换位（T779：快照按 updated_at 排，照它排一秒一换位）', () => {
+  const k736 = topic('k736', 'running', { updated_at: 3000 });
+  const k772 = topic('k772', 'running', { updated_at: 2000 });
+  const k778 = topic('k778', 'running', { updated_at: 1000 });
+  const before = statusGroups(a, snap, [k736, k772, k778]).running.map((r) => r.key);
+  // 下一次同步：k772 刚写了进度，快照把它排到最前
+  const after = statusGroups(a, snap, [{ ...k772, updated_at: 4000 }, k736, k778]).running.map((r) => r.key);
+  assert.deepEqual(before, ['k778', 'k772', 'k736']);
+  assert.deepEqual(after, before);
+});
+
 test('等了多久的字：刚刚、分、小时、天', () => {
   assert.equal(sinceWords(30), '刚刚');
   assert.equal(sinceWords(39 * 60 + 5), '39 分');

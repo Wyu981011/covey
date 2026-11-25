@@ -12,8 +12,8 @@ import type {
   SnapshotResponse,
   SnapshotTopic,
   TurnView,
-  TurnsResponse, MainMemoryResponse } from '@shared/api.interface';
-import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
+  TurnsResponse, MainMemoryResponse, UpgradeResponse } from '@shared/api.interface';
+import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchUpgrade, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
 import { mergeCollabs } from '@client/src/cv/collab';
 import { mergeSnapshot, sinceFor } from '@client/src/cv/snapshotMerge';
 
@@ -223,3 +223,16 @@ export const useTidy = () =>
 /** v37：主记忆（设置页「记忆」）；改了以后 Covey 回执之前就推，页面收到 done 再取一次 */
 export const useMemory = () =>
   useQuery<MainMemoryResponse | null>({ queryKey: MEMORY_KEY, queryFn: fetchMemory, refetchInterval: 30000, staleTime: 3000, gcTime: KEEP_MS });
+
+export const UPGRADE_KEY = ['upgrade'] as const;
+/** v39：版本与更新。只在 Covey 认 upgrade 操作（settings.ops）时取：在查、在升级时每 3 秒，其余每分钟 */
+export const useUpgrade = (enabled = true) =>
+  useQuery<UpgradeResponse | null>({
+    queryKey: UPGRADE_KEY,
+    queryFn: fetchUpgrade,
+    enabled,
+    refetchInterval: (q): number => (q.state.data?.data.running || q.state.data?.data.checking ? 3000 : 60000),
+    staleTime: 2000,
+    gcTime: KEEP_MS,
+    retry: 1,
+  });

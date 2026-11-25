@@ -9,6 +9,8 @@ import queue
 import threading
 import time
 
+from covey.core import storage_watch
+
 
 def supervised(runtime, name, target, *args):
     """Start the daemon thread ``name`` that calls ``target(*args)`` until ``runtime.shutdown``, again 5 s after each
@@ -29,7 +31,8 @@ def supervised(runtime, name, target, *args):
 def every(runtime, seconds, *steps, args=(), isolate=""):
     """Until ``runtime.shutdown``: call each of ``steps`` with ``args``, then wait ``seconds``. A step that raises
     ends the loop, unless ``isolate`` names it: then the failure is logged as "<isolate> step <module>.<name>
-    failed: <type>" and the next step runs."""
+    failed: <type>" (an OSError with its words: "OSError: Disk quota exceeded") and the next step runs; a write refused
+    for want of space is kept for the diagnostics and the alert (core/storage_watch.py)."""
     while not runtime.shutdown.is_set():
         for step in steps:
             try:
@@ -37,7 +40,9 @@ def every(runtime, seconds, *steps, args=(), isolate=""):
             except Exception as exc:
                 if not isolate:
                     raise
-                runtime.log(f"{isolate} step {step.__module__}.{step.__name__} failed: {type(exc).__name__}")
+                where = f"{isolate} step {step.__module__}.{step.__name__}"
+                storage_watch.note_failure(exc, where)
+                runtime.log(f"{where} failed: {storage_watch.reason(exc)}")
         runtime.shutdown.wait(seconds)
 
 

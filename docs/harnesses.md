@@ -13,7 +13,7 @@ Harness 是执行任务的 Agent 程序。本篇按上手顺序写：有哪些�
 | DeepSeek Harness | 只有模型网关（无前缀）：没有给 dsh 用的网关就用不了 | 网关的个人密钥 |
 | Antigravity | 自己的登录（无前缀，写“Antigravity 自带”） | agy 的 Google 账号登录 |
 
-核心不带任何一家网关，网关由 `harnesses.json` 的 `gateways` 或扩展配置（[模型网关](#模型网关codex-与-dsh)）。已下线的 Harness 和供应商（`RETIRED_PREFIXES`）、旧话题会怎样，见[已下线的功能与旧配置](legacy.md)。
+核心不带任何一家网关，网关由 `harnesses.json` 的 `gateways` 或扩展配置（[模型网关](#模型网关codex-与-dsh)）。同一个账号只列一次：Harness 自己的登录（Claude Code 的 `ANTHROPIC_BASE_URL` 加 `ANTHROPIC_AUTH_TOKEN` 或 `ANTHROPIC_API_KEY`，进程环境里没有就读用户级 `settings.json` 的 `env`；Codex 的 `config.toml` 里 `model_provider` 指的那一项的 `base_url` 和 `env_key`）和它的某个模型网关地址相同、密钥也相同时，两者是同一账号（`core/same_account.py`，密钥只比摘要）。这时模型选择里只有网关这一个供应商：自带登录里网关也有的模型不再单列，其余的列在网关名下；它们的模型 id 不变，照旧用自带登录跑，停在上面的话题不受影响（`app/launch_models.py` 的 `fold_same_account`）。扩展里的来源（经中转、包装命令跑，Covey 看不到它的地址）就是自带登录的账号时，由扩展在 `PROVIDERS` 里写 `"own_login": True` 说明，效果一样（[自己的模型来源走扩展](architecture.md#扩展)）。已下线的 Harness 和供应商（`RETIRED_PREFIXES`）、旧话题会怎样，见[已下线的功能与旧配置](legacy.md)。
 
 | ID（启动卡名称） | 运行方式 | 原生问答 | 执行中补充 | 原生图片 | 分叉的会话 | 原生会话位置 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -77,7 +77,7 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **本轮结果**：thread 和 turn 双重绑定，只用当前 turn 的完整 items（不完整时按 ID 回读），取 `final_answer` 阶段的 agentMessage。下载请求与结果从 rollout 还原，不记的部分列在 `not_recorded`。
 - **执行指标**：token 取 `thread/tokenUsage/updated` 的累计减本轮基线（`CodexTurnUsage`），子 Agent 会话各自减基线；生成时间从 `turn/start` 计，扣除工具和提问区间（重试也算在内，token/s 会偏低）；TTFT `codex_item`、`codex_delta`。
 - **管家的工具**：管家跑在 Codex 上时（设置卡「配置」页的“管家”一段的 Harness），它那一轮的线程另挂 Bridge 工具服务 `bridge`（`backends/codex/appserver.py` 的 `bridge_servers`），工具等待上限 `tool_timeout_sec` 150 秒，比服务自己的 120 秒长。`approvalPolicy: never` 下调用不弹审批（0.167.2 实测）。
-- **失败**（`backends/codex/turn.py` 的 `codex_failure_code`，按 `codexErrorInfo` 分，不看原文）：`usageLimitExceeded`、`rateLimitExceeded` 或 429 记 `rate_limited`，原文说 quota exceeded、billing、要升级套餐的记 `quota_exhausted`；`serverOverloaded`、`internalServerError`、`flexUnavailable`，以及连接失败或中断（`httpConnectionFailed`、`responseStream*`、`responseTooManyFailedAttempts`）没有状态码或是 500、502、503、504、529 的记 `server_fault`；带别的状态码的连接错误还是 `transport_error`；`unauthorized` 和 401、403 记 `authentication_error`（网关每日额度的 403 记 `quota_exhausted`）；模型不存在、请求错误、上下文超长、各类策略拦截和其余的记 `root_failed`。
+- **失败**（`backends/codex/turn.py` 的 `codex_failure_code`，按 `codexErrorInfo` 分，不看原文）：`usageLimitExceeded`、`rateLimitExceeded` 或 429 记 `rate_limited`，原文说 quota exceeded、billing、要升级套餐的记 `quota_exhausted`；`serverOverloaded`、`internalServerError`、`flexUnavailable`，以及连接失败或中断（`httpConnectionFailed`、`responseStream*`、`responseTooManyFailedAttempts`）没有状态码或是 500、502、503、504、529 的记 `server_fault`（原文说的是账号的事，如 could not authenticate、sign in again 记 `authentication_error`，insufficient_quota、额度用完记 `quota_exhausted`：`core/limit_reset.py` 的 `account_fault`）；带别的状态码的连接错误还是 `transport_error`；`unauthorized` 和 401、403 记 `authentication_error`（网关每日额度的 403 记 `quota_exhausted`）；模型不存在、请求错误、上下文超长、各类策略拦截和其余的记 `root_failed`。
 - **交接摘要**（`backends/codex/handoff.py`）：在原会话的 `thread/fork`（`ephemeral`，不写 rollout，原会话不动）上请原模型写，单独起一个 app-server，`CODEX_HOME` 用协作同款的私有目录（只链登录和会话，不带主人的 MCP、hook、规则、插件、记忆），只读沙箱、不审批，关掉两种 shell（`shell_tool`、`unified_exec`）、子 Agent、网页搜索、浏览器和看图等工具，不挂 Bridge 工具和工作区只读工具，服务端发来的审批或提问一律拒绝；最多 180 秒，超时或停止时关掉 app-server 并停它的进程组。网关模型同样经一个本轮的中继。
 - **参数**写在 bootstrap 命令上，不进 `harnesses.json`（[常用参数](#常用参数)）；网关模型见[模型网关](#模型网关codex-与-dsh)。
 
@@ -95,7 +95,8 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **子 Agent 的模型**（`backends/claude/subagents.py`，设置卡「配置」页“更多”里的“子 Agent”）：默认“轻量”，子进程带 `CLAUDE_CODE_SUBAGENT_MODEL=sonnet`，并用 `--agents` 把内置 Explore 换成只读、跑在 Haiku 上的同名子 Agent；“跟主模型”两样都不加。Claude Code 接的网关认不出 `sonnet`、`haiku` 别名时选“跟主模型”。
 - **模型目录**：一次双向初始化，不提交 prompt。档位只取模型声明的 `low` 到 `max`，声明了 `xhigh` 的另有 `ultracode`。子进程带 `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`，经 `ANTHROPIC_BASE_URL` 接托管网关时还列出网关的模型（如 `claude/claude-opus-5`）；某次一个都没列出时沿用 24 小时内的 `<state>/native-models/claude-gateway.json`。已删除的网关模型的话题在启动前失败，提示换配置。
 - **本轮结果与收尾**：只取当前调用的 JSONL，result 文本等于最后一条完整根消息才算数。最终 result 后关输入，约 10 秒后停止进程组（还有补充没被接收时不关）；后台命令或子 Agent 结束时 Claude Code 会再起一轮通知，机器人等它们全部结束，只受 `--claude-timeout` 约束，这一轮的回复是各轮回复按顺序连起来（紧挨着的相同段落只留一段，`backends/claude/completion.py` 的 `final_texts`）。有结果后 CLI 非零退出时按部分结果投递（会话封住）；因停止或超时结束、已有完整回复的照常发出并加说明。原生错误详情在 `<状态目录>/claude-diagnostics/<run-id>.json`，不要外传。
-- **限流与额度**：429 记 `rate_limited`（会自动重试），529、500、502、503、504、连接重置、流空闲超时记 `server_fault`（临时故障，会自动重试），402 记 `quota_exhausted`，451 记 `model_blocked`（后两种提示换配置）。明确的官方拒绝或降级会停止当前任务，见[官方拒绝与降级停止](policy-stop.md)。
+- **命令先排队等席位**（只对用 `--claude-cmd` 指向包装脚本的部署有用，默认不生效）：包装脚本要先排队等网关空位时，CLI 还没启动，initialize 没人应答。脚本在 stderr 至少每 30 秒写一行 `covey queue: {"ahead": 1, "running": 3, "cap": 3, "limit": 3600, "name": "<网关名>"}`（字段都可省；`limit` 是它最多等几秒，到了自己退出），轮到时写 `covey queue: {"admitted": true}` 再启动 Claude Code。Bridge 据此一直等它的初始化回答（不超过 `limit`，最多 4 小时，此后再等 30 秒），任务卡状态行写“排队”；停写超过 30 秒、过了 `limit`，或还没轮到就自己退出，都记 `queue_timeout`。不写这种行的命令照旧只等 30 秒（`initialize_timeout`）。这些行不进失败日志的 stderr 摘录。
+- **限流与额度**：429 记 `rate_limited`（会自动重试），529、500、502、503、504、连接重置、流空闲超时记 `server_fault`（临时故障，会自动重试；但原文说的是账号的事时不算：网关把登录失效、额度用完也回成 5xx，Claude Code 照样说“服务端问题，通常是暂时的”，这时按原文记 `authentication_error` 或 `quota_exhausted`，不自动重试，`core/limit_reset.py` 的 `account_fault`），402 记 `quota_exhausted`，451 记 `model_blocked`（后两种提示换配置）。明确的官方拒绝或降级会停止当前任务，见[官方拒绝与降级停止](policy-stop.md)。
 - **执行指标**：输出 token 是每条消息最大的 `output_tokens` 之和；缓存取 `cache_read_input_tokens`、`cache_creation_input_tokens`；子任务按 `parent_tool_use_id` 算，退出后读 `subagents/agent-*.jsonl` 补值；上下文取 result 的 `modelUsage`；生成时间扣除 tool_use 到 tool_result；TTFT `claude_delta`。下载请求与结果从会话记录的 `api-request*` 行还原，按 `requestDigest` 核对上的记 `digest_verified`。
 
 ### Claude profiles
@@ -184,7 +185,7 @@ Antigravity 是 Google 的 Agent 开发平台，这里用它的命令行 `agy`�
 - **提前恢复**：上次确认用完 10 分钟（`RECHECK`）以后，下一个请求照常发上游查一次，其余的仍在本地回绝。它成功了（比如主人申请了临时额度）就不再拦，又是 403 就再等 10 分钟。
 - 原文没写恢复时间的，这一轮照样立刻失败，但不记录，下一轮照常发。
 
-别的线路用同一把密钥时（比如 magpie 里另配的同一个网关），在 `harnesses.json` 顶层写 `gateway_quotas`，按网关名：
+别的线路用同一把密钥时（比如另一条线路里配的同一个网关），在 `harnesses.json` 顶层写 `gateway_quotas`，按网关名：
 
 ```json
 {"gateway_quotas": {"mygw": {

@@ -7,6 +7,7 @@ from __future__ import annotations
 import dataclasses
 import json
 
+from covey.core import ui_samples
 from covey.core.jobs import upsert_job_record
 from covey.core.locks import resource_lock
 from covey.cards.elements import md
@@ -154,6 +155,8 @@ class CheckpointQuestions:
         # "multiSelect" is taken too. Without either the card had a single select, though the question
         # said 可多选.
         questions = [{**q, "multiple": q.get("multiple") is True or q.get("multiSelect") is True} for q in questions]
+        # 样张 (core/ui_samples.py): each option's file read once, now, and what its card draws kept in the record.
+        questions = ui_samples.carry(questions, device=bool(getattr(ctx, "device", "")))
         job.checkpoint_question_deferred = True
         upsert_job_record(ctx.state_dir, job.message_id, checkpoint_question_deferred=True)
         with job.trace_lock:
@@ -196,7 +199,9 @@ class CheckpointQuestions:
                     self.questions.triage.note(ctx, job, record)
                     continue
                 visible = {**record, "display_pending": False}
-                on_result_card = bool(use_result_card and self.cards.set_task_element(ctx, job, question_element(visible)))
+                # A question with samples goes on a card of its own: the task card is no place for two or three cards.
+                on_result_card = bool(use_result_card and not ui_samples.any_of(record.get("questions"))
+                                      and self.cards.set_task_element(ctx, job, question_element(visible)))
                 shown = on_result_card
                 if not shown:
                     shown = bool(self.questions.publish_question_card(ctx, record, visible=visible))

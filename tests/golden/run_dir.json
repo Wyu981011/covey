@@ -702,6 +702,7 @@
   "REQUESTS": "requests",
   "RUNNER": "runner.json",
   "RUNS": "runs",
+  "RUN_LOCK": "runner.lock",
   "WAKE": "wake.json",
   "WAKE_SIGNAL": "SIGUSR1"
  },

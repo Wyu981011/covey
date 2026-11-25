@@ -60,7 +60,7 @@ import json
 import re
 import time
 
-from covey.core import devices
+from covey.core import devices, inbound_ledger
 from covey.core import env as cenv
 from covey.core.locks import resource_lock  # owner-chats.json
 from covey.core.groups import activated, decided, list_groups, read_group, save_group
@@ -199,9 +199,15 @@ class Access:
         """A click or a routed message from ``user_id`` in ``chat_id``: the owner, or an active group."""
         return self.is_owner(user_id) or bool(user_id and self.active(chat_id))
 
+    # The reasons worth a note in the owner's message ledger (core/inbound_ledger.py): the others are a message not meant
+    # for the bot (a group's talk without its @) or the stranger's, which the owner never sent.
+    LEDGER_REASONS = ('bot_identity_unknown', 'pairing_in_group', 'empty', 'no_text')
+
     def ignore(self, event, reason):
         message = str(event.get('message_id') or event.get('id') or '')
         self.runtime.log(f'ignored message id={message[-10:]} reason={reason}')
+        if reason in self.LEDGER_REASONS and self.is_owner(str(event.get('sender_id') or '')):
+            inbound_ledger.note(self.runtime.state_dir, message, 'ignored', reason=reason, event=event)
 
     def mentions_bot(self, mentions) -> bool:
         own = self.own_ids()

@@ -26,7 +26,7 @@ import { byUpdated, fmtTok, hhmm, isRunning, isWaiting, toneOf, type ToneKey } f
 import { listTone } from './topicText';
 import './projects.css';
 
-/** rail：手机和窄屏没有右栏，此刻、记忆、文件放进“记忆与文件”标签；brief：项目简报（v40，背景、动作、任务图；负责人还没写时退回第一期的目标检查表三栏）。
+/** rail：手机和窄屏没有右栏，此刻、记忆、文件放进“记忆与文件”标签；brief：项目简报（v41，背景、动作、任务图；负责人还没写时退回第一期的目标检查表三栏）。
  * 第一期的 /progress 还能打开，跳到 /brief */
 type View = 'chat' | 'graph' | 'brief' | 'report' | 'rail';
 

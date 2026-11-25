@@ -211,7 +211,7 @@ class RelayHoldTests(unittest.TestCase):
         self.assertGreater(record["checked_at"], long_ago + quota_hold.RECHECK)
 
     def test_a_compressed_spent_quota_is_read_as_one(self):
-        # Codex asks for gzip, so a gateway may compress its 403 (a real one's spent quota came gzipped).
+        # Codex asks for gzip, so a gateway may compress its 403.
         def gzip_body(data):
             packer = zlib.compressobj(wbits=zlib.MAX_WBITS | 16)
             return packer.compress(data) + packer.flush()
@@ -331,6 +331,32 @@ class RunsHoldTests(UnifiedCase):
         # Another quota (the Harness's own account) keeps the shared words.
         other = failure.failure_view({"status": "failed", "failure_code": "quota_exhausted", "topic_id": "t"})
         self.assertEqual(other["title"], failure.OWN["quota_exhausted"][0])
+
+
+class WithoutConfigurationTests(unittest.TestCase):
+    """No gateway_quotas and a model off every gateway (what most turns are): nothing is held, nothing changes."""
+
+    def setUp(self):
+        gateways.configure(None)
+        gateways.configure_quotas(None)
+        gateways.forget()
+        self.state = state_dir(self)
+
+    def test_nothing_is_a_gateway_quota_so_nothing_is_held_or_blocked(self):
+        for harness, model in (("codex", "gpt-6-luna"), ("claude", "x"), ("agy", "x")):
+            self.assertIsNone(gateways.quota_gateway(harness, model), (harness, model))
+            self.assertIsNone(quota_hold.held(self.state, harness, model))
+            self.assertIsNone(quota_hold.blocks(self.state, harness, model))
+            self.assertIsNone(quota_hold.note_failure(self.state, harness, model, "quota exceeded. Resets at 2099-01-01T00:00:00Z"))
+        self.assertEqual(gateways.quota_share("mygw"), gateways.QuotaShare())
+        self.assertEqual(list(self.state.iterdir()), [])  # Not a file written.
+
+    def test_a_relay_without_a_hold_passes_a_403_on_as_it_came(self):
+        self.assertIsNone(BusyRelay("http://127.0.0.1:1").hold)
+
+    def test_a_quota_failure_of_a_harness_own_account_keeps_its_words(self):
+        record = {"status": "failed", "failure_code": "quota_exhausted", "topic_id": "t"}
+        self.assertEqual(failure.failure_view(record)["title"], failure.OWN["quota_exhausted"][0])
 
 
 if __name__ == "__main__":

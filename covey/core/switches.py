@@ -20,7 +20,8 @@ from covey.core.text import redact
 KNOWN = (
     "COVEY_BUTLER", "COVEY_PROJECTS", "COVEY_PROJECT_TIDY", "COVEY_BOARD", "COVEY_REVIEW", "COVEY_REVISIT",
     "COVEY_MEMORY", "COVEY_KNOWLEDGE", "COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY",
-    "COVEY_PROJECT_TRIAGE", "COVEY_SOURCE_WATCH", "COVEY_TOPIC_STEER", "COVEY_QUICK_ANSWER_SECONDS",
+    "COVEY_PROJECT_TRIAGE", "COVEY_LEDGER_RECONCILE", "COVEY_EVENT_TRANSPORT", "COVEY_CARD_TRANSPORT", "COVEY_SOURCE_WATCH",
+    "COVEY_TOPIC_STEER", "COVEY_QUICK_ANSWER_SECONDS",
     "COVEY_QUIET_HOURS", "COVEY_RELAY_MERGE_SECONDS", "COVEY_APP_CHECK", "COVEY_CLAUDE_HOOKS", "COVEY_WELCOME",
     "COVEY_AUTO_RETRY_LONG", "COVEY_LIMIT_NOTICE", "COVEY_STRANGER_REPLY", "COVEY_INVITE_URL", "COVEY_DOWN_NOTICE",
     "COVEY_OWNER_SEND", "COVEY_PROXY_REPLY_CHECK", "COVEY_DIGEST_TIMES", "COVEY_PINNED_OVERVIEW", "COVEY_PINNED_TOPICS",
@@ -29,14 +30,18 @@ KNOWN = (
     "COVEY_JUDGE_GATEWAY", "COVEY_WEB", "COVEY_WEB_CONFIG", "COVEY_WEB_SELFHOST", "COVEY_WEB_SELFHOST_DIR",
     "COVEY_WEB_SELFHOST_PORT", "COVEY_WEB_SELFHOST_PUBLIC", "COVEY_WEB_SELFHOST_PUBLIC_PORT", "COVEY_WEB_SELFHOST_BIND", "COVEY_DEVICES", "COVEY_NODE_LISTEN",
     "COVEY_GROUP_ALL_MESSAGES", "COVEY_HISTORY_CMD", "COVEY_BUTLER_RULES", "COVEY_PATROL", "COVEY_WORKSPACE_GISTS",
-    "COVEY_CARD_TRANSPORT", "COVEY_EVENT_TRANSPORT", "COVEY_LOCK_ROOT", "COVEY_COLLAB",
+    "COVEY_LOCK_ROOT", "COVEY_AUTO_UPGRADE", "COVEY_COLLAB",
 )
 # What ./install writes into a new service's manifest where the shell sets neither spelling (service/installer.py
 # default_switches; docs/configuration.md 默认已开). The code's own default of each stays off (AGENTS.md rule 4), so a
 # service registered before keeps what it had.
 INSTALL = {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD": "1", "COVEY_REVIEW": "1",
            "COVEY_REVISIT": "1", "COVEY_MEMORY": "1", "COVEY_KNOWLEDGE": "1", "COVEY_PROJECT_AUTOWAKE": "1",
-           "COVEY_PROJECT_ASK": "1", "COVEY_PROJECT_MEMORY": "1", "COVEY_PROJECT_TRIAGE": "1"}
+           "COVEY_PROJECT_ASK": "1", "COVEY_PROJECT_MEMORY": "1", "COVEY_PROJECT_TRIAGE": "1",
+           "COVEY_EVENT_TRANSPORT": "sdk", "COVEY_CARD_TRANSPORT": "sdk"}
+# The ones of INSTALL that need the Feishu SDK (pyproject.toml's ``feishu-sdk``) in the service's Python: ./install writes them
+# only where it imports (service/installer.py feishu_sdk), else the events and cards stay on lark-cli as before.
+SDK_SWITCHES = ("COVEY_EVENT_TRANSPORT", "COVEY_CARD_TRANSPORT")
 # 演示套餐 (docs/configuration.md 演示套餐): INSTALL and what a demo shows on top of it. `./install --showcase` writes it as
 # INSTALL is written; `covey_service.py set --preset showcase` turns it on in a registered service (preset_changes).
 SHOWCASE = {**INSTALL, "COVEY_COLLAB": "1", "COVEY_PINNED_OVERVIEW": "1", "COVEY_PINNED_TOPICS": "1",

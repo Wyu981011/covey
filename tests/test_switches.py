@@ -44,7 +44,8 @@ class SwitchesTests(unittest.TestCase):
         self.assertEqual(switches.INSTALL, {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD": "1",
                                             "COVEY_REVIEW": "1", "COVEY_REVISIT": "1", "COVEY_MEMORY": "1",
                                             "COVEY_KNOWLEDGE": "1", "COVEY_PROJECT_AUTOWAKE": "1", "COVEY_PROJECT_ASK": "1",
-                                            "COVEY_PROJECT_MEMORY": "1", "COVEY_PROJECT_TRIAGE": "1"})
+                                            "COVEY_PROJECT_MEMORY": "1", "COVEY_PROJECT_TRIAGE": "1",
+                                            "COVEY_EVENT_TRANSPORT": "sdk", "COVEY_CARD_TRANSPORT": "sdk"})
         self.assertEqual({k: v for k, v in switches.SHOWCASE.items() if k in switches.INSTALL}, switches.INSTALL)
         self.assertEqual([name for name in switches.SHOWCASE if name not in switches.KNOWN], [])
         lines = (REPO / "docs" / "configuration.md").read_text().splitlines()

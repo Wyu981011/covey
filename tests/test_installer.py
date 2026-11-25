@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import shutil
 import stat
 import subprocess
@@ -19,7 +20,7 @@ from support import REPO, exec_tempdir
 
 from covey.core import app_manifest, butler_settings, qr, switches, welcome
 from covey.core import env as cenv
-from covey.service import install_probe, installer
+from covey.service import install_probe, installer, web_selfhost
 from covey.service.install_probe import Probe
 
 # The QR lark-cli printed for "https://open.feishu.cn/page/cli?user_code=LWEY-WV75&lpv=1.0.98&ocv=1.0.98&from=cli"
@@ -196,7 +197,7 @@ class InstallerCase(unittest.TestCase):
                                   ask=ask or self.ask, probe=self.probe, browser_factory=FakeBrowser,
                                   survey_app=self.survey, app_name_of=lambda profile: self.app_name,
                                   app_id_of=lambda profile: "cli_fake" if (self.fake / "profile").exists() else "",
-                                  sync_slash=self.slash_sync)
+                                  sync_slash=self.slash_sync, feishu_sdk=lambda: getattr(self, "sdk_ok", True))
         return ins
 
     def ask(self, prompt):
@@ -867,6 +868,121 @@ class SwitchesTest(InstallerCase):
                                                       for name in ("COVEY_HISTORY_CMD", "COVEY_REVISIT", "COVEY_REVIEW")))
 
 
+class FeishuSdkTest(InstallerCase):
+    """A new service starts on the Feishu SDK's events and card writes (with the events kept on disk until handled) where the
+    service's Python has the SDK, installed with pip if need be; else they stay on lark-cli and the closing words say how to turn
+    them on later."""
+
+    def settled(self, *argv, **shell):
+        ins = self.make(*argv, env=self.env(**shell))
+        ins.app_id = "cli_fake"
+        ins.settle_switches()
+        return ins
+
+    def test_the_install_set_has_the_sdk_switches_and_they_need_the_feishu_sdk_extra(self):
+        self.assertEqual({key: switches.INSTALL[key] for key in switches.SDK_SWITCHES},
+                         {"COVEY_EVENT_TRANSPORT": "sdk", "COVEY_CARD_TRANSPORT": "sdk"})
+        text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+        extra = re.search(r'^feishu-sdk = \[(.*)\]$', text, re.M).group(1)
+        self.assertEqual(tuple(re.findall(r'"([^"]+)"', extra)), installer.SDK_REQUIREMENTS)
+
+    def test_a_new_service_is_on_the_sdk_where_it_imports(self):
+        ins = self.settled()
+        self.assertEqual((cenv.get("COVEY_EVENT_TRANSPORT", None, ins.env), cenv.get("COVEY_CARD_TRANSPORT", None, ins.env)),
+                         ("sdk", "sdk"))
+
+    def test_without_the_sdk_the_events_and_cards_stay_on_lark_cli(self):
+        self.sdk_ok = False
+        ins = self.settled()
+        self.assertIsNone(cenv.get("COVEY_EVENT_TRANSPORT", None, ins.env))
+        self.assertIsNone(cenv.get("COVEY_CARD_TRANSPORT", None, ins.env))
+        self.assertEqual(cenv.get("COVEY_PROJECTS", None, ins.env), "1")  # The rest of the install set as before.
+
+    def test_the_shell_wins_and_a_registered_service_gets_no_new_default(self):
+        ins = self.settled(COVEY_EVENT_TRANSPORT="cli")
+        self.assertEqual(cenv.get("COVEY_EVENT_TRANSPORT", None, ins.env), "cli")
+        from covey.service.manager import register
+        state = self.data / "harness-cli_fake"
+        state.mkdir(parents=True, exist_ok=True)
+        register(self.data / "bridge-services", state, [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py"],
+                 workdir=self.root, environment={"LARK_BRIDGE_PROJECTS": "1"}, health_timeout=90)
+        ins = self.settled()
+        self.assertIsNone(cenv.get("COVEY_EVENT_TRANSPORT", None, ins.env))
+
+    def fake_python(self, has_after_pip=True):
+        """A python3 first on PATH that has the SDK once pip ran (``has_after_pip``); its calls in fake/python-calls."""
+        path = self.bin / "python3"
+        path.write_text(f"""#!/bin/bash
+echo "$*" >> {self.fake}/python-calls
+case "$*" in
+  *"-m pip install"*) {"touch " + str(self.fake / "sdk") if has_after_pip else "echo 'error: externally-managed-environment'; exit 1"} ;;
+  *"sys.prefix"*) echo False ;;
+  *"importlib.metadata"*) [ -e {self.fake}/sdk ] || exit 1 ;;
+esac
+""")
+        path.chmod(path.stat().st_mode | stat.S_IEXEC)
+
+    def real_check(self):
+        args = installer.parser().parse_args(["--data-home", str(self.data), "--workdir", str(self.root / "work")])
+        ins = installer.Installer(args, env=self.env(), say=self.lines.append, interactive=False, ask=self.ask,
+                                  probe=self.probe, survey_app=self.survey, sync_slash=self.slash_sync)
+        (self.data / "install-logs").mkdir(parents=True, exist_ok=True)
+        return ins
+
+    def test_the_sdk_is_installed_with_pip_into_the_users_site_when_missing(self):
+        self.fake_python()
+        ins = self.real_check()
+        self.assertTrue(ins.feishu_sdk())
+        self.assertTrue(ins.feishu_sdk())  # Asked once a run.
+        calls = (self.fake / "python-calls").read_text().splitlines()
+        pip = [line for line in calls if "-m pip install" in line]
+        self.assertEqual(len(pip), 1)
+        self.assertIn("--user lark-oapi==1.7.4 cryptography>=43", pip[0])
+
+    def test_a_pip_that_cannot_install_leaves_lark_cli_and_says_how_to_turn_it_on(self):
+        self.fake_python(has_after_pip=False)
+        ins = self.real_check()
+        self.assertFalse(ins.feishu_sdk())
+        self.assertIn("照旧用 lark-cli", self.text())
+        self.assertIn("COVEY_EVENT_TRANSPORT=sdk", self.text())
+
+
+class UpgraderTest(InstallerCase):
+    """A service registered from a git checkout gets <data>/upgrade.json (scripts/upgrade.sh for it): the page's 版本与更新 and
+    COVEY_AUTO_UPGRADE use it. Not from a release, and never over an extension installer's."""
+
+    def register(self):
+        ins = self.make()
+        ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["codex"]
+        (self.data / "tmp").mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(installer.Installer, "run_logged", return_value=(0, "")), \
+                mock.patch.object(installer.Installer, "service_up", return_value=False), \
+                mock.patch.object(installer.Installer, "precompile"):
+            ins.start_service(self.data / "harnesses.json")
+        return ins
+
+    def test_a_checkout_writes_the_upgrader_for_its_service(self):
+        ins = self.register()
+        written = json.loads((self.data / "upgrade.json").read_text())
+        script = str(installer.REPO_ROOT / "scripts" / "upgrade.sh")
+        state = str(ins.service_state())
+        self.assertEqual(written, {"by": "covey", "status": [script, "--status", "--json", "--state-dir", state],
+                                   "run": [script, "--state-dir", state]})
+        from covey.app import self_upgrade
+        self.assertIsNotNone(self_upgrade.config(self.data))  # What the Bridge accepts.
+
+    def test_an_extension_s_upgrader_stays_and_a_release_writes_none(self):
+        self.data.mkdir(parents=True, exist_ok=True)
+        theirs = {"by": "covey-internal", "status": ["/absolute/x", "status"], "run": ["/absolute/x", "upgrade"]}
+        (self.data / "upgrade.json").write_text(json.dumps(theirs))
+        self.register()
+        self.assertEqual(json.loads((self.data / "upgrade.json").read_text()), theirs)
+        (self.data / "upgrade.json").unlink()
+        with mock.patch.object(installer, "REPO_ROOT", self.root / "release"):
+            self.register()
+        self.assertFalse((self.data / "upgrade.json").exists())
+
+
 class WorkspaceTest(InstallerCase):
     """D1 (T647): in the checkout without --workdir a terminal run asks once where new topics work; Enter (or a directory that
     is not there, twice) keeps <data>/workspace, which gets the guide (core/welcome.py GUIDE) while it is empty; a re-run
@@ -1413,6 +1529,12 @@ class WebTest(InstallerCase):
     def switch_names(self, ins):
         return {key for key in ins.env if "WEB" in key}
 
+    def test_the_page_config_names_the_port_this_run_sets(self):
+        ins = self.web("--web", env=self.env(COVEY_WEB_SELFHOST_PORT="18651"))
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual(18651, self.prepared[0][1]["port"])  # The Manager starts the page there: web.json must say so too.
+
     def test_a_terminal_answer_of_yes_builds_in_the_background_and_prepares_the_page_for_the_manifest(self):
         ins = self.web(interactive=True, answers=["y"])
         ins.choose_web()
@@ -1421,7 +1543,8 @@ class WebTest(InstallerCase):
         self.assertEqual(["bash", str(installer.REPO_ROOT / "web/deploy/selfhost/build.sh"), str(self.folder())], self.spawned[0])
         self.assertEqual([], self.prepared)  # Not before the registration step waits for the build.
         ins.finish_web()
-        self.assertEqual([(self.data, {"folder": str(self.folder() / "dist-selfhost")})], self.prepared)
+        self.assertEqual([(self.data, {"folder": str(self.folder() / "dist-selfhost"), "port": web_selfhost.DEFAULT_PORT})],
+                         self.prepared)
         self.assertEqual("1", cenv.get("COVEY_WEB_SELFHOST", None, ins.env))
         self.assertEqual(str(self.folder() / "dist-selfhost"), cenv.get("COVEY_WEB_SELFHOST_DIR", None, ins.env))
         self.assertEqual([], ins.leftovers)

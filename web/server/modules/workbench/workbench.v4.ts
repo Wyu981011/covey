@@ -76,7 +76,7 @@ export function progressOf(v: unknown): TopicProgress | undefined {
   if ('slow_step' in d) p.slow_step = slowStepOf(d.slow_step);
   const command: TopicCommand | undefined = commandOf(d.command);
   if (command) p.command = command;
-  // v40：下一步、在等主人答什么（专项「简报」的 session 行用）
+  // v41：下一步、在等主人答什么（专项「简报」的 session 行用）
   const next: string = clip(d.next_step, 120);
   if (next) p.next_step = next;
   const waiting: string = clip(d.waiting, 160);
@@ -302,7 +302,7 @@ export function asksOf(v: unknown): SettingsAsks | undefined {
   return { waiting, stopped, stuck };
 }
 
-/* v39：专项的「进度」标签（Covey app/web_collect.py progress_fields）。数组才收，每条按类型过滤，形状不对的那条不要；
+/* v40：专项的「进度」标签（Covey app/web_collect.py progress_fields）。数组才收，每条按类型过滤，形状不对的那条不要；
  * 一条都不剩就当没推（undefined），页面写“这个专项还没有目标检查表” */
 const ITEM_ID = /^c[1-9][0-9]{0,3}$/u;
 const isState = (v: unknown): v is ChecklistState => (CHECKLIST_STATES as readonly unknown[]).includes(v);
@@ -318,7 +318,7 @@ export function checklistOf(v: unknown): ChecklistItem[] | undefined {
     if (!ITEM_ID.test(id) || !criterion || !isState(d.state) || out.some((it: ChecklistItem) => it.id === id)) continue;
     const needs: string[] = Array.isArray(d.needs) ? d.needs.filter((n: unknown): n is string => typeof n === 'string' && ITEM_ID.test(n)).slice(0, 12) : [];
     const item: ChecklistItem = { id, criterion, topic: clip(d.topic, 64), needs, evidence: clip(d.evidence, 400), gap: clip(d.gap, 400), state: d.state, at: finite(d.at) ?? 0 };
-    // v40 的可选字段：没有（或形状不对）就不带键，旧页面照旧
+    // v41 的可选字段：没有（或形状不对）就不带键，旧页面照旧
     const title: string = clip(d.title, 40);
     if (title) item.title = title;
     if (d.waiting_on === 'owner' || d.waiting_on === '') item.waiting_on = d.waiting_on;
@@ -337,7 +337,7 @@ function refsOf(v: unknown, max: number): string[] {
   return [...new Set(v.map((x: unknown) => clip(x, 64)).filter(Boolean))].slice(0, max);
 }
 
-/* v40：专项「简报」（Covey app/web_collect.py progress_fields）。动作、缺口都是数组，每条按类型过滤；一条都不剩就当没推 */
+/* v41：专项「简报」（Covey app/web_collect.py progress_fields）。动作、缺口都是数组，每条按类型过滤；一条都不剩就当没推 */
 const ACTION_ID = /^a[1-9][0-9]{0,3}$/u;
 
 /** 动作（Covey 限没 dropped 的最多 10 个，id 不复用，所以 dropped 的也会推来；这里放宽到 40）：id 是 a 加数字，title 不空，

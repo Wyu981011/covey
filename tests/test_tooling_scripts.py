@@ -144,6 +144,42 @@ class DeployScriptTests(DeployFixture):
         self.assertEqual((code, out["ok"]), (0, True), out)
         self.assertTrue(out["pre"]["command_diff"])
 
+    def test_configuration_the_upgrade_would_drop_blocks_until_allowed(self):
+        # T786: the live release (its own core/dropped_config.py) did not list it, the checkout's does: the upgrade drops it.
+        from covey.core.dropped_config import RETIRED_OPTIONS
+        from covey.core.roster import NAMES
+        option, (harness, _what, _instead) = next((o, v) for o, v in RETIRED_OPTIONS.items() if v[0] != NAMES[0])
+        (self.data / "harnesses.json").write_text(json.dumps({"harnesses": {harness: {"args": [option, "/x.json"]}}}))
+        release = self.data / "releases" / "livefake"
+        (release / "bin").mkdir(parents=True)
+        (release / "bin" / "covey_bridge.py").write_text("")
+        (release / "covey" / "core").mkdir(parents=True)
+        for name in ("covey/__init__.py", "covey/core/__init__.py"):
+            (release / name).write_text("")
+
+        def live_lists(keys):
+            (release / "covey" / "core" / "dropped_config.py").write_text(
+                f"def read_config(path):\n    return {{}}\n\ndef dropped(*args):\n    return {[{'key': k} for k in keys]!r}\n")
+
+        python = shutil.which("python3", path=self.env["PATH"])
+        (self.services / "services" / "a.json").write_text(json.dumps({
+            "state_dir": str(self.state.resolve()), "environment": runtime_environment(self.env),
+            "command": [python, "-B", str(release / "bin" / "covey_bridge.py"), *self.args]}))
+        args = ("--check-only", "--workdir", str(self.workdir), "--profile", "bot", "--allow-rollback")
+        tail = ("--", "--sandbox", "danger-full-access")
+        live_lists([])
+        code, out = self.deploy(*args, *tail)
+        self.assertEqual((code, out["ok"]), (1, False), out)
+        self.assertIn("'dropped_config'", out["error"])
+        self.assertEqual(len(out["pre"]["dropped_config"]), 1)
+        self.assertIn(option, out["pre"]["dropped_config"][0])
+        code, out = self.deploy(*args, "--allow-dropped-config", *tail)
+        self.assertEqual((code, out["ok"]), (0, True), out)
+        live_lists([f"option:{harness}:{option}"])  # Dropped before this upgrade: only counted.
+        code, out = self.deploy(*args, *tail)
+        self.assertEqual((code, out["ok"]), (0, True), out)
+        self.assertEqual((out["pre"]["dropped_config"], out["pre"]["dropped_config_known"]), ([], 1))
+
     def test_a_permission_variable_no_longer_read_blocks_in_the_manifest_or_the_shell(self):
         # core/ignored_env.py: these restricted the backends, which now run with their open defaults.
         sandbox = {"LARK_BRIDGE_CODEX_SANDBOX": "workspace-write"}
@@ -348,6 +384,41 @@ SECOND_FILES = {"covey_second/manifest.py": "SETTINGS = {}\n", "covey_second/bin
 def tree(root):
     root = Path(root)
     return {str(p.relative_to(root)): p.read_text() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+def deploy_functions(*names):
+    """The named functions of deploy_bridge.sh's Python, on their own (its post-checks need a live deploy to reach)."""
+    import ast
+    import re
+    text = DEPLOY.read_text()
+    source = text[text.index("<<'PY'\n") + len("<<'PY'\n"):text.rindex("\nPY\n")]
+    tree = ast.parse(source)
+    found = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    space = {"re": re, "os": os}
+    exec(compile(ast.Module(body=found, type_ignores=[]), str(DEPLOY), "exec"), space)
+    return [space[name] for name in names]
+
+
+class DeployPostCheckTests(unittest.TestCase):
+    """T784: a live runner whose runner.json was not read has no job number; the post-checks crashed on it."""
+
+    def test_runner_jobs_sort_with_an_unknown_job_number_last(self):
+        runner_jobs, = deploy_functions("runner_jobs")
+        self.assertEqual(runner_jobs([12, None, 3, None]), [3, 12, None, None])
+        self.assertEqual(runner_jobs([]), [])
+
+    def test_only_numbered_live_runners_not_in_the_log_are_waited_for(self):
+        adopted_pids, not_adopted = deploy_functions("adopted_pids", "not_adopted")
+        text = ("12:00 adopted task runner job=#41 pid=1001\n"
+                "12:00 adopted task runner job=#42 pid=None\n"
+                "12:01 adopted task runner job=#43 pid=1003")
+        self.assertEqual(adopted_pids(text), {1001, 1003})
+        self.assertEqual(adopted_pids(""), set())
+        alive, gone = os.getpid(), 2 ** 22 + 7  # Above pid_max: no such process.
+        with mock.patch("os.path.exists", side_effect=lambda path: path == f"/proc/{alive}"):
+            self.assertEqual(not_adopted({alive: 44, gone: 45}, text), {alive: 44})
+            self.assertEqual(not_adopted({alive: None}, text), {})  # A prestarted runner: nothing to adopt.
+            self.assertEqual(not_adopted({alive: 41}, f"adopted task runner job=#41 pid={alive}"), {})
 
 
 class AssembleReleaseTests(unittest.TestCase):
@@ -629,7 +700,7 @@ class DeployPrecompileTests(DeployFixture):
         self.assertEqual(out["bootstrap_exit"], 1)
 
 
-class DeployPostCheckTests(unittest.TestCase):
+class DeployPostCheckBlockTests(unittest.TestCase):
     """Run the actual post-check block with fake processes, clock, logs and service commands; never bootstrap."""
 
     def post_check(self, runners, alive, adopted=()):
@@ -647,6 +718,8 @@ class DeployPostCheckTests(unittest.TestCase):
                      "status": lambda _: {"status": {"generation": 2, "process": {"pid": 900},
                                                        "health": {"status": "ready", "workers": {"proxy": True}}}},
                      "sh": shell, "args": mock.Mock(profile="fake", app_id="fake"), "finish": finish}
+        namespace.update(zip(("runner_jobs", "adopted_pids", "not_adopted"),
+                             deploy_functions("runner_jobs", "adopted_pids", "not_adopted")))
         with mock.patch("os.path.exists", side_effect=lambda path: int(path.rsplit("/", 1)[1]) in alive), \
                 mock.patch.object(Path, "read_bytes", return_value=b"python3\0/fake/releases/new/bin/covey_bridge.py\0"):
             exec(compile(source, str(DEPLOY), "exec"), namespace)
@@ -660,7 +733,7 @@ class DeployPostCheckTests(unittest.TestCase):
     def test_ended_unnumbered_runners_do_not_break_sorting(self):
         out, clock = self.post_check({101: None, 102: None, 103: 42, 104: 7}, alive=set())
         self.assertTrue(out["ok"])
-        self.assertEqual(out["post"]["ended_meanwhile"], [7, 42])
+        self.assertEqual(out["post"]["ended_meanwhile"], [7, 42, None, None])  # The unnumbered last (runner_jobs).
         self.assertEqual(out["post"]["not_adopted_alive"], {})
         clock.sleep.assert_not_called()
 

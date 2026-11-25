@@ -58,6 +58,8 @@ bootstrap 的参数和注册链路见[运维 · 注册与启动服务](operation
 
 ## 日常升级
 
+数据根里有 `upgrade.json` 时，网页「版本与更新」会提示新版本，点一下就照它把 Bridge 和网页一起升级，见 [web.md 版本与更新](web.md#版本与更新)；设了 `COVEY_AUTO_UPGRADE` 时每天到点自己安全地升一次，见[定时自动升级](#定时自动升级)。`upgrade.json` 由装好、升级好这台机器人的安装器写：扩展的安装器（比如 covey-internal 的 `./install`）写它自己的；只有核心时，在 git 检出里运行的 `./install` 和 `scripts/upgrade.sh` 写一份用 `scripts/upgrade.sh` 的（不覆盖扩展写的）。下面是在终端里升级。
+
 `./install` 装的机器人（只有核心、没有扩展）升级只要一条命令，在仓库里运行：
 
 ```bash
@@ -72,10 +74,27 @@ scripts/upgrade.sh              # 部署：机器人重启一次，成功后检�
 3. 核对依赖：服务清单里的 `python3` 是 3.10 以上，服务的 `PATH` 里有 `lark-cli`（没有只提示）。
 4. 照服务清单载入环境：清单里的变量原样，终端里别的本项目变量（`COVEY_*`、代理）不带进去，所以开关和代理都不变；`--workdir`、`--profile`、`--app-id`、`--state-dir`、`--harness-config` 和其余参数从清单的启动命令抄。先跑 `deploy_bridge.sh --check-only`，没过的项用中文写出来（有任务重启会被打断、另一个部署在跑、权限变量……），什么都不换；`--dry-run` 到此为止。
 5. 部署：机器人重启，几秒后就收得到消息和点击，在跑的任务不中断、由新进程接管。日志在 `$COVEY_DATA_HOME/deploy-runs/<时间>/`（检查是 `<时间>-check/`）。成功后检出快进到这个提交；第一次升级时还有任务进程用着检出里的代码的，先不快进，下次运行时补上。
+6. 网页：用 `web/deploy/selfhost/build.sh` 自托管的网页（`./install --web` 装的）跟着换成新 release 的 `web/`（`web/deploy/selfhost/build.sh <目录> --restart`，Manager 几秒内拉起新版，日志在 `deploy-runs/<时间>-web/`）；Bridge 已经是最新、网页还是旧的时只补网页。别的办法部署的网页只提示，不动；`--no-web` 不动网页。最后写 `upgrade.json`（见上）。
 
-退出码：0 升级好了（或已经是最新、`--dry-run` 的检查都过了），1 某项检查没过（部署前停下的什么都没换），2 参数不对或找不到机器人，3 另一个部署正在跑（等它结束再运行）。再跑一次是安全的：已经是最新时什么都不做。
+`scripts/upgrade.sh --status` 只查不换：取新提交，说现网、升级会部署的提交、新提交、网页要不要更新、现在为什么不能升（有没提交的改动、带扩展……）；加 `--json` 时最后一行是给 Bridge 的 JSON（网页「版本与更新」和定时自动升级读它）。
+
+退出码：0 升级好了（或已经是最新、`--dry-run` 的检查都过了、`--status` 查完），1 某项检查没过（部署前停下的什么都没换），2 参数不对或找不到机器人，3 另一个部署正在跑（等它结束再运行），4 Bridge 升级好了、网页没更新上（不用回滚 Bridge，单独重跑日志里那条网页命令，或再运行一次）。再跑一次是安全的：已经是最新时什么都不做。
 
 升级以后服务从 `releases/` 下的 release 运行：改开关用 `covey_service.py set`（[改开关三步](configuration.md#改开关三步)），不要再用 `./install`，它会把服务注册回检出目录。它不升级 Manager 和内存看门狗，需要时见下面[部署新版本](#部署新版本)第 6、8 步；回滚、带扩展和要改启动参数的，照下一节手工用 `deploy_bridge.sh`。
+
+### 定时自动升级
+
+不想每次手动升级时，在服务清单里设 `COVEY_AUTO_UPGRADE=05:00`（每天几点，按 Asia/Shanghai；[改开关三步](configuration.md#改开关三步)），要数据根里有 `upgrade.json`（见上；没有时 Bridge 启动记一行 `auto upgrade: ... no upgrade.json: off`，什么都不做）。到点 Bridge 照 `upgrade.json` 做和网页上点「全部更新」一样的事，只是规矩更保守：
+
+- 先查（`upgrade.json` 的 `status`）：没有新版本就什么都不做，也不说；`status` 说现在不能升（检出有没提交的改动、和远端分叉、带扩展……）就不升，在私聊里说一次要人处理什么，第二天再试。
+- 有任务在跑，或重启会打断任务（`restart_blockers`）时不升：15 分钟后再看，最多再看 3 次；还是忙就放弃这一天，私聊里说一句，第二天同一时间再试。从不强行重启。
+- 升级本身先过部署前的检查（`deploy_bridge.sh --check-only`）才部署，网页跟着一起更新（扩展的安装器、`scripts/upgrade.sh` 都是这样）。检查时另一个部署在跑、或刚好来了任务的，按上一条推迟；别的没过的、部署没成的，**不自动回滚**，私聊里说一句和日志位置，等人看过再升。
+- 升级会重启 Bridge，这一天的进度记在状态目录的 `upgrade/auto.json`，新起来的 Bridge 接着读结果（`upgrade/run.json`）；升完在私聊里发一条：升到哪个版本、有哪些新提交，或者网页没更新上、为什么。夜里不打扰的时段（`COVEY_QUIET_HOURS`）里攒到时段结束再发。日志在 `deploy-runs/<时间>-auto/`。
+- 错过时间（那会儿 Bridge 没在运行）的，过了时间 2 小时就不再补，等第二天。
+
+### 稳定通道
+
+升级跟的是检出当前分支的上游：核心的 `scripts/upgrade.sh` 跟检出的分支（默认 `main`），扩展的安装器跟扩展检出的分支。部署频繁的仓库可以另维护一个稳定分支（比如 `stable`），只在新版本已在自己的机器人上跑稳之后才快进过去；使用者把检出切到这个分支（`git checkout stable`，上游是 `origin/stable`），网页上的升级和定时自动升级就只会升到稳定分支上的版本。扩展的安装器怎么切、谁来推进稳定分支，见扩展自己的说明。
 
 ## 升级与回滚
 
@@ -122,6 +141,15 @@ release 目录已存在时不重新打包，只重新注册，所以回滚很快
 
 - **排队**：真部署在部署前检查之前拿服务根下的 `deploy.lock`（`flock`，进程退出就释放，崩溃也一样；NFS 上同样互斥），一直持到结束；锁文件里写着谁拿着（`pid`、`host`、`commit`、`release_id`、`started`、`run_dir`、`task`）。别的部署正拿着时立刻退出，退出码 3，结果里的 `deploy_running` 是那位占用者，什么都不碰。等它部署完再跑一次就是排队。`--check-only` 不拿锁、不受它拦，只在 `pre.deploy_running` 里报有没有部署在跑（没有是 `null`）。
 - **不回退**：现网服务清单里的入口在 `$COVEY_DATA_HOME/releases/<id>/` 下时，现网的提交（release 里的 `RELEASE_MANIFEST`，没有就按 id）必须是 `--commit` 的祖先；扩展个数和现网一样时，每个 `--ext-commit` 也按顺序这样比。不是就拦下（`pre.rollback` 写明哪个提交没包含现网的哪个，或检出里没有现网的提交、要先 fetch），`--check-only` 也报。要部署的提交是从旧 `main` 拿的，先同步最新 `main`；真要回滚时加 `--allow-rollback`。现网不是从 `releases/` 下运行的（如 `./install` 直接跑检出）不比，`pre.live_release` 是 `null`。
+
+### 升级不丢配置
+
+新版本下线一个功能时，它的配置往往只是“读到了、不再用”：以前只在启动日志里记一行 `no longer used`，要等启动卡上少了供应商、话题报“已下线”才发现。现在部署前的预检会列出来（`core/dropped_config.py`）：
+
+- 列什么：Harness 参数里已下线的选项且带了值（默认 Harness 的在服务启动命令里，其余在 `harnesses.json` 的 `harnesses.<名字>.args`，如 Claude 网关档位的 `--claude-profiles`、Magpie 的 `--codex-magpie-url`）；`harnesses.json` 里还写着、或 `enabled_harnesses` 里启用的已下线 Harness；只给已下线 Harness 用的模型网关；服务环境里不再读的变量（`core/ignored_env.py` 的 `IGNORED_ENV`）。每项写明丢的是什么、改成什么。
+- 什么时候拦：只拦这次升级才丢的（新版本列出、现网 release 自己的清单里没有的），`pre.dropped_config` 逐项写出；现网早就不读的只计数（`pre.dropped_config_known`）。看过、确认不要了，加 `--allow-dropped-config` 再部署（`scripts/upgrade.sh` 也收这个参数）。现网 release 还没有这份清单（比它旧，或不是从 `releases/` 运行）时没有可比的，不拦。
+- 升级以后：`covey_doctor` 的报告每个服务多一个 `dropped_config`，终端摘要里一行“有 N 项配置新版本不再用”，只提示，不算故障。
+- 以后下线功能的人：值不再读的选项加进 `RETIRED_OPTIONS`；下线 Harness、网关能接的 Harness、环境变量照原来的表（`core/roster.py` 的 `RETIRED`、`core/gateways.py` 的 `RETIRED_GATEWAY_HARNESSES`、`IGNORED_ENV`）改，清单自己会读到。
 
 ### 核心和扩展分开检出
 

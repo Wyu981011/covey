@@ -4,8 +4,8 @@ import sys
 import unittest
 from pathlib import Path
 
-from covey.core.text import (command_core, command_purpose, redact, safe_text, short_count, shown_command, step_label,
-                             tool_detail)
+from covey.core.text import (command_core, command_purpose, error_reason, redact, safe_text, short_count, shown_command,
+                             step_label, tool_detail)
 
 
 class RedactTests(unittest.TestCase):
@@ -68,6 +68,20 @@ class RedactTests(unittest.TestCase):
         value = "开始 token=" + "中A🙂" * 10000 + "; 完成"
         self.assertEqual(redact(value), "开始 token=[已隐藏]; 完成")
         self.assertEqual(redact(redact(value)), redact(value))
+
+
+class ErrorReasonTests(unittest.TestCase):
+    """What an exception said, for the log and the card (T784: 40 failures read only "ValueError")."""
+
+    def test_its_kind_and_its_words_with_secrets_hidden_and_cut(self):
+        self.assertEqual(error_reason(ValueError("模型后端尚未登录")), "ValueError: 模型后端尚未登录")
+        self.assertEqual(error_reason(RuntimeError("bad\n  token=synthetic-x  end")), "RuntimeError: bad token=[已隐藏] end")
+        long = error_reason(OSError("x" * 500), limit=20)
+        self.assertEqual(long, "OSError: " + "x" * 19 + "…")
+
+    def test_its_kind_alone_when_it_said_nothing(self):
+        self.assertEqual(error_reason(ValueError()), "ValueError")
+        self.assertEqual(error_reason(RuntimeError("  ")), "RuntimeError")
 
 
 class SafeTextTests(unittest.TestCase):

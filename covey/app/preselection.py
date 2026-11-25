@@ -13,8 +13,8 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from covey.app import model_usage
-from covey.core.menu_choice import (default_entry, effort_options, explicit, find_choice, harness_of, preset_choice,
-                                    work_modes)
+from covey.core.menu_choice import (NATIVE, default_entry, effort_options, explicit, find_choice, harness_of,
+                                    named_budget, preset_choice, work_modes)
 from covey.core.defaults import RECOMMENDED
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 
@@ -130,6 +130,14 @@ def launch_selection(choices, usage, config, *, model, workspace, work_mode, fre
         if fitted != model:
             model, budget = fitted, ''
             choices = model_usage.ranked(choices, usage, model)
+    if not found and model.partition(':')[2] == NATIVE:
+        # Claude Code's "Default (recommended)" names no model: the card lists it no more (docs/ui.md 13 U5), so a last
+        # launch or the chat's latest selection of it starts from its Harness's model that names itself.
+        named = harness_model(choices, harness_of(model, choices.get(model, {})), '', '')
+        if named and named[0] != model:
+            last = (named[0], last[1]) if last[0] == model else last  # The budget chosen with it comes along.
+            model, budget = named[0], ''
+            choices = model_usage.ranked(choices, usage, model)
     options, default_effort = effort_options(choices.get(model, {}))
     # A budget preset's or the card's budget; else the 新话题默认 budget where its Harness is the model's and the
     # model offers it (the card follows it, so a lowered default reaches chats that always took
@@ -141,6 +149,10 @@ def launch_selection(choices, usage, config, *, model, workspace, work_mode, fre
               or (last[1] if last[0] == model else '') or RECOMMENDED)
     if effort not in dict(options):
         effort = default_effort
+    # By the level it runs: 推荐 and 模型原生默认 are on the card no more (docs/ui.md 13 U5); one the card's own draft has
+    # (tapped on a card sent before) stays as it was.
+    if not (effort == draft.get('effort') and effort in dict(options)):
+        effort = named_budget(choices.get(model, {}), effort)
     mode = work_modes(choices.get(model, {}), mode, known=False)[1]
     return LaunchSelection(choices, model, effort, mode, workspace, names, notice)
 
@@ -168,12 +180,15 @@ def switch_selection(choices, usage, topic, names):
     # chosen here starts from the budget the chat usually gives it.
     choices = model_usage.ranked(choices, usage, key)
     usual = {name: model_usage.usual_effort(usage, name, dict(effort_options(entry)[0])) for name, entry in choices.items()}
-    usual = {name: value for name, value in usual.items() if value}
+    usual = {name: named_budget(choices[name], value) for name, value in usual.items() if value}
     # A redacting topic preselects a model that keeps redacting (switch_topic refuses any other).
     offered = [name for name, entry in choices.items() if entry.get("redaction") or not redacting]
     selected = key if key in offered else next(iter(offered), next(iter(choices)))
     options, default_effort = effort_options(choices[selected])
     effort = budget if selected == key and budget in dict(options) else usual.get(selected) or default_effort
+    # By the level it runs (docs/ui.md 13 U5); the topic's own budget as it is bound.
+    if not (selected == key and effort == budget):
+        effort = named_budget(choices[selected], effort)
     workspace = topic.get("workspace_name") or str(topic.get("workdir") or "")
     names = names if workspace in names else [workspace, *names]
     return SwitchSelection(choices, key, selected, effort, usual, redacting, workspace, names)

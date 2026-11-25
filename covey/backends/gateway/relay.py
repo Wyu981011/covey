@@ -114,7 +114,7 @@ def error_message(payload):
 def plain(payload, encoding):
     """A body's bytes before its Content-Encoding (gzip or deflate), at most PLAIN_BYTES; the bytes as they came for
     another encoding or ones that do not decode. Codex asks for gzip and the relay passes that upstream as it came,
-    so a gateway's 403 may be compressed (a real one's spent quota came gzipped). A part decodes as far as it goes."""
+    so a gateway's 403 may be compressed. A part decodes as far as it goes."""
     encoding = (encoding or "").strip().lower()
     if encoding in ("gzip", "x-gzip"):
         tries = (zlib.MAX_WBITS | 16,)

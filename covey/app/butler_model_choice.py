@@ -55,7 +55,7 @@ def _plain(text):
     return "".join(ch for ch in text.lower() if ch not in " -_\t")
 
 
-def _harness_id(topics, value):
+def harness_id(topics, value):
     """The Harness id a call's ``harness`` names: an id, or a Harness's display name (``spec.title``, "Claude Code")
     compared without case, spaces and hyphens. A value naming none comes back lower-cased, for the refusal."""
     lowered = value.lower()
@@ -84,7 +84,7 @@ def resolve(topics, state_dir, chat, defaults, args=None, choices=None):
     last = last_launch(state_dir, chat)
     own = defaults.harness.lower()
     sources, name = {}, ""
-    for value, source in ((_harness_id(topics, arg_text(args.get("harness"))), CALL), (own, SETTINGS),
+    for value, source in ((harness_id(topics, arg_text(args.get("harness"))), CALL), (own, SETTINGS),
                           (last[0] if last else "", LAST), (topics.default, BRIDGE)):
         if value:
             name, sources["harness"] = value, source

@@ -172,7 +172,7 @@ class LaunchCardTests(LaunchCardCase):
         self.assertEqual(options['model']['initial_option'],'maso:maso-model')
         self.assertEqual(options['workspace']['initial_option'],name)
         self.assertEqual(options['run_mode']['initial_option'],'worktree')
-        self.assertTrue(options['effort']['initial_option'].endswith(':top_minus_one'))
+        self.assertTrue(options['effort']['initial_option'].endswith(':xhigh'))  # 推荐's level by name (docs/ui.md 13 U5).
         # A click the client still sends from the previous card starts its replacement, as recorded there.
         with self.assertRaisesRegex(ValueError,'不在 git 仓库'):
             submit_launch_form(self.child,self.target,self.submit)
@@ -321,9 +321,9 @@ class LaunchCardTests(LaunchCardCase):
         self.assertTrue(self.app.runtime.jobs.queue.empty())
 
 
-def budget_setting(choice, revision):
+def budget_setting(choice, revision, effort=''):
     """The 思考预算 row a model's choice gives, values ``revision``:budget as on the card."""
-    settings = model_settings({'m:x': choice}, 'm:x', kinds=('h', 'p', 'm', 'b', 'w'), revision=revision, effort='')
+    settings = model_settings({'m:x': choice}, 'm:x', kinds=('h', 'p', 'm', 'b', 'w'), revision=revision, effort=effort)
     return next(setting for setting in settings if setting.key == 'effort')
 
 
@@ -419,7 +419,7 @@ class LaunchConfigTests(UnifiedCase):
         self.assertEqual(len(self.process().calls), 1)
         _, record = self.current()
         self.assertEqual(record['selected_model'], 'claude:claude-model')
-        self.assertEqual(selected_effort(record, '1:top_minus_one'), 'top_minus_one')
+        self.assertEqual(selected_effort(record, '1:top_minus_one'), 'xhigh')  # The level 推荐 names (docs/ui.md 13 U5).
 
     def test_unknown_source_owner_model_and_started_topics_cannot_mutate(self):
         self.prepare()
@@ -628,15 +628,18 @@ class LaunchConfigTests(UnifiedCase):
             setting = budget_setting({'levels': levels}, 7)
             self.assertEqual((setting.current, setting.text), ('7:', '未选'))
             self.assertNotIn('7:top_minus_one', dict(setting.options))
+        # The levels by name, the one 推荐 names preselected; no 推荐 or 模型原生默认 (docs/ui.md 13 U5).
         setting = budget_setting({'levels': ['max', 'xhigh', 'high', 'medium', 'low']}, 7)
-        self.assertEqual(setting.current, '7:top_minus_one')
-        self.assertEqual(setting.options[0][1], '推荐 xhigh')
-        self.assertEqual(setting.options[1][0], '7:max')
+        self.assertEqual(setting.current, '7:xhigh')
+        self.assertEqual([value for value, _ in setting.options], ['7:max', '7:xhigh', '7:high', '7:medium', '7:low'])
+        # 推荐 kept by a topic or tapped on a card sent before stays, drawn as it was.
+        setting = budget_setting({'levels': ['max', 'xhigh', 'high', 'medium', 'low']}, 7, effort='top_minus_one')
+        self.assertEqual((setting.current, setting.options[-1]), ('7:top_minus_one', ('7:top_minus_one', '推荐 xhigh')))
 
     def test_a_single_budget_is_preselected(self):
         setting = budget_setting({'levels': ['max']}, 7)
         self.assertEqual(setting.current, '7:max')
-        self.assertEqual([value for value, _ in setting.options], ['7:max', '7:default'])
+        self.assertEqual([value for value, _ in setting.options], ['7:max'])  # No 模型原生默认 (docs/ui.md 13 U5).
 
     def test_maso_presets_offer_only_their_own_budget(self):
 

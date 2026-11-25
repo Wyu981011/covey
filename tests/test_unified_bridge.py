@@ -163,6 +163,27 @@ class UnifiedTests(UnifiedCase):
         self.assertEqual(find_job_record(self.ctx.state_dir, 'stopped')['status'], 'cancelled')
         self.assertNotIn(job.job_id, self.app.runtime.jobs.by_id)
 
+    def test_a_failed_backend_start_says_what_the_error_said_in_the_log_and_on_the_record(self):
+        """T784: "后端初始化失败：ValueError" was all the card and the log had, 40 times."""
+        self.receive('unstarted', 'initial')
+        _, ctx = self.route('unstarted')
+        self.app.topics.select_harness(ctx, 'chat', 'claude')
+        app, ctx = self.route('unstarted')
+        app.submission.start_workspace(ctx, 'chat', ctx.workspace_name)
+        job = self.app.runtime.jobs.queue.get_nowait()
+        logs = []
+        self.app.runtime.log_sink = logs.append
+        with mock.patch('covey.app.job_dispatch.check_or_raise',
+                        side_effect=ValueError('模型后端尚未登录 token=synthetic-secret')), \
+             mock.patch.object(app.controls, 'show_recovery_card'):
+            self.app.process_reply_job(job, self.ctx)
+        record = find_job_record(self.ctx.state_dir, 'unstarted')
+        self.assertEqual(record['status'], 'failed')
+        self.assertIn('后端初始化失败：ValueError: 模型后端尚未登录 token=[已隐藏]', json.dumps(record, ensure_ascii=False))
+        line = next(line for line in logs if line.startswith('backend startup failed'))
+        self.assertIn('harness=claude: ValueError: 模型后端尚未登录 token=[已隐藏]', line)
+        self.assertNotIn('synthetic-secret', ''.join(logs) + json.dumps(record, ensure_ascii=False))
+
     def test_a_task_runner_does_not_repeat_its_bridges_backend_check(self):
         self.receive('checked', 'initial')
         _, ctx = self.route('checked')

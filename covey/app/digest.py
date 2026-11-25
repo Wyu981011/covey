@@ -69,7 +69,7 @@ from covey.core import env as cenv
 from covey.app import memory_candidates, weekly_usage
 from covey.app.overview import dismissable
 from covey.app.pins import board_look, kept, laid, record_path, taken_off as taken_off_now
-from covey.app import project_loop, revisits, topic_links
+from covey.app import owner_ledger, project_loop, revisits, topic_links
 from covey.app.topic_links import link_for, linkify
 from covey.app.form_cards import settle
 from covey.app.menu_panel import MenuPanel
@@ -253,8 +253,9 @@ def collect(state, chat, slot, since, now, *, board=False, asked=False):
     jobs = [record for record in read.jobs if board_read.fresh(record, now) and record.get("topic_id") not in off]
     # 等你: 等我 as every reader counts it (core/board_read.py waits): the questions, the butler's and the leads' too,
     # and the tasks waiting for 开始, each with the card it is acted on; those waiting over QUESTION_AGE one line.
-    found = board_read.waits(state, chat, now, off=off)
-    asks = looked.asks(state, chat, found, now, off) if asked else None
+    ledger = owner_ledger.of(state, chat, now, looked, off=off)  # 等主人的账 (app/owner_ledger.py), as every reader.
+    found = ledger.waits
+    asks = ledger.asks if asked else None
 
     def named(topic):
         """(label, title) of ``topic``: the butler or a lead asking at the top level by its speaker, no T number."""

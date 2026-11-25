@@ -42,13 +42,15 @@ class TaskMonitor:
         images=None,
         history=(),
         stuck=None,
+        watch=None,
     ):
         """``state``: told (phase, asking) when the checkpoint's phase ("" before one) or a model's question
         waiting for its answer changes, for the card's chat-list preview. ``images``: told the checkpoint each time
         it changes and once more as the monitor stops (app/turn_images.py: the images it lists to show at once).
         ``history``: the 用时 of the topic's earlier turns (core/progress.py turn_seconds), for the estimate;
         ``stuck``: told True when the turn may be stuck (core/progress.py maybe_stuck) and False when it moves again,
-        each time that changes (the task card's 看看 button)."""
+        each time that changes (the task card's 看看 button); ``watch``: told the Facts at each tick while the turn runs
+        (app/unstick.py: a butler's hung model request), its failure logged, never the tick's."""
         self.job, self.checkpoint = job, checkpoint
         self.state, self.last_state = state, None
         self.images = images
@@ -81,6 +83,7 @@ class TaskMonitor:
         # The turn's progress (core/progress.py): the earlier turns' 用时, the stuck threshold, what it last did and
         # when (the trace's newest step, ``trace_activity``; the checkpoint's change), and whether ``stuck`` was told.
         self.history, self.stuck, self.shown_stuck = list(history or ()), stuck, False
+        self.watch = watch
         # The turn's first estimate of its whole 用时 (run so far + eta), kept on the record as ``estimate_seconds``
         # for the web page's 预计 vs 实际 (app/web_sync.py): the first, since the later ones close in on the actual.
         self.estimate = None
@@ -125,6 +128,11 @@ class TaskMonitor:
             if self.stuck is not None and found is not None and found["maybe_stuck"] != self.shown_stuck:
                 self.shown_stuck = found["maybe_stuck"]  # Not retried when the write fails: the card shows the line.
                 self.stuck(self.shown_stuck)
+            if self.watch is not None and found is not None:
+                try:
+                    self.watch(facts)
+                except Exception as exc:  # noqa: BLE001 - the status line goes on
+                    self.log(f"task monitor watch failed: {type(exc).__name__}")
             retry = facts.retry
             retry_changed = retry != self.last_retry or facts.queue != self.last_queue
             self.last_retry, self.last_queue = dict(retry), dict(facts.queue or {})

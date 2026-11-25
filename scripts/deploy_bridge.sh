@@ -6,7 +6,7 @@
 #   deploy_bridge.sh --workdir DIR --profile NAME [--app-id ID] [--state-dir DIR] [--harness-config FILE]
 #                    [--check-only] [--repo CHECKOUT] [--commit REV] [--run-dir DIR] [--allow-command-change]
 #                    [--ext-repo CHECKOUT [--ext-commit REV]]... [--allow-core-mismatch] [--allow-rollback]
-#                    [--allow-extension-checks] [-- BRIDGE_OPTION ...]
+#                    [--allow-extension-checks] [--allow-dropped-config] [-- BRIDGE_OPTION ...]
 #
 # Names as in docs/operations.md: COVEY_DATA_HOME (required), APP_ID and STATE_DIR when --app-id and
 # --state-dir are absent (STATE_DIR defaults to $COVEY_DATA_HOME/harness-$APP_ID), the service root from
@@ -30,6 +30,10 @@
 # --ext-commit, in order, when the live release has as many extensions); "pre.rollback" says which is not, or which
 # the checkout does not have (fetch it); --allow-rollback lets it go back on purpose. A live service not run from a
 # release under releases/ is not compared ("pre.live_release" is null).
+# And no configuration the upgrade would drop (core/dropped_config.py, T786): "pre.dropped_config" lists what this
+# deployment set up (an option, a Harness, a gateway, a variable) that the checkout's release reads no more and the live
+# release still did (its own list, run from releases/<live>/, lacks it); --allow-dropped-config lets it go once the deployer
+# has read it. What both list is only counted ("pre.dropped_config_known"); a live release without the list adds nothing.
 # --check-only stops there. Then: git archive REV into releases/<sha>, write its .pyc files (below), bootstrap from it.
 # Precompiling: the service runs every Python process with -B, so a release without __pycache__ is compiled from source
 # again at each process start. Before bootstrap, scripts/precompile_release.py runs under the python3 bootstrap
@@ -78,6 +82,7 @@ ap.add_argument("--ext-commit", action="append", default=[])
 ap.add_argument("--allow-core-mismatch", action="store_true")
 ap.add_argument("--allow-rollback", action="store_true")
 ap.add_argument("--allow-extension-checks", action="store_true")
+ap.add_argument("--allow-dropped-config", action="store_true")
 ap.add_argument("--app-id", default=os.environ.get("APP_ID"))
 ap.add_argument("--state-dir", default=os.environ.get("STATE_DIR"))
 ap.add_argument("--workdir")
@@ -135,7 +140,8 @@ def status(code_dir):
 
 
 def runners():
-    """pid -> job number of live task runners whose --run-dir is under this bot's runs/."""
+    """pid -> job number of live task runners whose --run-dir is under this bot's runs/ (None when its runner.json was
+    not read: a prestarted runner before its handoff)."""
     found = {}
     for proc in glob.glob("/proc/[0-9]*/cmdline"):
         try:
@@ -154,6 +160,25 @@ def runners():
             job = None
         found[int(proc.split("/")[2])] = job
     return found
+
+
+def runner_jobs(jobs):
+    """Job numbers in order, the ones whose runner.json was not read (None) last: sorted() alone raised TypeError
+    on a None among numbers, and the post-checks ended there."""
+    return sorted(jobs, key=lambda job: (job is None, job if isinstance(job, int) else 0))
+
+
+def adopted_pids(text):
+    """The pids of the task runners the new Bridge's log says it adopted (app/detached.py adopt_runners)."""
+    return {int(pid) for pid in re.findall(r"adopted task runner job=#\S+ pid=(\d+)", text)}
+
+
+def not_adopted(live, text):
+    """The live runners of ``live`` (pid -> job number) the new Bridge has not adopted yet. One without a job number (a
+    prestarted runner whose handoff never came) has nothing to adopt: it stays in runners_before, not waited for."""
+    adopted = adopted_pids(text)
+    return {pid: job for pid, job in live.items()
+            if job is not None and pid not in adopted and os.path.exists(f"/proc/{pid}")}
 
 
 def log_after_start(release_id):
@@ -353,6 +378,26 @@ def not_after(live_sha, checkout, new_sha, what):
 
 live_id, live_shas = live_commits(live[2] if len(live) > 2 else None)
 pre["live_release"] = live_id
+# Configuration the new release no longer uses (core/dropped_config.py), from the checkout; what the live release listed
+# already is not new. A live release without the module (older, or not run from releases/) lists nothing to compare with.
+drop_code = ("import json, sys\ntry:\n    from covey.core.dropped_config import dropped, read_config\n"
+             "except ImportError:\n    print('null'); raise SystemExit(0)\n"
+             "print(json.dumps(dropped(read_config(sys.argv[1]), json.loads(sys.argv[2]), json.loads(sys.argv[3])), ensure_ascii=False))")
+dropped_now = json_of(["python3", "-B", "-c", drop_code, HARNESS_CONFIG, json.dumps(BRIDGE_ARGS), json.dumps(mine)], repo,
+                      "dropped_config()") or []
+live_dir = DATA / "releases" / live_id if live_id else None
+dropped_live = None
+if live_dir and (live_dir / "covey").is_dir():
+    found = sh(["python3", "-B", "-c", drop_code, HARNESS_CONFIG, json.dumps(live[3:]), json.dumps(theirs)], cwd=live_dir,
+               timeout=60)
+    try:
+        dropped_live = json.loads(found.stdout) if found.returncode == 0 else None
+    except ValueError:
+        dropped_live = None  # The live release's own list could not be read: nothing to compare with, as without one.
+known = None if dropped_live is None else {item["key"] for item in dropped_live}
+pre["dropped_config"] = [f"{item['what']}；{item['instead']}" for item in dropped_now
+                         if known is not None and item["key"] not in known]
+pre["dropped_config_known"] = len(dropped_now) - len(pre["dropped_config"])
 pairs = [(live_shas[0], repo, commit, "core")] if live_shas else []
 if live_shas and len(live_shas) - 1 == len(exts):
     pairs += [(sha, path, new, f"extension {path.name}") for sha, (path, new, _) in zip(live_shas[1:], exts)]
@@ -361,8 +406,9 @@ old = before.get("status") or {}
 result.update(pre=pre, old={"generation": old.get("generation"), "pid": (old.get("process") or {}).get("pid")})
 blocked = [k for k in ("restart_blockers", "creating_worktree", "proxy_sending",
                        "env_missing", "env_extra", "env_value_diff", "permission_env", "command_diff",
-                       "extension_env", "core_lock_mismatch", "extension_checks", "rollback") if pre.get(k)
+                       "extension_env", "core_lock_mismatch", "extension_checks", "rollback", "dropped_config") if pre.get(k)
            and not (k == "command_diff" and args.allow_command_change)
+           and not (k == "dropped_config" and args.allow_dropped_config)
            and not (k == "extension_checks" and args.allow_extension_checks)
            and not (k == "rollback" and args.allow_rollback)
            and not (k == "core_lock_mismatch" and args.allow_core_mismatch)]
@@ -423,17 +469,14 @@ pending = {}
 while started and time.time() < deadline:
     _, after = log_after_start(release_id)
     text = "\n".join(after or [])
-    pending = {pid: job for pid, job in live_runners.items()
-               if job is not None and f"adopted task runner job=#{job} pid={pid}" not in text
-               and os.path.exists(f"/proc/{pid}")}
+    pending = not_adopted(live_runners, text)
     if not pending:
         break
     time.sleep(3)
 text = "\n".join(after or [])
 post["adopted"] = sorted(int(m) for m in re.findall(r"adopted task runner job=#(\d+)", text))
 post["not_adopted_alive"] = {str(pid): job for pid, job in pending.items()}
-post["ended_meanwhile"] = sorted(job for pid, job in live_runners.items()
-                                 if job is not None and not os.path.exists(f"/proc/{pid}"))
+post["ended_meanwhile"] = runner_jobs(job for pid, job in live_runners.items() if not os.path.exists(f"/proc/{pid}"))
 now = status(release)
 st = now.get("status") or {}
 pid = (st.get("process") or {}).get("pid")

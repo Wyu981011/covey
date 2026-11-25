@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
@@ -167,8 +167,11 @@ export const RichText = forwardRef<
     onBlur: () => cb.current.onTrigger?.(null),
   });
   edRef.current = editor;
-  // 外面换了字（发出后清空、换对话、“先问一句”清掉）：整段换掉，不触发 onChange
-  useEffect(() => {
+  // 外面换了字（发出后清空、换对话、“先问一句”清掉）：整段换掉，不触发 onChange。
+  // 要在 useLayoutEffect 里换：Composer 在它自己的 useLayoutEffect 里按编辑区的 scrollHeight 定高，子组件的 layout effect 先于父组件跑，
+  // 这里先把字换掉，量到的才是新字的高。原来写在 useEffect 里（晚于父组件的 layout effect），发完一段长消息后量到的还是旧字的高、
+  // 写死在 style.height 上，清空以后不再重算（emitUpdate: false），空输入框卡在近半屏高（T789，主人截图 T774）
+  useLayoutEffect(() => {
     if (!editor || value === last.current) return;
     last.current = value;
     editor.commands.setContent(value, { contentType: 'markdown', emitUpdate: false });

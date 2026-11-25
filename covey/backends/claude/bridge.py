@@ -26,7 +26,7 @@ from covey.core.harness import BackendRuntime, HarnessCapabilities, HARNESS_REGI
 from covey.core.process import device_of
 from covey.core.process_env import child_process_env, process_device
 from covey.core.harness import BackendConfig, BridgeContext, HarnessSpec, RunRequest, RunResult, UUID_RE
-from covey.backends.claude.models import last_native_catalog, model_catalog
+from covey.backends.claude.models import last_native_catalog, model_catalog, with_extension_models
 from covey.backends.claude import profiles, redaction, rewind
 from covey.core.providers import retired_provider, retired_provider_notice
 
@@ -186,10 +186,10 @@ class ClaudeBackend(BackendRuntime):
         return {**native, **configured} if configured else native
 
     def model_catalog(self, ctx):
-        return self._catalog(ctx)
+        return with_extension_models(self._catalog(ctx))
 
     def refresh_model_catalog(self, ctx):
-        return self._catalog(ctx, refresh=True)
+        return with_extension_models(self._catalog(ctx, refresh=True))
 
     def normalize_model_settings(self, ctx, model, effort):
         found = profiles.choice(ctx, model)
@@ -327,8 +327,9 @@ class ClaudeBackend(BackendRuntime):
 
 @contextlib.contextmanager
 def _extension_turn(ctx, env, *, run_id=""):
-    """Every enabled package's ``claude_turn`` hook around a Claude Code turn (core/extensions.py), the first package's
-    outermost: each gets the (ctx, env) the one outside it gave. None enabled: the turn as it is."""
+    """Optional extension hooks around a Claude Code turn (core/extensions.py ``claude_turn``): every enabled
+    package's, nested in the order they are enabled (the first is the outermost, so the last one's context and
+    environment reach Claude Code)."""
     with contextlib.ExitStack() as stack:
         for _package, hook in extensions.hooks("claude_turn"):
             ctx, env = stack.enter_context(hook.turn(ctx, env, run_id=run_id))

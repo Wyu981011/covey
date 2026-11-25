@@ -21,9 +21,11 @@ import functools
 import time
 
 from covey.app.task_card import (StreamingCard, StreamingReply, bind_record, body_anchor, bottom_anchor,
-                                          count_update_failure, details_anchor, drop_element, io_card, note_element,
+                                          already_there, count_update_failure, details_anchor, drop_element, element_held_off, element_refused,
+                                          element_took, io_card, note_element,
                                           panel_room, status_actions, took_status, under_body, write_live)
 from covey.app import answer_cards
+from covey.feishu.transport import last_failure
 from covey.app.launch_models import available_models
 from covey.core.menu_choice import find_choice
 from covey.core.trace import ToolTrace
@@ -662,6 +664,9 @@ class Cards:
             # older release); only dynamically inserted panels are tracked in `present`. Without it, it goes under
             # 本轮请求, where it would have been.
             details = eid == "task_details"
+            held_off = element_held_off(job.progress, eid)
+            if held_off:
+                return False
             if eid in present or (details and getattr(job.progress, "details_panel", True)):
                 result = self._write(ctx, job, "PUT", "elements/" + eid, element_body(element), eid)
             else:
@@ -669,7 +674,13 @@ class Cards:
                     before, after = "", details_anchor(job.progress)
                 result = self._write(ctx, job, "POST", "elements", insert_body([element], before or after, bool(before)),
                                      eid)
+                if result is None and already_there(last_failure()):
+                    # Another writer of the card (a second runner of the job, an insert whose answer was lost) put it
+                    # there: it is replaced in place from now on, not inserted again at every update (T784).
+                    present.add(eid)
+                    result = self._write(ctx, job, "PUT", "elements/" + eid, element_body(element), eid)
             if result is not None:
+                element_took(job.progress, eid)
                 present.add(eid)
                 job.interactive_elements = present
                 note_element(job.progress, element)
@@ -678,7 +689,10 @@ class Cards:
                     job.progress.details_panel = job.progress.live_details = True
                     job.progress.details_text = element["elements"][0]["content"]
             else:
-                self._write_failed(job, f"Failed to update task element: {eid}")
+                element_refused(job.progress, eid)
+                failure = last_failure()
+                why = " ".join(filter(None, [failure.code, failure.detail[:80]])) if failure else ""
+                self._write_failed(job, f"Failed to update task element: {eid}" + (f"（飞书 {why}）" if why else ""))
             return result is not None
 
 

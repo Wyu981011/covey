@@ -15,7 +15,7 @@ from covey.app import butler_tracks, dispatch_cards, relay_stops, runner_ipc, st
 from covey.app.binding import JOB_STARTING, STALE_CARD, stale_job_card
 from covey.app.card_actions import action_value, card_object, click_kind, moved_card_text, ACTIONS
 from covey.cards.launch_config import SUBMIT_PREFIX
-from covey.core import timing
+from covey.core import inbound_ledger, timing
 from covey.core.harness import BridgeContext
 from covey.core.jobs import JOB_STOP_ACTION_KIND
 from covey.core.locks import LOCK
@@ -75,7 +75,11 @@ class CardRouting:
         if not claimed:
             timing.outcome('duplicate')
             self.runtime.log(f'duplicate message id={message_id} skipped')
+            if admitted.owner and inbound_ledger.lost_before(ctx.state_dir, message_id):
+                self.tell_lost(ctx, event, message_id)
             return
+        if admitted.owner:
+            inbound_ledger.received(ctx.state_dir, event)  # Where it goes is noted as it is decided (core/inbound_ledger.py).
         if admitted.owner and (not admitted.group or access.agent_chat(str(event.get('chat_id') or ''), True)) \
                 and not str(event.get('thread_id') or ''):
             self.menu.owner_said(str(event.get('chat_id') or ''))  # The menu's cards there are no longer the newest.
@@ -99,9 +103,11 @@ class CardRouting:
         if self.menu.handle_slash(
                 ctx, event, admitted,
                 personal_group=admitted.group and access.agent_chat(str(event.get('chat_id') or ''), True)):
+            inbound_ledger.note(ctx.state_dir, message_id, 'command')
             return
         if any(feature.handle_event(ctx, event, admitted.owner) for feature in self.extension_features
                if hasattr(feature, 'handle_event')):
+            inbound_ledger.note(ctx.state_dir, message_id, 'extension')
             return
         if self.butler.handle_event(ctx, event, admitted.owner):
             return
@@ -110,9 +116,20 @@ class CardRouting:
         timing.mark('route')
         if routed is None:
             timing.outcome('refused')
+            inbound_ledger.note(ctx.state_dir, message_id, 'refused', reason='所在话题已冻结或它的 Harness 已下线，回复在话题里')
             return
         app, target = routed
         return app.handle_event(event, target)
+
+    def tell_lost(self, ctx, event, message_id):
+        """The owner's message was taken in once and never handled (the Bridge stopped between: its duplicate now comes
+        from the event spool's replay): said once in its thread, so he sends it again. No lock held; the reply is keyed."""
+        inbound_ledger.note(ctx.state_dir, message_id, 'lost')
+        chat = str(event.get('chat_id') or '')
+        self.runtime.log(f'message lost id={message_id[-10:]} told')
+        self.messenger.reply(dataclasses.replace(ctx, reply_to_message_id=message_id), chat,
+                             '这条消息收下后没来得及处理就中断了（Bridge 重启过），没有变成任何一轮，请再发一次。',
+                             self.voice.key('lost-message', message_id), voice=self.voice)
 
     def handle_menu_event(self, event, ctx):
         """A click on the bot menu (app/bot_menu.py): one ``timing`` line and one log line."""

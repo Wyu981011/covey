@@ -8,7 +8,7 @@ import time
 import uuid
 
 from covey.core.harness import RunResult, UUID_RE
-from covey.core.limit_reset import evidence, fault_in, row_reset, row_text, text_reset
+from covey.core.limit_reset import account_fault, evidence, fault_in, row_reset, row_text, text_reset
 from covey.core.result import ExecutionOutcome, MAX_REPLY_BYTES, VerifiedRootReply
 from covey.core.state import write_private_text
 from covey.backends.claude.policy import policy_signal
@@ -42,8 +42,10 @@ def result_failure(row):
     if row.get("api_error_status") == 429 or (
             row.get("is_error") is True and "rate_limit_error" in str(row.get("errors") or "") + str(row.get("result") or "")):
         return "failed", "rate_limited"
-    if row.get("is_error") is True and fault_in(row.get("api_error_status"), str(row.get("errors") or "") + str(row.get("result") or "")):
-        return "failed", "server_fault"
+    words = str(row.get("errors") or "") + str(row.get("result") or "")
+    if row.get("is_error") is True and fault_in(row.get("api_error_status"), words):
+        # A 5xx whose words are the account's (a gateway's lost sign-in, a spent quota) is not a passing fault (T784).
+        return "failed", account_fault(words) or "server_fault"
     if subtype != "success" or row.get("is_error") is not False or row.get("errors"):
         return "failed", "root_failed"
     if reason not in (None, "completed") or row.get("stop_reason") not in (None, "end_turn", "stop_sequence"):
@@ -117,6 +119,8 @@ class ClaudeReplyState:
         # A passing server fault (an assistant row's error "server_error", 529, a dropped connection) ended it; and
         # what a limit said of itself: when it resets (epoch seconds) and the rows it came as (MAX_EVIDENCE).
         self.server_fault = False
+        # Such an error whose words are the account's (core/limit_reset.py account_fault): its code, else "".
+        self.account_error = ""
         self.limit_reset = None
         self.limit_evidence = []
         self.policy_event = None
@@ -140,6 +144,7 @@ class ClaudeReplyState:
         self.inputs.append(input_id)
         self.session_state = None
         self.rate_limited = self.server_fault = False
+        self.account_error = ""
         self.limit_reset, self.limit_evidence = None, []
 
     def note_limit(self, row, reset=None):
@@ -214,7 +219,11 @@ class ClaudeReplyState:
                 self.note_limit(row, row_reset(row) or text_reset(row_text(row), time.time()))
             elif kind == "assistant" and (row.get("error") == "server_error" or (
                     row.get("isApiErrorMessage") is True and fault_in(None, row_text(row)))):
-                self.server_fault = True
+                account = account_fault(row_text(row))
+                if account:
+                    self.account_error = account  # Said as a server error, but no retry helps (T784).
+                else:
+                    self.server_fault = True
                 self.note_limit(row)
             if kind == "assistant":
                 message = row.get("message")
@@ -333,6 +342,8 @@ class ClaudeReplyState:
         if status in ("failed", "timed_out") and code in RATE_LIMIT_MASKED and candidate is None:
             if self.rate_limited:
                 status, code = "failed", "rate_limited"
+            elif self.account_error:
+                status, code = "failed", self.account_error
             elif self.server_fault:
                 status, code = "failed", "server_fault"
         if not cleanup:

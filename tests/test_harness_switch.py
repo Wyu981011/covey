@@ -684,7 +684,8 @@ class HarnessSwitchTests(UnifiedCase):
         card = replace.call_args.args[4]
         self.assertEqual(card['schema'], '2.0')  # A whole card, never one element.
         self.assertEqual(replace.call_args.args[3]['selected_model'], 'dsh:dsh-model')
-        self.assertIn('2:top_minus_one', json.dumps(card))
+        self.assertIn('2:xhigh', json.dumps(card))  # The level 推荐 names, by name (docs/ui.md 13 U5).
+        self.assertNotIn('top_minus_one', json.dumps(card))
 
     @requires_extension()
     def test_the_switch_card_lists_the_topics_harness_first_and_each_harness_its_models(self):

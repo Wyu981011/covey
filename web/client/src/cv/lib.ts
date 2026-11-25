@@ -122,6 +122,8 @@ const tie = (a: Ord, b: Ord): number => (b.number ?? 0) - (a.number ?? 0) || a.k
 export const byAsked = (a: Ord, b: Ord): number => a.updated_at - b.updated_at || tie(a, b);
 export const byNumberDesc = (a: Ord, b: Ord): number => tie(a, b);
 export const byRecent = (a: Ord, b: Ord): number => b.updated_at - a.updated_at || tie(a, b);
+/** 侧栏排专项先后用的“最近活动”（T779）：在跑的（含可能卡住）不算，它的 updated_at 每次同步都变，拿它排，几个都有话题在跑的专项会整块来回换位 */
+export const steadyAt = (t: SnapshotTopic): number => (isRunning(t) ? 0 : t.updated_at);
 
 /** 上下文窗口：limit 为 0 或缺失时没有窗口，不能算百分比 */
 export const ctxLimitOk = (c: { limit: number } | null | undefined): boolean => !!c && Number.isFinite(c.limit) && c.limit > 0;

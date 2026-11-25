@@ -338,6 +338,29 @@ def launch_cards():
     }
 
 
+def sample_question():
+    """One question whose options carry samples as the Bridge keeps them (core/ui_samples.py sample): two button rows,
+    and a third too large to draw."""
+    from covey.core import ui_samples
+
+    def row(*buttons):
+        return {"tag": "column_set", "flex_mode": "none", "horizontal_spacing": "8px", "columns": [
+            {"tag": "column", "width": "weighted", "weight": 1, "elements": [button]} for button in buttons]}
+
+    def button(label, kind, look="default"):
+        return {"tag": "button", "text": {"tag": "plain_text", "content": label}, "type": look, "width": "fill",
+                "name": kind, "behaviors": [{"type": "callback", "value": {"kind": kind, "token": TOKEN}}]}
+    same = ui_samples.sample({"schema": "2.0", "body": {"elements": [
+        row(button("提交回答", "bridge_question", "primary_filled"), button("不处理", "bridge_question_set_aside"))]}}, 0)
+    text = ui_samples.sample([button("提交回答", "bridge_question", "primary_filled"),
+                              {**button("不处理", "bridge_question_set_aside", "text"), "width": "default"}], 1)
+    large = ui_samples.sample([{"tag": "markdown", "content": f"第 {n} 行"} for n in range(ui_samples.SAMPLE_NODES + 1)], 2)
+    return [{"id": "look", "header": "按钮", "question": "不处理按钮用哪一版？", "multiple": False, "options": [
+        {"label": "A 一样宽（推荐）", "description": "和提交回答并排、一样宽的边框按钮", "sample": same},
+        {"label": "B 文字按钮", "description": "提交回答下面一个文字按钮", "sample": text},
+        {"label": "C 很长的一版", "sample": large}]}]
+
+
 def question_cards():
     from covey.cards.question_cards import (TOP_COPY, answer_notice_card, folded_refusal, mirror_card,
                                                      question_card, question_element, question_feedback_card)
@@ -427,6 +450,14 @@ def question_cards():
     cards["mirror_pick_asked"] = mirror_card(pick, "T436", output, ask=ask_block(
         "问答卡这一部分是不是也可以优化一下", at="00:20", who="T436 精简问题卡", doing="waiting",
         url="https://applink.feishu.cn/client/chat/open?openChatId=oc_x&openThreadId=omt_436"))
+    # 样张 (core/ui_samples.py, docs/ui.md 12): a question whose options carry samples of a card, drawn above the question,
+    # each under its option's label and description; one too large says why; answered, the samples are gone.
+    samples = sample_question()
+    cards["card_samples"] = question_card(question_record(answers={}, questions=samples), "T70", "问题卡的按钮")
+    cards["card_samples_answered"] = question_card(question_record(
+        "answered", continuation_job_id=432, questions=samples, answers={"look": {"answers": ["A 一样宽（推荐）"]}}),
+        "T70", "问题卡的按钮")
+    cards["mirror_samples"] = mirror_card(question_record(answers={}, questions=samples), "T436", output)
     cards["feedback"] = question_feedback_card(question_record())
     cards["answer_notice"] = answer_notice_card("已提交回答")
     cards["folded_refusal"] = folded_refusal(question_record("superseded", superseded_by_job=432))

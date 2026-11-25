@@ -50,6 +50,11 @@ def summarize(report, key, now) -> dict:
         cleanup = mine.get('claude_cleanup') if isinstance(mine.get('claude_cleanup'), dict) else None
         if cleanup:
             data['claude_cleanup'] = {key: cleanup.get(key) for key in ('state', 'days', 'path', 'hint')}
+        ledger = mine.get('owner_ledger') if isinstance(mine.get('owner_ledger'), dict) else None
+        if ledger:  # 等主人的账 and its 补发 (service/doctor.py ledger_row), plain values only.
+            data['owner_ledger'] = {'checked_at': ledger.get('checked_at'), 'counts': dict(ledger.get('counts') or {}),
+                                    'missing': len(ledger.get('missing') or ()), 'tries': int(ledger.get('tries') or 0),
+                                    'ok': int(ledger.get('ok') or 0), 'failed': int(ledger.get('failed') or 0)}
     return data
 
 

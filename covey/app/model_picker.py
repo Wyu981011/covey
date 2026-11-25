@@ -174,7 +174,7 @@ class LaunchModelPicker(CardActionQueue):
             # Shown only for a model that can redact, and checked again at 开始任务.
             field, valid = 'selected_redaction', option in REDACTION_LABELS and bool(choice.get('redaction'))
         else:
-            option = parse_budget(option, record['config_revision'], choice)
+            option = parse_budget(option, record['config_revision'], choice)  # One tapped on a card sent before stays.
             field, valid = 'selected_effort', option is not None
         if not valid or record.get(field) == option:
             return False

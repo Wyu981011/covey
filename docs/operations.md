@@ -115,6 +115,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 ├─ browsers/、tmp/、workspace/     ./install 用的无头浏览器、临时目录、默认工作区
 ├─ install.json                    ./install 上次注册时的设置（重跑时比较它，没变就不重新注册）
 ├─ install-harnesses.json          ./install 上次写 harnesses.json 时哪些 Harness 能用（重跑时据此只加新能用的）
+├─ upgrade.json                    网页「版本与更新」和定时自动升级怎么查新版本、怎么升级（能升级这个部署的安装器写，见 web.md 版本与更新）
 └─ harnesses.json                  --harness-config 指向它（./install 写这个文件）
 ```
 
@@ -145,7 +146,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ questions/、held-notes/      待答问题；多题待答时暂存的补充
 │  ├─ interaction-deliveries/      补充和回答的送达记录
 │  ├─ delivery-receipts/           飞书写操作的幂等回执
-│  ├─ inbound-messages/            收到的消息的去重标记
+│  ├─ inbound-messages/            收到的消息的去重标记，里面是这条消息的去向（`bin/covey_inbound.py`）
 │  ├─ event-spool/                 事件长连接走 SDK 时，收下还没处理完的消息和点击（下次启动先补处理）
 │  ├─ stranger-replies/            别人私聊时回过的那句（每人每天一个标记）
 │  ├─ verified-results/、result-files/   已授权的回复正文、长回复文件
@@ -286,6 +287,31 @@ python3 -B bin/covey_devices.py --state-dir "$STATE_DIR" list                 # 
 
 `core/harness_probe.py` 的 `probe(名字)` 对 Claude 跑 `claude -p`、对 Codex 跑 `codex exec`（短超时，一次最便宜的问法），返回 `ok`、`reason`（`ok|not_installed|not_logged_in|network|timeout|other`）和 `detail`。安装器、`covey_doctor --probe-harnesses` 用它；`covey_doctor` 不带参数时只读缓存（`<数据根>/harness-probe/<名字>.json`，通过 6 小时、失败 10 分钟，换了命令或代理设置作废）。Bridge 里默认不探测，设 `COVEY_HARNESS_PROBE=1`（可写进服务清单）后，可用性检查把结果放进健康检查的 `model_access.preflight.<名字>.probe`，缓存里是“没登录”的 Harness 在启动卡上不可用（沿用现有的“模型后端尚未登录”提示），网络、超时等不挡任务。
 
+### 问题卡问得多不多
+
+改了话题什么时候问主人的规则（[问题与回答 · 什么时候问](architecture.md#什么时候问)）以后，用同一个脚本比改之前和之后各一段时间。只读，不改状态目录：
+
+```bash
+python3 -B scripts/question_stats.py --state "$STATE_DIR" --window 2026-11-11:2026-11-25 --window 2026-12-01:2026-12-07
+python3 -B scripts/question_stats.py --state "$STATE_DIR" --window 2026-12-01:2026-12-07 --daily   # 再按天各一行
+python3 -B scripts/question_stats.py --state "$STATE_DIR" --json                                   # 最近 7 天，JSON
+ssh <host> python3 - --state /absolute/path/to/state --window 2026-12-01:2026-12-07 < scripts/question_stats.py  # 别的机器，只用标准库
+```
+
+每个时间窗（本地日期，两头都算）一段：
+
+| 数 | 怎么算 |
+| --- | --- |
+| 问题卡、卡/天 | 时间窗里建的问题记录（`questions/*.json`），一条记录是一张卡，不管几道题 |
+| 每百轮 | 问题卡数 ÷ 同期轮次（`jobs/*.json` 的 `created_at`）× 100；用得多的那周不会显得问得多 |
+| 选推荐率 | 答案带“推荐”的题 ÷ 全部题。可撤回、有推荐的不再问以后，它和“其他”类的题数应该一起降 |
+| 不回答 | 答“不回答此题”的题（点不处理的也算） |
+| 第一轮就问 | 话题第一轮就发的卡，方案还没给就先问的多在这里 |
+| 负责人替答 | 专项负责人分流替主人答掉的卡 |
+| 按类别 | 每道题按标题和题面的词归到部署、删除、花钱、对外发送、占机器（这几类照常问），都不像的是其他；只是粗分，前后用的是同一套词 |
+
+读记录有总时限（`--seconds`，默认 60），网络盘上卡住没读到的记成“未读”另行列出，这时的数偏少。
+
 ## 日志
 
 | 文件 | 谁写 | 内容与轮转 |
@@ -321,6 +347,9 @@ python3 -B bin/covey_devices.py --state-dir "$STATE_DIR" list                 # 
 | `launch catalog unavailable` | 模型目录读取失败，见[启动卡里缺少某个 Harness 的模型](troubleshooting.md#启动卡里缺少某个-harness-的模型) |
 | `event bus TCP transport stalled` | 事件总线停滞后被替换，见[自动恢复](troubleshooting.md#自动恢复) |
 | `worker <名称> failed` / `maintenance deferred` | 后台线程异常并重建 / 维护出错推迟 |
+| `<isolate> step <模块>.<函数> failed: OSError: Disk quota exceeded` | 后台循环的一步失败：OSError 带上原因（不带路径），别的异常只写类型。写不进（Disk quota exceeded、No space left on device）另记下来，私聊里告诉主人一次（6 小时内最多一次，`app/storage_alerts.py`），`covey_doctor.py` 也说，见[状态目录写不进](troubleshooting.md#状态目录写不进) |
+| `slow <什么>: N s so far, at <调用栈>` | 一次等锁、持锁或读记录超过 2 秒（`core/storage_watch.py`：`LOCK`、记录和卡片的文件锁、记录读盘），记一次调用栈；`covey_doctor.py` 说最近 6 小时有几次、最长多久 |
+| `backend startup failed job=#N harness=<名字>: <类型>: <原文>` | 后端启动检查或启动失败，原文经脱敏、截到 160 字；卡上同样写“后端初始化失败：<类型>: <原文>” |
 | `maintenance backup completed` / `idle maintenance … completed` | 每日备份 / 空闲时的清理 |
 | `… is the old name of …` / `env <名字> is no longer read` | 设了环境变量的旧名（见[改名与兼容](compat.md#环境变量的旧名)）/ 不再读取的变量（见[已下线的功能与旧配置](legacy.md#不再读取的变量)） |
 | `app setup check` / `app setup run` | 飞书应用检查和自动补齐，见[飞书应用配置](feishu-app.md#自动补齐飞书应用) |
@@ -386,6 +415,7 @@ python3 -B bin/covey_maintenance.py --restore /absolute/bridge-NNN.tar.gz --dest
 | --- | --- |
 | `runner.json` | 进程号、启动时间、boot ID、release、任务编号、Harness |
 | `wake.json` | 任务进程能接 SIGUSR1：Bridge 写收件箱后用它立即唤醒（旧 release 的任务进程没有它） |
+| `runner.lock` | 运行锁：跑这个任务的任务进程一直持着，同一任务的第二个任务进程拿不到就什么都不跑（空文件；设了 `COVEY_LOCK_ROOT` 时在那里，不在运行目录） |
 | `done.json` | 卡片更新完、只剩产物上传时写入；Bridge 见到就放开这个话题，同话题的下一条照常开始 |
 | `exit.json` | 退出时写入 |
 | `runner.log` | 任务进程的日志 |
@@ -393,6 +423,7 @@ python3 -B bin/covey_maintenance.py --restore /absolute/bridge-NNN.tar.gz --dest
 - 运行目录在任务结束 7 天后由空闲维护删除。单看 `runner.json` 判断不了进程是否还活着，要看 `exit.json` 或进程列表。
 - 任务结束后，任务进程还会等产物上传最多 30 分钟、卡片更新最多 60 秒再退出。
 - Bridge 一侧的日志：`task runner started job=#N pid=... dir=...`（交给任务进程）、`adopted task runner job=#N pid=...`（重启后认领仍存活的）、`task runner done job=#N`、`task runner ended job=#N status=... exit=...`（`exit=none` 表示没有 `exit.json`，进程被杀或崩溃）。`task runner of job #N still alive: watched again` 是看着像退出了、再问时还活着（读 `runner.json` 一时失败），没有再起第二个；`task runner relaunched job=#N` 是任务没开始就退出、再起了一次。
+- 任务进程一侧（`runner.log`）：`task runner job=#N pid=... ran nothing: another task runner holds its run directory` 是同一任务已有一个任务进程持着运行锁在跑，这个什么都没做就退出了，任务和卡不受影响；`runs without a run lock` 是锁文件建不出来或文件系统不支持加锁，照旧跑（没有运行锁之前就是这样）。同一任务的 `runner.log` 里出现两行 `task runner job=#N harness=… pid=…`（两个不同的 pid）说明有两个任务进程都跑了它，属于故障，查 Bridge 日志里同一任务的 `relaunched` 行。
 - 管家空闲时的压缩进程也是 `covey_runner.py`，命令行带 `--run-dir <state>/main-thread/compacting/<管家话题> --compact-only`：不建任务、不出卡、不算 `restart_blockers`。Bridge 重启时停掉上一个 Bridge 留下的这种进程，请求放回去。
 
 操作：

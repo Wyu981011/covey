@@ -42,7 +42,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import card_lanes, web_images, web_memory
+from covey.app import card_lanes, self_upgrade, web_images, web_memory
 from covey.app.web_collect import Collector, Shared
 from covey.app.web_ops import Ops
 from covey.app.web_push_client import Client, WebError
@@ -63,6 +63,7 @@ HOT_STUCK_SECONDS = 15
 HOT_WAIT = 5.0  # Seconds a quick look waits for a store's lock (core/store.py bounded) before it gives its step up: another thread's scan may be stuck.
 HOT_GAP = 0.25  # The least time between two quick looks, however often this process writes a record.
 PASS_PAUSE = 1.0  # Seconds between two steps of a pass (each a slice of PASS_SLICE topics), and between two checks whether one is due.
+UPGRADE_PAUSE = 60.0  # Seconds between two looks of the web-upgrade thread whether a check of a newer version is due (app/self_upgrade.py due).
 BUSY_EVERY = 60  # A quick look given up for a busy store is logged the first time, then every this many.
 MAX_LEFT = 3  # Left-behind steps still stuck: with this many no new thread is started until one of them ends, or LEFT_WAIT has passed.
 LEFT_WAIT = 300  # Seconds waited at MAX_LEFT; then the next step runs in a new thread anyway (an open stuck for good must not stop the push).
@@ -168,6 +169,7 @@ class WebSync:
         self.settings_lock = threading.Lock()  # push_settings runs in both threads.
         self.tidy_stamps, self.tidy_lock, self.tidy_failed = None, threading.Lock(), 0  # The 整理专项 item (push_tidy).
         self.memory_stamps, self.memory_lock, self.memory_failed = None, threading.Lock(), 0  # The 记忆 item (push_memory).
+        self.upgrade_stamps, self.upgrade_lock, self.upgrade_failed = None, threading.Lock(), 0  # The 版本与更新 item (push_upgrade).
         self.asks_failed, self.asks_tried, self.asks_full = 0, None, False  # The 要你处理 item (push_asks): failures in a row, the rev tried last, a pass began.
         self.ledger = None
         self.op_lanes = OpLanes(runtime.log)  # The page's operations (inbox_once, do_op).
@@ -184,7 +186,12 @@ class WebSync:
     def threads(self):
         if not web_sync.enabled():
             return ()
-        return (("web-push", lambda ctx: self.run_push()),
+        upgrader = self.ops.self_upgrade
+        # 版本与更新 (v39): its own thread, only with an upgrader set up (a check fetches two repositories, up to STATUS_SECONDS).
+        upgrading = (("web-upgrade", lambda ctx: self.loop("upgrade", self.upgrade_once, lambda: UPGRADE_PAUSE,
+                                                           stuck=self_upgrade.STATUS_SECONDS + 60)),) \
+            if upgrader is not None and upgrader.on() else ()
+        return upgrading + (("web-push", lambda ctx: self.run_push()),
                 ("web-pass", lambda ctx: self.loop("pass", self.pass_once, lambda: PASS_PAUSE, self.start_over_pass,
                                                    lambda: self.passer.moved, where=lambda: self.passer.doing)),
                 ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, self.inbox_pause, again=True)),
@@ -532,6 +539,8 @@ class WebSync:
         self.push_tidy(now, full=full)
         passer.mark("memory")
         self.push_memory(full=full)
+        passer.mark("upgrade")
+        self.push_upgrade(full=full)
         passer.mark("images")
         self.push_images(passer, now)
         passer.mark("saving")
@@ -755,6 +764,48 @@ class WebSync:
         finally:
             self.memory_lock.release()
 
+    def upgrade_once(self) -> int:
+        """The web-upgrade thread's step: a check of a newer version when one is due (app/self_upgrade.py due), then the item."""
+        upgrader = self.ops.self_upgrade
+        if upgrader is None:
+            return 0
+        if upgrader.due():
+            upgrader.check()
+        return self.push_upgrade()
+
+    def push_upgrade(self, full=False) -> int:
+        """The ``settings`` item ``upgrade`` (版本与更新, app/self_upgrade.py view, data contract v39), posted on its own as
+        ``push_memory`` is: when its two files or the upgrade's process changed (a few stats, from the pass thread each step and the
+        web-upgrade thread), on a full pass, and before the ack of an ``upgrade`` operation. Nothing without an upgrader set up. A page
+        older than v39 refuses the key: logged the first time and every tenth. How many went."""
+        upgrader = self.ops.self_upgrade
+        if upgrader is None or not upgrader.on() or not self.upgrade_lock.acquire(blocking=False):
+            return 0
+        try:
+            stamps = upgrader.stamps()
+            if not full and stamps == self.upgrade_stamps:
+                return 0
+            self.upgrade_stamps = stamps
+            each = web_sync.item("settings", web_sync.UPGRADE_KEY, upgrader.view())
+            if self.sent.get((each["type"], each["key"])) == each["rev"]:
+                return 0
+            try:
+                self.client.request("POST", "/sync/upsert", {"items": [each], "deleted": []})
+            except Exception as exc:  # noqa: BLE001 - logged; the next change or full look tries again
+                self.upgrade_failed += 1
+                self.upgrade_stamps = None
+                if self.upgrade_failed == 1 or self.upgrade_failed % 10 == 0:
+                    self.runtime.log(f"web upgrade not pushed ({self.upgrade_failed}): {type(exc).__name__}: {self.why(exc)}")
+                return 0
+            self.upgrade_failed = 0
+            self.sent[(each["type"], each["key"])] = each["rev"]
+            return 1
+        except Exception as exc:  # noqa: BLE001 - a status that cannot be read stops nothing
+            self.runtime.log(f"web upgrade not built: {type(exc).__name__}")
+            return 0
+        finally:
+            self.upgrade_lock.release()
+
     # -- inbox ----------------------------------------------------------------------------------------------------------
 
     def inbox_once(self) -> int:
@@ -810,7 +861,10 @@ class WebSync:
 
     @staticmethod
     def lane_of(row) -> str:
-        """The lane of an operation: its topic's, its project's, else the one of the chat-wide ones (settings, launch, tidy, memory)."""
+        """The lane of an operation: its topic's, its project's, ``upgrade``'s own (its check takes a minute: no setting waits for it),
+        else the one of the chat-wide ones (settings, launch, tidy, memory)."""
+        if row.get("kind") == "upgrade":
+            return "upgrade"
         if row.get("topic_key"):
             return "topic:" + str(row["topic_key"])
         if row.get("project_key"):
@@ -835,7 +889,7 @@ class WebSync:
             for topic in touched:
                 self.collector.touch(topic)
             self.wake.set()  # The quick look builds what the operation touched now, not at its next tick.
-            if kind in ("settings", "launch", "tidy_decide", "memory_edit"):
+            if kind in ("settings", "launch", "tidy_decide", "memory_edit", "upgrade"):
                 self.before_ack(kind)  # The page reads the new settings, the tidy list, the memory when it sees done.
             pushed = time.monotonic()
             try:
@@ -863,6 +917,9 @@ class WebSync:
         next one preselects), the memory for its tab."""
         chat = self.runtime.access.owner_chat()
         if not chat:
+            return
+        if kind == "upgrade":
+            self.push_upgrade(full=True)  # The page reads what the check found, or that the upgrade is under way, when it sees done.
             return
         if kind in ("settings", "launch"):
             self.settings_due = True

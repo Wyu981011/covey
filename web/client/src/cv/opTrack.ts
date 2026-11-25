@@ -23,14 +23,15 @@ export const SETTLE_GAP_MS = 500;
 /** 没有“预期的新状态”可看的操作，回执后再补取几次（Covey 回执前后推的新数据落库有先后） */
 export const SETTLE_BLIND = 2;
 
-/** 要取的数据：一个话题的轮次、大厅、快照、设置、整理建议、主记忆 */
+/** 要取的数据：一个话题的轮次、大厅、快照、设置、整理建议、主记忆、版本与更新 */
 export type Pull =
   | { t: 'turns'; key: string }
   | { t: 'room' }
   | { t: 'snapshot' }
   | { t: 'settings' }
   | { t: 'tidy' }
-  | { t: 'memory' };
+  | { t: 'memory' }
+  | { t: 'upgrade' };
 
 export const pullId = (p: Pull): string => (p.t === 'turns' ? `turns:${p.key}` : p.t);
 
@@ -46,6 +47,8 @@ export function pullPlan(body: Pick<OutboxRequest, 'kind' | 'topic_key' | 'paylo
   if (body.payload?.room === true) own.push({ t: 'room' });
   if (kind === 'settings') return { all: [{ t: 'settings' }], follow: [] };
   if (kind === 'memory_edit') return { all: [{ t: 'memory' }], follow: [] };
+  // v39：Covey 回执之前推好了检查的结果；开始升级后 running 随后推来，再补取一会儿
+  if (kind === 'upgrade') return { all: [{ t: 'upgrade' }], follow: [{ t: 'upgrade' }] };
   if (kind === 'tidy' || kind === 'tidy_decide') return { all: [{ t: 'tidy' }, { t: 'snapshot' }], follow: [{ t: 'tidy' }] };
   if (kind === 'forget' || kind === 'memory_fix') return { all: [{ t: 'snapshot' }], follow: [] };
   if (kind === 'launch') return { all: [{ t: 'snapshot' }], follow: [{ t: 'snapshot' }] };

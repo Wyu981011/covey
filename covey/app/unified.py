@@ -23,7 +23,7 @@ from typing import Any
 
 from covey.core import env as cenv
 from covey.app.app import BridgeApp
-from covey.app import auto_retry, limit_notice, policy_retry
+from covey.app import auto_retry, auto_upgrade, limit_notice, policy_retry
 from covey.app.availability import watch as watch_availability
 from covey.app.card_lanes import CardLanes
 from covey.app.card_routing import INBOUND_DIR, CardRouting
@@ -119,16 +119,16 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
     EARLY = ('workspace_manager', 'launch_model_picker', 'directory_picker', 'harness_switch', 'rewind')
     PANELS = ('proxy.panel', 'proxy.resend', 'proxy.owner_send', 'group_manager', 'redaction_panel', 'nodes.panel',
               'butler_panel', 'settings_hub', 'settings_hub.memory', 'overview', 'digest', 'app_setup', 'welcome',
-              'group_menu', 'project_tidy', 'review', 'collab.cards', 'web_login', 'fold_close')
+              'group_menu', 'project_tidy', 'review', 'collab.cards', 'web_login', 'fold_close', 'batch_switch')
 
     # What only the Bridge uses, built by _build_parts: at once in the Bridge (the default), on first use in a
     # task runner (``task_runner=True``), which rarely meets any of it.
     PARTS = ('directory_picker', 'launch_model_picker', 'workspace_manager', 'harness_switch', 'rewind', 'proxy',
              'weekly_usage', 'group_manager', 'redaction_panel', 'butler_panel',
-             'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'digest',
+             'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'storage_alerts', 'digest',
              'topic_seen', 'app_setup', 'dispatch_cards', 'project_cards', 'projects', 'project_tidy',
              'project_loop', 'patrol', 'devices', 'nodes', 'web_sync', 'web_login', 'source_watch', 'extension_features', 'features', 'menu', 'group_menu', 'group_boards',
-             'welcome', 'revisits', 'review', 'collab', 'fold_close')
+             'welcome', 'revisits', 'review', 'collab', 'fold_close', 'owner_ledger', 'batch_switch')
 
     def __init__(self, *, script_path, component_factory=components, task_runner=False):
         self.runtime = Runtime(script_path=script_path)
@@ -195,11 +195,12 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.group_manager import GroupManager
         from covey.app.group_menu import GroupMenu
         from covey.app.harness_switch import HarnessSwitch
-        from covey.app import butler_knowledge, butler_search, butler_panel, butler_tools, butler_topics
+        from covey.app import batch_switch, butler_knowledge, butler_search, butler_panel, butler_tools, butler_topics
         from covey.app.butler_env import ButlerEnv
         from covey.app.butler_panel import ButlerPanel
         from covey.app.butler_tools import ButlerTools
         from covey.app.memguard_alerts import MemguardAlerts
+        from covey.app.storage_alerts import StorageAlerts
         from covey.app.model_picker import LaunchModelPicker
         from covey.app.overview import Overview
         from covey.app.proxy import Proxy
@@ -211,6 +212,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.weekly_usage import WeeklyUsage
         from covey.app.welcome import Welcome
         from covey.app.revisits import Revisits
+        from covey.app.owner_ledger import Reconcile as OwnerLedger
         from covey.app.collab_flow import Collaboration
         from covey.app.workspace_manager import WorkspaceManager
         with self.parts_lock:
@@ -247,7 +249,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # Every tool core/butler_tool_specs.py names, by the module that runs it.
             self.butler_tools = ButlerTools(self.butler_env, handlers={**butler_tools.TOOLS, **butler_search.TOOLS,
                                                                  **butler_topics.TOOLS, **butler_panel.TOOLS,
-                                                                 **butler_knowledge.TOOLS, **PROJECT_BUTLER_TOOLS})
+                                                                 **butler_knowledge.TOOLS, **batch_switch.TOOLS,
+                                                                 **PROJECT_BUTLER_TOOLS})
             self.butler_search = butler_search.ButlerSearch(self.butler_env)  # Reads the checkpoints topics_search looks into.
             # 独立复核 on an answer card (app/review.py, COVEY_REVIEW=1): a read-only topic opened as the butler opens one.
             from covey.app.review import Review
@@ -255,8 +258,13 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # A fold closed by a click on its text (app/fold_close.py).
             from covey.app.fold_close import FoldClose
             self.fold_close = FoldClose(self.runtime, self.messenger)
+            # 批量换配置 (app/batch_switch.py): the card the butler's or a lead's topics_switch sends, and the owner's clicks on it.
+            from covey.app.batch_switch import BatchSwitch
+            self.batch_switch = BatchSwitch(self.runtime, self.topics, self.messenger)
             # The memory watchdog's alerts (service/memguard.py), to a task's topic or the owner's private chat.
             self.memguard_alerts = MemguardAlerts(self.runtime, self.messenger, self.voice)
+            # The state directory's disk (app/storage_alerts.py): slow locks and reads watched, a refused write told once.
+            self.storage_alerts = StorageAlerts(self.runtime, self.messenger, self.voice)
             # 早晚汇总 (app/digest.py), when COVEY_DIGEST_TIMES is set: a card in the owner's private chat.
             self.digest = Digest(self.runtime, self.messenger, self.voice)
             # 你反复说的 on the evening digest (app/memory_candidates.py), COVEY_MEMORY=1: the Claude Code that groups them.
@@ -315,12 +323,15 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.collab = Collaboration(self.runtime, self.topics, self.messenger, self.voice)
             # The web page's say/stop with a collaboration (app/web_ops.py) reach it through the butler's env, as WebSync's Ops does.
             self.butler_env.collab = self.collab
-            features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.proxy,
+            # 等主人的账's 对账 (app/owner_ledger.py): one thread unless COVEY_LEDGER_RECONCILE=0, sending again a card the
+            # ledger has and the chat lacks.
+            self.owner_ledger = OwnerLedger(self.runtime, self.butler_env)
+            features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.storage_alerts, self.proxy,
                         self.group_manager, self.overview, self.topic_seen, self.butler_tools,
                         self.butler_search, self.settings_hub, self.butler, self.digest, self.app_setup, self.welcome,
                         self.dispatch_cards, self.project_cards, self.projects, self.project_tidy,
                         self.project_loop, self.patrol, self.devices, self.nodes, self.web_sync, self.source_watch,
-                        self.revisits, self.collab, *self.extension_features)
+                        self.revisits, self.collab, self.owner_ledger, *self.extension_features)
             # The bot menu's items (app/bot_menu.py): each answers in the owner's private chat, its card
             # replacing the one it sent before, or folding and unfolding it while it is the newest (``menu_folds()``).
             self.menu = BotMenu(self.runtime, INBOUND_DIR,
@@ -548,7 +559,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
                 ('outbox', lambda ctx: run_outbox(self, ctx, *OUTBOX_STEPS)),
                 ('policy', lambda ctx: run_policy_guard(self, ctx)),
                 *(thread for feature in self.features for thread in getattr(feature, 'threads', tuple)()),
-                *self.group_menu.threads(), *self.group_boards.threads()]
+                *self.group_menu.threads(), *self.group_boards.threads(), *auto_upgrade.targets(self)]
 
     def maintenance_target(self, ctx):
         """The maintenance thread. Its modules are imported when the thread starts, not when the targets are listed:

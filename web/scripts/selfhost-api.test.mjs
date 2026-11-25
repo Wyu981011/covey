@@ -264,6 +264,34 @@ test('登录后：读看板、话题、发一句', async () => {
   assert.equal((await fetch(`${base}/openapi/sync/inbox`, { headers: { cookie } })).status, 401);
 });
 
+test('版本与更新（v39）：Covey 推 upgrade 条目、页面读到理好的形状；发件 upgrade 只收 check、run，不带话题', async () => {
+  const cookie = approved.session;
+  assert.equal((await (await api('/api/upgrade', { cookie })).text()), ''); // 没推过：空
+  const pushed = await open('upsert', {
+    method: 'POST',
+    key: SECOND_KEY,
+    body: { items: [{ type: 'settings', key: 'upgrade', rev: 'u1', data: {
+      live: 'aaaaaaaa-bbbbbbbb', latest: 'aaaaaaaa-cccccccc', available: true, bridge: true,
+      web: { kind: 'selfhost', current: false, manual: false }, count: 2,
+      changes: [{ repo: 'covey-internal', sha: 'cccccccc', subject: '升级顺带更新网页', at: 1795600000 }, { repo: 'x', sha: '不是提交号' }],
+      checked_at: 1795600000, checking: false, error: '', blocked: '', running: null, last: null } }] },
+  });
+  assert.equal(pushed.status < 300, true, await pushed.clone().text());
+  const got = await (await api('/api/upgrade', { cookie })).json();
+  assert.equal(got.rev, 'u1');
+  assert.equal(got.data.latest, 'aaaaaaaa-cccccccc');
+  assert.equal(got.data.changes.length, 1); // 不认得的提交丢掉
+  assert.equal(got.data.count, 2);
+  const run = await api('/api/outbox', { method: 'POST', cookie, body: { op_id: 'up-1', kind: 'upgrade', payload: { action: 'run' } } });
+  assert.equal(run.status < 300, true, await run.clone().text());
+  const inbox = await (await open('inbox', { key: SECOND_KEY })).json();
+  assert.ok(inbox.items.some((i) => i.op_id === 'up-1' && i.kind === 'upgrade' && i.payload.action === 'run' && !i.topic_key));
+  for (const [id, body] of [['up-2', { kind: 'upgrade', payload: { action: 'rollback' } }], ['up-3', { kind: 'upgrade', topic_key: 't1', payload: { action: 'check' } }],
+    ['up-4', { kind: 'upgrade', payload: { action: 'run', ref: 'HEAD' } }]]) {
+    assert.equal((await api('/api/outbox', { method: 'POST', cookie, body: { op_id: id, ...body } })).status, 400, id);
+  }
+});
+
 test('更快的取数（v38）：取件 wait 挂着等、快照 since 增量、回执 wait 挂着等；不带参数和以前一样', async () => {
   const cookie = approved.session;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

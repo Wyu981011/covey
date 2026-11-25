@@ -50,6 +50,8 @@
 
 三种情况的做法见[实现细节 · 路由的细节](butler-internals.md#路由的细节)。
 
+**挂住的请求不再堵住后面的话**（`app/unstick.py`）：管家的一轮在等模型回应时没有任何动静，而你后来的话还在等它（补充没被读到，或开了[同时做几件事](#同时做几件事开关默认关)时排在这一路后面）：满 3 分钟，在每条等着的消息下说一句它在等哪一轮、已经多久没动静；满 10 分钟（`COVEY_BUTLER_HUNG_MINUTES`，`0` 关）停下这一轮，记成失败（“模型请求长时间没有回应，Bridge 停下了这一轮”，可检查并继续），你后来的话各自作为新一轮接着跑。在等命令、等你回答、请求在重试或排队等空位的不算没动静；普通话题不自动停，卡上有停止和看看。负责人的轮一样。
+
 ### 直答与转交
 
 规则在 `app/prompts.py` 的 `butler_rules`（`AREA_OPENING`、`AREA_RULE`），放在每轮用户消息开头：
@@ -173,7 +175,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `topics_search` | clues*、limit | 按线索找是哪个话题哪一轮做的 |
 | `topic_read` | topic*、job、turns | 读话题最近几轮：问题、结论、检查点、没答的问题 |
 | `workspaces_list` | 无 | 列工作区：名字、路径、用途、最近的话题 |
-| `topic_start` | title*、prompt*、workspace*、readonly*、user_requested*、why*、attachments、criteria、harness、model、effort、redaction | 为新的事开话题；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)） |
+| `topic_start` | title*、prompt*、workspace*、readonly*、user_requested*、why*、attachments、criteria、harness、model、effort、basis、redaction | 为新的事开话题；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)）；填了 harness、model、effort 要写 basis（见下面[点名配置的依据](#点名配置的依据)） |
 | `topic_send` | topic*、text*、note、title、criteria、attachments | 把主人的话追加给已有话题 |
 | `topic_fork` | topic*、title*、prompt*、attachments | 从已有话题分叉 |
 | `question_answer` | topic*、answers* | 替主人答选择题 |
@@ -182,6 +184,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `principle_delete` | id* | 删一条原则 |
 | `principles_list` | 无 | 列出原则 |
 | `settings_panel` | 无 | 在私聊发设置卡（`app/butler_panel.py`） |
+| `topics_switch` | topics*、basis*、harness、model、effort | 在私聊发批量换配置卡，主人点「确认更换」后才逐个换（[批量换配置](usage.md#批量换配置)） |
 | `knowledge_save` | scope*、kind*、text*、workspace、why、source_topic | 记一条知识条目（只有 `COVEY_KNOWLEDGE=1` 才列） |
 | `knowledge_update` | id*、text*、reason*、kind、why | 改写：新 id 取代旧 id（同上） |
 | `knowledge_drop` | id*、reason* | 作废一条（同上） |
@@ -194,6 +197,12 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 `topic_start` 开出的话题和同一个仓库里 30 分钟内还在做的话题标题相近时，回复末尾加“可能重复：T12《…》 也在同一个仓库做相近的事”，只提示，照常开（`app/repo_peers.py` 的 `duplicates`）。
 
 开了专项时 `topic_start`、`topic_send` 各多一个可选的 `project`（开专项、把话题转成专项）。开了专项时话题也能把只有管家能办的事交过来：私聊顶层一条“↪ T12 转给管家”，管家在它上面排一轮、按主人在话题里的原话办（[在话题里说开专项](projects.md#在话题里说开专项)）。查询类工具只读记录、不持记录锁；`question_answer` 和卡上点“提交回答”走同一条路。各工具的规则见[实现细节 · 工具的细节](butler-internals.md#工具的细节)。
+
+### 点名配置的依据
+
+管家和专项负责人开话题（`topic_start`、`project_topic_start`）时填了 `harness`、`model` 或 `effort`，或者用 `topics_switch` 批量换配置，都要写 `basis`：主人这一轮原话里连续的一段，或记下的原则编号（`p1a2b3c`）、这一轮带的记忆编号（`M12`），也可以是原则或专项记忆里的一段原文。Bridge 在执行前核对（`app/config_basis.py` 的 `check`，比较时不计空格、标点和大小写，短于 3 个字的不算），对不上就拒绝这次调用、说明原因，模型改为不填（用设置里的默认）或问主人。开出来的话题卡在配置那一行末尾写“按「…」”，主人一眼能看出这个配置是照哪句话选的；没填这几项的话题卡和以前一样。
+
+为什么要这样：主人说“监视进程这类给 Codex”，之后修代码、验收这类话题也被开到 Codex 上。原则只管它说的那一类事，工具说明、管家规则和记忆纠正规则里都写了这一条；Bridge 自己开话题（独立复核、网页开新话题）用的是设置卡里的配置，不经过这道核对。
 
 ### 按线索找话题
 
@@ -218,7 +227,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 `app/butler_handoff.py`。交给话题的每一轮（开、下一轮、补充、分叉），模型收到 `handoff_prompt`，卡、历史和串里显示主人原话（`shown`、`thread_line`）。
 
 - **Bridge 的说明**（`note`，开头 `[Bridge 说明]`）：你在哪个话题；这件事是管家按主人哪条消息交来的；路由已经办完，直接做事；你的回复就是结论。
-- **任务说明**：管家写的 `prompt`/`text`，后跟“管家补充：note”。
+- **任务说明**：管家写的 `prompt`/`text`，后跟“管家补充：note”。不用写“别发问题卡”：话题每一轮的执行约定里有[什么时候问](architecture.md#什么时候问)，`topic_start` 的 `prompt` 说明也这样告诉管家；负责人交来的，说明里只点部署、删除、花钱、对外发送、占机器照常问。
 - **主人原话**（`asked`）：管家这一轮记录的 `user_text` 加运行中收到的补充，按时间引用。
 - **附件**（`carry`）：只认管家话题 `incoming_media/` 或 `<state>/incoming_media/` 下的文件（`core/attachments.py` 的 `parse_attachment_block`），按参数 `attachments`（`all`、`none`、序号）挑出，硬链接或复制到目标话题的 `incoming_media/`。补充只送文字。
 
@@ -344,7 +353,7 @@ Harness 自己的记忆在代答话题和脱敏的一轮里不读不写，开没
 | 记忆（`COVEY_MEMORY=1`） | 下一轮带上什么（选工作区，带几条、各范围用了多少、快满或放不下的提示、原文），按范围列出的条目，每条“删除”，原则多一个“常驻”（`app/memory_panel.py`） |
 | 能做什么 | 只读：启用的 Harness 和现在用不了的、开着的功能和读的开关、没开的怎么开、启用的扩展（`app/about_panel.py`） |
 
-每行点开是选项，点一个就记下并整卡重画；只有主人能改。模型和思考预算只列说得出是哪一个的选项：模型行没有 Claude Code 目录里的“Default (recommended)”，思考预算行没有“推荐”和“模型原生默认”（`core/menu_choice.py` 的 `explicit`、`plain_budgets`），因为看不出它们实际跑哪个；管家、独立复核两段的这两行也没有“默认”。新话题段的空选项留着，写的是它现在跟到哪个（“跟上次一样：Opus 5.5”）。以前存下的这类值照旧画出、打勾，换掉后就不再出现。代答的模型行（`cards/proxy_panel.py`）用同一套行，也一样。启动卡的选项不变，只是新话题段只选了 Harness 时，启动卡不再预选“Default (recommended)”，预选这个 Harness 的第一个具体模型（`app/preselection.py` 的 `harness_model`）；主人自己选它照旧可以。私聊模式改成纯话题要再点“确定改”。子 Agent 一项对 Bridge 起的每一轮 Claude Code 都生效（`backends/claude/subagents.py`）。独立复核选了模型时，点「独立复核」就用它（`app/review.py` 的 `configured`），同一家厂商也照用；它的 Harness 本机没启用或现在用不了、模型不在目录里了、原话题开着脱敏而它不能脱敏、或思考预算模型不再支持时，照没设时自动挑，并在开复核的那句回复里说一句原因。旧卡按钮的去向、脱敏默认的迁移和子 Agent 的参数见[实现细节 · 设置卡的细节](butler-internals.md#设置卡的细节)。
+每行点开是选项，点一个就记下并整卡重画；只有主人能改。模型和思考预算只列说得出是哪一个的选项：模型行没有 Claude Code 目录里的“Default (recommended)”，思考预算行没有“推荐”和“模型原生默认”（`core/menu_choice.py` 的 `explicit`、`plain_budgets`），因为看不出它们实际跑哪个；管家、独立复核两段的这两行也没有“默认”。新话题段的空选项留着，写的是它现在跟到哪个（“跟上次一样：Opus 5.5”）。以前存下的这类值照旧画出、打勾，换掉后就不再出现。代答的模型行（`cards/proxy_panel.py`）用同一套行，也一样。启动卡、换配置卡和网页开新话题也一样（`cards/launch_config.py` 的 `model_settings` 用 `offered_models`、`plain_budgets`，预选和点击记下的档用 `named_budget`）：不列“Default (recommended)”“推荐 · xhigh”“模型原生默认”，以前记下的这几项画成它实际跑的那一档；新话题段只选了 Harness、或上次用的是“Default (recommended)”时，预选这个 Harness 的具体模型（`app/preselection.py` 的 `harness_model`），话题正绑在它上面时换配置卡照旧列出它（[UI 规范 · 拍板记录](ui.md#13-拍板记录) U5）。私聊模式改成纯话题要再点“确定改”。子 Agent 一项对 Bridge 起的每一轮 Claude Code 都生效（`backends/claude/subagents.py`）。独立复核选了模型时，点「独立复核」就用它（`app/review.py` 的 `configured`），同一家厂商也照用；它的 Harness 本机没启用或现在用不了、模型不在目录里了、原话题开着脱敏而它不能脱敏、或思考预算模型不再支持时，照没设时自动挑，并在开复核的那句回复里说一句原因。旧卡按钮的去向、脱敏默认的迁移和子 Agent 的参数见[实现细节 · 设置卡的细节](butler-internals.md#设置卡的细节)。
 
 ## 话题链接
 

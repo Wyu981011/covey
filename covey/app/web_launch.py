@@ -2,9 +2,10 @@
 owner's private chat, pushed for the page's chat box (``catalog``), and the page's ``launch`` that opens one with the choices made there
 (``launch``), started at once.
 
-- ``catalog`` is the launch card's own reading: the menu (app/launch_models.py available_models) in the order the card lists it
-  (app/preselection.py launch_selection: the preselected model first, then the chat's recent ones), each model with its Harness and
-  provider and their titles, the budgets the card offers (core/menu_choice.py budget_options), ``start_budget`` (the budget the card
+- ``catalog`` is the launch card's own reading: the menu (app/launch_models.py available_models) as the card lists it (without Claude
+  Code's "Default (recommended)", core/menu_choice.py offered_models) in its order (app/preselection.py launch_selection: the
+  preselected model first, then the chat's recent ones), each model with its Harness and provider and their titles, the budgets the
+  card offers (core/menu_choice.py plain_budgets: the levels by name), ``start_budget`` (the budget the card
   preselects when that model is chosen: launch_selection with that model as the draft, so the 新话题 page's budget, the chat's usual one
   and 推荐 come in the card's order), whether it can redact and its work modes; the workspaces the private chat may use, most recently
   used first, a device's with its title and the Harnesses it declares; and ``preselect``, what a launch card of the private chat
@@ -80,14 +81,16 @@ def _selection(env, choices, config, harnesses, reads, draft=None):
 def catalog(env, ctx, chat) -> dict:
     """The data contract v17 ``launch`` block (see the module's docstring)."""
     from covey.app.launch_models import available_models
-    from covey.core.menu_choice import budget_options, harness_of, plain_budget, plain_budgets, tiers
+    from covey.core.menu_choice import budget_options, harness_of, offered_models, plain_budget, plain_budgets, tiers
     from covey.core.defaults import WORK_MODES
     from covey.core.workspaces import RUN_MODES
     choices = available_models(env.topics, ctx)
     config, titles, harnesses = workspace_config(env, ctx, chat)
     reads = _reads(env, ctx, chat)
     found = _selection(env, choices, config, harnesses, reads)
-    ranked = found.choices
+    # The models the launch card lists (docs/ui.md 13 U5): Claude Code's "Default (recommended)" names none, so it is not
+    # one of them; 开始任务's check (model_choice) still takes the whole menu.
+    ranked = offered_models(found.choices, found.model)
     models = []
     for key, entry in ranked.items():
         harness = harness_of(key, entry)

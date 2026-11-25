@@ -1,4 +1,4 @@
-// 专项的「简报」标签（v40，client/src/cv/briefData.ts）：动作的五种状态、一个话题挂几个动作、话题在项目里的位置和影响、没挂条目的话题、
+// 专项的「简报」标签（v41，client/src/cv/briefData.ts）：动作的五种状态、一个话题挂几个动作、话题在项目里的位置和影响、没挂条目的话题、
 // 任务图（防环）、缺口挂到动作、没有简报字段不报错、服务端怎么过滤 Covey 推来的背景、动作、缺口。跑：npm run test:brief
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

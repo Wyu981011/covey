@@ -5,8 +5,9 @@ butler sees every project and topic (its snapshot, projects_list), so it, not th
 there already.
 
 - The rule (``RULE``, ``offered``; app/runs.py puts it after the checkpoint file): in the owner's own turn (``direct``: his
-  Feishu message or his words from the web page, his by rule 11's ``owner_turn``; not a hand-on of the butler's or a lead's,
-  a wake-up, a revisit, an answer's continuation, an automatic retry, a 协作 turn) of an ordinary topic or a project's
+  Feishu message, his words from the web page or his answer to the topic's question (``owner_answer``), his by rule 11's
+  ``owner_turn``; not a hand-on of the butler's or a lead's, an answer the butler or a lead gave for him, a wake-up, a
+  revisit, an automatic retry, a 协作 turn) of an ordinary topic or a project's
   topic in a chat with a butler; not the butler's family (its leads too), not a 代答 topic. The topic writes
   ``ask_butler`` ({ask, why}, ``wanted``) into its checkpoint and says in its reply that it is handed on.
 - Handed on (``collect``, the Bridge once the turn's runner is gone: app/detached.py after_job, never in a task runner,
@@ -33,7 +34,7 @@ import time
 from pathlib import Path
 
 from covey.app.butler_handoff import asked
-from covey.core import butler, projects, turn_source
+from covey.core import butler, projects, triage, turn_source
 from covey.core.attachments import message_words
 from covey.core.checkpoint import read_checkpoint
 from covey.core.history_storage import append_history, history_lines
@@ -49,6 +50,8 @@ FOLDER = "butler-asks"
 ASK_CHARS, WHY_CHARS, WORDS_CHARS = 400, 120, 200
 ENDED_WELL = ("done", "waiting_user")
 DIRECT = ("om_", WEB_PREFIX)  # The message ids of the owner's own words the Bridge took in: Feishu's, the web page's.
+ANSWER = "answer-"  # An answer's continuation: "answer-<question token>" (app/questions.py).
+NOT_HIS = ("main-", "lead-")  # The answer events of the butler's question_answer and a lead's project_answer.
 SAME_DAYS = 7
 # Put after the checkpoint file in the owner's own turns of a topic (app/runs.py ``_ask_note``), only where ``offered``.
 RULE = ("要管家办的事：主人这一轮要的事只有管家能办（开专项、把这个话题收进某个专项、另开一个话题、交给别的话题）时，"
@@ -79,11 +82,28 @@ def retried(job) -> bool:
     return bool(job_field(job, "policy_retry")) or any(int(job_field(job, name) or 0) > 0 for name in COUNTS)
 
 
-def direct(job, access) -> bool:
-    """Whether ``job`` (a job or its record) is the owner's own words to the topic: started by his Feishu message or his
-    words from the web page (not the butler's or a lead's hand-on, a wake-up, a revisit, an answer's continuation), of a
-    source whose words are his as before (no 协作 turn), not an automatic retry, and his (app/access.py owner_turn)."""
-    return (str(job_field(job, "message_id") or "").startswith(DIRECT)
+def owner_answer(state_dir, message_id) -> bool:
+    """Whether ``message_id`` is the continuation of an answer the owner gave himself (on the question card, from the web
+    page, or a message of the topic taken as one): "answer-<token>" of a question on record that neither the butler
+    (question_answer, "main-…") nor a lead (project_answer, "lead-…", its 分流 answered) answered for him. Never raises."""
+    token = message_id.removeprefix(ANSWER) if message_id.startswith(ANSWER) else ""
+    if not state_dir or not token or "/" in token or token.startswith("."):
+        return False
+    try:
+        question = read_object(Path(state_dir) / "questions" / (token + ".json"))
+    except (OSError, ValueError):
+        return False
+    return (bool(question) and triage.state(question) != triage.ANSWERED
+            and not str(question.get("answer_event") or "").startswith(NOT_HIS))
+
+
+def direct(job, access, state_dir="") -> bool:
+    """Whether ``job`` (a job or its record) is the owner's own words to the topic: started by his Feishu message, his
+    words from the web page or his answer to the topic's question (``owner_answer``, read under ``state_dir``; not the
+    butler's or a lead's hand-on or answer, a wake-up, a revisit), of a source whose words are his as before (no 协作
+    turn), not an automatic retry, and his (app/access.py owner_turn)."""
+    message = str(job_field(job, "message_id") or "")
+    return ((message.startswith(DIRECT) or owner_answer(state_dir, message))
             and turn_source.kind(job) in (turn_source.LEGACY, turn_source.OWNER) and not retried(job)
             and bool(access.owner_turn(str(job_field(job, "chat_id") or ""), str(job_field(job, "sender_id") or ""))))
 
@@ -103,7 +123,8 @@ def offered(access, state_dir, job, topic_id="") -> bool:
     """Whether ``job``'s turn message carries ``RULE``: on (``enabled``), the owner's own turn, a topic that may hand on
     (``topic_id``, else the job's)."""
     topic_id = str(topic_id or job_field(job, "topic_id") or "")
-    return enabled() and direct(job, access) and topic_ok(state_dir, topic_id, str(job_field(job, "chat_id") or ""), access)
+    return (enabled() and direct(job, access, state_dir)
+            and topic_ok(state_dir, topic_id, str(job_field(job, "chat_id") or ""), access))
 
 
 def wanted(cp) -> dict | None:
@@ -202,7 +223,7 @@ def hand_on(gateway, job, ctx, record, ask) -> None:
     reason = ("not-finished" if record.get("status") not in ENDED_WELL
               else "not-authorized" if not record.get("verified_reply_authorized")
               else "retry" if retried(record) or retried(job)
-              else "not-the-owners" if not direct(record, access)
+              else "not-the-owners" if not direct(record, access, state)
               else "topic" if not topic_ok(state, topic, chat, access) else "")
     if reason or not key:
         gateway.runtime.log(f"butler ask ignored reason={reason or 'no-key'} job=#{record.get('job_id')}")
@@ -270,7 +291,8 @@ def queue_turn(gateway, base, app, chat, message, text, owner, topic, said) -> s
     if target.topic_id != topic_id:
         return None
     source = turn_source.make(turn_source.HANDOVER, asserted_by=turn_source.PARTY_OWNER,
-                              origin={"topic": topic, "message_id": said, "chat": chat})
+                              origin={"topic": topic, "message_id": said, "chat": chat,
+                                      **({"question": said.removeprefix(ANSWER)} if said.startswith(ANSWER) else {})})
     append_history(target.history_path, "user", text,
                    {"message_id": message, "chat_id": chat, **({"sender_id": owner} if owner else {})})
     job = app.submission.enqueue_chat_job(target, text, chat, message, prompt_content=text, sender_id=owner, source=source)

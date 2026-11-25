@@ -50,6 +50,7 @@ from covey.cards.overview import DISMISS as OVERVIEW_DISMISS, UNDO as OVERVIEW_U
 from covey.cards.board import KINDS as BOARD_KINDS
 from covey.cards.app_setup import SKIP as APP_SETUP_SKIP, START as APP_SETUP_START
 from covey.cards.welcome import KIND as WELCOME_KIND
+from covey.cards.batch_switch import KINDS as BATCH_SWITCH_KINDS
 from covey.cards.web_login import KINDS as WEB_LOGIN_KINDS
 from covey.cards import launch_config
 from covey.cards.rewind import KINDS as REWIND_KINDS
@@ -105,6 +106,7 @@ class CardActionTableTest(unittest.TestCase):
         before_routing |= {FOLD_CLOSE_KIND}  # A click on the text of 这一轮中途的汇报 under a relay (app/fold_close.py).
         before_routing |= {OWNER_SEND, OWNER_SEND_DROP, OWNER_SEND_PICK,
                            OWNER_SEND_ASK}  # The 代发草稿 card (app/owner_send.py).
+        before_routing |= BATCH_SWITCH_KINDS  # The 批量换配置 card (app/batch_switch.py).
         init = next(node for node in ast.walk(ast.parse((PACKAGE / "app" / "app.py").read_text()))
                     if isinstance(node, ast.FunctionDef) and node.name == "__init__")
         components = {node.targets[0].attr: getattr(bridge_app, node.value.func.id) for node in ast.walk(init)
@@ -203,6 +205,8 @@ ENTRIES = {
     "covey_app_console.py": "covey.feishu.app_console",
     "covey_workspaces.py": "covey.core.workspaces",
     "covey_memory.py": "covey.core.memory_search",
+    "covey_ledger.py": "covey.app.owner_ledger",
+    "covey_inbound.py": "covey.core.inbound_ledger",
     "covey_devices.py": "covey.service.device_check",
     "covey_plugins.py": "covey.service.plugins",
     "covey_feishu_web.py": "covey.feishu.web_client",
@@ -551,6 +555,9 @@ DYNAMIC_ENV = {
     ("covey/core/gateways.py", "self.base_url_env"), ("covey/core/gateways.py", "variable"),
     ("covey/core/gateways.py", "self.key_file_env"),
     ("covey/backends/gateway/connection.py", "gateway.key_env"),
+    ("covey/core/same_account.py", "gateway.key_env"), ("covey/core/same_account.py", "gateway.base_url_env"),
+    ("covey/core/same_account.py", "variable"),  # Codex's config.toml names its key's variable (env_key).
+    ("covey/core/dropped_config.py", "name"),  # dropped: IGNORED_ENV's, read only to name them.
 }
 
 
@@ -696,6 +703,22 @@ class InventoryTest(unittest.TestCase):
     def test_every_name_in_the_table_is_read(self):
         variables, options, _ = read_inventory()
         self.assertEqual(sorted(set(inventory_rows()) - set(variables) - set(options)), [])
+
+    def test_settings_are_read_through_core_env_so_the_old_names_work_too(self):
+        """T778: core/memory.py read COVEY_MEMORY from os.environ alone, and a service whose Manager starts it with the
+        manifest's names (LARK_BRIDGE_MEMORY) had no memory at all. A setting is read through core/env.py get, which knows
+        both spellings; these two are not a manifest's (set by the node's own hook) or read both names themselves."""
+        direct = re.compile(r"""(?:(?:os\.environ|environ)\)?(?:\.get\(|\[)|os\.getenv\()\s*(?:["']COVEY_|[A-Z_]*ENV\b)""")
+        allowed = {("covey/core/node_agent.py", "COVEY_NODE_AUTOSTART"), ("covey/service/browser_setup.py", "COVEY_BROWSER_EXECUTABLE")}
+        found = []
+        for path in sorted(PACKAGE.rglob("*.py")):
+            name = str(path.relative_to(REPO))
+            if name == "covey/core/env.py":
+                continue
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if direct.search(line) and not any(name == where and word in line for where, word in allowed):
+                    found.append(f"{name}:{number}: {line.strip()}")
+        self.assertEqual(found, [], "read it with core/env.py get (cenv.get(NAME, default, environ))")
 
 # What the docs name in backticks (AGENTS.md, README.md, docs/*.md; not docs/history/, which records the past).
 DOC_FILES = ["AGENTS.md", "README.md", *sorted(str(p.relative_to(REPO)) for p in (REPO / "docs").glob("*.md"))]
@@ -850,6 +873,51 @@ class CodeMapTest(unittest.TestCase):
                    if p.name != "__init__.py" and "__pycache__" not in p.parts}
         self.assertEqual(sorted(modules - listed), [])
 
+
+
+def load_concepts():
+    spec = importlib.util.spec_from_file_location("concepts", REPO / "scripts/concepts.py")
+    concepts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(concepts)
+    return concepts
+
+
+class ConceptFreezeTest(unittest.TestCase):
+    """AGENTS.md 收敛期: every setting, card button kind, Bridge tool, Harness, provider and glossary word of the core is
+    on tests/golden/concepts.json (scripts/concepts.py), so a new concept is added in sight, and in the 收敛期 only with
+    who allowed it."""
+
+    def test_the_core_has_the_concepts_the_list_keeps_and_no_other(self):
+        concepts = load_concepts()
+        listed = concepts.load()
+        text = concepts.report(listed, concepts.compare(listed, concepts.current()), concepts.frozen(listed))
+        self.assertEqual(text, "", "\n" + text)
+
+    def test_every_approved_concept_says_who_allowed_it_and_why(self):
+        concepts = load_concepts()
+        for entry in concepts.load()["approved"]:
+            self.assertIn(entry.get("kind"), concepts.KINDS, entry)
+            for field in ("name", "by", "why"):
+                self.assertTrue(str(entry.get(field) or "").strip(), (field, entry))
+
+    def test_in_the_freeze_write_refuses_a_new_concept_and_after_it_takes_it(self):
+        concepts = load_concepts()
+        listed = {"freeze": {"since": "2026-11-25", "until": "2026-12-09"},
+                  "concepts": {kind: ["old"] for kind in concepts.KINDS},
+                  "approved": [{"kind": "tools", "name": "allowed", "by": "T1", "why": "w"}]}
+        now = {kind: ["old"] for kind in concepts.KINDS} | {"tools": ["allowed", "new", "old"], "terms": []}
+        self.assertTrue(concepts.frozen(listed, concepts.datetime.date(2026, 12, 9)))
+        self.assertFalse(concepts.frozen(listed, concepts.datetime.date(2026, 12, 10)))
+        diff = concepts.compare(listed, now)
+        self.assertEqual(diff["added"], {"tools": ["new"]})
+        self.assertEqual(diff["removed"], {"terms": ["old"]})
+        self.assertIn("先问主人", concepts.report(listed, diff, True))
+        out, refused = concepts.written(listed, now, True)
+        self.assertEqual(refused, ["tools:new"])
+        self.assertEqual((out["concepts"]["tools"], out["concepts"]["terms"]), (["old"], []))
+        self.assertEqual([entry["name"] for entry in out["approved"]], ["allowed"])
+        out, refused = concepts.written(listed, now, False)
+        self.assertEqual((refused, out["concepts"]["tools"], out["approved"]), ([], ["allowed", "new", "old"], []))
 
 class StandardLibraryTest(unittest.TestCase):
     """The core needs nothing but Python (pyproject.toml lists no dependencies) and CI installs nothing else: what a

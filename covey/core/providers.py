@@ -23,6 +23,9 @@ class Provider:
     prefix: str  # Its model ids' prefix; '' for the Harness's own provider.
     access: str  # Where its sign-in or key lives (docs/harnesses.md).
     menu: str = ""  # Its name in the 换配置 card's provider select, where that is not ``name``.
+    # A deployment's source that is its Harness's own login's account (an extension's relay for the account Claude Code signs in
+    # with, T786): the menus list the two once, under this provider (core/same_account.py folded).
+    own_login: bool = False
 
 
 CORE_PROVIDERS = (
@@ -112,10 +115,26 @@ def provider_of(harness, model):
     return own
 
 
+def own_account(harness, environ=None) -> tuple:
+    """The keys of ``harness``'s providers that are its own login's account (T786: one account, one provider on the menus):
+    those an extension declares so (``own_login``: a relay or wrapper whose address Covey cannot see), then the gateways
+    core/same_account.py finds at the own login's address with its key; () for none."""
+    from covey.core import same_account
+
+    declared = tuple(p.key for p in providers() if p.harness == harness and p.prefix and p.own_login)
+    return declared + tuple(name for name in same_account.folded(harness, environ) if name not in declared)
+
+
 def menu_name(provider, harness_title):
     """The provider as the 换配置 card's provider select names it: its own name, else its Harness's own login
-    (Claude 自带) or, for DeepSeek Harness, which runs only its gateway's models, the gateway (``menu``)."""
+    (Claude 自带) or, for DeepSeek Harness, which runs only its gateway's models, the gateway (``menu``). A Harness's own login
+    that is a gateway's account (core/same_account.py ``folded``) is named as that gateway: one account, one name."""
     if provider is None:
         return harness_title
+    if not provider.prefix:
+        names = own_account(provider.harness)
+        same = next((p for p in providers() if p.harness == provider.harness and p.key in names), None) if names else None
+        if same is not None and same is not provider:
+            return same.menu or same.name or harness_title
     return provider.menu or provider.name or harness_title + " 自带"
 

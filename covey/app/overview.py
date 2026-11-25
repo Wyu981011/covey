@@ -44,6 +44,7 @@ import time
 from pathlib import Path
 
 from covey.core import env as cenv
+from covey.app import owner_ledger
 from covey.app.card_lanes import after_ack
 from covey.app.pins import GROUPS, PinnedTopics, dismiss, kept, last_click, record_path, taken_off, undismiss
 from covey.app.topic_links import link_for
@@ -196,12 +197,12 @@ class Overview:
         self.profile = getattr(ctx, "profile", None)
         looked = self.pins.look(state, chat, now, read, board=board)
         off = self.pins.dismissed if board else {}
-        # 等我 as every reader counts it (core/board_read.py waits), the latest first: the questions, the butler's and
-        # the leads' too, and the tasks waiting for 开始; with the board on, its topics taken off left out (its look).
-        found = board_read.waits(state, chat, now, off=off)
-        # 要你处理 as the 看板 counts it (core/board_read.py Asks): 等我, the results that stopped, what may be stuck, the
-        # projects a guard paused and, in the private chat, 整理专项's proposals waiting for his 好.
-        asks = self.pins.asks(state, chat, found, now, off, proposals=self.private(chat))
+        # 等主人的账 (app/owner_ledger.py), the one every reader counts from: 等我 (core/board_read.py waits), the latest
+        # first: the questions, the butler's and the leads' too, and the tasks waiting for 开始; with the board on, its
+        # topics taken off left out (its look). 要你处理 as the 看板 counts it (core/board_read.py Asks): 等我, the results
+        # that stopped, what may be stuck, the projects a guard paused and, in the private chat, 整理专项's proposals.
+        ledger = owner_ledger.of(state, chat, now, self.pins, proposals=self.private(chat), off=off)
+        found, asks = ledger.waits, ledger.asks
         jobs = sorted([record for record in read.jobs if record.get("status") in RUNNING],
                       key=lambda record: int(record.get("job_id") or 0))
         # The topics' earlier turns as the read has them, for the estimate (core/progress.py).

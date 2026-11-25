@@ -16,7 +16,6 @@ from pathlib import Path
 
 from covey.core import projects
 from covey.core.harness import backend_capabilities
-from covey.core.menu_choice import butler_harnesses
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 from covey.core.text import cut
 from covey.core.topics import load_topic
@@ -35,12 +34,6 @@ def can_lead(entry, redacting=False) -> bool:
 def lead_choices(choices, redacting=False) -> dict:
     """``choices`` (the model menu) left with the models a lead can run on (``can_lead``), in their order."""
     return {key: entry for key, entry in choices.items() if can_lead(entry, redacting)}
-
-
-def lead_harnesses(choices, redacting=False) -> dict:
-    """{name: title} of the Harnesses on the menu a lead can run on, in menu order: the butler's own list, since both need
-    the Bridge's tools (core/menu_choice.py butler_harnesses)."""
-    return butler_harnesses(choices, redacting=redacting)
 
 
 def runs_lead(app, redacting=False) -> bool:

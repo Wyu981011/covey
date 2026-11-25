@@ -12,7 +12,7 @@ import time
 from covey.backends.codex.rpc import RpcError, failed, request_identifier
 from covey.core.harness import JobCancelled
 from covey.core import gateways, quota_hold
-from covey.core.limit_reset import FAULT_STATUSES
+from covey.core.limit_reset import FAULT_STATUSES, account_fault
 from covey.core.protocol import retry_note, retry_reason
 from covey.core.result import MAX_REPLY_BYTES, is_identifier
 from covey.core.ttft import FirstToken
@@ -69,7 +69,8 @@ def codex_failure_code(error):
     if name in LIMITED or status == 429:
         return "quota_exhausted" if SPENT.search(message) else "rate_limited"
     if name in FAULTED or (name in CONNECTION and (status is None or status in FAULT_STATUSES)):
-        return "server_fault"
+        # A gateway's lost sign-in or spent quota said with a 5xx is the account's, not a passing fault (T784).
+        return account_fault(message) or "server_fault"
     if name in CONNECTION:
         return "transport_error"
     return "root_failed"

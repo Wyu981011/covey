@@ -1,4 +1,4 @@
-// 专项的「进度」三栏（v39，client/src/cv/progressData.ts；v40 起并进「简报」标签，负责人还没写简报时显示）：目标检查表分栏（做完 / 正在做 / 将要做 / 等你）、尾巴、解锁反查、依赖图（成环不死循环）、
+// 专项的「进度」三栏（v40，client/src/cv/progressData.ts；v41 起并进「简报」标签，负责人还没写简报时显示）：目标检查表分栏（做完 / 正在做 / 将要做 / 等你）、尾巴、解锁反查、依赖图（成环不死循环）、
 // “等你”先看 waiting_on、没写过再按缺口文字推断、近 10 条决定和里程碑，服务端怎么过滤 Covey 推来的三样。简报的在 brief.test.mjs。跑：npm run test:progress
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

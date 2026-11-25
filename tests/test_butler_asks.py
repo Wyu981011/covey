@@ -81,7 +81,7 @@ class RuleTest(Case):
         self.assertTrue(self.offered(sender=""))  # A record without a sender, in his private chat.
 
     def test_hand_ons_wake_ups_answers_retries_and_other_peoples_turns_do_not(self):
-        for message in ("main-abc", "lead-p1-3", "revisit-a1a1-1-0", "answer-q1"):
+        for message in ("main-abc", "lead-p1-3", "revisit-a1a1-1-0", "answer-q1"):  # q1: no question on record.
             self.assertFalse(self.offered(message), message)
         self.assertFalse(self.offered(sender="ou_colleague"))
         self.assertFalse(self.offered(chat="oc_somewhere"))  # No butler in that chat.
@@ -89,6 +89,27 @@ class RuleTest(Case):
         self.assertFalse(self.offered(policy_retry={"of": "k"}))
         ask = turn_source.make(turn_source.ASK, asserted_by="topic", collab="c1")
         self.assertFalse(self.offered(turn_source=ask))  # A 协作 turn.
+
+    def question(self, token, **fields):
+        path = self.state / "questions" / f"{token}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"token": token, "topic_id": TOPIC, "chat_id": CHAT, "status": "answered", **fields}))
+
+    def test_the_owners_answer_on_the_question_card_is_his_own_words(self):
+        self.question("qcard", answer_event="evt-click-1")  # His click on the card.
+        self.question("qweb", answer_event="web-op9")  # His answer from the web page.
+        self.question("qsaid", answer_event="om_said")  # A message of the topic taken as the answer.
+        for token in ("qcard", "qweb", "qsaid"):
+            self.assertTrue(self.offered(f"answer-{token}"), token)
+        self.assertFalse(self.offered("answer-qcard", sender="ou_colleague"))
+        self.assertFalse(self.offered("answer-qcard", auto_retry=1))
+
+    def test_an_answer_the_butler_or_a_lead_gave_for_him_is_not(self):
+        self.question("qbutler", answer_event="main-req1")  # The butler's question_answer.
+        self.question("qlead", answer_event="lead-req2", triage={"state": "answered_by_lead"})  # A lead's project_answer.
+        self.question("qlead2", answer_event="evt", triage={"state": "answered_by_lead"})
+        for token in ("qbutler", "qlead", "qlead2", "../qcard", ".hidden"):
+            self.assertFalse(self.offered(f"answer-{token}"), token)
 
     def test_the_butlers_family_and_a_proxy_topic_do_not(self):
         self.assertFalse(self.offered(topic=butler.butler_topic_id(CHAT)))
@@ -150,6 +171,19 @@ class HandOnTest(Case):
         self.assertEqual((record["state"], record["message_id"], record["butler_job"], record["why"]),
                          ("sent", "om_handed", "om_handed", "话题开不了专项"))
         self.send_message.assert_not_called()
+
+    def test_an_answer_on_the_question_card_is_handed_on_with_the_question_as_its_origin(self):
+        questions = self.state / "questions"
+        questions.mkdir(parents=True, exist_ok=True)
+        (questions / "q7.json").write_text(json.dumps({"token": "q7", "topic_id": TOPIC, "chat_id": CHAT,
+                                                       "status": "answered", "answer_event": "evt-click"}))
+        asks.collect(self.gateway, self.turn("answer-q7", ask=self.ASK, user_text="用户补充回答：\n怎么推进\n交给管家"),
+                     self.ctx)
+        self.assertIn("你在 T12 说：用户补充回答： 怎么推进 交给管家", self.send_text.call_args.args[2])
+        source = self.enqueue.call_args.kwargs["source"]
+        self.assertEqual(source["origin"], {"topic": TOPIC, "message_id": "answer-q7", "chat": CHAT, "question": "q7"})
+        self.assertEqual(source["level"], "owner")
+        self.assertEqual(read_object(asks.record_path(self.state, "answer-q7"))["state"], "sent")
 
     def test_the_owners_words_come_from_the_topics_history_by_the_message_id(self):
         from covey.core.history_storage import append_history

@@ -50,6 +50,14 @@ python3 -B -m unittest discover -s tests -p test_steer.py        # 不经地图�
 
 测试模块按被测对象命名（`test_<模块或功能>`），不在这里列全；要知道改动该跑哪些，用 `select`。
 
+### 入口 × Harness × 界面矩阵
+
+`tests/test_matrix.py` 一格一格问同一个问题：管家、负责人、话题（启动卡、换配置、管家开话题）、网页开的话题，在 `core/roster.py` 的每个核心 Harness 上能不能用，一轮做完在飞书卡片和网页工作台上有没有地方出现。各后端的细节仍在它自己的测试里，这里只核对每格都成立。
+
+- 名册里加了 Harness：先在 `SEEN` 里写它的后端怎么接 Bridge 工具、怎么让负责人只读，否则 `test_every_core_harness_says_how_its_cells_are_seen` 失败。
+- 某一格在某个 Harness 上做不到：修好，或者写进 `GAPS` 并写明原因（设计如此还是待接上）；`GAPS` 里的格后来做到了也会失败，提醒把它去掉。
+- 概念清单（`scripts/concepts.py`、`tests/golden/concepts.json`）见 AGENTS.md 的「收敛期」，由 `test_structure` 的 `ConceptFreezeTest` 核对。
+
 ### 不改行为的改动：副作用轨迹与补丁清单
 
 重构、搬模块、收拢重复代码时，用 `scripts/golden_trace.py` 证明行为没变。它每个模块一个子进程，逐个测试记下：Messenger 的调用（参数和返回）、`Runtime.log` 的每一行、原子写入的文件（权限和内容）、新建的文件和目录、删除、`Popen` 的 argv、临时目录删除前 `runs/`、`queued/`、`jobs/` 下的全部文件。随机数和临时目录编号按测试 ID 固定，时间、临时路径、pid 归一化。
@@ -88,6 +96,8 @@ python3 -B scripts/golden_trace.py compare $G/before $G/after --noise $G/before2
 GOLDEN_CARDS=update python3 -B -m unittest discover -s tests -p test_card_golden.py
 git diff --stat tests/golden/cards.json
 ```
+
+主人拍板的 UI 规则（[UI 规范 · 拍板记录](ui.md#13-拍板记录)）由 `tests/test_ui_rules.py` 读这份金样逐条核对，`MATRIX` 给每条规则按入口（管家、负责人、话题、专项的话题、网页开的话题）列出查哪些样本；重写金样不会让它通过，它不过就是把定好的样子改回去了。改外观之前的样张用 `scripts/ui_samples.py` 做和查（[改外观先选样张](ui.md#12-改外观先选样张)）。
 
 金样只覆盖这组样本。改到样本没画的分支（新卡片、新状态、新按钮、超预算才走的折叠和截断）时先补样本，并临时改一处文案确认测试会失败。样本只用假的 open_id、群和消息 ID，路径写 `/absolute/...`。
 
