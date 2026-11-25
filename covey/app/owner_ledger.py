@@ -104,7 +104,7 @@ def of(state, chat, now, looked, *, proposals=False, off=None) -> Ledger:
     off = dict(looked.dismissed if off is None else off)
     waits = board_read.waits(state, chat, now, off=off)
     asks = looked.asks(state, chat, waits, now, off, proposals=proposals)
-    return Ledger(waits, asks, dict(looked.unseen or {}), tuple(unshown(state, chat, now)))
+    return Ledger(waits, asks, dict(getattr(looked, "unseen", None) or {}), tuple(unshown(state, chat, now)))
 
 
 def unshown(state, chat, now) -> list:
