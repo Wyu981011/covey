@@ -503,6 +503,101 @@ class NoBrowserTest(InstallerCase):
         self.assertIn("application:app_slash_command", self.text())
 
 
+class DetectTest(InstallerCase):
+    """T766: what step 3 says of each Harness. A CLI off this shell's PATH in a folder its own installer uses is found
+    and its folder goes into the service's PATH; the ones not installed are one line that says no one needs them all;
+    dsh is enabled where it is installed and its gateway's key is in a file the service reads, and not said otherwise."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = Path(self.exec.name) / "home"  # Executable: the fake CLIs found there are run.
+        self.home.mkdir()
+        (self.data / "tmp").mkdir(parents=True)
+
+    def check(self, **extra):
+        ins = self.make(env=self.env(HOME=str(self.home), **extra))
+        ins.check_harnesses()
+        return ins
+
+    def cli(self, folder, name):
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / name
+        path.write_text("#!/bin/bash\n")
+        path.chmod(0o755)
+        return path
+
+    def test_a_cli_in_a_folder_its_installer_uses_is_found_and_the_folder_goes_into_the_service_path(self):
+        (self.bin / "claude").unlink()
+        for relative in installer.COMMON_DIRS:
+            with self.subTest(folder=relative):
+                shutil.rmtree(self.home / ".local", ignore_errors=True)
+                shutil.rmtree(self.home / ".claude", ignore_errors=True)
+                self.lines.clear()
+                self.cli(self.home / relative, "claude")
+                ins = self.check()
+                self.assertEqual(["claude", "codex"], ins.working)
+                self.assertTrue(ins.env["PATH"].startswith(f"{self.home / relative}:"))
+                self.assertIn(f"claude：在 ~/{relative} 找到（这个终端的 PATH 里没有它），服务的 PATH 会加上这个目录", self.text())
+                self.assertIn("claude", [name for name, _ in self.probed])
+        shutil.rmtree(self.home / ".local", ignore_errors=True)
+        shutil.rmtree(self.home / ".claude", ignore_errors=True)
+        self.lines.clear()
+        ins = self.check()  # Nowhere: not installed, said in the one line.
+        self.assertEqual(["codex"], ins.working)
+        self.assertEqual("没装（PATH 里没有 claude 命令）", ins.reasons["claude"])
+        self.assertIn("没装 Claude Code、Antigravity：不用每个都装，有一个能调通就能用", self.text())
+
+    def test_what_is_not_installed_is_one_line_that_says_not_every_harness_is_needed(self):
+        self.check()
+        self.assertIn("没装 Antigravity：不用每个都装，有一个能调通就能用；以后装了哪个，重新运行 ./install 会把它加进来",
+                      self.text())
+        self.assertNotIn("agy：", self.text())
+        self.assertNotIn("dsh", self.text())  # Not installed: not said at all.
+        self.cli(self.bin, "agy")
+        self.probes["agy"] = Probe(True, "ok")
+        self.lines.clear()
+        self.check()
+        self.assertNotIn("没装", self.text())
+
+    def gateway(self, key_file):
+        from covey.core.gateways import Gateway
+        return Gateway(name="mygw", display="MyGW", base_url="https://gateway.invalid", key_env="MYGW_API_KEY",
+                       key_file=str(key_file), harnesses=("codex", "dsh"))
+
+    def test_dsh_is_enabled_where_its_gateway_s_key_is_in_a_file_the_service_reads(self):
+        self.cli(self.bin, "dsh")
+        key = self.root / "mygw-api-key"
+        cases = (("none", None, {}, "dsh：装了，没有给它用的模型网关（docs/harnesses.md「dsh」），先不启用"),
+                 ("no key", "", {}, "dsh：装了，没有 MyGW 的密钥：MyGW 个人密钥未配置"),
+                 ("only here", "", {"MYGW_API_KEY": "sk-fake"},
+                  f"dsh：装了，MyGW 的密钥只在这个终端的 MYGW_API_KEY 里，服务拿不到：写进 {key}（权限 600）"),
+                 ("open", "sk-fake", {}, f"MyGW 的密钥文件 {key} 要改成只有自己能读（chmod 600）"),
+                 ("ready", "sk-fake", {}, "dsh：装了，MyGW 的密钥也在，启用"))
+        for case, body, extra, words in cases:
+            with self.subTest(case=case):
+                key.unlink(missing_ok=True)
+                if body:
+                    key.write_text(body)
+                    key.chmod(0o644 if case == "open" else 0o600)
+                self.lines.clear()
+                gateway = None if body is None else self.gateway(key)
+                with mock.patch.object(installer.gateways, "dsh_gateway", return_value=gateway):
+                    ins = self.check(**extra)
+                self.assertIn(words, self.text())
+                self.assertEqual(["dsh"] if case == "ready" else [], ins.set_up)
+        ins.write_harness_config()
+        self.assertEqual(["codex", "claude", "dsh"], json.loads((self.data / "harnesses.json").read_text())["enabled_harnesses"])
+        self.assertIn("dsh", ins.fingerprint(self.data / "harnesses.json")["harnesses"])
+
+    def test_dsh_s_command_is_the_one_harnesses_json_names(self):
+        self.data.mkdir(parents=True, exist_ok=True)
+        dsh = self.cli(self.home / "tools", "dsh-preview")
+        (self.data / "harnesses.json").write_text(json.dumps({"harnesses": {"dsh": {"args": ["--dsh-cmd", str(dsh)]}}}))
+        with mock.patch.object(installer.gateways, "dsh_gateway", return_value=None):
+            self.check()
+        self.assertIn("dsh：装了，没有给它用的模型网关", self.text())
+
+
 class ExtensionHookTest(InstallerCase):
     def test_hooks_see_the_old_setup_script_helpers_and_may_add_harnesses(self):
         (self.fake / "phone").touch()
@@ -1156,23 +1251,47 @@ class WithoutClaudeTest(InstallerCase):
         self.assertTrue(butler_settings.preset_harness(self.state, "codex") is False)  # A Harness chosen stays.
 
     def test_claude_code_working_later_is_enabled_by_a_rerun_but_one_taken_out_stays_out(self):
-        path = self.data / "harnesses.json"
+        path, record = self.data / "harnesses.json", self.data / installer.USABLE_RECORD
         self.data.mkdir(parents=True, exist_ok=True)
-        for last, enabled, want in ((["codex"], ["codex"], ["codex", "claude"]),
-                                    (["claude", "codex"], ["codex"], ["codex"]),
-                                    (None, ["codex"], ["codex"])):
-            with self.subTest(last=last):
+        # (what the last run that wrote harnesses.json recorded, the last registration's install.json, enabled, wanted)
+        for usable, last, enabled, want in ((None, ["codex"], ["codex"], ["codex", "claude"]),
+                                            (None, ["claude", "codex"], ["codex"], ["codex"]),
+                                            (None, None, ["codex"], ["codex"]),  # A file the owner wrote by hand.
+                                            # T766: the last run stopped before its registration wrote install.json.
+                                            (["codex"], None, ["codex"], ["codex", "claude"]),
+                                            (["codex"], ["claude", "codex"], ["codex"], ["codex", "claude"]),
+                                            (["claude", "codex"], ["codex"], ["codex"], ["codex"])):
+            with self.subTest(usable=usable, last=last):
                 self.lines.clear()
                 path.write_text(json.dumps({"enabled_harnesses": enabled, "spaces": {"notify_space": "oc_x"}}))
                 (self.data / "install.json").write_text(json.dumps({"harnesses": last}) if last is not None else "{}")
+                record.unlink(missing_ok=True)
+                if usable is not None:
+                    record.write_text(json.dumps({"usable": usable}))
                 ins = self.make()
                 ins.working = ["claude", "codex"]
                 ins.write_harness_config()
                 config = json.loads(path.read_text())
                 self.assertEqual((config["enabled_harnesses"], config["spaces"]), (want, {"notify_space": "oc_x"}))
-                self.assertEqual("claude：这次能调通了，加进启用的 Harness" in self.text(), want != enabled)
+                self.assertEqual("claude：这次能用了，加进启用的 Harness" in self.text(), want != enabled)
+                self.assertEqual(json.loads(record.read_text()), {"usable": ["claude", "codex"]})
 
-    def closing(self, working, environment, butler=None):
+    def test_a_first_run_that_stops_before_the_registration_still_lets_a_rerun_add_claude_code(self):
+        # T766: harnesses.json was written with Codex only, the registration never ran (no install.json); Claude Code
+        # logged in since, the re-run adds it, as the closing lines promised.
+        (self.fake / "phone").touch()
+        self.lacking.clear()
+        self.probes["claude"] = Probe(False, install_probe.NOT_LOGGED_IN, "Not logged in")
+        self.assertEqual(0, self.make("--no-start").run())
+        path = self.data / "harnesses.json"
+        self.assertEqual(["codex"], json.loads(path.read_text())["enabled_harnesses"])
+        self.assertFalse((self.data / "install.json").exists())
+        self.probes["claude"] = Probe(True, "ok")
+        (self.fake / "authed").touch()
+        self.assertEqual(0, self.make("--no-start").run())
+        self.assertEqual(["codex", "claude"], json.loads(path.read_text())["enabled_harnesses"])
+
+    def closing(self, working, environment, butler=None, reasons=None):
         self.registered(environment)
         if butler:
             butler_settings.path(self.state).write_text(json.dumps({"mode": "agent", "harness": butler}))
@@ -1180,6 +1299,7 @@ class WithoutClaudeTest(InstallerCase):
             butler_settings.path(self.state).unlink(missing_ok=True)
         ins = self.make()
         ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", list(working)
+        ins.reasons = dict(reasons or {})
         with mock.patch.object(Path, "cwd", return_value=installer.REPO_ROOT):
             return "\n".join(ins.closing_lines())
 
@@ -1195,6 +1315,9 @@ class WithoutClaudeTest(InstallerCase):
             self.assertIn(words, text)
         self.assertNotIn("（不含专项）", text)
         self.assertNotIn(command, text)  # 专项 is on: nothing to turn on.
+        self.assertNotIn("Claude Code 这次：", text)
+        text = self.closing(("codex",), installed, butler="codex", reasons={"claude": "没装（PATH 里没有 claude 命令）"})
+        self.assertIn("小模型判断也用它\n    Claude Code 这次：没装（PATH 里没有 claude 命令）\n装好并登录 Claude Code 以后", text)
         text = self.closing(("agy",), installed)  # No Harness named: the butler follows what works, Antigravity here.
         self.assertIn("已经开着：管家（Antigravity）", text)
         self.assertIn("Claude Code 没调通：管家用 Antigravity", text)

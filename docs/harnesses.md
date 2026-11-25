@@ -32,7 +32,7 @@ Harness 是执行任务的 Agent 程序。本篇按上手顺序写：有哪些�
 
 ## 安装和登录 Harness
 
-`./install`（[安装](install.md)）的前提只有一条：机器上已装好并登录了 Claude Code 或 Codex 之一。安装器和机器人都不替你安装、不替你登录；安装时只对 Claude Code 和 Codex 各真实调用一次模型（`service/installer.py` 的 `PROBED`），没登录、网络不通会逐个说明，没调通的不启用。
+`./install`（[安装](install.md)）的前提只有一条：机器上已装好并登录了 Claude Code、Codex 或 Antigravity 之一，不用每个都装。安装器和机器人都不替你安装、不替你登录；安装时对 Claude Code、Codex 和 Antigravity 各真实调用一次模型（`service/installer.py` 的 `PROBED`），没登录、网络不通会逐个说明，没调通的不启用，没装的合成一行。`PATH` 里找不到时再看 `~/.local/bin` 和 `~/.claude/local`，找到就把目录加进服务的 `PATH`（`locate`）。
 
 - **Claude Code**：按[官方说明](https://docs.claude.com/en/docs/claude-code/setup)安装，在 `claude` 里登录；验证：`claude -p "ok"` 有回答。
 - **Codex**：按[官方说明](https://github.com/openai/codex)安装，`codex login`；验证：`codex exec --skip-git-repo-check "ok"` 有回答（不在 git 仓库里不加这个参数会被拦下）。
@@ -42,7 +42,7 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 
 ### 进阶 Harness（dsh、Antigravity、扩展的）
 
-这些要自己准备，`./install` 不探测、不自动启用；装好后按[手工加一个 Harness](#手工加一个-harness) 加进 `harnesses.json`。扩展的 Harness 由扩展的安装钩子在 `./install` 第 3 步报告并启用，准备方法看扩展的 README。
+这些要自己准备，不装也照常能用。Antigravity 装好登录后 `./install` 会探测并启用；dsh 装好、给它用的网关的密钥写进文件（权限 600）后，`./install` 不调用模型就启用（`set_up_harnesses`；密钥只在终端的环境变量里时服务拿不到，安装器会说写进哪个文件），已经装过的重跑一次 `./install` 就加上。扩展的 Harness 由扩展的安装钩子在 `./install` 第 3 步报告并启用，准备方法看扩展的 README。不用 `./install` 时按[手工加一个 Harness](#手工加一个-harness) 加进 `harnesses.json`。
 
 | Harness | 准备什么 |
 | --- | --- |

@@ -114,6 +114,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 ├─ harness-probe/                  Harness 探测结果的缓存（./install、doctor --probe-harnesses）
 ├─ browsers/、tmp/、workspace/     ./install 用的无头浏览器、临时目录、默认工作区
 ├─ install.json                    ./install 上次注册时的设置（重跑时比较它，没变就不重新注册）
+├─ install-harnesses.json          ./install 上次写 harnesses.json 时哪些 Harness 能用（重跑时据此只加新能用的）
 └─ harnesses.json                  --harness-config 指向它（./install 写这个文件）
 ```
 

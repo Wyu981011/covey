@@ -70,10 +70,11 @@ def normalize_catalog(info):
         slug = row["value"]
         if slug in catalog:
             raise ValueError("Claude 模型目录包含重复标识")
+        # A level this release does not know (a newer Claude Code's) is left off that model, never the whole list: one
+        # unknown value used to take every Claude model off the launch card of a new install, which has no older list.
         raw = row.get("supportedEffortLevels", [])
-        if not isinstance(raw, list) or any(not isinstance(x, str) or x not in EFFORTS for x in raw):
-            raise ValueError("Claude 推理档位格式无效")
-        levels = list(dict.fromkeys(raw)) if row.get("supportsEffort") is True else []
+        known = [x for x in raw if isinstance(x, str) and x in EFFORTS] if isinstance(raw, list) else []
+        levels = list(dict.fromkeys(known)) if row.get("supportsEffort") is True else []
         catalog[slug] = catalog_row(slug, str(row.get("displayName") or slug), str(row.get("description") or ""),
                                     levels, "")  # Do not invent a model's default effort.
     return catalog

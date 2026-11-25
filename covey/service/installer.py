@@ -5,9 +5,11 @@
                     没给 --workdir 时终端里问一次默认工作区（回车用 <数据根>/workspace，新建的空目录里放一份说明
                     core/welcome.py GUIDE）；重跑沿用上次注册的工作区（install.json）
   2 准备 lark-cli   没有就装（npm 全局，不行装到数据根下 tools/）；``--skills`` 才同步 Skills
-  3 检查 Harness    对 claude、codex、agy 各做一次真实调用（service/install_probe.py），分清没登录、网络不通、其他；
-                    像网络问题时问一次代理地址；通过后把代理写进服务环境；扩展的安装钩子在这里跑；重跑时这次调通、上次注册时
-                    没调通的加进 harnesses.json。Claude Code 没调通时（docs/install.md 没有 Claude Code 时）新服务的管家写成
+  3 检查 Harness    对 claude、codex、agy 各做一次真实调用（service/install_probe.py），分清没登录、网络不通、其他；PATH 里
+                    没有的再看 ~/.local/bin、~/.claude/local（找到就把目录加进服务的 PATH）；没装的合成一句“不用每个都装”；
+                    装了 dsh 且它的网关密钥在文件里就启用（不调用模型），没装的不提；
+                    像网络问题时问一次代理地址；通过后把代理写进服务环境；扩展的安装钩子在这里跑；重跑时这次能用、上次写
+                    harnesses.json 时不能用的加进去（install-harnesses.json 记每次的结果）。Claude Code 没调通时（docs/install.md 没有 Claude Code 时）新服务的管家写成
                     调通了的 Codex 或 Antigravity（core/butler_settings.py preset_harness，第一次启动前）；专项、整理专项这些
                     开关照常写（负责人和小模型判断都能跑在它们上面），--showcase 也一样
   4 飞书应用        默认手机扫码 3 步（建应用、授权、事件与回调一键订阅）+ Bot OpenAPI 自动注册斜杠命令（feishu/slash_commands.py），
@@ -39,6 +41,7 @@ import queue
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -46,7 +49,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.core import app_manifest, butler_settings, claude_retention, extensions, qr, switches, welcome
+from covey.core import app_manifest, butler_settings, claude_retention, extensions, gateways, qr, switches, welcome
 from covey.core import env as cenv
 from covey.core.paths import REPO_ROOT, data_home
 from covey.core.process import service_key
@@ -71,8 +74,18 @@ DEFAULT_APP_NAME = "Covey"
 LARK_DOMAINS = "im,docs,drive,contact"
 FEISHU_NO_PROXY = ".feishu.cn,.larksuite.com,.larkoffice.com,.feishucdn.com,localhost,127.0.0.1"  # privacy: allow 飞书自己的域名
 PROXY_VARIABLES = ("HTTPS_PROXY", "HTTP_PROXY")
-PROBED = ("claude", "codex", "agy")  # The Harnesses one real call proves; dsh, Pi and an extension's need set-up of their own.
+PROBED = ("claude", "codex", "agy")  # The Harnesses one real call proves.
+# Enabled without a model call where they are set up (set_up_harnesses): dsh installed and its gateway's key in a file
+# the service reads. Not installed, nothing is said: no one has to install every Harness.
+GATEWAY_HARNESSES = ("dsh",)
+# Where a Harness CLI's own installer may have put it while this shell's PATH lacks it (Claude Code's native installer:
+# ~/.local/bin; its older local install: ~/.claude/local, reached through a shell alias a child process never sees).
+# Found there, its folder goes into this run's PATH, which the service is registered with (locate).
+COMMON_DIRS = (".local/bin", ".claude/local")
 STEPS = 6
+# What the last run that wrote harnesses.json found usable, under the data root (last_harnesses): a re-run adds what is
+# usable since, also after a run that stopped before the registration wrote install.json.
+USABLE_RECORD = "install-harnesses.json"
 URL = re.compile(r"https://\S+")
 RELEASES = "https://nodejs.org/"  # Where a machine without npm gets Node.js.
 ANSWER_SECONDS = 600  # How long a run in a terminal waits for the first answer in the private chat (docs/install.md).
@@ -110,7 +123,7 @@ SWITCH_WORDS = {"COVEY_PROJECTS": "专项", "COVEY_PROJECT_AUTOWAKE": "叫醒负
                 "COVEY_DISPATCH_CARD": "派发卡"}
 PROJECT_PARTS = ("COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY", "COVEY_PROJECT_TRIAGE")
 PROJECT_SWITCHES = ("COVEY_PROJECTS", "COVEY_PROJECT_TIDY", *PROJECT_PARTS)  # What harness_lines turns on where 专项 is off.
-HARNESS_TITLES = {"claude": "Claude Code", "codex": "Codex", "agy": "Antigravity"}
+HARNESS_TITLES = {"claude": "Claude Code", "codex": "Codex", "agy": "Antigravity", "dsh": "DeepSeek Harness"}
 # Besides Claude Code, the probed Harnesses that can run the butler and a project's lead (core/harness.py bridge_tools), in
 # the roster's order: where Claude Code did not answer, a new service's butler is preset to the first of them that did.
 BUTLER_HARNESSES = ("codex", "agy")
@@ -302,6 +315,7 @@ class Installer:
         self.workdir, self.phone_step, self.poll_seconds = None, 0, 5
         self.browser_python, self.live_open, self.prepare_browser = None, False, prepare_browser
         self.working, self.extra, self.reasons, self.leftovers = [], [], {}, []
+        self.set_up = []  # Of GATEWAY_HARNESSES, the ones set up here (set_up_harnesses)
         self.switches_settled = False  # settle_switches ran
         self.fresh = False  # settle_switches found no service registered for this app: a new one (D3 presets its butler)
         self.app_id = ""
@@ -490,9 +504,69 @@ class Installer:
         answer = self.ask(f"    {words}要走代理的话输入代理地址（如 http://127.0.0.1:7890），不用就直接回车：").strip()
         return answer
 
+    def locate(self, name):
+        """Whether Harness ``name``'s CLI is on this run's PATH, or in one of COMMON_DIRS under HOME: then that folder is
+        put at the front of the PATH (the service is registered with this run's PATH) and said once."""
+        if self.which(name):
+            return True
+        home = Path(self.env.get("HOME") or Path.home())
+        for relative in COMMON_DIRS:
+            folder = home / relative
+            path = folder / name
+            if path.is_file() and os.access(path, os.X_OK):
+                self.env["PATH"] = f"{folder}{os.pathsep}{self.env.get('PATH', '')}"
+                self.note(f"{name}：在 ~/{relative} 找到（这个终端的 PATH 里没有它），服务的 PATH 会加上这个目录")
+                return True
+        return False
+
+    def harness_config(self):
+        """<data>/harnesses.json as it is now, {} when it is not there or not an object."""
+        try:
+            config = json.loads((self.data / "harnesses.json").read_text())
+        except (OSError, ValueError):
+            return {}
+        return config if isinstance(config, dict) else {}
+
+    def set_up_harnesses(self):
+        """GATEWAY_HARNESSES installed here, each enabled when its gateway's key is in a file the service reads (a key only
+        in this shell's environment never reaches it: a manifest keeps no credential) and said in one line either way; one
+        not installed is not said. dsh's command is harnesses.json's --dsh-cmd, else ``dsh``; its gateway the first that
+        declares it (core/gateways.py: an extension's or harnesses.json's)."""
+        config = self.harness_config()
+        args = ((config.get("harnesses") or {}).get("dsh") or {}).get("args") or []
+        command = args[args.index("--dsh-cmd") + 1] if "--dsh-cmd" in args[:-1] else "dsh"
+        if not self.which(command):
+            return
+        try:
+            gateways.configure(config.get("gateways"))
+            gateway = gateways.dsh_gateway()
+        except (ValueError, extensions.ExtensionError):
+            gateway = None
+        why = "没有给它用的模型网关（docs/harnesses.md「dsh」）" if gateway is None else self.key_problem(gateway)
+        if why:
+            self.note(f"dsh：装了，{why}，先不启用")
+            return
+        self.set_up.append("dsh")
+        self.note(f"dsh：装了，{gateway.display} 的密钥也在，启用")
+
+    def key_problem(self, gateway):
+        """'' when ``gateway``'s key file is one the service can read (owner-only, not empty), else what to do."""
+        path = gateway.key_path()
+        try:
+            info = path.stat()
+        except OSError:
+            info = None
+        if info is not None and stat.S_ISREG(info.st_mode) and info.st_size and not info.st_mode & 0o077:
+            return ""
+        if info is not None and stat.S_ISREG(info.st_mode) and info.st_size:
+            return f"{gateway.display} 的密钥文件 {path} 要改成只有自己能读（chmod 600）"
+        if self.env.get(gateway.key_env):
+            return f"{gateway.display} 的密钥只在这个终端的 {gateway.key_env} 里，服务拿不到：写进 {path}（权限 600）"
+        return f"没有 {gateway.display} 的密钥：{gateway.missing_key}"
+
     def check_harnesses(self):
         self.step(3, "检查 Harness（各调用一次模型）")
-        installed = [n for n in PROBED if self.which(n)]
+        installed = [n for n in PROBED if self.locate(n)]
         extra = self.run_hooks("ext_ensure", "ext_detect")
         for name in installed:
             result = self.probe(name, self.env, cwd=str(self.data / "tmp"), directory=self.data / "harness-probe")
@@ -511,11 +585,15 @@ class Installer:
                 self.note(f"{name}：{self.reasons[name]}；不启用")
         for name in PROBED:
             if name not in installed:
-                self.reasons[name] = "没装"
+                self.reasons[name] = f"没装（PATH 里没有 {name} 命令）"
+        self.set_up_harnesses()
         self.extra = [h for h in extra if h not in self.working]
         for h in self.extra:
             self.note(f"{h}：扩展提供，沿用它自己的检查")
-        if not self.working and not self.extra:
+        missing = [HARNESS_TITLES[n] for n in PROBED if n not in installed]
+        if missing and (self.working or self.extra or self.set_up):
+            self.note(f"没装 {'、'.join(missing)}：不用每个都装，有一个能调通就能用；以后装了哪个，重新运行 ./install 会把它加进来")
+        if not self.working and not self.extra and not self.set_up:
             raise Fail("没有能调通的 Harness", next=(
                 "按下面的原因修好其中一个：没装的照 docs/harnesses.md「安装和登录 Harness」装；没登录的在终端里运行 claude "
                 "按提示登录，或 codex login，或运行 agy 用 Google 登录；网络不通的先 export HTTPS_PROXY=http://主机:端口。确认 "
@@ -529,19 +607,24 @@ class Installer:
             self.note("提示：" + line)
 
     def last_harnesses(self):
-        """The Harnesses the last registration of this data root had working (install.json, the fingerprint); None
-        without one."""
-        try:
-            found = json.loads((self.data / "install.json").read_text()).get("harnesses")
-        except (OSError, ValueError, AttributeError):
-            return None
-        return found if isinstance(found, list) else None
+        """The Harnesses usable at the last run that wrote harnesses.json (USABLE_RECORD), else at the last registration
+        (install.json, the fingerprint, of a data root an older release installed); None without either."""
+        for name, key in ((USABLE_RECORD, "usable"), ("install.json", "harnesses")):
+            try:
+                found = json.loads((self.data / name).read_text()).get(key)
+            except (OSError, ValueError, AttributeError):
+                continue
+            if isinstance(found, list):
+                return found
+        return None
 
     def write_harness_config(self):
-        """<data>/harnesses.json: the working Harnesses enabled, the default (the roster's first) first; what else the
-        file holds stays, and so do the enabled ones that are not probed here. On a re-run a probed Harness that works
-        now and did not at the last registration (Claude Code installed after an install with only Codex, D3) is added;
-        one the owner took out of the file after an install had it working stays out."""
+        """<data>/harnesses.json: the usable Harnesses (the probed ones that answered, the GATEWAY_HARNESSES set up here and
+        the extensions') enabled, the default (the roster's first) first; what else the file holds stays, and so do the
+        enabled ones that are not probed here. On a re-run one usable now and not at the last run that wrote the file
+        (last_harnesses: Claude Code installed after an install with only Codex, D3; dsh set up since) is added, even when
+        that run stopped before the registration; one the owner took out of the file after a run had it usable stays out.
+        What this run found usable is recorded in USABLE_RECORD."""
         from covey.core.roster import NAMES
 
         path = self.data / "harnesses.json"
@@ -551,20 +634,23 @@ class Installer:
             config = {}
         if not isinstance(config, dict):
             config = {}
+        usable = self.working + self.set_up
         old = config.get("enabled_harnesses") if isinstance(config.get("enabled_harnesses"), list) else []
         if old:  # Upgrade: what the owner enabled stays; a failed probe is only said (the launch card shows it unavailable).
             for n in old:
                 if n in PROBED and n not in self.working:
                     self.leftovers.append(f"{n} {self.reasons.get(n, '探测没通过')}，启动卡上会显示不可用（仍保留在已启用里）")
             last = self.last_harnesses()
-            newly = [n for n in PROBED if n in self.working and n not in old and last is not None and n not in last]
+            newly = [n for n in (*PROBED, *GATEWAY_HARNESSES)
+                     if n in usable and n not in old and last is not None and n not in last]
             for n in newly:
-                self.note(f"{n}：这次能调通了，加进启用的 Harness")
+                self.note(f"{n}：这次能用了，加进启用的 Harness")
             enabled = [n for n in NAMES if n in old or n in self.extra or n in newly]
         else:
-            enabled = [n for n in NAMES if n in self.working or n in self.extra]
+            enabled = [n for n in NAMES if n in usable or n in self.extra]
         config["enabled_harnesses"] = enabled
         write_json(path, config)
+        write_json(self.data / USABLE_RECORD, {"usable": sorted(usable + self.extra)})
         return path
 
     # 4 -----------------------------------------------------------------------------------------
@@ -1053,7 +1139,7 @@ class Installer:
         # other switches, has to re-register instead of "nothing changed".
         settings = {k: v for k, v in sorted(self.env.items()) if k.startswith("LARK_BRIDGE_") and persistable(k)}
         return {"profile": self.args.profile, "app_id": self.app_id, "workdir": str(self.workdir),
-                "harnesses": sorted(self.working + self.extra), "proxy": proxy, "config": str(config_path),
+                "harnesses": sorted(self.working + self.set_up + self.extra), "proxy": proxy, "config": str(config_path),
                 "repo": str(REPO_ROOT), "settings": settings}
 
     def preset(self):
@@ -1241,7 +1327,8 @@ class Installer:
         first = f"Claude Code 没调通：管家用 {title}，专项的负责人和整理专项、同时做几件事的小模型判断也用它" + more
         then = ("装好并登录 Claude Code 以后：重新运行 ./install（它会把 Claude Code 加进启用的 Harness）；"
                 "想让管家用它，在「设置」→「配置」的管家一段换成 Claude Code")
-        return [first, then]
+        why = self.reasons.get("claude")  # What step 3 found (T766: a colleague saw only "没调通" and not why).
+        return [first, *([f"    Claude Code 这次：{why}"] if why else []), then]
 
     # The service's own environment (D4) ---------------------------------------------------------------------------
 
