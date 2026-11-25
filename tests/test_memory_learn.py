@@ -79,6 +79,20 @@ class Case(unittest.TestCase):
         return notes, asked, find_job_record(self.state, job.message_id)
 
 
+class SwitchTest(unittest.TestCase):
+    def test_the_old_names_turn_the_memory_and_its_learning_on(self):
+        # A Manager from before the rename starts the Bridge with the manifest's LARK_BRIDGE_ names only (T778: a colleague's
+        # page had no 记忆 and no turn carried the memory although his manifest set LARK_BRIDGE_MEMORY=1).
+        self.assertTrue(memory.enabled({"LARK_BRIDGE_MEMORY": "1"}))
+        self.assertTrue(memory.learning({"LARK_BRIDGE_MEMORY": "1", "LARK_BRIDGE_MEMORY_LEARN": "1"}))
+        self.assertTrue(memory.learning({"COVEY_MEMORY": "1", "LARK_BRIDGE_MEMORY_LEARN": "1"}))
+        self.assertFalse(memory.enabled({"COVEY_MEMORY": "0", "LARK_BRIDGE_MEMORY": "1"}))  # The new name, when set, decides.
+        self.assertFalse(memory.learning({"LARK_BRIDGE_MEMORY_LEARN": "1"}))
+        self.assertFalse(memory.enabled({}))
+        with mock.patch.dict(os.environ, {"LARK_BRIDGE_MEMORY": "1"}, clear=True):
+            self.assertTrue(memory.enabled())
+
+
 class OwnerWordsTest(Case):
     def test_an_answers_turn_is_what_he_answered_and_added_never_the_question(self):
         said = "用户补充回答：\n要不要再单独加一个「整理」？\n不加，看板卡里有就够（推荐）\n\n用户补充说明：\n以后这类按推荐走"

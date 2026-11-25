@@ -37,6 +37,7 @@ from __future__ import annotations
 import hashlib
 import os
 
+from covey.core import env as cenv
 from covey.core import knowledge, project_memory, turn_source
 from covey.core.state import epoch_seconds
 
@@ -67,14 +68,16 @@ HELD_KINDS = ("decision", "constraint")  # Of the lead's notes: what the project
 
 
 def enabled(environ=None) -> bool:
-    return (os.environ if environ is None else environ).get(ENV) == "1"
+    """Whether COVEY_MEMORY=1, under either spelling (core/env.py get): a Manager from before the rename starts the Bridge with
+    only the manifest's LARK_BRIDGE_MEMORY, and the memory must not be off for it (read on every call)."""
+    return cenv.get(ENV, "", environ) == "1"
 
 
 def learning(environ=None) -> bool:
     """Whether the memory learns by itself (docs/butler.md 记忆自己长): COVEY_MEMORY_LEARN=1 with COVEY_MEMORY=1. Off: every
     reader and writer of the memory does what it did before it."""
     env = os.environ if environ is None else environ
-    return enabled(env) and env.get(LEARN_ENV) == "1"
+    return enabled(env) and cenv.get(LEARN_ENV, "", env) == "1"
 
 
 def by_source(source) -> str:
