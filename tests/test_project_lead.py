@@ -232,13 +232,18 @@ class RebuildTest(Case):
 
     def test_a_first_turn_and_a_recent_small_one_on_the_same_model_go_on(self):
         self.assertEqual(self.reason(), "")
-        self.last(input_tokens=149_999)
+        self.last(context_tokens=299_999)
         self.assertEqual(self.reason(), "")
 
-    def test_over_150_thousand_tokens_idle_over_a_day_or_another_model_each_rebuild(self):
-        self.last(input_tokens=150_001)
-        self.assertIn("150001", self.reason())
-        self.assertEqual(self.reason(now=NOW + 24 * 3600 - 60), "上一轮读了 150001 token")
+    def test_a_conversation_over_300_thousand_tokens_idle_over_a_day_or_another_model_each_rebuild(self):
+        self.last(context_tokens=300_001)
+        self.assertIn("300001", self.reason())
+        self.assertEqual(self.reason(now=NOW + 24 * 3600 - 60), "上一轮结束时对话有 300001 token")
+
+    def test_what_every_request_of_the_turn_read_together_is_not_the_conversations_size(self):
+        # T776: 41 requests on a 200K conversation read 918K; the lead started a new session at every turn.
+        self.last(input_tokens=917_605, context_tokens=199_272)
+        self.assertEqual(self.reason(), "")
 
     def test_idle_and_model(self):
         self.last(input_tokens=1000)
@@ -247,12 +252,14 @@ class RebuildTest(Case):
         self.assertIn("换了模型", self.reason(model="claude-sonnet-5"))
         self.assertEqual(self.reason(model=""), "")
 
-    def test_the_context_size_stands_in_when_a_record_has_no_input_tokens(self):
-        self.last(context_tokens=200_000)
-        self.assertIn("200000", self.reason())
+    def test_the_input_tokens_stand_in_when_a_record_has_no_context_size(self):
+        self.last(input_tokens=400_000)
+        self.assertIn("400000", self.reason())
+        self.last(input_tokens=200_000)
+        self.assertEqual(self.reason(), "")
 
     def test_settle_session_clears_the_pointer_and_logs_why(self):
-        self.last(input_tokens=200_000)
+        self.last(context_tokens=400_000)
         job = SimpleNamespace(topic_id=LEAD, chat_id=CHAT, message_id="lead-2", job_id=2, model="claude-opus-5")
         calls = []
         sessions = SimpleNamespace(clear_session=lambda ctx, revision, sid: calls.append((revision, sid)) or True,
@@ -261,7 +268,7 @@ class RebuildTest(Case):
         ctx = SimpleNamespace(state_dir=self.state, model="claude-opus-5")
         self.assertEqual(project_lead.settle_session(ctx, job, sessions, runtime, 7, "sid-1"), (8, None))
         self.assertEqual(calls, [(7, "sid-1")])
-        self.assertTrue(any("lead session rebuilt" in line and "上一轮读了 200000 token" in line for line in self.logs))
+        self.assertTrue(any("lead session rebuilt" in line and "上一轮结束时对话有 400000 token" in line for line in self.logs))
 
     def test_a_session_that_may_go_on_and_other_topics_are_not_touched(self):
         self.last(input_tokens=10)
@@ -330,8 +337,8 @@ class StartTurnTest(Case):
 
     def test_a_big_previous_turn_starts_the_lead_on_a_new_session_and_a_topic_keeps_its_own(self):
         sid = "11111111-1111-4111-8111-111111111111"
-        self.lead_job("lead-1", status="done", model="claude-opus-5", input_tokens=200_000)
-        write_job(self.state, "top-1", topic_id="ee" * 16, chat_id=CHAT, job_id=8, status="done", input_tokens=900_000)
+        self.lead_job("lead-1", status="done", model="claude-opus-5", context_tokens=400_000)
+        write_job(self.state, "top-1", topic_id="ee" * 16, chat_id=CHAT, job_id=8, status="done", context_tokens=900_000)
         (_, session_id), job = self.start(LEAD, sid)
         self.assertIsNone(session_id)
         self.assertIsNone(job.session_id)

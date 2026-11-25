@@ -9,7 +9,7 @@ how its session lives. Only a lead topic's turn (core/butler.py ``is_lead``) com
 - ``lead_rules``: the lead's rules in layers (identity, tools, style, and the practice layer phase 3 fills for a
   specialist: nothing now).
 - ``settle_session`` (app/worker.py ``_start_turn``): the session is dropped, and the pack sent again, when the previous
-  turn read over ``RESET_TOKENS``, the topic has been idle ``RESET_IDLE`` seconds, or the model changed.
+  turn's conversation ended over ``RESET_TOKENS``, the topic has been idle ``RESET_IDLE`` seconds, or the model changed.
 - ``lead_turn`` (app/butler.py ``butler_turn``): the turn's context (its Bridge tools, the turn held to reading on
   whichever Harness it runs: LEAD, ``held``) and message (rules, pack, then the turn's own message).
 - The inbox, ``projects/<id>/inbox/<n>.json`` ({id, kind, thread, text, at, taken_by}): receipts of what happened since
@@ -47,7 +47,9 @@ from covey.core.topics import topic_file, topic_label, topic_title
 from covey.core.turn_words import RESULTS, UNSET_PHASES
 from covey.core.web_sync import PREFIX as WEB_PREFIX
 
-RESET_TOKENS = 150_000  # A previous turn that read more than this: the next starts a new session.
+# A previous turn whose conversation ended over this (its context_tokens): the next starts a new session. The leads' on
+# one day (T776) ended between 99K and 316K; 300K lets all but the longest go on and read the cache.
+RESET_TOKENS = 300_000
 RESET_IDLE = 24 * 3600  # Idle this long: the cached prompt is long gone, a new session costs no more.
 DECISIONS = 10  # Entries of the decision log in the pack.
 NOTES_KEPT, DECISIONS_KEPT = 100, 50  # What the record keeps of each list (the memory is core/project_memory.py's).
@@ -565,15 +567,20 @@ def previous_turn(state_dir, topic_id, key):
 
 
 def rebuild_reason(state_dir, topic_id, key, model, now=None) -> str:
-    """Why the lead's session must be built again ('' when it may go on): the previous turn read over RESET_TOKENS, the
-    topic was idle over RESET_IDLE, or the model is not the previous turn's."""
+    """Why the lead's session must be built again ('' when it may go on): the previous turn ended with its conversation
+    over RESET_TOKENS, the topic was idle over RESET_IDLE, or the model is not the previous turn's.
+
+    The conversation's size is the previous turn's ``context_tokens`` (what its next request would start from), not its
+    ``input_tokens``: those add up every request of the turn, each of which read the whole conversation again (T776: a
+    lead turn of 41 steps on a 200K conversation had read 918K, and every turn of the lead started a new session, its
+    first request reading nothing from the cache). A record without it (one from before the counts) falls back to them."""
     last = previous_turn(state_dir, topic_id, key)
     if last is None:
         return ""
-    tokens = last.get("input_tokens")
-    tokens = tokens if type(tokens) is int else last.get("context_tokens")
+    tokens = last.get("context_tokens")
+    tokens = tokens if type(tokens) is int else last.get("input_tokens")
     if type(tokens) is int and tokens > RESET_TOKENS:
-        return f"上一轮读了 {tokens} token"
+        return f"上一轮结束时对话有 {tokens} token"
     ended = board_read.ended_at(last)
     if ended and now_of(now) - ended > RESET_IDLE:
         return "空闲超过 24 小时"
