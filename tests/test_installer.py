@@ -1218,7 +1218,7 @@ class WithoutClaudeTest(InstallerCase):
 
     def test_installer_preset_is_the_first_of_codex_and_antigravity_that_answered_without_claude_code(self):
         for working, want in ((("codex",), "codex"), (("agy",), "agy"), (("codex", "agy"), "codex"),
-                              (("claude", "codex"), ""), (("claude",), ""), ((), ""), (("pi", "dsh"), "")):
+                              (("claude", "codex"), ""), (("claude",), ""), ((), ""), (("dsh",), "")):
             with self.subTest(working=working):
                 self.assertEqual(installer.butler_preset(working), want)
 

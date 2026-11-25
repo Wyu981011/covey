@@ -129,6 +129,6 @@ bash web/deploy/selfhost/build.sh <数据根>/web/app && python3 -B -m covey.ser
 
 ## 进阶
 
-- Harness 参数、dsh、Pi、Antigravity、模型网关：[Harness 说明](harnesses.md)
+- Harness 参数、dsh、Antigravity、模型网关：[Harness 说明](harnesses.md)
 - 群聊、代答、看板等功能：[使用指南](usage.md)、[配置](configuration.md)
 - 重启、开机恢复、备份：[运维指南](operations.md)；升级、回滚：[升级与部署](deploy.md)；飞书应用的权限和菜单：[飞书应用配置](feishu-app.md)；旧安装脚本：[手工安装](manual-install.md)
