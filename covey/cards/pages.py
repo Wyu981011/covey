@@ -45,6 +45,7 @@ class Page:
 class Paged:
     pages: tuple
     alone: bool = False  # What follows the text did not fit under the last card: the caller sends it on its own.
+    after: tuple = ()  # When ``alone``: what goes atop the caller's card of it (a relay's 这一轮中途的汇报, relay_pages).
 
 
 def sent_size(built) -> int:
@@ -229,17 +230,42 @@ def paged(text, draw, *, finish=None, reserve=False) -> Paged:
     return result
 
 
-def drawer(summary, *, row=None, words=(), label="", element_id=None, tail=(), update_multi=False):
+def tail_apart(result, draw, text="") -> Paged:
+    """``result`` (``paged`` without ``reserve``) with what follows the text on a card of its own after the others when
+    the last could not hold it (``alone``), numbered with them: ``draw("", n, n, True)``; ``text``, that card's Markdown
+    when Feishu refuses it."""
+    if not result.alone:
+        return result
+    total = len(result.pages) + 1
+    pages = [Page(draw(page.text, n, total, False), page.text) for n, page in enumerate(result.pages, 1)]
+    return Paged((*pages, Page(draw("", total, total, True), text)))
+
+
+def paged_after(text, draw, more, draw_more, *, reserve=False) -> Paged:
+    """``text`` over cards as ``paged`` cuts it with ``draw``, then ``more`` over cards of its own as ``draw_more`` draws
+    them (a relay's 这一轮中途的汇报, each card's part of them in a fold: cards/relay_card.py), all numbered together; what
+    follows goes under the last of ``more``'s (``reserve`` as ``paged`` takes it; ``alone`` when it did not fit there)."""
+    first, rest = paged(text, draw), paged(more, draw_more, reserve=reserve)
+    total = len(first.pages) + len(rest.pages)
+    cards = [Page(draw(page.text, n, total, False), page.text) for n, page in enumerate(first.pages, 1)]
+    for k, page in enumerate(rest.pages, 1):
+        last = k == len(rest.pages) and not rest.alone
+        cards.append(Page(draw_more(page.text, len(first.pages) + k, total, last), page.text))
+    return Paged(tuple(cards), rest.alone)
+
+
+def drawer(summary, *, row=None, words=(), label="", element_id=None, tail=(), update_multi=False, part_element=None):
     """``draw`` for ``paged``: each part in a speaker's card's look (docs/ui.md 5.3): ``row(page)`` (the speaker's row
     with ``page``, "2/3", in it; None: a card with no row, which says which it is on a grey line first), ``words``
     under the first card's row (the owner's words that open, its head's other blocks), the part (``label`` grey
-    before it on the first, as cards/review.py reply_shown; ``element_id`` its ID on each), ``tail`` under the last;
-    ``summary``, the chat list's preview, with the page after it."""
+    before it on the first, as cards/review.py reply_shown; ``element_id`` its ID on each; ``part_element`` (text ->
+    element): drawn so instead of as Markdown), ``tail`` under the last; ``summary``, the chat list's preview, with the
+    page after it."""
     def draw(part, n, total, last):
         page = f"{n}/{total}" if total > 1 else ""
         head = [row(page)] if row else ([note(f"分 {total} 张发 · {page}")] if page else [])
         text = labelled(part, label) if n == 1 and label else part
-        body = [md(text, element_id=element_id)] if part else []
+        body = ([part_element(text)] if part_element else [md(text, element_id=element_id)]) if part else []
         elements = copy.deepcopy([*head, *(words if n == 1 else ()), *body, *(tail if last else ())])
         look = dict(padding=BODY_PADDING, spacing=BODY_SPACING) if row else {}
         return banded(card(elements, f"{summary}（{page}）" if page else summary, update_multi=update_multi, **look))

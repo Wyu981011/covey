@@ -651,8 +651,19 @@ class ClaudeAlignmentTests(unittest.TestCase):
         self.assertEqual(catalog["b"]["supported_reasoning_levels"], [])
         self.assertEqual([r["effort"] for r in catalog["c"]["supported_reasoning_levels"]], ["low", "high", "max"])
         self.assertEqual(catalog["a"]["default_reasoning_level"], "")
-        with self.assertRaises(ValueError):
-            normalize_catalog({"models": [{"value": "a", "supportedEffortLevels": ["invented"]}]})
+
+    def test_a_level_this_release_does_not_know_is_left_off_its_model_not_the_whole_list(self):
+        # T766: one unknown value took every Claude model off a new install's launch card (no older list to fall back on).
+        catalog = normalize_catalog({"models": [
+            {"value": "a", "supportsEffort": True, "supportedEffortLevels": ["invented", "high", 3, "max"]},
+            {"value": "b", "supportsEffort": True, "supportedEffortLevels": "high"},
+            {"value": "c", "supportsEffort": True, "supportedEffortLevels": ["low"]}]})
+        self.assertEqual(list(catalog), ["a", "b", "c"])
+        self.assertEqual([r["effort"] for r in catalog["a"]["supported_reasoning_levels"]], ["high", "max"])
+        self.assertEqual(catalog["b"]["supported_reasoning_levels"], [])
+        self.assertEqual([r["effort"] for r in catalog["c"]["supported_reasoning_levels"]], ["low"])
+        with self.assertRaises(ValueError):  # A list that is not one of models still says so.
+            normalize_catalog({"models": [{"value": ""}]})
 
     def test_a_probe_without_the_gateways_models_keeps_the_last_ones_seen_for_a_day(self):
         # 2026-11-03: Claude Code listed the gateway's Opus 5 in some probes only; Opus 5 came and went in the menus.

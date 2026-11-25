@@ -100,13 +100,13 @@ class HarnessDefaultModelTest(unittest.TestCase):
                 "claude.DEFAULT_CLAUDE_TIMEOUT, claude.SKIP_PERMISSIONS_DEFAULT, claude.LOGIN_SHELL_DEFAULT); "
                 "from covey.app.harnesses import components\n"
                 "for name, keys in (('maso', ('model', 'maso_end_wait', 'maso_timeout')), ('dsh', ('dsh_cmd',)), "
-                "('pi', ('pi_cmd',)), ('claude', ('no_skip_permissions', 'claude_login_shell'))):\n"
+                "('claude', ('no_skip_permissions', 'claude_login_shell'))):\n"
                 "    parser = argparse.ArgumentParser(); components(name)[1].add_cli_args(parser)\n"
                 "    args = parser.parse_args([]); print(*(getattr(args, key) for key in keys))")],
             text=True, capture_output=True, check=True, env=env)
         self.assertEqual(probe.stdout.splitlines(), [
             "gpt-6-astra max danger-full-access codex 0", "claude-fable-5 xhigh claude 0 True False",
-            "gpt-6-astra_reasoning_xhigh None 0", "dsh", "pi", "False False"])
+            "gpt-6-astra_reasoning_xhigh None 0", "dsh", "False False"])
 
 
 class HarnessSubprocessTest(unittest.TestCase):

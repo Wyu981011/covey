@@ -15,10 +15,10 @@ import os
 from covey.core import env as cenv
 from covey.core import extensions
 from covey.core.process_env import FALSE_VALUES
-from covey.core.roster import NAMES
+from covey.core.roster import NAMES, RETIRED
 
 # name -> (Harness, the option that replaces it). A switch's option depends on its value: (when on, when off),
-# None where the value is the default already.
+# None where the value is the default already. A retired Harness's (core/roster.py RETIRED) has no option: it is unset.
 IGNORED_ENV = {
     "LARK_BRIDGE_CODEX_MODEL": ("codex", "--model"),
     "LARK_BRIDGE_CODEX_REASONING_EFFORT": ("codex", "--reasoning-effort"),
@@ -32,7 +32,7 @@ IGNORED_ENV = {
     "LARK_CLAUDE_BRIDGE_SKIP_PERMISSIONS": ("claude", (None, "--no-skip-permissions")),
     "LARK_CLAUDE_BRIDGE_LOGIN_SHELL": ("claude", ("--claude-login-shell", None)),
     "LARK_DSH_BRIDGE_CMD": ("dsh", "--dsh-cmd"),
-    "LARK_PI_BRIDGE_CMD": ("pi", "--pi-cmd"),
+    "LARK_PI_BRIDGE_CMD": ("pi", None),  # Pi is retired (T766).
     **extensions.ignored_env(),  # An extension's Harnesses.
 }
 CODEX_SANDBOX = "danger-full-access"  # backends/codex/bridge.py's DEFAULT_SANDBOX.
@@ -72,6 +72,9 @@ def ignored_env(environ=None):
             continue
         if name in loose:
             lines.append(f"env {loose[name]} (covey_doctor fails until then)")
+            continue
+        if harness in RETIRED:
+            lines.append(f"env {name} is no longer read; unset it: {RETIRED[harness]} is retired")
             continue
         if isinstance(option, tuple):
             option = option[str(cenv.get(name, "", environ)).strip().lower() in FALSE_VALUES]

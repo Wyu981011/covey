@@ -29,7 +29,7 @@ from covey.app.card_lanes import CardLanes
 from covey.app.card_routing import INBOUND_DIR, CardRouting
 from covey.app.job_dispatch import JobDispatch
 from covey.app.butler import Butler
-from covey.app.harnesses import Harness, components, enabled_names, models_first
+from covey.app.harnesses import Harness, components, enabled_names, models_first, retired_enabled
 from covey.app.outbox import run as run_outbox
 from covey.app.pins import configure_boards
 from covey.app.policy_guard import run as run_policy_guard
@@ -473,6 +473,9 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         ignored = sorted(set(config.get('harnesses', {})) - set(NAMES))
         if ignored:
             self.runtime.log('harness config ignores Harnesses not in the roster: ' + ', '.join(ignored))
+        retired = retired_enabled(config)
+        if retired:
+            self.runtime.log('harness config enables retired Harnesses, left out: ' + ', '.join(retired))
         for name in NAMES[1:]:
             if name not in names:
                 continue

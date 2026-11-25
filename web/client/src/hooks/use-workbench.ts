@@ -1,8 +1,7 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import type {
   OutboxRequest,
-  OutboxResponse,
   ReportResponse,
   RoomResponse,
   SearchHit,
@@ -16,9 +15,17 @@ import type {
   TurnsResponse, MainMemoryResponse } from '@shared/api.interface';
 import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
 import { mergeCollabs } from '@client/src/cv/collab';
+import { mergeSnapshot, sinceFor } from '@client/src/cv/snapshotMerge';
 
-/** 所有列表来自同一份快照，每 2 秒轮询一次 */
-export const POLL_MS = 2000;
+/**
+ * 所有列表来自同一份快照，每 1 秒取一次：带 ?since= 只取变过的话题（数据约定 v38，见 cv/snapshotMerge.ts），每分钟取一次整份兜底；
+ * 旧服务端不认 since，每次都是整份（和以前一样，只是更勤了，所以旧服务端上 1 秒一份整份：699 个话题约 1 MB，库里约 76 毫秒——
+ * 要退回去把 POLL_MS 改回 2000）。
+ * 话题的轮次在有任务在跑（有人在等它出结果）时也是 1 秒，其余 2 秒；大厅 2 秒。发过操作的话题另由 cv/sendOp.ts 的跟踪器勤取几秒。
+ */
+export const POLL_MS = 1000;
+/** 话题、大厅在不忙时的轮询间隔 */
+export const SLOW_POLL_MS = 2000;
 const KEEP_MS = 30 * 60 * 1000;
 
 export const SNAPSHOT_KEY = ['snapshot'] as const;
@@ -28,14 +35,40 @@ export const turnsKey = (key: string): readonly unknown[] => ['turns', key];
 export const useMe = () =>
   useQuery<{ name: string | null }>({ queryKey: ['me'], queryFn: fetchMe, staleTime: Infinity, gcTime: Infinity, retry: 1 });
 
-export const useSnapshot = () =>
-  useQuery<SnapshotResponse>({
+/** 上一次取到整份快照的时刻（增量取数每分钟回整份一次）和上一份响应的游标。游标不放进缓存的数据里：它每次都变，放进去的话
+ * 快照没变也会让所有用它的页面每秒重画一遍（数据一样时 react-query 沿用旧对象，页面不动） */
+let lastFullAt = 0;
+let snapCursor: string | null = null;
+
+/** 取快照：能带 since 就取增量并进上一份，并不进去（缓存和响应对不上）就再取一份整份 */
+export async function fetchSnapshotMerged(qc: QueryClient): Promise<SnapshotResponse> {
+  const prev: SnapshotResponse | undefined = qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY);
+  const res: SnapshotResponse = await fetchSnapshot(prev ? sinceFor({ cursor: snapCursor ?? undefined }, lastFullAt, Date.now()) : null);
+  snapCursor = res.cursor ?? null;
+  let out: SnapshotResponse | null = res;
+  if (res.partial) {
+    out = mergeSnapshot(qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY), res);
+  }
+  if (!out) {
+    // 并不进去：再取一份整份
+    out = await fetchSnapshot(null);
+    snapCursor = out.cursor ?? null;
+  }
+  if (!res.partial || out !== res) lastFullAt = Date.now();
+  const { cursor: _cursor, ...data } = out;
+  return data;
+}
+
+export const useSnapshot = () => {
+  const qc: QueryClient = useQueryClient();
+  return useQuery<SnapshotResponse>({
     queryKey: SNAPSHOT_KEY,
-    queryFn: fetchSnapshot,
+    queryFn: () => fetchSnapshotMerged(qc),
     refetchInterval: POLL_MS,
-    staleTime: 1000,
+    staleTime: 500,
     gcTime: KEEP_MS,
   });
+};
 
 /** 编号 → 话题（正文里 T12 链到它） */
 export function useTopicByNumber(): Map<number, SnapshotTopic> {
@@ -74,8 +107,8 @@ export function useTurns(key: string) {
   return useQuery<TurnsResponse>({
     queryKey: turnsKey(key),
     queryFn: () => fetchMerged(qc, key),
-    refetchInterval: POLL_MS,
-    staleTime: 1000,
+    refetchInterval: (q): number => (q.state.data?.turns.some((t: TurnView) => t.status === 'running') ? POLL_MS : SLOW_POLL_MS),
+    staleTime: 500,
     gcTime: KEEP_MS,
     placeholderData: (prev: TurnsResponse | undefined): TurnsResponse | undefined => {
       if (prev && prev.topic.key === key) return prev;
@@ -104,7 +137,7 @@ export function useRoomTurns(enabled = true) {
       return { ...res, turns: [...byKey.values()], cursor: res.cursor ?? prev.cursor, ...(collabs?.length ? { collabs } : {}) };
     },
     enabled,
-    refetchInterval: POLL_MS,
+    refetchInterval: SLOW_POLL_MS,
     staleTime: 1000,
     gcTime: KEEP_MS,
   });
@@ -141,20 +174,6 @@ export const useSearch = (q: string) =>
     placeholderData: keepPreviousData,
     staleTime: 10000,
   });
-
-export const useSendOutbox = () => {
-  const qc: QueryClient = useQueryClient();
-  return useMutation<OutboxResponse, Error, OutboxRequest>({
-    mutationFn: (body: OutboxRequest) => postOutbox(body),
-    retry: false,
-    onSuccess: (_res: OutboxResponse, vars: OutboxRequest) => {
-      // 只刷这个话题和快照，不动别的
-      if (vars.topic_key) void qc.invalidateQueries({ queryKey: turnsKey(vars.topic_key) });
-      if (vars.payload?.room === true) void qc.invalidateQueries({ queryKey: ROOM_KEY });
-      void qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
-    },
-  });
-};
 
 export function newOpId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {

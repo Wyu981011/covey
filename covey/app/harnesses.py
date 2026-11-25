@@ -17,7 +17,7 @@ from typing import Any
 from covey.core import env as cenv
 from covey.core.harness import HARNESS_REGISTRY, BridgeContext, HarnessBackend, HarnessSpec, SessionStore
 from covey.core.paths import component_dir
-from covey.core.roster import HARNESSES, NAMES
+from covey.core.roster import HARNESSES, NAMES, RETIRED
 from covey.core.state import canonical_workdir, ensure_private_dir, keyed_json_path
 from covey.core.store import directory_store
 from covey.feishu.messenger import Voice
@@ -42,14 +42,24 @@ def components(name):
 
 
 def enabled_names(config):
-    """The bot's enabled Harnesses, default first; an omitted list preserves the full roster."""
+    """The bot's enabled Harnesses, default first; an omitted list preserves the full roster. A retired Harness the
+    list still names (core/roster.py RETIRED: an older install wrote it) is left out (``retired_enabled`` says which);
+    a list of retired ones alone counts as omitted, so the Bridge still starts."""
     if not isinstance(config, dict):
         raise ValueError('Harness config must be a JSON object')
     names = config.get('enabled_harnesses', list(NAMES))
-    if (not isinstance(names, list) or not names or any(not isinstance(name, str) or name not in NAMES for name in names)
+    if (not isinstance(names, list) or not names
+            or any(not isinstance(name, str) or (name not in NAMES and name not in RETIRED) for name in names)
             or len(set(names)) != len(names)):
         raise ValueError('enabled_harnesses must be a non-empty list of distinct Harness IDs: ' + ', '.join(NAMES))
-    return tuple(names)
+    return tuple(name for name in names if name in NAMES) or NAMES
+
+
+def retired_enabled(config):
+    """The retired Harnesses (core/roster.py RETIRED) the enabled list of ``config`` names, which ``enabled_names``
+    leaves out."""
+    names = config.get('enabled_harnesses') if isinstance(config, dict) else None
+    return [name for name in names if isinstance(name, str) and name in RETIRED] if isinstance(names, list) else []
 
 
 def models_first(config, name):

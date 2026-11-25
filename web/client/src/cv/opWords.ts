@@ -1,4 +1,4 @@
-/* 网页发给 Covey 的操作（发件箱）从点下去到有回执，各处用同一套说法和同一个等法（T647 P1-C2）：
+/* 网页发给 Covey 的操作（发件箱）从点下去到有回执，各处用同一套说法（T647 P1-C2），同一个等法在 opTrack.ts（T765）：
  * 发送中 → 已发出，等 Covey → Covey 回的那句（办好了）/ 没办成：原因；等满 OP_WAIT_MS 还没回音不算失败，
  * 操作留在发件箱里，Covey 回来会接着办。纯函数，单测在 scripts/words.test.mjs。 */
 import type { OutboxView } from '@shared/api.interface';
@@ -8,19 +8,6 @@ export type OpPhase = 'sending' | 'waiting' | 'done' | 'failed' | 'unsent' | 'ti
 
 /** 等回执最多等多久；Covey 每半秒取一次发件，通常一两秒就回 */
 export const OP_WAIT_MS = 60000;
-/** 第 i 次问之前隔多久：头三次 0.7 秒，之后 1.5 秒 */
-export const opDelay = (i: number): number => (i < 3 ? 700 : 1500);
-/** 等满 OP_WAIT_MS 要问几次 */
-export const OP_TRIES: number = (() => {
-  let ms = 0;
-  let n = 0;
-  while (ms < OP_WAIT_MS) {
-    ms += opDelay(n);
-    n += 1;
-  }
-  return n;
-})();
-
 /** 回执里给人看的那句：去掉开关名这类内部词（“整理专项没有开（COVEY_PROJECT_TIDY）”→“整理专项没有开”），多余的空白收成一个 */
 export function plainReceipt(message: string | null | undefined): string {
   return String(message ?? '')
@@ -50,6 +37,26 @@ export function opWords(phase: OpPhase, message?: string | null): string {
     default:
       return 'Covey 还没回音：操作留在发件箱里，Covey 回来会接着办';
   }
+}
+
+/** 输入框发的话，气泡里写的几个词：写进网页库了（POST 成功）、Covey 回执后写它的原话 */
+export const SENT_WORD = '✓ 已发出';
+export const SENT_TITLE = '已写进网页库：Covey 在线马上办，不在线也会接着办';
+
+/** 输入框发出去的一句话的气泡：phase 是网页库这一步（sending 还在发、sent 写进去了、failed 没发出去），row 是发件箱那一行，tracked 是跟踪器问到的回执。
+ * 回执（办好了）写 Covey 的原话（plainReceipt），不是笼统的“已执行”；tone：wait 还没回音、ok 办好了、bad 没办成 */
+export function bubbleWords(
+  p: { phase: 'sending' | 'sent' | 'failed'; error?: string },
+  row?: { state: string; message?: string | null },
+  tracked?: { phase: OpPhase; message?: string | null },
+): { text: string; tone: 'wait' | 'ok' | 'bad'; faded: boolean; title: string } {
+  if (p.phase === 'failed') return { text: opWords('unsent', p.error), tone: 'bad', faded: false, title: '' };
+  const state: string = row && row.state !== 'new' ? row.state : tracked?.phase === 'done' || tracked?.phase === 'failed' ? tracked.phase : '';
+  const message: string | null | undefined = row && row.state !== 'new' ? row.message : tracked?.message;
+  if (state === 'failed') return { text: opWords('failed', message), tone: 'bad', faded: false, title: '' };
+  if (state === 'done') return { text: opWords('done', message), tone: 'ok', faded: false, title: '' };
+  if (p.phase === 'sent') return { text: SENT_WORD, tone: 'wait', faded: false, title: SENT_TITLE };
+  return { text: opWords('sending'), tone: 'wait', faded: true, title: '' };
 }
 
 /** 发件箱一行的状态换成 OpPhase（new 还在等） */

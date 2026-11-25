@@ -77,7 +77,7 @@ VENDORS = (("anthropic", ("claude", "opus", "sonnet", "haiku", "fable")),
            ("xai", ("grok",)),
            ("mistral", ("mistral", "codestral", "devstral")))
 # A Harness's own maker, for a model whose words name none (its default, "" in a record).
-HARNESS_VENDORS = {"claude": "anthropic", "codex": "openai", "pi": "openai", "agy": "google", "dsh": "deepseek"}
+HARNESS_VENDORS = {"claude": "anthropic", "codex": "openai", "agy": "google", "dsh": "deepseek"}
 
 
 def vendor_of(harness, model="", label=""):

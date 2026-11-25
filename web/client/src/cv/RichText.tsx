@@ -4,6 +4,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { Markdown } from '@tiptap/markdown';
 import { Placeholder } from '@tiptap/extensions';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
+import { enterAction } from './composerText';
 import { mentionAt, OBJ } from './room';
 import { Mention } from './MentionNode';
 import type { MentionAttrs } from './mention';
@@ -57,9 +58,14 @@ export function triggerOf(ed: Editor): Trigger | null {
   return m ? { query: m.query, from: $from.pos - (before.length - m.start), to: $from.pos } : null;
 }
 
+/** 换行键（Shift / Ctrl / ⌘ / Alt + Enter）转成的普通 Enter：自己的 handleKeyDown 认出它就放过，交给编辑器的键位 */
+const replayed = new WeakSet<KeyboardEvent>();
+
 /**
  * 边写边渲染的输入框（T616，所见即所得）：写 Markdown 就直接变样子——行首“- ”“1. ”“[ ] ”成列表、“# ”成标题、“> ”成引用、
- * “```”成代码块、**粗体**、`代码`；Enter 换段（列表里是下一项，空项再按一次结束列表），Shift+Enter 段内换行，Tab / Shift+Tab 缩进列表项。
+ * “```”成代码块、**粗体**、`代码`；Tab / Shift+Tab 缩进列表项。
+ * Enter 按 composerText.ts 的 enterAction（T761，和飞书一样）：收着时 Enter 发送，Shift / Ctrl / ⌘ / Alt + Enter 换行；放大后、手机上都换行。
+ * 换行一律是另起一段（列表里是下一项，空项再按一次结束列表），不用段内的软换行：软换行后面打的“* ”不在段首，不变列表。
  * 对外仍是 Markdown 文字：value 进、onChange 出，发出去的就是这段文字。粘贴或拖进来的文件交给 onFiles（附件），不进正文。
  */
 export const RichText = forwardRef<
@@ -68,8 +74,10 @@ export const RichText = forwardRef<
     value: string;
     onChange: (md: string) => void;
     placeholder: string;
-    /** ⌘/Ctrl+Enter */
+    /** Enter 发送（enterAction 说 send 时） */
     onSubmit: () => void;
+    /** 收着时 true：Enter 发送；放大后、手机上 false：Enter 换行 */
+    sendOnEnter: boolean;
     onFiles: (files: File[]) => void;
     className?: string;
     /** 大厅（T624）：按键先给它（@ 候选的上下键、回车、Esc），返回 true 就不再往下走 */
@@ -77,12 +85,12 @@ export const RichText = forwardRef<
     /** 光标前正在打 @ 时给出查询词和位置，不在打（或在组字）就是 null（@ 候选跟着它） */
     onTrigger?: (t: Trigger | null) => void;
   }
->(({ value, onChange, placeholder, onSubmit, onFiles, className, onKey, onTrigger }, ref) => {
+>(({ value, onChange, placeholder, onSubmit, sendOnEnter, onFiles, className, onKey, onTrigger }, ref) => {
   const last = useRef<string>(value);
   const box = useRef<HTMLDivElement | null>(null);
   // 编辑器只建一次：回调走 ref，拿到的总是最新的
-  const cb = useRef({ onChange, onSubmit, onFiles, onKey, onTrigger });
-  cb.current = { onChange, onSubmit, onFiles, onKey, onTrigger };
+  const cb = useRef({ onChange, onSubmit, sendOnEnter, onFiles, onKey, onTrigger });
+  cb.current = { onChange, onSubmit, sendOnEnter, onFiles, onKey, onTrigger };
   const edRef = useRef<Editor | null>(null);
   const focused = useRef<boolean>(false);
   const trig = (ed: Editor | null): void => {
@@ -114,19 +122,22 @@ export const RichText = forwardRef<
           return false;
         },
       },
-      handleKeyDown: (_view, e: KeyboardEvent): boolean => {
+      handleKeyDown: (view, e: KeyboardEvent): boolean => {
+        if (replayed.has(e)) return false;
         if (!e.isComposing && cb.current.onKey?.(e)) return true;
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) {
+        const act = enterAction(e, cb.current.sendOnEnter);
+        if (act === 'send') {
           e.preventDefault();
           cb.current.onSubmit();
           return true;
         }
-        // 标题里按 Shift+Enter（以前“Shift+Enter 换行”的习惯）：标题只有一行，换行就是另起一段正文，
-        // 不在标题里塞软换行——否则第二行看着也是标题，切一次源码才变回正文（T616 21:26）
-        const ed: Editor | null = edRef.current;
-        if (e.key === 'Enter' && e.shiftKey && !e.isComposing && ed?.isActive('heading')) {
+        if (act === 'break' && (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
+          // 带修饰键的换行当成普通的 Enter 交给编辑器的键位（换段、续列表、结束空项、代码块里换行、``` 回车成代码块），
+          // 不走 HardBreak 的 Shift/Mod+Enter 软换行。标题里也一样：末尾换行是另起一段正文（T616 21:26）
           e.preventDefault();
-          ed.chain().splitBlock().setParagraph().run();
+          const plain = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true });
+          replayed.add(plain);
+          if (!view.someProp('handleKeyDown', (f) => f(view, plain))) edRef.current?.commands.splitBlock();
           return true;
         }
         return false;

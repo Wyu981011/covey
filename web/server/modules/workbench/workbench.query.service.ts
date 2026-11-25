@@ -51,6 +51,7 @@ import {
 import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
+import { wake, waitFor } from './workbench.wake';
 import {
   answersOf, asksOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectOpShape, recoverShape, revisitCancelShape, revisitOf,
 } from './workbench.v4';
@@ -164,6 +165,11 @@ const SNAP_TOPICS = sql`select t.key, t.number, t.title, t.project_key, t.state,
     select data from turns w where w.topic_key = t.key and w.status = 'running' and w.role <> 'owner'
       order by w.seq desc limit 1
   ) r on (t.state = '在做' or t.data->>'tone' in ('running', 'stuck'))`;
+
+/** 快照游标往前留多少秒，保证并发写入、同一秒里的写入不漏 */
+const CURSOR_OVERLAP_S = 5;
+/** 挂着等回执时多久查一次库（毫秒） */
+const OUTBOX_STEP_MS = 250;
 
 const UPLOAD_ID = /^[0-9a-f]{32}$/u;
 /** 话题、协作、记忆条目的 key：Covey 给的 id（十六进制哈希、web-<op_id> 之类），不含空白和斜杠 */
@@ -599,22 +605,42 @@ export class WorkbenchQueryService {
     };
   }
 
-  /** 侧栏、看板、专项页的列表都从这里来：几条 SQL 并行，一次返回 */
-  async snapshot(): Promise<SnapshotResponse> {
-    const [topicRes, projectRes, questionRes, syncedAt, asks] = await Promise.all([
-      this.db.execute(sql`${SNAP_TOPICS} order by t.updated_at desc`),
+  /**
+   * 侧栏、看板、专项页的列表都从这里来：几条 SQL 并行，一次返回。
+   * since（v38，上一次响应的 cursor）：只返回这之后变过的话题（话题行或它的轮次的 _updated_at 晚于 since），外加 keys（现在所有话题的 key）
+   * 和新的 cursor，响应带 partial: true；projects、questions、asks 照旧整份。since 不合法就当没带，返回整份。每次响应都带 cursor。
+   * cursor 是查询开始时数据库的 now() 往前留 CURSOR_OVERLAP_S 秒：并发写入、同一秒里的写入都不会漏，重叠的部分前端按 key 合并。
+   */
+  async snapshot(sinceRaw: string | null = null): Promise<SnapshotResponse> {
+    const sinceMs: number = sinceRaw ? Date.parse(sinceRaw) : NaN;
+    const since: string | null = Number.isNaN(sinceMs) ? null : new Date(sinceMs).toISOString();
+    const changed = since
+      ? sql` where t._updated_at > ${since}::timestamptz or t.key in (select topic_key from turns where _updated_at > ${since}::timestamptz)`
+      : sql``;
+    // 游标和数据查询一起发：数据库的时钟，往前留的几秒盖得住它们之间的先后
+    const [cursorRes, topicRes, lightRes, projectRes, questionRes, syncedAt, asks] = await Promise.all([
+      this.db.execute(sql`select now() - make_interval(secs => ${CURSOR_OVERLAP_S}) as c`),
+      this.db.execute(sql`${SNAP_TOPICS}${changed} order by t.updated_at desc`),
+      since
+        ? this.db.execute(sql`select key, project_key, state, coalesce(nullif(data->>'kind', ''), 'topic') as kind, updated_at from topics order by updated_at desc`)
+        : Promise.resolve([]),
       this.db.execute(sql`select key, title, status, updated_at, data from projects order by updated_at desc`),
       this.db.execute(sql`select key, topic_key, turn_key, state, data from questions where state = 'open'`),
       this.syncedAt(),
       this.snapshotData('asks'),
     ]);
+    const cursor: string = new Date(asRows<{ c: string | Date }>(cursorRes)[0]?.c ?? Date.now()).toISOString();
     const all: SnapshotTopic[] = asRows<SnapTopicRow>(topicRes).map((r: SnapTopicRow) => this.snapTopic(r));
-    // 网页里 kind=butler 的话题只留一个（updated_at 最新，已按它倒序）
-    const butler: SnapshotTopic | undefined = all.find((t: SnapshotTopic) => t.kind === 'butler');
-    const topics: SnapshotTopic[] = all.filter((t: SnapshotTopic) => t.kind !== 'butler' || t === butler);
+    // 网页里 kind=butler 的话题只留一个（updated_at 最新，已按它倒序）。增量时变过的只是一部分，最新的那个要从所有话题里找
+    interface Light { key: string; project_key: string | null; state: string; kind: string }
+    const lights: Light[] = since ? asRows<Light>(lightRes) : [];
+    const butlerKey: string | undefined = since ? lights.find((t: Light) => t.kind === 'butler')?.key : all.find((t: SnapshotTopic) => t.kind === 'butler')?.key;
+    const topics: SnapshotTopic[] = all.filter((t: SnapshotTopic) => t.kind !== 'butler' || t.key === butlerKey);
+    // 专项卡上的话题计数要算所有话题，不只是变过的
+    const counted: Light[] = since ? lights.filter((t: Light) => t.kind !== 'butler' || t.key === butlerKey) : topics;
     const projects: SnapshotProject[] = asRows<ProjectRow>(projectRes).map((p: ProjectRow): SnapshotProject => {
       const d: Record<string, unknown> = obj(p.data);
-      const own: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => t.project_key === p.key && t.kind !== 'lead');
+      const own: Light[] = counted.filter((t: Light) => (t.project_key || null) === p.key && t.kind !== 'lead');
       return {
         key: p.key,
         avatar: str(d.avatar),
@@ -631,20 +657,22 @@ export class WorkbenchQueryService {
         updated_at: num(p.updated_at),
         counts: {
           topics: own.length,
-          waiting: own.filter((t: SnapshotTopic) => t.state === '等你').length,
-          running: own.filter((t: SnapshotTopic) => t.state === '在做').length,
+          waiting: own.filter((t: Light) => t.state === '等你').length,
+          running: own.filter((t: Light) => t.state === '在做').length,
         },
       };
     });
-    const counted: SettingsAsks | undefined = asksOf(asks);
+    const asked: SettingsAsks | undefined = asksOf(asks);
     return {
       synced_at: syncedAt,
-      butler_key: butler?.key ?? null,
+      butler_key: (since ? butlerKey : topics.find((t: SnapshotTopic) => t.kind === 'butler')?.key) ?? null,
       projects,
       topics,
       questions: asRows<QuestionRow>(questionRes).map((q: QuestionRow) => this.questionView(q)),
       // v34：Covey 算好的要你处理，和话题同一步推来；旧 Covey 没推过就不带，网页自己数
-      ...(counted ? { asks: counted } : {}),
+      ...(asked ? { asks: asked } : {}),
+      cursor,
+      ...(since ? { partial: true as const, keys: counted.map((t: Light) => t.key) } : {}),
     };
   }
 
@@ -998,17 +1026,37 @@ export class WorkbenchQueryService {
     );
     const row = asRows<OutboxResponse>(res)[0];
     if (!row) throw new ConflictException('这个操作已经发过了');
+    // 同进程里挂着等取件的 Covey 请求（/sync/inbox?wait=）马上取走，不用等下一次查库
+    wake('inbox');
     return row;
   }
 
-  /** 一条发件的结果（不属于话题的动作，如看板的「整理」），页面按 op_id 轮询 */
-  async outboxStatus(opId: string): Promise<OutboxStatus> {
-    const row = asRows<OutboxStatus>(
-      await this.db.execute(sql`select op_id, kind, state, coalesce(message, '') as message, _created_at as created_at
-        from outbox where op_id = ${opId}`),
-    )[0];
-    if (!row) throw new NotFoundException('没有这条发件');
-    return row;
+  /**
+   * 一条发件的结果（页面按 op_id 问）。waitMs > 0（v38，?wait=<秒>）：它还是 new 就挂着，每 200 毫秒查一次库
+   * （同进程里 Covey 回执会提前叫醒），最多等 waitMs 毫秒，不是 new 了马上返回；没有这条发件仍是 404。不带 wait 和以前一样。
+   */
+  async outboxStatus(opId: string, waitMs = 0, aborted: () => boolean = () => false): Promise<OutboxStatus> {
+    let last: OutboxStatus | null = null;
+    const read = async (): Promise<OutboxStatus> => {
+      const row = asRows<OutboxStatus>(
+        await this.db.execute(sql`select op_id, kind, state, coalesce(message, '') as message, _created_at as created_at
+          from outbox where op_id = ${opId}`),
+      )[0];
+      if (!row) throw new NotFoundException('没有这条发件');
+      last = row;
+      return row;
+    };
+    return waitFor<OutboxStatus>(
+      'ack',
+      waitMs,
+      OUTBOX_STEP_MS,
+      async () => {
+        const row: OutboxStatus = await read();
+        return row.state === 'new' ? null : row;
+      },
+      () => last as unknown as OutboxStatus,
+      aborted,
+    );
   }
 
   /** v15：本周用量快照（sync_state name='usage'）的 data；没有是 null */

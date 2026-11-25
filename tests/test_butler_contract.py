@@ -82,6 +82,18 @@ class SettingsTest(unittest.TestCase):
             self.assertNotIn("start", written)
             self.assertNotIn("trusted", written)
 
+    def test_a_retired_harness_chosen_before_reads_as_none_chosen(self):
+        # Pi was retired (T766): the butler, its topics, 独立复核 and a lead chosen on it follow what is enabled again.
+        choice = {"harness": "pi", "model": "gpt-6-astra", "effort": "high"}
+        loaded = settings.from_json({**choice, "topic_defaults": {**choice, "run_mode": "worktree"}, "review": choice,
+                                     "lead": choice})
+        self.assertEqual((loaded.harness, loaded.model, loaded.effort), ("", "", ""))
+        self.assertEqual((loaded.topic_defaults.harness, loaded.topic_defaults.model, loaded.topic_defaults.run_mode),
+                         ("", "", "worktree"))
+        self.assertEqual((loaded.review, loaded.lead), (settings.ReviewModel(), settings.LeadModel()))
+        kept = settings.from_json({"harness": "codex", "model": "gpt-x", "lead": {"harness": "agy", "model": "n"}})
+        self.assertEqual((kept.harness, kept.model, kept.lead.harness, kept.lead.model), ("codex", "gpt-x", "agy", "n"))
+
 
 class RequestsTest(unittest.TestCase):
     def setUp(self):

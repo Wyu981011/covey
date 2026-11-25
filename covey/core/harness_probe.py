@@ -10,7 +10,7 @@ agy 的探测（只在本机，``command_for`` 不给设备）：没有登录凭
 
 ``probe(name, ...)`` 返回 ``{'ok': bool, 'reason': 'ok'|'not_installed'|'not_logged_in'|'network'|'timeout'|'other',
 'detail': str}``；``detail`` 是截短、抹掉密钥样子字符串的一两行，可以直接给用户看。没有探测方式的 Harness
-（dsh、pi、扩展带来的）只查可执行文件：在就 ``ok``（``probed`` 为 False），不在 ``not_installed``。
+（dsh、扩展带来的）只查可执行文件：在就 ``ok``（``probed`` 为 False），不在 ``not_installed``。
 ``cached_probe`` 把结果存在 ``<目录>/<名字>.json``（带时间），成功和失败各有存活期，换了命令或代理设置就作废。
 """
 from __future__ import annotations

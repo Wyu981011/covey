@@ -20,10 +20,8 @@ import type {
   SettingsWorkspaceItem,
   SettingsWorkspacePage,
 } from '@shared/api.interface';
-import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
-import { newOpId, SETTINGS_KEY, useMemory, useSettings } from '@client/src/hooks/use-workbench';
+import { newOpId, useMemory, useSettings } from '@client/src/hooks/use-workbench';
 import { MainMemory } from './MainMemory';
-import { errorText } from '@client/src/lib/workbench-format';
 import { Head } from './Shell';
 import { setLight, useUi } from './store';
 import { ago } from './topicText';
@@ -31,6 +29,7 @@ import { useTick } from './ui';
 import { pickKind } from './launch';
 import { appendLines, dropLine, planTerms, type TermLine, type TermPlan } from './redactionTerms';
 import { opWords, plainReceipt } from './opWords';
+import { sendOp, type OpResult } from './sendOp';
 import './settings.css';
 
 /* ---------- 发件：每个动作一个 id，保存中 → 回执（Covey 回的话，回执前 Covey 已推新快照）→ 立刻重拉快照，2 秒后再拉一次保险 ---------- */
@@ -43,7 +42,6 @@ interface Ops {
   st: Record<string, Phase>;
   run: (id: string, payload: Record<string, unknown>) => Promise<void>;
 }
-const sleep = (ms: number): Promise<void> => new Promise<void>((r) => window.setTimeout(r, ms));
 
 function useOps(): Ops {
   const qc = useQueryClient();
@@ -60,7 +58,6 @@ function useOps(): Ops {
       const put = (p: Phase): void => {
         if (alive.current) setSt((s: Record<string, Phase>) => ({ ...s, [id]: p }));
       };
-      const refetch = (): Promise<unknown> => qc.refetchQueries({ queryKey: SETTINGS_KEY });
       // 失败的提示 8 秒后收起（还是这一条才收）
       const fade = (message: string): void => {
         window.setTimeout(() => {
@@ -68,38 +65,22 @@ function useOps(): Ops {
         }, 8000);
       };
       put({ phase: 'saving', message: '' });
-      const opId: string = newOpId();
-      try {
-        await postOutbox({ op_id: opId, kind: 'settings', payload });
-      } catch (e) {
-        const message = opWords('unsent', errorText(e));
+      // Covey 回执前已经推了新快照：跟踪器问到回执就重取设置（opTrack.pullPlan），取回来了才算保存完（格子在这之前显示“保存中”）
+      const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'settings', payload }, qc);
+      if (r.phase === 'unsent') {
+        const message = opWords('unsent', r.message);
         put({ phase: 'failed', message });
         fade(message);
         return;
       }
-      // Covey 每半秒取一次发件，回执前已经推了新快照：先密后疏地问，done 就立刻重拉快照，拉到了才算保存完（格子在这之前显示“保存中”）
-      for (let i = 0; i < 70; i += 1) {
-        await sleep(i < 4 ? 250 : i < 10 ? 500 : 1500);
-        try {
-          const r = await fetchOutboxStatus(opId);
-          if (r.state === 'done' || r.state === 'failed') {
-            try {
-              await refetch();
-            } catch {
-              /* 快照这次没拉到，后面还有一次 */
-            }
-            const message = r.state === 'done' ? plainReceipt(r.message) : opWords('failed', r.message);
-            put({ phase: r.state, message });
-            window.setTimeout(() => void refetch(), 2000);
-            if (r.state === 'failed') fade(message);
-            return;
-          }
-        } catch {
-          /* 取不到就接着等 */
-        }
+      if (r.phase === 'timeout') {
+        put({ phase: 'late', message: opWords('timeout') });
+        return;
       }
-      put({ phase: 'late', message: opWords('timeout') });
-      window.setTimeout(() => void refetch(), 2000);
+      await r.settled;
+      const message = r.phase === 'done' ? plainReceipt(r.message) : opWords('failed', r.message);
+      put({ phase: r.phase, message });
+      if (r.phase === 'failed') fade(message);
     },
     [qc],
   );

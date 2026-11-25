@@ -47,10 +47,7 @@ test('发件状态一套说法：发送中 → 已发出等 Covey → 回执 / �
   const late = O.opWords('timeout');
   assert.doesNotMatch(late, /失败|没办成|没开看板/u);
   assert.match(late, /发件箱/u);
-  // 一分钟的等法：头三次 0.7 秒，之后 1.5 秒
-  let ms = 0;
-  for (let i = 0; i < O.OP_TRIES; i += 1) ms += O.opDelay(i);
-  assert.ok(ms >= O.OP_WAIT_MS && ms < O.OP_WAIT_MS + 1500, `等了 ${ms} 毫秒`);
+  // 一分钟的等法（节奏在 opTrack.ts 的 pollGap，单测在 scripts/op-track.test.mjs）：发出后气泡写“✓ 已发出”，回执后写 Covey 的原话
 });
 
 test('回执不露开关名（整理专项没开时 Covey 写的 COVEY_PROJECT_TIDY）；「不管了」不再说“只记在这台设备上”', () => {

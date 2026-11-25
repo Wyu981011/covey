@@ -163,7 +163,7 @@ python3 -B scripts/brand_assets.py demo --out /absolute/covey/docs/media --work 
 - 边界上的替身优先于按模块路径打补丁：任务记录写到 `records.state_dir` 再 `records.saved` 读回；CardKit 写用 `FakeCardKit`，不给 `cardkit_api` 打补丁。替身保留原函数签名，参数不对时测试失败。
 - 断言整句界面文字时，从产品模块导入这句话的常量，不在测试里另抄一份；产品里还是行内字面量的，先提成模块常量。
 
-`test_backend_contract` 对每个后端驱动（codex、claude、dsh、pi，扩展启用时再加扩展的后端）跑同一组投递不变量：保存的回复只重投一次、不重跑模型；部分结果带说明发出、会话保持封住；部分失败不清掉更新的会话指针；失败的一轮不授权、不发正文；重启后 outbox 只发已授权的回复。`HarnessContractTests`、`SharedResultGateTests` 用假后端检查接口和结果闸门。加后端时加一个驱动。完整链用例只替换模型、进程传输、外部发送等边界，模拟通过不等于真实 SDK、进程清理或飞书发送已通过。
+`test_backend_contract` 对每个后端驱动（codex、claude、dsh、agy，扩展启用时再加扩展的后端）跑同一组投递不变量：保存的回复只重投一次、不重跑模型；部分结果带说明发出、会话保持封住；部分失败不清掉更新的会话指针；失败的一轮不授权、不发正文；重启后 outbox 只发已授权的回复。`HarnessContractTests`、`SharedResultGateTests` 用假后端检查接口和结果闸门。加后端时加一个驱动。完整链用例只替换模型、进程传输、外部发送等边界，模拟通过不等于真实 SDK、进程清理或飞书发送已通过。
 
 ### 任务进程协议与跨版本检查
 
@@ -232,7 +232,7 @@ python3 -B scripts/cross_release.py compare /absolute/runs/cross-<提交>   # �
 
 - Claude CLI 契约：`CLAUDE_BRIDGE_REAL_CLI=1 python3 -B -m unittest discover -s tests -p test_claude.py -k InstalledClaudeContractTests`，本机 `claude` 连本地模拟接口，配置隔离。升级 Claude Code 后跑一次。
 - 扩展自己的 `--check-runtime`（有的话）：解释器、固定 revision、关键接口；不加载模型。
-- 交接摘要（Codex、Pi，`backends/<名字>/handoff.py`）：升级 `codex` 或 `pi` 后，在单独的 `CODEX_HOME`（只链登录和 `config.toml`）里用后端跑一轮带 shell 调用的小任务，再对这个会话调后端的 `handoff_summary`：要写出摘要；提示词让它执行命令时没有工具执行、不生成文件；超时和停止几秒内返回空；源会话文件、会话目录和 Codex 的状态库（`state_5.sqlite` 的 threads、`thread_history_1.sqlite`）都不变，没有残留目录和进程。`codex features list` 里要还有 `backends/codex/handoff.py` 的 `FLAGS` 关掉的每个功能（它不认识的键会忽略）。
+- 交接摘要（Codex，`backends/codex/handoff.py`）：升级 `codex` 后，在单独的 `CODEX_HOME`（只链登录和 `config.toml`）里用后端跑一轮带 shell 调用的小任务，再对这个会话调后端的 `handoff_summary`：要写出摘要；提示词让它执行命令时没有工具执行、不生成文件；超时和停止几秒内返回空；源会话文件、会话目录和 Codex 的状态库（`state_5.sqlite` 的 threads、`thread_history_1.sqlite`）都不变，没有残留目录和进程。`codex features list` 里要还有 `backends/codex/handoff.py` 的 `FLAGS` 关掉的每个功能（它不认识的键会忽略）。
 - 部署或重启后在 Bridge 的实际环境里发一次无副作用的真实模型请求（[健康诊断](troubleshooting.md#健康诊断)），终端里成功不能代替。
 
 ## 飞书客户端验收

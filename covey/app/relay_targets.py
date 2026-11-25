@@ -1,9 +1,9 @@
 """Where a topic turn's outcome goes back to at the butler's top level (app/butler_relay.py, docs/butler.md
 结论回到顶层): which turns came from the butler (``relay_target``: a request's opened record, a supplement it
-gave, or an automatic retry of either; ``area_target``: the latest request that touched a 话题区), the message a relay
-quotes (``relay_quote``, ``butler_job_owner_message``), its "你问" block (``ask_for``), the card its T number opens
-(``turn_card``), and a project member's turn the owner waits for (``awaited_target``: one the lead handed on while he was
-there). Reads records only: nothing here sends or writes."""
+gave, or an automatic retry of either; ``area_target``: the latest request that touched a 话题区, or the owner's own
+launch from the web page, ``web_root``), the message a relay quotes (``relay_quote``, ``butler_job_owner_message``), its
+"你问" block (``ask_for``), the card its T number opens (``turn_card``), and a project member's turn the owner waits for
+(``awaited_target``: one the lead handed on while he was there). Reads records only: nothing here sends or writes."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,7 +13,7 @@ from covey.cards.relay_card import WAITING
 from covey.core import butler_opened, placement, projects
 from covey.core.jobs import find_job_record, job_field, job_key
 from covey.core.store import directory_store
-from covey.core.topics import topic_label
+from covey.core.topics import load_topic, topic_label
 
 PREFIX = "main-"  # A butler tool's synthetic message id (app/butler_topics.py).
 RETRY_HOPS = 5
@@ -83,15 +83,41 @@ def relays(state_dir, topic_id, chat) -> bool:
     return placement.plan(state_dir, {"topic_id": topic_id, "chat_id": chat}).row.conclusion != placement.NONE
 
 
+def web_root(state_dir, topic_id, chat=""):
+    """(the request, the topic card, its chat) of a topic the owner opened on the web page in ``chat``
+    (app/web_launch.py: topic.json's ``origin.kind`` "web", ``origin.request`` "web-<op id>"), its topic card at the top
+    level as a topic the butler opens at once has; None for any other topic, or one whose topic.json cannot be read.
+    Reads topic.json without a lock (rule 2)."""
+    try:
+        data = load_topic(Path(state_dir), str(topic_id))
+    except (OSError, ValueError):
+        return None
+    origin = data.get("origin") if isinstance(data, dict) else None
+    root = str(data.get("root_id") or "") if isinstance(data, dict) else ""
+    if not isinstance(origin, dict) or origin.get("kind") != "web" or not root.startswith("om_"):
+        return None
+    opened_in = str(data.get("chat_id") or "")
+    if chat and opened_in != str(chat):
+        return None
+    return str(origin.get("request") or ""), root, opened_in
+
+
 def area_target(state_dir, topic_id, chat=""):
     """Where a turn of the 话题区 ``topic_id`` relays when no request of the butler started it: the latest one
-    (main-thread/opened/) that opened, forked or handed on to it, as ``relay_target`` gives it, kind "follow"; None
-    for a topic no request touched."""
+    (main-thread/opened/) that opened, forked or handed on to it, as ``relay_target`` gives it, kind "follow"; a topic
+    the owner opened on the web page that no request touched since (``web_root``) as its own, quoting its topic card
+    (T762, 2026-11-25: T753, opened there, relayed none of its five turns nor copied its three questions); None for a
+    topic no request touched."""
     if not topic_id or not relays(state_dir, topic_id, chat):
         return None
     best = butler_opened.latest_for_topic(state_dir, topic_id)
     if best is None:
-        return None
+        web = web_root(state_dir, topic_id, chat)
+        if web is None:
+            return None
+        request, root, opened_in = web
+        return {"chat_id": opened_in or str(chat), "reply_to": root, "label": topic_label(Path(state_dir), topic_id)
+                or "话题", "token": request, "kind": "follow", "topic_id": topic_id, "main_key": ""}
     reply_to = relay_quote(state_dir, best[1].get("job_key"))
     if not reply_to:
         return None

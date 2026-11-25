@@ -120,7 +120,6 @@ tail -n 100 "$STATE_DIR/bridge.log"
 | Claude Code | 没登录（任务前会跑 `claude auth status`） | `python3 -B bin/covey_doctor.py --probe-harnesses` |
 | Codex | 读不到 `~/.codex/models_cache.json`（在 CLI 里跑过一次就有），又没配模型网关 | 同上 |
 | DeepSeek Harness | 没有声明给 dsh 用的模型网关，或网关密钥没配 | 日志的 `detail=` 写原因；配法见[最小网关示例](harnesses.md#最小网关示例) |
-| Pi | 没有 Codex 登录也没配网关，或 `--pi-cmd` 不对 | 看 `detail=` |
 | Antigravity | `agy` 没登录或 `agy models` 没回应 | 在服务的账号下跑 `agy models` |
 
 已提交的任务在执行前再检查一次后端，不可用时话题里回复“后端暂不可用，任务尚未执行。”。

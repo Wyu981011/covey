@@ -159,10 +159,10 @@ class WorkspaceGuideTest(unittest.TestCase):
 
 class CardTest(unittest.TestCase):
     def test_with_the_butler_it_says_how_a_message_is_answered_and_offers_three_examples(self):
-        card = cards.welcome_card({**VIEW, "down": [["Pi", "没登录"]]})
+        card = cards.welcome_card({**VIEW, "down": [["Antigravity", "没登录"]]})
         words = texts(card)
         for part in ("欢迎使用 Covey", "装在 devbox", "有事直接在这里说", "管家先接住每句话", "出现表情，就是收到了",
-                     "Harness：Codex、Claude Code", "现在用不了：Pi（没登录）", "默认工作区：work", "/absolute/work"):
+                     "Harness：Codex、Claude Code", "现在用不了：Antigravity（没登录）", "默认工作区：work", "/absolute/work"):
             self.assertIn(part, words)
         self.assertNotIn("启动卡", words)
         self.assertEqual(buttons(card), [(cards.TRY, {"kind": cards.KIND, "example": n}, False) for n in range(3)])

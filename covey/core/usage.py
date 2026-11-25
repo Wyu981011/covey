@@ -52,7 +52,7 @@ class ActiveGenerationClock:
 
 
 class TurnTokens:
-    """A turn's token_usage summed over its model requests (pi's, dsh's): output, input with the cache
+    """A turn's token_usage summed over its model requests (dsh's): output, input with the cache
     reads and writes beside it, and the output whose generation was timed, with that time. With
     ``max_rate`` (token/s) a request timed faster than it, or at no time at all, was timed wrong."""
     def __init__(self, max_rate=None):

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 # Event data, a dict per kind:
 #   tool: id, name, status ("running", "done", "failed"), started_at; optional detail, ended_at,
 #     child_id, exit_code, public_progress (a trusted adapter's opt-in to the compact live summary).
-#     A name in STEP_TITLES is shown by its title (Claude Code's and pi's tools, Codex's bash, edit and
+#     A name in STEP_TITLES is shown by its title (Claude Code's tools, Codex's bash, edit and
 #     websearch, background for a command left running, context_compaction); any other as it is (Codex's
 #     调用工具, 更新计划, 读取文件 and 浏览目录, another tool's own name).
 #   progress_note: id, text; optional received_at, child_id, urgent (omitted: the note shows at once),
@@ -53,7 +53,7 @@ AGENT_ENDED = frozenset({"completed", "errored", "interrupted", "cancelled", "sh
 # An agent_state status of a subtask still running, or about to (cards/trace.py).
 AGENT_LIVE = frozenset({"running", "pendingInit"})
 
-# The reasons a progress_note's retry gives for a model request being retried (Codex's and pi's).
+# The reasons a progress_note's retry gives for a model request being retried (Codex's).
 RATE_LIMITED_REASON = "上游限流（429）"
 UNAVAILABLE_REASON = "模型服务暂时不可用"
 # The same, when the failure's own words say it is the network or a proxy (a refused or reset connection, a name

@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import type {
   ImageHaveRequest,
   ImageHaveResponse,
@@ -14,6 +15,10 @@ import type {
 import { WorkbenchImagesService } from './workbench.images.service';
 import { WorkbenchSyncService } from './workbench.sync.service';
 import { WorkbenchUploadsService } from './workbench.uploads.service';
+import { waitSeconds } from './workbench.wake';
+
+/** 取件最多挂多久（秒）：Covey 带 wait 时的上限 */
+const INBOX_WAIT_MAX = 10;
 
 @Controller('openapi/sync')
 export class WorkbenchOpenApiController {
@@ -53,10 +58,13 @@ export class WorkbenchOpenApiController {
   }
 
   @Get('inbox')
-  inbox(@Query('after') after?: string, @Query('limit') limit?: string): Promise<InboxResponse> {
+  inbox(@Res({ passthrough: true }) res: Response, @Query('after') after?: string, @Query('limit') limit?: string, @Query('wait') wait?: string): Promise<InboxResponse> {
     const a: number = Number(after ?? 0) || 0;
     const l: number = Math.min(Math.max(Number(limit ?? 100) || 100, 1), 500);
-    return this.svc.inbox(a, l);
+    // wait（秒，可选，≤10）：没有新操作时挂着等；Covey 断开了就不再等（响应还没发出就 close，是连接断了）
+    let closed = false;
+    res.once('close', () => { closed = true; });
+    return this.svc.inbox(a, l, wait === undefined ? null : waitSeconds(wait, INBOX_WAIT_MAX) * 1000, () => closed);
   }
 
   @Post('ack')

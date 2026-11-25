@@ -34,9 +34,6 @@ CORE_HARNESSES = {
     # DeepSeek Harness, on Acme's Anthropic Messages models (Acme's Responses models are a Codex provider). Not on a
     # device: its gateway's personal key would have to go there, and its route patch and DSH_HOME are paths here.
     "dsh": RosterEntry("covey.backends.dsh.bridge", "DshSessionStore"),
-    # Pi, on GPT models from the Codex login or Acme; questions go through the checkpoint like dsh's. Not on a device: it
-    # borrows this machine's Codex token, and its home, sessions and a gateway's relay are all on this machine.
-    "pi": RosterEntry("covey.backends.pi.bridge", "PiSessionStore"),
     # Antigravity (Google's agy), on the models of its own Google sign-in; questions go through the checkpoint. On a
     # device with the device's own sign-in, and no supplement into a running turn there (backends/agy/bridge.py).
     "agy": RosterEntry("covey.backends.agy.bridge", "AntigravitySessionStore", devices=True),
@@ -56,6 +53,8 @@ CORE_RETIRED = {
     "doubao": "豆包",
     # Kiro, retired.
     "kiro": "Kiro",
+    # Pi (pi --mode rpc on the Codex login or a gateway's GPT models), retired: Codex runs the same models.
+    "pi": "Pi",
 }
 
 

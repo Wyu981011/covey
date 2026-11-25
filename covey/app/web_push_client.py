@@ -38,7 +38,8 @@ class Client:
     an NFS open that hung held the push for minutes (2026-11-23 T673)."""
 
     def __init__(self) -> None:
-        self.opener = http_upstream.opener()
+        self.opener = http_upstream.opener()  # http:// (a self-hosted page on loopback): a request a connection, as before.
+        self.kept = http_upstream.KeepAlive()  # https://: one kept connection per thread (2026-11-25 T765: 203 -> 137 ms a request).
         self.loaded, self.config, self.stamp = 0.0, None, None
 
     def settings(self) -> web_sync.Config:
@@ -62,9 +63,13 @@ class Client:
             raise WebError(f"config: {exc}") from None
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode()
         headers = {"Authorization": "Bearer " + config.key, **({"Content-Type": "application/json"} if data is not None else {})}
+        url = config.base_url + path
         try:
-            status, response = http_upstream.send(self.opener, method, config.base_url + path, data, headers, TIMEOUT)
-            raw = response.read()
+            if url.startswith("https://"):
+                status, raw = self.kept.send(method, url, data, headers, TIMEOUT)
+            else:
+                status, response = http_upstream.send(self.opener, method, url, data, headers, TIMEOUT)
+                raw = response.read()
         except OSError as exc:
             raise WebError(type(exc).__name__) from None
         if status >= 300:

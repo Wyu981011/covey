@@ -44,7 +44,7 @@ class BindingTest(unittest.TestCase):
     """Which Harness, model and budget a new lead takes, by rule alone."""
 
     def setUp(self):
-        self.apps = {"claude": app("claude", redaction=True), "codex": app("codex"), "pi": app("pi", tools=False)}
+        self.apps = {"claude": app("claude", redaction=True), "codex": app("codex"), "dsh": app("dsh", tools=False)}
         self.root = {"harness_id": "claude", "model": "opus-x", "effort": "max"}
 
     def test_the_calls_choice_then_the_settings_then_the_butlers(self):
@@ -58,7 +58,7 @@ class BindingTest(unittest.TestCase):
                          {"harness_id": "claude", "model": "opus-x", "effort": "max", "source": "butler"})
 
     def test_a_harness_that_cannot_run_a_lead_here_gives_way(self):
-        for name in ("pi", "agy"):  # No Bridge tools; not enabled.
+        for name in ("dsh", "agy"):  # No Bridge tools; not enabled.
             with self.subTest(name=name):
                 found = lead_harness.binding(self.apps, self.root, None, butler_settings.LeadModel(harness=name))
                 self.assertEqual((found["harness_id"], found["source"]), ("claude", "butler"))
@@ -68,13 +68,13 @@ class BindingTest(unittest.TestCase):
 
     def test_why_a_harness_cannot_run_a_lead(self):
         self.assertEqual(lead_harness.refusal(self.apps, "codex"), "")
-        self.assertEqual(lead_harness.refusal(self.apps, "pi"), lead_harness.CANNOT_LEAD)
+        self.assertEqual(lead_harness.refusal(self.apps, "dsh"), lead_harness.CANNOT_LEAD)
         self.assertEqual(lead_harness.refusal(self.apps, "codex", redacting=True), lead_harness.CANNOT_REDACT)
         self.assertIn("没有启用 agy", lead_harness.refusal(self.apps, "agy"))
 
     def test_the_menus_models_a_lead_can_run_on(self):
         menu = {"claude:a": {"bridge_tools": True, "redaction": True}, "codex:b": {"bridge_tools": True},
-                "pi:c": {"redaction": False}}
+                "dsh:c": {"redaction": False}}
         self.assertEqual(list(lead_harness.lead_choices(menu)), ["claude:a", "codex:b"])
         self.assertEqual(list(lead_harness.lead_choices(menu, redacting=True)), ["claude:a"])
         self.assertFalse(lead_harness.can_lead(None))
@@ -168,7 +168,7 @@ class CardSwitchTest(UpCase):
             form, _ = self.open()
         # The core's (an enabled extension's that takes the Bridge's tools, covey_internal's MASO, is listed too).
         self.assertEqual({key for key in form["models"] if key.partition(":")[0] in CORE_HARNESSES},
-                         {"claude:claude-model", "codex:codex-model", "agy:agy-model", "pi:pi-model"})
+                         {"claude:claude-model", "codex:codex-model", "agy:agy-model"})
         self.assertNotIn("dsh:dsh-model", form["models"])
         self.assertEqual(form["lead"], {"project_id": self.pid, "name": "迁移订单库"})
         self.assertEqual(form["current"]["workspace"], "project")
@@ -297,9 +297,9 @@ class CatalogTest(UpCase):
         from covey.app import web_launch
         base = self.app.apps["claude"].harness.context
         found = {model["key"]: model["bridge_tools"] for model in web_launch.catalog(self.env, base, CHAT)["models"]}
-        # Every core Harness takes the Bridge's tools (Pi and DeepSeek Harness since T700's second round).
+        # Every core Harness takes the Bridge's tools (DeepSeek Harness since T700's second round).
         core = {"claude:claude-model": True, "codex:codex-model": True, "agy:agy-model": True,
-                "dsh:dsh-model": True, "pi:pi-model": True}
+                "dsh:dsh-model": True}
         # An enabled extension adds its own Harnesses' models (covey_internal: MASO's, no Bridge tools): only the core's are named.
         self.assertEqual({key: found.get(key) for key in core}, core)
         self.assertTrue(all(isinstance(value, bool) for value in found.values()), found)

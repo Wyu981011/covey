@@ -212,17 +212,20 @@ def _send(state_dir, taken, key, target, outcome, send, made, profile, log):
     merged = len(taken) > 1
     reply_to = ""  # A message of its own at the top level, quoting no card.
     sent = []
+    cut = built if isinstance(built, Paged) else None
+    after = list(cut.after) if cut else []  # Its 这一轮中途的汇报, when the cards left it to the small one.
     try:
         if isinstance(built, Paged):  # A reply too large for one card, on several (``send_pages``).
             ok, built = send_pages(target["chat_id"], key, reply_to, send, built, sent)
         else:
             ok = send(target["chat_id"], text, key, reply_to, built, sent.append)
         error = "" if ok else "not confirmed"
-        if ok and built is None and facts.get("inputs") is not None:
-            # Cards that could not hold its 产物 and 输入/输出 too: they follow on a small card, with the same row.
+        if ok and built is None and (facts.get("inputs") is not None or after):
+            # Cards that could not hold its 产物 and 输入/输出 too: they follow on a small card, with the same row, its
+            # 这一轮中途的汇报 folded first (cards/relay_card.py relay_pages).
             tail_built, _ = linked(state_dir, target["chat_id"], tail_card(
-                [*([facts["ask"]] if facts.get("ask") else []),
-                 *answer_tail(facts.get("files"), facts["inputs"], facts.get("outputs") or (), link=target["label"],
+                [*([facts["ask"]] if facts.get("ask") else []), *after,
+                 *answer_tail(facts.get("files"), facts.get("inputs"), facts.get("outputs") or (), link=target["label"],
                               change=facts.get("change") or facts.get("delivery"), notes=facts.get("notes") or (),
                               buttons=facts.get("buttons") or ()), reply_hint(target["label"])],
                 summary(target["label"], "产物与详情", ""), "上面是这一轮的回答，产物和详情在这里"), "", profile, cards=links)
@@ -233,8 +236,11 @@ def _send(state_dir, taken, key, target, outcome, send, made, profile, log):
                 sent += tails
     except Exception as exc:  # noqa: BLE001 - it may have gone out: never sent again
         ok, error = False, type(exc).__name__
+    # Its 这一轮中途的汇报 closes on a click on its text, on whichever of its cards they went.
+    for page, message_id in zip(cut.pages if cut else (), sent):
+        fold_close.remember(state_dir, message_id, page.card, key)
     if ok and sent and built is not None:
-        fold_close.remember(state_dir, sent[-1], built, key)  # Its 这一轮中途的汇报 closes on a click on its text.
+        fold_close.remember(state_dir, sent[-1], built, key)
     if ok and sent and built is not None and facts.get("files"):
         # Its 产物 brought up to date once uploaded (app/answer_cards.py refresh).
         answer_cards.register(state_dir, key, "relay", sent[-1], built, facts.get("files_status"))

@@ -26,8 +26,9 @@ export async function fetchMe(): Promise<{ name: string | null }> {
   return res.data as { name: string | null };
 }
 
-export async function fetchSnapshot(): Promise<SnapshotResponse> {
-  const res = await axiosForBackend({ url: '/api/snapshot', method: 'GET' });
+/** since：上一份响应的 cursor（v38），只取这之后变过的话题；null 是整份。旧服务端不认 since，回的就是整份 */
+export async function fetchSnapshot(since: string | null = null): Promise<SnapshotResponse> {
+  const res = await axiosForBackend({ url: '/api/snapshot', method: 'GET', params: since ? { since } : undefined });
   return res.data as SnapshotResponse;
 }
 
@@ -90,8 +91,9 @@ export async function fetchLocate(q: { message_id?: string; question?: string })
   return res.data as LocateResponse;
 }
 
-export async function fetchOutboxStatus(opId: string): Promise<OutboxStatus> {
-  const res = await axiosForBackend({ url: `/api/outbox/${encodeURIComponent(opId)}`, method: 'GET' });
+/** wait（秒，v38）：新服务端还没回执就挂着等，旧服务端不认、马上回 */
+export async function fetchOutboxStatus(opId: string, wait = 0): Promise<OutboxStatus> {
+  const res = await axiosForBackend({ url: `/api/outbox/${encodeURIComponent(opId)}`, method: 'GET', params: wait > 0 ? { wait } : undefined });
   return res.data as OutboxStatus;
 }
 

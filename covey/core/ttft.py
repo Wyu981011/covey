@@ -6,7 +6,7 @@ from covey.core.usage import number
 
 class Sources:
     """The ``ttft_source`` names a figure is shown for: ``<backend>_<how>``, ``how`` a streamed text delta, a whole item
-    or the backend's own timing (codex_delta, codex_item, claude_delta, pi_delta; an extension's backend names its own
+    or the backend's own timing (codex_delta, codex_item, claude_delta; an extension's backend names its own
     the same way, and saved records keep the name it wrote: rule 10)."""
 
     NAME = re.compile(r"[a-z][a-z0-9]*_(?:delta|item|native)")

@@ -97,7 +97,7 @@ DETAILS = {
     "redaction_failed": "本话题开着敏感词脱敏，但本轮没法脱敏，没有发给模型服务。",
     "read_only_refused": "这个群的群成员只读，这个 Harness 做不到只读，后端没有启动。",
 }
-# The whole failure text of Codex, Pi and dsh by error code (core/reply_state.failure_text), the Harness that
+# The whole failure text of Codex and dsh by error code (core/reply_state.failure_text), the Harness that
 # failed named by {label}. The same codes are worded twice for now, in DETAILS and here.
 FAILURES = {
     "root_failed": "{label} 本轮执行失败，原生会话不可续接。",

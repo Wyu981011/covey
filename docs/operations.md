@@ -46,7 +46,7 @@ SERVICE_ROOT="$(python3 -B bin/covey_paths.py service-root)"
       ├─ 后台线程：scheduler、cards、menu、maintenance、connections、availability、outbox、policy，
       │   加上打开了的功能各自的后台线程（proxy、overview、digest、main-tools、app-setup 等）
       └─ 任务进程：bin/covey_runner.py，每个任务一个，在自己的会话里运行
-          └─ 后端进程（codex app-server、claude、pi、dsh、agy，或扩展的隔离解释器）
+          └─ 后端进程（codex app-server、claude、dsh、agy，或扩展的隔离解释器）
 
 内存看门狗：bin/covey_memguard.py，独立于以上进程，由 Manager 拉起
 自托管网页进程（可选，COVEY_WEB_SELFHOST=1）：node <目录>/server/selfhost/main.js，由 Manager 拉起，见 web.md 自托管
@@ -114,6 +114,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 ├─ harness-probe/                  Harness 探测结果的缓存（./install、doctor --probe-harnesses）
 ├─ browsers/、tmp/、workspace/     ./install 用的无头浏览器、临时目录、默认工作区
 ├─ install.json                    ./install 上次注册时的设置（重跑时比较它，没变就不重新注册）
+├─ install-harnesses.json          ./install 上次写 harnesses.json 时哪些 Harness 能用（重跑时据此只加新能用的）
 └─ harnesses.json                  --harness-config 指向它（./install 写这个文件）
 ```
 
@@ -191,7 +192,8 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 └─ 后端
    ├─ backend-health/              各后端最近一次任务的结果和模型目录查询结果，doctor 从这里读
    ├─ launch-models/、native-models/   模型目录缓存、扩展的实测档位
-   ├─ pi-sessions/、<网关名>/、<扩展>-sessions/   后端自己的会话和运行文件（<网关名>/relay.log 是模型网关的繁忙记录）
+   ├─ <网关名>/、<扩展>-sessions/   后端自己的会话和运行文件（<网关名>/relay.log 是模型网关的繁忙记录）
+   ├─ pi-sessions/                 已下线的 Pi 留下的会话（老部署才有），不再读写，可以删
    ├─ stuck-check/、track-judge/、memory-candidates/、memory-learn/、memory-tidy/、memory-harvest/   小模型一次调用的工作目录：「看看」、同时做几件事的判断、你反复说的分组
    ├─ codex-judge/、agy-judge/   没给工作目录时，小模型问 Codex、Antigravity 自己的命令行用的空目录（它们的临时主目录在 tmp/ 下，问完就删）
    └─ claude-diagnostics/、<扩展>-diagnostics/   后端诊断

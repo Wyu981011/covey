@@ -109,6 +109,38 @@ class TargetTest(Case):
         self.opened("t1", plan={"start": True}, job_key="gone")
         self.assertIsNone(relay_target(self.state, self.job()))
 
+    def test_a_topic_the_owner_opened_on_the_web_page_relays_every_turn_quoting_its_topic_card(self):
+        """T762 (the owner, 2026-11-25: T753回复的内容没发到私聊区): a topic opened on the web page has its topic card
+        at the top level, as one the butler opens at once (app/web_launch.py), but no request of the butler, so none of
+        T753's five turns relayed and none of its three questions was copied up."""
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT, root_id="om_web_root",
+                   origin={"kind": "web", "request": "web-op1", "title": "看看视觉"})
+        for job_id, message_id in ((9, "web-op1"), (10, "answer-tok"), (11, "om_typed_in_topic")):
+            self.assertEqual({"chat_id": CHAT, "reply_to": "om_web_root", "label": "T410", "token": "web-op1",
+                              "kind": "follow", "topic_id": TOPIC, "main_key": ""},
+                             relay_target(self.state, self.job(message_id=message_id, job_id=job_id)), message_id)
+        send = self.send()
+        self.assertEqual("sent", relay(self.state, self.job(message_id="answer-tok", job_id=10), DONE, send=send,
+                                       text=REPLY))
+        chat, _, key, reply_to, _, _ = send.call_args.args
+        self.assertEqual((CHAT, job_key("answer-tok", 10), ""), (chat, key, reply_to))  # Its own, at the top level.
+        # Once the butler hands it work, its turns relay through that request, as any 话题区's do.
+        self.opened("t2", topic_id=TOPIC, answer={"ok": True, "data": {"topic_id": TOPIC, "steered": False}})
+        self.assertEqual(("follow", "t2", OWNER),
+                         tuple(relay_target(self.state, self.job(message_id="om_later", job_id=12))[k]
+                               for k in ("kind", "token", "reply_to")))
+
+    def test_a_topic_from_the_web_page_of_another_chat_or_without_its_card_is_not(self):
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id="oc_other", root_id="om_web_root",
+                   origin={"kind": "web", "request": "web-op1"})
+        self.assertIsNone(relay_target(self.state, self.job(message_id="web-op1")))
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT, root_id="web-op1",
+                   origin={"kind": "web", "request": "web-op1"})
+        self.assertIsNone(relay_target(self.state, self.job(message_id="web-op1")))
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT, root_id="om_root",
+                   origin={"kind": "launch"})
+        self.assertIsNone(relay_target(self.state, self.job(message_id="om_typed_in_topic")))
+
 
 class CardTest(unittest.TestCase):
     def test_a_long_reply_is_shown_whole(self):
@@ -267,6 +299,47 @@ class SendTest(Case):
         self.assertEqual(("sent", "om_page1"), (saved["state"], saved["message_id"]))
         for n in range(1, len(sent) + 1):
             self.assertEqual(TOPIC, message_topic(self.state, CHAT, f"om_page{n}"))  # Each the topic's.
+
+    def test_a_long_relay_s_reports_go_folded_on_cards_that_close_on_their_text(self):
+        # T758 (the owner, 2026-11-25): T732's relay was on several cards and its 这一轮中途的汇报 open on the last.
+        from covey.app import fold_close
+        from covey.cards.pages import Paged
+        from covey.core.trace import STAGE_HEADING, with_stage_notes
+        reply = "## 结论\n先说结论。\n\n" + "\n\n".join(f"### 第{n}节\n" + "细节很长，" * 300 for n in range(1, 12))
+        text = with_stage_notes(reply, [(None, f"第{n}次汇报：" + "进展" * 400) for n in range(1, 41)])
+        sent, ids = [], iter(f"om_page{n}" for n in range(1, 30))
+
+        def one(chat, text, key, reply_to, card, on_sent):
+            sent.append((key, text, card))
+            on_sent(next(ids))
+            return True
+        self.assertEqual("sent", relay(self.state, self.job(), DONE, send=mock.Mock(side_effect=one), text=text,
+                                       inputs=["Claude Code"], outputs=[]))
+        self.assertTrue(all(STAGE_HEADING not in words for _, words, _ in sent))
+        folded = [n for n, (_, _, card) in enumerate(sent, 1) if fold_close.has_fold(card)]
+        self.assertGreater(len(folded), 1)
+        for n in folded:  # Each kept, so a click on its text closes it.
+            self.assertTrue(fold_close.path_of(self.state, f"om_page{n}").exists())
+        self.assertFalse(fold_close.path_of(self.state, "om_page1").exists())  # The reply's first card has none.
+        # The cards left the reports to the small card of the parts: it carries them, folded first.
+        for path in list((self.state / "main-thread" / "relays").glob("*.json")):
+            path.unlink()
+        sent.clear()
+        fold = {"tag": "collapsible_panel", "element_id": "relay_reply_s0", "expanded": False,
+                "elements": [{"tag": "interactive_container", "elements": [],
+                              "behaviors": [{"type": "callback", "value": {"kind": "bridge_fold_close", "fold": "relay_reply_s0"}}]}]}
+        real = relay_send.relay_pages
+
+        def alone(*args, **kwargs):
+            return Paged(real(*args, **kwargs).pages, True, (fold,))
+        ids = iter(f"om_next{n}" for n in range(1, 30))
+        with mock.patch("covey.app.relay_send.relay_pages", side_effect=alone):
+            self.assertEqual("sent", relay(self.state, self.job(), DONE, send=mock.Mock(side_effect=one), text=reply,
+                                           inputs=["Claude Code"], outputs=[]))
+        key, _, card = sent[-1]
+        self.assertTrue(key.endswith("-tail"))
+        self.assertIn("relay_reply_s0", [element.get("element_id") for element in card["body"]["elements"]])
+        self.assertTrue(fold_close.path_of(self.state, f"om_next{len(sent)}").exists())
 
     def test_a_sent_relay_is_a_log_line(self):
         log = mock.Mock()

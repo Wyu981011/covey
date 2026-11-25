@@ -4,7 +4,8 @@ import { ArrowDown, ChevronRight, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CollabView, OutboxView, SayFile, SnapshotProject, SnapshotTopic, TurnView } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { newOpId, postOutboxQuiet, useRoomTurns, useSendOutbox, useSnapshot, useTurns } from '@client/src/hooks/use-workbench';
+import { newOpId, postOutboxQuiet, useRoomTurns, useSnapshot, useTurns } from '@client/src/hooks/use-workbench';
+import { useSendOutbox, useTrackedOp } from './sendOp';
 import {
   addPending, getDraft, getScroll, markSeenSent, patchPending, removePending, setDraft, setScroll, usePending, type Pending,
 } from '@client/src/lib/conv-store';
@@ -16,7 +17,7 @@ import { Md } from './Md';
 import { composerWords, QuestionPanel, useQuestionForm } from './Question';
 import { ctxLimitOk, fmtDur, fmtWindow, harnessName, hhmm, isRunning, isWaiting, toneOf } from './lib';
 import { FailBox, stopWords } from './Timeline';
-import { opLine, opWords } from './opWords';
+import { bubbleWords, opLine, opWords } from './opWords';
 import { AgentTurn, ChatRound, OwnerBubble } from './chatTurn';
 import { progressNote, saidLabel, shownText, stopPressing } from './topicText';
 import { Dot, useTick } from './ui';
@@ -67,15 +68,15 @@ const ContextMeter: React.FC<{ used: number; limit: number }> = ({ used, limit }
   );
 };
 
-/** 刚发出的一句话：状态按 outbox 行走（发送中 → 已发出，等 Covey → 已执行 / 没办成：原因，opWords.ts），没办成的可以关掉 */
+/** 刚发出的一句话（T765 F3）：发送中时半透明；写进网页库（POST 成功）就画成正式的样子，旁边写“✓ 已发出”；
+ * Covey 回执后写它的回执原话（“已开下一轮”“已作为补充交给在做的任务 #…”），没办成写原因，没办成的可以关掉（opWords.ts bubbleWords） */
 const PendingBubble: React.FC<{ p: Pending; row: OutboxView | undefined; onClose: () => void }> = ({ p, row, onClose }) => {
-  const failed: boolean = p.phase === 'failed' || row?.state === 'failed';
-  const text: string = p.phase === 'failed'
-    ? opWords('unsent', p.error)
-    : row?.state === 'failed' ? opWords('failed', row.message)
-      : row?.state === 'done' ? opWords('done') : p.phase === 'sent' ? opWords('waiting') : opWords('sending');
+  const tr = useTrackedOp(p.id);
+  const w = bubbleWords(p, row, tr);
+  const failed: boolean = w.tone === 'bad';
+  const text: string = w.text;
   return (
-    <div className="um" style={{ opacity: failed ? 1 : 0.8 }}>
+    <div className="um" style={{ opacity: w.faded ? 0.8 : 1 }}>
       <div className="um-tx">
         {p.text ? <Md body={p.text} said /> : null}
         {p.files?.length ? (
@@ -88,7 +89,7 @@ const PendingBubble: React.FC<{ p: Pending; row: OutboxView | undefined; onClose
           </div>
         ) : null}
       </div>
-      <span className="tm" role={failed ? 'alert' : undefined} style={failed ? { color: 'var(--fail)' } : undefined}>
+      <span className="tm" role={failed ? 'alert' : undefined} title={w.title || undefined} style={failed ? { color: 'var(--fail)' } : undefined}>
         {text}
         {failed ? (
           <button type="button" aria-label="关闭" onClick={onClose} style={{ marginLeft: 6, background: 'none', border: 0, cursor: 'pointer', color: 'inherit' }}>×</button>
@@ -598,8 +599,25 @@ export const Conversation: React.FC<{
     return !!t && (isRunning(t) || isWaiting(t));
   };
 
-  const stop = (): void =>
-    send.mutate({ op_id: newOpId(), kind: 'stop', topic_key: topicKey, payload: {} }, { onError: (e: Error) => toast.error(opWords('unsent', errorText(e))) });
+  // 停止（T765 F2）：点了就写“正在停…”并禁用，直到话题不在跑（running 为假，按钮自己没了）、停止失败或等满了没回音
+  const [stopOp, setStopOp] = useState<{ id: string; posted: boolean } | null>(null);
+  const stopTr = useTrackedOp(stopOp?.id);
+  const stop = (): void => {
+    const id: string = newOpId();
+    send.mutate(
+      { op_id: id, kind: 'stop', topic_key: topicKey, payload: {} },
+      {
+        onSuccess: () => setStopOp({ id, posted: true }),
+        onError: (e: Error) => {
+          setStopOp(null);
+          toast.error(opWords('unsent', errorText(e)));
+        },
+      },
+    );
+    // 点击里直接 setState 会在请求发出去之前先整页重画一遍（话题页很大，慢机器上晚发几百毫秒；微任务里 setState 也一样，
+    // React 当它是点击里的更新）：放到下一个任务，请求发出以后再写“正在停…”
+    window.setTimeout(() => setStopOp((cur) => (cur?.id === id ? cur : { id, posted: false })), 0);
+  };
   // 专项页里点开的成员话题也有配置栏（话题页由 TopicPage 给）：和话题页一样能换配置。
   // v36：专项页里只看这位负责人的那部分也有负责人的配置栏（同飞书专项卡上的「换配置」）；忙不忙只看负责人自己（这一路里还有专项话题的轮次）
   const leadBusy: boolean = (!!topic && (isRunning(topic) || toneOf(topic) === 'queued'))
@@ -619,6 +637,8 @@ export const Conversation: React.FC<{
     return () => { void nav(to); };
   };
   const stopPending: boolean = outbox.some((o: OutboxView) => o.kind === 'stop' && o.state === 'new');
+  // 回执到了话题却还显示在跑（Covey 的新状态晚一步推来）也算正在停，最多再等 15 秒
+  const stopping: boolean = stopPending || (!!stopOp && (!stopOp.posted || stopTr?.phase === 'waiting' || (stopTr?.phase === 'done' && running && Date.now() - stopTr.at < 15000)));
 
   if (isError && !data) {
     return (
@@ -821,7 +841,8 @@ export const Conversation: React.FC<{
         route={route}
         config={config ?? ownConfig}
         sendLabel={answering ? '提交回答' : '发送'}
-        onStop={running && !butler && !stopPending ? stop : undefined}
+        onStop={running && !butler ? stop : undefined}
+        stopping={stopping}
         extra={extra !== undefined ? extra : topic?.context ? <ContextMeter used={topic.context.used} limit={ctxLimitOk(topic.context) ? topic.context.limit : 0} /> : undefined}
       />
     </div>

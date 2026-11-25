@@ -27,6 +27,10 @@ import type {
 import { WorkbenchImagesService } from './workbench.images.service';
 import { WorkbenchQueryService } from './workbench.query.service';
 import { WorkbenchUploadsService } from './workbench.uploads.service';
+import { waitSeconds } from './workbench.wake';
+
+/** 页面问回执最多挂多久（秒） */
+const OUTBOX_WAIT_MAX = 8;
 
 /** 主人的妙搭 user_id 放环境变量 COVEY_OWNER_USER_ID；没配就谁都不放行 */
 function mustBeOwner(req: Request): void {
@@ -84,9 +88,9 @@ export class WorkbenchController {
   }
 
   @Get('snapshot')
-  snapshot(@Req() req: Request, @Res({ passthrough: true }) res: Response): Promise<SnapshotResponse> {
+  snapshot(@Req() req: Request, @Res({ passthrough: true }) res: Response, @Query('since') since?: string): Promise<SnapshotResponse> {
     mustBeOwner(req);
-    return timed(res, () => this.svc.snapshot());
+    return timed(res, () => this.svc.snapshot(since ? String(since) : null));
   }
 
   @Get('topics/:key/turns')
@@ -202,9 +206,12 @@ export class WorkbenchController {
   }
 
   @Get('outbox/:opId')
-  outboxStatus(@Req() req: Request, @Param('opId') opId: string): Promise<OutboxStatus> {
+  outboxStatus(@Req() req: Request, @Res({ passthrough: true }) res: Response, @Param('opId') opId: string, @Query('wait') wait?: string): Promise<OutboxStatus> {
     mustBeOwner(req);
-    return this.svc.outboxStatus(opId);
+    // wait（秒，可选，≤8）：还没有回执就挂着等；页面断开了就不再等
+    let closed = false;
+    res.once('close', () => { closed = true; });
+    return this.svc.outboxStatus(opId, waitSeconds(wait, OUTBOX_WAIT_MAX) * 1000, () => closed);
   }
 
   @Post('outbox')

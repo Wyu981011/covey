@@ -264,6 +264,75 @@ test('登录后：读看板、话题、发一句', async () => {
   assert.equal((await fetch(`${base}/openapi/sync/inbox`, { headers: { cookie } })).status, 401);
 });
 
+test('更快的取数（v38）：取件 wait 挂着等、快照 since 增量、回执 wait 挂着等；不带参数和以前一样', async () => {
+  const cookie = approved.session;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const items0 = (await (await open('inbox', { key: SECOND_KEY })).json());
+  assert.equal('waited' in items0, false, '不带 wait 的响应没有 waited，旧 Covey 看到的和以前一样');
+  const after = Math.max(0, ...items0.items.map((i) => i.seq));
+  // 没有新操作：挂到 wait 秒才回，带 waited: true
+  const t0 = Date.now();
+  const idle = await (await open(`inbox?after=${after}&wait=1`, { key: SECOND_KEY })).json();
+  assert.deepEqual(idle, { items: [], waited: true });
+  assert.ok(Date.now() - t0 >= 900 && Date.now() - t0 < 2500, `挂了 ${Date.now() - t0} 毫秒`);
+  // 挂着的时候页面发了一条：马上回来，不用等满
+  const held = open(`inbox?after=${after}&wait=8`, { key: SECOND_KEY }).then((r) => r.json());
+  await sleep(300);
+  const t1 = Date.now();
+  assert.equal((await api('/api/outbox', { method: 'POST', cookie, body: { op_id: 'wait-1', kind: 'say', topic_key: 't1', payload: { text: '挂着等' } } })).status < 300, true);
+  const got = await held;
+  assert.ok(got.waited && got.items.some((i) => i.op_id === 'wait-1'), JSON.stringify(got));
+  assert.ok(Date.now() - t1 < 1500, `发出后 ${Date.now() - t1} 毫秒才取到`);
+  // wait 上限 10 秒、不是数就不等
+  assert.deepEqual(await (await open(`inbox?after=999999&wait=abc`, { key: SECOND_KEY })).json(), { items: [], waited: true });
+
+  // 快照：每次都带 cursor；since 是现在（什么都没变）时 topics 为空、keys 是全部话题
+  const full = await (await api('/api/snapshot', { cookie })).json();
+  assert.ok(typeof full.cursor === 'string' && !full.partial && !full.keys);
+  const quiet = await (await api(`/api/snapshot?since=${encodeURIComponent(new Date(Date.now() + 1000).toISOString())}`, { cookie })).json();
+  assert.equal(quiet.partial, true);
+  assert.deepEqual(quiet.topics, []);
+  assert.ok(quiet.keys.includes('t1') && quiet.keys.length === full.topics.length);
+  assert.ok(quiet.projects.some((p) => p.key === 'p1') && quiet.projects.find((p) => p.key === 'p1').counts.topics >= 1, '专项的话题数照所有话题算');
+  // 话题变了：只有它回来；轮次变了也算它变了
+  const mark = new Date().toISOString();
+  await sleep(50);
+  await open('upsert', { method: 'POST', key: SECOND_KEY, body: { items: [{ type: 'topic', key: 't1', rev: 'v38-a', data: { title: '话题一（改过）', state: '在做', number: 1, project_key: 'p1', updated_at: Date.now() / 1000 } }] } });
+  const changed = await (await api(`/api/snapshot?since=${encodeURIComponent(mark)}`, { cookie })).json();
+  assert.deepEqual(changed.topics.map((t) => t.key), ['t1']);
+  assert.equal(changed.topics[0].title, '话题一（改过）');
+  const mark2 = new Date().toISOString();
+  await sleep(50);
+  await open('upsert', { method: 'POST', key: SECOND_KEY, body: { items: [{ type: 'turn', key: 't1:2', rev: 'v38-b', data: { topic_key: 't1', seq: 2, role: 'agent', status: 'done', body: '第二轮的回答' } }] } });
+  const viaTurn = await (await api(`/api/snapshot?since=${encodeURIComponent(mark2)}`, { cookie })).json();
+  assert.deepEqual(viaTurn.topics.map((t) => t.key), ['t1']);
+  assert.equal(viaTurn.topics[0].latest, '第二轮的回答');
+  // 不合法的 since 当没带：整份
+  const bad = await (await api('/api/snapshot?since=不是时间', { cookie })).json();
+  assert.ok(!bad.partial && bad.topics.some((t) => t.key === 't1'));
+
+  // 回执：还没回执时挂着等，Covey 回执后马上回；等满了没回执返回 new；没有这条发件仍是 404
+  const none = Date.now();
+  assert.equal((await api('/api/outbox/不存在?wait=5', { cookie })).status, 404);
+  assert.ok(Date.now() - none < 1500);
+  const w0 = Date.now();
+  const still = await (await api('/api/outbox/wait-1?wait=1', { cookie })).json();
+  assert.equal(still.state, 'new');
+  assert.ok(Date.now() - w0 >= 900 && Date.now() - w0 < 2500, `挂了 ${Date.now() - w0} 毫秒`);
+  const waiting = api('/api/outbox/wait-1?wait=8', { cookie }).then((r) => r.json());
+  await sleep(300);
+  const a0 = Date.now();
+  await open('ack', { method: 'POST', key: SECOND_KEY, body: { results: [{ op_id: 'wait-1', state: 'done', message: '已作为补充交给在做的任务 #7' }] } });
+  const rec = await waiting;
+  assert.equal(rec.state, 'done');
+  assert.equal(rec.message, '已作为补充交给在做的任务 #7');
+  assert.ok(Date.now() - a0 < 1500, `回执后 ${Date.now() - a0} 毫秒才取到`);
+  // 不带 wait：马上回，不挂
+  const quick = Date.now();
+  assert.equal((await (await api('/api/outbox/wait-1', { cookie })).json()).state, 'done');
+  assert.ok(Date.now() - quick < 1000);
+});
+
 test('登录后：已登录的浏览器列表标出当前这个', async () => {
   const res = await api('/api/auth/sessions', { cookie: approved.session });
   const { sessions } = await res.json();

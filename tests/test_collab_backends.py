@@ -69,7 +69,7 @@ class LimitTest(unittest.TestCase):
         ctx = make_context(Path("/x"), options={TOOL_LIMIT: CONSULT})
         for caps in (HarnessCapabilities(), HarnessCapabilities(read_only=True), HarnessCapabilities(collab=True)):
             with self.subTest(caps):
-                self.assertIn("还不能做只读咨询", tool_limits.refusal(ctx, caps, "Pi"))
+                self.assertIn("还不能做只读咨询", tool_limits.refusal(ctx, caps, "Later"))
         self.assertEqual(tool_limits.refusal(ctx, HarnessCapabilities(read_only=True, collab=True), "Claude"), "")
         self.assertTrue(tool_limits.note(ctx).endswith(tool_limits.CONSULT_NOTE))
         self.assertEqual(tool_limits.note(make_context(Path("/x"), options={TOOL_LIMIT: LOOK})), "")

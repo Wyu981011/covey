@@ -14,6 +14,7 @@ from covey.app.launch_models import available_models
 from covey.app.topics import retired_notice
 from covey.app.unified import UnifiedBridgeApp
 from covey.core.jobs import find_job_record, upsert_job_record
+from covey.core.roster import NAMES
 from covey.core import run_dir
 from covey.core.state import write_json
 from covey.core.topics import read_topic, remember_topic_message
@@ -164,6 +165,19 @@ class EnabledHarnessTests(UnifiedCase):
         for value in ('gpt-6-astra', [1], ['']):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'models_first'):
                 self.configured_bridge(['claude', 'maso'], maso={'models_first': value})
+
+    def test_a_retired_harness_an_older_install_enabled_is_left_out_and_the_bridge_starts(self):
+        # Pi was retired (T766): a harnesses.json an older ./install wrote with it still starts the Bridge.
+        self.enable(('claude', 'pi'))
+        self.assertEqual(set(self.app.apps), {'claude'})
+        self.assertIn('harness config enables retired Harnesses, left out: pi', self.logs)
+        self.logs.clear()
+        app, _, _ = self.configured_bridge(['pi'], pi={'args': ['--pi-cmd', '/absolute/pi']})
+        self.assertEqual(tuple(app.apps), NAMES)  # Nothing else listed: as if the list were omitted.
+        self.assertEqual(app.topics.default, NAMES[0])
+        self.assertIn('harness config ignores Harnesses not in the roster: pi', self.logs)
+        with self.assertRaises(ValueError):
+            self.configured_bridge(['claude', 'pi', 'pi'])
 
     def test_invalid_enabled_list_is_rejected_before_startup(self):
         for value in ([], None, 'claude', ['unknown'], ['claude', 'claude'], [1], [{}]):

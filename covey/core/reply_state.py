@@ -1,4 +1,4 @@
-"""The verified reply and the outcome of one turn of Codex, Pi or dsh.
+"""The verified reply and the outcome of one turn of Codex or dsh.
 
 A callback saves evidence; only the final outcome can authorize delivery (rule 5). Each failure
 code has one text (core/result.py FAILURES), the Harness that failed named by ``{label}``; a route

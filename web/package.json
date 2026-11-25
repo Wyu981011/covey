@@ -60,6 +60,8 @@
     "test:v34": "node --import ./scripts/alias.mjs --test scripts/v34.test.mjs",
     "test:canvas": "node --test scripts/canvas-look.test.mjs",
     "test:status": "node --import ./scripts/alias.mjs --test scripts/status-groups.test.mjs",
+    "test:optrack": "node --import ./scripts/alias.mjs --test scripts/op-track.test.mjs",
+    "test:snapmerge": "node --import ./scripts/alias.mjs --test scripts/snapshot-merge.test.mjs",
     "test:selfhost-logic": "node --import ./scripts/alias.mjs --test scripts/selfhost-logic.test.mjs",
     "test:selfhost-tls": "npm run build:selfhost:server && node --test scripts/selfhost-tls.test.mjs",
     "test:selfhost-api": "npm run build:selfhost:server && node --test scripts/selfhost-api.test.mjs"

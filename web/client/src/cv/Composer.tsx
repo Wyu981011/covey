@@ -4,11 +4,12 @@ import { ArrowUp, Code2, ExternalLink, FileText, Maximize2, Minimize2, Plus, Rot
 import { toast } from 'sonner';
 import type { SayFile, SayPayload } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { newOpId, useSendOutbox } from '@client/src/hooks/use-workbench';
+import { newOpId } from '@client/src/hooks/use-workbench';
+import { useSendOutbox } from './sendOp';
 import { addPending, getDraft, patchPending, setDraft } from '@client/src/lib/conv-store';
 import { errorText } from '@client/src/lib/workbench-format';
 import { blobOf, useAttachments, type Attachment } from './attachments';
-import { fmtSize, listEnter, listIndent, SEND_KEY, type TextEdit } from './composerText';
+import { BIG_HINT, ENTER_HINT, enterAction, fmtSize, lineBreak, listEnter, listIndent, SEND_KEY, type TextEdit } from './composerText';
 import type { LaunchBox } from './launch';
 import { LaunchLine, LaunchNote, LaunchPanel } from './LaunchPanel';
 import { pref, setPref } from './lib';
@@ -48,6 +49,9 @@ export interface KeyLike {
   ctrlKey: boolean;
   preventDefault: () => void;
 }
+
+/** 触屏手机（没有鼠标悬停、指针粗）：屏幕键盘的回车只换行，点发送钮发；窄窗口的电脑仍按电脑算 */
+const touchFirst = (): boolean => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none) and (pointer: coarse)').matches;
 
 /** 外面能对输入框做的：聚焦、在末尾插几个字（和打字一样走 onValue，大厅和话题页的 @ 候选跟着变） */
 export interface ComposerHandle {
@@ -142,7 +146,8 @@ const DraftLightbox: React.FC<{ items: Attachment[]; at: number; onAt: (i: numbe
 
 /**
  * 底部输入框（T616）：
- * - 桌面 Enter 换行、⌘/Ctrl+Enter 发送；手机 Enter 换行、发送钮发。列表项里按 Enter 续下一项，Tab / Shift+Tab 缩进列表项。
+ * - 按键和飞书聊天一样（T761，composerText.ts 的 enterAction）：收着时 Enter 发送，Shift / Ctrl / ⌘ / Alt + Enter 换行；
+ *   放大后几种 Enter 都换行，只有发送钮发；触屏手机上回车换行、发送钮发。换行都是另起一段：列表里续下一项，Tab / Shift+Tab 缩进列表项。
  * - 边写边渲染（RichText）：写 Markdown 直接变样子，发出去的仍是 Markdown 文字；「</>」切到源码（纯文字框），选择记在本机。
  * - 随内容长高（上限按对话区算），再高出滚动条；「放大」切成大编辑区，再点或 Esc 收回。
  * - 写的字和附件按对话存（换对话、刷新都在，发出去才清）；附件小卡点开看大图，文件在新标签页打开。
@@ -156,6 +161,8 @@ export const Composer: React.FC<{
   placeholder: string;
   hint?: React.ReactNode;
   onStop?: () => void;
+  /** 停止已经发出、话题还没停下：停止钮禁用，写“正在停…”（T765 F2） */
+  stopping?: boolean;
   extra?: React.ReactNode;
   config?: React.ReactNode;
   value?: string;
@@ -170,13 +177,15 @@ export const Composer: React.FC<{
   launchOnly?: boolean;
   /** 大厅给（T624）：输入框上沿的 @、引用条和 @ 候选；发出交给 route.send（它决定交给谁），返回 true 才清空 */
   route?: ComposerRoute | null;
-}> = ({ topicKey, maxSeq, placeholder: basePlaceholder, hint, onStop, extra, config, value, onValue, onSubmit, canSubmit, sendLabel: baseLabel = '发送', inputRef, launch, route, launchOnly = false }) => {
+}> = ({ topicKey, maxSeq, placeholder: basePlaceholder, hint, onStop, stopping = false, extra, config, value, onValue, onSubmit, canSubmit, sendLabel: baseLabel = '发送', inputRef, launch, route, launchOnly = false }) => {
   const [own, setOwn] = useState<string>(() => getDraft(topicKey));
   const text: string = value ?? own;
   const desktop: boolean = useIsDesktop();
   const say = useSay(topicKey);
   const att = useAttachments(topicKey);
   const [big, setBig] = useState<boolean>(false);
+  /** Enter 发送还是换行：收着时发送，放大后、触屏手机上换行 */
+  const sendOnEnter: boolean = !big && !touchFirst();
   /** 看 Markdown 源码（纯文字框）；默认边写边渲染。记在本机 */
   const [source, setSourceState] = useState<boolean>(() => pref('composer_source', '0') === '1');
   const setSource = (v: boolean): void => {
@@ -364,13 +373,16 @@ export const Composer: React.FC<{
       apply(listIndent(el.value, el.selectionStart, el.selectionEnd, e.shiftKey), e);
       return;
     }
-    if (e.key !== 'Enter') return;
-    if (e.metaKey || e.ctrlKey) {
+    const act = enterAction({ key: e.key, shiftKey: e.shiftKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey, altKey: e.altKey, keyCode: e.keyCode }, sendOnEnter);
+    if (act === 'send') {
       e.preventDefault();
       submit();
       return;
     }
-    if (!e.shiftKey && !e.altKey) apply(listEnter(el.value, el.selectionStart, el.selectionEnd), e);
+    if (act !== 'break') return;
+    // 换行：列表项里续下一项；Ctrl / ⌘ / Alt + Enter 浏览器自己不换，替它换；Enter、Shift+Enter 交给浏览器
+    if (apply(listEnter(el.value, el.selectionStart, el.selectionEnd), e)) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) apply(lineBreak(el.value, el.selectionStart, el.selectionEnd), e);
   };
   const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
     const files: File[] = Array.from(e.clipboardData?.files ?? []);
@@ -402,6 +414,7 @@ export const Composer: React.FC<{
       onChange={change}
       placeholder={placeholder}
       onSubmit={submit}
+      sendOnEnter={sendOnEnter}
       onKey={route?.keys}
       onTrigger={route?.onTrigger}
       onFiles={addFiles}
@@ -501,8 +514,8 @@ export const Composer: React.FC<{
             {area}
           </div>
           {onStop ? (
-            <button type="button" className="stopb" onClick={onStop} aria-label="停止" style={{ height: 40, borderRadius: 20 }}>
-              <Square /> 停止
+            <button type="button" className="stopb" onClick={onStop} disabled={stopping} aria-label={stopping ? '正在停' : '停止'} style={{ height: 40, borderRadius: 20 }}>
+              <Square /> {stopping ? '正在停…' : '停止'}
             </button>
           ) : null}
           <button type="button" className="send" onClick={submit} disabled={!sendable} aria-label={sendLabel} title={route?.blocked || route?.title || sendLabel} style={{ border: 0 }}>
@@ -530,17 +543,17 @@ export const Composer: React.FC<{
           <span className="sp" />
           {tools}
           {onStop ? (
-            <button type="button" className="stopb" onClick={onStop}>
-              <Square /> 停止
+            <button type="button" className="stopb" onClick={onStop} disabled={stopping} aria-label={stopping ? '正在停' : undefined}>
+              <Square /> {stopping ? '正在停…' : '停止'}
             </button>
           ) : null}
-          <button type="button" className="send" onClick={submit} disabled={!sendable} aria-label={sendLabel} title={route?.blocked || `${route?.title ? `${route.title}：` : ''}${sendLabel}（${SEND_KEY}）`} style={{ border: 0 }}>
+          <button type="button" className="send" onClick={submit} disabled={!sendable} aria-label={sendLabel} title={route?.blocked || `${route?.title ? `${route.title}：` : ''}${sendLabel}${sendOnEnter ? `（${SEND_KEY}）` : ''}`} style={{ border: 0 }}>
             <ArrowUp />
           </button>
         </div>
         {drag ? <div className="cp-drop">松开就加进附件</div> : null}
       </div>
-      <div className="hint">{hint ?? `${SEND_KEY} 发送 · Enter 换行`}</div>
+      <div className="hint">{big ? BIG_HINT : (hint ?? ENTER_HINT)}</div>
     </>
   );
 };

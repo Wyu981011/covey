@@ -1,6 +1,6 @@
 # 管家
 
-管家是私聊里一个常驻的会话（设置卡的私聊模式选“管家”时），没选 Harness 时跑在 Claude Code 上，这台机器没启用 Claude Code 时依次跑在启用了的 Codex、Antigravity 上（再没有时用 Pi 或 DeepSeek Harness）；也可以在设置卡「配置」页的“管家”一段换。主人在私聊**顶层**发的消息都交给它：能直接答的自己答，要干活的开话题或转给已有话题，主人说“T12 选 A”时替主人答选择题。用户视角见[使用指南 · 管家](usage.md#管家)，部署开关见[配置](configuration.md)。
+管家是私聊里一个常驻的会话（设置卡的私聊模式选“管家”时），没选 Harness 时跑在 Claude Code 上，这台机器没启用 Claude Code 时依次跑在启用了的 Codex、Antigravity 上（再没有时用 DeepSeek Harness）；也可以在设置卡「配置」页的“管家”一段换。主人在私聊**顶层**发的消息都交给它：能直接答的自己答，要干活的开话题或转给已有话题，主人说“T12 选 A”时替主人答选择题。用户视角见[使用指南 · 管家](usage.md#管家)，部署开关见[配置](configuration.md)。
 
 管家交给负责人跟进的长期的事见[专项](projects.md)，网页上的工作台见[网页工作台](web.md)。这篇讲管家是什么、由哪几块组成、一轮怎么走；放置表的每一格、工具通道的协议、各功能的记录和刷新方式等改代码时才查的细节在[管家的实现细节](butler-internals.md)，标题和这里一一对应。
 
@@ -24,7 +24,7 @@
 
 **纯话题**下和没有管家时一样：顶层每条消息开一个话题；引用管家以前的卡当作新消息开话题（`core/topics.py` 的 `context_for_topic`），引用“交给一个话题”的管家卡照旧进那个话题；正在跑的管家那一轮跑完，按 `BUTLER_OFF` 收尾；会话和记录留着；管家开过的话题不再回带、不再放顶层问题卡副本。群聊两种模式都没有管家。
 
-管家的 Harness 是设置里的 `harness`，只能选能接 Bridge 工具的（`core/harness.py` 的 `bridge_tools`：Claude Code、本机上的 Codex、Antigravity、Pi 和 DeepSeek Harness；扩展里的 Harness 看它自己声明没有；见[换 Harness](#换-harness)）。没选（空）时跟着启用了的走（`app/butler_harness.py`）：启用了 Claude Code 就用它，和以前一样；没启用时用启用了的、能接工具的第一个：先 Codex、再 Antigravity，然后才按名单顺序轮到 Pi、DeepSeek Harness（`FALLBACKS`）。设置卡和网页设置页上画的是它现在用的那个，不写进文件，以后装上 Claude Code 就回到 Claude Code。没选 Harness 时记下的模型和预算是 Claude Code 的（设置卡把 Claude Code 存成空），换到别的 Harness 上时用它自己的默认模型（`model_of`）；在设置卡上给 Codex 或 Antigravity 选模型时，Harness 一起记下。选了的 Harness 没启用或接不了工具时不替换：私聊消息照旧开话题，Bridge 启动日志写一行 `main thread is on but its Harness <名字> is not enabled or cannot take the Bridge tools`；没选、也没有一个启用了的能接工具时写 `main thread is on but no enabled Harness can take the Bridge tools (Claude Code, Codex, Antigravity, Pi or DeepSeek Harness)`。新部署私聊里的[欢迎卡](usage.md#第一次使用)（`app/welcome.py` 的 `butler_state`）也当面说：没有管家时写为什么（管家用的 Harness 没启用或接不了工具；`COVEY_BUTLER=0`；私聊模式是纯话题；或它刚才没起来）和怎么补（装好并登录 Claude Code、Codex 或 Antigravity 中的一个再运行一次 `./install`，选过别的 Harness 的在设置卡「配置」页的“管家”一段换成启用了的；纯话题时在同一页改回交给管家），并说明每条消息会开一个话题、先出启动卡；有管家时说明你的话下面出现表情就是收到了，有东西要给你看时才发卡（一轮跑过 90 秒才发任务卡，见[提问不开串](#提问不开串)）。
+管家的 Harness 是设置里的 `harness`，只能选能接 Bridge 工具的（`core/harness.py` 的 `bridge_tools`：Claude Code、本机上的 Codex、Antigravity 和 DeepSeek Harness；扩展里的 Harness 看它自己声明没有；见[换 Harness](#换-harness)）。没选（空）时跟着启用了的走（`app/butler_harness.py`）：启用了 Claude Code 就用它，和以前一样；没启用时用启用了的、能接工具的第一个：先 Codex、再 Antigravity，然后才轮到 DeepSeek Harness（`FALLBACKS`）。设置卡和网页设置页上画的是它现在用的那个，不写进文件，以后装上 Claude Code 就回到 Claude Code。没选 Harness 时记下的模型和预算是 Claude Code 的（设置卡把 Claude Code 存成空），换到别的 Harness 上时用它自己的默认模型（`model_of`）；在设置卡上给 Codex 或 Antigravity 选模型时，Harness 一起记下。选了的 Harness 没启用或接不了工具时不替换：私聊消息照旧开话题，Bridge 启动日志写一行 `main thread is on but its Harness <名字> is not enabled or cannot take the Bridge tools`；没选、也没有一个启用了的能接工具时写 `main thread is on but no enabled Harness can take the Bridge tools (Claude Code, Codex, Antigravity or DeepSeek Harness)`。新部署私聊里的[欢迎卡](usage.md#第一次使用)（`app/welcome.py` 的 `butler_state`）也当面说：没有管家时写为什么（管家用的 Harness 没启用或接不了工具；`COVEY_BUTLER=0`；私聊模式是纯话题；或它刚才没起来）和怎么补（装好并登录 Claude Code、Codex 或 Antigravity 中的一个再运行一次 `./install`，选过别的 Harness 的在设置卡「配置」页的“管家”一段换成启用了的；纯话题时在同一页改回交给管家），并说明每条消息会开一个话题、先出启动卡；有管家时说明你的话下面出现表情就是收到了，有东西要给你看时才发卡（一轮跑过 90 秒才发任务卡，见[提问不开串](#提问不开串)）。
 
 ## 和话题的不同
 
@@ -232,7 +232,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 
 ## 结论回到顶层
 
-管家开的或转过去的那一轮结束时，Bridge 在聊天区发一条新消息，第一行头像行写谁在说（话题的 T 号头像、标题和状态，后面灰字写它对你哪句话做了什么），整行可点、进话题串里这一轮的卡；下面一行灰字收着你那句话（回答问题的一轮是问题和你的回答），点开看全文。再下面直接是回答全文，没有结论带、不折叠。只在管家开着时；不调模型。回带的是管家开的、转过去的轮次和它们的自动重试，以及话题里回答问题后接着跑的、主人在串里开的一轮；管家没碰过的话题不回带。专项的话题只回带负责人在你在场的一轮里交出去的那一轮（[主人在等的结果](projects.md#主人在等的结果)）。
+管家开的或转过去的那一轮结束时，Bridge 在聊天区发一条新消息，第一行头像行写谁在说（话题的 T 号头像、标题和状态，后面灰字写它对你哪句话做了什么），整行可点、进话题串里这一轮的卡；下面一行灰字收着你那句话（回答问题的一轮是问题和你的回答），点开看全文。再下面直接是回答全文，没有结论带、不折叠。只在管家开着时；不调模型。回带的是管家开的、转过去的轮次和它们的自动重试，以及话题里回答问题后接着跑的、主人在串里开的一轮；网页上开的话题和管家直接开工的一样在聊天区有话题卡，它的每一轮也这样回带，问题也有顶层副本（`app/relay_targets.py` 的 `web_root`）；管家没碰过的其他话题不回带。专项的话题只回带负责人在你在场的一轮里交出去的那一轮（[主人在等的结果](projects.md#主人在等的结果)）。
 
 | 结果 | 回带 |
 | --- | --- |
@@ -241,7 +241,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | 失败或停止，没排上自动重试 | 停住卡：头像行下面粗体一行原因、灰字一行下一步，没有结论带（`core/failure.py`，和任务卡、恢复卡、网页同一句话，不写记录的状态行），下面是任务卡的“检查并继续”（限流叫“现在重试”）和“看原因”（超时等是“拆小再试”），限流、额度用完、安全拒绝这类还有“换个模型”：换配置卡直接开在聊天区（预选一个现在能用的别的 Harness，没有就是原来的，你点“确认更换”才换），换好后这张卡改成一行“↪ 已换配置：…；回复这张卡说一句，就按新配置接着做”；点了别的按钮这张卡原地改成一行“↪ 已接着做 · 任务 #12”或没做的原因，再点、话题后来有了新的一轮、换过配置都不会再开一轮（`app/relay_stops.py`）。主人自己点的停止不发 |
 | 没送达、排上了自动重试 | 不回带 |
 
-- **较长的进展说明跟着回带**：一轮里写完一段话再调工具，这段话进了任务卡的「执行过程」（进展说明）。长任务边等边写的阶段汇报（“基线组已经补跑起来了……”“初步结果：……”）就是这样，只看最后的回答会漏掉。不少于 300 字的进展说明（`core/trace.py` 的 `stage_notes`、`STAGE_NOTE_CHARS`）按写的顺序、各带时间，放在回答后面一个默认收起的折叠里，标题是“这一轮中途的汇报 · 约 N 字”，点标题展开、再点标题收起；回带卡上展开后点正文任意处也能收起，不用回到顶上找标题（`cards/review.py` 的 `stages_fold`，`app/fold_close.py`：Bridge 记下发出的卡，点击后把卡改写成收起的样子，换一个新的折叠 ID，要一两秒；记录 7 天没动就清掉，之后只能点标题收起）。问题副本上只能点标题收起；分几张卡发的长回带不折叠，整段在最后一张。短的过程话不带。负责人转给你的、一轮结束时提的问题，副本也带（`app/triage.py` 的 `show`，从任务的过程记录读）。一轮中途提的实时问题，副本本来就带这一轮到提问为止的全部进展说明。
+- **较长的进展说明跟着回带**：一轮里写完一段话再调工具，这段话进了任务卡的「执行过程」（进展说明）。长任务边等边写的阶段汇报（“基线组已经补跑起来了……”“初步结果：……”）就是这样，只看最后的回答会漏掉。不少于 300 字的进展说明（`core/trace.py` 的 `stage_notes`、`STAGE_NOTE_CHARS`）按写的顺序、各带时间，放在回答后面一个默认收起的折叠里，标题是“这一轮中途的汇报 · 约 N 字”，点标题展开、再点标题收起；回带卡上展开后点正文任意处也能收起，不用回到顶上找标题（`cards/review.py` 的 `stages_fold`，`app/fold_close.py`：Bridge 记下发出的卡，点击后把卡改写成收起的样子，换一个新的折叠 ID，要一两秒；记录 7 天没动就清掉，之后只能点标题收起）。问题副本上只能点标题收起。回答长到分几张卡发时，汇报不跟着正文切：放得进一张卡就折叠在最后一张、产物前面（最后一张放不下就折叠在后面那张产物与详情小卡的最上面）；一张卡放不下就在正文那几张后面另发几张，每张一个默认收起的折叠，和正文一起编号，产物在最后一张下面（`cards/relay_card.py` 的 `stages_of`、`stage_drawer`，`cards/pages.py` 的 `paged_after`）。问题副本前的长输出同样处理，只能点标题收起。短的过程话不带。负责人转给你的、一轮结束时提的问题，副本也带（`app/triage.py` 的 `show`，从任务的过程记录读）。一轮中途提的实时问题，副本本来就带这一轮到提问为止的全部进展说明。
 - **只发一次**（`app/relay_send.py` 的 `send_once`）：锁内写意图、锁外发，没确认记 `uncertain`，从不重发（规则 1）。
 - 回带消息是话题的消息，看过它就算看过话题。
 - **连着做完的合成一条**（`send_merged`，`COVEY_RELAY_MERGE_SECONDS`，默认 20 秒，0 关）：“完成”的回带发出时聊天里还有别的话题的任务在跑或排队、或者已有回带在等，就先记 `pending`（`main-thread/relays/waiting.json` 按聊天列着）等这么多秒，再把这期间等着的一起发：只有自己的照常是结论卡，两条以上发一张「N 个话题做完了」卡（`cards/relay_card.py` 的 `merged_card`：有头像行，每个话题一块，T 号、标题、回答第一句和“产物 N 个”，整块点开那个话题；最后一行灰字“回复这张卡是跟管家说；要接着跟某个话题说，点那一行进话题”）。哪条记录都只从 `pending` 被取走一次（锁内改成 `submitting`），仍然只发一次；合成的那条算顶层的消息，引用它交给管家。没有别的任务在做时照旧马上发。“等你”和“停住了”从不等、不合并；带提醒的“完成”（提交号对不上、完成标准没满足，`cards/answer_card.py` 的 `alerts`）也不等，照常一张结论卡，提醒不会被合并卡吞掉，回复它也照常交给那个话题。

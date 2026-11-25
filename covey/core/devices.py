@@ -130,7 +130,7 @@ def harness_names():
 
 
 def _not_on_devices(items):
-    """The Harnesses of ``items`` the roster has but that cannot run on a device (Pi and dsh in the core)."""
+    """The Harnesses of ``items`` the roster has but that cannot run on a device (dsh in the core)."""
     from covey.core.roster import NAMES
     return [item for item in items if isinstance(item, str) and item in NAMES and item not in harness_names()]
 

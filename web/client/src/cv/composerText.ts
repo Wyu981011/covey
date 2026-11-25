@@ -1,5 +1,5 @@
 /**
- * 输入框里的 Markdown 编辑（T616）：列表续行、Tab 缩进列表项。纯函数，不碰 DOM：Composer.tsx 把文字和光标喂进来，按结果改写。
+ * 输入框里的 Markdown 编辑（T616）：列表续行、Tab 缩进列表项，以及 Enter 是发送还是换行（T761）。纯函数，不碰 DOM：Composer.tsx 把文字和光标喂进来，按结果改写。
  * 防回归：scripts/composer-text.test.mjs。
  *
  * - 光标在列表项（`- `、`* `、`+ `、`1. `、`1) `、`- [ ] `）的内容里按 Enter：断开这一行，下一行续同样的符号，编号加一，勾选框续成空的。
@@ -118,13 +118,42 @@ export function listIndent(value: string, start: number, end: number, outdent: b
   return { value: v, start: s, end: start === end ? s : Math.max(s, end + total) };
 }
 
-/** 发送键的说法：Mac 上是 ⌘，别处是 Ctrl */
-export function sendKey(platform: string): string {
-  return /Mac|iPhone|iPad|iPod/u.test(platform) ? '⌘+Enter' : 'Ctrl+Enter';
+/** 一次按键里定 Enter 做什么要看的部分（React 的和编辑器的按键事件都有） */
+export interface EnterKey {
+  key: string;
+  shiftKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  altKey: boolean;
+  isComposing?: boolean;
+  keyCode?: number;
 }
 
-/** 这台机器上的发送键（提示行、问题面板、发送钮的说明共用） */
-export const SEND_KEY: string = sendKey(typeof navigator === 'undefined' ? '' : navigator.platform || navigator.userAgent || '');
+/**
+ * Enter 在输入框里做什么，和飞书聊天一样（T761）：
+ * - 收着时（sendOnEnter）：Enter 发送；Shift / Ctrl / ⌘ / Alt + Enter 换行。
+ * - 放大后、触屏手机上：几种 Enter 都换行，只有发送钮发。
+ * 换行都是另起一段（列表里续下一项、空项结束列表、代码块里换行），和以前的 Enter 一样：下一行行首打“- ”“1. ”“# ”照样变样子。
+ * 以前 Shift+Enter 是段内的软换行，软换行后面打的“* ”不在段首，不变列表（T761 主人贴图后那条就是这样）。
+ * 'send' 发送；'break' 换行；null 不是 Enter，或在组字（中文输入法选字时的回车，Safari 上是 keyCode 229），交给编辑器。
+ */
+export function enterAction(e: EnterKey, sendOnEnter: boolean): 'send' | 'break' | null {
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return null;
+  const plain: boolean = !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey;
+  return plain && sendOnEnter ? 'send' : 'break';
+}
+
+/** 源码框里在光标处换一行（Ctrl / ⌘ + Enter 浏览器自己不换） */
+export function lineBreak(value: string, start: number, end: number): TextEdit {
+  return { value: `${value.slice(0, start)}\n${value.slice(end)}`, start: start + 1, end: start + 1 };
+}
+
+/** 发送键和换行键的说法（提示行、问题面板、发送钮的说明共用） */
+export const SEND_KEY = 'Enter';
+export const BREAK_KEY = 'Shift+Enter';
+/** 输入框下面那行小字：收着时、放大后 */
+export const ENTER_HINT = `${SEND_KEY} 发送 · ${BREAK_KEY} 换行`;
+export const BIG_HINT = '放大时 Enter 换行，点发送钮发出';
 
 /** 文件大小：12 KB、3.4 MB */
 export function fmtSize(bytes: number): string {
