@@ -16,7 +16,8 @@ how its session lives. Only a lead topic's turn (core/butler.py ``is_lead``) com
   the lead last looked (a member topic's turn ended, a question held, the owner spoke in a member topic). ``add_receipt`` writes
   one (the Bridge does, app/project_loop.py: a member's turn ended, the owner spoke in a member topic, nothing moved), ``take_receipts`` gives the lead's turn what it has not read.
 - With 协作 on (COVEY_COLLAB=1, docs/projects.md 负责人对照目标跟进) the lead answers for the project's goal: its rules say so
-  (``COLLAB_RULES``), and its pack (the consult's ``read_only_pack`` too) shows the 目标检查表 and the 协作 gaps not dealt
+  (``COLLAB_RULES``), and its pack (the consult's ``read_only_pack`` too) shows the 简报 (``brief_block``: the background, once
+  in a new session, and the actions a line each, core/project_actions.py), the 目标检查表 and the 协作 gaps not dealt
   with (``checklist_block``, core/project_checklist.py), the memory's lines with their ids and the owner's own words in the
   project (the grounds project_answer names, app/triage.py grounds), and the inbox in groups (``inbox_block``: what to look
   at first, the topics' deliveries, the consults' receipts folded). Off, rules and pack are as they were.
@@ -33,7 +34,7 @@ from pathlib import Path
 from covey.app import project_context
 from covey.app.prompts import project_memory_lines
 from covey.app.triage_view import pack_block
-from covey.core import board_read, butler, collab, devices, project_checklist, project_library, project_memory, projects, triage
+from covey.core import board_read, butler, collab, devices, project_actions, project_checklist, project_library, project_memory, projects, triage
 from covey.core import memory as core_memory
 from covey.core import turn_source
 from covey.core.checkpoint import read_checkpoint
@@ -169,6 +170,8 @@ COLLAB_RULES = (
     "project_finish 会拒绝。主人说不要了的才标 dropped，在 gap 里写主人怎么说的；需要主人定范围、顺序或取舍时，合成一个问题用 project_note 标 report 问他。",
     "- 协作咨询的回执（collab_answered）只供你参考，不会叫醒你，汇总方会自己交付结论。向主人汇报只说新的东西，比如“3 条标准只覆盖了 2 条，"
     "缺原版基线对照，还不能收尾”；不要把话题或汇总方的结论换个说法再发一遍。",
+    "- 简报：第一轮用 project_goal 的 background 写背景，再用 project_checklist 的 actions 把目标拆成 3–8 个动作，"
+    "每个写清条目、话题和一句现状（note）；动作的状态由 Bridge 算，不用你写。开话题、给话题加话时带 action 或 item，主人在对话里要改简报就照改。",
 )
 EVIDENCE_RULE = (
     "- 开了协作，project_answer 必须写 evidence：列出你依据的专项记忆条目 id（状态包专项记忆每行开头〔〕里的）或主人在这个专项里的原话"
@@ -356,6 +359,12 @@ def lead_goal(record) -> str:
     return " ".join(str(found.get("text") or "").split())
 
 
+def lead_background(record) -> str:
+    """The background the lead wrote with project_goal's ``background`` (app/project_tools.py), '' before it did."""
+    found = record.get("lead_background") if isinstance(record.get("lead_background"), dict) else {}
+    return " ".join(str(found.get("text") or "").split())
+
+
 LEAD_MEMORY_HEAD = "专项记忆（每一轮都带，和专项的话题读到的是同一份）："
 
 
@@ -403,11 +412,76 @@ def owner_word_lines(state_dir, record) -> list:
             f"{cut(job.get('user_text'), OWNER_WORDS_TEXT)}" for job in jobs[:OWNER_WORDS_SHOWN]]
 
 
-def checklist_block(state_dir, record, rows) -> str:
+BRIEF_EMPTY = "还没写简报：project_goal 写背景，project_checklist 的 actions 拆 3–8 个动作"
+BRIEF_BACKGROUND = 120  # Characters of the background the pack says, once, in a new session.
+BRIEF_UNMET = 5  # Items an action's line names as not met; the others are counted.
+BRIEF_UNMAPPED = 8  # Topics the pack names as on no item; the others are counted.
+
+
+def topic_states(rows) -> dict:
+    """Topic id -> what core/project_actions.py ``state`` reads of it, from ``member_rows``: its turn waits for the owner, runs
+    (or queues), or neither."""
+    return {row["topic_id"]: project_actions.WAITING if row["waiting"] else project_actions.RUNNING if row["live"]
+            else project_actions.ENDED for row in rows}
+
+
+def id_list(ids, shown) -> str:
+    """``ids`` joined, at most ``shown`` of them, the rest counted."""
+    return "、".join(ids[:shown]) + (f" 等 {len(ids)} 条" if len(ids) > shown else "")
+
+
+def brief_block(state_dir, record, rows, *, full, detail=False) -> str:
+    """The 简报 as the pack says it (core/project_actions.py), short: the background (``full``: a new session only, cut to
+    BRIEF_BACKGROUND), an action a line (id, title, what it reads as, the items not met, the lead's line; one that reads 做完 only
+    that), the topics that are on no item. ``detail``: for the tool's answer, the whole background and each action with its
+    items and topics. A record with no background and no action gets one line asking for them. ``rows``: ``member_rows``."""
+    background, actions = lead_background(record), project_actions.items(record)
+    if not background and not actions:
+        return BRIEF_EMPTY
+    entries = project_checklist.items(record)
+    by_id = {item["id"]: item for item in entries}
+    states = topic_states(rows)
+    labels = {row["topic_id"]: row["label"] for row in rows}
+    live = [action for action in actions if action["state"] != project_actions.DROPPED]
+    dropped = len(actions) - len(live)
+    out = [f"简报（{len(live)} 个动作{f'，另有 {dropped} 个不做了' if dropped else ''}）：" if actions else "简报："]
+    if full and background:
+        out.append("背景：" + (background if detail else cut(background, BRIEF_BACKGROUND)))
+    elif full:
+        out.append("背景：还没写（project_goal 的 background）")
+    if not actions:
+        out.append("动作：还没写（project_checklist 的 actions 拆 3–8 个）")
+    for action in live:
+        found = project_actions.state(action, entries, states)
+        parts = [f"{action['id']} {action['title']}", project_actions.STATE_WORDS[found]]
+        if found != project_actions.DONE:
+            unmet = [item_id for item_id in action["items"] if item_id in by_id and by_id[item_id]["state"] not in project_checklist.MET]
+            if unmet:
+                parts.append("没满足 " + id_list(unmet, BRIEF_UNMET))
+            if action["note"]:
+                parts.append("现状：" + action["note"])
+        if detail:
+            parts.append("条目 " + ("、".join(action["items"]) or "没有"))
+            parts.append("话题 " + ("、".join(labels.get(topic) or topic[:8] for topic in action["topics"]) or "没有"))
+        out.append("- " + " · ".join(parts))
+    loose = project_actions.unmapped(record)
+    if loose:
+        names = [labels.get(topic) or topic[:8] for topic in loose]
+        out.append("还没挂到条目上的话题：" + "、".join(names[:BRIEF_UNMAPPED]) + (f" 等 {len(names)} 个" if len(names) > BRIEF_UNMAPPED else ""))
+    return "\n".join(out)
+
+
+def delivering(item) -> str:
+    """The topic that delivers ``item``: its ``topic``, or, with none named, the first that took part (``topics``); '' with neither."""
+    return (project_checklist.topics_of(item) or [""])[0]
+
+
+def checklist_block(state_dir, record, rows, detail=False) -> str:
     """The 目标检查表 and the 协作 gaps not dealt with, as the pack says them (core/project_checklist.py): an item a line (its id,
     state, criterion, the topic that delivers it and how that topic is, what it waits on, the evidence, the gap); then what to
     look into: an item met while one it needs is not, an item not met whose topic has ended (its claim is to be checked
-    against the criterion); then the open gaps. ``rows``: ``member_rows``."""
+    against the criterion); then the open gaps. ``rows``: ``member_rows``. ``detail``: for the tool's answer, an item says the
+    other topics on it too (``topics``), what a ``topics`` of a change replaces. The topic an item's line names is ``delivering``."""
     entries = project_checklist.items(record)
     out = []
     if entries:
@@ -416,10 +490,15 @@ def checklist_block(state_dir, record, rows) -> str:
         met = sum(1 for item in entries if item["state"] in project_checklist.MET)
         out.append(f"目标检查表（{len(entries)} 条：{met} 条满足或不做了，{len(entries) - met} 条没满足）：")
         for item in entries:
-            row = by_topic.get(item["topic"])
+            topic = delivering(item)
+            row = by_topic.get(topic)
             parts = [item["id"], project_checklist.STATE_WORDS[item["state"]], item["criterion"],
-                     (f"{row['label'] if row else topic_label(state_dir, item['topic']) or item['topic'][:8]}"
-                      f"（{row['status'] if row else '不在专项里了'}）") if item["topic"] else "还没有话题"]
+                     (f"{row['label'] if row else topic_label(state_dir, topic) or topic[:8]}"
+                      f"（{row['status'] if row else '不在专项里了'}）") if topic else "还没有话题"]
+            others = [each for each in project_checklist.topics_of(item) if each != topic]
+            if detail and others:
+                parts.append("参与的话题 " + "、".join(by_topic[each]["label"] if each in by_topic else topic_label(state_dir, each) or each[:8]
+                                                    for each in others))
             if item["needs"]:
                 parts.append("依赖 " + "、".join(f"{need}（{project_checklist.STATE_WORDS.get(states.get(need), '不在了')}）"
                                                for need in item["needs"]))
@@ -429,7 +508,7 @@ def checklist_block(state_dir, record, rows) -> str:
             out.append(f"⚠️ {item['id']} 标了{project_checklist.STATE_WORDS[item['state']]}，但它依赖的 {'、'.join(waiting)} "
                        "还没满足：核对是不是冲突，或漏了前置结果。")
         for item in entries:
-            row = by_topic.get(item["topic"])
+            row = by_topic.get(delivering(item))
             if item["state"] not in project_checklist.MET and row and row["ended"]:
                 out.append(f"⚠️ {row['label']} 已经结束（{row['status']}），它交付的 {item['id']} 还没满足："
                            "对照这条标准核对它的交付和证据，缺什么就让它返工。")
@@ -439,6 +518,19 @@ def checklist_block(state_dir, record, rows) -> str:
     if open_gaps:
         out += [GAPS_HEAD, *(f"- {gap['id']} · {stamp(gap['at'])} · {cut(gap['text'], 200)}" for gap in open_gaps)]
     return "\n".join(out)
+
+
+UNLOCKS_SHOWN = 4  # The items a delivery says it unlocks.
+
+
+def unlock_words(entries, mine) -> str:
+    """What the items ``mine`` (ids) not met yet would let begin, the items that wait on them directly (core/project_checklist.py
+    unlocks): '；满足后 c15 可开始、c16 还在等 c4', or ''. Only the next step: what lies further on is the checklist's."""
+    found = project_checklist.unlocks(entries, mine)
+    words = [f"{item_id} " + (f"还在等 {'、'.join(waits)}" if waits else "可开始") for item_id, waits in found[:UNLOCKS_SHOWN]]
+    if len(found) > UNLOCKS_SHOWN:
+        words.append(f"另有 {len(found) - UNLOCKS_SHOWN} 条")
+    return "；满足后 " + "、".join(words) if words else ""
 
 
 def inbox_block(state_dir, receipts, record) -> str:
@@ -457,7 +549,8 @@ def inbox_block(state_dir, receipts, record) -> str:
     ends = [item for item in named if item.get("kind") == "thread_end"]
     consults = [item for item in named if item.get("kind") == collab.RECEIPT_ANSWERED]
     rest = [item for item in named if item not in first and item not in ends and item not in consults]
-    open_items = [item for item in project_checklist.items(record) if item["state"] not in project_checklist.MET]
+    entries = project_checklist.items(record)
+    open_items = [item for item in entries if item["state"] not in project_checklist.MET]
     out = [head]
     if first:
         out += ["先看：", *(receipt_line(item).replace("- ", "- ⚠️ ", 1) if item.get("kind") == collab.RECEIPT_GAP
@@ -465,8 +558,8 @@ def inbox_block(state_dir, receipts, record) -> str:
     if ends:
         out.append(f"话题的交付和结束（{len(ends)} 条，对照目标检查表看各覆盖了哪条）：")
         for item in ends:
-            mine = [entry["id"] for entry in open_items if entry["topic"] and entry["topic"] == item.get("thread")]
-            out.append(receipt_line(item) + (f"（它交付的 {'、'.join(mine)} 还没满足）" if mine else ""))
+            mine = [entry["id"] for entry in open_items if item.get("thread") in project_checklist.topics_of(entry)]
+            out.append(receipt_line(item) + (f"（它交付的 {'、'.join(mine)} 还没满足{unlock_words(entries, mine)}）" if mine else ""))
     if rest:
         out += ["其他：", *map(receipt_line, rest)]
     if consults:
@@ -502,7 +595,7 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
     ``receipts``: the inbox's items when the caller has taken them. The memory is core/memory.py project_view's, as a member
     topic reads it: ``since`` the lead's previous turn's start (a resumed session: what was voided since then is said),
     ``redacted`` whether the lead's topic reads the lines from topics with redaction on. With 协作 on (COVEY_COLLAB=1) also
-    the 目标检查表 and the open 协作 gaps (``checklist_block``), the memory's ids (``memory_lines``), the owner's own words
+    the 简报 (``brief_block``: its background in a new session only), the 目标检查表 and the open 协作 gaps (``checklist_block``), the memory's ids (``memory_lines``), the owner's own words
     with the triage on (``owner_word_lines``) and the inbox in groups (``inbox_block``), in a new session and a resumed one."""
     style = style_of(record)
     if receipts is None:
@@ -522,7 +615,7 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
     out.append("话题（" + (f"{len(rows)} 个，{sum(1 for row in rows if row['live'])} 个没结束" if rows else "还没有") + "）："
                + ("\n" + "\n".join(map(thread_line, rows)) if rows else ""))
     if collab_on:
-        out.append(checklist_block(state_dir, record, rows))
+        out += [brief_block(state_dir, record, rows, full=full), checklist_block(state_dir, record, rows)]
     view = core_memory.project_view(project_memory.entries(state_dir, record), record["id"], redacted=redacted,
                                     since=None if full else since)
     memory = memory_lines(view)

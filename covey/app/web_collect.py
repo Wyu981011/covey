@@ -14,13 +14,13 @@ from pathlib import Path
 
 from covey.app import owner_send, pins, project_lead, project_loop, revisits as revisit_rules, topic_links, web_images, web_pairing, web_room, web_said, web_switch, web_turns
 from covey.app.project_facts import rebound
-from covey.core import board_read, collab, collab_records, look, project_checklist, project_library, project_memory, projects, revisits, store, turn_source, web_sync
+from covey.core import board_read, collab, collab_records, look, project_actions, project_checklist, project_library, project_memory, projects, revisits, store, turn_source, turn_words, web_sync
 from covey.core import owner_send as owner_send_records
 from covey.core import memory as core_memory
 from covey.core import progress as turn_progress
 from covey.core.history_storage import history_lines
 from covey.core.butler import butler_topic_id
-from covey.core.checkpoint import upload_ledger
+from covey.core.checkpoint import read_checkpoint, upload_ledger
 from covey.core.jobs import job_key, select_job_records, topic_job_records
 from covey.core.model_names import model_name
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
@@ -59,6 +59,9 @@ REPLY_MESSAGE = re.compile(r"collab-([0-9a-f]{24})-reply-\d+")  # core/collab.py
 CONTINUED_WORDS = "（协作的答复到齐，接着汇总）"  # What the page shows of the long prompt the Bridge wrote for that turn.
 NOTES_SHOWN = 10  # The newest milestones and decisions a project item carries (its 进度 tab on the page, docs/web.md 专项条目).
 CHECKLIST_SHOWN = ("id", "criterion", "topic", "needs", "evidence", "gap", "state", "at")  # What an item of the 目标检查表 carries.
+ACTION_SHOWN = ("id", "title", "note", "items", "topics", "state", "at")  # What an action of the 简报 carries.
+GAP_TEXT = 200  # Characters of a 协作 gap a project item carries.
+NEXT_STEP, WAITING_TEXT = 120, 160  # Characters of a running topic's next step and of what it waits for the owner to answer.
 
 
 def estimate_of(job, turn) -> None:
@@ -664,8 +667,8 @@ class Collector:
             body["context"] = context
         live = next((record for record in reversed(records) if record.get("status") in LIVE), None)
         if live is not None:  # Its running turn's progress (core/progress.py), from the record the task monitor keeps.
-            body["progress"] = turn_progress.progress(live, now=now or time.time(), history=turn_progress.turn_seconds(
-                records, exclude=live.get("job_id")))
+            body["progress"] = {**turn_progress.progress(live, now=now or time.time(), history=turn_progress.turn_seconds(
+                records, exclude=live.get("job_id"))), **checkpoint_fields(live)}
         body["tone"] = self.tone(records, latest, questions, body["unseen"], body.get("progress"), starts)
         if self.board is not None and not (butler or project):
             body["board"] = self.board.get(topic, "")
@@ -1188,7 +1191,7 @@ class Collector:
                 "title": str(record.get("name") or ""), "goal": project_lead.lead_goal(record), "status": word, "status_reason": why,
                 "lead_topic_key": lead, "topic_keys": members, "memory": memory, "memory_version": version, "library": library,
                 "started_at": web_pairing.moment(record.get("created_at")), "updated_at": web_pairing.moment(record.get("updated_at")),
-                **progress_fields(record)})
+                **progress_fields(record, project_lead.inbox_items(state, str(pid)) if turn_source.enabled() else ())})
             with self.shared.lock:
                 self.shared.project_rows[pid] = (basis, item)
             out.append(item)
@@ -1312,10 +1315,12 @@ def parties(record) -> set:
 
 
 def project_stamp(state, pid) -> tuple:
-    """What a project's memory, its meta and its library are read from, as stats (each written whole and renamed over, so a change
-    is a new inode): a quick look builds the project again only when one changed (Collector.project_items)."""
+    """What a project's memory, its meta and its library, and with 协作 on its inbox (the gaps are read from it), are read from, as stats
+    (each written whole and renamed over, so a change is a new inode; the inbox is a folder, which a receipt added or taken changes): a
+    quick look builds the project again only when one changed (Collector.project_items)."""
     out = []
-    for path in (project_memory.memory_path(state, pid), project_memory.meta_path(state, pid), project_library.index_path(state, pid)):
+    for path in (project_memory.memory_path(state, pid), project_memory.meta_path(state, pid), project_library.index_path(state, pid),
+                 *((project_lead.inbox_dir(state, pid),) if turn_source.enabled() else ())):
         try:
             stat = path.stat()
         except OSError:
@@ -1325,20 +1330,54 @@ def project_stamp(state, pid) -> tuple:
     return tuple(out)
 
 
-def progress_fields(record) -> dict:
-    """What a project's 进度 tab is drawn from (docs/web.md 专项条目): its 目标检查表 as ``checklist`` (core/project_checklist.py items;
-    ``topic`` is the topic id, the page's topic key), the newest NOTES_SHOWN of its milestone and finish notes as ``milestones`` and of
-    its decision log as ``decisions``, each {id, at, kind, text}. A field the record has nothing for is left out, so a page from before
-    reads the item as it did; the item is built again when the record changes (Collector.project_items: ``web_sync.rev``)."""
+def progress_fields(record, receipts=()) -> dict:
+    """What a project's 简报 and 进度 tabs are drawn from (docs/web.md 专项条目): its 目标检查表 as ``checklist`` (core/project_checklist.py
+    items; ``topic`` and ``topics`` are topic ids, the page's topic keys; ``title``, ``waiting_on``, ``done_at`` and ``topics`` only on an
+    item that has them), its ``background`` (the lead's), its ``actions`` (core/project_actions.py, the dropped too), the 协作 gaps not
+    dealt with as ``gaps`` ({id, thread, text, at} of ``receipts``, the inbox's), the newest NOTES_SHOWN of its milestone and finish notes
+    as ``milestones`` and of its decision log as ``decisions``, each {id, at, kind, text}. A field the record has nothing for is left out, so
+    a page from before reads the item as it did; the item is built again when the record or the inbox changes (Collector.project_items)."""
     out = {}
-    checklist = [{key: item[key] for key in CHECKLIST_SHOWN} for item in project_checklist.items(record)]
+    checklist = [{**{key: item[key] for key in CHECKLIST_SHOWN}, **optional_fields(item)} for item in project_checklist.items(record)]
     if checklist:
         out["checklist"] = checklist
+    background = project_lead.lead_background(record)
+    if background:
+        out["background"] = background
+    actions = [{key: action[key] for key in ACTION_SHOWN} for action in project_actions.items(record)]
+    if actions:
+        out["actions"] = actions
+    gaps = [{"id": gap["id"], "thread": gap["thread"], "text": gap["text"][:GAP_TEXT], "at": gap["at"]}
+            for gap in project_checklist.gaps(record, receipts)]
+    if gaps:
+        out["gaps"] = gaps
     for field, source, kinds in (("milestones", "notes", ("milestone", "finish")), ("decisions", "decisions", None)):
         rows = [note_row(row) for row in record.get(source) or ()
                 if isinstance(row, dict) and str(row.get("text") or "").strip() and (kinds is None or row.get("kind") in kinds)]
         if rows:
             out[field] = rows[-NOTES_SHOWN:]
+    return out
+
+
+def optional_fields(item) -> dict:
+    """What an item of the checklist says besides CHECKLIST_SHOWN, only where it says it: ``title``, ``waiting_on`` (written: ``owner``,
+    or '' for not the owner's), ``done_at`` (not 0), ``topics`` (the other topics on it)."""
+    return {key: item[key] for key in ("title", "waiting_on", "done_at", "topics") if item[key] or key == "waiting_on" and item[key] is not None}
+
+
+def checkpoint_fields(record) -> dict:
+    """What a running topic's checkpoint (the file ``record`` names) says that its ``progress`` carries besides core/progress.py's: its
+    ``next_step`` (NEXT_STEP characters; not the seed's, not "无"), and ``waiting``, the ``question`` it asks the owner while its
+    ``requires_user`` is true (WAITING_TEXT). Each only when there is one (docs/web.md 进度)."""
+    path = str(record.get("checkpoint_path") or "")
+    found = read_checkpoint(Path(path)) if path else {}
+    step = " ".join(str(found.get("next_step") or "").split())
+    asked = " ".join(str(found.get("question") or "").split())
+    out = {}
+    if step and step != turn_words.SEED_NEXT and not re.fullmatch(r"(无|没有|暂无)[。.]?", step):
+        out["next_step"] = step[:NEXT_STEP]
+    if found.get("requires_user") is True and asked:
+        out["waiting"] = asked[:WAITING_TEXT]
     return out
 
 

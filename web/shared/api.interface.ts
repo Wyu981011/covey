@@ -286,6 +286,10 @@ export interface TopicProgress {
   slow_step?: TopicSlowStep | null;
   /** 最新一步是还在跑的命令时才有：几时开始、已跑几秒（到分钟）、是否已跑满卡住的分钟数 */
   command?: TopicCommand;
+  /** v40：检查点里的下一步，≤120 字（专项「简报」里 session 行的“下一步”） */
+  next_step?: string;
+  /** v40：检查点 requires_user 时的 question，≤160 字：话题在等主人答什么 */
+  waiting?: string;
 }
 export interface TopicSlowStep {
   number: number;
@@ -523,6 +527,34 @@ export interface SnapshotProject {
   milestones?: ProjectNote[];
   /** v39：决定日志，最新 10 条，旧的在前 */
   decisions?: ProjectNote[];
+  /** v40：负责人写的背景（≤300 字）；没写就没有这个键 */
+  background?: string;
+  /** v40：动作（含 dropped，网页不画 dropped）；没写就没有这个键 */
+  actions?: BriefAction[];
+  /** v40：没处理的协作缺口；没有就没有这个键 */
+  gaps?: ProjectGap[];
+}
+
+/** v40：动作的状态只有 open、dropped（Covey core/project_actions.py）；做完、在做、等你这些是网页按条目和话题算的，不存 */
+export const ACTION_STATES = ['open', 'dropped'] as const;
+export type ActionStoredState = (typeof ACTION_STATES)[number];
+/** v40：负责人拆出的一个动作。items 是检查表条目 id；topics 是话题 key（也认 T 号）；title ≤30 字，note ≤80 字（负责人那一句现状）；
+ * at 是动作最后改动的时刻（秒） */
+export interface BriefAction {
+  id: string;
+  title: string;
+  note: string;
+  items: string[];
+  topics: string[];
+  state: ActionStoredState;
+  at: number;
+}
+/** v40：一条没处理的协作缺口：thread 是报缺口的话题（key 或 T 号），text ≤200 字 */
+export interface ProjectGap {
+  id: string;
+  thread: string;
+  text: string;
+  at: number;
 }
 
 /** 目标检查表的状态（Covey core/project_checklist.py STATES）：open 没满足、done 满足、blocked 卡住、dropped 不做了 */
@@ -539,6 +571,13 @@ export interface ChecklistItem {
   gap: string;
   state: ChecklistState;
   at: number;
+  /** v40，都可选（旧 Covey 不推）：title 是 ≤24 字的短标题；waiting_on 写过才有，'owner' 是下一步在主人手上、空串是写过“不在主人手上”
+   * （没有这个键就退回按缺口文字推断）；done_at 是转成 done 的时刻（秒，非 0 才有）；topics 是参与这一条的几个话题（key 或 T 号，
+   * 不含 topic 自己时 topic 仍是主要的那个） */
+  title?: string;
+  waiting_on?: string;
+  done_at?: number;
+  topics?: string[];
 }
 /** v39：专项记录里的一条进展或决定：kind 是 milestone、finish（里程碑），决定日志里多是 note */
 export interface ProjectNote {

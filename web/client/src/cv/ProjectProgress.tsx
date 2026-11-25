@@ -13,7 +13,7 @@ import {
 } from './progressData';
 import './progress.css';
 
-/* 专项的「进度」标签（v39，第一期只读）：顶上等你带，中间 做完 / 正在做 / 将要做 三栏，下面依赖图，右栏近 10 条决定和最近里程碑；
+/* 专项的「进度」标签（v39，第一期只读；v40 起只在负责人还没写背景和动作时显示，由 ProjectBrief 退回到这里）：顶上等你带，中间 做完 / 正在做 / 将要做 三栏，下面依赖图，右栏近 10 条决定和最近里程碑；
  * 点任一条右侧打开详情，「带着这条和负责人讨论」把引用放进负责人对话的输入框。分栏规则在 progressData.ts。
  * 状态不只靠颜色：每处都带图标和字（琥珀对白底不到 3:1）。 */
 
@@ -409,7 +409,7 @@ const ItemDrawer: React.FC<{
   );
 };
 
-const ProjectProgress: React.FC<{ p: SnapshotProject; snap: SnapshotResponse; lead: SnapshotTopic | undefined; base: string }> = ({ p, snap, lead, base }) => {
+const ProjectProgress: React.FC<{ p: SnapshotProject; snap: SnapshotResponse; lead: SnapshotTopic | undefined; base: string; hint?: string }> = ({ p, snap, lead, base, hint }) => {
   const desktop: boolean = useIsDesktop();
   const nav = useNavigate();
   const now: number = useTick(30000);
@@ -431,6 +431,7 @@ const ProjectProgress: React.FC<{ p: SnapshotProject; snap: SnapshotResponse; le
   if (!b.placed.length) {
     return (
       <div className={`pg${desktop ? '' : ' m'}`}>
+        {hint ? <div className="pg-hintbar" role="note">{hint}</div> : null}
         <div className="pg-main">
           <div className="pg-empty">
             <b>这个专项还没有目标检查表</b>
@@ -444,6 +445,7 @@ const ProjectProgress: React.FC<{ p: SnapshotProject; snap: SnapshotResponse; le
   return (
     <div className="pg-wrap">
       <div className={`pg${desktop ? '' : ' m'}`}>
+        {hint ? <div className="pg-hintbar" role="note">{hint}</div> : null}
         <SumLine b={b} now={now} />
         <OwnerBand b={b} waits={waits} pick={pick} />
         <div className="pg-main">

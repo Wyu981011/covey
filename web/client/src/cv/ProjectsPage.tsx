@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight, Sparkles } from 'lucide-react';
-import type { SnapshotProject, SnapshotTopic } from '@shared/api.interface';
+import type { SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { useSnapshot, useTidy } from '@client/src/hooks/use-workbench';
 import { Head } from './Shell';
 import { Dot, Pill, useTick } from './ui';
@@ -9,8 +9,12 @@ import { STATES, TONE_KEYS } from './look.gen';
 import { byRecent, fmtDur, isRunningTone, isWaiting, pref, setPref, shortWhen, toneOf, TONE_RANK, type ToneKey } from './lib';
 import { isStopped, listTone } from './topicText';
 import { isHalted, leadOf, projectNote, projectPill, toneCounts } from './projectData';
+import { briefOf, type ActionView, type Brief } from './briefData';
+import { ActPill } from './ProjectBrief';
+import { cut } from './progressData';
 import { TopicBadge } from './RoleAvatar';
 import './projects.css';
+import './brief.css';
 
 /** 专项一览（/projects）：手机底部「专项」标签打开的就是这一页（以前是侧栏抽屉，只有屏幕六成宽、和最近话题混在一起）。
  * 一张卡一个专项：状态胶囊、名字、目标一行、按状态的话题数和最后动静；卡下列出要紧的话题（等你、停住、在做，最多 HOT_SHOWN 个）和
@@ -44,8 +48,32 @@ interface View {
   rank: number;
 }
 
-const ProjectCard: React.FC<{ x: View; now: number }> = ({ x, now }) => {
+/** 简报卡（v40）：背景一句、每个动作一行（状态和负责人那句话）、话题数和检查表数；点了进专项的「简报」。
+ * 负责人还没写简报的专项只写检查表数（有检查表时），目标在上面的 .pl-goal 里 */
+const BriefBlock: React.FC<{ b: Brief; base: string }> = ({ b, base }) => {
+  const foot: string = `${b.members.length} 个话题（${b.liveN} 在跑）${b.total ? ` · 检查表 ${b.met}/${b.total} 满足` : ''}`;
+  if (!b.has) {
+    return b.total ? <Link to={base} className="pb-oc"><div className="pb-ocf">检查表 {b.met}/{b.total} 满足 · 负责人还没写背景和动作</div></Link> : null;
+  }
+  return (
+    <Link to={`${base}/brief`} className="pb-oc">
+      {b.background ? <div className="pb-ocl" title={b.background}><b>背景：</b>{cut(b.background, 80)}</div> : null}
+      {b.actions.map((v: ActionView) => (
+        <div key={v.action.id} className="pb-orow">
+          <span className="pb-on">{v.n}</span>
+          <span className="pb-otx" title={v.action.title}>{v.action.title}</span>
+          <ActPill state={v.state} />
+          {v.state !== 'done' && v.action.note ? <span className="pb-onote" title={v.action.note}>{cut(v.action.note, 24)}</span> : null}
+        </div>
+      ))}
+      <div className="pb-ocf">{b.actions.length} 个动作 · {foot}<span className="pb-ogo short">点开看简报 ›</span></div>
+    </Link>
+  );
+};
+
+const ProjectCard: React.FC<{ x: View; now: number; snap: SnapshotResponse }> = ({ x, now, snap }) => {
   const { p, lead } = x;
+  const brief: Brief = briefOf(p, snap, now);
   const base: string = `/projects/${encodeURIComponent(p.key)}`;
   const tones: ToneKey[] = x.topics.map((t: SnapshotTopic) => x.tones.get(t.key) ?? listTone(t));
   const pill = projectPill(p, tones, lead);
@@ -71,6 +99,7 @@ const ProjectCard: React.FC<{ x: View; now: number }> = ({ x, now }) => {
           <span className="pl-when short">{shortWhen(x.last, now)}</span>
         </div>
       </Link>
+      <BriefBlock b={brief} base={base} />
       {leadWaits || shown.length ? (
         <div className="pl-hot">
           {leadWaits && lead ? (
@@ -149,7 +178,7 @@ const ProjectsPage: React.FC = () => {
           {!views.length ? (
             <p className="pl-empty">{tidyOn ? '还没有专项。对管家说一件要做很久的事，它会开成专项；或在看板上点「整理」，Covey 会看看哪些话题该归到一起。' : '还没有专项。对管家说一件要做很久的事，它会开成专项。'}</p>
           ) : null}
-          {live.map((x: View) => <ProjectCard key={x.p.key} x={x} now={now} />)}
+          {live.map((x: View) => <ProjectCard key={x.p.key} x={x} now={now} snap={snap} />)}
           {old.length ? (
             <section className={`pl-old${oldOpen ? ' open' : ''}`}>
               <button type="button" className="pl-oldh" onClick={toggleOld} aria-expanded={oldOpen}>

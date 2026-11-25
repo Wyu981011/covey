@@ -1,12 +1,17 @@
 """目标检查表 (docs/projects.md 目标检查表, COVEY_COLLAB=1): a project's done-when as a few items its lead keeps, and the
 协作 gaps it has not dealt with yet, as plain functions of the project record and its inbox. Standard library and core only.
 
-- An item (``items``) is {id, criterion, topic, needs, evidence, gap, state, at, job}: what is to be true (``criterion``),
-  the member topic that delivers it (``topic``, a topic id; '' before one is named), the items it waits on (``needs``, their
-  ids), where the proof is (``evidence``: a commit, a path, the check a topic's checkpoint said), what is still missing and who
-  does it next (``gap``), and its state (``STATES``): ``open`` not met yet, ``done`` met, with its evidence, ``blocked`` held
-  up (by ``needs`` or what ``gap`` says), ``dropped`` the owner let it go (``gap`` says why). Ids are ``c1``, ``c2`` … in
-  the order written and never given again.
+- An item (``items``) is {id, criterion, topic, needs, evidence, gap, state, at, job, title, waiting_on, done_at, topics}:
+  what is to be true (``criterion``), the member topic that delivers it (``topic``, a topic id; '' before one is named), the
+  items it waits on (``needs``, their ids), where the proof is (``evidence``: a commit, a path, the check a topic's checkpoint
+  said), what is still missing and who does it next (``gap``), and its state (``STATES``): ``open`` not met yet, ``done`` met,
+  with its evidence, ``blocked`` held up (by ``needs`` or what ``gap`` says), ``dropped`` the owner let it go (``gap`` says
+  why). Ids are ``c1``, ``c2`` … in the order written and never given again. Optional, for the owner's 简报 and 进度表
+  (docs/web.md 专项条目): a short ``title`` (TITLE characters); ``waiting_on`` ``owner`` when the next step is the owner's
+  ('' when the lead says it is not, None when it never said: the gap's words are read then, ``owners``); ``done_at``, written
+  by ``apply`` when the item turns done and cleared when it turns back (0 for one done before it was kept); ``topics``, the
+  other topics (TOPICS at most) that took part in it beside ``topic`` (``topics_of`` is all of them). A record from before has
+  none of them and reads as before.
 - The record keeps them in ``checklist``: {items, closed, next, at, job}. ``closed`` is the 协作 gaps the lead dealt with
   (gap id -> {how, at, job}). Only the lead's tool writes it (app/project_tools.py project_checklist), under the record's
   lock (core/projects.py update), and ``apply`` is that change: it checks everything before it edits, so a refusal writes
@@ -36,6 +41,13 @@ TEXT = 200  # Characters of a criterion, an evidence, a gap.
 HOW = 120  # Characters of how a gap was dealt with.
 NEEDS = 6  # Items one item may wait on.
 CLOSED_KEPT = 100  # Closed gaps the record remembers.
+TITLE = 24  # Characters of a short title.
+TOPICS = 6  # Topics besides ``topic`` that took part in one item.
+OWNER = "owner"
+WAITING_ON = (OWNER, "")  # What ``waiting_on`` may be: the owner does the next step, or not (None: the lead never said).
+# 等你 read off a gap's words where the lead wrote no ``waiting_on`` (the web page's progressData.ts OWNER_GAP).
+OWNER_GAP = re.compile(r"(只差|等|要|需要)主人")
+DONE_COL, DOING_COL, NEXT_COL, OWNER_COL = "done", "doing", "next", "owner"  # ``column``: 做完, 正在做, 将要做, 等你.
 ITEM_ID = re.compile(r"c([1-9][0-9]{0,3})")
 GAP_ID = re.compile(r"g[0-9a-f]{6}")
 GAP_KIND = collab.RECEIPT_GAP
@@ -55,17 +67,34 @@ def _item(row) -> dict | None:
     if not isinstance(row, dict) or not ITEM_ID.fullmatch(str(row.get("id") or "")) or not clean(row.get("criterion")):
         return None
     needs = [need for need in row.get("needs") or () if isinstance(need, str) and ITEM_ID.fullmatch(need)]
-    at = row.get("at")
+    at, done_at = row.get("at"), row.get("done_at")
     return {"id": row["id"], "criterion": clean(row.get("criterion")), "topic": clean(row.get("topic"), 64),
             "needs": needs[:NEEDS], "evidence": clean(row.get("evidence")), "gap": clean(row.get("gap")),
             "state": row.get("state") if row.get("state") in STATES else OPEN,
-            "at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else 0, "job": clean(row.get("job"), 120)}
+            "at": at if isinstance(at, (int, float)) and not isinstance(at, bool) else 0, "job": clean(row.get("job"), 120),
+            "title": clean(row.get("title"), TITLE),
+            "waiting_on": row["waiting_on"] if row.get("waiting_on") in WAITING_ON else None,
+            "done_at": done_at if isinstance(done_at, (int, float)) and not isinstance(done_at, bool) else 0,
+            "topics": list(dict.fromkeys(topic for topic in (clean(each, 64) for each in row.get("topics") or ()
+                                                              if isinstance(each, str)) if topic))[:TOPICS]}
+
+
+def stored(item) -> dict:
+    """``item`` as the record keeps it: the optional fields only when they say something (a record stays as before for an
+    item that has none; an older release reads it the same)."""
+    return {key: value for key, value in item.items()
+            if not (key in ("title", "topics", "done_at") and not value or key == "waiting_on" and value is None)}
 
 
 def items(record) -> list:
     """The record's items, each well formed, in the order they were written; [] when the lead has written none."""
     rows = _field(record).get("items")
     return [item for item in map(_item, rows if isinstance(rows, list) else ()) if item is not None]
+
+
+def topics_of(item) -> list:
+    """The topics of ``item``, each once: its ``topic`` first (the main one), then ``topics`` (those that took part)."""
+    return list(dict.fromkeys(topic for topic in (item["topic"], *item["topics"]) if topic))
 
 
 def kept(record) -> bool:
@@ -105,6 +134,67 @@ def unmet(record, receipts) -> tuple:
     return [item for item in items(record) if item["state"] not in MET], gaps(record, receipts)
 
 
+def owners(item) -> tuple:
+    """(whether the next step of ``item`` is the owner's, whether that is read off its gap's words: the lead wrote no
+    ``waiting_on``). An item met is nobody's."""
+    if item["state"] in MET:
+        return False, False
+    if item["waiting_on"] is not None:
+        return item["waiting_on"] == OWNER, False
+    guessed = bool(OWNER_GAP.search(item["gap"]))
+    return guessed, guessed
+
+
+def column(item, by_id) -> str:
+    """Where the 进度表 puts ``item`` (``by_id``: the checklist's items by id), the same rule as the web page's progressData.ts,
+    in this order: met (done, dropped) 做完; the owner's next step (``owners``) 等你; waiting on an item not met, or blocked,
+    将要做; a topic on it (``topics_of``) 正在做 (whether it still runs or has ended and waits for the lead to check it);
+    else 将要做 (可开始)."""
+    if item["state"] in MET:
+        return DONE_COL
+    if owners(item)[0]:
+        return OWNER_COL
+    if any(need in by_id and by_id[need]["state"] not in MET for need in item["needs"] if need != item["id"]):
+        return NEXT_COL
+    if item["state"] == BLOCKED:
+        return NEXT_COL
+    return DOING_COL if topics_of(item) else NEXT_COL
+
+
+def columns(record) -> dict:
+    """How many items of ``record``'s checklist each ``column`` has, and ``total``; every count 0 without a checklist."""
+    entries = items(record)
+    by_id = {item["id"]: item for item in entries}
+    counts = dict.fromkeys((DONE_COL, DOING_COL, NEXT_COL, OWNER_COL), 0)
+    for item in entries:
+        counts[column(item, by_id)] += 1
+    return {**counts, "total": len(entries)}
+
+
+def rev(entries) -> dict:
+    """Item id -> the ids of the items (of ``entries``, ``items``) that wait on it, in the order written."""
+    found = {item["id"]: [] for item in entries}
+    for item in entries:
+        for need in item["needs"]:
+            if need in found and need != item["id"]:
+                found[need].append(item["id"])
+    return found
+
+
+def unlocks(entries, mine) -> list:
+    """For each item not met that waits on any of ``mine`` (ids) directly: (its id, the ids it still waits on besides ``mine``);
+    [] when it waits on nothing else (it can begin once ``mine`` is met). Only the next step, not what lies further on."""
+    by_id = {item["id"]: item for item in entries}
+    after = rev(entries)
+    found = []
+    for item_id in dict.fromkeys(x for each in mine for x in after.get(each, ())):
+        if item_id in mine or by_id[item_id]["state"] in MET:
+            continue
+        found.append((item_id, [need for need in by_id[item_id]["needs"]
+                                if need in by_id and need not in mine and by_id[need]["state"] not in MET and need != item_id]))
+    return found
+
+
 def conflicts(record) -> list:
     """(item, the ids of what it waits on that is not met) for each item marked met while something it needs is not."""
     by_id = {item["id"]: item for item in items(record)}
@@ -131,6 +221,7 @@ def apply(record, rows=(), close=(), *, receipts=(), job="", now=None) -> list:
     gaps closed, in order."""
     stamp = time.time() if now is None else now
     current = items(record)
+    before = {item["id"]: item["state"] for item in current}
     by_id = {item["id"]: dict(item) for item in current}
     order = [item["id"] for item in current]
     field = _field(record)
@@ -153,13 +244,25 @@ def apply(record, rows=(), close=(), *, receipts=(), job="", now=None) -> list:
             number += 1
             item_id = f"c{number}"
             item = by_id[item_id] = {"id": item_id, "criterion": "", "topic": "", "needs": [], "evidence": "", "gap": "",
-                                     "state": OPEN, "at": stamp, "job": clean(job, 120)}
+                                     "state": OPEN, "at": stamp, "job": clean(job, 120), "title": "", "waiting_on": None,
+                                     "done_at": 0, "topics": []}
             order.append(item_id)
         for key in ("criterion", "evidence", "gap"):
             if key in row:
                 item[key] = clean(row.get(key))
+        if "title" in row:
+            item["title"] = clean(row.get("title"), TITLE)
+        if "waiting_on" in row:
+            waiting = row.get("waiting_on") if row.get("waiting_on") is not None else ""
+            if waiting not in WAITING_ON:
+                problems.append(f"{item_id} 的 waiting_on 要是 owner（下一步在主人手上）或空串")
+                continue
+            item["waiting_on"] = waiting
         if "topic" in row:
             item["topic"] = clean(row.get("topic"), 64)
+        if "topics" in row:
+            given = row.get("topics") if isinstance(row.get("topics"), list) else [row.get("topics")] if row.get("topics") else []
+            item["topics"] = list(dict.fromkeys(clean(each, 64) for each in given if clean(each, 64)))
         if "needs" in row:
             given = row.get("needs") if isinstance(row.get("needs"), list) else [row.get("needs")] if row.get("needs") else []
             item["needs"] = list(dict.fromkeys(clean(need, 8) for need in given if clean(need, 8)))
@@ -176,6 +279,8 @@ def apply(record, rows=(), close=(), *, receipts=(), job="", now=None) -> list:
             problems.append(f"{item_id} 的 criterion 不能为空")
         if len(item["needs"]) > NEEDS:
             problems.append(f"{item_id} 最多依赖 {NEEDS} 条")
+        if len(item["topics"]) > TOPICS:
+            problems.append(f"{item_id} 的 topics 最多 {TOPICS} 个（主要的那个写在 topic）")
         for need in item["needs"]:
             if need == item_id:
                 problems.append(f"{item_id} 不能依赖自己")
@@ -187,6 +292,14 @@ def apply(record, rows=(), close=(), *, receipts=(), job="", now=None) -> list:
             problems.append(f"{item_id} 标 blocked 要写卡在哪（needs 或 gap）")
         if item["state"] == DROPPED and not item["gap"]:
             problems.append(f"{item_id} 标 dropped 要在 gap 里写为什么不做了（主人怎么说的）")
+        if item["waiting_on"] == OWNER and item["state"] not in MET and not item["gap"]:
+            problems.append(f"{item_id} 写了 waiting_on=owner，要在 gap 里写要主人做什么")
+        # 完成时间: when it turns done (kept while it stays done), none once it turns back.
+        if item["state"] == DONE:
+            if before.get(item_id) != DONE:
+                item["done_at"] = stamp
+        else:
+            item["done_at"] = 0
     if len(order) > MAX_ITEMS:
         problems.append(f"目标检查表最多 {MAX_ITEMS} 条，这次会有 {len(order)} 条：合并几条再加")
     open_gaps = {gap["id"] for gap in gaps(record, receipts)}
@@ -205,7 +318,7 @@ def apply(record, rows=(), close=(), *, receipts=(), job="", now=None) -> list:
     done = closed(record)
     for gap, how in shut:
         done[gap] = {"how": how, "at": stamp, "job": clean(job, 120)}
-    record[FIELD] = {"items": [by_id[item_id] for item_id in order],
+    record[FIELD] = {"items": [stored(by_id[item_id]) for item_id in order],
                      "closed": dict(sorted(done.items(), key=lambda pair: pair[1].get("at") or 0)[-CLOSED_KEPT:]),
                      "next": f"c{number + 1}", "at": stamp, "job": clean(job, 120)}
     return [*dict.fromkeys(touched), *(gap for gap, _ in shut)]

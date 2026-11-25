@@ -322,28 +322,39 @@ TRIAGE_TOOLS = (
 # name its grounds (``evidence``, checked by the Bridge: app/triage.py grounds). Off, the lead's list is as it was.
 COLLAB_ENV = "COVEY_COLLAB"
 CHECKLIST_ITEM = {"type": "object", "properties": {
-    "id": {"type": "string", "description": "要改的条目 id（状态包“目标检查表”里每行开头的，如 c2）；新加的不填"},
-    "criterion": {"type": "string", "description": "完成标准，一句话（最多 200 字）；新加的必填"},
-    "topic": {"type": "string", "description": "交付这一条的话题：这个专项的话题的 T 号或 topic_id；还没派的不填，写空串清掉"},
-    "needs": {"type": "array", "items": {"type": "string"}, "description": "它依赖的条目 id（要先满足的），最多 6 个"},
-    "evidence": {"type": "string", "description": "证据在哪：提交号、产物路径、topic_read 看到的检查点自检；标 done 必填"},
-    "gap": {"type": "string", "description": "还缺什么、下一步谁做；标 blocked 写卡在哪，标 dropped 写主人为什么不要了"},
+    "id": {"type": "string", "description": "要改的条目 id（如 c2）；新加的不填"},
+    "criterion": {"type": "string", "description": "完成标准，一句话；新加的必填"},
+    "title": {"type": "string", "description": "短标题"},
+    "topic": {"type": "string", "description": "主要交付它的话题（T 号或 topic_id）；还没派的不填，空串清掉"},
+    "topics": {"type": "array", "items": {"type": "string"}, "description": "也参与它的话题，整组替换，最多 6 个"},
+    "needs": {"type": "array", "items": {"type": "string"}, "description": "依赖的条目 id，最多 6 个"},
+    "evidence": {"type": "string", "description": "证据在哪：提交号、产物路径、检查点自检；标 done 必填"},
+    "gap": {"type": "string", "description": "还缺什么、下一步谁做；blocked 写卡在哪，dropped 写主人为什么不要了"},
+    "waiting_on": {"type": "string", "enum": ["owner", ""], "description": "下一步在主人手上写 owner，否则空串"},
     "state": {"type": "string", "enum": ["open", "done", "blocked", "dropped"],
-              "description": "open 没满足（新加的默认）/ done 有证据满足了 / blocked 卡住 / dropped 主人说不做了"}}}
+              "description": "open 没满足（默认）/ done 满足了 / blocked 卡住 / dropped 主人说不做了"}}}
+ACTION_ITEM = {"type": "object", "properties": {
+    "id": {"type": "string", "description": "要改的动作 id（如 a3）；新加的不填"},
+    "title": {"type": "string", "description": "动作名；新加的必填"},
+    "note": {"type": "string", "description": "现状一句，80 字内"},
+    "items": {"type": "array", "items": {"type": "string"}, "description": "条目 id，整组替换"},
+    "topics": {"type": "array", "items": {"type": "string"}, "description": "话题 T 号，整组替换"},
+    "state": {"type": "string", "enum": ["open", "dropped"]}}}
 CHECKLIST_TOOLS = (
     {"name": "project_checklist",
-     "description": "维护这个专项的目标检查表：把完成标准拆成几条，每条写清由哪个话题交付、依赖哪几条、证据在哪、还缺什么。"
-                    "第一轮写，目标变了再改；收到话题的交付或协作缺口时对照它查漏项、冲突和依赖，再更新。"
-                    "话题说做完只是它的说法：核对过证据才标 done；主人说不要了的才标 dropped。"
-                    "还有 open、blocked 的条目或没处理的协作缺口时，project_finish 会拒绝收尾。"
-                    "缺口处理完（补齐了、或主人说不用补）用 close_gaps 写怎么处理的。什么都不传就是看现在的检查表。",
+     "description": "维护目标检查表和简报：检查表把完成标准拆成几条（谁交付、依赖、证据、缺口），简报用 actions 拆动作。"
+                    "缺口处理完用 close_gaps 写怎么处理的。什么都不传就是看现在的两样。",
      "input_schema": {"type": "object", "properties": {
-         "items": {"type": "array", "maxItems": 20, "items": CHECKLIST_ITEM,
-                   "description": "要新加或修改的条目；改的只写要改的项"},
+         "items": {"type": "array", "items": CHECKLIST_ITEM, "description": "要新加或修改的条目（最多 20 条）；改的只写要改的项"},
+         "actions": {"type": "array", "items": ACTION_ITEM, "description": "要新加或修改的动作，写法同 items"},
          "close_gaps": {"type": "array", "items": {"type": "object", "required": ["gap", "how"], "properties": {
-             "gap": {"type": "string", "description": "缺口 id（状态包“没处理的协作缺口”里每行开头的，如 g1a2b3c）"},
-             "how": {"type": "string", "description": "一句话：怎么处理的（谁补了、证据在哪，或主人说不用补）"}}}}}}},
+             "gap": {"type": "string", "description": "缺口 id（如 g1a2b3c）"},
+             "how": {"type": "string", "description": "怎么处理的（谁补了、证据在哪，或主人说不用补）"}}}}}}},
 )
+# 简报 (with COVEY_COLLAB=1 too, app/project_tools.py): the goal's background, and a topic opened or fed on an action or an item.
+ACTION_ARG = {"type": "string", "description": "动作 id，如 a3"}
+ITEM_ARG = {"type": "string", "description": "条目 id，如 c9"}
+BACKGROUND_ARG = {"type": "string", "description": "背景，300 字内"}
 EVIDENCE = {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string"},
             "description": "替主人答题的依据：专项记忆条目的 id（状态包专项记忆每行开头〔〕里的，如 0123456789abcdef-2），"
                            "或主人在这个专项里的原话 msg:<消息 id>（状态包“主人在专项里说过的话”里的）。"
@@ -361,6 +372,18 @@ def with_evidence(tool) -> dict:
     return {**tool, "description": tool["description"] + EVIDENCE_NOTE,
             "input_schema": {**schema, "required": [*schema["required"], "evidence"],
                              "properties": {**schema["properties"], "evidence": EVIDENCE}}}
+def with_brief(tool) -> dict:
+    """The lead's project_topic_start and project_topic_send with ``action`` and ``item``, and project_goal with ``background``
+    (neither text nor background required then), as the lead sees them with 协作 on; others as they are."""
+    name, schema = tool["name"], tool["input_schema"]
+    if name in ("project_topic_start", "project_topic_send"):
+        return {**tool, "input_schema": {**schema, "properties": {**schema["properties"], "action": ACTION_ARG, "item": ITEM_ARG}}}
+    if name == "project_goal":
+        return {**tool, "input_schema": {**{key: value for key, value in schema.items() if key != "required"},
+                                         "properties": {**schema["properties"], "background": BACKGROUND_ARG}}}
+    return tool
+
+
 # The lead's two tools were project_thread_start and project_thread_send in older releases. The list names only the new ones;
 # a call under an old name (a session that began earlier, a server of an older release) is run as the new one.
 RENAMED_TOOLS = {"project_thread_start": "project_topic_start", "project_thread_send": "project_topic_send"}
@@ -445,7 +468,8 @@ assert any(tool["name"] == "project_topic_start" and WOKEN in tool["description"
 
 def lead_tools(environ=None) -> tuple:
     """The lead's tools; the two of the question triage with COVEY_PROJECT_TRIAGE=1 in ``environ``; with COVEY_COLLAB=1 there
-    also project_checklist, and project_answer asks for its ``evidence`` (``with_evidence``). An ``environ`` without
+    also project_checklist, project_answer asks for its ``evidence`` (``with_evidence``) and the 简报's arguments are there
+    (``with_brief``). An ``environ`` without
     COVEY_PROJECT_AUTOWAKE=1 (the Bridge hands it on, core/butler.py mcp_config) has project_topic_start say no turn comes
     when its topic ends (NOT_WOKEN)."""
     triage = environ is not None and str(cenv.get(TRIAGE_ENV, "", environ)).strip() == "1"
@@ -455,8 +479,8 @@ def lead_tools(environ=None) -> tuple:
     if environ is not None and str(cenv.get(AUTOWAKE_ENV, "", environ)).strip() != "1":
         tools = tuple({**tool, "description": tool["description"].replace(WOKEN, NOT_WOKEN)}
                       if tool["name"] == "project_topic_start" else tool for tool in tools)
-    return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_READ) + tools + (CHECKLIST_TOOLS if collab else ())
-            + (asked if triage else ()))
+    return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_READ) + (tuple(map(with_brief, tools)) if collab else tools)
+            + (CHECKLIST_TOOLS if collab else ()) + (asked if triage else ()))
 
 
 # The butler's tools a turn seldom needs. A Harness that fits a turn's tools in a budget (Antigravity, backends/agy/home.py)

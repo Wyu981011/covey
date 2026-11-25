@@ -1,5 +1,6 @@
 /* 专项的「进度」标签（v39，docs/web.md 专项条目）：把负责人的目标检查表分成 做完 / 正在做 / 将要做 / 等你，算解锁、尾巴、依赖图，
- * 取近 10 条决定和里程碑。全是纯函数，不碰页面；第一期只用现有数据，不加字段（“等你”按缺口文字推断，第二期换成 waiting_on）。 */
+ * 取近 10 条决定和里程碑。全是纯函数，不碰页面。v40 起这一页只在负责人还没写背景和动作时出现（简报在 briefData.ts），
+ * “等你”先看条目的 waiting_on，没写过再按缺口文字推断。 */
 import type { ChecklistItem, MemoryItem, ProjectNote, QuestionView, SnapshotProject, SnapshotTopic } from '@shared/api.interface';
 import { STATES } from './look.gen';
 import { byAsked, isRunningTone, isWaiting, toneOf } from './lib';
@@ -17,8 +18,12 @@ export const COL_ICON: Record<Col, string> = { done: '✓', doing: '▶', next: 
 
 /** 满足了：done 或 dropped（Covey project_checklist.MET，收尾门禁放行的两种） */
 export const isMet = (state: string | undefined): boolean => state === 'done' || state === 'dropped';
-/** 缺口里说下一步在主人手上（第一期按文字推断）：只差主人、等主人、要主人、需要主人 */
+/** 缺口里说下一步在主人手上（没写 waiting_on 时按文字推断）：只差主人、等主人、要主人、需要主人 */
 export const OWNER_GAP = /(只差|等|要|需要)主人/u;
+/** 一条的下一步在主人手上吗（v40）：负责人写过 waiting_on 就照它（'owner' 是，空串不是）；没写过（旧数据）退回按缺口文字推断。
+ * 满足了的不算，调用的地方先排除 */
+export const ownerWaits = (item: Pick<ChecklistItem, 'waiting_on' | 'gap'>): boolean =>
+  item.waiting_on === undefined ? OWNER_GAP.test(item.gap) : item.waiting_on === 'owner';
 
 export interface Placed {
   item: ChecklistItem;
@@ -69,7 +74,7 @@ function placeOne(item: ChecklistItem, items: Map<string, ChecklistItem>, topics
   const waiting: string[] = item.needs.filter((n: string) => items.has(n) && !isMet(items.get(n)?.state));
   if (item.state === 'dropped') return { col: 'done', why: 'dropped', waiting, topic };
   if (item.state === 'done') return { col: 'done', why: 'met', waiting, topic };
-  if (OWNER_GAP.test(item.gap)) return { col: 'owner', why: 'owner', waiting, topic };
+  if (ownerWaits(item)) return { col: 'owner', why: 'owner', waiting, topic };
   if (waiting.length) return { col: 'next', why: 'needs', waiting, topic };
   if (item.state === 'blocked') return { col: 'next', why: 'blocked', waiting, topic };
   if (item.topic) return { col: 'doing', why: !topic ? 'lost' : topicNow(topic).live ? 'live' : 'ended', waiting, topic };
