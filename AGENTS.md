@@ -2,7 +2,7 @@
 
 名词以 [docs/glossary.md](docs/glossary.md) 为准：界面、提示词只用表里的中文名。
 
-默认主干是 `main`，GitHub `ericxk/covey` 是准源。改动在分支上做；开发完成并跑完适用检查（见下文「怎么挑测试」）后，先同步最新 `main`，再快进合并进 `main` 并推到 GitHub，不 force 推送，也不覆盖别人的提交。检查存在已确认的基线失败时，记录验证结果和限制，不把它说成全部通过。GitHub Actions（`.github/workflows`）在 `main` 上跑测试，红了先修。
+默认主干是 `main`，GitHub `ericxk/covey` 是准源。改动在分支上做；开发完成并跑完适用检查（见下文「怎么挑测试」）后，先同步最新 `main`，再快进合并进 `main` 并推到 GitHub，不 force 推送，也不覆盖别人的提交。`main` 有规则集保护：谁都不能强推或删除；只有仓库管理员能直接推，其他协作者（包括替他们干活的 Coding Agent）推自己的分支、向 `main` 开 PR，满足 PR 页面列出的要求后再合并。检查存在已确认的基线失败时，记录验证结果和限制，不把它说成全部通过。GitHub Actions（`.github/workflows`）在 `main` 上跑测试，红了先修。
 
 贡献者和 Coding Agent 都照下面几条做：
 
