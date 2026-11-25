@@ -20,8 +20,11 @@ import type {
   SettingsWorkspaceItem,
   SettingsWorkspacePage,
 } from '@shared/api.interface';
-import { newOpId, useMemory, useSettings } from '@client/src/hooks/use-workbench';
+import { newOpId, useMemory, useSettings, useUpgrade } from '@client/src/hooks/use-workbench';
 import { MainMemory } from './MainMemory';
+import { UpgradePanel } from './Upgrade';
+import { UPGRADE_TAB, upgradeMark, upgradeOn } from './upgrade';
+import { canDo } from './v34';
 import { Head } from './Shell';
 import { setLight, useUi } from './store';
 import { ago } from './topicText';
@@ -927,12 +930,18 @@ const SettingsPage: React.FC = () => {
   const ops: Ops = useOps();
   const snap = q.data ?? null;
   const memoryOn: boolean = !!mem.data?.data?.on;
-  const tabs: { key: string; label: string }[] = snap
+  // 「更新」（v39）：Covey 认 upgrade 操作、也推过版本条目才有，排在最后
+  const upgradable: boolean = canDo(snap?.data.ops, 'upgrade');
+  const up = useUpgrade(upgradable);
+  const upgradeShown: boolean = upgradeOn(snap?.data.ops, up.data);
+  const base: { key: string; label: string }[] = snap
     ? (memoryOn ? [...snap.data.tabs.slice(0, 1), MEMORY_TAB, ...snap.data.tabs.slice(1)] : snap.data.tabs)
     : [];
+  const tabs: { key: string; label: string }[] = upgradeShown ? [...base, UPGRADE_TAB] : base;
+  const mark: boolean = !!upgradeMark(up.data?.data);
   const first: string | undefined = tabs[0]?.key;
-  // 「记忆」要等主记忆取回来再判断有没有，免得刷新时先被跳到第一页
-  const waiting: boolean = tab === MEMORY_TAB.key && mem.isLoading;
+  // 「记忆」「更新」要等各自的数据取回来再判断有没有，免得刷新时先被跳到第一页
+  const waiting: boolean = (tab === MEMORY_TAB.key && mem.isLoading) || (tab === UPGRADE_TAB.key && upgradable && up.isLoading);
   if (snap && first && !waiting && (!tab || !tabs.some((t) => t.key === tab))) return <Navigate to={`/settings/${first}`} replace />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
@@ -942,9 +951,14 @@ const SettingsPage: React.FC = () => {
           {q.isLoading ? <p className="st-faint">读取中…</p> : snap ? (
             <>
               <nav className="st-tabs" aria-label="设置分页">
-                {tabs.map((t) => <NavLink key={t.key} to={`/settings/${t.key}`} className={({ isActive }) => (isActive ? 'on' : '')}>{t.label}</NavLink>)}
+                {tabs.map((t) => (
+                  <NavLink key={t.key} to={`/settings/${t.key}`} className={({ isActive }) => (isActive ? 'on' : '')}>
+                    {t.label}
+                    {t.key === UPGRADE_TAB.key && mark ? <i className="up-tabdot" aria-label="有新版本" /> : null}
+                  </NavLink>
+                ))}
               </nav>
-              {tab === MEMORY_TAB.key ? <MainMemory /> : <Body data={snap.data} tab={tab ?? ''} ops={ops} />}
+              {tab === MEMORY_TAB.key ? <MainMemory /> : tab === UPGRADE_TAB.key ? <UpgradePanel /> : <Body data={snap.data} tab={tab ?? ''} ops={ops} />}
             </>
           ) : (
             <div className="st-empty">

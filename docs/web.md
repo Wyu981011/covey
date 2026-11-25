@@ -287,7 +287,13 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **key `asks`**（v34）：“要你处理”的几个数，`{waiting, stopped, stuck}`，和飞书看板、「手上的事」同一个算法（`core/board_read.py` 的 `Asks.counts`：等你含管家、负责人的题和整理专项要你定的建议，停住了含护栏停住的专项，点了“不管了”的不算）。
   - 推的线程每一步看完话题就算一次（`app/web_collect.py` 的 `counted`），变了就紧跟着这一步的话题单独一个请求推（`app/web_sync.py` 的 `push_asks`），所以和话题条目一起变；网页快照接口把它和话题一起给页面。
   - 网页有它就用它的数，没有（旧 Covey，或这几个数不全是非负整数）时照旧按条目自己数。比 v34 旧的网页拒收这个 key 时只记日志（第一次和每第十次），同样的数等下一次全量对时再试，不耽误话题。
-
+- **key `upgrade`**（v39，`app/self_upgrade.py` 的 `view`）：网页的「版本与更新」读它，见[版本与更新](#版本与更新)。只有这台 Covey 配了升级器（数据根里有 `upgrade.json`）才推，`ops` 里也才有 `upgrade`；没配时什么都不推，网页不画这一块。
+  - `live`：Bridge 现在跑的 release；`latest`：升级会部署的 release（没查过、查不到是空串）；`available`：升级会换东西（Bridge，或升级会更新、还不是这一版的网页）且没在升级；`bridge`：Bridge 会换。
+  - `web`：`{kind, current, manual}`，`kind` 是网页的部署方式（自托管是 `selfhost`，部署到全栈应用平台的是安装器给的另一个值，核心只照着转给网页）；`current` 网页已是 `latest` 的；`manual` 网页不是部署脚本建的，升级不动它（网页上说照部署时的办法更新）。没有网页工作台时是 null。
+  - `count`：新提交数（两个库合计，不含测试地图这类）；`changes`：最新的至多 20 个 `{repo, sha, subject, at}`，新的在前（`repo` 是 `covey` 或扩展的库名，`at` 秒）。
+  - `checked_at`（秒，没查过是 0）、`checking`、`error`（上次查没成功的原因，成功是空串，旧的结果照留）、`blocked`（现在不能升级的原因，比如检出有没提交的改动；能升级是空串）。
+  - `running`：在升级时 `{op_id, started_at, log}`，否则 null。`last`：上一次从网页点的升级 `{state, message, at, release, log, tail}`，`state` 是 `done`（Bridge 和网页都好了）、`partial`（Bridge 升好了、网页没更新上）、`failed`；`tail` 是升级输出的最后几行。没有是 null。
+  - 单独一个请求推：查完、升级开始和结束（两个文件和升级进程变了，推的线程每一步看几个 stat）、全量对时、`upgrade` 操作回执之前。比 v39 旧的网页拒收这个 key 时只记日志。
 ### 网页发回的操作
 
 `web-inbox` 线程 GET `/sync/inbox?after=<seq>&wait=8`（取到新操作就立刻再取一次）。认 `wait` 的网页（回的 JSON 带 `"waited": true`，见[更快的取数](#更快的取数可选参数)）没有新操作时把请求挂住，等到有了再回，Covey 拿到回音马上再问；不认的旧网页马上回，Covey 照旧隔 `poll_seconds`（默认 0.5 秒）再问。
@@ -317,6 +323,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | `project_finish`（v34） | `project_key`：专项的「收尾」，同停住卡的“收尾”，见下 |
 | `project_stop`（v34） | `project_key`：专项的「停止」，同专项卡的“停止专项”、停住卡的“停”，见下 |
 | `memory_edit`（v37） | 不带 `topic_key`、`project_key`，`payload` 是 `{action, …}`：改主记忆，同飞书设置卡「记忆」，见下 |
+| `upgrade`（v39） | 不带 `topic_key`、`project_key`，`payload` 是 `{action}`：`check` 查新版本、`run` 升级，见[版本与更新](#版本与更新)；没配升级器时回 failed |
 | `revisit_cancel`（v35） | `topic_key`，`payload` 是 `{set_at}`：取消话题的 Covey 定时回看，同飞书看板的「取消」，见下 |
 | `memory_undo`（v34） | `topic_key`，`payload` 是 `{job_id, entry_id}`：撤销这一轮刚记下的一条记忆，同答案卡上的「不对」，见下 |
 | `login` | 自托管网页的“用飞书登录”：`op_id` 是 `login-<request_id>`，`payload` 是 `{request_id, code, browser, os, ip, at}`；Covey 在私聊发确认卡（[网页登录确认](#网页登录确认)），回执只说卡发出了；主人的决定由 Covey 推 `type` 为 `login` 的条目（`key` 是 `request_id`，`data` 是 `{decision: approved \| denied, decided_at}`）告诉网页 |
@@ -392,6 +399,15 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - `node_add`（`name`、`title`、`ssh`）：只能经 ssh（不用 ssh 的方式要显示一次性口令，口令不进网页的库）。ssh 在单独的线程里跑，最长 90 秒，结果写进 `<state>/web/node-joins.json`。`node_remove`（`alias`）：同卡片，本机不能移除。`refresh`：什么都不改，只让设置马上重推。
 - `proxy`（`op`）：`enable`、`disable`、`row`（`kind`、`option`）、`pause`、`resume`、`remove`（`contact`），和代答卡同一处。按名字查找添加、去登录留在飞书。
 - 其余回 failed“这一项网页上只读”。
+
+### 版本与更新
+
+网页上点一下就把这台 Covey 升到最新：Bridge 和网页工作台一起（只升 Bridge 时网页还是旧的，网页上的新功能看不到）。代码在 `app/self_upgrade.py`，网页读 `settings` 的 `upgrade` 条目。
+
+- **谁会升级**：核心不知道一个部署该怎么升级（带扩展的 release 由扩展的安装器升级，见 [deploy.md 升级与回滚](deploy.md#升级与回滚)），由能升级它的安装器在数据根写 `upgrade.json`：`{"by", "status": [命令], "run": [命令]}`，两个命令的第一个词都是绝对路径。`status` 只查不改（取两个库的新提交，不拉、不换），最后一行输出 `{live, latest, bridge, web, count, changes, blocked}`；`run` 升级（拉代码、预检、换 Bridge、更新网页），退出码 0 全好、4 Bridge 好了网页没好、3 另一个部署在跑、别的是没做成。covey-internal 的 `./install` 装好、`./install upgrade` 升级好后写它（`./install status --json`、`./install upgrade`）。**没有这个文件时什么都不做**：不起线程、`ops` 里没有 `upgrade`、不推条目，只装核心的部署和以前一样。
+- **查新版本**：有升级器时多一个 `web-upgrade` 线程，Bridge 起来 2 分钟后查一次，之后每 6 小时一次，网页点了升级、升级结束 30 秒后再查一次（网页不再提示刚装上的版本）；网页上的「检查更新」（`upgrade` 的 `check`）马上查。一次最多 180 秒、同时只查一次，升级在跑时不查（它在拉检出）。结果在 `<状态目录>/upgrade/status.json`，查不成时写 `error`、旧的结果照留。
+- **升级**（`upgrade` 的 `run`）：先查一次；已经是最新、`blocked` 不空、已经在升级时回 failed 并写原因。否则在自己的会话里起升级进程（`start_new_session`，和任务进程一样，Bridge 重启停不到它）：外面包一层，输出写进 `<数据根>/deploy-runs/<时间>-page/upgrade.log`，结束时把退出码、结束时间和最后几行写进 `<状态目录>/upgrade/run.json`。回执马上回“开始升级…”。升级里的部署会重启 Bridge，在跑的任务不中断；新的 Bridge 从 `run.json` 读进度和结果，推给网页。升级进程不见了又没写结果时，网页说“结果不确定，看日志”。
+- 这条操作走自己的车道，查的这一两分钟不挡设置、开新话题这些。
 
 ### 更快的取数（可选参数）
 
@@ -488,3 +504,4 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v36 | 专项负责人的 `config`，`switch` 接受负责人（只换模型、预算、脱敏）；`launch.models` 的 `bridge_tools`；负责人那一轮“换个模型”的 `how` 是 `switch`；`settings.config` 的 `lead`（专项负责人一段） |
 | v37 | `settings` 的 `memory` 条目（主记忆：全局和各工作区的原则、知识条目、候选，用量，下一轮预览）；`memory_edit` 操作 |
 | v38 | 取数的可选参数（见[更快的取数](#更快的取数可选参数)）：`/sync/inbox` 的 `wait` 和响应的 `waited`；`/api/snapshot` 的 `since` 和响应的 `cursor`、`partial`、`keys`；`/api/outbox/:opId` 的 `wait`。推送的条目没有变化 |
+| v39 | `settings` 的 `upgrade` 条目和 `upgrade` 操作（[版本与更新](#版本与更新)：查新版本，点一下升级 Bridge 和网页）；只在数据根有 `upgrade.json` 时有，`ops` 里也才有 `upgrade` |

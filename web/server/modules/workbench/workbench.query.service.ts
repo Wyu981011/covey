@@ -47,7 +47,7 @@ import {
   type TurnImage,
   type TurnView,
   type WaitingItem,
-  type SettingsAsks, type MainMemoryData, type MainMemoryResponse } from '@shared/api.interface';
+  type SettingsAsks, type MainMemoryData, type MainMemoryResponse, type UpgradeData, type UpgradeResponse } from '@shared/api.interface';
 import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
@@ -55,6 +55,7 @@ import { wake, waitFor } from './workbench.wake';
 import {
   answersOf, asksOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectOpShape, recoverShape, revisitCancelShape, revisitOf,
 } from './workbench.v4';
+import { upgradeOf, upgradeShape } from './workbench.upgrade';
 
 interface TopicRow {
   key: string;
@@ -1088,6 +1089,15 @@ export class WorkbenchQueryService {
     return { rev: str(o.rev), data: o.data as MainMemoryData, at: str(o.at) };
   }
 
+  /** v39：版本与更新（设置条目 key upgrade）；Covey 没推过、或形状不对是 null */
+  async upgrade(): Promise<UpgradeResponse | null> {
+    const res = await this.db.execute(sql`select value from sync_state where name = ${'upgrade'}`);
+    const v = asRows<{ value: unknown }>(res)[0]?.value;
+    const o: Record<string, unknown> = obj(typeof v === 'string' ? JSON.parse(v) : v);
+    const data: UpgradeData | undefined = upgradeOf(o.data);
+    return data ? { rev: str(o.rev), data, at: str(o.at) } : null;
+  }
+
   /** v16：整理专项的建议；没收到过是 null */
   async tidy(): Promise<TidyResponse> {
     const d: Record<string, unknown> | null = await this.snapshotData('tidy');
@@ -1167,6 +1177,12 @@ export class WorkbenchQueryService {
     }
     if (kind === 'memory_edit') {
       checkMemoryEdit(payload, req);
+      return;
+    }
+    if (kind === 'upgrade') {
+      // v39：检查更新、全部更新；能不能升级由 Covey 定（没有更新、正在升级、检出有改动都回 failed）
+      const shape = upgradeShape(payload, str(req.topic_key), str(req.project_key));
+      if ('error' in shape) throw new BadRequestException(shape.error);
       return;
     }
     if (kind === 'tidy_decide') {

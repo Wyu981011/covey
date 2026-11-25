@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemory } from '@client/src/hooks/use-workbench';
+import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemory, useUpgrade } from '@client/src/hooks/use-workbench';
 import { ageMs, errorText } from '@client/src/lib/workbench-format';
 import { byRecent, isRunning, isWaiting, pref, setPref, toneOf, toneWord, topicNumberOf, type ToneKey } from './lib';
 import { Avatar, Dot, useTick } from './ui';
@@ -17,6 +17,8 @@ import { askNumbers, asks, askSum, haltWords, isHalted, stoppedSet, type Asks } 
 import { PaneHandle } from './PaneHandle';
 import { StatusGroups } from './StatusGroups';
 import { SIDE_PANE, showSavedPanes } from './panes';
+import { upgradeMark } from './upgrade';
+import { canDo } from './v34';
 import './covey.css';
 import './layout-a.css';
 import './night.css';
@@ -26,6 +28,7 @@ import './tags.css';
 import './sidebar.css';
 import './unify.css';
 import './v3.css';
+import './upgrade.css';
 
 
 /** 侧栏话题行右下角画状态点的状态：要你处理、告诉你一声和在做的；做完、空闲、排队、已停止不画（灰点不带信息） */
@@ -253,6 +256,14 @@ export const SyncDot: React.FC<{ at: string | null | undefined }> = ({ at }) => 
   return <i className="sync" title={at ? `最后同步 ${at}` : '还没同步'} style={fresh ? undefined : { background: 'var(--stop)', animation: 'none' }} />;
 };
 
+/** v39：「设置」旁的“有新版本”“更新中”：Covey 认 upgrade 操作才去取版本条目；没有就是空串，什么都不画 */
+function useUpgradeMark(): string {
+  const ops: readonly string[] | undefined = useSettings().data?.data?.ops;
+  const on: boolean = canDo(ops, 'upgrade');
+  const up = useUpgrade(on);
+  return on ? upgradeMark(up.data?.data) : '';
+}
+
 const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }) => {
   const memoryOn: boolean = !!useMemory().data?.data?.on;
   const { data } = useSnapshot();
@@ -262,6 +273,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
   const [shown, setShown] = useState<number>(LOOSE_PAGE);
   const scroller = React.useRef<HTMLDivElement>(null);
   const launchOn: boolean = !!useSettings().data?.data?.launch;
+  const upMark: string = useUpgradeMark();
   const [unOpen, setUnOpen] = useState<boolean>(false);
   const [oldOpen, setOldOpen] = useState<boolean>(() => pref('grp.old', '0') === '1');
   const [oldWas, setOldWas] = useState<string>('');
@@ -432,10 +444,14 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
         </div>
       </div>
       <div className="sidefoot">
-        <Link to="/settings" className={`sidelink${loc.pathname.startsWith('/settings') ? ' on' : ''}`} title="设置" aria-label="设置">
+        <Link to={mini && upMark ? '/settings/upgrade' : '/settings'} className={`sidelink${loc.pathname.startsWith('/settings') ? ' on' : ''}`} title={mini && upMark ? `设置 · ${upMark}` : '设置'} aria-label="设置">
           <Settings />
           {mini ? null : <span>设置</span>}
+          {mini && upMark ? <i className="up-dot" aria-label={upMark} /> : null}
         </Link>
+        {!mini && upMark ? (
+          <Link to="/settings/upgrade" className="short up-new" title="版本与更新：机器人和网页一起换成最新版本">{upMark}</Link>
+        ) : null}
         {mini ? null : <Avatar />}
       </div>
     </aside>
@@ -489,6 +505,7 @@ const TabBar: React.FC = () => {
   // 和看板、侧栏同一个数（projectData.ts asks）
   const act: number = data ? askSum(askNumbers(asks(data, now), data.asks)) : 0;
   const on = (focus: 'topics'): boolean => ui.menu && ui.focus === focus;
+  const upMark: string = useUpgradeMark();
   return (
     <nav className="nb-tabs" aria-label="主导航" style={gap ? { paddingRight: gap } : undefined}>
       <Link to="/" className={loc.pathname === '/' && !ui.menu ? 'on' : ''}>
@@ -508,9 +525,10 @@ const TabBar: React.FC = () => {
         <ListTree />
         <span>话题</span>
       </button>
-      <Link to="/settings" className={loc.pathname.startsWith('/settings') && !ui.menu ? 'on' : ''}>
+      <Link to={upMark ? '/settings/upgrade' : '/settings'} className={loc.pathname.startsWith('/settings') && !ui.menu ? 'on' : ''}>
         <Settings />
         <span>设置</span>
+        {upMark ? <i className="up-dot" aria-label={upMark} /> : null}
       </Link>
     </nav>
   );

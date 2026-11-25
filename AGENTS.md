@@ -212,6 +212,7 @@
 | `app/runs.py` | Runs: one job's turn on its Harness's backend |
 | `app/runtime.py` | Process-wide Bridge state, one object passed by reference to every part that needs it |
 | `app/saved_send.py` | A turn's saved reply, paused question or canonical text sent the same way on its first send and on each … |
+| `app/self_upgrade.py` | 网页上点一下就升级: whether this deployment has a newer version, and its upgrade started from the page and carried on … |
 | `app/sessions.py` | Sessions: one Harness's native-session pointer of a topic |
 | `app/settings_hub.py` | The 设置 card: the bot menu's 设置 (event key MENU_KEY) puts the butler's settings on one page, 配置, the workspace … |
 | `app/source_watch.py` | The owner recalled or edited a message the Bridge acts on |

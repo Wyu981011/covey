@@ -38,7 +38,7 @@ from covey.cards.redaction_panel import SWITCH_ROWS, TOPICS
 from covey.cards.settings_hub import (ABOUT, CONFIG, DOCTOR, GROUPS, LABELS, MEMORY, NODES, PROXY, REDACTION, TOPIC,
                                       WORKSPACE)
 from covey.cards.workspace_manager import list_entries, tag_words, tail
-from covey.app import web_launch, web_panels
+from covey.app import self_upgrade, web_launch, web_panels
 from covey.app.access import free_talk_on
 from covey.core import butler, butler_settings, projects, web_sync
 from covey.core.workspaces import add_workspace, load_config, missing_workspaces, remove_workspaces
@@ -88,6 +88,12 @@ def rows_of(settings_) -> list:
     """``settings_`` as the page's rows, in the order of the card's lines, each with its ``line`` (1, 2, ...: the rows the
     card draws side by side, cards/butler_panel.py ``lines``): the page may lay a line out as it likes."""
     return [{**row(each, True), "line": number} for number, line in enumerate(cards.lines(settings_), 1) for each in line]
+
+
+def page_ops() -> list:
+    """The page's operations this Covey does (``ops``, v34): core/web_sync.py KINDS, ``upgrade`` (v39) only with an upgrader set up
+    (app/self_upgrade.py config), so a page draws 版本与更新 only then."""
+    return [kind for kind in web_sync.KINDS if kind != "upgrade" or self_upgrade.config() is not None]
 
 
 class WebSettings:
@@ -143,7 +149,7 @@ class WebSettings:
         tabs = [*tabs, *([PROXY_TAB] if self.proxy_panel() is not None else [])]
         # ``ops``: the page's operations this Covey does (core/web_sync.py KINDS, data contract v34), so a page shows a button only
         # for what is done (收尾、停止 of a project, 不对 on a memory line) and an older Covey's page stays as it was.
-        data = {"tabs": [{"key": tab, "label": labels[tab]} for tab in tabs], "feishu": self.feishu(), "ops": list(web_sync.KINDS)}
+        data = {"tabs": [{"key": tab, "label": labels[tab]} for tab in tabs], "feishu": self.feishu(), "ops": page_ops()}
         build = {CONFIG: lambda: self.config(ctx, settings, choices, chat),
                  WORKSPACE: lambda: self.workspaces(ctx, settings), REDACTION: lambda: self.redaction(ctx),
                  GROUPS: lambda: self.groups(ctx, now), NODES: lambda: self.nodes(ctx),

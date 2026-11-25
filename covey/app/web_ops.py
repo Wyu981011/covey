@@ -85,7 +85,7 @@ from covey.app import auto_retry, memory_collect, project_clicks, project_lead, 
 from covey.app.answers import AnswerIncomplete, answer_fields, skip_all_fields, submitted_answer
 from covey.app.binding import stale_job_card
 from covey.app.runtime import job_stage, supplement_target_of
-from covey.app import web_files, web_memory
+from covey.app import self_upgrade, web_files, web_memory
 from covey.app.web_settings import WebSettings
 from covey.app.web_turns import STOP_AUTO_RETRY
 from covey.core import board_read, collab, collab_records, failure, project_memory, projects, revisits, triage, turn_source, web_sync
@@ -128,10 +128,19 @@ class Ops:
         self.hear = hear
         self.fetch = fetch  # request(method, path) of the page's /openapi (app/web_push_client.py Client.request): a say's files; None: none taken.
         self.web_settings = WebSettings(env)  # The 设置 page's snapshot (app/web_sync.py) and its changes (``settings``).
+        self._upgrader = None  # self_upgrade, made once the state directory is known (build_context fills it in before any thread).
 
     @property
     def runtime(self):
         return self.env.runtime
+
+    @property
+    def self_upgrade(self):
+        """版本与更新 (``upgrade``, v39, app/self_upgrade.py): its checks and the upgrade it starts, one for the Bridge (app/web_sync.py
+        pushes its item and runs its thread); None before the state directory is known."""
+        if self._upgrader is None and self.env.state_dir:
+            self._upgrader = self_upgrade.SelfUpgrade(self.env.state_dir, self.runtime.log)
+        return self._upgrader
 
     def run(self, row) -> tuple:
         """(state, message) of one outbox row; never raises."""
@@ -143,7 +152,7 @@ class Ops:
                        "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover,
                        "login": self.login, "project_finish": self.project_finish, "project_stop": self.project_stop,
                        "memory_undo": self.memory_undo, "revisit_cancel": self.revisit_cancel,
-                       "memory_edit": self.memory_edit}.get(kind)
+                       "memory_edit": self.memory_edit, "upgrade": self.upgrade}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -819,6 +828,29 @@ class Ops:
         except Exception as exc:  # noqa: BLE001 - taken back all the same; the card's lines follow on its next redraw
             self.runtime.log(f"web memory_undo card not redrawn: {type(exc).__name__}")
         return "已撤销：" + " ".join(str(note.get("text") or "").split())[:40]
+
+    def upgrade(self, state, chat, row, payload) -> str:
+        """``upgrade`` (v39, docs/web.md 版本与更新): ``check`` looks for a newer version now, ``run`` starts the upgrade in a process of
+        its own (app/self_upgrade.py). Only with an upgrader set up; never with a topic or a project."""
+        if row.get("topic_key") or row.get("project_key"):
+            raise ValueError("upgrade 不带话题和专项")
+        action = str(payload.get("action") or "")
+        if action not in ("check", "run"):
+            raise ValueError("upgrade 的 action 只能是 check 或 run")
+        upgrader = self.self_upgrade
+        if upgrader is None or not upgrader.on():
+            raise ValueError("这台 Covey 没配网页上升级：在终端里按安装说明升级")
+        if action == "run":
+            return upgrader.start(row.get("op_id") or "")
+        status = upgrader.check()
+        if status.get("error"):
+            raise ValueError(f"没查成：{status['error']}")
+        if status.get("blocked"):
+            return f"已检查：现在不能升级（{status['blocked']}）"
+        count = status.get("count") or 0
+        if self_upgrade.available(status):
+            return f"已检查：有 {count} 个更新" if count else "已检查：网页要更新到和 Bridge 同一版"
+        return "已检查：已经是最新"
 
     def memory_edit(self, state, chat, row, payload) -> str:
         """The page's 记忆 tab (data contract v37): add, change, 常驻, delete a principle or a knowledge entry of 全局 or a workspace,
