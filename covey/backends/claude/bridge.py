@@ -170,7 +170,7 @@ class ClaudeBackend(BackendRuntime):
 
     def _catalog(self, ctx, *, refresh=False):
         configured = profiles.catalog(ctx)  # Validate first, before running even the default command.
-        if ctx.options.get(profiles.SELECTED):
+        if (getattr(ctx, "options", None) or {}).get(profiles.SELECTED):  # As profiles.catalog reads a bare context.
             return configured  # An execution context contains the selected command, never the default probe.
         # The default account catalog always uses its original environment, even while selecting a profile.
         probe = (dataclasses.replace(ctx, model="", options={k: v for k, v in ctx.options.items() if k != profiles.SELECTED})

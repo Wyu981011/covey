@@ -344,19 +344,19 @@ TRIAGE_TOOLS = (
 # name its grounds (``evidence``, checked by the Bridge: app/triage.py grounds). Off, the lead's list is as it was.
 COLLAB_ENV = "COVEY_COLLAB"
 CHECKLIST_ITEM = {"type": "object", "properties": {
-    "id": {"type": "string", "description": "要改的条目 id（如 c2）；新加的不填"},
+    "id": {"type": "string", "description": "条目 id（如 c2）；新加的不填"},
     "criterion": {"type": "string", "description": "完成标准，一句话；新加的必填"},
     "title": {"type": "string", "description": "短标题"},
-    "topic": {"type": "string", "description": "主要交付它的话题（T 号或 topic_id）；还没派的不填，空串清掉"},
-    "topics": {"type": "array", "items": {"type": "string"}, "description": "也参与它的话题，整组替换，最多 6 个"},
+    "topic": {"type": "string", "description": "主要交付它的话题（T 号）；没派的不填，空串清掉"},
+    "topics": {"type": "array", "items": {"type": "string"}, "description": "也参与的话题，整组替换，最多 6 个"},
     "needs": {"type": "array", "items": {"type": "string"}, "description": "依赖的条目 id，最多 6 个"},
-    "evidence": {"type": "string", "description": "证据在哪：提交号、产物路径、检查点自检；标 done 必填"},
-    "gap": {"type": "string", "description": "还缺什么、下一步谁做；blocked 写卡在哪，dropped 写主人为什么不要了"},
+    "evidence": {"type": "string", "description": "证据：提交号、产物路径、检查点自检；done 必填"},
+    "gap": {"type": "string", "description": "还缺什么、下一步谁做；blocked 写卡在哪，dropped 写为什么不要"},
     "waiting_on": {"type": "string", "enum": ["owner", ""], "description": "下一步在主人手上写 owner，否则空串"},
     "state": {"type": "string", "enum": ["open", "done", "blocked", "dropped"],
-              "description": "open 没满足（默认）/ done 满足了 / blocked 卡住 / dropped 主人说不做了"}}}
+              "description": "open 没满足（默认）/ done 满足 / blocked 卡住 / dropped 不做了"}}}
 ACTION_ITEM = {"type": "object", "properties": {
-    "id": {"type": "string", "description": "要改的动作 id（如 a3）；新加的不填"},
+    "id": {"type": "string", "description": "动作 id（如 a3）；新加的不填"},
     "title": {"type": "string", "description": "动作名；新加的必填"},
     "note": {"type": "string", "description": "现状一句，80 字内"},
     "items": {"type": "array", "items": {"type": "string"}, "description": "条目 id，整组替换"},
@@ -364,18 +364,17 @@ ACTION_ITEM = {"type": "object", "properties": {
     "state": {"type": "string", "enum": ["open", "dropped"]}}}
 CHECKLIST_TOOLS = (
     {"name": "project_checklist",
-     "description": "维护目标检查表和简报：检查表把完成标准拆成几条（谁交付、依赖、证据、缺口），简报用 actions 拆动作。"
-                    "缺口处理完用 close_gaps 写怎么处理的。什么都不传就是看现在的两样。",
+     "description": "维护目标检查表的条目和简报的动作；缺口处理完用 close_gaps 写怎么处理的。不传参数是查看。",
      "input_schema": {"type": "object", "properties": {
-         "items": {"type": "array", "items": CHECKLIST_ITEM, "description": "要新加或修改的条目（最多 20 条）；改的只写要改的项"},
-         "actions": {"type": "array", "items": ACTION_ITEM, "description": "要新加或修改的动作，写法同 items"},
+         "items": {"type": "array", "items": CHECKLIST_ITEM, "description": "新加或改的条目，最多 20 条；改的只写要改的项"},
+         "actions": {"type": "array", "items": ACTION_ITEM, "description": "新加或改的动作，写法同 items"},
          "close_gaps": {"type": "array", "items": {"type": "object", "required": ["gap", "how"], "properties": {
              "gap": {"type": "string", "description": "缺口 id（如 g1a2b3c）"},
-             "how": {"type": "string", "description": "怎么处理的（谁补了、证据在哪，或主人说不用补）"}}}}}}},
+             "how": {"type": "string", "description": "怎么处理的：谁补了、证据在哪，或主人说不用补"}}}}}}},
 )
 # 简报 (with COVEY_COLLAB=1 too, app/project_tools.py): the goal's background, and a topic opened or fed on an action or an item.
-ACTION_ARG = {"type": "string", "description": "动作 id，如 a3"}
-ITEM_ARG = {"type": "string", "description": "条目 id，如 c9"}
+ACTION_ARG = {"type": "string", "description": "动作 id"}
+ITEM_ARG = {"type": "string", "description": "条目 id"}
 BACKGROUND_ARG = {"type": "string", "description": "背景，300 字内"}
 EVIDENCE = {"type": "array", "minItems": 1, "maxItems": 6, "items": {"type": "string"},
             "description": "替主人答题的依据：专项记忆条目的 id（状态包专项记忆每行开头〔〕里的，如 0123456789abcdef-2），"
