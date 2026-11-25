@@ -735,6 +735,169 @@ class AwaitedTest(AwaitedCase):
             self.assertIsNone(relay_targets.awaited_target(self.state, self.job()))
 
 
+OWNER_WORDS = "刚发的这个仓库能不能帮上产线？题包负责人来看吧"
+HANDED_WORDS = "管家整理的说明：评估仓库对产线的用处"
+
+
+class HandedLeadCase(AwaitedCase):
+    """T812, 2026-11-26: the owner asked the butler at the top level, its project_send handed his words to the lead (a turn
+    of message id "main-<token>", no card of its own and no Feishu message), whose project_topic_start opened T806; T806
+    ended and nothing came back to the top level, as the one hop up from it (the lead's turn) named nothing to quote."""
+
+    def setUp(self):
+        super().setUp()
+        # The butler's turn that took the owner's message, its card at the top level.
+        upsert_job_record(self.state, job_key(OWNER, 5), card_message_id="om_butler_card", user_text=OWNER_WORDS)
+
+    def handed_lead_turn(self, token="ps1", job_id=7, butler_key=None, chat=CHAT):
+        """The lead's turn ``token`` project_send started (app/butler_projects.py): its record and the request's; its key."""
+        mid = "main-" + token
+        upsert_job_record(self.state, job_key(mid, job_id), job_id=job_id, message_id=mid, chat_id=chat,
+                          topic_id=self.lead_topic, card_message_id="", reply_to_message_id="", status="done",
+                          user_text=HANDED_WORDS)
+        self.opened(token, job_key=job_key(OWNER, 5) if butler_key is None else butler_key, lead_topic_id=self.lead_topic,
+                    project_id=self.PID, answer={"ok": True, "data": {"project_id": self.PID, "steered": False}})
+        return job_key(mid, job_id)
+
+    def member_turn(self, lead_key, token="t1"):
+        """The member's turn ``token`` the lead's turn ``lead_key`` opened (project_topic_start)."""
+        self.opened(token, plan={"start": True}, topic_id=TOPIC, job_key=lead_key)
+
+
+class HandedLeadTest(HandedLeadCase):
+    def test_a_turn_handed_on_in_a_lead_turn_the_butler_handed_on_relays_quoting_the_butlers_card(self):
+        lead = self.handed_lead_turn()
+        self.member_turn(lead)
+        target = relay_targets.awaited_target(self.state, self.job())
+        self.assertEqual(("om_butler_card", "T410", "start", "t1", TOPIC, lead),
+                         tuple(target[k] for k in ("reply_to", "label", "kind", "token", "topic_id", "main_key")))
+        # The lead's turn answers no message of the owner's itself: the topics it opens hang under none.
+        self.assertEqual("", relay_targets.butler_job_owner_message(self.state, lead))
+        send = self.send()
+        self.assertEqual("sent", relay(self.state, self.job(), DONE, send=send, text=REPLY))
+        card = json.dumps(send.call_args.args[4], ensure_ascii=False)
+        self.assertIn(OWNER_WORDS[:12], card)  # "你问" is what he said to the butler,
+        self.assertNotIn("管家整理的说明", card)  # not what the butler handed the lead.
+        # Its stop relays too; a second turn of it once.
+        self.member_turn(lead, "t2")
+        self.assertEqual("sent", relay(self.state, self.job("main-t2", 10), STOPPED, send=send, reason="任务失败"))
+        self.assertEqual("sent", relay(self.state, self.job("main-t2", 10), STOPPED, send=send, reason="任务失败"))
+        self.assertEqual(2, send.call_count)
+
+    def test_without_the_butlers_card_it_quotes_the_owners_message(self):
+        upsert_job_record(self.state, job_key(OWNER, 5), card_message_id="")
+        self.member_turn(self.handed_lead_turn())
+        self.assertEqual(OWNER, relay_targets.awaited_target(self.state, self.job())["reply_to"])
+
+    def test_an_automatic_retry_of_the_leads_turn_follows_the_turn_it_continues(self):
+        lead = self.handed_lead_turn()
+        upsert_job_record(self.state, lead, auto_retry_state="queued")
+        # Its message id as app/auto_retry.py gives it (task_controls retry_topic), no card (a lead's never has one).
+        upsert_job_record(self.state, job_key("auto-retry-7-1", 12), job_id=12, message_id="auto-retry-7-1", chat_id=CHAT,
+                          topic_id=self.lead_topic, status="done", retry_of=lead)
+        self.member_turn(job_key("auto-retry-7-1", 12))
+        self.assertEqual("om_butler_card", relay_targets.awaited_target(self.state, self.job())["reply_to"])
+
+    def test_the_ask_block_is_of_the_turn_the_owner_spoke_in(self):
+        lead = self.handed_lead_turn()
+        self.member_turn(lead)
+        target = relay_targets.awaited_target(self.state, self.job())
+        with mock.patch.object(relay_targets.answer_cards, "asked", return_value={"tag": "ask"}) as asked:
+            self.assertEqual({"tag": "ask"}, relay_targets.ask_for(self.state, self.job(), target, at="om_card"))
+        record = asked.call_args.args[1]
+        self.assertEqual((5, OWNER_WORDS), (record["job_id"], record["user_text"]))
+        self.assertEqual((TOPIC, "om_card"), (asked.call_args.kwargs["topic_id"], asked.call_args.kwargs["at"][0]))
+        # A lead's turn the owner started himself (a reply to the project's card, its message id his): its own words.
+        upsert_job_record(self.state, job_key("om_to_card", 8), job_id=8, message_id="om_to_card", chat_id=CHAT,
+                          topic_id=self.lead_topic, status="done", user_text="直接对负责人说的")
+        with mock.patch.object(relay_targets.answer_cards, "asked", return_value={"tag": "ask"}) as asked:
+            relay_targets.ask_for(self.state, self.job(), {**target, "main_key": job_key("om_to_card", 8)})
+        self.assertEqual(8, asked.call_args.args[1]["job_id"])
+        # An ordinary topic the butler opened: its own turn's words, as before.
+        with mock.patch.object(relay_targets.answer_cards, "asked", return_value={"tag": "ask"}) as asked:
+            relay_targets.ask_for(self.state, self.job(), {**target, "main_key": job_key(OWNER, 5)})
+        self.assertEqual(5, asked.call_args.args[1]["job_id"])
+
+    def test_a_wake_up_turn_still_hands_on_nothing_to_relay(self):
+        wake = f"lead-{self.PID}-3"
+        upsert_job_record(self.state, job_key(wake, 7), job_id=7, message_id=wake, chat_id=CHAT, topic_id=self.lead_topic,
+                          card_message_id="", status="done")
+        self.member_turn(job_key(wake, 7))
+        self.assertIsNone(relay_targets.awaited_target(self.state, self.job()))
+        self.assertEqual("", relay_targets.relay_quote(self.state, job_key(wake, 7)))
+        send = self.send()
+        self.assertIsNone(relay(self.state, self.job(), DONE, send=send, text=REPLY))
+        send.assert_not_called()
+
+    def test_a_loop_of_records_ends_with_nothing_to_quote(self):
+        first = self.handed_lead_turn("ps1", 7, butler_key=job_key("main-ps2", 8))
+        self.handed_lead_turn("ps2", 8, butler_key=first)
+        self.member_turn(first)
+        self.assertEqual("", relay_targets.relay_quote(self.state, first))
+        self.assertIsNone(relay_targets.awaited_target(self.state, self.job()))
+        self.assertEqual(8, relay_targets._asker(self.state, first)["job_id"])  # The loop ends at the last one read.
+
+    def test_a_chain_longer_than_its_hops_is_not_followed_to_its_end(self):
+        hops = relay_targets.HAND_HOPS
+        above = job_key(OWNER, 5)
+        for n in range(hops - 1, 0, -1):  # Jobs 1 .. HAND_HOPS - 1, each handed on by the one above it.
+            above = self.handed_lead_turn(f"h{n}", 100 + n, butler_key=above)
+        self.assertEqual("om_butler_card", relay_targets.relay_quote(self.state, above))  # HAND_HOPS jobs: within.
+        longer = self.handed_lead_turn("h0", 100, butler_key=above)
+        self.assertEqual("", relay_targets.relay_quote(self.state, longer))  # One more: not followed.
+
+    def test_a_record_of_another_chat_up_the_chain_is_not_quoted(self):
+        upsert_job_record(self.state, job_key(OWNER, 5), chat_id="oc_elsewhere")
+        lead = self.handed_lead_turn()
+        self.member_turn(lead)
+        self.assertEqual("", relay_targets.relay_quote(self.state, lead))
+        self.assertIsNone(relay_targets.awaited_target(self.state, self.job()))
+
+    def test_a_topic_moved_out_of_the_project_relays_through_the_same_chain(self):
+        # Its turns relay as an ordinary topic's (relay_target), quoting what the turn the owner spoke in has.
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT)
+        self.member_turn(self.handed_lead_turn())
+        target = relay_target(self.state, self.job())
+        self.assertEqual(("om_butler_card", "start"), (target["reply_to"], target["kind"]))
+        self.assertIsNone(relay_targets.awaited_target(self.state, self.job()))  # No member any more.
+
+    def test_the_leads_receipt_says_it_was_sent_so_a_wake_up_that_retells_it_stays_quiet(self):
+        from covey.app import project_lead, project_loop
+        from covey.core import projects
+
+        projects.create(self.state, projects.new_record(chat_id=CHAT, name="题包", goal="评估", project_id=self.PID,
+                                                        now=time.time()))
+        projects.add_member(self.state, self.PID, TOPIC)
+        self.member_turn(self.handed_lead_turn())
+        upsert_job_record(self.state, job_key("main-t1", 9), job_id=9, message_id="main-t1", chat_id=CHAT, topic_id=TOPIC,
+                          status="done", final_text="评估完了：有帮助")
+        self.assertEqual("sent", relay(self.state, self.job(), DONE, send=self.send(), text=REPLY))
+        logs = []
+        project_loop.after_runner(logs.append, self.state, self.job())
+        [item] = project_loop.unread(self.state, self.PID)
+        self.assertEqual(("thread_end", True), (item["kind"], item.get("relayed")))
+        self.assertIn(project_lead.RELAYED_NOTE, project_lead.receipt_line(item))
+        wake = f"lead-{self.PID}-1"
+        project_lead.take_receipts(self.state, self.PID, wake)
+        note = {"id": "n1", "at": time.time(), "text": "T410 出结果了", "report": True, "kind": "thread", "job": wake}
+        projects.update(self.state, self.PID, lambda record: record.update(style={"report": "each_thread"}, notes=[note]))
+        self.assertTrue(project_loop.told_already(self.state, self.PID, wake))
+        self.assertFalse(project_loop.reported(self.state, self.lead_topic, wake))
+
+
+class HandedLeadDeliverTest(HandedLeadCase):
+    """TurnDelivery.deliver relays such a turn from its task runner."""
+
+    deliver = DeliverTest.deliver
+
+    def test_a_done_member_turn_sends_its_conclusion(self):
+        self.member_turn(self.handed_lead_turn())
+        send = self.deliver(self.job(progress=SimpleNamespace()))
+        send.assert_called_once()
+        self.assertIn("两种做法都行", json.dumps(send.call_args.kwargs["card"]["body"], ensure_ascii=False))
+        self.assertEqual("sent", read_object(relay_send.relay_path(self.state, job_key("main-t1", 9))).get("state"))
+
+
 class AwaitedDeliverTest(AwaitedCase):
     """TurnDelivery.deliver relays a member's awaited turn as it does a butler topic's."""
 

@@ -3,7 +3,9 @@
 gave, or an automatic retry of either; ``area_target``: the latest request that touched a 话题区, or the owner's own
 launch from the web page, ``web_root``), the message a relay quotes (``relay_quote``, ``butler_job_owner_message``), its
 "你问" block (``ask_for``), the card its T number opens (``turn_card``), and a project member's turn the owner waits for
-(``awaited_target``: one the lead handed on while he was there). Reads records only: nothing here sends or writes."""
+(``awaited_target``: one the lead handed on while he was there). A hand-on can come from a turn that was handed on itself
+(a lead's turn the butler's project_send started, ``_handed_up``): the quote and the "你问" block are then the ones of
+the turn the owner spoke in, up that chain. Reads records only: nothing here sends or writes."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -17,6 +19,9 @@ from covey.core.topics import load_topic, topic_label
 
 PREFIX = "main-"  # A butler tool's synthetic message id (app/butler_topics.py).
 RETRY_HOPS = 5
+# Jobs ``_handed_up`` reads up a chain of hand-ons: a project member's turn is two hand-ons below the owner's message (the
+# butler's project_send to the lead, the lead's project_topic_start), the rest is room for an end to a loop of records.
+HAND_HOPS = 4
 
 
 def _opened(state_dir, message_id, job_id, topic_id):
@@ -49,22 +54,73 @@ def origin_message(state_dir, job) -> str:
     return _origin_job(state_dir, job)[0]
 
 
+def _owner_message(job) -> str:
+    """The Feishu message the job record ``job`` answers: its reply_to_message_id, else its own message id; '' for
+    neither an ``om_`` one."""
+    reply_to = str(job.get("reply_to_message_id") or "")
+    if not reply_to.startswith("om_"):
+        reply_to = str(job.get("message_id") or "")
+    return reply_to if reply_to.startswith("om_") else ""
+
+
 def butler_job_owner_message(state_dir, butler_job_key) -> str:
     """The owner's top-level message the butler job ``butler_job_key`` answers (the one its card quotes); ''
-    when its record is gone or names no Feishu message."""
-    butler_job = find_job_record(Path(state_dir), str(butler_job_key or "")) or {}
-    reply_to = str(butler_job.get("reply_to_message_id") or "")
-    if not reply_to.startswith("om_"):
-        reply_to = str(butler_job.get("message_id") or "")
-    return reply_to if reply_to.startswith("om_") else ""
+    when its record is gone or names no Feishu message. That job's own only, never one up its hand-ons
+    (``relay_quote`` follows them): a lead's turn the butler handed on answers no message of the owner's itself, so the
+    topics it opens hang under none (app/butler_topics.py place), and what it says in them is the lead's
+    (app/web_said.py)."""
+    return _owner_message(find_job_record(Path(state_dir), str(butler_job_key or "")) or {})
+
+
+def _handed_up(state_dir, key):
+    """The jobs from the job ``key`` up the hand-ons it came from, each as (key, record): a job whose message id (that of
+    its automatic retry chain's first, ``_origin_job``) is a hand-on's, "main-<token>", came from the job its
+    main-thread/opened record names (``job_key``), as a lead's turn the butler's project_send started came from the
+    butler's turn that took the owner's message (T812, 2026-11-26: T806, handed on by such a turn, relayed nothing).
+    Stops at a job no hand-on started (the owner's own turn, a lead's wake-up), one whose record is gone or is of
+    another chat, one read already, and after HAND_HOPS jobs."""
+    seen, chat, key = set(), "", str(key or "")
+    while key and key not in seen and len(seen) < HAND_HOPS:
+        seen.add(key)
+        record = find_job_record(Path(state_dir), key)
+        if not record:
+            return
+        where = str(record.get("chat_id") or "")
+        if chat and where and where != chat:
+            return
+        chat = chat or where
+        yield key, record
+        message_id = str(record.get("message_id") or "")
+        if not message_id.startswith(PREFIX) and record.get("retry_of"):
+            message_id = _origin_job(state_dir, record)[0]
+        if not message_id.startswith(PREFIX):
+            return
+        key = str(butler_opened.by_token(state_dir, message_id[len(PREFIX):]).get("job_key") or "")
 
 
 def relay_quote(state_dir, butler_job_key) -> str:
     """What a relay of the butler job ``butler_job_key``'s hand-on quotes: its card at the top level (``relay``),
-    else the owner's message it answers; '' when neither is known."""
-    butler_job = find_job_record(Path(state_dir), str(butler_job_key or "")) or {}
-    card = str(butler_job.get("card_message_id") or "")
-    return card if card.startswith("om_") else butler_job_owner_message(state_dir, butler_job_key)
+    else the owner's message it answers; for a job with neither that was handed on itself (a lead's turn the butler's
+    project_send started: no card of its own, message id "main-<token>"), the same of the job it came from, up the
+    chain (``_handed_up``). '' when none is known: never for a chain that starts at a wake-up of the lead's."""
+    for _, record in _handed_up(state_dir, butler_job_key):
+        card = str(record.get("card_message_id") or "")
+        if card.startswith("om_"):
+            return card
+        owner = _owner_message(record)
+        if owner:
+            return owner
+    return ""
+
+
+def _asker(state_dir, key):
+    """The record of the job whose words a relay of the hand-on of the job ``key`` quotes in its "你问" block: the top of
+    ``_handed_up``, the turn the owner spoke in (for a lead's turn the butler's project_send started, the butler's turn
+    with his message, not the words the butler handed the lead); None when ``key``'s record is gone."""
+    found = None
+    for found in _handed_up(state_dir, key):
+        pass
+    return found[1] if found else None
 
 
 def areas_of(state_dir, butler_job_key) -> set:
@@ -128,7 +184,8 @@ def area_target(state_dir, topic_id, chat=""):
 
 def ask_for(state_dir, job, target, profile=None, *, at="", log=None, doing="about"):
     """The "你问"/"你答" block of the topic turn ``job`` its relay or question copy carries (app/answer_cards.py
-    asked): the words of the owner's message the butler took it from (its job record, target ``main_key``), or,
+    asked): the words of the owner's message the butler took it from (its job record, target ``main_key``, or the one
+    that job was handed on from, ``_asker``), or,
     for a turn the owner started in the topic (kind "follow"), the turn's own words; None when it cannot be told.
     Never raises. Whatever the kind, the block opens the topic's thread (target ``topic_id``),
     at ``at`` (the relay's turn card or question card, ``turn_card``) or the turn's own card when
@@ -136,7 +193,7 @@ def ask_for(state_dir, job, target, profile=None, *, at="", log=None, doing="abo
     try:
         record = None
         if target.get("kind") != "follow" and target.get("main_key"):
-            record = find_job_record(Path(state_dir), str(target["main_key"]))
+            record = _asker(state_dir, target["main_key"])
         from covey.app.answer_cards import turn_messages
 
         return answer_cards.asked(state_dir, record or job, profile=profile, log=log, doing=doing,
@@ -170,9 +227,10 @@ def relay_target(state_dir, job):
 def awaited_target(state_dir, job):
     """Where a project member's turn the owner waits for relays its conclusion or its stop (docs/projects.md 主人在等的结果):
     the lead handed it on (project_topic_start, project_topic_send or the supplement it gave, main-thread/opened/) in a turn
-    of the lead the owner was in, one that was not a wake-up (``projects.is_wake``); as ``relay_target`` gives it. None for
-    any other turn: a member's row relays nothing of its own (core/placement.py), what a wake-up turn handed out is the
-    lead's to tell (its style)."""
+    of the lead the owner was in, one that was not a wake-up (``projects.is_wake``); as ``relay_target`` gives it, quoting
+    the lead's card, else what the turn the owner spoke in has (``relay_quote``: the butler's card of a project_send).
+    None for any other turn: a member's row relays nothing of its own (core/placement.py), what a wake-up turn handed out
+    is the lead's to tell (its style)."""
     topic_id, chat = str(job_field(job, "topic_id")), str(job_field(job, "chat_id"))
     if not projects.enabled() or not projects.is_member_topic(state_dir, topic_id):
         return None
