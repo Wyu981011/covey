@@ -7,6 +7,7 @@ import json
 import os
 import time
 import unittest
+import zlib
 from types import SimpleNamespace
 from unittest import mock
 
@@ -208,6 +209,37 @@ class RelayHoldTests(unittest.TestCase):
         record = quota_hold.read(self.state, self.gateway)
         self.assertEqual(record["reset_at"], reset)
         self.assertGreater(record["checked_at"], long_ago + quota_hold.RECHECK)
+
+    def test_a_compressed_spent_quota_is_read_as_one(self):
+        # Codex asks for gzip, so a gateway may compress its 403 (a real one's spent quota came gzipped).
+        def gzip_body(data):
+            packer = zlib.compressobj(wbits=zlib.MAX_WBITS | 16)
+            return packer.compress(data) + packer.flush()
+        def raw_deflate(data):
+            packer = zlib.compressobj(wbits=-zlib.MAX_WBITS)
+            return packer.compress(data) + packer.flush()
+        for encoding, pack in (("gzip", gzip_body), ("deflate", zlib.compress), ("deflate", raw_deflate)):
+            with self.subTest(encoding=encoding, pack=pack.__name__):
+                quota_hold.path(self.state, self.gateway).unlink(missing_ok=True)
+                self.logs.clear()
+                reset = int(time.time()) + 3600
+                body = json.dumps({"error": {"message": spent_text(reset), "type": "forbidden"}}).encode()
+                upstream = self.upstream([(403, {"Content-Type": "application/json", "Content-Encoding": encoding},
+                                           pack(body))])
+                with self.relay(upstream) as relay:
+                    status, _, answer = post(relay.base_url, headers={"Accept-Encoding": "gzip, deflate"})
+                self.assertEqual((status, json.loads(answer)["error"]["code"]), (429, "insufficient_quota"))
+                self.assertEqual(quota_hold.read(self.state, self.gateway)["reset_at"], reset)
+                self.assertIn("message=quota exceeded", self.logs[0])
+
+    def test_a_compressed_403_that_is_not_a_spent_quota_passes_byte_for_byte(self):
+        packer = zlib.compressobj(wbits=zlib.MAX_WBITS | 16)
+        packed = packer.compress(b'{"error":{"message":"no access"}}') + packer.flush()
+        upstream = self.upstream([(403, {"Content-Encoding": "gzip"}, packed)])
+        with self.relay(upstream) as relay:
+            status, headers, answer = post(relay.base_url)
+        self.assertEqual((status, headers.get("Content-Encoding"), answer), (403, "gzip", packed))
+        self.assertFalse(quota_hold.path(self.state, self.gateway).exists())
 
     def test_a_403_that_is_not_a_spent_quota_passes_as_it_came(self):
         upstream = self.upstream([(403, {}, b'{"error":{"message":"no access"}}')])

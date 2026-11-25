@@ -64,6 +64,7 @@ import select
 import socket
 import threading
 import time
+import zlib
 
 from covey.backends.gateway.connection import NO_REDIRECT
 from covey.core.http_upstream import copy_headers, pipe, send
@@ -96,6 +97,7 @@ CAPACITY_TEXTS = ("throughput limit", "too_many_requests", "too many requests", 
 # A spent quota as Codex hears it from the relay: an OpenAI insufficient_quota 429, which ends the turn at once.
 SPENT = "insufficient_quota"
 SPENT_BYTES = 64 * 1024  # Of a 403's body, read to see whether it is a spent quota.
+PLAIN_BYTES = 1024 * 1024  # At most this much of it decoded (plain).
 
 
 def error_message(payload):
@@ -107,6 +109,25 @@ def error_message(payload):
     if isinstance(error, dict) and isinstance(error.get("message"), str):
         return error["message"]
     return payload.decode("utf-8", "replace")
+
+
+def plain(payload, encoding):
+    """A body's bytes before its Content-Encoding (gzip or deflate), at most PLAIN_BYTES; the bytes as they came for
+    another encoding or ones that do not decode. Codex asks for gzip and the relay passes that upstream as it came,
+    so a gateway's 403 may be compressed (a real one's spent quota came gzipped). A part decodes as far as it goes."""
+    encoding = (encoding or "").strip().lower()
+    if encoding in ("gzip", "x-gzip"):
+        tries = (zlib.MAX_WBITS | 16,)
+    elif encoding == "deflate":
+        tries = (zlib.MAX_WBITS, -zlib.MAX_WBITS)  # zlib-wrapped as the RFC says, or raw as some servers send it.
+    else:
+        return payload
+    for wbits in tries:
+        try:
+            return zlib.decompressobj(wbits).decompress(payload, PLAIN_BYTES)
+        except zlib.error:
+            continue
+    return payload
 
 
 def busy_detail(payload):
@@ -327,7 +348,8 @@ class BusyRelay:
                     held, failed = stream_opening(response)
                 if status == 403 and self.hold is not None:
                     held = response.read(SPENT_BYTES)
-                    message = error_message(held)
+                    said = plain(held, response.headers.get("Content-Encoding"))  # Held stays as it came for Codex.
+                    message = error_message(said)
                     if self.hold.spent(message):
                         ended = self.answered(child, status)
                         if ended:
@@ -335,7 +357,7 @@ class BusyRelay:
                         record = self.hold.note(message)
                         until = (time.strftime("until %Y-%m-%dT%H:%M:%SZ", time.gmtime(record["reset_at"])) if record
                                  else "not held (no reset said)")
-                        self.log(f"{self.name} quota spent, {until} {busy_detail(held)}{agent(child)}")
+                        self.log(f"{self.name} quota spent, {until} {busy_detail(said)}{agent(child)}")
                         self.send_spent(handler, message)
                         return
                 if status != 429 and failed is None:

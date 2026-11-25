@@ -177,7 +177,7 @@ Antigravity 是 Google 的 Agent 开发平台，这里用它的命令行 `agy`�
 
 有 `quota_pattern` 的网关回 403、原文对得上、又写了 `Resets at <UTC 时间>` 时，Covey 把这份额度记成用完，到那个时间为止（`core/quota_hold.py`，记录在状态目录的 `<名字>/quota-hold.json`）：
 
-- **中继**：这个 403 和之后的请求，中继都回给 Codex 一个 429 `insufficient_quota`，不再往上游发。Codex 对它立刻结束这一轮；原样转 403 的话，Codex 要重试 10 次、白等约 205 秒（codex-cli 0.172.0，本机假上游实测）。
+- **中继**：这个 403 和之后的请求，中继都回给 Codex 一个 429 `insufficient_quota`，不再往上游发。Codex 对它立刻结束这一轮；原样转 403 的话，Codex 要重试 10 次、白等约 205 秒（codex-cli 0.172.0，本机假上游实测）。Codex 请求时要 gzip，中继原样转给上游，所以 403 的正文常是压缩的：中继按 `Content-Encoding`（gzip、deflate）解开再认（`relay.py` 的 `plain`），转回给 Codex 的仍是原来的字节。
 - **开工前**：话题的模型走这份额度的，新一轮不启动，直接停住（`app/runs.py`，`quota_exhausted`）。
 - **卡上的话**（`failure_detail`，`core/failure.py` 照它写原因行）：“<显示名> 的每日额度用完了，北京时间 HH:MM 恢复；<显示名> 的所有模型共用这一份额度，换 `<前缀>` 下的别的模型也没用，可以换到 …”。不是今天恢复的带日期。
 - **负责人派活**：`project_topic_send` 的目标话题走这份额度时不发，回一句几点恢复、先换配置（`app/project_tools.py` 的 `spent_quota`）。
