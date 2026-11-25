@@ -28,8 +28,7 @@ EFFORT_ARG = "主人点名思考预算时必须填（如“用高预算”“max
 # A preference holds for the kind of work it was said for (T786: "监视进程这类用 Codex" had other topics opened on Codex): a call
 # that names a Harness, model or budget says on what (app/config_basis.py checks it). Short: agy's room (backends/agy/home.py).
 BASIS_ARG = {"type": "string",
-             "description": "填了 harness、model、effort 时必填：主人这一轮原话里的一段，或原则、记忆编号（p1a2b3c、M12）。"
-                            "原则和记忆只管它说的那类事，别的事不套用；Bridge 会核对，话题卡上写明"}
+             "description": "填 harness/model/effort 时必填：主人原话里的一段或原则、记忆编号；原则只管它说的那类事，会核对"}
 # 敏感词脱敏 of the new topic (app/butler_topics.py plan_start): the settings' default unless given; a topic that would redact on
 # a Harness that cannot is refused with what to ask the owner (T647 P0-8).
 REDACTION_ARG = {"type": "boolean",
