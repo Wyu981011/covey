@@ -1605,7 +1605,7 @@ class HarnessNoteTest(unittest.TestCase):
             self.assertIn("no enabled Harness can take the Bridge tools", note)
             self.assertIn("纯话题", note)
             self.assertEqual(self.thread({session.HARNESS: self.app()}).harness_note(self.state), "")
-            note = self.thread({"pi": self.app(tools=False)}).harness_note(self.state)  # Enabled, but no Bridge tools.
+            note = self.thread({"dsh": self.app(tools=False)}).harness_note(self.state)  # Enabled, but no Bridge tools.
             self.assertIn("no enabled Harness can take the Bridge tools", note)
         with mock.patch.object(session.contract, "enabled", return_value=False):
             self.assertEqual(self.thread({}).harness_note(self.state), "", "the main thread off: nothing to warn of")
@@ -1613,13 +1613,13 @@ class HarnessNoteTest(unittest.TestCase):
     def test_with_none_named_the_butler_runs_on_claude_code_else_the_first_enabled_harness_that_takes_the_tools(self):
         """T664: a butler whose settings name no Harness follows what is enabled: Claude Code while it can run it (as
         before), else Codex, else Antigravity; never one without the Bridge's tools; nothing saved."""
-        claude, codex, agy, pi = self.app(), self.app(), self.app(), self.app(tools=False)
+        claude, codex, agy, dsh = self.app(), self.app(), self.app(), self.app(tools=False)
         with mock.patch.object(session.contract, "enabled", return_value=True):
             for apps, want in (({session.HARNESS: claude, "codex": codex, "agy": agy}, (session.HARNESS, claude)),
                                ({"codex": codex, "agy": agy}, ("codex", codex)),
-                               ({"agy": agy, "pi": pi}, ("agy", agy)),
+                               ({"agy": agy, "dsh": dsh}, ("agy", agy)),
                                ({session.HARNESS: self.app(tools=False), "codex": codex}, ("codex", codex)),
-                               ({"pi": pi}, (session.HARNESS, None))):
+                               ({"dsh": dsh}, (session.HARNESS, None))):
                 with self.subTest(apps=sorted(apps)):
                     self.assertEqual(self.thread(apps).harness_app(self.state), want)
                     self.assertEqual(self.thread(apps).harness_note(self.state) == "", want[1] is not None)

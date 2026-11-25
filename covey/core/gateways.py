@@ -14,7 +14,9 @@ from pathlib import Path
 
 from covey.core.extensions import ExtensionError, manifests
 
-GATEWAY_HARNESSES = ("codex", "pi", "dsh")  # 网关能接的 Harness。
+GATEWAY_HARNESSES = ("codex", "dsh")  # 网关能接的 Harness。
+# 已下线的 Harness（Pi，T766）：旧的扩展 manifest 和 harnesses.json 的 harnesses 里还写着它，照常解析，忽略它。
+RETIRED_GATEWAY_HARNESSES = ("pi",)
 NAME = re.compile(r"[a-z][a-z0-9-]{0,30}")
 FIELDS = {"display", "prefix", "base_url", "base_url_env", "key_env", "key_file", "key_file_env", "headers",
           "header_envs", "harnesses", "quota_pattern", "busy_hint", "access"}
@@ -22,17 +24,17 @@ FIELDS = {"display", "prefix", "base_url", "base_url_env", "key_env", "key_file"
 
 @dataclass(frozen=True)
 class Gateway:
-    name: str  # 状态目录名、Codex/Pi 里的 provider 名、模型目录缓存名。
+    name: str  # 状态目录名、Codex 里的 provider 名、模型目录缓存名。
     display: str  # 卡上的名字。
     base_url: str
     key_env: str  # 密钥进子进程用的环境变量名。
-    prefix: str = ""  # Codex、Pi 上模型 id 的前缀；全是 dsh 用的网关可以留空。
+    prefix: str = ""  # Codex 上模型 id 的前缀；全是 dsh 用的网关可以留空。
     base_url_env: str = ""  # 设了就覆盖 base_url。
     key_file: str = ""  # 没有环境变量时读的文件；相对路径在 XDG 配置目录下，默认 harness-bridge/<name>-api-key。
     key_file_env: str = ""
     headers: tuple = ()  # ((名, 值), …) 每个请求都带。
     header_envs: tuple = ()  # ((头名, 环境变量), …) 环境变量非空时覆盖头的值。
-    harnesses: tuple = ("codex", "pi", "dsh")
+    harnesses: tuple = GATEWAY_HARNESSES
     quota_pattern: str = ""  # 403 响应里表示“额度用完”的正则（空则没有这种 403）。
     busy_hint: str = ""  # 繁忙失败卡的末句，例如指向用量页面。
     access: str = ""  # 供应商表里“密钥在哪”。
@@ -91,10 +93,11 @@ def parse(name, fields, where):
         pairs[key] = tuple(value.items())
     harnesses = fields.get("harnesses", list(GATEWAY_HARNESSES))
     if (not isinstance(harnesses, (list, tuple)) or not harnesses or len(set(harnesses)) != len(harnesses)
-            or any(h not in GATEWAY_HARNESSES for h in harnesses)):
+            or any(h not in GATEWAY_HARNESSES + RETIRED_GATEWAY_HARNESSES for h in harnesses)):
         raise bad(f"harnesses must be a non-empty list from {list(GATEWAY_HARNESSES)}")
-    if {"codex", "pi"} & set(harnesses) and not texts["prefix"]:
-        raise bad("a gateway for Codex or Pi needs a model prefix such as 'name/'")
+    harnesses = [h for h in harnesses if h in GATEWAY_HARNESSES]  # A retired one is left out (RETIRED_GATEWAY_HARNESSES).
+    if "codex" in harnesses and not texts["prefix"]:
+        raise bad("a gateway for Codex needs a model prefix such as 'name/'")
     if texts["quota_pattern"]:
         try:
             re.compile(texts["quota_pattern"])
@@ -171,7 +174,7 @@ def for_harness(harness) -> tuple:
 
 
 def for_model(harness, model):
-    """The gateway ``model`` of ``harness`` belongs to by its prefix (Codex, Pi), else None. dsh's ids carry no
+    """The gateway ``model`` of ``harness`` belongs to by its prefix (Codex), else None. dsh's ids carry no
     prefix: ``for_harness("dsh")`` is its gateway list."""
     if harness == "dsh":
         return None

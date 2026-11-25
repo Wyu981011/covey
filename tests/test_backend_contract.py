@@ -43,7 +43,6 @@ from covey.backends.claude.events import ClaudeEventAdapter
 from covey.backends.codex.bridge import CodexBackend
 from covey.backends.codex.events import CodexEventAdapter
 from covey.backends.dsh.bridge import DshEventAdapter
-from covey.backends.pi.events import PiEventAdapter
 from covey.core.harness import HarnessRegistry, JobCancelled, RunInputs, RunRequest, RunResult
 from covey.core.jobs import BridgeReplyJob, find_job_record
 from covey.core.protocol import HarnessEvent
@@ -471,8 +470,6 @@ class HarnessContractTests(unittest.TestCase):
         # Claude Code's own models take questions, steering, forks and redaction.
         self.assertTrue(claude.questions and claude.steering and claude.native_fork
                         and claude.redaction)
-        from covey.backends.pi.bridge import PiBackend
-        self.assertEqual(PiBackend().capabilities(SimpleNamespace()).image_bytes, MAX_IMAGE_BYTES)
 
     def test_quoted_and_forwarded_images_use_native_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -588,29 +585,6 @@ class CodexSteps(StepDriver):
         self.adapter.item("item/completed", {"id": "m", "type": "agentMessage", "text": "x"}, self.tick())
 
 
-class PiSteps(StepDriver):
-    def make(self, emit):
-        return PiEventAdapter(emit)
-
-    def start(self, key, name="read", args=None):
-        self.adapter.accept({"type": "tool_execution_start", "toolCallId": key, "toolName": name,
-                             "args": args or {"path": "a.py"}}, self.tick())
-
-    def end(self, key):
-        self.adapter.accept({"type": "tool_execution_end", "toolCallId": key, "isError": False}, self.tick())
-
-    def repeat(self):
-        for _ in range(2):
-            self.adapter.accept({"type": "compaction_start"}, self.tick())
-
-    def stray(self):
-        self.end("nobody")
-        self.adapter.accept({"type": "compaction_end", "result": {}}, self.tick())
-
-    def fetch(self, key):
-        self.start(key, "fetch", {"url": self.URL})
-
-
 class DshSteps(StepDriver):
     def make(self, emit):
         return DshEventAdapter(emit)
@@ -660,7 +634,7 @@ class StepLifecycleContractTests(unittest.TestCase):
     def test_every_adapter_keeps_one_step_lifecycle(self):
         """An ended step never runs again, a start repeated while it runs is that one step, an end the
         adapter cannot place publishes nothing, and a URL's query and fragment never reach a detail."""
-        for driver in (ClaudeSteps, CodexSteps, PiSteps, DshSteps, *([MasoSteps] if extension_enabled() else [])):
+        for driver in (ClaudeSteps, CodexSteps, DshSteps, *([MasoSteps] if extension_enabled() else [])):
             with self.subTest(driver.__name__):
                 d, trace = driver(), ToolTrace()
                 if isinstance(d, MasoSteps):

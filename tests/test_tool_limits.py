@@ -117,11 +117,11 @@ class LimitTests(unittest.TestCase):
 
     def test_only_a_read_turn_on_a_harness_that_cannot_hold_it_is_refused(self):
         read = dataclasses.replace(self.ctx, options={TOOL_LIMIT: READ})
-        self.assertIn('这一轮没有启动', tool_limits.refusal(read, HarnessCapabilities(), 'Pi'))
-        self.assertIn('Pi 做不到只读', tool_limits.refusal(read, HarnessCapabilities(), 'Pi'))
+        self.assertIn('这一轮没有启动', tool_limits.refusal(read, HarnessCapabilities(), 'Later'))
+        self.assertIn('Later 做不到只读', tool_limits.refusal(read, HarnessCapabilities(), 'Later'))
         self.assertEqual(tool_limits.refusal(read, HarnessCapabilities(read_only=True), 'Codex'), '')
         look = dataclasses.replace(self.ctx, options={TOOL_LIMIT: LOOK})
-        self.assertEqual(tool_limits.refusal(look, HarnessCapabilities(), 'Pi'), '')  # The words alone.
+        self.assertEqual(tool_limits.refusal(look, HarnessCapabilities(), 'Later'), '')  # The words alone.
         self.assertTrue(backend_capabilities(ClaudeBackend(), self.ctx).read_only)
 
 

@@ -15,7 +15,7 @@ SUB = {"thread-id": "child-thread-1", "x-openai-subagent": "collab_spawn"}  # A 
 BUSY = json.dumps({"error": {"message": "业务申请资源不足，平台申请扩容", "code": "-2004"}}, ensure_ascii=False).encode()
 SSE = {"Content-Type": "text/event-stream"}
 CREATED = b'event: response.created\ndata: {"type":"response.created","response":{"id":"resp_1","error":null}}\n\n'
-# What a Pi turn on gpt-6.1-sol got on 2026-11-04 00:49: a 200 stream whose first event past the opening is an error.
+# What a turn on gpt-6.1-sol (of a Harness since retired) got on 2026-11-04 00:49: a 200 stream whose first event past the opening is an error.
 THROUGHPUT = CREATED + (b'data: {"error":{"code":"429","message":"Requests have exceeded the throughput limit on your '
                         b'Provisioned-Managed deployment. If you continue to exceed your limit, consider increasing the '
                         b'number of provisioned throughput units deployed."}}\n\n')

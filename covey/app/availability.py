@@ -92,16 +92,9 @@ def local_check(name, ctx):
                                          env=child_process_env(ctx.workdir, device=process_device(ctx)))
         if known and known.get('reason') == 'not_logged_in':
             return {'status': 'unavailable', 'reason': 'authentication', 'scope': 'live_probe'}
-    gateway = gateways.for_model(name, ctx.model) if name == 'pi' else gateways.dsh_gateway() if name == 'dsh' else None
-    # Only for a Pi or dsh check: their modules (urllib and the rest) stay out of a task runner's start.
-    if name == 'pi' and gateway is None:
-        from covey.backends.pi import home as pi_home
-        try:
-            # Only that Codex has a login: an expiring token fails the turn with its own words (backends/pi/home.py).
-            pi_home.access_token(margin=None)
-        except ValueError:
-            return {'status': 'unavailable', 'reason': 'authentication', 'scope': 'local_preflight'}
-    elif name in ('dsh', 'pi'):
+    if name == 'dsh':
+        gateway = gateways.dsh_gateway()
+        # Only for a dsh check: its modules (urllib and the rest) stay out of a task runner's start.
         from covey.backends.gateway.connection import api_key
         try:
             if gateway is None or not api_key(gateway):

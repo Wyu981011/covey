@@ -1,9 +1,9 @@
 """A gateway's Responses models on the launch card, and the relay's waits on the task card.
 
-What the Codex and Pi Harnesses share about those models: their launch-catalog rows (``<prefix><model>``,
-named "(<display name>)", with Codex's ``ultra`` where it applies) and the ``notify`` that puts a BusyRelay's
-runs of 429s (gateway/relay.py) on the card. Codex binds the models to its threads in
-backends/codex/gateway.py; Pi in backends/pi/.
+What the Codex Harness (and an extension's that runs them) takes of those models: their launch-catalog rows
+(``<prefix><model>``, named "(<display name>)", with Codex's ``ultra`` where it applies) and the ``notify`` that puts a
+BusyRelay's runs of 429s (gateway/relay.py) on the card. Codex binds the models to its threads in
+backends/codex/gateway.py.
 """
 from __future__ import annotations
 

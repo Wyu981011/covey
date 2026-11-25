@@ -27,13 +27,22 @@ class ConfiguredGatewayTest(unittest.TestCase):
         gw = gateways.named("mygw")
         self.assertEqual((gw.display, gw.url(), gw.header_dict()), ("MyGW", "https://gw.example", {"x-source": "bridge"}))
         self.assertIs(gateways.for_model("codex", "mygw/gpt-6").name == "mygw", True)
-        self.assertIsNone(gateways.for_model("pi", "mygw/gpt-6"))  # Not declared for Pi.
+        self.assertIsNone(gateways.for_model("dsh", "mygw/gpt-6"))  # dsh's ids carry no prefix.
         self.assertEqual(providers.provider_of("codex", "mygw/gpt-6").name, "MyGW")
         self.assertEqual(providers.menu_name(providers.provider_of("dsh", "x"), "DeepSeek Harness"),
                          "MyGW" if "acme" not in before else providers.menu_name(providers.provider_of("dsh", "x"), ""))
         self.assertTrue(gw.quota_text("403: Over Quota"))
         self.assertTrue(gateways.quota_text("403: Over Quota"))
         self.assertIn("MyGW 个人密钥未配置：写入 ~/.config/harness-bridge/mygw-api-key（权限 600）或设置 MYGW_KEY", gw.missing_key)
+
+    def test_a_retired_harness_an_older_entry_still_names_is_left_out(self):
+        # Pi was retired (T766): an extension's manifest or a harnesses.json written before still says "pi".
+        gw = gateways.parse("mygw", {**OWN, "harnesses": ["codex", "pi", "dsh"]}, "")
+        self.assertEqual(gw.harnesses, ("codex", "dsh"))
+        dsh_only = gateways.parse("dshgw", {**OWN, "prefix": "", "harnesses": ["pi", "dsh"]}, "")
+        self.assertEqual((dsh_only.harnesses, dsh_only.prefix), (("dsh",), ""))  # Only Codex needs a prefix now.
+        self.assertEqual(gateways.parse("mygw", {k: v for k, v in OWN.items() if k != "harnesses"}, "").harnesses,
+                         ("codex", "dsh"))
 
     def test_the_key_file_default_is_under_the_config_dir(self):
         gw = gateways.parse("mygw", OWN, "")

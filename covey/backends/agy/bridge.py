@@ -6,7 +6,7 @@ in as one ``user`` line on stdin, which is then closed, so agy ends after that t
 ``result`` with the turn's answer and status. ``--conversation <id>`` continues the topic's conversation.
 agy signs in with the Google account it was logged in with on this machine (``agy`` once, interactively);
 the Bridge never sees the token. It has no question a headless run can answer, so a task asks through
-the checkpoint file like dsh and Pi; stdin takes text only, so images are given by their path (agy opens
+the checkpoint file like dsh's; stdin takes text only, so images are given by their path (agy opens
 them with its own read_file).
 
 agy takes nothing into a running turn (another ``user`` line is a turn of its own, after this one), so a

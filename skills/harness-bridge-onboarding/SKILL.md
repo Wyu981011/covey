@@ -1,6 +1,6 @@
 ---
 name: harness-bridge-onboarding
-description: Walk a new user through installing their own Covey Feishu bot from this repository with ./install (one QR scan), where each topic runs a Harness (Codex, Claude Code, DeepSeek Harness dsh, Pi, Antigravity agy, plus any Harness an enabled extension adds; model gateways a deployment configures) with a model, reasoning effort and workspace. Use when someone wants to install the bot for the first time, set it up on a new machine, or verify a fresh installation end to end. Not for day-to-day operation (docs/operations.md) or using the bot in Feishu (docs/usage.md).
+description: Walk a new user through installing their own Covey Feishu bot from this repository with ./install (one QR scan), where each topic runs a Harness (Codex, Claude Code, DeepSeek Harness dsh, Antigravity agy, plus any Harness an enabled extension adds; model gateways a deployment configures) with a model, reasoning effort and workspace. Use when someone wants to install the bot for the first time, set it up on a new machine, or verify a fresh installation end to end. Not for day-to-day operation (docs/operations.md) or using the bot in Feishu (docs/usage.md).
 ---
 
 # Covey 安装引导

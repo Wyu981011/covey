@@ -104,8 +104,7 @@ def main() -> None:
 
 
 def codex_home() -> Path:
-    """Codex's home: CODEX_HOME, else ~/.codex. Its rollouts (backends/codex/sessions.py) and the login Pi
-    borrows (backends/pi/home.py) are under it."""
+    """Codex's home: CODEX_HOME, else ~/.codex. Its rollouts (backends/codex/sessions.py) are under it."""
     home = os.environ.get("CODEX_HOME", "").strip()
     return Path(home).expanduser() if home else Path.home() / ".codex"
 

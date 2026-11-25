@@ -14,12 +14,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 - 网页工作台：电脑上改成“外槽 + 圆角画布”，侧栏铺在外槽上，主栏和右栏是一块圆角画布（浅色是浅灰外槽配白画布、侧栏选中的行是白底，深色外槽压暗、画布一圈细亮边）；侧栏的 T 号改成同色浅底彩字，选中的那个仍是实心块；浅色主题里不加粗的字更实（Mac 上不再用 antialiased 削细笔画，界面正文灰加深一档），句子和标题里的数字改用比例数字；输入框下沿的上下文用量前面多一条细进度条，过八成变橙。
 - 网页工作台：左侧栏和右栏（话题页的进度栏、专项页和看板的右栏）能拖动调宽，双击分界线回到默认，宽度记在这台浏览器上；字体参考 Codex 桌面版改成系统界面字体在前（Mac 上 SF Pro 和苹方，等宽 SF Mono；Windows 上 Segoe UI 和微软雅黑），网页自带的 Inter、JetBrains Mono 退为兜底，中文引号用中文字体画，粗体统一到 600。
 - 专项负责人能单独选和换 Harness、模型、思考预算，和管家、话题一样：设置卡「配置」页多一段“专项负责人”（新建专项用它，默认跟管家一样），管家开专项时点名的优先；已有的专项点专项卡上的「换配置」，或在网页负责人的对话下面换。只列能接 Bridge 工具的 Harness，负责人在哪个上都只读，工作区不变（[docs/projects.md](docs/projects.md#负责人用哪个-harness)）。网页数据约定 v36。
-- Pi 和 DeepSeek Harness 也能当管家和专项负责人：Pi 用它自带的 MCP 接 Bridge 工具，负责人那一轮只留 read、grep、find、ls；DeepSeek Harness 用自带的 `dsh-mcp-client`，负责人那一轮用 read-only 权限预设。核心的五个 Harness 在设置卡「配置」的管家、专项负责人两段都能选了。管家没选 Harness 时的顺序不变（Claude Code → Codex → Antigravity，然后才是它们）。
+- DeepSeek Harness 也能当管家和专项负责人：用自带的 `dsh-mcp-client` 接 Bridge 工具，负责人那一轮用 read-only 权限预设。核心的四个 Harness 在设置卡「配置」的管家、专项负责人两段都能选了。管家没选 Harness 时的顺序不变（Claude Code → Codex → Antigravity，然后才是它）。
 - 记忆自己长（`COVEY_MEMORY_LEARN=1`，要 `COVEY_MEMORY=1`）：一轮结束后 Bridge 自己读主人的话，引用核对过的长期要求直接记下（通用的、工作区的记成原则），答案卡上能“不对”；记下这一轮用到了哪几条，放不下时最近用过的先带；晚间汇总的“你反复说的”先生效（它总结的）；新增“整理记忆”，收起专项里办完的、被替代的、很久没用的当前决定（能撤销），把反复的选择提炼成约定；把 Codex、Claude Code 自己记的偏好收进候选；每轮的记忆块能用 `bin/covey_memory.py search` 按需查放不下的和答过的题。
 
 ### Changed 变更
 
 - 网页工作台输入框的回车和飞书聊天一样：Enter 发送，Shift+Enter（或 Ctrl / ⌘ + Enter）换行；点「放大」编辑时几种 Enter 都换行，点发送钮才发；手机上回车换行、点发送钮发。原来是 Enter 换行、⌘/Ctrl+Enter 发送。
+
+### Removed 移除
+
+- Pi 下线（GPT 模型用 Codex 跑）：启动卡、换配置卡、设置卡上不再有它，Pi 的旧话题只回已下架。旧 `harnesses.json` 的 `enabled_harnesses`、网关的 `harnesses` 里写着 `pi` 时跳过它、照常启动；设置里选的是 Pi 的按没选处理（见 docs/legacy.md）。
 
 ### Fixed 修复
 
@@ -50,12 +54,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 - Web page: on a computer the main area and the right rail are one rounded canvas inside a tray that carries the sidebar (white on light grey in the light theme, where the sidebar's selected row is white too; in the dark the tray is darker and the canvas has a faint ring); the sidebar's T badges are tinted in their own colour, the selected one solid; in the light theme regular-weight text is fuller (no antialiased smoothing thinning it on a Mac, the interface grey a step darker) and numbers inside sentences and titles are proportional; the composer's context use has a thin bar before it that turns orange past 80%.
 - Web page: the left sidebar and the right rails (a topic's progress rail, a project's and the board's) can be dragged wider or narrower, a double click on the divider restores the default, and the widths stay in the browser. Fonts follow the Codex desktop app: the system UI font first (SF Pro and PingFang with SF Mono on a Mac, Segoe UI and Microsoft YaHei on Windows), the bundled Inter and JetBrains Mono as fallbacks, Chinese quotation marks drawn in the Chinese font, and bold unified at 600.
 - A project's lead chooses and changes its Harness, model and budget like the butler and a topic: the 设置 card's 配置 has a 专项负责人 section (new projects; follows the butler by default), a Harness the butler names when it opens a project comes first, and an existing lead changes through 换配置 on its 专项卡 or the web page. Only Harnesses that take the Bridge's tools are offered; the lead stays read-only and keeps its workspace. Web data contract v36.
-- Pi and DeepSeek Harness can be the butler and a project's lead: Pi takes the Bridge's tools through its built-in MCP and a lead's turn keeps only read, grep, find and ls; DeepSeek Harness takes them through its bundled `dsh-mcp-client` and a lead's turn runs on its read-only permission preset. All five core Harnesses are on the 设置 card's butler and lead sections now; a butler with none named still falls back Claude Code, Codex, Antigravity first.
+- DeepSeek Harness can be the butler and a project's lead: it takes the Bridge's tools through its bundled `dsh-mcp-client` and a lead's turn runs on its read-only permission preset. All four core Harnesses are on the 设置 card's butler and lead sections now; a butler with none named still falls back Claude Code, Codex, Antigravity first.
 - Memory that learns by itself (`COVEY_MEMORY_LEARN=1`, with `COVEY_MEMORY=1`): after a turn the Bridge reads the owner's own words and writes down what he asks from now on (quote-checked; general and workspace ones as principles), with 不对 on the answer card; which lines a turn used is noted and orders what fits; the evening digest's repeated corrections take effect at once as 它总结的; a nightly 整理记忆 puts away a project's decisions that are done, replaced or unused (undoable) and distills rules from repeated choices; what Codex and Claude Code noted of the owner on their own comes in as candidates; a turn looks up what its memory block could not carry with `bin/covey_memory.py search`.
 
 ### Changed (English)
 
 - The web workbench's composer takes Enter the way Feishu chat does: Enter sends, Shift+Enter (or Ctrl / ⌘ + Enter) starts a new line; while expanded every Enter starts a new line and only the send button sends; on phones Return starts a new line. It used to be Enter for a new line and ⌘/Ctrl+Enter to send.
+
+### Removed (English)
+
+- Pi is retired (Codex runs the GPT models): it is off the launch, 换配置 and 设置 cards, and an old Pi topic only gets the retired notice. An older `harnesses.json` whose `enabled_harnesses` or a gateway's `harnesses` still names `pi` starts as before with it left out; a setting that chose Pi reads as none chosen (docs/legacy.md).
 
 ### Fixed (English)
 

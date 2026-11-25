@@ -22,7 +22,7 @@ class SteerUncertain(RuntimeError):
 
 
 def steer_text(text):
-    """A supplement as the task receives it. Claude Code and pi run a message that starts with "/" as one of their
+    """A supplement as the task receives it. Claude Code runs a message that starts with "/" as one of its
     commands; a supplement such as "/mnt/data/x 也看看" is text for the model."""
     return ("用户补充：" + text) if text.lstrip().startswith("/") else text
 

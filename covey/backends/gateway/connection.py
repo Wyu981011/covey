@@ -1,7 +1,7 @@
 """模型网关的连接：个人密钥、模型目录、请求头（网关由 core/gateways.py 的配置描述，可以有多个）。
 
 模型用个人密钥直接调用，不经封装也不带 SSO 令牌。Codex 经每线程一个的 provider 跑 OpenAI Responses 模型
-（backends/codex/gateway.py），Pi 同（backends/pi/），dsh 跑 Anthropic Messages 模型（backends/dsh/bridge.py）。
+（backends/codex/gateway.py），dsh 跑 Anthropic Messages 模型（backends/dsh/bridge.py）。
 密钥只经 Harness 的环境变量到达它，从不进 argv、配置文件或日志。
 """
 from __future__ import annotations

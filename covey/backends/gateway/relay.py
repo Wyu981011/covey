@@ -1,4 +1,4 @@
-"""A local relay in front of a model gateway (core/gateways.py) for one Codex or Pi task, so its 429s are ridden out.
+"""A local relay in front of a model gateway (core/gateways.py) for one Codex task, so its 429s are ridden out.
 
 Acme answers 429 in two ways. Short of capacity (many users) it says
 "业务申请资源不足，平台申请扩容" without a Retry-After header, and Codex fails a
@@ -17,11 +17,10 @@ A spent daily quota is a 403 ("quota exceeded: Daily Limits exceeded"), never
 held.
 
 Acme's upstream may also run out of capacity after it began a 200 event
-stream: a Pi turn on gpt-6.1-sol got its response.created
-and then a data line {"error": {..., "message": "Requests have exceeded the
-throughput limit on your Provisioned-Managed deployment ..."}} (pi's OpenAI SDK
-throws a data line's error as it is). Neither Codex nor pi retries that, so the
-relay reads a stream's opening events before it answers: when the first event
+stream: a turn on gpt-6.1-sol (of a Harness since retired) got its
+response.created and then a data line {"error": {..., "message": "Requests have
+exceeded the throughput limit on your Provisioned-Managed deployment ..."}}.
+Codex does not retry that, so the relay reads a stream's opening events before it answers: when the first event
 past them (OPENING) carries a capacity error (CAPACITY_TEXTS), the stream is a
 capacity 429 like any other; else the read bytes go out first, unchanged.
 

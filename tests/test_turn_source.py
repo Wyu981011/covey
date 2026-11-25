@@ -157,7 +157,7 @@ class RecordsAndHandoffTest(unittest.TestCase):
 
     def test_only_the_harnesses_that_passed_the_real_write_refusal_check_declare_a_collaboration(self):
         # C8 (tests/test_collab_c8.py on the installed CLI): Claude Code and Codex held to CONSULT refused every write.
-        # Pi, Antigravity and dsh have no read-only limit at all; an extension's Harness declares nothing of it.
+        # Antigravity and dsh have no read-only limit at all; an extension's Harness declares nothing of it.
         self.assertFalse(HarnessCapabilities().collab)
         declared = sorted(path.relative_to(REPO).as_posix() for path in (REPO / "covey" / "backends").rglob("*.py")
                           if "collab=True" in path.read_text())

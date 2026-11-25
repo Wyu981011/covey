@@ -381,7 +381,7 @@ class EntrypointTests(unittest.TestCase):
             "covey.app.runtime"])
 
     def test_a_backend_imports_only_its_own_modules_the_gateway_and_core(self):
-        # One Harness's code does not reach into another's (round 2 B took Pi off Codex's gateway catalog and
+        # One Harness's code does not reach into another's (round 2 B took a backend off Codex's gateway catalog and
         # UUID pattern); what they share is in backends/gateway (the model gateway) or core. Relative imports,
         # imports inside functions and under TYPE_CHECKING count too.
         found = [f"{path.relative_to(PACKAGE)}:{line} {module}" for path in sorted((PACKAGE / "backends").rglob("*.py"))
@@ -392,12 +392,12 @@ class EntrypointTests(unittest.TestCase):
     def test_foreign_backends_sees_every_import_form(self):
         source = "\n".join(("import covey.backends.codex.gateway", "from covey.backends import codex",
                             "from covey.backends.codex.sessions import UUID_RE", "from ..claude import models",
-                            "from . import home", "from covey.backends import gateway, pi",
+                            "from . import home", "from covey.backends import gateway, dsh",
                             "from covey.core import harness", "import covey.core.state",
                             "def f():\n    from covey.app import detached",
                             "if TYPE_CHECKING:\n    from covey.cards.streaming import CardRuntime",
                             "from ...core import roster", "from ...app.unified import x", "import json"))
-        self.assertCountEqual([module for module, _ in foreign_backends(source, "covey.backends.pi")], [
+        self.assertCountEqual([module for module, _ in foreign_backends(source, "covey.backends.dsh")], [
             "covey.backends.codex.gateway", "covey.backends.codex",
             "covey.backends.codex.sessions", "covey.backends.claude", "covey.app.detached",
             "covey.cards.streaming", "covey.app.unified"])
@@ -489,7 +489,7 @@ class RosterTest(unittest.TestCase):
         from covey.core.harness import UUID_RE
         uuids = {name for name, harness in HARNESSES.items() if getattr(importlib.import_module(harness.module),
                  name.upper().replace("-", "_") + "_SPEC").session_pattern is UUID_RE}
-        self.assertEqual(uuids, {"claude", "codex", "pi", "agy"})
+        self.assertEqual(uuids, {"claude", "codex", "agy"})
         self.assertIs(completion.UUID_RE, UUID_RE)
         self.assertEqual([str(path.relative_to(PACKAGE)) for path in sorted(PACKAGE.rglob("*.py"))
                           if UUID_RE.pattern in path.read_text()], ["core/harness.py"])
@@ -502,9 +502,10 @@ class RosterTest(unittest.TestCase):
         self.assertEqual(set(RETIRED) & set(HARNESSES), set())
         # Their old topics and records keep the name they showed.
         self.assertEqual(RETIRED, {"neeko": "Neeko", "codex-w": "Codex-W", "claude-w": "Claude-W", "neeko-next": "Neeko Next",
-                                   "doubao": "豆包", "kiro": "Kiro"})
+                                   "doubao": "豆包", "kiro": "Kiro", "pi": "Pi"})
         self.assertFalse((BIN / "acme_bridge_exec.sh").exists())  # The Acme wrappers' launcher is gone.
         self.assertFalse((PACKAGE / "backends" / "neeko_next").exists())  # 2026-11-02.
+        self.assertFalse((PACKAGE / "backends" / "pi").exists())  # T766: the owner, 2026-11-25: Pi 没啥用了.
         # TRAE and 豆包 went for good (the owner, 2026-11-05: 后续没有这个供应商了), and with them what only they used.
         for gone in ("backends/traex", "backends/doubao", "backends/messages", "backends/claude/traex.py",
                      "backends/claude/doubao.py", "backends/claude/gateways.py"):
@@ -521,7 +522,7 @@ class RosterTest(unittest.TestCase):
         # The owner (2026-11-03): Acme is where models come from, never a Harness of its own.
         from covey.core.providers import PROVIDERS, RETIRED_PREFIXES, providers
         gateway_harnesses = {p.harness for p in providers()} - {p.harness for p in PROVIDERS}
-        self.assertLessEqual(gateway_harnesses, {"codex", "pi", "dsh"})  # A gateway's providers (core/gateways.py).
+        self.assertLessEqual(gateway_harnesses, {"codex", "dsh"})  # A gateway's providers (core/gateways.py).
         self.assertLessEqual({p.harness for p in providers()}, set(NAMES))
         PROVIDERS = providers()
         # A removed provider's prefix is no live provider's.
@@ -704,8 +705,7 @@ DOC_ROOTS = {"covey", "bin", "docs", "scripts", "tests", "integrations", "skills
 # AGENTS.md's code map names paths under covey/ and covey/backends/ without the prefix; these
 # also start data-root paths (`cards/.locks`) and model IDs (`claude/claude-opus-5`), so only a file name with a
 # code suffix or a directory with its trailing / counts.
-DOC_SHORT_ROOTS = {"app", "core", "cards", "feishu", "service", "backends", "claude", "codex", "maso", "dsh", "pi",
-                   "gateway"}
+DOC_SHORT_ROOTS = {"app", "core", "cards", "feishu", "service", "backends", "claude", "codex", "maso", "dsh", "gateway"}
 CODE_SUFFIXES = (".py", ".sh", ".json", ".js", ".html", ".css", ".md")
 # Paths the docs name on purpose that are not in this repo.
 DOC_UNTRACKED_PATHS = {

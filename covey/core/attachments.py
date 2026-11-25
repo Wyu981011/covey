@@ -1,4 +1,4 @@
-"""Image attachments a Harness hands its model itself (Claude Code's stream-json input, pi's prompt)."""
+"""Image attachments a Harness hands its model itself (Claude Code's stream-json input)."""
 from __future__ import annotations
 
 import base64

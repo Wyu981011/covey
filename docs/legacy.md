@@ -9,6 +9,7 @@
 | 已下线的 | 旧配置或旧话题现在会怎样 |
 | --- | --- |
 | 已下架的 Harness（`core/roster.py` 的 `RETIRED`），以及名单外的任何 Harness ID | 旧话题里发消息或点卡片，只回“本话题使用的 <名字> 已下架，不能继续。…”，不执行；日志带 `outcome=retired_harness`。Bridge 启动时把它们没结束、也没有存活任务进程的任务标为中断并通知一次，存盘的排队任务丢弃。`harnesses.json` 里的这些键忽略。话题、任务记录、原生会话和旧状态目录留在原处，机器人不读也不删 |
+| Pi（`pi`；GPT 模型用 Codex 跑） | 同上一行：Pi 的旧话题只回已下架。旧 `harnesses.json` 的 `enabled_harnesses` 里写着 `pi` 时跳过它、照常启动，`bridge.log` 记一行 `harness config enables retired Harnesses, left out: pi`，只写了它一个时按没写处理（启用全部）；`harnesses.pi` 的参数（`--pi-cmd` 等）只记一行 `harness config ignores Harnesses not in the roster`。网关配置（扩展 manifest 或 `harnesses.json` 的 `gateways`）的 `harnesses` 里写着 `pi` 照常解析、忽略它。设置卡里管家、新话题、独立复核或专项负责人选的是 Pi 时按没选处理（跟着启用了的走）。状态目录里的 `pi-sessions/` 和 `tmp/pi-home-*` 不再读写，可以删 |
 | 已下线的模型供应商（`core/providers.py` 的 `RETIRED_PREFIXES`：几家 Claude 和 Codex 的供应商，以及下一行的 Claude 网关档位） | 启动卡、换配置卡和保存的上次选择都不再给出它们的模型。停在它们上面的话题发消息时回复“本话题的模型来自已下线的供应商「…」…请点任务卡上的“🔁 换配置”…”，换配置后照常继续。旧命令行和旧 `harnesses.json` 里它们的参数（`--traex-ppe-env`、`--traex-site`、`--codex-magpie-url`）还能解析，值被忽略，设了非空值时启动记一行 `no longer used`；它们的变量（如 `COVEY_MAGPIE_URL`）不再读，旧的模型目录缓存留在盘上、不再读 |
 | Claude 网关档位（`--claude-profiles` 配置文件、包装命令、手工 pending/ready、`profile/<id>/<模型>` 选项） | Covey 只用本机自己装好并登录的 Claude Code 或 Codex。`profile/…` 模型不再列出，保存的上次选择、排队任务和旧话题里的 `profile/…` 不启动，回复同上一行。`--claude-profiles` 仍能解析，值被忽略，设了启动记一行 `no longer used`；配置文件留在盘上，不再读 |
 | 已删除的 Claude 网关模型（形如 `<网关>/<模型>`、不在当前目录里） | 不再列出；停在它上面的话题在启动 Claude Code 之前失败，卡上提示换配置 |
@@ -32,7 +33,8 @@
 
 - Codex：`LARK_BRIDGE_CODEX_{MODEL,REASONING_EFFORT,SANDBOX,CMD}`、`LARK_BRIDGE_TIMEOUT` → 服务命令行 `--model`、`--reasoning-effort`、`--sandbox`、`--codex-cmd`、`--codex-timeout`；
 - Claude：`LARK_CLAUDE_BRIDGE_{MODEL,EFFORT,CLAUDE_CMD,TIMEOUT,SKIP_PERMISSIONS,LOGIN_SHELL}` → `--model`、`--effort`、`--claude-cmd`、`--claude-timeout`、`--no-skip-permissions`、`--claude-login-shell`；
-- `LARK_DSH_BRIDGE_CMD`、`LARK_PI_BRIDGE_CMD` → `--dsh-cmd`、`--pi-cmd`。
+- `LARK_DSH_BRIDGE_CMD` → `--dsh-cmd`；
+- `LARK_PI_BRIDGE_CMD`：Pi 已下线，删掉就行（启动日志写 `env LARK_PI_BRIDGE_CMD is no longer read; unset it: Pi is retired`）。
 
 服务清单会把终端里的它们存下来，所以老部署重启后还带着，只是不生效。Bridge 启动时对每个设了的变量在 `bridge.log` 记一行 `env <名字> is no longer read; put <参数> in …`（`core/ignored_env.py` 的 `IGNORED_ENV`）。在没有它们的终端里重新注册（[改设置后重新注册](deploy.md#改设置后重新注册)）就清掉了。
 

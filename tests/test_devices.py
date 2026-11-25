@@ -139,15 +139,15 @@ class ConfigTest(unittest.TestCase):
         from covey.core.roster import DEVICE_HARNESSES, NAMES
         self.assertEqual(devices.harness_names(), DEVICE_HARNESSES)
         self.assertTrue({"claude", "codex", "agy"} <= set(DEVICE_HARNESSES))
-        self.assertFalse({"pi", "dsh"} & set(DEVICE_HARNESSES))
+        self.assertNotIn("dsh", DEVICE_HARNESSES)
         self.assertEqual(devices.DEFAULT_HARNESSES, ("claude", "codex"))  # What a device without the key meant before.
         entry = {"ssh": {"host": "h"}}
         named = devices.parse(json.dumps({"schema": 1, "devices": {"a": {**entry, "harnesses": ["agy", "claude"]}}}))
         self.assertEqual(named.device("a").harnesses, ("agy", "claude"))
-        text = problems(json.dumps({"schema": 1, "devices": {"a": {**entry, "harnesses": ["claude", "pi", "dsh"]}}}))
-        self.assertIn("devices.a.harnesses: must be a non-empty list from %s (pi, dsh cannot run on a device)"
+        text = problems(json.dumps({"schema": 1, "devices": {"a": {**entry, "harnesses": ["claude", "dsh"]}}}))
+        self.assertIn("devices.a.harnesses: must be a non-empty list from %s (dsh cannot run on a device)"
                       % ", ".join(DEVICE_HARNESSES), text)
-        self.assertTrue(all(name in NAMES for name in ("pi", "dsh")))
+        self.assertIn("dsh", NAMES)
         text = problems(json.dumps({"schema": 1, "devices": {"a": {**entry, "harnesses": ["gemini"]}}}))
         self.assertIn("must be a non-empty list from %s\n" % ", ".join(DEVICE_HARNESSES), text + "\n")
         self.assertNotIn("cannot run on a device", text)  # Not a Harness of this Bridge at all: no reason to give.

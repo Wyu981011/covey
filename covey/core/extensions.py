@@ -6,7 +6,7 @@ only, no import of covey): ``HARNESSES`` (name -> the fields of core/roster.py's
 ``RETIRED_HARNESSES``, and the small tables the core reads for them: ``WORK_MODES`` (mode id -> [label, hint]) with
 ``DEFAULT_WORK_MODE`` (core/defaults.py), ``AGENT_DIRS`` (hidden directories an agent keeps in a workspace,
 app/artifact_policy.py), ``IGNORED_ENV`` (variable -> [Harness, option], core/ignored_env.py) and ``GATEWAYS`` (name -> the
-fields of core/gateways.py's Gateway: model gateways for Codex, Pi and dsh); each may be left out.
+fields of core/gateways.py's Gateway: model gateways for Codex and dsh); each may be left out.
 Two more tables hold what only some deployments have: ``HOOKS`` (hook name -> the dotted name of a module of the
 package, imported when the core asks for it: ``hook``, or every package's: ``hooks``; the names are the
 ``HOOK_NAMES`` below) and ``SETTINGS``

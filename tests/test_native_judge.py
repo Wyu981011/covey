@@ -370,15 +370,15 @@ class RoutingTest(unittest.TestCase):
             os.environ.pop(name, None)
 
     def test_claude_code_first_then_codex_then_antigravity_and_never_one_that_cannot_answer_alone(self):
-        claude, codex, agy, pi = self.app("claude"), self.app("codex", ask_once=True), self.app("agy", ask_once=True), \
-            self.app("pi")
+        claude, codex, agy, dsh = self.app("claude"), self.app("codex", ask_once=True), self.app("agy", ask_once=True), \
+            self.app("dsh")
         for apps, want in (({"claude": claude, "codex": codex, "agy": agy}, claude),
-                           ({"codex": codex, "agy": agy}, codex), ({"agy": agy, "pi": pi}, agy)):
+                           ({"codex": codex, "agy": agy}, codex), ({"agy": agy, "dsh": dsh}, agy)):
             with self.subTest(apps=sorted(apps)):
                 self.assertEqual(track_judge.tools(apps), (want.harness.backend, want.harness.context))
-        self.assertEqual(track_judge.tools({"pi": pi}), (None, None))
+        self.assertEqual(track_judge.tools({"dsh": dsh}), (None, None))
         self.assertEqual(track_judge.tools({}), (None, None))
-        self.assertFalse(track_judge.available({"pi": pi}, environ={}))
+        self.assertFalse(track_judge.available({"dsh": dsh}, environ={}))
         self.assertTrue(track_judge.available({"codex": codex}, environ={}))
         self.assertTrue(track_judge.available({}, environ={"COVEY_JUDGE_GATEWAY": "gw:model"}))
 

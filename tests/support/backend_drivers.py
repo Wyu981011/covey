@@ -1,7 +1,7 @@
 """One driver per live backend for the shared contract in ``test_backend_contract.py``.
 
 A driver builds a real BridgeApp of its backend. Only the model boundary (the
-Codex App Server RPC, a scripted Claude, dsh, pi or agy child process, the
+Codex App Server RPC, a scripted Claude, dsh or agy child process, the
 in-memory MASO SDK), Git discovery and the Feishu transport are simulated; the
 production adapter builds every result. A scenario says what the one turn does:
 
@@ -19,7 +19,6 @@ sent), ``backend_run``/``authorize``/``cas``/``finalize_session`` (wrapping mock
 """
 from __future__ import annotations
 
-import base64
 import contextlib
 import dataclasses
 import json
@@ -325,47 +324,6 @@ class DshDriver(Driver):
             run.secrets = [run.body]
 
 
-class PiDriver(Driver):
-    """Pi over the scripted ``pi_rpc.py`` RPC child on the Codex login; pi has no children."""
-
-    name = "pi"
-    scenarios = ("complete", "failed")
-    sid = "01a1a217-4147-747b-a08f-83323257ddf3"
-    other_sid = "01a1a21e-5b23-7308-9dd0-f72c93ca797c"
-    SCRIPTS = {"complete": "ok", "failed": "exit-after-end"}
-    BODY = "Verified Pi answer"
-
-    def context(self, run):
-        return make_context(run.root, model="gpt-6-astra", effort="high", timeout=8,
-                            backend_cmd=[sys.executable, "-I", str(FIXTURES / "harness/pi_rpc.py")],
-                            options={"harness_id": self.name})
-
-    def seed_session(self, run):
-        # pi resumes by the session's file (backends/pi/bridge.py), so the previous turn left one.
-        folder = run.ctx.state_dir / "pi-sessions"
-        folder.mkdir()
-        (folder / f"2026-11-04T00-00-00-000Z_{self.sid}.jsonl").write_text("")
-        super().seed_session(run)
-
-    def install(self, run):
-        clean = {k: v for k, v in os.environ.items() if not k.startswith(("ACME_", "PI_", "CODEX_", "FAKE_PI"))}
-        run.stack.enter_context(mock.patch.dict(os.environ, {
-            **clean, "HOME": str(run.root), "FAKE_PI_RECORD": str(run.root / "pi-record.json"),
-            "FAKE_PI_SCENARIO": self.SCRIPTS[run.scenario], "FAKE_PI_TEXT": self.BODY}, clear=True))
-        codex = run.root / ".codex"
-        codex.mkdir(exist_ok=True)
-        claims = json.dumps({"exp": int(time.time()) + 86400}).encode()
-        token = "e30." + base64.urlsafe_b64encode(claims).decode().rstrip("=") + ".c2ln"
-        (codex / "auth.json").write_text(json.dumps({"tokens": {"access_token": token}}))
-        (codex / "models_cache.json").write_text(json.dumps({"models": [
-            {"slug": "gpt-6-astra", "display_name": "GPT-6-Astra", "visibility": "list",
-             "supported_reasoning_levels": [{"effort": "high"}]}]}))
-        run.app.cards.streaming = False
-        run.body = self.BODY
-        if run.scenario == "failed":  # The reply streams and its turn ends, then pi exits 3 before the end is confirmed.
-            run.secrets = [run.body]
-
-
 class AgyDriver(Driver):
     """Antigravity over the scripted ``agy_stream.py`` child process; its subagents' steps never reach the reply."""
 
@@ -392,7 +350,7 @@ class AgyDriver(Driver):
             run.secrets = [run.body]
 
 
-DRIVERS = (CodexDriver(), ClaudeDriver(), *([MasoDriver()] if InMemoryMasoTransport else []), DshDriver(), PiDriver(),
+DRIVERS = (CodexDriver(), ClaudeDriver(), *([MasoDriver()] if InMemoryMasoTransport else []), DshDriver(),
            AgyDriver())
 
 

@@ -26,7 +26,6 @@ from support import requires_extension
 from covey.core.jobs import context_for_job
 from covey.core.harness import backend_capabilities
 from covey.backends.codex.bridge import CodexBackend
-from covey.backends.pi.bridge import PiBackend
 from covey.app import harness_switch as hs
 from covey.app import switch_handoff
 from covey.app import model_usage
@@ -64,10 +63,9 @@ class HarnessSwitchTests(UnifiedCase):
         self.addCleanup(patcher.stop)
         # Leaving setUp's Codex topic asks Codex's own 交接摘要 now (T668), which starts the real CLI: here it answers
         # none unless a test says what it answers (on the backend of the app it routes to).
-        for backend in (CodexBackend, PiBackend):
-            patcher = mock.patch.object(backend, 'handoff_summary', autospec=True, return_value=('', '测试里不写'))
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(CodexBackend, 'handoff_summary', autospec=True, return_value=('', '测试里不写'))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.receive('src', 'first question')
         _, self.source = self.route('src')
         data = read_topic(self.source)
@@ -679,7 +677,7 @@ class HarnessSwitchTests(UnifiedCase):
 
         def options(name):  # What a row's options page lists.
             return page_options(switch_form.build_switch_card({**json.loads(path.read_text()), 'page': name}))
-        self.assertEqual([v for v, _ in options('harness')], ['codex', 'claude', 'maso', 'dsh', 'pi', 'agy'])
+        self.assertEqual([v for v, _ in options('harness')], ['codex', 'claude', 'maso', 'dsh', 'agy'])
         self.assertEqual([name for name, _ in itertools.groupby(key.split(':', 1)[0] for key in fixed)], sorted(NAMES, key=harness_rank))
         self.assertEqual(options('model'), [('codex:codex-model', 'Codex Model')])
         self.click(form, hs.HARNESS, 'maso')
@@ -1164,7 +1162,7 @@ class HarnessSwitchTests(UnifiedCase):
         self.assertEqual(sum(r['role'] == 'assistant' for r in rows), 3)
 
     def test_leaving_codex_its_model_hands_over_a_summary_too(self):
-        """Codex and Pi write one as Claude does (T668): asked with the old binding's model, budget, workdir and session."""
+        """Codex writes one as Claude does (T668): asked with the old binding's model, budget, workdir and session."""
         self.switch_to()  # From setUp's Codex topic, which has a session.
         calls = []
 

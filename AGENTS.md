@@ -341,7 +341,7 @@
 | --- | --- |
 | `core/agy_home.py` | A HOME of its own for one Antigravity (`agy`) run that must leave nothing behind |
 | `core/app_manifest.py` | What the Feishu app behind a Bridge must have, and what its online version lacks |
-| `core/attachments.py` | Image attachments a Harness hands its model itself (Claude Code's stream-json input, pi's prompt) |
+| `core/attachments.py` | Image attachments a Harness hands its model itself (Claude Code's stream-json input) |
 | `core/avatars.py` | The avatars of the private chat's cards: which picture a speaker has, and the image keys Feishu gave them |
 | `core/background.py` | The work a task runner finishes before it exits |
 | `core/backup.py` | The daily backup of a state directory |
@@ -434,7 +434,7 @@
 | `core/redaction.py` | Sensitive-term redaction: the owner's term list, which topics use it and what each turn replaced |
 | `core/redaction_views.py` | What the 设置 card's 脱敏 tab shows of the relays' records |
 | `core/redactor.py` | Matching for sensitive-term redaction: terms to stand-ins in requests, stand-ins back in replies |
-| `core/reply_state.py` | The verified reply and the outcome of one turn of Codex, Pi or dsh |
+| `core/reply_state.py` | The verified reply and the outcome of one turn of Codex or dsh |
 | `core/result.py` | Validated root reply identity, separate from execution and continuation rights |
 | `core/revisits.py` | 到点回来看: a topic ends its turn with `revisit` in its checkpoint (when, and what to look at) and the Bridge … |
 | `core/roster.py` | The Harness backends the unified bot routes, in one table |
@@ -595,17 +595,7 @@
 | --- | --- |
 | `backends/gateway/catalog.py` | A gateway's Responses models on the launch card, and the relay's waits on the task card |
 | `backends/gateway/connection.py` | 模型网关的连接：个人密钥、模型目录、请求头（网关由 core/gateways.py 的配置描述，可以有多个）。 |
-| `backends/gateway/relay.py` | A local relay in front of a model gateway for one Codex or Pi task, so its 429s are ridden out |
-
-### backends/pi
-
-| 文件 | 管什么 |
-| --- | --- |
-| `backends/pi/bridge.py` | Pi: GPT models from the Codex login or from a model gateway |
-| `backends/pi/events.py` | pi's RPC event rows to public Harness events |
-| `backends/pi/handoff.py` | A handoff summary from a Pi session the topic is leaving, as backends/claude/handoff.py writes Claude Code's |
-| `backends/pi/home.py` | Pi's private home for one turn, and how its models reach it |
-| `backends/pi/rpc.py` | One Pi turn over `pi --mode rpc`: a process per turn, JSONL both ways |
+| `backends/gateway/relay.py` | A local relay in front of a model gateway for one Codex task, so its 429s are ridden out |
 
 ### bin
 

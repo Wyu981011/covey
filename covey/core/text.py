@@ -304,11 +304,11 @@ def shown_command(detail):
 
 def tool_detail(inputs, keys, fallback="", said=""):
     """A tool step's one-line detail: the first of ``keys`` that ``inputs`` has (each backend keeps its own
-    order: Claude shows Grep's pattern, dsh and Pi its path), else ``fallback``. ``said``: what the model said
+    order: Claude shows Grep's pattern, dsh its path), else ``fallback``. ``said``: what the model said
     the call is for beside its parameters (Antigravity's toolSummary, backends/agy/bridge.py), which leads the
     detail ("<purpose> · <parameter>"). A command leads with the model's own one-line purpose: ``said``, its
     description (Claude Code's), else a comment it began the command with (``command_purpose``); a URL loses its
-    query and fragment, which may carry a token (dsh and Pi showed ``?token=…`` on the card and in traces/)."""
+    query and fragment, which may carry a token (dsh showed ``?token=…`` on the card and in traces/)."""
     if not isinstance(inputs, dict):
         return fallback
     key = next((k for k in keys if inputs.get(k)), None)

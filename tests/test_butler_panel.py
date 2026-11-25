@@ -384,10 +384,10 @@ class ButlerPanelTests(UnifiedCase):
             self.assertIn('**专项负责人**', text)
             self.assertIn(panel_card.LEAD_NOTE, text)
             self.assertIn('负责人 跟管家', self.cards[-1]['header']['subtitle']['content'])
-            # Every core Harness takes the Bridge's tools (Pi and DeepSeek Harness too since T700's second round).
+            # Every core Harness takes the Bridge's tools (DeepSeek Harness too since T700's second round).
             # An enabled extension's Harness that takes them too (covey_internal's MASO) is listed among them.
             self.assertEqual([v['option'] for v in self.values(panel_card.LEAD_HARNESS) if v['option'] in CORE_HARNESSES
-                              or not v['option']], ['', 'claude', 'codex', 'dsh', 'pi', 'agy'])
+                              or not v['option']], ['', 'claude', 'codex', 'dsh', 'agy'])
             self.click(self.option(panel_card.LEAD_HARNESS, 'codex'), event_id='lead1',
                        message=f'om_panel{self.app.messenger.create_and_send_card.call_count}')
             lead = self.settings().lead
@@ -673,7 +673,7 @@ class ButlerPanelTests(UnifiedCase):
                     'levels': ['low', 'high'], 'bridge_tools': True, **more}
         choices = {'claude:a1': entry('claude', 'Claude Code', 'a1', redaction=True, compaction=True),
                    'codex:g1': entry('codex', 'Codex', 'g1'), 'agy:n1': entry('agy', 'Antigravity', 'n1'),
-                   'pi:p1': {**entry('pi', 'Pi', 'p1'), 'bridge_tools': False}}
+                   'dsh:p1': {**entry('dsh', 'DeepSeek Harness', 'p1'), 'bridge_tools': False}}
         self.enterContext(mock.patch.object(panel, 'available_models', lambda topics, ctx: choices))
         settings.update(self.ctx.state_dir, model='a1', effort='high')
         self.ask()

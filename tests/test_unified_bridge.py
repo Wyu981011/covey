@@ -16,7 +16,7 @@ from support import requires_extension
 from covey.app.app import BridgeApp
 from covey.app.harnesses import components
 from covey.core.ignored_env import IGNORED_ENV
-from covey.core.roster import HARNESSES
+from covey.core.roster import HARNESSES, RETIRED
 from covey.core.jobs import BridgeReplyJob, find_job_record, upsert_job_record
 from covey.core.model_settings import settings_path
 from covey.core.topics import read_topic, remember_topic_message
@@ -480,7 +480,7 @@ class IgnoredEnvTests(UnifiedCase):
 
     ENV = {"LARK_CLAUDE_BRIDGE_MODEL": "claude-x", "LARK_BRIDGE_CODEX_CMD": "codex",
            "LARK_CLAUDE_BRIDGE_SKIP_PERMISSIONS": "1", "LARK_CLAUDE_BRIDGE_LOGIN_SHELL": "1",
-           "LARK_DSH_BRIDGE_CMD": "dsh", "LARK_MASO_BRIDGE_PYTHON": "/absolute/python"}
+           "LARK_DSH_BRIDGE_CMD": "dsh", "LARK_PI_BRIDGE_CMD": "pi", "LARK_MASO_BRIDGE_PYTHON": "/absolute/python"}
 
     def startup_lines(self, env):
         self.logs.clear()
@@ -507,7 +507,8 @@ class IgnoredEnvTests(UnifiedCase):
             "env LARK_CLAUDE_BRIDGE_MODEL is no longer read; put --model in harnesses.json",
             "env LARK_CLAUDE_BRIDGE_SKIP_PERMISSIONS is no longer read; unset it: its value is the default",
             "env LARK_CLAUDE_BRIDGE_LOGIN_SHELL is no longer read; put --claude-login-shell in harnesses.json",
-            "env LARK_DSH_BRIDGE_CMD is no longer read; put --dsh-cmd in harnesses.json"])
+            "env LARK_DSH_BRIDGE_CMD is no longer read; put --dsh-cmd in harnesses.json",
+            "env LARK_PI_BRIDGE_CMD is no longer read; unset it: Pi is retired"])
         # LARK_MASO_BRIDGE_PYTHON stays (setup_harness_bridge.sh sets it); the sandbox at its default only has to go.
         self.assertEqual(self.startup_lines({"LARK_BRIDGE_CODEX_SANDBOX": "danger-full-access"}), [
             "env LARK_BRIDGE_CODEX_SANDBOX is no longer read; put --sandbox in the service command line"])
@@ -533,6 +534,9 @@ class IgnoredEnvTests(UnifiedCase):
 
     def test_no_variable_is_read_and_its_option_is_its_harness_s(self):
         for name, (harness, option) in IGNORED_ENV.items():
+            if harness in RETIRED:  # Its module is gone, and so is any option for it.
+                self.assertIsNone(option, name)
+                continue
             with self.subTest(name=name):
                 spec = components(harness)[0]
                 self.assertNotIn(f'"{name}"', inspect.getsource(importlib.import_module(HARNESSES[harness].module)))

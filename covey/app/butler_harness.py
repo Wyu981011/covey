@@ -34,7 +34,7 @@ def takes_tools(app) -> bool:
 
 
 # The Harnesses a butler with none named falls back to after Claude Code, in this order, before the roster's others
-# (Pi and DeepSeek Harness take the Bridge's tools too since T700, but a deployment that had Codex or Antigravity keeps it).
+# (DeepSeek Harness takes the Bridge's tools too since T700, but a deployment that had Codex or Antigravity keeps it).
 FALLBACKS = ("codex", "agy")
 
 

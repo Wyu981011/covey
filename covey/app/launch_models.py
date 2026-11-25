@@ -110,7 +110,6 @@ CATALOG_FILTERS = {
                             view=claude_names),
     'dsh': CatalogFilter(view=readable_names),
     'codex': CatalogFilter(view=codex_names),
-    'pi': CatalogFilter(view=codex_names),
 }
 
 

@@ -231,13 +231,13 @@ class SpawnRequestTest(DeviceCase):
         self.assertEqual(dl.device_argv(["claude", "-p"], SimpleNamespace(backend_cmd=["other"]), {}), ["claude", "-p"])
 
     def test_antigravitys_command_is_the_devices_too_and_one_that_cannot_run_there_is_left_alone(self):
-        # core/roster.py ``devices``: claude, codex and agy run on a device; pi and dsh do not (core/devices.py harness_names).
-        found = {"tools": {"agy": {"found": True, "path": "/home/me/.local/bin/agy"}, "pi": {"found": True, "path": "/x/pi"}}}
+        # core/roster.py ``devices``: claude, codex and agy run on a device; dsh does not (core/devices.py harness_names).
+        found = {"tools": {"agy": {"found": True, "path": "/home/me/.local/bin/agy"}, "dsh": {"found": True, "path": "/x/dsh"}}}
         self.assertEqual(dl.device_argv(["/hub/bin/agy", "--output-format", "stream-json"],
                                         SimpleNamespace(backend_cmd=["/hub/bin/agy"]), found),
                          ["/home/me/.local/bin/agy", "--output-format", "stream-json"])
-        self.assertEqual(dl.device_argv(["/hub/bin/pi", "--mode", "rpc"], SimpleNamespace(backend_cmd=["/hub/bin/pi"]), found),
-                         ["/hub/bin/pi", "--mode", "rpc"])
+        self.assertEqual(dl.device_argv(["/hub/bin/dsh", "--json"], SimpleNamespace(backend_cmd=["/hub/bin/dsh"]), found),
+                         ["/hub/bin/dsh", "--json"])
 
     def test_a_context_without_a_remote_directory_or_an_unreachable_device_is_a_spawn_error(self):
         with self.assertRaises(ValueError):

@@ -12,7 +12,7 @@
 
 | 功能 | 开关 | 怎么确认开着 | 怎么关 |
 | --- | --- | --- | --- |
-| [管家](#管家) | `COVEY_BUTLER`（不设即允许） | 私聊发一句话由管家回答或开话题；设置卡「配置」页有管家一段。管家没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity（再没有时 Pi、DeepSeek Harness）；设置卡「配置」页的“管家”一段可换；选的 Harness 没启用时私聊照旧开话题 | `COVEY_BUTLER=0`；或主人在设置卡「配置」页的“管家”一段把私聊顶层改成“每条直接开一个话题” |
+| [管家](#管家) | `COVEY_BUTLER`（不设即允许） | 私聊发一句话由管家回答或开话题；设置卡「配置」页有管家一段。管家没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity（再没有时 DeepSeek Harness）；设置卡「配置」页的“管家”一段可换；选的 Harness 没启用时私聊照旧开话题 | `COVEY_BUTLER=0`；或主人在设置卡「配置」页的“管家”一段把私聊顶层改成“每条直接开一个话题” |
 | [专项](projects.md) | `COVEY_PROJECTS=1`（`./install` 写） | 管家把长期要跟进的事开成专项时，私聊出现专项卡 | `COVEY_PROJECTS=0` |
 | [整理专项](#整理专项)（只提议） | `COVEY_PROJECT_TIDY=suggest`（`./install` 写，要 `COVEY_PROJECTS=1`） | 话题多了以后私聊出现“建个专项？”的提议卡；有菜单「看板」时看板卡上有「整理专项」 | `COVEY_PROJECT_TIDY=off` |
 | [菜单「看板」](usage.md#看板) | `COVEY_BOARD=1`（`./install` 写） | 菜单里有「看板」，随时点开看现在等你、停住、在做的事；不用开早晚汇总（应用里还没有这一项时，「飞书应用待补」卡会补上） | `COVEY_BOARD=0`（开了早晚汇总时「看板」照旧跟着它） |
@@ -128,7 +128,7 @@
 ```json
 {"harnesses": {
   "<扩展 Harness id>": {"args": ["--<扩展参数>", "/absolute/runtime/venv/bin/python"]},
-  "pi": {"args": ["--pi-cmd", "/absolute/pi/node_modules/.bin/pi"], "models_first": ["<模型 ID>"]}
+  "dsh": {"args": ["--dsh-cmd", "/absolute/bin/dsh"], "models_first": ["<模型 ID>"]}
 }}
 ```
 
@@ -275,7 +275,7 @@
 
 仓库代码里不设就是关（AGENTS.md 规则 4）；`./install` 给新服务写服务清单时，终端里没设的就写上安装器的那组开关（`core/switches.py` 的 `INSTALL`，其中有 `COVEY_PROJECTS=1`、`COVEY_PROJECT_TIDY=suggest`，全部见[默认已开](#默认已开)），终端里设了的（新名旧名都算）不动；已经注册过的服务重跑 `./install` 时保留清单里的设置，不加新默认。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
 
-可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断都是一问一答，去[小模型判断](#小模型判断)说的地方：有 Claude Code 时用它的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装；没有时用 Codex 或 Antigravity 自己的默认模型（不用它们的轻量模型，理由同上）；设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>` 时问那个[模型网关](harnesses.md#模型网关codexpi-与-dsh)（`harnesses.json` 的 `gateways` 或扩展带的网关，用你给它配的个人密钥；这时 `COVEY_PROJECT_TIDY_MODEL` 不管用，模型就是这里写的，选一个读得懂整段对话的）。三处都没有时判断不了，整理卡写“没有能判断的模型（Claude Code、Codex、Antigravity 都没启用，也没设模型网关）”。
+可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断都是一问一答，去[小模型判断](#小模型判断)说的地方：有 Claude Code 时用它的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装；没有时用 Codex 或 Antigravity 自己的默认模型（不用它们的轻量模型，理由同上）；设了 `COVEY_JUDGE_GATEWAY=<网关名>:<模型>` 时问那个[模型网关](harnesses.md#模型网关codex-与-dsh)（`harnesses.json` 的 `gateways` 或扩展带的网关，用你给它配的个人密钥；这时 `COVEY_PROJECT_TIDY_MODEL` 不管用，模型就是这里写的，选一个读得懂整段对话的）。三处都没有时判断不了，整理卡写“没有能判断的模型（Claude Code、Codex、Antigravity 都没启用，也没设模型网关）”。
 
 ### 记忆
 
@@ -334,7 +334,7 @@
 
 - `0`：不允许。不起后台线程、不改消息路由，设置卡没有管家的标签。
 - 不设或 `1`：允许。用不用由主人在设置卡上选的模式定（`<state>/main-thread.json` 的 `mode`），改模式不用重启。新部署第一次启动写成管家，日志 `main thread mode settled mode=agent|topics`。
-- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity，再没有时 Pi、DeepSeek Harness（`app/butler_harness.py`）；设置卡「配置」页的管家一段可以换（`harness`，见[管家 · 换 Harness](butler.md#换-harness)）。Claude Code 没调通的新装，`./install` 在服务第一次启动前写好调通的那个，如 `"harness": "codex"`（`core/butler_settings.py` 的 `preset_harness`，文件里已经有 Harness 的不动）。
+- 管家的设置在 `<state>/main-thread.json`，工具请求在 `<state>/main-thread/requests/`。管家的会话没选 Harness 时用 Claude Code，没启用 Claude Code 时用启用了的 Codex 或 Antigravity，再没有时 DeepSeek Harness（`app/butler_harness.py`）；设置卡「配置」页的管家一段可以换（`harness`，见[管家 · 换 Harness](butler.md#换-harness)）。Claude Code 没调通的新装，`./install` 在服务第一次启动前写好调通的那个，如 `"harness": "codex"`（`core/butler_settings.py` 的 `preset_harness`，文件里已经有 Harness 的不动）。
 - `main-thread.json` 里旧的 `"desk_topics": true` 读到也按 `false` 处理，启动时记一行 warning，见[已下线的功能与旧配置](legacy.md)。
 - 开着专项（`COVEY_PROJECTS=1`）时，话题能把只有管家能办的事转给管家（检查点 `ask_butler`，记录在 `<state>/butler-asks/`），没有单独的开关，见[在话题里说开专项](projects.md#在话题里说开专项)。
 
@@ -392,7 +392,7 @@
 | `ssh.host` | `~/.ssh/config` 里的别名或 `user@host`。不能有空格，不能以 `-` 开头 |
 | `ssh.options` | 追加的 ssh 参数（`-J` 跳板、`-p`、`-i` 等）。Covey 自己的选项排在前面，这里改不掉它们 |
 | `ssh.python` | 设备上的解释器，默认 `python3`（3.9 起） |
-| `harnesses` | 这台设备上要用的 Harness：`claude`、`codex`、`agy` 的子集（`core/roster.py` 里 `devices` 为真的，扩展的 Harness 也看这一列），不写时是 `claude`、`codex`。`pi`、`dsh` 不能写，配置报错时点名（原因见 [Harness 说明](harnesses.md#在设备上运行)） |
+| `harnesses` | 这台设备上要用的 Harness：`claude`、`codex`、`agy` 的子集（`core/roster.py` 里 `devices` 为真的，扩展的 Harness 也看这一列），不写时是 `claude`、`codex`。`dsh` 不能写，配置报错时点名（原因见 [Harness 说明](harnesses.md#在设备上运行)） |
 | `env` | 只写要覆盖设备环境档案的变量（比如这台机器出网要的代理）。值里不能带 `user:密码@` |
 | `login_shell` | `true` 时自检再用登录 shell 取一次环境变量（`.bashrc` 里设的代理）。默认 `false` |
 | `spaces` | 谁可以用这台设备：`owner_private`（默认，主人私聊）、`personal_groups`、`team`（显式写才开）。代答群和没绑定的群永远不能用 |
@@ -402,7 +402,7 @@
 **自检**：`python3 -B bin/covey_devices.py --state-dir "$STATE_DIR" check gpu1`（`list` 只打印每台设备最近一次的结果），新加设备、改了 ssh 或代理设置后跑一次，见[运维 · 设备自检](operations.md#设备自检)。失败时写明是哪一步：连不上、没装、没登录、超时，或连不上模型服务（去哪里设 `HTTPS_PROXY`）。
 
 **已知限制**：
-- 只有 Linux 设备真机验证过；能上设备的是 Claude Code、Codex 和 Antigravity，Pi 和 dsh 不能。Antigravity 在设备上用设备自己的 Google 登录（没登录时这一轮当场拒绝），不能执行中补充（下一轮再说）。
+- 只有 Linux 设备真机验证过；能上设备的是 Claude Code、Codex 和 Antigravity，dsh 不能。Antigravity 在设备上用设备自己的 Google 登录（没登录时这一轮当场拒绝），不能执行中补充（下一轮再说）。
 - 设备上的话题没有回退、压缩、下载请求与结果、敏感词脱敏和分叉（按钮不出现）；开着脱敏的话题在设备上的一轮直接拒绝。
 - 管家自己的工作区不能是设备；专项开在设备工作区时，负责人留在 Bridge 本机，专项的话题开在设备上。不能用「独立 worktree」（管家设置是独立 worktree 时，设备话题出预选原目录的启动卡），换配置不生成旧模型的摘要。
 - 任务卡和答案卡不显示改动摘要；产物只能是设备工作区里的文件（目录请打包）；回复里指向设备文件的 Markdown 图片不上传。
@@ -444,10 +444,10 @@
 | `COVEY_SERVICE_ROOT` | `core/paths.py` | `<数据根>/bridge-services` | 否 |
 | `COVEY_REVIEW` | `app/review.py`（`enabled`，`buttons` 据此画按钮） | 关（`./install` 新装的服务写 `1`）；`1`：改了代码的答案卡和回带卡多「独立复核」 | 否 |
 | `COVEY_TURN_EXPORT` | `app/turn_export.py`（`enabled`，`attach_export_controls` 据此加按钮） | 关；`1`：结束的任务卡多「下载请求与结果」 | 否 |
-| `COVEY_STATE_DIR`；`LARK_CLAUDE_BRIDGE_STATE_DIR`、`LARK_DSH_BRIDGE_STATE_DIR`、`LARK_PI_BRIDGE_STATE_DIR`、`COVEY_AGY_STATE_DIR` | `app/harnesses.py`（只有默认 Harness 读，其余总用 Bridge 的 `--state-dir`） | `<数据根>/<Harness 的目录名>` | 否 |
-| `COVEY_PROFILE` | `backends/codex/bridge.py`、`backends/dsh/bridge.py`、`backends/pi/bridge.py`、`backends/agy/bridge.py`（Bridge 的 `--profile`） | 空：lark-cli 的默认 profile | 否 |
-| `COVEY_MESSAGE_FORMAT`、`LARK_CLAUDE_BRIDGE_MESSAGE_FORMAT`、`LARK_DSH_BRIDGE_MESSAGE_FORMAT`、`LARK_PI_BRIDGE_MESSAGE_FORMAT`、`COVEY_AGY_MESSAGE_FORMAT` | `feishu/messenger.py`（各 Harness 发消息时读） | `markdown` | 否 |
-| `COVEY_MESSAGE_CHUNK_LIMIT`、`LARK_CLAUDE_BRIDGE_MESSAGE_CHUNK_LIMIT`、`LARK_DSH_BRIDGE_MESSAGE_CHUNK_LIMIT`、`LARK_PI_BRIDGE_MESSAGE_CHUNK_LIMIT`、`COVEY_AGY_MESSAGE_CHUNK_LIMIT` | `feishu/messenger.py` | 12000 | 否 |
+| `COVEY_STATE_DIR`；`LARK_CLAUDE_BRIDGE_STATE_DIR`、`LARK_DSH_BRIDGE_STATE_DIR`、`COVEY_AGY_STATE_DIR` | `app/harnesses.py`（只有默认 Harness 读，其余总用 Bridge 的 `--state-dir`） | `<数据根>/<Harness 的目录名>` | 否 |
+| `COVEY_PROFILE` | `backends/codex/bridge.py`、`backends/dsh/bridge.py`、`backends/agy/bridge.py`（Bridge 的 `--profile`） | 空：lark-cli 的默认 profile | 否 |
+| `COVEY_MESSAGE_FORMAT`、`LARK_CLAUDE_BRIDGE_MESSAGE_FORMAT`、`LARK_DSH_BRIDGE_MESSAGE_FORMAT`、`COVEY_AGY_MESSAGE_FORMAT` | `feishu/messenger.py`（各 Harness 发消息时读） | `markdown` | 否 |
+| `COVEY_MESSAGE_CHUNK_LIMIT`、`LARK_CLAUDE_BRIDGE_MESSAGE_CHUNK_LIMIT`、`LARK_DSH_BRIDGE_MESSAGE_CHUNK_LIMIT`、`COVEY_AGY_MESSAGE_CHUNK_LIMIT` | `feishu/messenger.py` | 12000 | 否 |
 | `COVEY_CARD_TRANSPORT` | `feishu/sdk.py`（`enabled()`） | 空：lark-cli；`sdk` 走 SDK | 否 |
 | `COVEY_EVENT_TRANSPORT` | `feishu/ws_intake.py`（`enabled()`） | 空：lark-cli 的事件消费者；`sdk` 走 SDK 长连接 | 否 |
 | `COVEY_FEISHU_DIRECT` | `feishu/sdk.py` | 开：直连飞书，`0` 走代理 | 否 |
@@ -567,7 +567,7 @@
 | `COVEY_REQUIRED_MOUNT` | `service/manager.py` | 开机守护设置，不要手设 | 否 |
 | `COVEY_RUNNER_PYTHONPATH` | `app/runner.py` | Bridge 交给任务进程，不要手设 | 否 |
 | `COVEY_TASK_DIR` | `app/leftovers.py`、`core/device_link.py` | 任务进程给本轮命令设置，不要手设 | 否 |
-| `CODEX_HOME` | `core/paths.py`（`codex_home`，Codex 的会话目录和 Pi 借用的登录都从它取）、`core/model_settings.py`、`backends/codex/consult.py`（协作咨询轮的私有 home 从它链接）、`app/memory_harvest.py`（记忆自己长读 Codex 的记忆摘要） | `~/.codex` | 否 |
+| `CODEX_HOME` | `core/paths.py`（`codex_home`，Codex 的会话目录从它取）、`core/model_settings.py`、`backends/codex/consult.py`（协作咨询轮的私有 home 从它链接）、`app/memory_harvest.py`（记忆自己长读 Codex 的记忆摘要） | `~/.codex` | 否 |
 | `COVEY_CLAUDE_HOOKS` | `backends/claude/hooks.py`（`enabled`：`TurnHooks.registration` 据此在每轮 Claude Code 的 initialize 里注册 SDK hook） | 开：子 Agent（Explore 除外）开工时收到守则（`SubagentStart`），子 Agent 调 `mcp__bridge__*` 被拒（`PreToolUse`），管家这一轮自己调满 6 次非 Bridge 工具时提醒一次交给话题（`PostToolUse`，主人说了“你直接做”的那一轮没有）；`0` 关：不注册，每轮和原来一样 | 否 |
 | `CLAUDE_CONFIG_DIR` | `backends/claude/sessions.py`、`backends/claude/redaction.py`、`core/maintenance_rules.py`、`core/claude_retention.py`（只读它的 `settings.json`，诊断页和 `./install` 提示会话保留几天） | `~/.claude` | 否 |
 | `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY`、`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` | `backends/claude/bridge.py`（Bridge 的环境里设了就用它的值，否则给 claude 子进程设成 `1`） | `1` | 否 |
@@ -589,7 +589,6 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--claude-profiles` | `backends/claude/bridge.py` | 已下线，值被忽略，设了启动记一行；见[已下线的功能与旧配置](legacy.md) | 否 |
 | `--claude-transport`、`--traex-ppe-env`、`--traex-site` | `backends/claude/bridge.py` | 值被忽略 | 只为旧 `harnesses.json` 能解析（`compat_report: removed-options`） |
 | `--model`、`--reasoning-effort`、`--dsh-cmd`、`--dsh-timeout` | `backends/dsh/bridge.py` | 见 `--help` | 否 |
-| `--model`、`--reasoning-effort`、`--pi-cmd`、`--pi-timeout` | `backends/pi/bridge.py` | 见 `--help` | 否 |
 | `--model`、`--reasoning-effort`、`--agy-cmd`、`--agy-timeout`、`--no-skip-permissions` | `backends/agy/bridge.py` | 空（agy 自己的默认模型）、空、`agy`、0、关 | 否 |
 
 `scripts/deploy_bridge.sh` 自己的参数不在这张表里（表只列 Bridge 读的）：`--ext-repo`、`--ext-commit`、`--allow-core-mismatch` 让它把核心检出和扩展检出拼成一个 release，不给时只部署 `--repo` 一个检出，`--ext-commit` 默认 `HEAD`；`--allow-rollback` 让它部署不包含现网提交的版本（有意回滚），`--allow-extension-checks` 放行没过的扩展自检（`pre.extension_checks`），另一个部署正在跑时它退出码 3、不部署；用法见[部署新版本](deploy.md#部署新版本)。

@@ -47,22 +47,22 @@ class ChoiceTest(Case):
     def test_none_named_claude_code_while_it_can_else_codex_else_antigravity(self):
         claude, codex, agy = app("claude"), app("codex"), app("agy")
         for apps, want in (({"claude": claude, "codex": codex, "agy": agy}, "claude"),
-                           ({"codex": codex, "agy": agy, "pi": app("pi", tools=False)}, "codex"),
+                           ({"codex": codex, "agy": agy, "dsh": app("dsh", tools=False)}, "codex"),
                            ({"agy": agy, "dsh": app("dsh", tools=False)}, "agy"),
                            ({"claude": app("claude", tools=False), "agy": agy}, "agy"),
-                           ({"pi": app("pi", tools=False)}, "claude"), ({}, "claude")):
+                           ({"dsh": app("dsh", tools=False)}, "claude"), ({}, "claude")):
             with self.subTest(apps=sorted(apps)):
                 self.assertEqual(butler_harness.default_name(apps), want)
                 name, chosen = butler_harness.chosen(self.state, apps)
                 self.assertEqual(name, want)
                 self.assertIs(chosen, apps.get(want) if apps.get(want) and butler_harness.takes_tools(apps[want]) else None)
 
-    def test_codex_and_antigravity_come_before_pi_and_deepseek_without_claude_code(self):
-        """T700: Pi and DeepSeek Harness take the Bridge's tools too; a butler with no Harness named still falls back to
-        Codex, then Antigravity, and to them only where neither is enabled."""
-        pi, dsh, agy = app("pi"), app("dsh"), app("agy")
-        for apps, want in (({"dsh": dsh, "pi": pi, "agy": agy}, "agy"), ({"pi": pi, "codex": app("codex")}, "codex"),
-                           ({"pi": pi, "dsh": dsh}, "dsh"), ({"pi": pi}, "pi")):
+    def test_codex_and_antigravity_come_before_deepseek_without_claude_code(self):
+        """T700: DeepSeek Harness takes the Bridge's tools too; a butler with no Harness named still falls back to
+        Codex, then Antigravity, and to it only where neither is enabled; an extension's Harness after the roster's."""
+        later, dsh, agy = app("later"), app("dsh"), app("agy")
+        for apps, want in (({"dsh": dsh, "later": later, "agy": agy}, "agy"), ({"dsh": dsh, "codex": app("codex")}, "codex"),
+                           ({"later": later, "dsh": dsh}, "dsh"), ({"later": later}, "later")):
             with self.subTest(apps=sorted(apps)):
                 self.assertEqual(butler_harness.default_name(apps), want)
 
@@ -87,7 +87,7 @@ class ChoiceTest(Case):
         data = butler_harness.unwritten_topic(self.state, {"codex": app("codex", workdir=str(self.root / "work"))})
         self.assertEqual(data, {"harness_id": "codex", "model": "gpt-x", "effort": "low", "workspace_name": "work",
                                 "workdir": str((self.root / "work").resolve()), REDACTION_KEY: True})
-        self.assertEqual(butler_harness.unwritten_topic(self.state, {"pi": app("pi", tools=False)}), {})
+        self.assertEqual(butler_harness.unwritten_topic(self.state, {"dsh": app("dsh", tools=False)}), {})
 
     def test_a_model_saved_with_no_harness_named_is_claude_codes_and_a_fallback_runs_its_own_default(self):
         butler_settings.update(self.state, model="claude-opus-x", effort="max")
@@ -172,8 +172,8 @@ class LeadLimitTest(Case):
 
     def test_a_harness_without_the_bridge_tools_does_not_run_a_lead(self):
         ctx = self.ctx(**{TOOL_LIMIT: LEAD})
-        refused = tool_limits.refusal(ctx, HarnessCapabilities(read_only=True), "Pi")
-        self.assertIn("Pi 不能当专项负责人", refused)
+        refused = tool_limits.refusal(ctx, HarnessCapabilities(read_only=True), "Later")
+        self.assertIn("Later 不能当专项负责人", refused)
         self.assertEqual(tool_limits.refusal(ctx, HarnessCapabilities(bridge_tools=True), "Antigravity"), "")
         for backend in (CodexBackend(), AntigravityBackend()):
             self.assertEqual(tool_limits.refusal(ctx, backend_capabilities(backend, ctx), "x"), "")
@@ -188,7 +188,7 @@ class JudgeCallersTest(Case):
     """Each caller of the small model takes what app/track_judge.py tools picks: no "claude" of its own."""
 
     def apps(self):
-        return {"codex": app("codex", ask_once=True), "pi": app("pi", tools=False)}
+        return {"codex": app("codex", ask_once=True), "dsh": app("dsh", tools=False)}
 
     def test_tidy_and_the_patrol_and_the_memory_candidates_and_the_stuck_check_ask_codex_without_claude_code(self):
         apps = self.apps()
@@ -197,7 +197,7 @@ class JudgeCallersTest(Case):
         self.assertEqual(track_judge.tools(apps), want)
         from covey.app import stuck_check
         check = stuck_check.StuckCheck.__new__(stuck_check.StuckCheck)
-        check.harness = SimpleNamespace(spec=SimpleNamespace(name="pi"))
+        check.harness = SimpleNamespace(spec=SimpleNamespace(name="dsh"))
         check.topics = SimpleNamespace(apps=apps)
         self.assertEqual(check.judge(SimpleNamespace()), want)
 

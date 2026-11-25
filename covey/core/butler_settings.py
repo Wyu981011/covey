@@ -14,6 +14,7 @@ from pathlib import Path
 
 from covey.core import butler as contract
 from covey.core.locks import resource_lock
+from covey.core.roster import RETIRED
 from covey.core.state import read_object, write_json
 
 FILE = contract.SETTINGS_FILE
@@ -99,6 +100,15 @@ def _text(value, default=""):
     return value.strip() if isinstance(value, str) else default
 
 
+def _choice(row):
+    """(harness, model, effort) of a settings section ``row``; all "" when its Harness is retired (core/roster.py
+    RETIRED: Pi, chosen before it went), so the Bridge picks as if none were chosen instead of a Harness it has no more."""
+    harness = _text(row.get("harness"))
+    if harness in RETIRED:
+        return "", "", ""
+    return harness, _text(row.get("model")), _text(row.get("effort"))
+
+
 def from_json(data) -> Settings:
     data = data if isinstance(data, dict) else {}
     base, topic = Settings(), data.get("topic_defaults") if isinstance(data.get("topic_defaults"), dict) else {}
@@ -107,22 +117,21 @@ def from_json(data) -> Settings:
     notes = data.get("workspace_notes")
     review = data.get("review") if isinstance(data.get("review"), dict) else {}
     lead = data.get("lead") if isinstance(data.get("lead"), dict) else {}
+    harness, model, effort = _choice(data)
     return Settings(
         enabled=contract.agent_mode(data),
-        harness=_text(data.get("harness")),
-        model=_text(data.get("model")), effort=_text(data.get("effort")), redaction=data.get("redaction") is True,
+        harness=harness, model=model, effort=effort, redaction=data.get("redaction") is True,
         workspace=_text(data.get("workspace")),
         compact_tokens=compact if type(compact) is int and compact >= 0 else base.compact_tokens,
         topic_defaults=TopicDefaults(
-            harness=_text(topic.get("harness")), model=_text(topic.get("model")), effort=_text(topic.get("effort")),
+            **dict(zip(("harness", "model", "effort"), _choice(topic))),
             run_mode=run_mode if run_mode in RUN_MODES else "direct",
             redaction=topic.get("redaction") is True, workspace=_text(topic.get("workspace"))),
         workspace_notes=tuple((str(k), str(v)) for k, v in notes.items() if isinstance(v, str))
         if isinstance(notes, dict) else (),
         subagents=data["subagents"] if data.get("subagents") in SUBAGENTS else base.subagents,
-        review=ReviewModel(harness=_text(review.get("harness")), model=_text(review.get("model")),
-                           effort=_text(review.get("effort"))),
-        lead=LeadModel(harness=_text(lead.get("harness")), model=_text(lead.get("model")), effort=_text(lead.get("effort"))))
+        review=ReviewModel(*_choice(review)),
+        lead=LeadModel(*_choice(lead)))
 
 
 def to_json(settings: Settings) -> dict:

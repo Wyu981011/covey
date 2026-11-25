@@ -259,7 +259,7 @@ class TurnTest(unittest.TestCase):
 
     def test_every_harness_has_it_in_its_rules_and_its_message(self):
         """No backend takes the rules at system level (owner 2026-11-02), so each reads them in request.prompt:
-        Claude (stdin), Codex (the turn's input), MASO, dsh (stdin), Pi (the RPC prompt) all pass that on."""
+        Claude (stdin), Codex (the turn's input), MASO, dsh (stdin) all pass that on."""
         self.save()
         for name in NAMES:
             with self.subTest(harness=name):
