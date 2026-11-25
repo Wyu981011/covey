@@ -697,6 +697,22 @@ class InventoryTest(unittest.TestCase):
         variables, options, _ = read_inventory()
         self.assertEqual(sorted(set(inventory_rows()) - set(variables) - set(options)), [])
 
+    def test_settings_are_read_through_core_env_so_the_old_names_work_too(self):
+        """T778: core/memory.py read COVEY_MEMORY from os.environ alone, and a service whose Manager starts it with the
+        manifest's names (LARK_BRIDGE_MEMORY) had no memory at all. A setting is read through core/env.py get, which knows
+        both spellings; these two are not a manifest's (set by the node's own hook) or read both names themselves."""
+        direct = re.compile(r"""(?:(?:os\.environ|environ)\)?(?:\.get\(|\[)|os\.getenv\()\s*(?:["']COVEY_|[A-Z_]*ENV\b)""")
+        allowed = {("covey/core/node_agent.py", "COVEY_NODE_AUTOSTART"), ("covey/service/browser_setup.py", "COVEY_BROWSER_EXECUTABLE")}
+        found = []
+        for path in sorted(PACKAGE.rglob("*.py")):
+            name = str(path.relative_to(REPO))
+            if name == "covey/core/env.py":
+                continue
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                if direct.search(line) and not any(name == where and word in line for where, word in allowed):
+                    found.append(f"{name}:{number}: {line.strip()}")
+        self.assertEqual(found, [], "read it with core/env.py get (cenv.get(NAME, default, environ))")
+
 # What the docs name in backticks (AGENTS.md, README.md, docs/*.md; not docs/history/, which records the past).
 DOC_FILES = ["AGENTS.md", "README.md", *sorted(str(p.relative_to(REPO)) for p in (REPO / "docs").glob("*.md"))]
 # A backticked path whose first part is one of these is the repo's; others (`proxy/web/profile`, `jobs/`,
