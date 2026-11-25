@@ -5,7 +5,8 @@ A Harness's own login goes somewhere (``own_login``): Claude Code to its ``ANTHR
 ``ANTHROPIC_API_KEY`` (the process's environment, else the ``env`` of its user settings.json, core/claude_retention.py
 ``settings_path``); Codex to the ``model_providers`` entry its config.toml's ``model_provider`` names (its ``base_url``, the key in
 the variable its ``env_key`` names). A gateway of the Harness (core/gateways.py) at the same address with the same key is that
-account (``folded``): the model selects show it once (app/launch_models.py ``fold_same_account``), under the gateway's name.
+account (``folded``); an extension's provider can say it is one (core/providers.py ``own_account``). The model selects show
+it once (app/launch_models.py ``fold_same_account``), under that provider's name.
 
 Addresses are compared without a trailing slash and the case of the scheme and host; keys by their SHA-256, never kept or shown.
 A login that names no address of its own (the vendor's sign-in) is no gateway's, and a key that cannot be read folds nothing.
@@ -102,7 +103,8 @@ def gateway_login(gateway, environ=None):
 
 
 def folded(harness, environ=None) -> tuple:
-    """The names of ``harness``'s gateways that are its own login's account, in the gateways' order; () for none."""
+    """The names of ``harness``'s gateways that are its own login's account, in the gateways' order; () for none. An
+    extension's provider that says it is one (core/providers.py ``own_account``) is not looked at here."""
     from covey.core import gateways
 
     now = time.monotonic()
@@ -112,7 +114,7 @@ def folded(harness, environ=None) -> tuple:
         if hit and now - hit[0] < FRESH and environ is None:
             return hit[1]
     own = own_login(harness, environ)
-    names = tuple(g.name for g in gateways.for_harness(harness) if own and gateway_login(g, environ) == own) if own else ()
+    names = tuple(g.name for g in gateways.for_harness(harness) if gateway_login(g, environ) == own) if own else ()
     if environ is None:
         with _lock:
             _cache[key] = (now, names)

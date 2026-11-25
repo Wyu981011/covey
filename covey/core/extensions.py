@@ -72,7 +72,7 @@ SETTING_NAMES = {
 # compat: variables of features that were taken out -> the feature; still set, they are ignored and the Bridge logs one
 # line for each (``unused_env``). Paseo (the covey_paseo extension) was taken out.
 RETIRED_ENV = {"COVEY_PASEO_FLEET": "Paseo"}
-PROVIDER_FIELDS = {"key", "harness", "name", "prefix", "access", "menu"}
+PROVIDER_FIELDS = {"key", "harness", "name", "prefix", "access", "menu", "own_login"}  # own_login: a bool (T786).
 
 
 class ExtensionError(RuntimeError):
@@ -234,6 +234,8 @@ def read(package: str) -> Extension:
         if not all(isinstance(provider.get(k), str) for k in ("key", "harness", "name", "prefix", "access")):
             raise ExtensionError(package, f"a PROVIDERS item needs the strings key, harness, name, prefix, "
                                           f"access, got {provider!r}")
+        if not isinstance(provider.get("own_login", False), bool):
+            raise ExtensionError(package, f"a PROVIDERS item's own_login is true or false, got {provider!r}")
     modes = _mapping(package, getattr(manifest, "WORK_MODES", {}), "WORK_MODES")
     if not all(isinstance(v, (list, tuple)) and len(v) == 2 and all(isinstance(t, str) for t in v)
                for v in modes.values()):

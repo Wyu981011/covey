@@ -118,6 +118,24 @@ class FoldTest(unittest.TestCase):
         self.assertEqual(result["codex:only-own"]["model"], "only-own")  # Still the own login's id: it runs as before.
         self.assertEqual(name, "MyGW")
 
+    def test_an_extensions_source_that_says_it_is_the_own_login_is_listed_once_under_its_name(self):
+        # T785's own sources go through an extension (a relay Covey cannot see the address of): it says so (own_login).
+        relay = providers.Provider("aster", "claude", "AsterGate", "aster/", "包装命令", own_login=True)
+        own = {"harness": "claude", "provider": "anthropic", "provider_title": "Claude 自带", "title": "Claude Code"}
+        entries = {"claude:opus": {**own, "model": "opus", "display_name": "Opus 5.5", "label": "Claude Code · Opus 5.5"},
+                   "claude:aster/opus": {"harness": "claude", "model": "aster/opus", "display_name": "Opus 5.5",
+                                         "provider": "aster", "provider_title": "AsterGate", "source": "AsterGate",
+                                         "title": "Claude Code", "label": "Claude Code · AsterGate · Opus 5.5"}}
+        with mock.patch.object(providers, "PROVIDERS", (*providers.PROVIDERS, relay)):
+            self.assertEqual(providers.own_account("claude", {}), ("aster",))
+            result = fold_same_account(entries)
+            name = providers.menu_name(providers.provider_of("claude", "opus"), "Claude Code")
+        self.assertEqual(list(result), ["claude:aster/opus"])
+        self.assertEqual(name, "AsterGate")
+        with mock.patch.object(providers, "PROVIDERS", (*providers.PROVIDERS,
+                                                       providers.Provider("gc", "claude", "GC", "gc/", "x"))):
+            self.assertEqual(providers.own_account("claude", {}), ())  # Not said: another account.
+
     def test_without_one_nothing_changes(self):
         with mock.patch.object(same_account, "folded", return_value=()):
             self.assertEqual(fold_same_account(self.entries()), self.entries())

@@ -10,8 +10,8 @@ from typing import NamedTuple
 from covey.core.harness import backend_capabilities
 from covey.core.loops import every
 from covey.core.model_names import readable_model
-from covey.core import gateways, same_account
-from covey.core.providers import RETIRED_PREFIXES, menu_name, provider_of
+from covey.core import gateways
+from covey.core.providers import RETIRED_PREFIXES, menu_name, own_account, provider_of
 from covey.core.roster import NAMES
 from covey.core.state import read_json, read_object, write_json
 
@@ -201,12 +201,12 @@ def available_models(topics, ctx):
 
 
 def fold_same_account(result):
-    """``result`` with each Harness's own login shown once when a gateway of it is the same account (core/same_account.py
-    ``folded``, T786): the own login's entries a folded gateway offers too (by name) leave the menu, the others are listed
+    """``result`` with each Harness's own login shown once when another provider of it is the same account
+    (core/providers.py ``own_account``, T786): the own login's entries a folded gateway offers too (by name) leave the menu, the others are listed
     under the gateway, so the provider select has one entry for the account. Their ids are unchanged: they still run on the
     Harness's own login, which is that account; a topic on one runs as before."""
     for name in {entry['harness'] for entry in result.values()}:
-        names = same_account.folded(name)
+        names = own_account(name)
         if not names:
             continue
         theirs = [entry for entry in result.values() if entry['harness'] == name and entry.get('provider') in names]
