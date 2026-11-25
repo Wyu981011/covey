@@ -775,14 +775,14 @@ class WebSync:
         ledger = self.ledger
         data = self.client.request("GET", f"/sync/inbox?after={ledger.after()}&limit=100&wait={INBOX_WAIT:g}")
         fetched = time.time()
-        self.inbox_waited = data.get("waited") is True
-        late, handed, fresh = [], [], 0
+        late, handed, fresh, busy = [], [], 0, False
         for row in data.get("items") or ():
             op_id, seq = str(row.get("op_id") or ""), row.get("seq")
             if not op_id or not isinstance(seq, int) or isinstance(seq, bool):
                 continue
             with self.inflight_lock:
                 if op_id in self.inflight:
+                    busy = True
                     continue  # Being done (a lane, or a step left behind): it is acknowledged when it ends.
                 known = ledger.get(op_id)
                 if known is None:
@@ -796,6 +796,9 @@ class WebSync:
                 ledger.finish(op_id, "failed", "这条执行到一半没有结果（Covey 重启或卡住了），结果不确定，没有重发")
             saved = ledger.get(op_id)
             late.append({"seq": seq, "op_id": op_id, "state": saved["state"], "message": saved["message"]})
+        # Held by the page until an operation came: ask again at once. Not when it answered because of one still being done here (it is
+        # new on the page until its ack): that would ask without a pause until it ends.
+        self.inbox_waited = data.get("waited") is True and not busy
         if late:  # Done before and not acknowledged (the page did not take the ack), or failed as uncertain just now.
             self.client.request("POST", "/sync/ack", {"results": late})
             ledger.acked([each["op_id"] for each in late])

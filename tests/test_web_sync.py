@@ -2732,6 +2732,22 @@ class OpLaneTest(WebCase):
         self.sync.inbox_once()
         self.assertEqual(self.sync.inbox_pause(), 0)
 
+    def test_one_still_running_makes_the_next_ask_pause(self):
+        """A page that holds the inbox answers at once while an operation is new on it, and one still being done here is: the next ask
+        waits poll_seconds, not none, or the inbox would ask without a pause until that operation ends."""
+        release = threading.Event()
+        self.web.waited = True
+        self.web.op("say", 1, "op-p1", TOPIC, text="a")
+        with mock.patch.object(app_web, "OP_WAIT", 0.1), \
+                mock.patch.object(self.sync.ops, "run", side_effect=lambda row: release.wait(5) and ("done", "ok")):
+            self.sync.inbox_once()
+            self.sync.inbox_once()
+            self.assertEqual(self.sync.inbox_pause(), web_sync.POLL_SECONDS)
+            release.set()
+            self.assertTrue(self.wait_for(lambda: len(self.web.acks) == 1))
+        self.sync.inbox_once()
+        self.assertEqual(self.sync.inbox_pause(), 0)
+
     def test_what_an_operation_touched_is_pushed_by_the_touch_thread(self):
         self.topic()
         self.sync.load_sent()
