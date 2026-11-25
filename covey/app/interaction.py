@@ -30,6 +30,7 @@ from covey.core.text import literal
 from covey.cards.trace_updates import panel_json
 from covey.cards.trace_view import BRIDGE_NOTE, TraceView
 from covey.core.metrics import mark_first_output
+from covey.core.protocol import QUEUE_NOTE
 from covey.core.trace_store import load_trace
 
 
@@ -144,8 +145,10 @@ class Interaction:
         self.steering = steering
 
     def structured_harness_event(self, ctx, job, kind, data, rpc, *, from_backend=True):
-        # A note from the Bridge itself is shown like progress but is not the backend's first output.
-        if from_backend and kind in {'answer_snapshot', 'tool', 'progress_note', 'agent_state', 'turn_finished', 'question'}:
+        # A note from the Bridge itself is shown like progress but is not the backend's first output; nor is the wait
+        # for a seat, before the CLI runs.
+        if (from_backend and kind in {'answer_snapshot', 'tool', 'progress_note', 'agent_state', 'turn_finished', 'question'}
+                and not (kind == "progress_note" and data.get("id") == QUEUE_NOTE)):
             if mark_first_output(job) and job.execution_started:
                 upsert_job_record(ctx.state_dir, job.message_id, timings=job.timings)
         with job.trace_lock:
@@ -165,8 +168,17 @@ class Interaction:
                                  or (k == "reason" and isinstance(v, str) and v)}
         elif main and kind in {"tool", "answer_snapshot", "progress_note", "model_reasoning", "model_output"}:
             job.backend_retry = {}
-        if job.activity_monitor is not None and (isinstance(retry, dict) or retrying and not job.backend_retry):
-            # Without this a long task's status line would wait up to 15 s to show or end the retry.
+        queue = data.get("queue") if kind == "progress_note" and main else None
+        queued = bool(job.backend_queue)
+        if isinstance(queue, dict):
+            job.backend_queue = {k: v for k, v in queue.items()
+                                 if (k in {"ahead", "running", "cap", "limit", "since"} and type(v) in {int, float})
+                                 or (k == "name" and isinstance(v, str) and v)}
+        elif main and kind in {"tool", "answer_snapshot", "progress_note", "model_reasoning", "model_output"}:
+            job.backend_queue = {}
+        if job.activity_monitor is not None and (isinstance(retry, dict) or retrying and not job.backend_retry
+                                                 or isinstance(queue, dict) or queued and not job.backend_queue):
+            # Without this a long task's status line would wait up to 15 s to show or end the retry or the wait.
             self.cards.trace_updates(job).submit("backend-retry", job.activity_monitor.tick, urgent=True)
         if kind in {"model_reasoning", "model_output"}:
             # Only the status line hears of these: the trace has nothing to show for them.

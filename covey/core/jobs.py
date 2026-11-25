@@ -152,6 +152,8 @@ class BridgeReplyJob:
     result_backend: str = _state("")
     last_backend_control: Any = _state()
     backend_retry: dict = _state(factory=dict)
+    # The backend's command waits for a free seat at its gateway (core/protocol.py queue_note): the status line's.
+    backend_queue: dict = _state(factory=dict)
     # What the link to the device says of this turn's process (core/device_link.py details(): state, seconds down, the
     # patience, ...), read by the activity monitor each tick (core/longtask.py) and saved in the record only for a turn on
     # a device (as ``device_state``). {} on this machine.

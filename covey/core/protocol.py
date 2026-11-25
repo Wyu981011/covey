@@ -16,7 +16,9 @@ from dataclasses import dataclass, field
 #     调用工具, 更新计划, 读取文件 and 浏览目录, another tool's own name).
 #   progress_note: id, text; optional received_at, child_id, urgent (omitted: the note shows at once),
 #     title (default 进展说明), retry (attempt, reason, next, since, limit: the main task's model request
-#     is being retried, shown on the status line until the main task's next event).
+#     is being retried, shown on the status line until the main task's next event), queue (ahead, running, cap,
+#     limit, name, since: the main task's command waits for a free seat at its gateway, ``queue_note``; shown on the
+#     status line until the main task's next event).
 #   agent_state: id, name, status, started_at; optional parent_id, ended_at, description, summary. A subtask
 #     that ended and runs again (Codex resumeAgent, a sub-agent's next run) comes with a later started_at:
 #     the trace takes a running state no later than the ended one's start for a stale event (cards/trace.py).
@@ -95,6 +97,20 @@ def retry_note(attempt, reason, received_at=None, **extra):
         note["received_at"] = received_at
     note["retry"] = {"attempt": attempt, "reason": reason, **extra}
     return note
+
+
+QUEUE_NOTE = "backend-queue"
+
+
+def queue_note(queue, since):
+    """The progress_note saying the main task's command waits for a free seat at its gateway, from ``since`` (ms since
+    the epoch): ``queue`` is what the command said (backends/claude/process.py queue_line); when it says its turn came
+    (``admitted``), the note that ends the wait."""
+    if queue.get("admitted"):
+        return {"id": QUEUE_NOTE, "text": "排队结束，开始执行"}
+    where = f"{queue['name']} " if queue.get("name") else ""
+    ahead = f"，前面还有 {queue['ahead']} 个" if "ahead" in queue else ""
+    return {"id": QUEUE_NOTE, "text": f"{where}排队等空位{ahead}", "queue": {**queue, "since": since}}
 
 # Display-only events. A failure while showing one is logged and never decides the
 # turn; question, answer and input events keep their failure semantics.
