@@ -705,7 +705,8 @@ def output_pages(output, topic="", ask=None, *, link=None, finish=None):
     -> card): the owner's words', once (cards/pages.py finished). A block sent before the title bar (no speaker) stands
     atop the first, as on the copy, which then has no row either."""
     from covey.cards.answer_card import words_fold
-    from covey.cards.pages import drawer, finished, paged
+    from covey.cards.pages import drawer, finished, paged, paged_after, tail_apart
+    from covey.cards.relay_card import stage_drawer, stages_of
     from covey.cards.review import reply_body
 
     meta, _ = split_ask([ask] if ask else [])
@@ -716,9 +717,20 @@ def output_pages(output, topic="", ask=None, *, link=None, finish=None):
     def row(page):
         return speaker_row(meta, outcome="waiting", label=label, page=page)
     body = reply_body(output)
+    # Its 这一轮中途的汇报 folded under the last card, as on the copy (cards/relay_card.py stages_apart; the cards go
+    # before the copy and are not kept, so only the fold's title closes it), else on a card of its own after them.
+    head, tail = ([row("9/9")] if not legacy else [*legacy]), [note(OUTPUT_NEXT)]
+    body, stages, fold = stages_of(body, [*head, *tail], closable=False, element_id=OUTPUT_ID)
     body = link(body) if link else body
-    return paged(body, drawer(f"{label} · 这一轮的输出", row=None if legacy else row, words=words, label=OUTPUT_LABEL,
-                              element_id=OUTPUT_ID, tail=[note(OUTPUT_NEXT)]), reserve=True)
+    lead = f"{label} · 这一轮的输出"
+    draw = drawer(lead, row=None if legacy else row, words=words, label=OUTPUT_LABEL, element_id=OUTPUT_ID,
+                  tail=[*([fold] if fold else []), *tail])
+    if not stages:
+        return paged(body, draw, reserve=True)
+    if fold is not None:
+        return tail_apart(paged(body, draw), draw, stages)
+    return paged_after(body, draw, stages, stage_drawer(lead, row=None if legacy else row, tail=tail, closable=False,
+                                                        element_id=OUTPUT_ID), reserve=True)
 
 
 def answer_notice_card(text):

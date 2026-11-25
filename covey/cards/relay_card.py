@@ -188,7 +188,7 @@ def relay_pages(label, *, text="", ask=None, url="", avatar="", link=None, finis
     ``link`` (text -> text): the reply's T numbers as links, once, before it is cut; ``finish`` (card -> card): the other
     parts', once (cards/pages.py finished). ``facts`` as ``relay_card`` takes them."""
     from covey.cards.answer_card import WORDS_ID
-    from covey.cards.pages import Paged, drawer, finished, paged
+    from covey.cards.pages import Paged, drawer, finished, paged, paged_after
 
     meta, _ = split_ask([ask] if ask else [])
     # What goes under a reply, drawn by relay_card itself: the same parts as on one card, from one place.
@@ -197,10 +197,53 @@ def relay_pages(label, *, text="", ask=None, url="", avatar="", link=None, finis
     said, tail = finished(finish, [part for part in parts if isinstance(part, dict) and part.get("element_id") == WORDS_ID],
                           [part for part in parts if not (isinstance(part, dict) and part.get("element_id") == WORDS_ID)])
     body = drop_part_heading(reply_body(text))
-    body = link(body) if link else body
 
     def row(page):
         return speaker_row(meta, outcome="result", label=label, avatar=avatar, url=into(url, meta), page=page)
+    # Its 这一轮中途的汇报 is not cut with the reply (the owner, 2026-11-25: T732's long relay had them open): folded under
+    # the last card before the parts, as on one card, or atop the caller's card of the parts (``after``); too long for
+    # one card, on cards of their own after the reply's, each a fold of its part of them.
+    body, stages, fold = stages_of(body, [row("9/9"), *tail])
+    body = link(body) if link else body
     lead = summary(label, look.word("result"), answer_lead(text, SUMMARY_CHARS))
-    result = paged(body, drawer(lead, row=row, words=said, element_id=FOLD_ID, tail=tail, update_multi=True))
-    return result if bare is not None else Paged(result.pages, True)  # Its parts alone past a card: on their own.
+    draw = drawer(lead, row=row, words=said, element_id=FOLD_ID, tail=[*([fold] if fold else []), *tail], update_multi=True)
+    if stages and fold is None:
+        result = paged_after(body, draw, stages, stage_drawer(lead, row=row, tail=tail, update_multi=True))
+    else:
+        result = paged(body, draw)
+    after = (fold,) if fold and result.alone else ()
+    # Its parts alone past a card (``bare``), or past the last one: on their own, the caller's.
+    return Paged(result.pages, bare is None or result.alone, after)
+
+
+def stages_of(body, beside=(), *, closable=True, element_id=FOLD_ID) -> tuple:
+    """(reply, reports, fold) of a reply's Markdown ``body`` too large for one card: its 这一轮中途的汇报 (cards/review.py
+    split_stages) taken out of the text the cards cut, and their fold (``stages_fold``; ``closable`` as on one card)
+    when it goes on one card with ``beside`` (what goes there with it), else None: on cards of their own then
+    (``stage_drawer``, cards/pages.py paged_after). (``body``, "", None) without any."""
+    from covey.cards.pages import fits
+    from covey.cards.review import split_stages, stages_fold
+
+    main, stages = split_stages(body)
+    if not stages:
+        return body, "", None
+    fold = stages_fold(stages, stages_id(element_id, closable), closable)
+    return main, stages, (fold if fits(card([*beside, fold], update_multi=True)) else None)
+
+
+def stages_id(element_id, closable) -> str:
+    """The element ID of a fold of 这一轮中途的汇报 under ``element_id``'s reply (cards/review.py reply_shown)."""
+    from covey.cards.review import STAGES_CLOSABLE, STAGES_SUFFIX
+
+    return element_id + (STAGES_CLOSABLE + "0" if closable else STAGES_SUFFIX)
+
+
+def stage_drawer(summary, *, row=None, tail=(), update_multi=False, closable=True, element_id=FOLD_ID):
+    """``draw`` (cards/pages.py drawer) of the cards that carry 这一轮中途的汇报 too long for one: each its part of them as
+    one closed fold (``stages_fold``), ``tail`` under the last."""
+    from covey.cards.pages import drawer
+    from covey.cards.review import stages_fold
+
+    fold_id = stages_id(element_id, closable)
+    return drawer(summary, row=row, tail=tail, update_multi=update_multi,
+                  part_element=lambda text: stages_fold(text, fold_id, closable))

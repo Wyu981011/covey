@@ -300,6 +300,47 @@ class SendTest(Case):
         for n in range(1, len(sent) + 1):
             self.assertEqual(TOPIC, message_topic(self.state, CHAT, f"om_page{n}"))  # Each the topic's.
 
+    def test_a_long_relay_s_reports_go_folded_on_cards_that_close_on_their_text(self):
+        # T758 (the owner, 2026-11-25): T732's relay was on several cards and its 这一轮中途的汇报 open on the last.
+        from covey.app import fold_close
+        from covey.cards.pages import Paged
+        from covey.core.trace import STAGE_HEADING, with_stage_notes
+        reply = "## 结论\n先说结论。\n\n" + "\n\n".join(f"### 第{n}节\n" + "细节很长，" * 300 for n in range(1, 12))
+        text = with_stage_notes(reply, [(None, f"第{n}次汇报：" + "进展" * 400) for n in range(1, 41)])
+        sent, ids = [], iter(f"om_page{n}" for n in range(1, 30))
+
+        def one(chat, text, key, reply_to, card, on_sent):
+            sent.append((key, text, card))
+            on_sent(next(ids))
+            return True
+        self.assertEqual("sent", relay(self.state, self.job(), DONE, send=mock.Mock(side_effect=one), text=text,
+                                       inputs=["Claude Code"], outputs=[]))
+        self.assertTrue(all(STAGE_HEADING not in words for _, words, _ in sent))
+        folded = [n for n, (_, _, card) in enumerate(sent, 1) if fold_close.has_fold(card)]
+        self.assertGreater(len(folded), 1)
+        for n in folded:  # Each kept, so a click on its text closes it.
+            self.assertTrue(fold_close.path_of(self.state, f"om_page{n}").exists())
+        self.assertFalse(fold_close.path_of(self.state, "om_page1").exists())  # The reply's first card has none.
+        # The cards left the reports to the small card of the parts: it carries them, folded first.
+        for path in list((self.state / "main-thread" / "relays").glob("*.json")):
+            path.unlink()
+        sent.clear()
+        fold = {"tag": "collapsible_panel", "element_id": "relay_reply_s0", "expanded": False,
+                "elements": [{"tag": "interactive_container", "elements": [],
+                              "behaviors": [{"type": "callback", "value": {"kind": "bridge_fold_close", "fold": "relay_reply_s0"}}]}]}
+        real = relay_send.relay_pages
+
+        def alone(*args, **kwargs):
+            return Paged(real(*args, **kwargs).pages, True, (fold,))
+        ids = iter(f"om_next{n}" for n in range(1, 30))
+        with mock.patch("covey.app.relay_send.relay_pages", side_effect=alone):
+            self.assertEqual("sent", relay(self.state, self.job(), DONE, send=mock.Mock(side_effect=one), text=reply,
+                                           inputs=["Claude Code"], outputs=[]))
+        key, _, card = sent[-1]
+        self.assertTrue(key.endswith("-tail"))
+        self.assertIn("relay_reply_s0", [element.get("element_id") for element in card["body"]["elements"]])
+        self.assertTrue(fold_close.path_of(self.state, f"om_next{len(sent)}").exists())
+
     def test_a_sent_relay_is_a_log_line(self):
         log = mock.Mock()
         self.assertEqual("sent", relay(self.state, self.job(), DONE, send=self.send(), log=log, text=REPLY))

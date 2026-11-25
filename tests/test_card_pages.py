@@ -218,6 +218,94 @@ class RelayPagesTest(unittest.TestCase):
         self.assertIn("T43 · 有结果：先说结论（1/", cut.pages[0].card["config"]["summary"]["content"])
 
 
+class StagesOnPagesTest(unittest.TestCase):
+    """这一轮中途的汇报 under a reply too large for one card (the owner, 2026-11-25: T732's long relay had them open): never cut
+    with the text, folded under the last card, atop the caller's card of the parts, or, too long for one card, on cards
+    of their own, each one closed fold."""
+
+    def stages(self, notes):
+        from covey.core.trace import with_stage_notes
+
+        return with_stage_notes(REPLY, [(None, text) for text in notes])
+
+    def folds(self, built):
+        return [element for element in built["body"]["elements"] if element.get("tag") == "collapsible_panel"
+                and "这一轮中途的汇报" in json.dumps(element.get("header"), ensure_ascii=False)]
+
+    def test_a_long_relay_s_reports_fold_under_its_last_card_before_its_parts(self):
+        from covey.app.fold_close import has_fold
+        from covey.core.trace import STAGE_HEADING
+
+        facts = dict(inputs=["Claude Code"], outputs=[figure("用时", "1分")], files=FILES)
+        cut = relay_pages("T43", text=self.stages(["汇报甲" * 200, "汇报乙" * 300]), **facts)
+        self.assertFalse(cut.alone)
+        self.assertTrue(all(STAGE_HEADING not in page.text and "汇报甲" not in page.text for page in cut.pages))
+        last = cut.pages[-1].card
+        fold, = self.folds(last)
+        self.assertEqual((fold["element_id"], fold["expanded"]), ("relay_reply_s0", False))
+        self.assertTrue(has_fold(last))  # Its text closes it (app/fold_close.py).
+        self.assertLess(ids(last).index("relay_reply_s0"), ids(last).index(ARTIFACTS_ID))
+        self.assertTrue(all(not self.folds(page.card) for page in cut.pages[:-1]))
+        self.assertTrue(all(pages.fits(page.card) for page in cut.pages))
+        self.assertEqual(body_text(cut, FOLD_ID).count("这一节说的是很长的细节，"), 19 * 120)
+        # Parts too large for the last card: the fold goes atop the caller's card of them (app/relay_send.py).
+        big = dict(FILES, elements=[{"tag": "markdown", "content": "很" * 5400}])
+        cut = relay_pages("T43", text=self.stages(["汇报甲" * 200]), **{**facts, "files": big})
+        self.assertTrue(cut.alone)
+        self.assertEqual([fold["element_id"] for fold in cut.after], ["relay_reply_s0"])
+        self.assertTrue(all(not self.folds(page.card) for page in cut.pages))
+        self.assertEqual(relay_pages("T43", text=REPLY, **facts).after, ())  # No reports: nothing atop.
+
+    def test_reports_too_long_for_one_card_go_on_cards_of_their_own_each_one_fold(self):
+        facts = dict(inputs=["Claude Code"], outputs=[figure("用时", "1分")], files=FILES)
+        notes = [f"第{n}次汇报：" + "进展" * 400 for n in range(1, 41)]
+        cut = relay_pages("T43", text=self.stages(notes), **facts)
+        total = len(cut.pages)
+        reply = [page for page in cut.pages if not self.folds(page.card)]
+        reports = cut.pages[len(reply):]
+        self.assertGreater(len(reports), 1)
+        self.assertTrue(all(len(self.folds(page.card)) == 1 for page in reports))
+        self.assertTrue(all(not self.folds(page.card) for page in reply))  # The reply's cards first, the reports after.
+        for n, page in enumerate(cut.pages, 1):
+            self.assertIn(f"{n}/{total}", row_words(page.card))
+            self.assertTrue(pages.fits(page.card))
+        words = "".join(json.dumps(self.folds(page.card), ensure_ascii=False) for page in reports)
+        self.assertTrue(all(f"第{n}次汇报：" in words for n in range(1, 41)))  # None left out.
+        self.assertTrue(all(not self.folds(page.card)[0]["expanded"] for page in reports))
+        self.assertEqual(ids(cut.pages[-1].card)[-3:], [ARTIFACTS_ID, FACTS_ID, HINT_ID])  # The parts under the last.
+        self.assertFalse(cut.alone)
+        self.assertEqual(body_text(cut, FOLD_ID).count("这一节说的是很长的细节，"), 19 * 120)
+
+    def test_a_question_s_long_output_has_its_reports_folded_too(self):
+        block = ask_block("问一下要不要部署", who="T44 部署", doing="waiting", url="https://x/t44", at="10:00")
+        cut = output_pages(self.stages(["汇报甲" * 200]), "T44", block)
+        last = cut.pages[-1].card
+        fold, = self.folds(last)
+        self.assertEqual((fold["element_id"], fold["expanded"]), (OUTPUT_ID + "_stages", False))
+        self.assertNotIn("interactive_container", json.dumps(fold, ensure_ascii=False))  # Not kept: its title closes it.
+        self.assertIn(OUTPUT_NEXT, last["body"]["elements"][-1]["content"])
+        self.assertTrue(all("汇报甲" not in page.text for page in cut.pages[:-1]))
+        cut = output_pages(self.stages([f"第{n}次汇报：" + "进展" * 400 for n in range(1, 41)]), "T44", block)
+        total = len(cut.pages)
+        self.assertGreater(sum(1 for page in cut.pages if self.folds(page.card)), 1)
+        for n, page in enumerate(cut.pages, 1):
+            self.assertIn(f"{n}/{total}", row_words(page.card))
+            self.assertTrue(pages.fits(page.card))
+        self.assertIn(OUTPUT_NEXT, cut.pages[-1].card["body"]["elements"][-1]["content"])
+        self.assertEqual(sum(OUTPUT_NEXT in json.dumps(page.card, ensure_ascii=False) for page in cut.pages), 1)
+
+    def test_what_the_last_card_cannot_hold_goes_on_one_of_its_own_numbered_with_them(self):
+        draw = pages.drawer("s", tail=[{"tag": "markdown", "content": "尾"}])
+        alone = pages.Paged((pages.Page(draw("一", 1, 2, False), "一"), pages.Page(draw("二", 2, 2, False), "二")), True)
+        cut = pages.tail_apart(alone, draw, "尾的文字")
+        self.assertFalse(cut.alone)
+        self.assertEqual([page.text for page in cut.pages], ["一", "二", "尾的文字"])
+        self.assertIn("1/3", json.dumps(cut.pages[0].card, ensure_ascii=False))
+        self.assertIn("尾", json.dumps(cut.pages[2].card["body"]["elements"], ensure_ascii=False))
+        kept = pages.Paged((pages.Page(draw("一", 1, 1, True), "一"),))
+        self.assertIs(pages.tail_apart(kept, draw), kept)
+
+
 class OutputPagesTest(unittest.TestCase):
     def test_a_question_s_long_output_has_the_copy_s_row_and_says_the_question_comes_next(self):
         block = ask_block("问一下要不要部署", who="T44 部署", doing="waiting", url="https://x/t44", at="10:00")
