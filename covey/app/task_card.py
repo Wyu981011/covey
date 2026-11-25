@@ -267,6 +267,37 @@ def count_update_failure(progress: Any) -> None:
     progress.failures_total = getattr(progress, "failures_total", 0) + 1
 
 
+ELEMENT_REFUSALS = 3  # Refusals in a row of the same element before it is left alone for a while.
+ELEMENT_WAIT, ELEMENT_WAIT_MAX = 15.0, 300.0
+
+
+def already_there(failure) -> bool:
+    """Whether ``failure`` (of an insert, POST .../elements) says the element is on the card already: 300315 Duplicate ID."""
+    return failure is not None and failure.code == "300315" and "Duplicate ID" in failure.detail
+
+
+def element_refused(progress: Any, element_id: str) -> None:
+    """One more refusal of ``element_id`` in a row on this card; from ELEMENT_REFUSALS on it is not written again
+    until a wait is over (``element_held_off``), 15 s and doubling to 5 min, so a refusal that stays (the element it goes
+    next to is not on the card) does not repeat at every update for the rest of the turn."""
+    refused = progress.__dict__.setdefault("element_refusals", {})
+    count = refused.get(element_id, (0, 0.0))[0] + 1
+    wait = min(ELEMENT_WAIT_MAX, ELEMENT_WAIT * 2 ** (count - ELEMENT_REFUSALS)) if count >= ELEMENT_REFUSALS else 0.0
+    refused[element_id] = (count, time.monotonic() + wait)
+
+
+def element_took(progress: Any, element_id: str) -> None:
+    refused = getattr(progress, "element_refusals", None)
+    if refused:
+        refused.pop(element_id, None)
+
+
+def element_held_off(progress: Any, element_id: str) -> bool:
+    """Whether ``element_id`` is in its wait after repeated refusals (``element_refused``)."""
+    refused = getattr(progress, "element_refusals", None) or {}
+    return time.monotonic() < refused.get(element_id, (0, 0.0))[1]
+
+
 def card_error(failure, before: str) -> str:
     """A task card's failed send as the job's ``last_card_error``: Feishu's code, category and words, after
     ``before`` (an earlier failure of the same card)."""

@@ -774,6 +774,52 @@ class CardSequenceRegressionTests(UnifiedCase):
             self.assertEqual(len(lark.calls), 1)
 
 
+class ElementInsertStormTests(UnifiedCase):
+    """T784: an element the card already has (another runner of the job added it, or an insert whose answer was lost)
+    was inserted again at every trace update for the rest of the turn, each refused with 300315 Duplicate ID."""
+
+    DUPLICATE = Failure('api_rejected', code='300315', detail='ErrMsg: msg: [ElementID process_panel: Code 1001: Duplicate ID]')
+    MISSING = Failure('api_rejected', code='300315', detail='ErrMsg: msg: [not find elementID : current_question]')
+    PANEL = {'tag': 'markdown', 'element_id': 'process_panel', 'content': '过程'}
+
+    def job(self, ctx):
+        job = BridgeReplyJob(job_id=7, user_text='task', chat_id='chat', message_id='om_t', timeout=0, topic_id=ctx.topic_id)
+        job.progress = StreamingReply('card', 'msg', sequence=int(time.time()) + 5)
+        return job
+
+    def cardkit(self, refused, held):
+        def card(profile, method, path, data, **kwargs):
+            if method == 'POST' and path.endswith('/elements') and refused is not None:
+                set_failure(refused)
+                return None
+            set_failure(None)
+            held.append((method, path))
+            return {'code': 0}
+        return FakeCardKit(side_effect=card)
+
+    def test_an_element_the_card_has_is_replaced_in_place_not_inserted_again(self):
+        app, ctx = self.route('om_t')
+        job, held = self.job(ctx), []
+        with self.cardkit(self.DUPLICATE, held) as lark:
+            for _ in range(6):
+                self.assertTrue(app.cards.set_task_element(ctx, job, self.PANEL))
+        self.assertEqual([call.method for call in lark.calls], ['POST', 'PUT', 'PUT', 'PUT', 'PUT', 'PUT', 'PUT'])
+        self.assertEqual(job.progress.failures_total, 0)
+
+    def test_an_element_refused_again_and_again_is_left_alone_for_a_while(self):
+        app, ctx = self.route('om_t')
+        job = self.job(ctx)
+        with mock.patch('time.monotonic', return_value=1000.0), self.cardkit(self.MISSING, []) as lark:
+            for _ in range(20):
+                self.assertFalse(app.cards.set_task_element(ctx, job, self.PANEL))
+            self.assertLess(len(lark.calls), 6)
+            self.assertLess(job.progress.failures_total, 6)
+        with mock.patch('time.monotonic', return_value=1000.0 + 600), self.cardkit(self.MISSING, []) as lark:
+            self.assertFalse(app.cards.set_task_element(ctx, job, self.PANEL))
+            self.assertEqual(len(lark.calls), 1)  # Tried again once the wait is over.
+        self.assertIn('300315', job.last_card_error)  # The reason is in the record, not only in the log.
+
+
 class LeadFirstTests(UnifiedCase):
     """T288: a finished card's lead read first, and the chat list's preview saying what came of the turn."""
 
