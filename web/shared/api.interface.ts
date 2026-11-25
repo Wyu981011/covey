@@ -585,6 +585,12 @@ export interface SnapshotResponse {
   questions: QuestionView[];
   /** v34：Covey 算好的要你处理（settings 类条目 asks，和话题同一步推来）；旧 Covey 没有，网页自己数 */
   asks?: SettingsAsks;
+  /** v38：下次取增量（?since=）用的游标：这次查询开始时数据库的时间往前留几秒。旧服务端没有 */
+  cursor?: string;
+  /** v38：带了 since 时为 true：topics 只有这个游标之后变过的，其余话题看 keys，要和上一份按 key 合并。没有就是整份，直接替换 */
+  partial?: true;
+  /** v38：partial 时现在所有话题的 key（按 updated_at 倒序，管家只留最新那个）：不在里面的话题已经没了，顺序也照它排 */
+  keys?: string[];
 }
 
 export interface TurnsResponse {
@@ -797,6 +803,8 @@ export interface InboxItem {
 }
 export interface InboxResponse {
   items: InboxItem[];
+  /** 请求带了 wait 时才有：这个服务端认 wait（不管这次有没有真的等）。旧服务端没有，不带 wait 的旧 Covey 看到的和以前一样 */
+  waited?: true;
 }
 export interface AckResult {
   seq?: number;

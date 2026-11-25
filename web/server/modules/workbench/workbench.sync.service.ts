@@ -12,9 +12,12 @@ import {
   type SyncUpsertResponse,
 } from '@shared/api.interface';
 import { arr, asRows, clipBody, missingTable, num, obj, str } from './workbench.util';
+import { wake, waitFor } from './workbench.wake';
 
 const MAX_ITEMS = 500;
 const CHUNK = 25;
+/** 挂着等取件时多久查一次库（毫秒） */
+const INBOX_STEP_MS = 200;
 
 interface OutboxRow {
   seq: number;
@@ -194,12 +197,32 @@ export class WorkbenchSyncService {
     );
   }
 
-  async inbox(after: number, limit: number): Promise<InboxResponse> {
-    const res = await this.db.execute(
-      sql`select seq::int as seq, op_id, kind, topic_key, project_key, payload, _created_at as created_at
-        from outbox where state = 'new' and seq > ${after} order by seq asc limit ${limit}`,
+  /**
+   * 取发件箱。waitMs 不是 null（Covey 带了 wait）：没有新操作就挂着，每 200 毫秒查一次库（同进程里 POST /api/outbox 写入会提前叫醒），
+   * 最多等 waitMs 毫秒，有了马上返回；响应里带 waited: true，Covey 靠它认出这个服务端支持 wait。不带 wait 时和以前完全一样。
+   */
+  async inbox(after: number, limit: number, waitMs: number | null = null, aborted: () => boolean = () => false): Promise<InboxResponse> {
+    const fetchRows = async (): Promise<OutboxRow[]> => {
+      const res = await this.db.execute(
+        sql`select seq::int as seq, op_id, kind, topic_key, project_key, payload, _created_at as created_at
+          from outbox where state = 'new' and seq > ${after} order by seq asc limit ${limit}`,
+      );
+      return asRows<OutboxRow>(res);
+    };
+    if (waitMs === null) return { items: await fetchRows() };
+    let latest: OutboxRow[] = [];
+    const items: OutboxRow[] = await waitFor<OutboxRow[]>(
+      'inbox',
+      waitMs,
+      INBOX_STEP_MS,
+      async () => {
+        latest = await fetchRows();
+        return latest.length ? latest : null;
+      },
+      () => latest,
+      aborted,
     );
-    return { items: asRows<OutboxRow>(res) };
+    return { items, waited: true };
   }
 
   async ack(body: SyncAckRequest): Promise<SyncAckResponse> {
@@ -214,6 +237,8 @@ export class WorkbenchSyncService {
       );
       updated += asRows<{ n: number }>(res).length;
     }
+    // 叫醒挂着等这条回执的浏览器请求（GET /api/outbox/:opId?wait=）
+    if (updated > 0) wake('ack');
     return { ok: true, updated };
   }
 }

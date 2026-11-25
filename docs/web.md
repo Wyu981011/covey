@@ -393,6 +393,16 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - `proxy`（`op`）：`enable`、`disable`、`row`（`kind`、`option`）、`pause`、`resume`、`remove`（`contact`），和代答卡同一处。按名字查找添加、去登录留在飞书。
 - 其余回 failed“这一项网页上只读”。
 
+### 更快的取数（可选参数）
+
+数据约定 v38。下面都是请求里可选的参数和响应里可选的字段：不带参数的旧调用、认不得新字段的旧页面，行为和以前完全一样；新网页遇到不认参数的旧服务端，退回整份、马上返回的老办法。
+
+- **取件挂着等**：`GET /sync/inbox?after=<seq>&wait=<秒>`。`wait` 上限 10，没有新操作时服务端每约 200 毫秒查一次库，最多等 `wait` 秒，有了马上返回；同一个进程里网页 `POST /api/outbox` 写入会提前叫醒它（多实例时靠查库兜底），Covey 断开了就不再等。带了 `wait` 的响应多一个 `"waited": true`（不管这次有没有真的等），Covey 靠它认出服务端是新的；不带 `wait` 的响应没有这个字段，和以前一样。旧服务端不认 `wait`、马上返回且没有 `waited`，Covey 照 0.5 秒一取的老办法。
+- **快照增量**：`GET /api/snapshot?since=<cursor>`。每次响应都带 `cursor`（这次查询开始时数据库的时间往前留 5 秒）。带了 `since` 时 `topics` 只有这个游标之后变过的话题（话题行或它的轮次的 `_updated_at` 晚于它；快照里的最新一轮、在跑状态都来自轮次表），另有 `keys`（现在所有话题的 key，按 `updated_at` 倒序，管家只留最新那个；不在里面的话题已经没了）和 `"partial": true`；`projects`、`questions`、`asks` 照旧整份，专项卡上的话题计数也照所有话题算。网页按 key 并进上一份，并不进去（缺话题）就再取一份整份，每分钟也回整份一次兜底。没有 `partial` 就是整份，直接替换；旧服务端不认 `since`、响应里没有 `cursor`，网页永远取整份。
+- **回执挂着等**：`GET /api/outbox/:opId?wait=<秒>`。`wait` 上限 8，这条发件还是 `new` 时服务端每约 250 毫秒查一次库（同进程里 Covey 的回执会提前叫醒），不是 `new` 了马上返回；没有这条发件仍是 404。旧服务端不认 `wait`、马上返回，网页照 250 毫秒起的间隔再问。
+
+网页上每个操作发出去以后只有一个跟踪器等结果（`web/client/src/cv/opTrack.ts`、`sendOp.ts`）：问回执，回执一到取这个话题的轮次（大厅取大厅）和快照各一次，之后约 3 秒内每 0.5 秒只取这个话题的轮次，直到看到预期的新状态；取数一律“上一次还没回来就跳过”，不取消在途的请求。
+
 ### 协作与三层记忆（契约，开发中）
 
 本节已实现（数据约定 v31），开关 `COVEY_COLLAB`（规则见[多参与者协作](architecture.md#多参与者协作开发中默认关)）。旧网页不认的字段和条目忽略；没带这些字段的操作和 v30 一样。**开关没开时**：不读 `collab/`，不推 `collab` 条目，一轮不带 `collab`，已推过的 `collab` 条目在下一次全量对时删掉；`say` 带了新字段也照单目标处理，要多选或引用协作的回 failed“协作没有打开（COVEY_COLLAB）”，`stop` 带了 `collab` 回 failed，**绝不**退成普通停止（那会停掉汇总方在跑的任务）。
@@ -477,3 +487,4 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v35 | `revisit_cancel` 操作（网页上取消 Covey 定时回看）；话题 `revisit` 加 `set_at`、`running`（正在回看的也推了）；网页上的说法改成“Covey 将于 … 自动回看” |
 | v36 | 专项负责人的 `config`，`switch` 接受负责人（只换模型、预算、脱敏）；`launch.models` 的 `bridge_tools`；负责人那一轮“换个模型”的 `how` 是 `switch`；`settings.config` 的 `lead`（专项负责人一段） |
 | v37 | `settings` 的 `memory` 条目（主记忆：全局和各工作区的原则、知识条目、候选，用量，下一轮预览）；`memory_edit` 操作 |
+| v38 | 取数的可选参数（见[更快的取数](#更快的取数可选参数)）：`/sync/inbox` 的 `wait` 和响应的 `waited`；`/api/snapshot` 的 `since` 和响应的 `cursor`、`partial`、`keys`；`/api/outbox/:opId` 的 `wait`。推送的条目没有变化 |
