@@ -284,6 +284,10 @@ class AntigravityEventAdapter:
         self.segment = 0  # Which agy process of the turn (a supplement starts the next one).
         self.tokens = TurnTokens()
         self.counted = False  # Whether a model request's usage was added.
+        # Whether the process that runs now started its conversation (run_stream sets it for each): agy's result.usage
+        # is the whole conversation's, so it is this turn's only then (T776: a butler turn stopped for a supplement
+        # before its first request had ended took the conversation's 164M as its own).
+        self.fresh = True
         self.first_output = False
 
     @property
@@ -292,7 +296,7 @@ class AntigravityEventAdapter:
 
     def accept(self, row, now):
         if row.get("event") == "result":
-            if not self.counted:  # No model request said its usage: the turn's total, untimed, not a context.
+            if not self.counted and self.fresh:  # No model request said its usage: the turn's total, untimed, no context.
                 self.add_usage((row.get("result") or {}).get("usage") if isinstance(row.get("result"), dict) else None,
                                context=False)
             return
@@ -557,7 +561,8 @@ class Homes:
         config = self.ctx.options.get("mcp_config")
         if not config:
             return env
-        home = PrivateHome(self.ctx.state_dir, env.get("HOME") or Path.home(), config, env)
+        # The same name at each turn of the topic, so the prompt agy starts it with reads from the cache.
+        home = PrivateHome(self.ctx.state_dir, env.get("HOME") or Path.home(), config, env, key=self.ctx.topic_id)
         path = home.__enter__()
         self.home = home
         if home.note:
@@ -937,6 +942,7 @@ def run_stream(request, argv, stdin, env, switch=None):
             # Where this process keeps its conversations (its HOME, the account the agy_turn hook gave it): a tool step's
             # summary is read there (tool_summary); a device's are on the device.
             adapter.home = None if device_of(ctx) else (env or {}).get("HOME") or str(Path.home())
+            adapter.fresh = rows.expected_session is None  # Not resuming a conversation: its result.usage is the turn's.
             rc, stderr = stream_subprocess_lines(argv, stdin_text=stdin, timeout=left, on_line=rows.on_line,
                                                  env=env, cwd=str(ctx.workdir), cancel_event=cancel_event,
                                                  process_observer=rows.observe, ctx=ctx)

@@ -154,6 +154,56 @@ class AntigravityTests(unittest.TestCase):
         with home:
             self.assertEqual(home.note, "")
 
+    def test_a_topics_turns_run_in_a_home_of_the_same_name(self):
+        """T776: agy writes its HOME into the start of its prompt (App Data Directory, every skill's path). A name of
+        its own each turn made the butler's and the leads' first request of a turn read nothing from the cache; each
+        turn of a topic now runs in the same one."""
+        from covey.backends.agy.home import home_name
+        from covey.core.butler import mcp_config
+        (self.root / ".gemini" / "antigravity-cli").mkdir(parents=True)
+        config = mcp_config(Path(__file__).resolve().parents[1], self.root / "state", "om_1-1", sys.executable)
+        ctx = dataclasses.replace(self.ctx, topic_id="topic-1", options={**self.ctx.options, "mcp_config": config})
+        homes = [Path(self.run_agy("ok", ctx=ctx)[-1]["home"]) for _ in range(2)]
+        self.assertEqual(homes, [self.root / "state" / "tmp" / home_name("topic-1", self.root)] * 2)
+        self.assertFalse(homes[0].exists())  # Removed with each turn all the same.
+        other = Path(self.run_agy("ok", ctx=dataclasses.replace(ctx, topic_id="topic-2"))[-1]["home"])
+        self.assertNotEqual(other, homes[0])
+        self.assertEqual(other.parent, homes[0].parent)
+
+    def test_a_turn_takes_a_home_of_its_own_while_another_of_the_topic_holds_its_name(self):
+        from covey.backends.agy.home import PrivateHome, home_name
+        (self.root / ".gemini" / "antigravity-cli").mkdir(parents=True)
+        server = {"command": sys.executable, "args": ["-c", "pass"]}
+
+        def home(key="topic-1"):
+            return PrivateHome(self.root / "state", self.root, {"mcpServers": {"bridge": server}}, dict(os.environ), key)
+        with home() as first:
+            self.assertEqual(first.name, home_name("topic-1", self.root))
+            with home() as second:  # An idle compaction not stopped yet: the turn still runs, in a name of its own.
+                self.assertNotEqual(second, first)
+                self.assertTrue((second / ".gemini" / "config" / "mcp_config.json").exists())
+            self.assertTrue(first.is_dir())  # The other's end leaves this one's alone.
+        self.assertFalse(first.exists())
+        (first / ".gemini").mkdir(parents=True)  # What a killed turn left: made again, empty.
+        (first / "left").write_text("x")
+        with home() as again:
+            self.assertEqual(again, first)
+            self.assertFalse((again / "left").exists())
+        with home("") as own:  # No topic: a name of its own, as before.
+            self.assertNotEqual(own, first)
+            self.assertTrue(own.name.startswith("agy-home-"))
+
+    def test_the_results_usage_counts_only_in_a_conversation_the_turn_started(self):
+        """agy's result.usage is the whole conversation's: in one the turn goes on with it is every turn's before (T776:
+        a butler turn stopped by a supplement before its first request ended took 164M as its own)."""
+        _result, events, *_rest = self.run_agy("result-usage")
+        usage = [d for k, d in events if k == "token_usage"]
+        self.assertEqual((usage[-1]["output_tokens"], usage[-1]["input_tokens"], usage[-1]["cache_read_tokens"]),
+                         (132, 15436 + 11130, 11130))
+        result, events, *_rest = self.run_agy("result-usage", session=SID)
+        self.assertFalse(result.is_error, result.text)
+        self.assertEqual([d for k, d in events if k == "token_usage"], [])
+
     BUTLER_ENV = {"COVEY_BUTLER_RULES": "1", "COVEY_PROJECTS": "1", "COVEY_KNOWLEDGE": "1",
                   "COVEY_HISTORY_CMD": "/absolute/history", "COVEY_PROJECT_TIDY": "suggest"}
 
