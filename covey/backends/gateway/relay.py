@@ -13,8 +13,10 @@ LIMIT_WAIT seconds; sooner is refused again). It keeps on until another answer
 comes or the task ends: the owner chose no time limit, Stop ends
 the wait. A ``window`` in seconds still makes it give up. Tools are never run
 again: only the model request is repeated, as Codex itself would repeat it.
-A spent daily quota is a 403 ("quota exceeded: Daily Limits exceeded"), never
-held.
+A spent daily quota is a 403 ("quota exceeded: Daily Limits exceeded. Resets at …Z"), never held: with a ``hold``
+(core/quota_hold.py, a gateway with a ``quota_pattern``) the relay keeps when it resets and answers Codex
+itself until then, and both that answer and the 403 go to Codex as a 429 ``insufficient_quota``, which Codex
+fails the turn on at once; a 403 it retries ten times, about 205 s (codex-cli 0.172.0, a local stand-in).
 
 Acme's upstream may also run out of capacity after it began a 200 event
 stream: a turn on gpt-6.1-sol (of a Harness since retired) got its
@@ -91,6 +93,20 @@ OPENING = frozenset({"response.created", "response.in_progress", "response.queue
 OPENING_BYTES = 64 * 1024
 # An in-stream error's code, type or message saying the upstream is out of capacity; a spent quota is not.
 CAPACITY_TEXTS = ("throughput limit", "too_many_requests", "too many requests", "rate_limit_exceeded", "资源不足")
+# A spent quota as Codex hears it from the relay: an OpenAI insufficient_quota 429, which ends the turn at once.
+SPENT = "insufficient_quota"
+SPENT_BYTES = 64 * 1024  # Of a 403's body, read to see whether it is a spent quota.
+
+
+def error_message(payload):
+    """An error body's message: its JSON ``error.message``, else the body as text."""
+    try:
+        error = json.loads(payload).get("error")
+    except (ValueError, AttributeError):
+        error = None
+    if isinstance(error, dict) and isinstance(error.get("message"), str):
+        return error["message"]
+    return payload.decode("utf-8", "replace")
 
 
 def busy_detail(payload):
@@ -209,8 +225,9 @@ def client_gone(handler):
 
 class BusyRelay:
     def __init__(self, upstream, *, window=None, note_every=NOTE_EVERY, show_after=SHOW_AFTER, notify=None,
-                 log=None, name="gateway", display=DISPLAY):
+                 log=None, name="gateway", display=DISPLAY, hold=None):
         self.name, self.display = name, display
+        self.hold = hold  # The gateway's spent quota (core/quota_hold.py Hold), or None: a 403 then passes as it came.
         self.upstream, self.window, self.note_every, self.show_after = (upstream.rstrip("/"), window, note_every,
                                                                         show_after)
         self.notify = notify or (lambda busy: None)
@@ -289,6 +306,12 @@ class BusyRelay:
         headers = {k: v for k, v in handler.headers.items() if k.lower() not in HOP}
         child = handler.headers.get("thread-id", "") if handler.headers.get("x-openai-subagent") == SUBAGENT else ""
         while True:
+            spent = self.hold.claim() if self.hold is not None else None
+            if spent is not None:  # Held: the quota is known to be spent until its reset, nothing goes upstream.
+                self.log(f"{self.name} quota held, answered here{agent(child)}")
+                self.send_spent(handler, spent.get("said", ""))
+                return
+            sent = time.time()
             try:
                 status, response = send(NO_REDIRECT, handler.command, self.upstream + handler.path, body, headers, 600)
             except OSError:
@@ -302,11 +325,26 @@ class BusyRelay:
                 held, failed = b"", None
                 if status == 200 and "text/event-stream" in (response.headers.get("Content-Type") or ""):
                     held, failed = stream_opening(response)
+                if status == 403 and self.hold is not None:
+                    held = response.read(SPENT_BYTES)
+                    message = error_message(held)
+                    if self.hold.spent(message):
+                        ended = self.answered(child, status)
+                        if ended:
+                            self.tell(ended)
+                        record = self.hold.note(message)
+                        until = (time.strftime("until %Y-%m-%dT%H:%M:%SZ", time.gmtime(record["reset_at"])) if record
+                                 else "not held (no reset said)")
+                        self.log(f"{self.name} quota spent, {until} {busy_detail(held)}{agent(child)}")
+                        self.send_spent(handler, message)
+                        return
                 if status != 429 and failed is None:
                     # Any other answer (200, 5xx, 403) ends the thread's run of 429s.
                     ended = self.answered(child, status)
                     if ended:
                         self.tell(ended)
+                    if status == 200 and self.hold is not None:
+                        self.hold.clear(sent)  # A request sent after the quota was found spent got through: it is back.
                     self.relay(handler, status, response, held)
                     return
                 if failed is None:
@@ -328,6 +366,18 @@ class BusyRelay:
             if self.closed.wait(wait or 0) or client_gone(handler):
                 handler.close_connection = True
                 return
+
+    def send_spent(self, handler, said):
+        """A spent quota, as a 429 ``insufficient_quota`` without Retry-After: Codex ends the turn on it at once (with
+        words of its own, "Quota exceeded. Check your plan and billing details."; ``said`` is the upstream's)."""
+        payload = json.dumps({"error": {"type": SPENT, "code": SPENT, "message": said or f"{self.display}: quota exceeded"}},
+                             ensure_ascii=False).encode()
+        handler.send_response(429)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Content-Length", str(len(payload)))
+        handler.send_header("Connection", "close")
+        handler.end_headers()
+        handler.wfile.write(payload)
 
     def send_busy(self, handler, response, payload, retry_after):
         handler.send_response(429)

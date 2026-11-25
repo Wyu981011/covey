@@ -458,6 +458,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         config = read_json(args.harness_config) if args.harness_config else {}
         names = enabled_names(config)
         gateways.configure(config.get('gateways'))  # Before any Harness reads its gateways (core/gateways.py).
+        gateways.configure_quotas(config.get('gateway_quotas'))  # Routes sharing a gateway's quota (core/quota_hold.py).
         ctx = self.argument_harness.context = self.argument_harness.build_context(args)
         self.owner, self.expected_app_id = args.owner, args.app_id
         self.pairing_file = args.pairing_file

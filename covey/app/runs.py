@@ -28,7 +28,7 @@ from covey.app.recovery_cards import paint_answered
 from covey.app.switch_handoff import capped
 from covey.cards.trace_view import BRIDGE_NOTE
 from covey.core.attachments import encoded_size, fit_images, native_image_attachments
-from covey.core import criteria, devices, turn_source, turn_words
+from covey.core import criteria, devices, gateways, quota_hold, turn_source, turn_words
 from covey.core.checkpoint import (audit_recovery, checkpoint_note, checkpoint_rules, gist_note, images_note,
                                             read_checkpoint, release_user_wait)
 from covey.core.harness import (CONSULT, TOOL_LIMIT, BridgeContext, JobCancelled, RunCallbacks, RunInputs, RunRequest, RunResult,
@@ -394,6 +394,12 @@ class Runs:
             # A member's turn of a read-only group never runs where it could do more (app/tool_limits.py READ).
             outcome = ExecutionOutcome("failed", "read_only_refused", cleanup_confirmed=True, protection_confirmed=True)
             return RunResult(outcome.summary(refused), session_id, True, None, outcome, failure_detail=refused)
+        found = quota_hold.blocks(ctx.state_dir, self.harness.spec.name, ctx.model)
+        if found:
+            # A gateway's quota spent until its reset: the turn would only fail the same way, minutes later.
+            refused = quota_hold.failure_words(*found)
+            outcome = ExecutionOutcome("failed", "quota_exhausted", cleanup_confirmed=True, protection_confirmed=True)
+            return RunResult(refused, session_id, True, None, outcome, failure_detail=refused)
         return None
 
     def _limit_refusal(self, ctx: BridgeContext) -> str:
@@ -411,7 +417,19 @@ class Runs:
             # The backend has closed its Harness: what the turn's commands left running (app/leftovers.py).
             stop_task_leftovers(self.runtime, self.interaction, ctx, job)
         self._leave_checkpoint_question(ctx, job, result)
-        return result
+        return self._quota_words(ctx, result)
+
+    def _quota_words(self, ctx: BridgeContext, result: RunResult) -> RunResult:
+        """A turn that failed on a gateway's spent quota, in core/quota_hold.py's words: when it is back (the hold
+        the failure left, if it said), that every model on it shares it, and where to go instead."""
+        outcome = result.outcome
+        if outcome is None or outcome.error_code != "quota_exhausted":
+            return result
+        gateway = gateways.quota_gateway(self.harness.spec.name, ctx.model)
+        if gateway is None or not gateway.quota_pattern:
+            return result  # A quota of the Harness's own account: its words stand.
+        detail = quota_hold.failure_words(gateway, quota_hold.read(ctx.state_dir, gateway))
+        return dataclasses.replace(result, text=detail if result.is_error else result.text, failure_detail=detail)
 
     def _redaction_refusal(self, ctx: BridgeContext) -> str:
         """Why the turn may not start for redaction, or '' when it may."""
