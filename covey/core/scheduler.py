@@ -11,7 +11,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from covey.core import env as cenv
+from covey.core import env as cenv, storage_watch
 from covey.core.metrics import mark
 
 WORKERS_ENV = "COVEY_MAX_WORKERS"
@@ -98,6 +98,7 @@ class WorkspaceScheduler:
             mark(job, 'dispatched')
             self.process(job)
         except Exception as exc:  # noqa: BLE001 - keep other workspaces running.
+            storage_watch.note_failure(exc, "workspace job")
             self.log(f"workspace job failed: {exc}")
         finally:
             with self.lock:

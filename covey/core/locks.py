@@ -6,6 +6,7 @@ import threading
 import weakref
 from pathlib import Path
 
+from covey.core import storage_watch
 from covey.core.file_lock import open_lock, runtime_locks_enabled
 
 _guard = threading.Lock()
@@ -43,15 +44,19 @@ class SharedFileLock:
         self.local = threading.RLock()
         self.depth = 0
         self.fd = None
+        self.held = None  # While held: the hold as core/storage_watch.py watches it.
 
     def __enter__(self):
-        self.local.acquire()
+        with storage_watch.watched("等锁 " + self.path.name):
+            self.local.acquire()
+            if self.depth == 0:
+                try:
+                    self.fd = self._open_locked()
+                except BaseException:
+                    self.local.release()
+                    raise
         if self.depth == 0:
-            try:
-                self.fd = self._open_locked()
-            except BaseException:
-                self.local.release()
-                raise
+            self.held = storage_watch.watched("持锁 " + self.path.name).enter()
         self.depth += 1
         return self
 
@@ -82,10 +87,13 @@ class SharedFileLock:
             self.depth -= 1
             if self.depth == 0:
                 fd, self.fd = self.fd, None
+                held, self.held = self.held, None
                 try:
                     fcntl.flock(fd, fcntl.LOCK_UN)
                 finally:
                     os.close(fd)
+                    if held is not None:
+                        held.leave()
         finally:
             self.local.release()
         return False
@@ -167,9 +175,42 @@ def card_lock(progress):
     return resource_lock('card', getattr(progress, 'card_id', '') or id(progress))
 
 
+class WatchedRLock(type(threading.RLock())):
+    """A reentrant lock (threading.RLock's own type, so it is one) whose waits and holds core/storage_watch.py watches
+    (``LOCK``): one past its SLOW_SECONDS has the stack of the thread that waits or holds it logged and kept for the
+    diagnostics."""
+
+    def __init__(self, name):
+        super().__init__()
+        self.name = name
+        self.held = None  # The outermost hold, as storage_watch watches it; set and cleared by its owner only.
+
+    def acquire(self, blocking=True, timeout=-1):
+        if self._is_owned():
+            return super().acquire(blocking, timeout)
+        with storage_watch.watched("等锁 " + self.name):
+            got = super().acquire(blocking, timeout)
+        if got:
+            self.held = storage_watch.watched("持锁 " + self.name).enter()
+        return got
+
+    def release(self):
+        held = self.held
+        super().release()
+        if held is not None and not self._is_owned():
+            held.leave()  # The outermost release; the next owner sets its own.
+
+    def __enter__(self):
+        return self.acquire()
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
 # Workspace config and topic.json rewrites, and the checks that must see every topic at once
 # (a submission registering its job, idle maintenance). Held briefly: never across a Feishu call.
-LOCK = threading.RLock()
+LOCK = WatchedRLock("LOCK")
 
 
 class _TopicLock:

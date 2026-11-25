@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
-from covey.core import timing
+from covey.core import storage_watch, timing
 from covey.core.locks import resource_lock
 from covey.core.statuses import QUESTION_TRANSITIONS
 from covey.core.state import atomic_write_bytes
@@ -588,7 +588,8 @@ class JsonDirectoryStore:
         if fingerprints.get(path.name) == fingerprint and path.name in records:  # A failed read is tried again.
             return path.name, fingerprint, records[path.name]
         try:
-            value = json.loads(path.read_text())
+            with storage_watch.watched("读记录 " + path.name):
+                value = json.loads(path.read_text())
         except (OSError, ValueError):
             return path.name, fingerprint, None
         return path.name, fingerprint, value if isinstance(value, dict) else None

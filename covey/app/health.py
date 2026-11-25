@@ -5,6 +5,7 @@ import os
 
 from covey.feishu import ws_intake
 from covey.feishu.events import consumers_snapshot
+from covey.core import storage_watch
 from covey.core.process import process_identity
 
 
@@ -20,7 +21,10 @@ def bridge_snapshot(runtime, workers):
         healthy = False
     availability = runtime.availability_health
     transport = {'event_transport': 'sdk'} if ws_intake.enabled() else {}  # Only then: the default snapshot is unchanged.
-    return {**transport, 'schema_version': 1, 'process': process_identity(os.getpid()),
+    # The state directory's disk (core/storage_watch.py): a refused write, slow locks and reads, only when there are.
+    storage = storage_watch.snapshot()
+    return {**transport, **({'storage': storage} if storage else {}), 'schema_version': 1,
+            'process': process_identity(os.getpid()),
             'status': 'ready' if healthy and not runtime.shutdown.is_set() else 'degraded',
             'consumers': consumers, 'workers': threads,
             'queued_jobs': runtime.jobs.queue.qsize(),

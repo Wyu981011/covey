@@ -61,7 +61,7 @@ from covey.app.diag_summary import DiagSummary
 from covey.app.worker import process_bridge_reply_job
 from covey.core.harness import BridgeContext, HarnessBackend, HarnessSpec, SessionStore
 from covey.app import butler_reactions, devices as device_turns, project_context, project_loop, source_watch
-from covey.core import device_reap, turn_words
+from covey.core import device_reap, storage_watch, turn_words
 from covey.core.run_dir import run_dir
 from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.core.jobs import context_for_job, record_bridge_job_state, recover_stale_jobs
@@ -361,6 +361,7 @@ class BridgeApp:
         if isinstance(exc, ValueError):
             self.messenger.reply(ctx, chat_id, f"{label}未完成：{exc}", self.key("action-invalid", source), voice=self.voice)
             return
+        storage_watch.note_failure(exc, "card action " + str(raw.get("kind") or ""))
         self.runtime.log(f"card action failed: {exc}")
         self.messenger.reply(ctx, chat_id, f"{label}暂未完成，请稍后重试。" + ("回答已保存时请先查看提交状态，避免重复发送。" if raw.get("kind") in ANSWER_KINDS else "已完成的任务结果仍保留。"),
                              self.key("action-failure", source), voice=self.voice)

@@ -347,6 +347,9 @@ ssh <host> python3 - --state /absolute/path/to/state --window 2026-12-01:2026-12
 | `launch catalog unavailable` | 模型目录读取失败，见[启动卡里缺少某个 Harness 的模型](troubleshooting.md#启动卡里缺少某个-harness-的模型) |
 | `event bus TCP transport stalled` | 事件总线停滞后被替换，见[自动恢复](troubleshooting.md#自动恢复) |
 | `worker <名称> failed` / `maintenance deferred` | 后台线程异常并重建 / 维护出错推迟 |
+| `<isolate> step <模块>.<函数> failed: OSError: Disk quota exceeded` | 后台循环的一步失败：OSError 带上原因（不带路径），别的异常只写类型。写不进（Disk quota exceeded、No space left on device）另记下来，私聊里告诉主人一次（6 小时内最多一次，`app/storage_alerts.py`），`covey_doctor.py` 也说，见[状态目录写不进](troubleshooting.md#状态目录写不进) |
+| `slow <什么>: N s so far, at <调用栈>` | 一次等锁、持锁或读记录超过 2 秒（`core/storage_watch.py`：`LOCK`、记录和卡片的文件锁、记录读盘），记一次调用栈；`covey_doctor.py` 说最近 6 小时有几次、最长多久 |
+| `backend startup failed job=#N harness=<名字>: <类型>: <原文>` | 后端启动检查或启动失败，原文经脱敏、截到 160 字；卡上同样写“后端初始化失败：<类型>: <原文>” |
 | `maintenance backup completed` / `idle maintenance … completed` | 每日备份 / 空闲时的清理 |
 | `… is the old name of …` / `env <名字> is no longer read` | 设了环境变量的旧名（见[改名与兼容](compat.md#环境变量的旧名)）/ 不再读取的变量（见[已下线的功能与旧配置](legacy.md#不再读取的变量)） |
 | `app setup check` / `app setup run` | 飞书应用检查和自动补齐，见[飞书应用配置](feishu-app.md#自动补齐飞书应用) |

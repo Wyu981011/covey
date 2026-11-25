@@ -125,7 +125,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
     # task runner (``task_runner=True``), which rarely meets any of it.
     PARTS = ('directory_picker', 'launch_model_picker', 'workspace_manager', 'harness_switch', 'rewind', 'proxy',
              'weekly_usage', 'group_manager', 'redaction_panel', 'butler_panel',
-             'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'digest',
+             'settings_hub', 'overview', 'butler_env', 'butler_tools', 'butler_search', 'memguard_alerts', 'storage_alerts', 'digest',
              'topic_seen', 'app_setup', 'dispatch_cards', 'project_cards', 'projects', 'project_tidy',
              'project_loop', 'patrol', 'devices', 'nodes', 'web_sync', 'web_login', 'source_watch', 'extension_features', 'features', 'menu', 'group_menu', 'group_boards',
              'welcome', 'revisits', 'review', 'collab', 'fold_close')
@@ -200,6 +200,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.butler_panel import ButlerPanel
         from covey.app.butler_tools import ButlerTools
         from covey.app.memguard_alerts import MemguardAlerts
+        from covey.app.storage_alerts import StorageAlerts
         from covey.app.model_picker import LaunchModelPicker
         from covey.app.overview import Overview
         from covey.app.proxy import Proxy
@@ -257,6 +258,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.fold_close = FoldClose(self.runtime, self.messenger)
             # The memory watchdog's alerts (service/memguard.py), to a task's topic or the owner's private chat.
             self.memguard_alerts = MemguardAlerts(self.runtime, self.messenger, self.voice)
+            # The state directory's disk (app/storage_alerts.py): slow locks and reads watched, a refused write told once.
+            self.storage_alerts = StorageAlerts(self.runtime, self.messenger, self.voice)
             # 早晚汇总 (app/digest.py), when COVEY_DIGEST_TIMES is set: a card in the owner's private chat.
             self.digest = Digest(self.runtime, self.messenger, self.voice)
             # 你反复说的 on the evening digest (app/memory_candidates.py), COVEY_MEMORY=1: the Claude Code that groups them.
@@ -315,7 +318,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             self.collab = Collaboration(self.runtime, self.topics, self.messenger, self.voice)
             # The web page's say/stop with a collaboration (app/web_ops.py) reach it through the butler's env, as WebSync's Ops does.
             self.butler_env.collab = self.collab
-            features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.proxy,
+            features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.storage_alerts, self.proxy,
                         self.group_manager, self.overview, self.topic_seen, self.butler_tools,
                         self.butler_search, self.settings_hub, self.butler, self.digest, self.app_setup, self.welcome,
                         self.dispatch_cards, self.project_cards, self.projects, self.project_tidy,

@@ -112,6 +112,7 @@ def service_rows(row, state, root_arg) -> list:
             next_step = (f"看日志最后几行：tail -n 50 {log}；一直不好就 {SERVICE}{root_arg} restart{state_arg}"
                          "（见 docs/troubleshooting.md）")
         rows.append((FAULT, f"机器人 {name} 有问题：{generation}{'；'.join(problems)}", next_step))
+    rows += storage_rows(_dict(_dict(row.get("bridge")).get("storage")), state, log)
     pairs = [pair for pair in row.get("switches") or () if isinstance(pair, (list, tuple)) and len(pair) == 2]
     if pairs:
         rows.append((INFO, f"设了 {len(pairs)} 个可选开关：" + "、".join(f"{key}={value}" for key, value in pairs),
@@ -139,6 +140,24 @@ def service_rows(row, state, root_arg) -> list:
         else:
             rows.append((NOTE, "设备读不出来", "看 docs/operations.md「多设备」"))
     rows += web_rows(_dict(row.get("web_selfhost")))
+    return rows
+
+
+def storage_rows(storage, state, log) -> list:
+    """What the Bridge saw of its state directory's disk lately (core/storage_watch.py snapshot): a write refused for
+    want of space, and locks and reads that took more than two seconds."""
+    rows = []
+    full = _dict(storage.get("full"))
+    if full:
+        count = int(full.get("count") or 0)
+        rows.append((FAULT, f"状态目录的磁盘写不进：{full.get('error') or '空间不足'}（最近一次 {clock(full.get('at'))}"
+                            + (f"，共 {count} 次" if count > 1 else "") + "）：任务记录和卡片进度可能存不下",
+                     f"清出空间或扩大配额：df -h {state or '<状态目录>'}；恢复后不用重启"))
+    slow = [one for one in storage.get("slow") or () if isinstance(one, dict)]
+    if slow:
+        worst = max(slow, key=lambda one: one.get("seconds") or 0)
+        rows.append((NOTE, f"最近 {len(slow)} 次持锁或读盘超过 2 秒，最长 {worst.get('seconds')} 秒：{worst.get('what')}"
+                           f"（{clock(worst.get('at'))}）", f"调用栈在日志里：grep 'slow ' {log}"))
     return rows
 
 
