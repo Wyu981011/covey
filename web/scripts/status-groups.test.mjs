@@ -5,7 +5,7 @@ import { statusGroups, sinceWords } from '../client/src/cv/statusGroups.ts';
 
 const topic = (key, tone, extra = {}) => ({ key, kind: 'topic', number: Number(key.slice(1)), title: `话题${key}`, tone, updated_at: 1000, project_key: null, ...extra });
 const snap = {
-  projects: [{ key: 'p1', title: '题包专项', avatar: 'fox', status_reason: '', updated_at: 900 }, { key: 'p2', title: '夜航改版', avatar: 'owl', status_reason: 'token 用完了', updated_at: 950 }],
+  projects: [{ key: 'p1', title: '账单专项', avatar: 'fox', status_reason: '', updated_at: 900 }, { key: 'p2', title: '夜航改版', avatar: 'owl', status_reason: 'token 用完了', updated_at: 950 }],
   questions: [{ topic_key: 'k31', state: 'open', asked_at: 800, questions: [{ question: '报表按周还是按月？' }] }, { topic_key: 'L1', state: 'open', asked_at: 700, questions: [{ question: '用 v1.9 还是 v1.8？' }] }],
   topics: [],
 };
@@ -41,7 +41,7 @@ test('谁：话题带 T 号去话题页，管家去大厅，负责人写专项�
   const by = Object.fromEntries(statusGroups(a, snap, []).act.map((r) => [r.key, r]));
   assert.deepEqual([by.k31.kind, by.k31.number, by.k31.to], ['topic', 31, '/topics/k31']);
   assert.deepEqual([by.b0.title, by.b0.to, by.b0.number], ['管家', '/butler', null]);
-  assert.deepEqual([by.L1.title, by.L1.to, by.L1.avatar], ['题包专项 · 负责人', '/projects/p1', 'fox']);
+  assert.deepEqual([by.L1.title, by.L1.to, by.L1.avatar], ['账单专项 · 负责人', '/projects/p1', 'fox']);
   assert.deepEqual([by['p:p2'].kind, by['p:p2'].to, by['p:p2'].avatar], ['project', '/projects/p2', 'owl']);
 });
 
