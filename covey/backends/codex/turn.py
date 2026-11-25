@@ -11,7 +11,7 @@ import time
 
 from covey.backends.codex.rpc import RpcError, failed, request_identifier
 from covey.core.harness import JobCancelled
-from covey.core import gateways
+from covey.core import gateways, quota_hold
 from covey.core.limit_reset import FAULT_STATUSES
 from covey.core.protocol import retry_note, retry_reason
 from covey.core.result import MAX_REPLY_BYTES, is_identifier
@@ -73,6 +73,19 @@ def codex_failure_code(error):
     if name in CONNECTION:
         return "transport_error"
     return "root_failed"
+
+
+def note_spent(ctx, error):
+    """Hold the gateway quota a failed turn found spent (core/quota_hold.py): Codex's message carries the gateway's
+    words, also on a route that shares its quota without going through its relay."""
+    state_dir = getattr(ctx, "state_dir", None)
+    if state_dir is None or not isinstance(error, dict):
+        return
+    try:
+        quota_hold.note_failure(state_dir, "codex", getattr(ctx, "model", ""), error.get("message"),
+                                (getattr(ctx, "options", None) or {}).get("model_provider", ""))
+    except (OSError, ValueError):
+        pass  # The hold only saves the next turns' time; it never decides this one.
 
 
 def _matches_question_pause(rpc, state, turn_id):
@@ -161,7 +174,10 @@ def end_turn(rpc, state, turn, ctx, started, cancel, text):
         if turn.get("status") == "interrupted":
             raise JobCancelled("任务已停止")
         if turn.get("status") != "completed":
-            return "failed", codex_failure_code(turn.get("error")), text, False, "", False
+            code = codex_failure_code(turn.get("error"))
+            if code == "quota_exhausted":
+                note_spent(ctx, turn.get("error"))
+            return "failed", code, text, False, "", False
         if rpc.user_requests:
             raise failed("root_incomplete")
         text, mids = completed_turn_reply(rpc, turn)

@@ -191,6 +191,57 @@ def quota_text(message) -> bool:
     return any(g.quota_text(message) for g in all_gateways())
 
 
+@dataclass(frozen=True)
+class QuotaShare:
+    """harnesses.json 顶层 ``gateway_quotas`` 里一个网关的一项（core/quota_hold.py 读）。"""
+    shared: tuple = ()  # 别的线路的 Codex 模型前缀，和这个网关用同一份额度（同一把密钥）：额度用完时一起拦。
+    # 额度用完时卡上建议换到的：以 / 结尾的是 Codex 模型前缀（名字从 Codex 模型目录读），"" 是 Codex 账号的模型（不带
+    # 前缀），其余原样列出（例如另一个 Harness "Claude"）。
+    instead: tuple = ()
+
+
+_quotas: dict = {}  # 网关名 -> QuotaShare，Bridge 和任务进程启动时 configure_quotas。
+
+
+def configure_quotas(rows) -> None:
+    """Take harnesses.json's ``gateway_quotas`` (gateway name -> {shared, instead}; None for none); a bad entry raises
+    ValueError. A name no gateway has is kept: the gateway may come from an extension enabled later."""
+    if rows is None:
+        rows = {}
+    if not isinstance(rows, dict):
+        raise ValueError("harnesses.json gateway_quotas must be an object")
+    found = {}
+    for name, fields in rows.items():
+        if not isinstance(fields, dict) or set(fields) - {"shared", "instead"}:
+            raise ValueError(f"gateway_quotas {name!r}: must be an object with the fields shared, instead")
+        lists = {key: fields.get(key, []) for key in ("shared", "instead")}
+        if not all(isinstance(value, list) and all(isinstance(item, str) for item in value) for value in lists.values()):
+            raise ValueError(f"gateway_quotas {name!r}: shared and instead are lists of strings")
+        if not all(item.endswith("/") for item in lists["shared"]):
+            raise ValueError(f"gateway_quotas {name!r}: shared lists model prefixes such as 'name/'")
+        found[name] = QuotaShare(tuple(lists["shared"]), tuple(lists["instead"]))
+    _quotas.clear()
+    _quotas.update(found)
+
+
+def quota_share(name) -> QuotaShare:
+    return _quotas.get(name) or QuotaShare()
+
+
+def quota_gateway(harness, model):
+    """The gateway whose spent quota a turn of ``harness`` on ``model`` draws on, or None: a Codex model of the gateway
+    (its prefix) or of a route sharing its quota (``gateway_quotas`` shared), a dsh turn's gateway."""
+    if harness == "dsh":
+        return dsh_gateway()
+    if harness != "codex":
+        return None
+    found = for_model(harness, model)
+    if found is not None:
+        return found
+    model = str(model or "")
+    return next((g for g in all_gateways() if any(model.startswith(p) for p in quota_share(g.name).shared)), None)
+
+
 BUSY_SUFFIX = " 繁忙记录"  # 网关繁忙记录的标题 "<显示名> 繁忙记录"（Gateway.busy_note）；旧记录里的标题照此认。
 
 
