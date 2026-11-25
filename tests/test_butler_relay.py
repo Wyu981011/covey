@@ -735,7 +735,7 @@ class AwaitedTest(AwaitedCase):
             self.assertIsNone(relay_targets.awaited_target(self.state, self.job()))
 
 
-OWNER_WORDS = "刚发的这个仓库能不能帮上产线？题包负责人来看吧"
+OWNER_WORDS = "刚发的这个仓库能不能帮上产线？仓库评估的负责人来看吧"
 HANDED_WORDS = "管家整理的说明：评估仓库对产线的用处"
 
 
@@ -865,7 +865,7 @@ class HandedLeadTest(HandedLeadCase):
         from covey.app import project_lead, project_loop
         from covey.core import projects
 
-        projects.create(self.state, projects.new_record(chat_id=CHAT, name="题包", goal="评估", project_id=self.PID,
+        projects.create(self.state, projects.new_record(chat_id=CHAT, name="仓库评估", goal="评估", project_id=self.PID,
                                                         now=time.time()))
         projects.add_member(self.state, self.PID, TOPIC)
         self.member_turn(self.handed_lead_turn())
