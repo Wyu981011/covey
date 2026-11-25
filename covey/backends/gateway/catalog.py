@@ -12,6 +12,7 @@ import time
 
 from covey.backends.gateway import connection
 from covey.backends.gateway.relay import RECOVERED, RETRYING, BusyRelay
+from covey.core import quota_hold
 from covey.core.metrics import clock_text
 # Codex runs ultra itself: the request carries xhigh plus a developer message turning on
 # proactive sub-agent delegation (codex-cli 0.164.0, checked against a local stand-in
@@ -71,6 +72,8 @@ def retry_notice(request, gateway):
 
 def turn_relay(request, gateway, state_dir):
     """The local relay one gateway turn talks to (gateway/relay.py), to use as a context manager that lives
-    exactly as long as the turn; its waits show on the card (retry_notice)."""
+    exactly as long as the turn; its waits show on the card (retry_notice), and a gateway that says when its spent
+    quota resets has it held (core/quota_hold.py)."""
     return BusyRelay(gateway.url(), notify=retry_notice(request, gateway),
-                     log=connection.relay_log(gateway, state_dir), name=gateway.name, display=gateway.display)
+                     log=connection.relay_log(gateway, state_dir), name=gateway.name, display=gateway.display,
+                     hold=quota_hold.Hold(state_dir, gateway) if gateway.quota_pattern else None)

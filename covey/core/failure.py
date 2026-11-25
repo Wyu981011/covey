@@ -190,6 +190,9 @@ def failure_view(record, now=None):
         title, actions = "这一轮被打断了；可以接着做，或先看原因", (CONTINUE, DIAGNOSE)
     elif code in OWN:
         title, actions = OWN[code]
+        said = str(record.get("failure_detail") or "").strip()
+        if code == "quota_exhausted" and said:
+            title = said.rstrip("。")  # A gateway's quota in its own words: when it is back, where to go (core/quota_hold.py).
         if code in ("rate_limited", "server_fault"):
             later = _later(record, now, "自动重试", total)
             title += f"；{later}" if later else "；可以稍后重试，着急可以换个模型"

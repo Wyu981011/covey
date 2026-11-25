@@ -4,7 +4,9 @@ app/butler_env.py describes them; app/butler_tools.py puts them with the butler'
 
 - ``project_topic_start``, ``project_topic_send`` hand the work to the project's member topics through the butler's own
   functions (app/butler_topics.py topic_start, topic_send: a call from a lead's job opens or feeds a member topic, ``lead_of``).
-  A project has no limit on the member topics working at once (deploys that would clash queue instead).
+  A project has no limit on the member topics working at once (deploys that would clash queue instead). Work for a topic
+  whose model's gateway quota is spent until its reset is not sent: the lead hears when it is back and to switch first
+  (``spent_quota``, core/quota_hold.py).
 - ``project_topic_stop`` stops one member topic for the owner (its tasks, and the question it waits on, which is cancelled
   with the reason ``lead_stop``); the topic stays in the project's list and counts as ended.
 - ``project_note`` (a line for the project's card; ``report`` marks what the owner is to hear, filtered by the style),
@@ -32,7 +34,7 @@ from pathlib import Path
 
 from covey.app import butler_topics, project_lead, triage as triage_flow
 from covey.app.butler_env import reply
-from covey.core import butler, project_memory, projects, triage, turn_source
+from covey.core import butler, project_memory, projects, quota_hold, triage, turn_source
 from covey.core import project_checklist as checklist
 from covey.core import project_proposals as proposals
 from covey.core.jobs import find_job_record
@@ -166,6 +168,9 @@ def project_topic_send(env, request):
     if isinstance(found, str):
         return reply(False, found)
     topic = found[1].topic_id
+    spent = spent_quota(env, topic, found[2])
+    if spent:
+        return reply(False, spent)
     if topic not in (record.get("threads") or ()):
         refused = take_in(env, chat, pid, topic, request.args.get("text"))
         if refused:
@@ -175,6 +180,17 @@ def project_topic_send(env, request):
     if answer.get("ok"):
         acted(env, pid, request, "send")
     return answer
+
+
+def spent_quota(env, topic, data) -> str:
+    """Why work is not sent to ``topic`` (its topic.json ``data``) now: the gateway quota its model draws on is spent
+    until its reset (core/quota_hold.py held), so its turn would only fail; '' when it is not."""
+    state = Path(env.state_dir)
+    found = quota_hold.held(state, data.get("harness_id"), data.get("model"))
+    if found is None:
+        return ""
+    gateway, hold = found
+    return quota_hold.send_words(gateway, hold, topic_label(state, topic) or topic[:8], data.get("model"))
 
 
 def take_in(env, chat, pid, topic, text) -> str:

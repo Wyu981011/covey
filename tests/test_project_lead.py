@@ -25,7 +25,7 @@ from covey.app import projects as projects_app
 from covey.app.butler_tools import ButlerTools
 from covey.backends.claude.argv import stream_argv
 from covey.backends.claude.bridge import ClaudeBackend
-from covey.core import butler_mcp, butler, butler_tool_specs, checkpoint, project_memory, project_proposals, projects
+from covey.core import butler_mcp, butler, butler_tool_specs, checkpoint, project_memory, project_proposals, projects, quota_hold
 from covey.core import butler_settings as settings
 from covey.core.jobs import job_key
 from covey.core.harness import CONSULT, LEAD as HELD, READ, TOOL_LIMIT  # LEAD here is the lead topic's id.
@@ -672,6 +672,32 @@ class SendToolsTest(ToolsCase):
         record = projects.read_record(self.state, PID)
         self.assertIn(other, record["threads"])
         self.assertEqual([(row["topic"], row["by"]) for row in record["joins"]][-1], (other, "lead"))
+
+    def test_work_for_a_topic_on_a_spent_gateway_quota_waits_for_a_switch_until_the_reset(self):
+        """2026-11-25: a turn was handed to a topic on a gateway 15 minutes after its daily quota was spent. Now the lead
+        hears when it is back and to switch first; nothing is sent until then (core/quota_hold.py)."""
+        from test_quota_hold import configure, spent_text
+
+        gateway = configure(self)
+        data = self.tool("project_topic_start", request_id="open", title="导出", prompt="导出账单", workspace="project",
+                         readonly=True, why="x", harness="codex")["data"]
+        job = self.job("open")
+        self.app.runtime.unregister_reply_job(job)
+        write_job(self.state, job.message_id, status="done")
+        path = self.state / "topics" / data["topic_id"] / "topic.json"
+        write_json(path, {**json.loads(path.read_text()), "model": "mygw-personal/gpt-x"})  # A route sharing its key.
+        reset = time.time() + 3600
+        quota_hold.note(self.state, gateway, spent_text(reset))
+        answer = self.tool("project_topic_send", request_id="q1", thread=data["label"], text="接着做")
+        self.assertFalse(answer["ok"], answer)
+        self.assertTrue(answer["text"].startswith(
+            f"没有发给 {data['label']}：它用的 mygw-personal/gpt-x 走 MyGW，MyGW 额度在{quota_hold.clock(reset)} 恢复"
+            "（所有模型共用这一份），先换配置：请主人在"), answer["text"])
+        self.assertIsNone(self.job("q1"))
+        with mock.patch.object(quota_hold, "time", SimpleNamespace(time=lambda: reset + 1)):
+            answer = self.tool("project_topic_send", request_id="q2", thread=data["label"], text="接着做")
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual(self.job("q2").user_text, "接着做")
 
     def test_another_projects_topic_a_topic_taken_out_and_the_lead_are_refused(self):
         self.opened()

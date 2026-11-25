@@ -125,6 +125,29 @@ Antigravity 是 Google 的 Agent 开发平台，这里用它的命令行 `agy`�
 - 密钥先读 `key_env` 指的环境变量，再读 `key_file`（相对路径在 `$XDG_CONFIG_HOME` 或 `~/.config` 下，默认 `harness-bridge/<名字>-api-key`，必须本人所有、权限 `600`）。
 - 没有网关时 Codex 只剩自己账号的模型，dsh 没有模型；一个网关的密钥没配时只是它的模型不出现。目录缓存在状态目录的 `native-models/<名字>.json`，繁忙日志在 `<名字>/relay.log`。Codex 的网关请求经本地中继，429 时在中继里等一阵再试（`backends/gateway/relay.py`）。
 
+### 每日额度用完
+
+有 `quota_pattern` 的网关回 403、原文对得上、又写了 `Resets at <UTC 时间>` 时，Covey 把这份额度记成用完，到那个时间为止（`core/quota_hold.py`，记录在状态目录的 `<名字>/quota-hold.json`）：
+
+- **中继**：这个 403 和之后的请求，中继都回给 Codex 一个 429 `insufficient_quota`，不再往上游发。Codex 对它立刻结束这一轮；原样转 403 的话，Codex 要重试 10 次、白等约 205 秒（codex-cli 0.172.0，本机假上游实测）。Codex 请求时要 gzip，中继原样转给上游，所以 403 的正文常是压缩的：中继按 `Content-Encoding`（gzip、deflate）解开再认（`relay.py` 的 `plain`），转回给 Codex 的仍是原来的字节。
+- **开工前**：话题的模型走这份额度的，新一轮不启动，直接停住（`app/runs.py`，`quota_exhausted`）。
+- **卡上的话**（`failure_detail`，`core/failure.py` 照它写原因行）：“<显示名> 的每日额度用完了，北京时间 HH:MM 恢复；<显示名> 的所有模型共用这一份额度，换 `<前缀>` 下的别的模型也没用，可以换到 …”。不是今天恢复的带日期。
+- **负责人派活**：`project_topic_send` 的目标话题走这份额度时不发，回一句几点恢复、先换配置（`app/project_tools.py` 的 `spent_quota`）。
+- **提前恢复**：上次确认用完 10 分钟（`RECHECK`）以后，下一个请求照常发上游查一次，其余的仍在本地回绝。它成功了（比如主人申请了临时额度）就不再拦，又是 403 就再等 10 分钟。
+- 原文没写恢复时间的，这一轮照样立刻失败，但不记录，下一轮照常发。
+
+别的线路用同一把密钥时（比如另一条线路里配的同一个网关），在 `harnesses.json` 顶层写 `gateway_quotas`，按网关名：
+
+```json
+{"gateway_quotas": {"mygw": {
+   "shared": ["mygw-personal/"],
+   "instead": ["", "other/", "Claude"]}}}
+```
+
+- `shared`：和这个网关共用额度的 Codex 模型前缀（以 `/` 结尾）。这些模型的一轮因这份额度失败时也记下来，额度用完期间一样开工前就停、派活时一样提醒。
+- `instead`：卡上建议换到的，按顺序列。以 `/` 结尾的是 Codex 模型前缀，名字从 Codex 模型目录里这个前缀的第一个模型读（“… · 名字”），目录里没有这个前缀的模型就不列；`""` 是 Codex 账号的模型（不带前缀）；其余原样写（例如另一个 Harness）。不写就是“可以换到不走 <显示名> 的模型或 Harness”。
+- 只列确认过额度独立的线路。写了不存在的网关名不报错（可能是之后才启用的扩展的）。
+
 ### 最小网关示例
 
 Bridge 从 `GET <base_url>/v1/models` 读模型目录（带 `Authorization: Bearer <密钥>` 和 `headers`），返回 `{"data": [...]}`，每行至少有 `id` 和 `protocol`：`openai-responses` 的给 Codex，`anthropic-messages`（或 `anthropic`）的给 dsh；没有 `protocol` 的行不列，只按 OpenAI 格式列模型的网关要补上这一项。可选 `display_name`、`supported_reasoning_levels`、`default_reasoning_level`；`status` 为 `deprecated`、`removed` 或带 `hidden` 的不列。Codex 的请求发到 `<base_url>/v1/responses`，dsh 的发到 Anthropic Messages 接口。
@@ -230,7 +253,7 @@ dsh 是 DeepSeek 开源的 Agent Harness（npm 包 `@deepseek-ai/dsh`，预览�
 - 不在名单里（含已下架）的 Harness 键只记一行 `harness config ignores Harnesses not in the roster`，然后忽略。`--state-dir`、`--workdir`、`--profile` 由机器人统一传入，写了也不生效。文件里不写凭据。
 - 服务和每个任务进程启动时按路径重新读，文件放持久位置、一次写完整；重启后生效。
 - 用了 `enabled_harnesses` 时已有话题保留原 Harness，原后端被禁用后不改由其他后端执行。
-- 同一个文件还放 `gateways`（[模型网关](#模型网关codex-与-dsh)）和 `spaces`（[配置 · 空间](configuration.md#空间spaces)）。
+- 同一个文件还放 `gateways`（[模型网关](#模型网关codex-与-dsh)）、`gateway_quotas`（[每日额度用完](#每日额度用完)）和 `spaces`（[配置 · 空间](configuration.md#空间spaces)）。
 
 ### 常用参数
 
@@ -257,4 +280,4 @@ Codex 的参数写在 bootstrap 命令上（`setup_harness_bridge.sh` 不接受�
 | Codex（`backends/codex/`） | `appserver.py` 一轮的开会话、起 turn、收尾（`run_appserver`）；`rpc.py` App Server 进程与 JSON-RPC（`AppServer`、`RpcError`）；`turn.py` 读一个 turn 到结束（`read_turn`、`close_turn`）；`events.py` 事件（`CodexEventAdapter`）；`usage.py` 用量；`gateway.py` 按会话分的 provider；`workspace_reader.py` 只读 MCP；`export.py` 下载 |
 | Antigravity（`backends/agy/`） | `bridge.py` 参数、进程、事件（`AntigravityEventAdapter`）、结果（`stream_outcome`）、模型目录、`agy_turn` 钩子（`extension_turn`、`Homes`）；`home.py` 管家的私有主目录；`judge.py` 小模型判断 |
 | dsh（`backends/dsh/`） | 只有 `bridge.py`：进程、补丁、事件（`DshEventAdapter`）、结果 |
-| 模型网关（`backends/gateway/`，配置在 `core/gateways.py`） | `connection.py` 密钥、目录、请求头、`BUSY_WINDOW`；`relay.py` 中继；`catalog.py` 目录行和繁忙提示 |
+| 模型网关（`backends/gateway/`，配置在 `core/gateways.py`） | `connection.py` 密钥、目录、请求头、`BUSY_WINDOW`；`relay.py` 中继；`catalog.py` 目录行和繁忙提示；每日额度用完记在 `core/quota_hold.py` |
