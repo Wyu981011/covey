@@ -1,6 +1,8 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import type { SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
+import { prefetchTurns } from '@client/src/hooks/use-workbench';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { Dot } from './ui';
 import type { Asks } from './projectData';
@@ -9,8 +11,12 @@ import { sinceWords, statusGroups, type StatusRow } from './statusGroups';
 /** 每组最多列几行，多的写“还有 N 个”（要你处理的链到看板） */
 const SHOWN = 6;
 
-const Row: React.FC<{ r: StatusRow; now: number; on: boolean }> = ({ r, now, on }) => (
-  <Link to={r.to} className={`ss-row${on ? ' on' : ''}`} title={`${r.title}\n${r.sub}`}>
+/** 鼠标移上去（手机按下）就先取这个话题的对话，点下去时多半已经在了（同侧栏话题行 TopicRow）；专项行没有对话可取 */
+const Row: React.FC<{ r: StatusRow; now: number; on: boolean }> = ({ r, now, on }) => {
+  const qc = useQueryClient();
+  const warm = r.kind === 'project' ? undefined : () => prefetchTurns(qc, r.key);
+  return (
+  <Link to={r.to} className={`ss-row${on ? ' on' : ''}`} title={`${r.title}\n${r.sub}`} onMouseEnter={warm} onTouchStart={warm}>
     {r.kind === 'topic' ? (
       <span className="a-tlogo">
         <TopicBadge number={r.number} />
@@ -26,7 +32,8 @@ const Row: React.FC<{ r: StatusRow; now: number; on: boolean }> = ({ r, now, on 
     <span className="ss-m">{r.plan ?? (r.since ? sinceWords(Math.max(0, now - r.since)) : '')}</span>
     <span className="ss-s">{r.sub}</span>
   </Link>
-);
+  );
+};
 
 /** 侧栏顶上的「要你处理」「在做」两组（statusGroups.ts）。两组都空时什么也不画 */
 export const StatusGroups: React.FC<{ a: Asks; data: SnapshotResponse; running: SnapshotTopic[]; act: number; now: number }> = ({ a, data, running, act, now }) => {

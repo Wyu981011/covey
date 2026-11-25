@@ -9,7 +9,8 @@
 @keyframes comet{from{stroke-dashoffset:7}to{stroke-dashoffset:-193}}
 @keyframes sweep{from{transform:translateX(-120%)}to{transform:translateX(320%)}}
 @keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
-@keyframes dotpulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--c) 55%,transparent)}100%{box-shadow:0 0 0 7px transparent}}
+/* 状态点的脉冲只动透明度（T753）：原来动 box-shadow，浏览器每帧都要在主线程重算样式、重绘，页面静止时也每秒 60 次，点击跟着顿；透明度交给合成线程 */
+@keyframes dotpulse{0%,100%{opacity:1}50%{opacity:.45}}
 @keyframes wave{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.7);opacity:.7}}
 @keyframes slidein{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}
 @keyframes hatch{to{background-position:16px 0}}
