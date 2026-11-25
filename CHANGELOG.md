@@ -29,6 +29,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed 修复
 
+- 网页工作台点输入框下面的配置胶囊（「工作区 … · Harness · 模型」）换不了配置：箭头翻上了，面板却不出来。电脑上输入框为了底座的圆角裁掉了伸出去的内容，浮在它上面的换配置面板被整块裁掉，专项负责人、普通话题和失败轮次上的「换个模型」都受影响（手机不受影响）。现在输入框不裁，底座自己收圆角；面板按输入框的位置固定定位，放大编辑或输入框长高时也整块看得见，放不下就在面板里滚。
 - 记忆开关只认新名 `COVEY_MEMORY`、`COVEY_MEMORY_LEARN`：改名前的 Manager 拉起服务时只带服务清单里的 `LARK_BRIDGE_MEMORY`，记忆整个被当成关（网页没有「记忆」页、每轮不带记忆）。现在和别的开关一样新旧名都认。
 - 网页工作台左侧跳得点不准：侧栏「在做」、专项和专项里的话题原来按最近更新时间排，在跑的话题每写一次进度就换位，现在在跑的按编号排、专项按不算在跑话题的最近活动排；鼠标在侧栏里时列表先不动，移出或停着不动 5 秒再更新。对话区左边的刻度条：指着的那条要挪过边几像素才换，点下去跳到预览卡上那条（按下、松开跨了两条也算数），去掉旁边几条跟着伸缩的放大镜，鼠标在上面时来了新一轮刻度不整体挪。
 - 一个任务卡在登记回复那一步时，别的任务全都跟着停住：所有任务登记和读取保存的回复共用一把锁（`verified-results/.lock`），一个任务拿着它不放，其他任务就起不了 Antigravity、写完回复也收不了尾（T769：一轮代答拿着它 18 分钟，管家和另外 5 个任务跟着等）。现在每个任务一把（`verified-results/.locks/` 里挨着它的索引），卡住只挡它自己；锁文件随索引一周不动后由每日维护清掉。
@@ -77,6 +78,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed (English)
 
+- Web page: the config pill under the chat box (workspace · Harness · model) opened nothing: its arrow turned up but the switch panel stayed hidden. On a computer the chat box clipped what stuck out of it (for its base's rounded corners), and the panel floats above the box, so it was clipped whole, for a project's lead, an ordinary topic and a failed turn's 换个模型 alike (phones were fine). The box no longer clips, its base rounds its own corners, and the panel is placed fixed by the box, so it shows whole while 放大编辑 or with a tall draft too, scrolling inside when it does not fit.
 - The memory switches read only `COVEY_MEMORY` and `COVEY_MEMORY_LEARN`: a Manager from before the rename starts services with the manifest's `LARK_BRIDGE_MEMORY` alone, and the memory was off as a whole (no 记忆 tab on the page, no memory in a turn). They now read either spelling, as every other switch does.
 - Web workbench: the left side moved under the pointer. The sidebar's running group, its projects and their topics were sorted by last update, which a running topic changes on every progress write; running topics now sort by number and projects by the latest activity of their topics that are not running, and the sidebar holds still while the mouse is in it (it catches up when the mouse leaves or rests for 5 s). The conversation's jump rail keeps the tick it points at until the pointer is a few pixels past its edge, a click jumps to the tick the preview card shows (also when press and release land on two ticks), the magnifier ripple is gone, and the rail does not shift when a new turn arrives under the pointer.
 - One task stuck while saving its reply no longer holds up every other task: saving and reading saved replies shared one lock (`verified-results/.lock`), so while one task held it no other could start an Antigravity turn or finish its own (T769: a 代答 turn held it for 18 minutes, the butler and five more tasks waited). Each task now has its own, beside its index in `verified-results/.locks/`; daily maintenance removes one a week after its index last changed.

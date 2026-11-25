@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import { engineText } from './lib';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 import { onOpenSwitch } from './switchOpen';
+import { popPlace, POP_GAP, type PopPlace } from './popPlace';
 import { changedFields, fromConfig, leadData, switchBlock, type SwitchSel } from './switchConfig';
 import './launch.css';
 import './composer.css';
@@ -77,6 +78,31 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, asked, topic?.key, loc.key]);
+  // 面板放在哪（T789）：按输入框（手机是配置栏那一行 .mcfg）的框固定定位，不受对话区 overflow 裁切；输入框长高、窗口变、滚动时重算
+  const [place, setPlace] = useState<PopPlace | null>(null);
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlace(null);
+      return undefined;
+    }
+    const host: HTMLElement | null = wrap.current?.closest<HTMLElement>('.composer, .mcfg') ?? null;
+    if (!host) return undefined;
+    const gap: number = host.classList.contains('mcfg') ? 6 : POP_GAP;
+    const fit = (): void => {
+      const next: PopPlace = popPlace(host.getBoundingClientRect(), window.innerHeight, gap);
+      setPlace((cur: PopPlace | null) => (cur && cur.left === next.left && cur.width === next.width && cur.bottom === next.bottom && cur.room === next.room ? cur : next));
+    };
+    fit();
+    const ro: ResizeObserver | null = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+    ro?.observe(host);
+    window.addEventListener('resize', fit);
+    window.addEventListener('scroll', fit, true);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', fit);
+      window.removeEventListener('scroll', fit, true);
+    };
+  }, [open]);
   // 点面板外面、按 Esc 收起（发送中不收，免得回执没人看）
   useEffect(() => {
     if (!open) return undefined;
@@ -178,7 +204,12 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
         {open ? <ChevronUp /> : <ChevronDown />}
       </button>
       {open ? (
-        <div className="cfg-pop" role="dialog" aria-label={lead ? '换负责人的配置' : '换配置'}>
+        <div
+          className={`cfg-pop${place ? ' fixed' : ''}`}
+          role="dialog"
+          aria-label={lead ? '换负责人的配置' : '换配置'}
+          style={place ? ({ left: place.left, width: place.width, bottom: place.bottom, '--room': `${place.room}px` } as React.CSSProperties) : undefined}
+        >
           <div className="cfg-head">
             <b>{lead ? '换负责人的配置' : '换配置'}</b>
             <span className="t3">{lead ? '同飞书专项卡上的「换配置」' : '同飞书话题里的「换配置」'}</span>

@@ -1,7 +1,7 @@
 // 外槽 + 圆角画布、浅色的字和侧栏 T 号（T753）：样式表里这几条规则还在、没被改回去。跑：npm run test:canvas
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -107,4 +107,44 @@ test('输入框下沿的上下文用量有一条细进度条，过八成变橙',
   assert.equal(at(css, '.cv .cp-ctxbar.full i').background, 'var(--wait)');
   const src = readFileSync(join(cv, 'Conversation.tsx'), 'utf8');
   assert.match(src, /pct >= 80 \? ' full' : ''/u);
+});
+
+// T789：T753 给电脑端输入框加了 overflow:hidden 收底座圆角，换配置面板（.cfg-pop，浮在输入框上方）被整块裁掉：点配置胶囊箭头翻上、面板看不见。
+// 从底座往外浮的面板：换配置 .cfg-pop（.cfg 里）、由谁汇总的菜单 .rc-menu（.cp-chip > .rc-wrap 里）；它们到输入框之间的每一层都不能裁
+const CLIPS = ['overflow', 'overflow-x', 'overflow-y', 'clip-path', 'contain'];
+const POP_HOSTS = ['composer', 'cfg', 'cp-chip', 'rc-wrap'];
+/** 这条声明会不会裁掉伸出盒子的子元素：overflow 只有 visible 不裁，clip-path 只有 none，contain 带 paint（strict、content 含它）才裁 */
+const clips = (prop, value) => (prop === 'contain' ? /paint|strict|content/u.test(value) : prop === 'clip-path' ? value !== 'none' : value !== 'visible');
+/** 选择器最后一段（真正被选中的那个元素）带哪些 class */
+const lastClasses = (selector) => (selector.split(/[\s>+~]+/u).filter(Boolean).pop() ?? '').replace(/:not\([^)]*\)/gu, '').match(/\.[\w-]+/gu)?.map((c) => c.slice(1)) ?? [];
+test('输入框和底座不裁往外浮的面板（T789：换配置面板被 .composer 的 overflow:hidden 裁掉）', () => {
+  const files = readdirSync(cv).filter((f) => f.endsWith('.css'));
+  const bad = [];
+  for (const f of files) {
+    for (const r of rules(f)) {
+      for (const s of r.selectors) {
+        const cls = lastClasses(s);
+        const host = cls.some((c) => POP_HOSTS.includes(c)) || (cls.includes('bar') && /\.composer\b/u.test(s));
+        if (!host) continue;
+        for (const p of CLIPS) {
+          const v = r.decls[p];
+          if (v && clips(p, v)) bad.push(`${f}: ${s} { ${p}: ${v} }`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(bad, [], '这些规则会把浮出去的面板裁掉');
+  // 底座靠自己的圆角收边（外框 18px 减 1px 边框），不靠裁切
+  const css = rules('composer.css');
+  assert.equal(at(css, '.cv:not(.m) .composer')['border-radius'], '18px');
+  assert.equal(at(css, '.cv:not(.m) .composer .bar')['border-radius'], '0 0 17px 17px');
+  // 面板确实浮在输入框外面（不是改成在里面展开绕过去的）
+  const pop = at(css, '.cv .cfg-pop');
+  assert.equal(pop.position, 'absolute');
+  assert.equal(pop.bottom, 'calc(100% + 8px)');
+  // 打开后按输入框的框固定定位（ConfigBar + popPlace.ts），高度不超过输入框上沿到视口顶（放大编辑时对话区里放不下，T789）
+  const fixed = at(css, '.cv .cfg-pop.fixed');
+  assert.equal(fixed.position, 'fixed');
+  assert.match(fixed['max-height'], /var\(--room/u);
+  assert.match(readFileSync(join(cv, 'ConfigBar.tsx'), 'utf8'), /popPlace\(host\.getBoundingClientRect\(\)/u);
 });

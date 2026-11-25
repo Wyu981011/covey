@@ -116,6 +116,10 @@
 .cv .cfg-note .warn{color:var(--wait)}
 .cv .mcfg{position:relative;margin:0 10px 4px}
 .cv .mcfg .cfg-pop{bottom:calc(100% + 6px);max-height:60vh}
+/* 打开后由 ConfigBar 按输入框的框固定定位（T789）：对话区是 overflow:hidden，放大编辑、输入框长高时上面放不下，absolute 会被裁掉上半截。
+   left、width、bottom 和 --room（输入框上沿到视口顶）写在 style 上 */
+.cv .cfg-pop.fixed{position:fixed;right:auto;max-height:min(70vh,620px,var(--room,100vh))}
+.cv .mcfg .cfg-pop.fixed{max-height:min(60vh,var(--room,100vh))}
 
 @media (max-width:767px){
   .cv .cfg-foot{flex-wrap:wrap}
@@ -134,7 +138,10 @@
 .cv .livepill .dot{flex:none;margin:0}
 .cv .livepill.stuck{color:var(--wait)}
 /* 输入框 = 主框 + 底座（T753，学 Copilot、Kimi）：下沿那一行（工作区、模型、上下文、按钮）铺浅灰底，像从主框下面长出来；圆角放大 */
-.cv:not(.m) .composer{border-radius:18px;overflow:hidden}
-.cv:not(.m) .composer .bar{background:var(--s2);border-top:1px solid var(--line);margin:8px -12px -8px;padding:6px 12px}
+/* 输入框不裁里面的东西（不写 overflow:hidden）：换配置面板（.cfg-pop）、由谁汇总的菜单（.rc-menu）都从底座往上浮出输入框，
+   裁了就是点开箭头翻上、面板看不见（T789）。底座按外框圆角自己收边（外框 18px 减 1px 边框） */
+.cv:not(.m) .composer{border-radius:18px}
+.cv:not(.m) .composer .bar{background:var(--s2);border-top:1px solid var(--line);margin:8px -12px -8px;padding:6px 12px;border-radius:0 0 17px 17px}
+.cv:not(.m) .composer .cp-drop{border-radius:17px}
 .cv:not(.m) .composer .send{border-radius:50%}
 
