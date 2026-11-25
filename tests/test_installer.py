@@ -20,7 +20,7 @@ from support import REPO, exec_tempdir
 
 from covey.core import app_manifest, butler_settings, qr, switches, welcome
 from covey.core import env as cenv
-from covey.service import install_probe, installer
+from covey.service import install_probe, installer, web_selfhost
 from covey.service.install_probe import Probe
 
 # The QR lark-cli printed for "https://open.feishu.cn/page/cli?user_code=LWEY-WV75&lpv=1.0.98&ocv=1.0.98&from=cli"
@@ -1529,6 +1529,12 @@ class WebTest(InstallerCase):
     def switch_names(self, ins):
         return {key for key in ins.env if "WEB" in key}
 
+    def test_the_page_config_names_the_port_this_run_sets(self):
+        ins = self.web("--web", env=self.env(COVEY_WEB_SELFHOST_PORT="18651"))
+        ins.choose_web()
+        ins.finish_web()
+        self.assertEqual(18651, self.prepared[0][1]["port"])  # The Manager starts the page there: web.json must say so too.
+
     def test_a_terminal_answer_of_yes_builds_in_the_background_and_prepares_the_page_for_the_manifest(self):
         ins = self.web(interactive=True, answers=["y"])
         ins.choose_web()
@@ -1537,7 +1543,8 @@ class WebTest(InstallerCase):
         self.assertEqual(["bash", str(installer.REPO_ROOT / "web/deploy/selfhost/build.sh"), str(self.folder())], self.spawned[0])
         self.assertEqual([], self.prepared)  # Not before the registration step waits for the build.
         ins.finish_web()
-        self.assertEqual([(self.data, {"folder": str(self.folder() / "dist-selfhost")})], self.prepared)
+        self.assertEqual([(self.data, {"folder": str(self.folder() / "dist-selfhost"), "port": web_selfhost.DEFAULT_PORT})],
+                         self.prepared)
         self.assertEqual("1", cenv.get("COVEY_WEB_SELFHOST", None, ins.env))
         self.assertEqual(str(self.folder() / "dist-selfhost"), cenv.get("COVEY_WEB_SELFHOST_DIR", None, ins.env))
         self.assertEqual([], ins.leftovers)

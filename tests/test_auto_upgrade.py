@@ -194,6 +194,14 @@ class EndTests(Case):
         self.assertEqual(self.step(stamp(26, 5, 8)), auto_upgrade.FAILED)
         self.assertIn("结果不确定", self.sent[0])
 
+    def test_no_owner_chat_sends_nothing_and_says_so(self):
+        self.ok = None
+        self.end_run(0)
+        self.step(stamp(26, 5, 8))
+        self.assertEqual(self.record()["told"], "no_chat")
+        self.step(stamp(26, 5, 9))
+        self.assertEqual(len(self.sent), 1)  # Asked once, never again.
+
     def test_quiet_hours_hold_the_message_and_an_uncertain_send_is_not_repeated(self):
         self.environ["COVEY_QUIET_HOURS"] = "23:00-08:30"
         self.end_run(0)

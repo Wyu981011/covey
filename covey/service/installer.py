@@ -1104,7 +1104,9 @@ class Installer:
             return
         extra = {"public": self.web_names} if self.web_names else {}
         try:
-            result = self.web_prepare(self.data, folder=str(folder / "dist-selfhost"), **extra)
+            # The port this run's environment names (COVEY_WEB_SELFHOST_PORT) is the one the page config says: the Manager starts
+            # the page on it, and web.json's base_url must reach it.
+            result = self.web_prepare(self.data, folder=str(folder / "dist-selfhost"), port=web_selfhost.port_of(self.env), **extra)
             switch_lines = [str(line) for line in result["switches"]]
         except Exception as exc:  # noqa: BLE001 - whatever prepare says is only said
             self.leftovers.append(f"网页工作台构建好了，但没能备好配置（{exc}）；服务照常注册。手动：{self.web_command(folder)}")

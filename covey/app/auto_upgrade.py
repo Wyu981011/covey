@@ -79,7 +79,8 @@ def busy_words(state_dir) -> str:
 
 class AutoUpgrade:
     """The daily automatic upgrade of one Bridge. ``upgrader``: its SelfUpgrade (self_upgrade.shared); ``busy()``: why not now ('' when
-    nothing runs, ``busy_words``); ``notify(text)``: sends one message to the owner, True when it went out; ``log(line)``."""
+    nothing runs, ``busy_words``); ``notify(text)``: sends one message to the owner, True when it went out, None when there is no
+    owner's chat to send it to (nothing sent); ``log(line)``."""
 
     def __init__(self, upgrader, *, busy, notify, log=lambda text: None, clock=time.time, environ=None) -> None:
         self.upgrader, self.busy, self.notify, self.log, self.clock, self.environ = upgrader, busy, notify, log, clock, environ
@@ -196,10 +197,11 @@ class AutoUpgrade:
         self.write({**record, "told": "sending"})
         ok = False
         try:
-            ok = bool(self.notify(text))
+            ok = self.notify(text)
         finally:
-            self.write({**self.read(), "told": "sent" if ok else "uncertain", "told_at": now})
-        self.log(f"auto upgrade: notice {'sent' if ok else 'uncertain'} state={record.get('state')}")
+            told = "sent" if ok else "no_chat" if ok is None else "uncertain"
+            self.write({**self.read(), "told": told, "told_at": now})
+        self.log(f"auto upgrade: notice {told} state={record.get('state')}")
 
 
 def words(record, clock) -> str:
@@ -241,7 +243,7 @@ def loop(app, ctx) -> None:
     def notify(text):
         chat = runtime.access.owner_chat()
         if not chat:
-            return False
+            return None
         key = app.voice.safe_key(f"auto-upgrade-{int(time.time())}")
         return app.messenger.send_message(ctx.profile, chat, text, key, voice=app.voice)
 
