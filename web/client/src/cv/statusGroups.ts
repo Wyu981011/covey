@@ -3,6 +3,7 @@
  *  要你处理和看板、侧栏角标同一口径（projectData.ts asks）：等你 → 停住了（含护栏停住的专项）→ 可能卡住。纯函数，单测在 scripts/status-groups.test.mjs。 */
 import type { QuestionView, SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import type { Asks } from './projectData';
+import { byNumberDesc } from './lib';
 import { splitTitle } from './topicText';
 
 export type GroupTone = 'waiting' | 'stopped' | 'stuck' | 'running';
@@ -59,7 +60,8 @@ function row(t: SnapshotTopic, tone: GroupTone, snap: Snap, qBy: Map<string, Que
   return { key: t.key, to: topicTo(t), kind, tone, title, sub, number: kind === 'topic' ? t.number ?? null : null, avatar: kind === 'lead' ? p?.avatar : undefined, since, plan };
 }
 
-/** 两组的行。running 由调用方给（话题自己的状态口径在 lib.ts toneOf，这里不重算） */
+/** 两组的行。running 由调用方给（话题自己的状态口径在 lib.ts toneOf，这里不重算）。
+ *  在做按编号大的在前（同看板）：快照按 updated_at 排，在跑的话题每次同步都变，照它排一秒一换位，鼠标点不准（T779） */
 export function statusGroups(a: Asks, snap: Snap, running: SnapshotTopic[]): StatusGroups {
   const qBy = new Map<string, QuestionView>(snap.questions.filter((q: QuestionView) => q.state === 'open').map((q: QuestionView) => [q.topic_key, q]));
   const halted: StatusRow[] = a.projects.map((p: SnapshotProject): StatusRow => ({
@@ -73,7 +75,7 @@ export function statusGroups(a: Asks, snap: Snap, running: SnapshotTopic[]): Sta
       ...halted,
       ...a.stuck.map((t: SnapshotTopic) => row(t, 'stuck', snap, qBy)),
     ],
-    running: running.filter((t: SnapshotTopic) => !qBy.has(t.key)).map((t: SnapshotTopic) => row(t, 'running', snap, qBy)),
+    running: running.filter((t: SnapshotTopic) => !qBy.has(t.key)).sort(byNumberDesc).map((t: SnapshotTopic) => row(t, 'running', snap, qBy)),
   };
 }
 

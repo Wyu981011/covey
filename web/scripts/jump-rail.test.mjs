@@ -27,12 +27,40 @@ test('间距：少时宽松，多了压紧，不小于 GAP_MIN', () => {
   assert.equal(J.gap(500, 600), J.GAP_MIN);
 });
 
-test('长短：眼前这条最长；鼠标指着时它和邻近几条依次变长', () => {
+test('长短：眼前这条最长；鼠标指着的那条一样长，旁边的不跟着变（T779 去掉放大镜）', () => {
   assert.equal(J.tickLength(3, 3, null), J.LEN.active);
   assert.equal(J.tickLength(0, 3, null), J.LEN.base);
-  const near = [5, 6, 7, 8, 9].map((i) => J.tickLength(i, 0, 5));
-  assert.deepEqual(near, [J.LEN.near[0], J.LEN.near[1], J.LEN.near[2], J.LEN.near[3], J.LEN.base]);
-  assert.ok(J.LEN.near[0] > J.LEN.near[1] && J.LEN.near[1] > J.LEN.near[2] && J.LEN.near[2] > J.LEN.base);
+  assert.deepEqual([4, 5, 6, 7].map((i) => J.tickLength(i, 0, 5)), [J.LEN.base, J.LEN.hover, J.LEN.base, J.LEN.base]);
+  assert.equal(J.tickLength(0, 0, 5), J.LEN.active);
+  assert.ok(J.LEN.hover > J.LEN.base && J.LEN.active > J.LEN.base);
+});
+
+test('指着哪条：没指着时按高度落在哪条就是哪条，出界的夹到两头', () => {
+  assert.equal(J.pickIndex(0, 10, 5, null), 0);
+  assert.equal(J.pickIndex(25, 10, 5, null), 2);
+  assert.equal(J.pickIndex(-4, 10, 5, null), 0);
+  assert.equal(J.pickIndex(80, 10, 5, null), 4);
+});
+
+test('指着哪条：已经指着一条时，越过它的边 STICK 像素才换，手抖一两像素不换', () => {
+  // 指着第 2 条（20~30）：往下挪到 31、32 还是它，过了 33 才换第 3 条；往上同理
+  assert.equal(J.pickIndex(31, 10, 5, 2), 2);
+  assert.equal(J.pickIndex(32.9, 10, 5, 2), 2);
+  assert.equal(J.pickIndex(33, 10, 5, 2), 3);
+  assert.equal(J.pickIndex(17, 10, 5, 2), 2);
+  assert.equal(J.pickIndex(16.9, 10, 5, 2), 1);
+  // 一下挪远了直接换过去
+  assert.equal(J.pickIndex(45, 10, 5, 2), 4);
+});
+
+test('指着哪条：刻度压得很密时，粘住的范围不超过半条间距，照样一条一条挪得过去', () => {
+  // 间距 3：粘 1.5px；指着第 10 条（30~33），33~34.5 还是它，34.5 起换第 11 条
+  assert.equal(J.pickIndex(34, 3, 100, 10), 10);
+  assert.equal(J.pickIndex(34.5, 3, 100, 10), 11);
+  assert.equal(J.pickIndex(28.6, 3, 100, 10), 10);
+  assert.equal(J.pickIndex(28.4, 3, 100, 10), 9);
+  // 之前指着的那条已经不在了（条数变少）：按高度重算
+  assert.equal(J.pickIndex(5, 3, 2, 10), 1);
 });
 
 test('预览卡不出滚动区', () => {

@@ -8,7 +8,7 @@ import type { SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/a
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
 import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemory, useUpgrade } from '@client/src/hooks/use-workbench';
 import { ageMs, errorText } from '@client/src/lib/workbench-format';
-import { byRecent, isRunning, isWaiting, pref, setPref, toneOf, toneWord, topicNumberOf, type ToneKey } from './lib';
+import { byNumberDesc, byRecent, isRunning, isWaiting, pref, setPref, steadyAt, toneOf, toneWord, topicNumberOf, type ToneKey } from './lib';
 import { Avatar, Dot, useTick } from './ui';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { setCollapsed, setMenu, useUi } from './store';
@@ -16,6 +16,7 @@ import { listTone } from './topicText';
 import { askNumbers, asks, askSum, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
 import { PaneHandle } from './PaneHandle';
 import { StatusGroups } from './StatusGroups';
+import { useHeld } from './sideHold';
 import { SIDE_PANE, showSavedPanes } from './panes';
 import { upgradeMark } from './upgrade';
 import { canDo } from './v34';
@@ -81,6 +82,8 @@ interface SideProject {
   stopped: number;
   running: number;
   last: number;
+  /** 排先后用的最近活动（steadyAt：在跑的话题不算），last 里在跑的话题每次同步都变 */
+  steady: number;
 }
 
 /** 组里先列要紧的（等你、停住、在做），再补最近的，凑到 SHOW_IN_GROUP 个；其余收成“其余 N 个话题” */
@@ -106,7 +109,8 @@ const ProjectGroup: React.FC<{ x: SideProject; snap: SnapshotResponse; stoppedKe
   }
   const show: boolean = open;
   const hot = (t: SnapshotTopic): boolean => isWaiting(t) || isRunning(t) || stoppedKeys.has(t.key);
-  const ordered: SnapshotTopic[] = [...x.topics.filter(hot), ...x.topics.filter((t: SnapshotTopic) => !hot(t))];
+  // 等你、在做、停住的在前，按编号（T779：在跑的 updated_at 每次同步都变，照它排几个在跑的会来回换位）；其余按最近
+  const ordered: SnapshotTopic[] = [...x.topics.filter(hot).sort(byNumberDesc), ...x.topics.filter((t: SnapshotTopic) => !hot(t))];
   const n: number = Math.max(SHOW_IN_GROUP, x.topics.filter(hot).length);
   let list: SnapshotTopic[] = all ? ordered : ordered.slice(0, n);
   if (activeTopic && !list.includes(activeTopic)) list = [...list, activeTopic];
@@ -266,7 +270,9 @@ function useUpgradeMark(): string {
 
 const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }) => {
   const memoryOn: boolean = !!useMemory().data?.data?.on;
-  const { data } = useSnapshot();
+  // 鼠标在侧栏里时先画它进来那刻的快照，移出或停着不动几秒再换新的：每秒的同步不让正要点的那行从鼠标底下挪走（sideHold.ts）
+  const hold = useHeld(useSnapshot().data);
+  const data = hold.view;
   const ui = useUi();
   const loc = useLocation();
   const now: number = useTick(60000);
@@ -301,16 +307,17 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
       stopped: own.filter((t: SnapshotTopic) => stoppedKeys.has(t.key)).length,
       running: own.filter(isRunning).length,
       last: Math.max(p.updated_at, ...own.map((t: SnapshotTopic) => t.updated_at)),
+      steady: Math.max(p.started_at ?? 0, ...own.map(steadyAt)),
     };
   });
   const quiet = (x: SideProject): boolean =>
     !x.waiting && !x.stopped && !x.running && !isHalted(x.p) && p2done(x.p.status, now - x.last > QUIET_DAYS * 86400);
   const rank = (x: SideProject): number => (x.waiting || x.stopped || isHalted(x.p) ? 0 : x.running ? 1 : 2);
-  const live: SideProject[] = groups.filter((x: SideProject) => !quiet(x)).sort((a: SideProject, b: SideProject) => rank(a) - rank(b) || b.last - a.last || a.p.key.localeCompare(b.p.key));
+  const live: SideProject[] = groups.filter((x: SideProject) => !quiet(x)).sort((a: SideProject, b: SideProject) => rank(a) - rank(b) || b.steady - a.steady || a.p.key.localeCompare(b.p.key));
   const old: SideProject[] = groups.filter(quiet).sort((a: SideProject, b: SideProject) => b.last - a.last);
   const hot = (t: SnapshotTopic): boolean => isWaiting(t) || isRunning(t) || qKeys.has(t.key) || stoppedKeys.has(t.key);
   const loose: SnapshotTopic[] = topics.filter((t: SnapshotTopic) => !t.project_key || !ids.has(t.project_key)).sort(byRecent);
-  const looseHot: SnapshotTopic[] = loose.filter(hot);
+  const looseHot: SnapshotTopic[] = loose.filter(hot).sort(byNumberDesc);
   const numbered: SnapshotTopic[] = [...looseHot, ...loose.filter((t: SnapshotTopic) => !hot(t) && !!t.number)];
   const unnumbered: SnapshotTopic[] = loose.filter((t: SnapshotTopic) => !hot(t) && !t.number);
   const shownN: number = Math.max(shown, looseHot.length);
@@ -334,7 +341,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
     if (drawer && e.target instanceof Element && e.target.closest('a')) setMenu(false);
   };
   return (
-    <aside className={`side a-side${mini ? ' mini' : ''}${drawer ? ' drawer-side' : ''}`} onClick={go} style={{ '--tw': logoChars } as React.CSSProperties}>
+    <aside className={`side a-side${mini ? ' mini' : ''}${drawer ? ' drawer-side' : ''}`} onClick={go} {...hold.bind} style={{ '--tw': logoChars } as React.CSSProperties}>
       <div className="brand">
         <div className="logo">C</div>
         {mini ? null : (
@@ -382,7 +389,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
             </Link>
           ) : null}
           {mini ? (
-            topics.filter(hot).slice(0, 12).map((t: SnapshotTopic) => <TopicRow key={t.key} t={t} active={isOn(t)} stopped={stoppedKeys.has(t.key)} mini />)
+            topics.filter(hot).sort(byNumberDesc).slice(0, 12).map((t: SnapshotTopic) => <TopicRow key={t.key} t={t} active={isOn(t)} stopped={stoppedKeys.has(t.key)} mini />)
           ) : (
             <>
               <StatusGroups a={a} data={data} running={topics.filter((t: SnapshotTopic) => t.kind === 'topic' && toneOf(t) === 'running')} act={act} now={now} />

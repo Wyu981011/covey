@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { activeIndex, cardTop, gap, tickLength, type Mark } from './jumpMarks';
+import { activeIndex, cardTop, gap, pickIndex, tickLength, type Mark } from './jumpMarks';
 import './jumprail.css';
 
 /** 刻度区上下留的空：底下躲开「回到最新」 */
@@ -9,6 +9,8 @@ const PAD_BOTTOM = 56;
 /**
  * 对话区左边的刻度导航（T621，照 Codex）：一句你说的话（话题页是一轮）一条刻度，眼前这条最长；
  * 鼠标停在刻度上出预览卡（你说的那句 + 它怎么答的开头），点一下跳过去。只在电脑上、至少两条时画。
+ * T779：指着哪条由整条刻度区按鼠标高度算（pickIndex，越过边几像素才换），点下去跳到的就是预览卡上那条，
+ * 按下和松开不在同一条刻度上也算数；鼠标在刻度区里时位置和间距不变，新来一轮也不把整列往上挪。
  */
 export const JumpRail: React.FC<{
   marks: Mark[];
@@ -20,6 +22,8 @@ export const JumpRail: React.FC<{
   const [hover, setHover] = useState<number | null>(null);
   const [focus, setFocus] = useState<number | null>(null);
   const [cardH, setCardH] = useState<number>(96);
+  /** 鼠标进刻度区那刻的位置和间距：在里面时不跟着新来的一轮、输入框变高重新居中 */
+  const [held, setHeld] = useState<{ top: number; g: number } | null>(null);
   const card = useRef<HTMLDivElement>(null);
   const btns = useRef<(HTMLButtonElement | null)[]>([]);
   const seqKey: string = marks.map((m: Mark) => m.seq).join(',');
@@ -63,15 +67,37 @@ export const JumpRail: React.FC<{
 
   if (marks.length < 2 || !boxH) return null;
   const room: number = Math.max(0, boxH - PAD_TOP - PAD_BOTTOM);
-  const g: number = gap(marks.length, room);
+  const liveG: number = gap(marks.length, room);
+  const g: number = held ? held.g : liveG;
   const total: number = g * marks.length;
-  const top: number = Math.max(PAD_TOP, Math.round((boxH - PAD_BOTTOM + PAD_TOP - total) / 2));
+  const top: number = held ? held.top : Math.max(PAD_TOP, Math.round((boxH - PAD_BOTTOM + PAD_TOP - liveG * marks.length) / 2));
   const cur: number = Math.min(Math.max(active, 0), marks.length - 1);
   const m: Mark | undefined = shown === null ? undefined : marks[shown];
 
   const go = (i: number): void => {
     const x: Mark | undefined = marks[i];
     if (x) onJump(x.seq);
+  };
+  const at = (e: React.PointerEvent | React.MouseEvent, prev: number | null): number =>
+    pickIndex(e.clientY - e.currentTarget.getBoundingClientRect().top, g, marks.length, prev);
+  const onMove = (e: React.PointerEvent<HTMLElement>): void => {
+    if (e.pointerType === 'touch') return;
+    if (!held) setHeld({ top, g });
+    const i: number = at(e, hover);
+    if (i !== hover) setHover(i);
+  };
+  const onLeave = (): void => {
+    setHover(null);
+    setHeld(null);
+  };
+  // 鼠标点：跳到预览卡上那条（按下、松开跨了两条刻度时 click 落在 nav 上，也照样跳）；键盘回车、空格（detail 为 0）跳到有焦点的那条
+  const onClick = (e: React.MouseEvent<HTMLElement>): void => {
+    const own: string | undefined = (e.target as HTMLElement).closest<HTMLElement>('[data-i]')?.dataset.i;
+    if (e.detail === 0) {
+      if (own !== undefined) go(Number(own));
+      return;
+    }
+    go(hover ?? at(e, null));
   };
   const onKey = (e: React.KeyboardEvent, i: number): void => {
     const to: number | null = e.key === 'ArrowUp' ? i - 1 : e.key === 'ArrowDown' ? i + 1 : e.key === 'Home' ? 0 : e.key === 'End' ? marks.length - 1 : null;
@@ -82,23 +108,22 @@ export const JumpRail: React.FC<{
 
   return (
     <>
-      <nav className="jr" aria-label="按你说的话跳转" style={{ top, height: total }} onMouseLeave={() => setHover(null)}>
+      <nav className="jr" aria-label="按你说的话跳转" style={{ top, height: total }} onPointerEnter={onMove} onPointerMove={onMove} onPointerLeave={onLeave} onClick={onClick}>
         {marks.map((x: Mark, i: number) => (
           <button
             type="button"
             key={x.seq}
+            data-i={i}
             ref={(b: HTMLButtonElement | null) => { btns.current[i] = b; }}
             className={`jr-t${i === cur ? ' on' : ''}${i === shown ? ' hv' : ''}${x.quiet ? ' quiet' : ''}`}
             style={{ height: g }}
             tabIndex={i === cur ? 0 : -1}
             aria-label={`${x.meta}：${x.title}`}
             aria-current={i === cur ? 'location' : undefined}
-            onMouseEnter={() => setHover(i)}
             // 只有键盘移过来才出卡片：鼠标点完焦点留在刻度上，卡片不该一直盖着正文
             onFocus={(e: React.FocusEvent<HTMLButtonElement>) => setFocus(e.currentTarget.matches(':focus-visible') ? i : null)}
             onBlur={() => setFocus(null)}
             onKeyDown={(e: React.KeyboardEvent) => onKey(e, i)}
-            onClick={() => go(i)}
           >
             <i style={{ width: tickLength(i, cur, shown) }} />
           </button>
