@@ -30,6 +30,7 @@ from pathlib import Path
 from covey.app import butler_reactions, runner_ipc, track_judge
 from covey.core import butler_tracks as core
 from covey.core import butler as contract
+from covey.core import inbound_ledger
 from covey.core import track_route as route
 from covey.core.deliveries import delivery_path, read_delivery
 from covey.core.harness import backend_capabilities
@@ -275,6 +276,7 @@ class Tracks:
         entry = next((entry for entry in entries if entry.live.job_id == decision.job_id), None)
         topic = core.track_topic_id(chat, entry.live.track if entry else decision.target or 0)
         move_topic_message(ctx.state_dir, topic, chat, message)
+        inbound_ledger.note(ctx.state_dir, message, "stop_word", topic_id=topic, job_id=decision.job_id)
         stop_ctx = app.submission.event_context(app.harness.context, {"chat_id": chat, "message_id": message})
         others = others_going(entries, decision.job_id)
         job = entry.job if entry else None

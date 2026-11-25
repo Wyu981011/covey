@@ -146,7 +146,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ questions/、held-notes/      待答问题；多题待答时暂存的补充
 │  ├─ interaction-deliveries/      补充和回答的送达记录
 │  ├─ delivery-receipts/           飞书写操作的幂等回执
-│  ├─ inbound-messages/            收到的消息的去重标记
+│  ├─ inbound-messages/            收到的消息的去重标记，里面是这条消息的去向（`bin/covey_inbound.py`）
 │  ├─ event-spool/                 事件长连接走 SDK 时，收下还没处理完的消息和点击（下次启动先补处理）
 │  ├─ stranger-replies/            别人私聊时回过的那句（每人每天一个标记）
 │  ├─ verified-results/、result-files/   已授权的回复正文、长回复文件

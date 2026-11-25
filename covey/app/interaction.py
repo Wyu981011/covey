@@ -7,7 +7,7 @@ from pathlib import Path
 
 from covey.app import butler_reactions, policy_guard
 from covey.app import triage as triage_flow
-from covey.core import timing, triage
+from covey.core import inbound_ledger, timing, triage
 from covey.core.checkpoint import release_user_wait
 from covey.core.trace import CONTEXT_FIELDS, ToolTrace, finish_record_trace, task_trace
 from covey.core.turn_words import retry_hint
@@ -246,6 +246,7 @@ class Interaction:
         try:
             return self._interactive_command(ctx, content, chat, mid, attachments, **({"top": top} if top else {}))
         except (ValueError, OSError, RuntimeError) as exc:
+            inbound_ledger.note(ctx.state_dir, mid, "refused", topic_id=ctx.topic_id, reason=f"交互暂未完成：{exc}"[:80])
             self.messenger.reply(ctx, chat, f"交互暂未完成：{exc}", self.voice.key("interaction-error", mid), voice=self.voice)
             butler_reactions.top_refused(self.messenger, ctx.profile, top, self.runtime.log)
             return True
@@ -280,6 +281,7 @@ class Interaction:
             text = ("这一轮有一道问题要你答，但问题卡没发出来，刚又试了一次也没成功；本条没有续接或排队。可以先停止这个任务，再在这里接着说。"
                     if not undelivered and triage_flow.ENV is not None and any(triage_flow.unshown(row) for _, row in rows)
                     else f"原结果或问题控件尚未送达，请先{retry_hint()} 重新投递；本条没有续接或排队。")
+            inbound_ledger.note(ctx.state_dir, mid, "refused", topic_id=ctx.topic_id, reason="原结果或问题卡还没送达，本条没有续接或排队")
             self.messenger.reply(ctx, chat, text, self.voice.key("answer-awaiting-result", mid), voice=self.voice)
             butler_reactions.top_refused(self.messenger, ctx.profile, top, self.runtime.log)
             return True
@@ -293,12 +295,14 @@ class Interaction:
         blocking = pending
         # An image sent as the answer reaches the model as its downloaded path; cards show only "附件：图片 1 张".
         if len(blocking) == 1 and len(blocking[0]["questions"]) == 1:
+            inbound_ledger.note(ctx.state_dir, mid, "answer", topic_id=ctx.topic_id)
             self.questions.submit_answer(ctx, chat, blocking[0]["token"],
                                {"answer_0": content, **({ATTACHMENTS: attachments} if attachments else {})}, mid,
                                **({"top": top} if top else {}))
             return True
         if blocking:
             # Several answers are awaited: keep the message for the first submitted answer.
+            inbound_ledger.note(ctx.state_dir, mid, "held_note", topic_id=ctx.topic_id)
             self.questions.hold_note(ctx, chat, content, mid, blocking, attachments=attachments,
                                      **({"top": top} if top else {}))
             return True

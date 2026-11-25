@@ -86,6 +86,26 @@ feishu/events.py consume：每个订阅一个 lark-cli 消费者，逐行交给�
  → done.json、exit.json → Bridge 的 finish_detached 收尾，未结束的记录标 interrupted，原卡换恢复卡；再跑这一轮的收尾 after_job
 ```
 
+### 主人消息的去向
+
+主人的每条消息（飞书 `om_…`，网页 `web-<op_id>`）进来以后只有下面这些去向，`core/inbound_ledger.py` 的 `where(state_dir, message_id)` 读出来，只读：不加锁、不发请求、不建目录。`bin/covey_inbound.py where <id>` 和 `recent` 是它的命令行（`--state` 必填）。
+
+| 去向 | 记录 | 主人看得见 |
+| --- | --- | --- |
+| 变成一轮（话题里的、管家的、网页发的） | `jobs/<消息 id>.json`（任务键就是消息 id）；条目的 `job` | 任务卡、答案卡、表情 |
+| 开跑前并进排队的任务、或排队卡送进在做的任务（`COVEY_TOPIC_STEER`） | 本条的任务记录 `status=cancelled` 加 `merged_into_job_id`；补充的送达记录 | 补充回执卡、DONE |
+| 管家的补充送进在做的一轮 | 送达记录 `interaction-deliveries/`；条目的 `supplement`（话题和任务号） | 开了同时做几件事是并进的表情；没开的现在也补上这个表情（以前没有） |
+| 当成问题的回答 / 暂存等答案 | 问题记录、`held-notes/`；条目的 `answer`、`held_note` | 问题卡、暂存卡 |
+| 停止词 | 条目的 `stop_word` | 停止的回复 |
+| 斜杠命令、扩展认领 | 条目的 `command`、`extension` | 命令的卡 |
+| 没处理：群里只有 @、没有读得出的内容、机器人身份未知、配对在群里 | 条目的 `ignored` 和原因（`Access.ignore`，只记主人的，群里没 @ 的不记） | 读不出内容的现在回一句；其余只有日志 |
+| 被拒绝：话题冻结、回答被拒 | 条目的 `refused` | 话题里有说明 |
+| 入队出错、没排上队 | 条目的 `error`、`not_queued` | 出错的现在回一句；没排上队本来就有说明 |
+| 收下后没处理完（重启在中间） | 条目有 `at`、没有 `fate`，也没有任务记录 | 重放时发现的，回一句让主人再发（`lost`，只一次） |
+| 重复投递 | 不新建；以第一次的记录为准 | 无需 |
+
+条目是每条消息在 `inbound-messages/<sha256(消息 id)>` 里的一小段 JSON（原来是空标记，同一个文件，7 天后维护清掉，备份不收）：`at`、`chat_id`、`text`（前 40 字）、`fate`、`reason`、`topic_id`、`job_id`。写它尽力而为：从不抛错，只持进程内的一把小锁，锁内不发请求；读口先看任务记录和送达记录，再看条目，所以升级前的消息只要任务记录还在也查得到。一条消息的条目没有 `fate`、没有任务记录，过了 `STALE_SECONDS`（120 秒）就算“收下后没处理完”。
+
 ### 谁被服务
 
 `app/access.py` 的 `Access`（`Runtime.access`，任务进程里也有）是唯一的判断处，别处不比较 open_id。

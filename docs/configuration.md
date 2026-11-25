@@ -614,6 +614,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--json` | `service/plugins.py`（`bin/covey_plugins.py`） | `list` 的 JSON 输出；子命令 `list`、`enable`、`disable`、`doctor` 见[扩展](architecture.md#扩展)的「装和卸」 | 否 |
 | `--state`、`--topic`、`--workspace`、`--owner`、`--redacted`、`--limit`、`--json` | `core/memory_search.py`（`bin/covey_memory.py search`，记忆自己长的查记忆） | 状态目录（必填）、这一轮的话题、按哪个工作区查（默认话题自己的）、带上全局的、带上来自脱敏话题的、最多几条（8）、JSON 输出 | 否 |
 | `--state-dir`、`--json` | `app/owner_ledger.py`（`bin/covey_ledger.py`：等主人的账，只读） | 状态目录（必填）；`--json` JSON 输出。见[架构 · 等主人的账](architecture.md#等主人的账) | 否 |
+| `--state`、`--limit`、`--json` | `core/inbound_ledger.py`（`bin/covey_inbound.py`，查主人消息的去向） | 状态目录（必填）、`recent` 最多列几条（10）、JSON 输出；子命令 `where <消息 id>`、`recent` | 否 |
 | `--state-dir`、`--no-probe`、`--json` | `service/device_check.py`（`bin/covey_devices.py`） | 见 `--help`；见[多设备](#多设备开发中默认关)的「自检」 | 否 |
 | `--root`、`--extra-root` | `backends/codex/workspace_reader.py` | 见 `--help` | 否 |
 | `--notes` | `backends/claude/tool_guard.py`（`bin/covey_tool_guard.py`：代答话题 Claude Code 的 PreToolUse 钩子，Bridge 自己写进那一轮的 `--settings`） | 空：编辑工具哪里都不能写；Bridge 给的是联系人的笔记目录 | 否 |

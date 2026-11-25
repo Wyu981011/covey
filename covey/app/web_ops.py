@@ -88,7 +88,7 @@ from covey.app.runtime import job_stage, supplement_target_of
 from covey.app import self_upgrade, web_files, web_memory
 from covey.app.web_settings import WebSettings
 from covey.app.web_turns import STOP_AUTO_RETRY
-from covey.core import board_read, collab, collab_records, failure, project_memory, projects, revisits, triage, turn_source, web_sync
+from covey.core import board_read, inbound_ledger, collab, collab_records, failure, project_memory, projects, revisits, triage, turn_source, web_sync
 from covey.core.attachments import message_words
 from covey.core.butler import is_butler_root
 from covey.core.history_storage import append_history
@@ -210,6 +210,8 @@ class Ops:
             try:
                 requeue = {"text": text, "prompt": text, **({"sender_id": owner} if owner else {})}
                 saved = steering.deliver_steer(where, live, text, message, asked=message_words(text), requeue=requeue)
+                inbound_ledger.note(state, message, "supplement", topic_id=topic, job_id=live.job_id,
+                                    event={"chat_id": chat, "content": text})
                 return (f"已并进排队中的任务 #{live.job_id}，它开始时一起处理" if (saved or {}).get("merged")
                         else f"已作为补充交给在做的任务 #{live.job_id}")
             except SteerUncertain:
@@ -218,6 +220,8 @@ class Ops:
                 self.runtime.log(f"web say queued instead job=#{live.job_id}: {exc}")
         append_history(where.history_path, "user", text, {"message_id": message, "chat_id": chat, **({"sender_id": owner} if owner else {})})
         queued = app.submission.enqueue_chat_job(where, text, chat, message, prompt_content=text, sender_id=owner)
+        inbound_ledger.note(state, message, "job" if queued is not None else "not_queued", topic_id=topic,
+                            job_id=getattr(queued, "job_id", None), event={"chat_id": chat, "content": text})
         if queued is None:
             raise ValueError("话题现在排不上这一轮，话已记进历史但没有开始")
         return "已开下一轮"

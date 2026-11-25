@@ -396,6 +396,7 @@
 | `core/history_storage.py` | A topic's history: appending a turn's rows (append_history), reading the latest ones and rounds … |
 | `core/http_upstream.py` | Requests a local relay or gateway sends on to its upstream, and the answer it passes back |
 | `core/ignored_env.py` | Backend parameters the environment no longer sets, and the two whose old values a service must not keep |
+| `core/inbound_ledger.py` | 主人消息的去向: where each message the owner sent went, as one read |
 | `core/jobs.py` | Shared durable job-state helpers for the Feishu bridge scripts |
 | `core/knowledge.py` | 知识条目: short entries the owner asked to be remembered ("记一下"), kept in one place so every Harness reads them … |
 | `core/limit_reset.py` | When a model limit resets, and what a passing server fault looks like, read off Claude Code's own output … |
@@ -616,7 +617,7 @@
 
 ### bin
 
-入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
+入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_inbound.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
 
 改名前的入口名留作转发壳，服务清单、开机钩子和各部署的脚本还在用：`bridge_app_setup.py`、`bridge_doctor.py`、`bridge_main_mcp.py`、`bridge_memguard.py`、`bridge_pairing.py`、`bridge_service.py`、`bridge_service_install.py`、`covey_main_mcp.py`、`lark_app_console.py`、`lark_bridge_maintenance.py`、`lark_bridge_paths.py`、`lark_bridge_workspaces.py`、`lark_feishu_web.py`、`lark_harness_bridge.py`、`lark_install_browser.py`、`lark_task_runner.py`、`lark_workspace_reader.py`。
 <!-- code-map:end -->

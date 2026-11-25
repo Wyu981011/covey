@@ -34,7 +34,7 @@ import sys
 import time
 from pathlib import Path
 
-from covey.app import butler_harness, idle_compaction, butler_relay, pins, project_lead, track_digest, track_standby
+from covey.app import butler_harness, butler_reactions, idle_compaction, butler_relay, pins, project_lead, track_digest, track_standby
 from covey.app.compaction import left_for_idle
 from covey.core.topic_seen import SEEN_FILE
 from covey.app import butler_tracks as tracks_module
@@ -42,7 +42,7 @@ from covey.app.butler_tracks import Tracks
 from covey.app.prompts import first_turn_message, butler_message, resume_message, earlier_history, tool_nudge
 from covey.core import butler as contract
 from covey.core import butler_tracks
-from covey.core import board_read, butler_opened, butler_settings, placement, projects, timing, turn_words
+from covey.core import board_read, butler_opened, inbound_ledger, butler_settings, placement, projects, timing, turn_words
 from covey.core import progress as turn_progress
 from covey.core.board_read import ended_at, topic_label as topic_words
 from covey.core.attachments import message_words
@@ -369,11 +369,18 @@ class Butler:
         except SteerUncertain:
             self.runtime.log(f"main thread supplement uncertain job=#{job.job_id} message={message[-10:]}")
             app.reply(ctx, chat, SUPPLEMENT_UNCERTAIN, app.key("main-supplement", message))
+            inbound_ledger.note(ctx.state_dir, message, "supplement", topic_id=job.topic_id, job_id=job.job_id)
+            return True
         except SteerRefused as exc:
             self.runtime.log(f"main thread supplement queued instead job=#{job.job_id}: {exc}")
             return fresh() if fresh is not None else False
+        inbound_ledger.note(ctx.state_dir, message, "supplement", topic_id=job.topic_id, job_id=job.job_id)
         if target is not None:
             self.tracks.noted("merged", chat, message, ctx=ctx, app=app)
+        elif message.startswith("om_"):
+            # Joined the turn under way with no task card or reply to say so: the message itself does (THUMBSUP, as a
+            # merged one of 同时做几件事 has; docs/usage.md 主人消息的去向). A failure is a log line.
+            butler_reactions.put(app.messenger, ctx.profile, message, butler_reactions.MERGED, "joined", self.runtime.log)
         return True
 
 
