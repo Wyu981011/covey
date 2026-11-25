@@ -553,10 +553,10 @@ class ButlerPanelTests(UnifiedCase):
         self.assertEqual(self.rows(panel_card.PROVIDER), claude['provider'])
         self.assertEqual(self.rows(panel_card.MODEL), claude['model'])  # T615: no 默认.
         self.click(self.option(panel_card.MODEL, 'claude-model'), event_id='c1')
-        # The butler's budgets are the launch card's levels by name (T615): no 推荐, 原生默认 or 默认; the model came
-        # with the level 推荐 names.
-        self.assertEqual(self.rows(panel_card.EFFORT), [o for o in claude['effort'] if o[0] not in NAMELESS])
-        self.assertEqual(claude['effort'][0], (RECOMMENDED, '推荐 xhigh'))
+        # The butler's budgets are the launch card's levels by name (T615; the launch card's too since, docs/ui.md 13 U5):
+        # no 推荐, 原生默认 or 默认; the model came with the level 推荐 names.
+        self.assertEqual(self.rows(panel_card.EFFORT), claude['effort'])
+        self.assertFalse([o for o in claude['effort'] if o[0] in NAMELESS])
         self.assertEqual(self.settings().effort, 'xhigh')
         # 推荐 on a card drawn before is no choice.
         self.click(self.option(panel_card.EFFORT, 'low'), event_id='c2')

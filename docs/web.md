@@ -278,7 +278,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - 部署有代答发送器时多一页 `proxy`（v15）：开关、网页登录、发不出去的原因、模型的几行、白名单（名字、私聊或群 @我、暂停没有、来自哪个群）。名字会进网页应用的库。
   - `ops`（v34）：这个 Covey 收的网页操作（`core/web_sync.py` 的 `KINDS`，就是下面操作表里的那些）。网页只在列着某个操作时才画它的按钮（专项的「收尾」「停止」、记忆的「不对」、定时回看的「取消」）；旧 Covey 不推 `ops`，这些按钮就不画，不会点了才回“不认识的操作”。
 - **`launch`**（v17）：`settings` 条目另带的启动卡选项，用启动卡同一套函数读（`app/web_launch.py` 的 `catalog`）。
-  - `models[]` 按启动卡的菜单顺序，每个带 `key`、`harness`、`harness_title`、`provider`、`provider_title`、`label`、`budgets[]`（各档按名字，和设置卡一样没有“推荐”“模型原生默认”，`app/web_launch.py` 用 `plain_budgets`；`default_budget`、`start_budget`、`preselect.effort` 是其中说得出名字的一档，开始任务和换配置的检查仍认启动卡的整张表，是它的超集）、`default_budget`、`start_budget`（选到这个模型时卡上预选哪一档）、`redaction`（能不能脱敏）、`bridge_tools`（v36：能不能当专项负责人，即它的 Harness 能接 Bridge 工具）、`work_modes` 和 `work_mode_texts`。
+  - `models[]` 按启动卡的菜单顺序（和启动卡一样不列 Claude Code 的“Default (recommended)”，`core/menu_choice.py` 的 `offered_models`），每个带 `key`、`harness`、`harness_title`、`provider`、`provider_title`、`label`、`budgets[]`（各档按名字，和设置卡一样没有“推荐”“模型原生默认”，`app/web_launch.py` 用 `plain_budgets`；`default_budget`、`start_budget`、`preselect.effort` 是其中说得出名字的一档，开始任务和换配置的检查仍认启动卡的整张表，是它的超集）、`default_budget`、`start_budget`（选到这个模型时卡上预选哪一档）、`redaction`（能不能脱敏）、`bridge_tools`（v36：能不能当专项负责人，即它的 Harness 能接 Bridge 工具）、`work_modes` 和 `work_mode_texts`。
   - `workspaces[]`（最近用过的在前，设备上的带 `device` 和那台设备声明的 `harnesses`）、`run_modes[]`、`preselect`（现在开一张启动卡会预选的）。
   - 网页照卡的两条规则联动：换 Harness 或供应商时，当前模型在新范围里就不动，否则取这个顺序里的第一个；换模型时取它的 `start_budget`。
 - **key `tidy`**（v16，开了整理专项时）：网页的“整理专项 · 要你定 N 条”面板读它。

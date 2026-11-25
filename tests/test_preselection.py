@@ -3,11 +3,11 @@ chat's last launch, its latest and usual selections, a rebuilt card's draft, and
 import unittest
 
 from covey.app.preselection import launch_selection, switch_selection
-from covey.core.defaults import RECOMMENDED
 
 SOL = {'': 'gpt56_sol', 'high': 'gpt56_sol_reasoning_high', 'max': 'gpt56_sol_reasoning_max'}
 # available_models' fixed order. Budget options: Opus top_minus_one/max/xhigh/high/default (default top_minus_one);
-# GPT top_minus_one/high/low/default (top_minus_one); Sol max/high/default (none: ''); Flash default only.
+# GPT top_minus_one/high/low/default (top_minus_one); Sol max/high/default (none: ''); Flash default only. The cards
+# list them by name (docs/ui.md 13 U5): what nobody chose preselects the level 推荐 names, xhigh for Opus, high for GPT.
 CHOICES = {
     'claude:opus': {'harness': 'claude', 'model': 'opus', 'levels': ['high', 'xhigh', 'max'], 'recommended': 'xhigh',
                     'redaction': True},
@@ -45,7 +45,7 @@ class LaunchSelectionTests(unittest.TestCase):
         last = {'model_choice': 'maso:gpt56_sol', 'effort': 'max', 'work_mode': 'adaptive', 'workdir': '/absolute/other'}
         self.check([
             ('the binding alone', {},
-             {'model': 'codex:gpt', 'effort': RECOMMENDED, 'work_mode': '', 'workspace': 'project', 'names': NAMES,
+             {'model': 'codex:gpt', 'effort': 'high', 'work_mode': '', 'workspace': 'project', 'names': NAMES,
               'notice': '', 'first': 'claude:opus'}),
             ('a MASO preset binding is its model with that budget', {'model': 'maso:gpt56_sol_reasoning_max'},
              {'model': 'maso:gpt56_sol', 'effort': 'max', 'work_mode': 'focus'}),
@@ -53,11 +53,11 @@ class LaunchSelectionTests(unittest.TestCase):
              {'model': 'maso:gpt56_sol', 'effort': 'max', 'work_mode': 'adaptive', 'workspace': 'other',
               'first': 'maso:gpt56_sol'}),
             ('a later binding keeps its own', {'saved': last, 'usage': used(('claude:opus', 'max', ''))},
-             {'model': 'codex:gpt', 'effort': RECOMMENDED, 'workspace': 'project', 'first': 'claude:opus'}),
+             {'model': 'codex:gpt', 'effort': 'high', 'workspace': 'project', 'first': 'claude:opus'}),
             ('a saved preset key brings its budget', {'fresh': True, 'saved': {'model_choice': 'maso:gpt56_sol_reasoning_high'}},
              {'model': 'maso:gpt56_sol', 'effort': 'high', 'work_mode': 'focus'}),
             ('a saved launch that is no dict is none', {'fresh': True, 'saved': ['maso:gpt56_sol']},
-             {'model': 'codex:gpt', 'effort': RECOMMENDED, 'workspace': 'project', 'first': 'claude:opus'}),
+             {'model': 'codex:gpt', 'effort': 'high', 'workspace': 'project', 'first': 'claude:opus'}),
             ('without a saved launch the latest selection', {'fresh': True, 'usage': used(
                 ('codex:gpt', 'low', ''), ('maso:gpt56_sol_reasoning_high', 'high', 'adaptive'))},
              {'model': 'maso:gpt56_sol', 'effort': 'high', 'work_mode': 'adaptive', 'first': 'maso:gpt56_sol'}),
@@ -81,7 +81,7 @@ class LaunchSelectionTests(unittest.TestCase):
             ('a draft preset key keeps its own budget', {'draft': {'model': 'maso:gpt56_sol_reasoning_max', 'effort': 'high'}},
              {'model': 'maso:gpt56_sol', 'effort': 'max'}),
             ('a draft budget alone', {'draft': {'effort': 'low'}}, {'model': 'codex:gpt', 'effort': 'low'}),
-            ('a draft budget the model lacks', {'draft': {'effort': 'max'}}, {'model': 'codex:gpt', 'effort': RECOMMENDED}),
+            ('a draft budget the model lacks', {'draft': {'effort': 'max'}}, {'model': 'codex:gpt', 'effort': 'high'}),
             ('the draft work mode', {'model': 'maso:gpt56_sol', 'draft': {'work_mode': 'adaptive'}},
              {'model': 'maso:gpt56_sol', 'work_mode': 'adaptive', 'effort': ''}),
             ('a work mode the model lacks is its first', {'model': 'maso:gpt56_sol', 'work_mode': 'turbo'},
@@ -94,7 +94,7 @@ class LaunchSelectionTests(unittest.TestCase):
 
     def test_what_the_menu_still_offers(self):
         self.check([
-            ('a model off the menu gives way to the first', {'model': 'codex:gone'}, {'model': 'claude:opus', 'effort': RECOMMENDED}),
+            ('a model off the menu gives way to the first', {'model': 'codex:gone'}, {'model': 'claude:opus', 'effort': 'xhigh'}),
             ('a model off the menu gives way to the chats most used', {'model': 'codex:gone',
                                                                        'usage': used(('dsh:flash', 'default', ''))},
              {'model': 'dsh:flash', 'effort': 'default', 'first': 'dsh:flash'}),
@@ -107,7 +107,7 @@ class LaunchSelectionTests(unittest.TestCase):
         usual = used(('codex:gpt', 'low', ''), ('codex:gpt', 'low', ''))
         self.check([
             ('a Harness the device lacks gives way to its first declared one', {**device, 'model': 'claude:opus'},
-             {'model': 'codex:gpt', 'effort': RECOMMENDED, 'workspace': 'project', 'first': 'codex:gpt'}),
+             {'model': 'codex:gpt', 'effort': 'high', 'workspace': 'project', 'first': 'codex:gpt'}),
             ('with that models usual budget', {**device, 'model': 'claude:opus', 'usage': usual},
              {'model': 'codex:gpt', 'effort': 'low', 'first': 'codex:gpt'}),
             ('a declared Harness stays', {**device, 'model': 'codex:gpt'}, {'model': 'codex:gpt', 'first': 'claude:opus'}),
@@ -128,7 +128,7 @@ class LaunchSelectionTests(unittest.TestCase):
              {'model': 'claude:opus'}),
             ('the last launch is fitted too', {**device, 'model': 'claude:opus', 'fresh': True,
                                                'saved': {'model_choice': 'claude:opus', 'effort': 'max'}},
-             {'model': 'codex:gpt', 'effort': RECOMMENDED}),
+             {'model': 'codex:gpt', 'effort': 'high'}),
         ])
 
     def test_the_new_topic_default_budget(self):
@@ -142,7 +142,7 @@ class LaunchSelectionTests(unittest.TestCase):
             ('and before the last launch', {**opus, 'fresh': True, 'saved': {'model_choice': 'claude:opus', 'effort': 'max'}},
              {'model': 'claude:opus', 'effort': 'high'}),
             ('the card keeps its own', {**opus, 'draft': {'model': 'claude:opus', 'effort': 'max'}}, {'effort': 'max'}),
-            ('another Harness keeps its own', {'topic_budget': ('claude', 'high')}, {'model': 'codex:gpt', 'effort': RECOMMENDED}),
+            ('another Harness keeps its own', {'topic_budget': ('claude', 'high')}, {'model': 'codex:gpt', 'effort': 'high'}),
             ('a Harness of any', {'topic_budget': ('', 'high')}, {'model': 'codex:gpt', 'effort': 'high'}),
             ('a budget the model lacks', {**opus, 'topic_budget': ('claude', 'low'), 'usage': usual}, {'effort': 'xhigh'}),
             ('a MASO preset keeps its own', {'model': 'maso:gpt56_sol_reasoning_max', 'topic_budget': ('', 'high')},
@@ -158,7 +158,7 @@ class LaunchSelectionTests(unittest.TestCase):
         fresh = {'fresh': True, 'saved': last}
         self.check([
             ('its model over the last launch', {**fresh, 'topic_model': ('claude', 'opus')},
-             {'model': 'claude:opus', 'effort': RECOMMENDED, 'workspace': 'other', 'first': 'claude:opus'}),
+             {'model': 'claude:opus', 'effort': 'xhigh', 'workspace': 'other', 'first': 'claude:opus'}),
             ('with its budget', {**fresh, 'topic_model': ('claude', 'opus'), 'topic_budget': ('claude', 'max')},
              {'model': 'claude:opus', 'effort': 'max'}),
             ('a Harness alone keeps the last model where it is that Harness', {**fresh, 'topic_model': ('codex', '')},
@@ -188,7 +188,10 @@ class LaunchSelectionTests(unittest.TestCase):
              {'model': 'claude:opus', 'first': 'claude:opus'}),
             ('nor the last launch on it', {'choices': native, 'fresh': True, 'topic_model': ('claude', ''),
                                            'saved': last}, {'model': 'claude:opus'}),
-            ('the owner may still pick it', {'choices': native, 'fresh': True, 'saved': last},
+            # The owner's choice A (2026-11-25): the cards list it no more, so a last launch on it gives way too.
+            ('nor a last launch on it with no 新话题 page', {'choices': native, 'fresh': True, 'saved': last},
+             {'model': 'claude:opus', 'effort': 'max'}),
+            ('one tapped on a card sent before stays', {'choices': native, 'draft': {'model': 'claude:default'}},
              {'model': 'claude:default'}),
         ])
 
@@ -216,7 +219,7 @@ class SwitchSelectionTests(unittest.TestCase):
              {'key': 'maso:gpt56_sol', 'effort': 'default'}),
             ('a budget not offered: the usual one', {'effort': 'max'}, used(('codex:gpt', 'high', ''), ('codex:gpt', 'high', '')),
              {'effort': 'high', 'usual': {'codex:gpt': 'high'}}),
-            ('a budget not offered: the default', {'effort': 'max'}, [], {'effort': RECOMMENDED}),
+            ('a budget not offered: the default', {'effort': 'max'}, [], {'effort': 'high'}),
             ('a model off the menu', {'model': 'gone'}, used(('dsh:flash', 'default', '')),
              {'key': 'codex:gone', 'selected': 'dsh:flash', 'effort': 'default', 'usual': {'dsh:flash': 'default'},
               'first': 'dsh:flash'}),
@@ -239,7 +242,7 @@ class SwitchSelectionTests(unittest.TestCase):
     def test_a_redacting_topic_when_no_model_redacts_keeps_its_own(self):
         choices = {key: {k: v for k, v in entry.items() if k != 'redaction'} for key, entry in CHOICES.items()}
         got = switch_selection(choices, [], {'harness_id': 'codex', 'model': 'gpt', 'redaction': True}, [])
-        self.assertEqual((got.selected, got.effort, got.workspace, got.names), ('codex:gpt', RECOMMENDED, '', ['']))
+        self.assertEqual((got.selected, got.effort, got.workspace, got.names), ('codex:gpt', 'high', '', ['']))
 
 
 if __name__ == '__main__':

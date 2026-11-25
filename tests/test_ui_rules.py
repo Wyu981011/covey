@@ -53,9 +53,11 @@ MATRIX = {
     "U11": {"看板": ("digest.board", "digest.board_butler_waiting", "digest.board_stops", "digest.board_empty"),
             "手上的事": ("overview.overview_butler_waiting", "overview.overview_stopped_stuck", "overview.pinned_board"),
             "早晚汇总": ("digest.evening", "digest.three_parts")},
-    "U5": {BUTLER: ("settings.config_butler",), LEAD: ("settings.config_lead", "settings.config_lead_chosen"),
+    "U5": {BUTLER: ("settings.config_butler",), LEAD: ("settings.config_lead", "settings.config_lead_chosen", "switch.card_lead"),
            "独立复核": ("settings.config_review", "settings.config_review_chosen"), "新话题默认": ("settings.config_topics",),
-           "代答": ("proxy.panel",), WEB: ("main_topic.numbered",)},
+           "代答": ("proxy.panel",), WEB: ("main_topic.numbered",),
+           TOPIC: ("launch.codex", "launch.claude_redacting", "launch.maso_expanded", "switch.card", "switch.card_old_record"),
+           "顶层换配置": ("switch.card_top",)},
 }
 # The cards of a conversation (docs/ui.md 10 ③): no conclusion band on any (U1), whatever entry drew them.
 CONVERSATION = ("task.", "question.", "recovery.", "steer.", "switch.", "pages.", "main_task.", "rewind.", "turn_export.",
@@ -234,9 +236,9 @@ class QuestionButtonsTest(unittest.TestCase):
 
 # Words that do not say which model or budget runs (U5).
 NAMELESS = re.compile(r"Default \(recommended\)|模型原生默认|推荐 ?· |推荐 (?:low|medium|high|xhigh|max)|默认模型|模型默认|思考 默认")
-# Where they are still shown until the owner decides (docs/ui.md 13 还没定的): the launch card and the 换配置 card. Each
-# prefix must still match a sample that shows them, or it is taken off here.
-PENDING = ("launch.", "switch.card")
+# Where they are still shown until the owner decides (docs/ui.md 13 还没定的), each prefix still matching a sample that
+# shows them. None now: the launch card and the 换配置 card went the 设置 card's way too (the owner's choice A).
+PENDING = ()
 
 
 def shown_texts(card) -> list:
@@ -284,6 +286,50 @@ class ModelChoiceTest(UnifiedCase):
                 "claude:opus": {"harness": "claude", "display_name": "Opus 5.5"}}
         self.assertEqual(list(explicit(menu)), ["claude:opus"])
 
+    MENU = {"claude:default": {"harness": "claude", "title": "Claude Code", "provider": "anthropic", "provider_title": "Claude 自带",
+                               "display_name": "Default (recommended)", "levels": ["low", "high", "xhigh", "max"]},
+            "claude:opus": {"harness": "claude", "title": "Claude Code", "provider": "anthropic", "provider_title": "Claude 自带",
+                            "display_name": "Opus 5.5", "levels": ["low", "high", "xhigh", "max"], "presets": {"": ""}}}
+
+    def test_the_launch_and_switch_rows_name_theirs(self):
+        """The launch card's and 换配置's rows (cards/launch_config.py model_settings): no "Default (recommended)" unless it is
+        the selected one (a topic bound to it), no 推荐 or 模型原生默认 unless it was chosen before (a topic's binding, a tap
+        on a card sent before: drawn as it was, as the 设置 card draws a saved one); nothing chosen, the level 推荐 names."""
+        from covey.cards.launch_config import model_settings
+        from covey.core.defaults import RECOMMENDED
+        kinds = ("h", "p", "m", "b", "w")
+        for effort in ("", "xhigh"):
+            with self.subTest(effort=effort):
+                rows = {row.key: row for row in model_settings(self.MENU, "claude:opus", kinds=kinds, revision=1, effort=effort)}
+                self.assertEqual([value for value, _ in rows["model"].options], ["claude:opus"])
+                self.assertEqual([text for _, text in rows["effort"].options], ["max", "xhigh", "high", "low"])
+                self.assertEqual(rows["effort"].current, "1:xhigh")
+        for effort in (RECOMMENDED, "default"):
+            with self.subTest(effort=effort):
+                rows = {row.key: row for row in model_settings(self.MENU, "claude:opus", kinds=kinds, revision=1, effort=effort)}
+                self.assertEqual([value for value, _ in rows["effort"].options][:4], ["1:max", "1:xhigh", "1:high", "1:low"])
+                self.assertEqual(rows["effort"].current, f"1:{effort}")
+        kept = {row.key: row for row in model_settings(self.MENU, "claude:default", kinds=kinds, revision=1, effort="")}
+        self.assertEqual([value for value, _ in kept["model"].options], ["claude:default", "claude:opus"])
+
+    def test_a_launch_never_starts_from_the_nameless_model(self):
+        from covey.app.preselection import launch_selection, switch_selection
+        from covey.core.defaults import RECOMMENDED
+        config = {"default": "w", "workspaces": {"w": "/absolute/w"}}
+        saved = {"model_choice": "claude:default", "effort": RECOMMENDED, "workdir": "/absolute/w"}
+        found = launch_selection(self.MENU, [], config, model="claude:default", workspace="w", work_mode="", fresh=True,
+                                 saved=saved)
+        self.assertEqual((found.model, found.effort), ("claude:opus", "xhigh"))
+        picked = launch_selection(self.MENU, [], config, model="claude:opus", workspace="w", work_mode="", fresh=False,
+                                  draft={"model": "claude:default", "effort": "default"})
+        self.assertEqual((picked.model, picked.effort), ("claude:default", "default"))  # Tapped on a card sent before.
+        usual = [{"model": "claude:opus", "effort": RECOMMENDED, "at": 1}]
+        topic = {"harness_id": "claude", "model": "opus", "effort": "default"}
+        self.assertEqual(switch_selection(self.MENU, usual, topic, ["w"]).effort, "default")  # Its binding, as it is.
+        other = {"harness_id": "claude", "model": "gone", "effort": "default"}
+        self.assertEqual(switch_selection({**self.MENU, "claude:gone": {"harness": "claude", "levels": ["high", "xhigh", "max"]}},
+                                          [], other, ["w"]).effort, "default")
+
     def test_the_web_pages_new_topic_names_its_budgets(self):
         from covey.app.web_launch import catalog
         from covey.core.state import write_private_text
@@ -294,6 +340,9 @@ class ModelChoiceTest(UnifiedCase):
         found = catalog(SimpleNamespace(topics=self.app.topics, runtime=self.app.runtime), self.ctx, "oc_owner")
         budgets = [budget["text"] for model in found["models"] for budget in model["budgets"]]
         self.assertTrue(budgets)
+        self.assertNotIn("Default (recommended)", [model["label"] for model in found["models"]], "网页开新话题的模型（U5）")
+        self.assertIn("Opus 5.5", [model["label"] for model in found["models"]])
+        self.assertNotRegex(json.dumps(found["preselect"]), "top_minus_one|claude:default")
         self.assertEqual([text for text in budgets if NAMELESS.search(text)], [], "网页开新话题的思考预算（U5）")
         values = {budget["value"] for model in found["models"] for budget in model["budgets"]}
         self.assertTrue(all(model["start_budget"] in values for model in found["models"] if model["budgets"]))

@@ -369,7 +369,7 @@
 | U2 | 卡片的标题栏只用 `default` 模板，不用彩色（红色）标题栏；属于某个说话人的卡用头像行，不用标题栏 | 标题栏发出去就改不了，状态变了它还是原来的颜色；是谁在说靠头像行认 | 所有卡 | `test_ui_rules.HeaderTest` |
 | U3 | 说话人的卡第一个元素是头像行（第 4 节 `speaker`）：管家、负责人的回答和任务卡，话题的答案卡、回带、问题卡和顶层副本 | 私聊里的消息都是同一个机器人发的，主人靠这一行认是谁、对哪句话 | 管家、负责人、话题、专项的话题 | `test_ui_rules.SpeakerRowTest` |
 | U4 | 问题卡只有两个发送按钮：提交回答（实心、通栏）和不处理（边框、和提交回答并排一样宽）；管家和负责人自己问的没有不处理。单选题每个选项一个按钮，按字宽排：短的并排，放不下换行，有一个长的才一行一个 | 五个按钮太多；选项改成一律一行一个以后，两个短选项画成两条横贯整张卡的长条，当天又改回按字宽排 | 话题、顶层副本、负责人转来的、任务卡上的、管家 | `test_ui_rules.QuestionButtonsTest`、`test_questions.PickRowsTest` |
-| U5 | 模型和思考预算只列说得出是哪一个的：设置卡（管家、负责人、独立复核、新话题默认）、代答页、网页开新话题的思考预算不列 Default (recommended)、“推荐 xhigh”、“模型原生默认”；管家、负责人和网页开的话题，话题卡和答案卡上写出模型名和思考预算。新话题默认的空选项留着，它写明跟到哪个（“跟上次一样：Opus 5.5”） | “默认”看不出是哪一个；设置卡去掉以后，网页开新话题、负责人开的话题又各冒出来一次 | 管家、负责人、网页开的话题、新话题默认、代答 | `test_ui_rules.ModelChoiceTest`、`test_butler_panel.ButlerPanelTests`、`test_proxy_panel.PanelTests`、`test_web_settings.WebSettingsTest`、`test_butler_topics.TopicDefaultsTest` |
+| U5 | 模型和思考预算只列说得出是哪一个的：设置卡（管家、负责人、独立复核、新话题默认）、代答页、启动卡、换配置卡和网页开新话题都不列 Claude Code 的 Default (recommended)、“推荐 · xhigh”、“模型原生默认（不指定）”；以前存下的这几项（上次开始任务、常用的档、话题的绑定、旧卡上的点击）画成它实际跑的那一档，话题正绑在 Default (recommended) 上时换配置卡照旧列出它；管家、负责人和网页开的话题，话题卡和答案卡上写出模型名和思考预算。新话题默认的空选项留着，它写明跟到哪个（“跟上次一样：Opus 5.5”） | “默认”看不出是哪一个；只改一处，别的入口就又冒出来一次（设置卡改完，网页开新话题、负责人开的话题、启动卡和换配置卡先后又出现），所以每个入口一起改 | 管家、负责人、话题、网页开的话题、新话题默认、代答 | `test_ui_rules.ModelChoiceTest`、`test_butler_panel.ButlerPanelTests`、`test_proxy_panel.PanelTests`、`test_web_settings.WebSettingsTest`、`test_butler_topics.TopicDefaultsTest` |
 | U6 | 按钮叫法照第 6 节：不带 emoji，不用“替换掉的写法” | 同一个操作在几张卡上叫法不一，带 emoji 的那批已经全换掉 | 所有卡 | `test_ui_rules.ButtonWordsTest` |
 | U7 | 状态词只用第 3 节的词，不用“不再用的说法” | 同一个状态在不同卡上叫法、颜色不一样 | 对话里的卡、看板类卡、管家读到的词 | `test_glossary.RetiredWordsTest` |
 | U8 | 红字不放在红底上，不用红色标题栏 | 红底配红字刺眼、读不清 | 所有卡 | `test_look.ColourRulesTest` |
@@ -378,6 +378,4 @@
 | U11 | 看板、手上的事、早晚汇总都有结论带：第一眼先说要你处理几件、最急的是哪件，没有就写都在掌握中 | 汇总的卡要有视觉中心，一眼看到结论或要你做的事（第 1 节） | 看板、手上的事、早晚汇总 | `test_ui_rules.BoardBandTest`、`test_look.BoardTest` |
 | U12 | 看板、手上的事、早晚汇总和网页的“要你处理”从同一本等主人的账数，每件恰好一条、能点开它的卡 | 几处各数各的，数字对不上，没发到聊天里的问题卡哪儿都看不到 | 看板、手上的事、早晚汇总、网页 | `test_owner_ledger.LedgerTest`、`test_owner_ledger.ReconcileTest` |
 
-**还没定的**（不在上表，主人定之前照现状）：
-
-- 启动卡、换配置卡的思考预算还列“推荐 xhigh”“模型原生默认”，启动卡、换配置卡和网页开新话题的模型列表还有 Claude Code 的 “Default (recommended)”：当初只改了设置卡（当时写明启动卡不变），U5 也没管到这几处。要不要也去掉，等主人选样张（`test_ui_rules.ModelChoiceTest` 的 `PENDING` 列着这几处，主人定了再改）。
+**还没定的**：现在没有。主人还没拍板、暂时照现状的地方写在这里，对应的测试把它列成例外（如 `test_ui_rules.ModelChoiceTest` 的 `PENDING`），主人定了再改。
