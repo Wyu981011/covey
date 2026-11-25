@@ -548,6 +548,42 @@
    "name": "COVEY_AUTO_UPGRADE",
    "by": "P0-D 工作包（专项「Covey 体验与同事痛点」，T785）",
    "why": "核心自带的定时安全升级：每天这个时间照 upgrade.json 升一次，有任务就推迟、不强切不回滚；不设就没有线程"
+  },
+  {
+   "kind": "tools",
+   "name": "topics_switch",
+   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
+   "why": "管家和负责人批量给话题换配置：只发确认卡，主人点了才换（工作包原文：发卡给主人确认后执行）"
+  },
+  {
+   "kind": "card_kinds",
+   "name": "bridge_batch_switch_confirm",
+   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
+   "why": "批量换配置卡的「确认更换」"
+  },
+  {
+   "kind": "card_kinds",
+   "name": "bridge_batch_switch_cancel",
+   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
+   "why": "批量换配置卡的「取消」"
+  },
+  {
+   "kind": "card_kinds",
+   "name": "bridge_batch_switch_retry",
+   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
+   "why": "批量换配置卡的「再试没换的」：在跑的话题停了之后再换"
+  },
+  {
+   "kind": "settings",
+   "name": "ANTHROPIC_AUTH_TOKEN",
+   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
+   "why": "不是新开关：Claude Code 自己登录用的密钥，只取摘要判断它和某个模型网关是不是同一账号（同一账号不拆成两个供应商）"
+  },
+  {
+   "kind": "settings",
+   "name": "ANTHROPIC_API_KEY",
+   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
+   "why": "同上，Claude Code 用 API key 登录时的变量"
   }
  ]
 }

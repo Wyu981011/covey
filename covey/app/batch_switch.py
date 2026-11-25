@@ -164,9 +164,10 @@ def topics_switch(env, request):
     if not record.get("rows"):
         default = env.topics.apps.get(env.topics.default) or next(iter(env.topics.apps.values()))
         choices = available_models(env.topics, default.models.configured_context(default.harness.context))
-        rows, seen = [], set()
+        rows, seen, ids = [], set(), numbered(env.state_dir, chat, names)
         for name in names:
-            row = plan(env, chat, name, args, lead, choices)
+            row = plan(env, chat, ids.get(name, name), args, lead, choices)
+            row["name"] = name
             if row.get("topic_id") and row["topic_id"] in seen:
                 continue  # The same topic twice.
             seen.add(row.get("topic_id") or row["name"])
@@ -193,6 +194,30 @@ def topics_switch(env, request):
     save(target, {**record, "status": "pending", "message_id": str(sent[0]), "answer": answer})
     env.runtime.log(f"batch switch card sent token={token[:12]} topics={len(ready)} skipped={len(skipped)}")
     return answer
+
+
+def numbered(state_dir, chat, names) -> dict:
+    """{name: topic id} of the names that are T numbers of ``chat``'s topics, in one pass over the topics (app/butler_topics.py
+    ``topic_ref`` reads them all for each number; a batch names up to MOST)."""
+    import re
+
+    wanted = {}
+    for name in names:
+        found = re.fullmatch(r"[Tt]?(\d+)", name)
+        if found:
+            wanted.setdefault(int(found.group(1)), []).append(name)
+    ids = {}
+    if not wanted:
+        return ids
+    for topic_json in (Path(state_dir) / "topics").glob("*/topic.json"):
+        data = read_object(topic_json)
+        number = data.get("topic_number")
+        if type(number) is int and number in wanted and data.get("chat_id") == chat and data.get("topic_id"):
+            for name in wanted.pop(number):
+                ids[name] = str(data["topic_id"])
+            if not wanted:
+                break
+    return ids
 
 
 TOOLS = {"topics_switch": topics_switch}
@@ -230,10 +255,10 @@ class BatchSwitch:
             if token in self.busy:
                 return "batch_switch_busy"
             self.busy.add(token)
-        after_ack(functools.partial(self.decide, ctx, target, kind))
+        after_ack(functools.partial(self.decide, ctx, target, kind, token))
         return {cards.CONFIRM: "batch_switch_confirm", cards.CANCEL: "batch_switch_cancel"}.get(kind, "batch_switch_retry")
 
-    def decide(self, ctx, target, kind) -> str:
+    def decide(self, ctx, target, kind, token) -> str:
         """What the click does, run after its acknowledgement: the outcome ('cancelled', 'switched', 'ignored')."""
         try:
             with resource_lock("batch-switch", target):
@@ -243,6 +268,7 @@ class BatchSwitch:
                     record = {**record, "status": "cancelled"}
                     save(target, record)
                 elif (kind == cards.CONFIRM and status == "pending") or (kind == cards.RETRY and status == "done"):
+                    # (A "running" record here is not this process's: ``busy`` keeps a second click off. It stays as it is.)
                     record = {**record, "status": "running"}
                     save(target, record)
                 else:
@@ -258,7 +284,7 @@ class BatchSwitch:
             return "switched"
         finally:
             with self.lock:
-                self.busy.discard(target.stem)
+                self.busy.discard(token)
 
     def paint(self, ctx, record) -> None:
         if record.get("message_id"):
@@ -277,7 +303,11 @@ class BatchSwitch:
             if row.get("state") not in ("ready", "failed", "switching"):
                 continue
             self.put_row(target, index, state="switching", why="")  # Before the switch: a restart is settled at the next click.
-            state, why = self.switch_one(ctx, chat, row)
+            try:
+                state, why = self.switch_one(ctx, chat, row)
+            except Exception as exc:  # noqa: BLE001 - one topic's trouble: said on its row, the others go on
+                self.runtime.log(f"batch switch failed topic={str(row.get('topic_id'))[:12]}: {type(exc).__name__}")
+                state, why = "failed", f"换的时候出错（{type(exc).__name__}），可能没换成：先在话题里看一眼再试"
             self.put_row(target, index, state=state, why=why)
         with resource_lock("batch-switch", target):
             record = {**read_object(target), "status": "done"}
