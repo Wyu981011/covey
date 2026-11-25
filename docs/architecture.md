@@ -782,7 +782,7 @@ cancelled、superseded：终态
 已实现（`app/butler_asks.py`，`COVEY_PROJECTS=1` 且管家开着；使用者怎么看见见[在话题里说开专项](projects.md#在话题里说开专项)）：
 
 - 话题在这一轮的检查点里写 `ask_butler`：`{ask, why}`，只写要办什么和自己的理解。这条规则（`RULE`）只放进主人发起的那一轮的消息（`offered`）。
-- Bridge 先核对这一轮是主人发起的（`direct`）：任务的消息是 Bridge 收进来的主人消息（飞书消息 `om_…` 的发送者是主人，或网页 `say` 的 `web-…`），来源是旧来源或 `owner`。唤醒轮、协作轮、到点回来看、回答的续接（`answer-…`）、管家和负责人转来的（`main-…`）、自动重试（`app/auto_retry.py` 的计数、`policy_retry`）都不能转交；自动重试写了的，话题串里说一句没转。
+- Bridge 先核对这一轮是主人发起的（`direct`）：任务的消息是 Bridge 收进来的主人消息（飞书消息 `om_…` 的发送者是主人，或网页 `say` 的 `web-…`），或主人自己对这个话题问题的回答（`answer-<token>`，`owner_answer`：问题记录在，回答不是管家的 `question_answer`（`main-…`）也不是负责人的 `project_answer`（`lead-…`、分流记成负责人答了）），来源是旧来源或 `owner`。唤醒轮、协作轮、到点回来看、管家或负责人替主人答的题、管家和负责人转来的（`main-…`）、自动重试（`app/auto_retry.py` 的计数、`policy_retry`）都不能转交；自动重试写了的，话题串里说一句没转。回答转交的，`handover` 的 `origin` 另带问题的 `question`。
 - 核对过的，Bridge 先在私聊顶层发一条机器人的文字消息（“↪ T12 转给管家”“你在 T12 说：<原话>”“T12 的理解：<ask>”），再在这条消息上给管家排一轮（`queue_turn`：`keep_topic`、记成管家的消息、写历史、`enqueue_chat_job`），来源是 `handover`：`asserted_by` 是 `owner`，`recorded_by` 是 `bridge`，`origin` 是那个话题和主人那句话的消息 id，`level` 是 `owner`。`handover` 不进在跑的管家那一轮（`steers` 为假），排在它后面。管家读到的是主人原话（按消息 id 从话题的历史取，`owner_words`；取不到用任务记录），话题的理解只作附注；管家照常判断（规则 `app/prompts.py` 的 `ASKED_RULE`），开专项仍走它自己的工具（`topic_start` 带 `project`），归进已有专项用 `project_send` 的 `topics`。
 - `handover` 在 `RUNS` 里。比兼容基线早的 release 不认识 `turn_source`，照主人的消息跑；兼容基线那一版认识它但不在 `RUNS`，回滚到它时排着的转交轮记为取消、不跑。
 
