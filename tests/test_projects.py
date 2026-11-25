@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from support import UNSET_OFF
 from support import enter_context
 from support.records import state_dir, write_job, write_topic
 
@@ -40,7 +41,7 @@ class Case(unittest.TestCase):
         previous = butler.configure_state(self.state)
         self.addCleanup(butler.configure_state, previous)
         env = {name: value for name, value in os.environ.items() if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}
-        enter_context(self, mock.patch.dict(os.environ, env, clear=True))
+        enter_context(self, mock.patch.dict(os.environ, {**env, **UNSET_OFF}, clear=True))
         if self.flag:
             os.environ[projects.ENV] = self.flag
         self.mode("agent")
@@ -341,7 +342,7 @@ class PredicateTest(Case):
 
 
 class FlagOffTest(Case):
-    flag = ""
+    flag = "0"
 
     def test_every_predicate_is_false_and_cells_are_empty(self):
         lead, thread = self.lead(), self.thread()
@@ -349,7 +350,7 @@ class FlagOffTest(Case):
         self.assertEqual([projects.is_lead_topic(self.state, lead, CHAT), projects.is_member_topic(self.state, thread),
                           butler.is_lead(lead, CHAT), butler.is_butler_topic(lead, CHAT)], [False] * 4)
         self.assertEqual(projects.cells(self.state, CHAT), {})
-        for flag in ("0", "true", "yes", "2"):
+        for flag in ("0", "off", "false", "no"):
             os.environ[projects.ENV] = flag
             self.assertFalse(projects.enabled(), flag)
             self.assertFalse(butler.is_butler_topic(lead, CHAT), flag)
@@ -611,7 +612,7 @@ class BoardTest(Case):
         rows, _ = pins.PinnedTopics(None, None).look(self.state, CHAT, now)
         self.assertEqual(sorted(row["topic"] for row in rows), sorted([LEAD, "cd" * 16]))
         self.assertEqual({row["topic"]: row["record"]["job_id"] for row in rows}[LEAD], 1)  # Ended last.
-        os.environ[projects.ENV] = ""
+        os.environ[projects.ENV] = "0"
         rows, _ = pins.PinnedTopics(None, None).look(self.state, CHAT, now)
         self.assertEqual(sorted(row["topic"] for row in rows), sorted([self.T1, self.T2, "cd" * 16]))
 

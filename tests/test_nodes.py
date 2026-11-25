@@ -407,7 +407,7 @@ class AlertsTest(unittest.TestCase):
         self.runtime = Runtime()
         self.runtime.access = Access()
         self.messenger = FakeMessenger()
-        self.alerts = node_alerts.NodeAlerts(self.runtime, self.messenger, Voice(), environ={"COVEY_NODE_LISTEN": "1"})
+        self.alerts = node_alerts.NodeAlerts(self.runtime, self.messenger, Voice(), environ={"COVEY_NODE_LISTEN": "1", "COVEY_QUIET_HOURS": "off"})
         nodes.claim(self.ctx.state_dir, nodes.open_join(self.ctx.state_dir, "box", "盒子"), {})
 
     def event(self, kind, rule="mem", **more):

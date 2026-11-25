@@ -26,7 +26,7 @@
 
 ## 路由的细节
 
-- **补充**：有任务没结束时，新消息用 `deliver_steer` 并进最新一轮，不发回执卡（开了[同时做几件事](butler.md#同时做几件事开关默认关)时，并进哪件在做的事由分流定）。可能已送达的不重发（规则 6），在主人消息下说一句；卡上已列出的不再各说（`TurnDelivery.listed`）。
+- **补充**：有任务没结束时，新消息用 `deliver_steer` 并进最新一轮，不发回执卡（开了[同时做几件事](butler.md#同时做几件事)时，并进哪件在做的事由分流定）。可能已送达的不重发（规则 6），在主人消息下说一句；卡上已列出的不再各说（`TurnDelivery.listed`）。
 - **收尾时发来的消息**：确定这一轮没读到的补充（held 后被拒，或已发出但 Claude 到结束都没报告读取），自动排成管家的新一轮，和主人刚发一条新消息一样：同一个 message_id 作为这一轮的请求，放置、表情和回答都落在它上面，不说 `SUPPLEMENT_LOST`。不确定的、主人停止的一轮照旧说一句；排队出错的不再排，说一句 `SUPPLEMENT_UNCERTAIN`。做法（`requeue`、`requeue_auto`、任务进程退出时和 Bridge 重启后的补排）见[架构 · 补充投递](architecture.md#补充投递)。
 - **等主人的话**：转发框里的留言会在转发后一两秒单独发来。没有任务时，没有自己文字的消息（`bare_message`：卡片、合并转发、图片、文件、只有链接）照常入队，但 `start_held_until` 设成 30 秒后（`HOLD_SECONDS`）。这期间主人的文字经 `merge_before_start` 并进请求并立即放行，写进 `asked_text`；到点没等到就开工。这个时间不存盘。
 
@@ -34,7 +34,7 @@
 
 `butler_message` 每一轮都重新拼规则，放在这一轮用户消息的开头，续接的会话也一样。所以服务带着变量重新注册之后，管家的下一个聊天轮就用新规则。已经在跑的那一轮用旧规则；续接的会话里以前各轮的消息开头还带着旧规则的原文，压缩之前模型会同时看到新旧两条，以最近一轮的为准。想立刻干净，让管家压缩一次或换新会话。
 
-`topic_start` 的工具说明里同样的话也换了（`core/butler_tool_specs.py` 的 `START_BUTLER`；`core/butler.py` 的 `mcp_config` 把 `COVEY_BUTLER_RULES` 一并交给 MCP 子进程）。关着时规则、提示词和原来逐字节相同（`tests/test_butler_rules.py`、`tests/golden/butler_prompt.txt`）。
+`topic_start` 的工具说明里同样的话也换了（`core/butler_tool_specs.py` 的 `START_BUTLER`；`core/butler.py` 的 `mcp_config` 把 `COVEY_BUTLER_RULES` 一并交给 MCP 子进程）。设成 `0` 时规则和提示词回到只读的自己做完那一版的原文（`tests/test_butler_rules.py`、`tests/golden/butler_prompt.txt`）。
 
 ## 同时做几件事的细节
 
@@ -43,7 +43,7 @@
 - **表情**：排在忙的那一路后面的消息挂“排队中”，开跑时换成 OnIt；并进成功的消息挂“并进”，主人引用它说“单独答”时摘掉、另起一件。
 - **别的几路答了什么**：每一路是分叉，它答了什么不在管家自己的会话里；管家的下一轮开头多一块“另外几件事这段时间答了什么”（12 小时内、最多 8 条），新开的那一路也带上，所以管家记得住。账本保留 7 天。
 
-底座（槽、分叉点、家族谓词）和运行时（分流规则、小模型的待命进程、选槽、账本、表情和停止的做法）见[架构 · 管家同时做几件事](architecture.md#管家同时做几件事默认关)。
+底座（槽、分叉点、家族谓词）和运行时（分流规则、小模型的待命进程、选槽、账本、表情和停止的做法）见[架构 · 管家同时做几件事](architecture.md#管家同时做几件事)。
 
 ## 提问不开串的细节
 
@@ -81,7 +81,7 @@
 `core/placement.py`：布局 × 角色 → 格子 `Row`。调用处只读格子；只有这一轮知道的事（开没开话题、多快、是不是主人自己停的）留在调用处。
 
 - **布局**（`layout()`）：管家开着是 `area`（话题挂在提问下面），否则 `topics`。
-- **角色**（`ROLES`）：`butler`（`BUTLER`、`BUTLER_OFF`）、`topic`；`COVEY_PROJECTS=1` 时再有 `lead`（`LEAD`、`LEAD_OFF`）和 `project_member`（读 `topic.json` 的 `project.role`），见[架构 · 专项](architecture.md#专项第-2-期开发中默认关)。
+- **角色**（`ROLES`）：`butler`（`BUTLER`、`BUTLER_OFF`）、`topic`；专项开着时再有 `lead`（`LEAD`、`LEAD_OFF`）和 `project_member`（读 `topic.json` 的 `project.role`），见[架构 · 专项](architecture.md#专项)。
 - **位置**：`TOP` 聊天区新消息、不引用任何卡；`THREAD` 上下文的回复目标（话题串）；`NONE` 不发。
 - `plan(state_dir, of)` 返回 `Placement`（`traits`、`layout`、`role`、`row`）。
 
@@ -123,7 +123,7 @@
 
 ## 工具的细节
 
-- **专项**（`COVEY_PROJECTS=1` 时，Bridge 把它交给 MCP 服务）：管家的清单多出 `projects_list`、`project_send`（`app/butler_projects.py`），`topic_start`、`topic_send` 各多一个可选的 `project`。
+- **专项**（专项开着时，Bridge 把它交给 MCP 服务）：管家的清单多出 `projects_list`、`project_send`（`app/butler_projects.py`），`topic_start`、`topic_send` 各多一个可选的 `project`。
   - `topic_start` 带 `project: true` 不开话题，开一个专项（`Projects.start`：记录、负责人话题、专项卡、`start` 回执），`title` 是专项名，`prompt` 是目标和完成标准，主人要收进来的已有话题放 `topics`（T 号的数组），挂进专项、不打断它们，挂不上的回复里逐个说原因。
   - `topic_send` 带 `project: true` 是管家判断这个话题要转成专项（主人要长期跟进、分成几个话题持续推进，或直接说“转成专项”；拿不准不带），`COVEY_PROJECT_UPGRADE` 不是 `off` 才生效。
   - 专项的话题不接 `topic_send`，回一句改用 `project_send`；`project_send` 的 `pid` 写 id、id 的开头或名字里的几个字，在跑的负责人那一轮收到补充，没有就开它的下一轮（消息 id `main-…`，算主人触发的一轮）。带 `topics` 时先把这些已有话题收进专项（`take_topics`：同 `topic_start` 的 `topics` 用 `wanted_topics` 查，`join_topic` 的 `by` 是 `butler`），回复逐个写收进的和没收进的。
@@ -196,22 +196,22 @@
   - 新会话的规则和续接会话的提醒都整块带，开着时代替原来分开的原则块、知识条目块和专项记忆块。每轮带了哪几条记进任务记录的 `memory_ids`。
 - **标出处**：原则、知识条目算“你说的”；专项记忆来源 `owner`、`owner_answer`、`owner_fix` 算“你说的”，`lead` 和其他算“它总结的”；话题记忆只有主人的话。专项的条目按 `core/memory.py` 的 `describe` 读来源（`asserted_by`、`recorded_by`、`origin`，等级只由 `core/turn_source.py` 的 `provenance` 算）和层，另标这一轮带它的那段（长期约定、当前决定、待核对参考），带着专项记忆的版本和上一轮之后作废的几条（`project_view`，负责人的状态包也这样读）。块后面跟五句规则（`MEMORY_RULES`）：谁说了算的顺序；“它总结的”默认照做、和主人的话冲突时让路；“它总结的”不能成为多问主人的理由；和 Harness 自己记的冲突以这里为准；主人已经同意的事不再问。有专项的条目时再跟两句（`MEMORY_LAYER_RULES`）：三段各是什么、当前决定只管那道题问的范围，待核对参考不能单独作为替主人答题的依据。来自开了脱敏的话题的条目只带给开了脱敏的话题。
 - **纠正落地**：触发词是“以后、每次、别再、不要再、记住、再也不要、从现在起”，规则段是 `MEMORY_FIX_RULE`；检查点里 `memory: [{quote, text}]` 至多 3 条，另可写 `memory_void: [{id, quote}]`。
-  - 一轮结束后 Bridge（`app/memory_collect.py`）核对：`quote` 必须是主人这一轮原话里的一段；`memory_void` 的编号必须是这一轮带过的、“它总结的”的专项记忆，才作废；新条目按最窄范围记成“你说的”：话题属于专项就记专项，不属于就记这个话题。`COVEY_KNOWLEDGE=1` 且这一轮本来就记知识条目时，“记住”“记一下”归知识条目。
+  - 一轮结束后 Bridge（`app/memory_collect.py`）核对：`quote` 必须是主人这一轮原话里的一段；`memory_void` 的编号必须是这一轮带过的、“它总结的”的专项记忆，才作废；新条目按最窄范围记成“你说的”：话题属于专项就记专项，不属于就记这个话题。知识条目开着且这一轮本来就记知识条目时，“记住”“记一下”归知识条目。
   - 结果写进任务记录的 `memory_notes`，答案卡底部每条一行灰字：“记下了：… · 管这个专项”带“不对”按钮（`bridge_memory_wrong`，不建任务），“作废了：…”。点“不对”撤销那一条（墓碑），这一行改成“已撤销：…”。
 - **设置卡「记忆」**（`app/memory_panel.py`、`cards/memory_panel.py`，开着记忆才有这个标签）：预览用的是和每轮一样的 `items`、`fill`、`select` 与 `memory_block`，场景是选中工作区里新开的普通话题、主人自己的一轮（所以只有全局和工作区两组）；列表另列各专项（没取消的）和各话题（任务记录 `memory_notes` 里有“管这个话题”的）的条目。删除走各自原来的路：原则 `delete`、知识条目 `drop`（原因写“主人在设置卡「记忆」里删掉”）、专项和话题记忆的墓碑。按钮的 `key` 是 `principle:<id>`、`knowledge:<id>`、`project:<专项>:<id>`、`topic:<话题>:<id>`；点击只认主人，先改存储再在应答之后整卡重画，同一次点击重投只算一次。
 - **还没有的**：全局产物索引、网页上的记忆页；负责人的话题不经这一块读专项记忆，它的状态包每一轮带同一份（`project_view`）。按需查和问之前先查是[记忆自己长](#记忆自己长)的事，开关关着时没有。
 
 ### 记忆候选
 
-每天一次，只提议（`app/memory_candidates.py`，`COVEY_MEMORY=1` 且设了 `COVEY_DIGEST_TIMES`，晚间汇总那一刻做，`app/digest.py` 的 `daily`）：
+每天一次，只提议（`app/memory_candidates.py`，记忆和早晚汇总都开着，晚间汇总那一刻做，`app/digest.py` 的 `daily`）：
 
 - **读什么**：那个时间点之前 24 小时里结束的轮次，只读普通话题里主人自己那一轮的 `user_text`（不读管家话题、代答话题、管家转交的轮次，不读开了脱敏或读不出设置的话题）；按句切开，只留带纠正字眼的句子（`CUES`：记忆的触发词，加上“不要、别、不是、应该、说过、又、总是、必须、记得、先”等），每个话题最多 6 句，一共最多 40 句。少于两个话题有这样的句子就不往下做。
-- **谁来分组**：小模型（和 `app/patrol_judge.py` 一样经 `app/track_judge.py` 的 `ask`：设了网关问网关，有 Claude Code 时是 Haiku，经 Claude Harness 自己的包装起一次性的 Claude Code，没有时问 Codex 或 Antigravity 自己的命令行；没有工具，最多 30 秒）。输入是句子（带 T 号）、已有的原则和主人说过“不用”的；要它找出在两个以上不同话题里说过的同一个纠正，每个写成一句以后都适用的话，最多 3 条，拿不准就不写。回答要能对上句子编号、跨两个以上话题才算。哪个都没有或调用失败时退回规则：不同话题里几乎一样的句子（`core/topic_gist.py` 的 `same_essence`）算一组，取最短的那句。和已有原则意思相同（`same_key`）或被说过“不用”的不再提。
+- **谁来分组**：小模型（和 `app/patrol_judge.py` 一样经 `app/track_judge.py` 的 `ask`：有 Claude Code 时是 Haiku，经 Claude Harness 自己的包装起一次性的 Claude Code，没有时问 Codex 或 Antigravity 自己的命令行；没有工具，最多 30 秒）。输入是句子（带 T 号）、已有的原则和主人说过“不用”的；要它找出在两个以上不同话题里说过的同一个纠正，每个写成一句以后都适用的话，最多 3 条，拿不准就不写。回答要能对上句子编号、跨两个以上话题才算。哪个都没有或调用失败时退回规则：不同话题里几乎一样的句子（`core/topic_gist.py` 的 `same_essence`）算一组，取最短的那句。和已有原则意思相同（`same_key`）或被说过“不用”的不再提。
 - **怎么定**：每个时间点只找一次（记录的 `ran`），找到的写进 `<state>/memory-candidates.json`（`rows`：id、话题、T 号、工作区、状态 `open|saved|declined`），汇总卡上每条一个「记下」一个「不用」（`bridge_digest_remember`，只认主人）。「记下」调 `core/principles.py` 的 `save`：来源话题都在一个工作区就记成那个工作区的原则，否则通用，来源写 `memory_candidates`；这一组满了时这一条留着没定，卡上写怎么腾地方。「不用」把这句的 `same_key` 记进 `declined`。点完在应答之后照汇总卡保存的样子重画，已定的那条换成灰字。模型调用和飞书调用都不在记录的锁里。
 
 ### 记忆自己长
 
-`COVEY_MEMORY_LEARN=1` 且 `COVEY_MEMORY=1`（`core/memory.py` 的 `learning`）；关着时下面这些都没有，规则、记录和卡片与没有它时逐字相同。
+`COVEY_MEMORY_LEARN=1` 且 `COVEY_MEMORY` 开着（`core/memory.py` 的 `learning`）；关着时下面这些都没有，规则、记录和卡片与没有它时逐字相同。
 
 - **每轮之后**（`app/memory_learn.py` 的 `after_turn`，在 `app/detached.py` 的 `after_job` 里、`memory_collect.collect` 之后跑，规则 8）：
   - 先记用到的：检查点 `memory_used` 里的编号和回复（`final_text`）里提到的编号，对上这一轮的 `memory_ids` 才算，写进 `core/memory_usage.py`（`<state>/memory-usage.json`：ref → 次数、最后一次，最多 2000 个），任务记录记一次 `memory_used`（ref 列表），之后不再记。
@@ -248,7 +248,7 @@
 
 ## 派发卡
 
-开关和用途见 butler.md [派发卡](butler.md#派发卡开关默认关)。
+开关和用途见 butler.md [派发卡](butler.md#派发卡)。
 
 - **内容**（`cards/dispatch_card.py` 的 `dispatch_card`）：提问串里的卡（记录 `in_thread`，`Dispatch.threaded`）：卡头 = 话题的 T 号和标题（前 30 字）+ 状态标签（在做、等你、做完、失败、已停），没有“你问”块（串根就是提问）；一行灰字“12:41 起 · 用时 2分05秒”；折叠面板“进度 · 工作区”；卡的摘要（串在聊天区的预览）“T12 在做 · 标题”。顶层的卡（带 `project` 的、旧记录）：卡头 = 主人请求的前 30 字 + 状态标签，顶上是“你问”块；一行灰字“T12 · 12:41 起 · 用时 2分05秒”；折叠面板（标题行 T 号 + 话题标题 + 工作区）。折叠面板在做和等你时展开，里面是当前步骤或阶段；输入/输出灰框；补充、停止、打开话题三个按钮，能用的才画（补充和停止只在“在做”且已有任务时，等你时回答在话题里的问题卡上）。卡里**没有输入框**（会刷新的卡不放输入框，见 [cards.md](cards.md) 卡片的客户端限制）。
 - **创建**（`app/dispatch_cards.py` 的 `created`）：已有话题接了 `topic_send` 的活之后发出，回复到主人的提问、进它的串（`card_publish.publish` 的 `reply_to`；管家布局下回复管家的消息就是进串，`feishu/message_request.py` 的 `reply_in_thread`），记录写 `in_thread: true`；带 `project` 的照旧发在顶层。提问已被别的话题占了（`message_topic` 不是管家一家：同一轮的 `topic_start` 先拿去当根）时不发（日志 `dispatch card skipped … the question's thread is another topic's`）。`topic_start`、`topic_fork` 不调（`app/butler_topics.py` 的 `dispatch_card`：开出的话题挂在提问下面或自己的话题卡在顶层）；提问的串里已有派发卡时，同一轮后开的话题不占这个串（`place` 看 `core/dispatch_records.py` 的 `threaded`）。记 `route_message`，主人引用这张卡说话进那个话题；在串里不引用卡直接发的，串根是提问、归管家（`app/butler.py` 的 `app_for`）。同一个请求只发一张。补充送进正在跑的任务时：话题里已有一张正跟着这一轮的派发卡，不再发新卡（日志 `dispatch card kept`）；这一轮是 `topic_start`、`topic_fork` 排的（消息 id 是 `main-` 加它们请求的 token，`opened_turn`），也不发（日志 `dispatch card skipped`：它在自己的串里，回带的便条也只记到它自己的请求上）。发不出去只记日志，话题已经接了活。旧版本为开话题发的派发卡（记录 `kind` 是 `start`、`fork`）照常刷新、沉底。

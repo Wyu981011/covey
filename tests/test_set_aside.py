@@ -214,7 +214,6 @@ class OthersWaitingTest(SetAsideFixture, unittest.TestCase):
         self.drawn = []
         self.app.questions.paint_standalone_question = lambda ctx, record: self.drawn.append(record)
         self.enterContext(mock.patch.object(self.app.runtime.access, "notify_chat", return_value="oc_chat"))
-        self.env = self.enterContext(mock.patch.dict(os.environ, {"COVEY_BOARD": ""}))
 
     def other(self, token="other", chat="oc_chat", status="pending"):
         """Another topic's question, asked a moment ago."""
@@ -227,7 +226,6 @@ class OthersWaitingTest(SetAsideFixture, unittest.TestCase):
     def test_a_question_set_aside_says_how_many_others_wait_and_offers_the_board(self):
         self.other("a")
         self.other("b")
-        self.env["COVEY_BOARD"] = "1"
         self.click()
         self.assertEqual(self.drawn[-1][OTHERS], {"n": 2, "board": True})
         self.assertEqual(self.drawn[-1][OTHERS]["n"], self.waiting())  # The very count 手上的事 and the 看板 say.
@@ -237,12 +235,12 @@ class OthersWaitingTest(SetAsideFixture, unittest.TestCase):
         self.assertEqual([e["text"]["content"] for e in opener], ["去看板"])
         self.assertNotIn(OTHERS, self.saved())  # Never saved: a later paint counts again.
 
-    def test_without_the_board_the_line_has_no_button_and_with_nothing_else_waiting_there_is_no_line(self):
+    def test_the_line_always_has_the_board_button_and_with_nothing_else_waiting_there_is_no_line(self):
         self.other("a")
         self.click()
         card = json.dumps(question_card(self.drawn[-1], "T70"), ensure_ascii=False)
         self.assertIn("还有 1 件等你", card)
-        self.assertNotIn(OPEN_KIND, card)
+        self.assertIn(OPEN_KIND, card)  # 看板 is always in the bot.
         self.click(RESTORE_KIND, "ev-undo")  # Open again: no line on a form.
         self.assertNotIn("件等你", json.dumps(question_card(self.drawn[-1], "T70"), ensure_ascii=False))
         self.other("a", status="answered")  # Answered meanwhile.

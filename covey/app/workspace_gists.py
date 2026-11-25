@@ -32,10 +32,15 @@ DAYS = 14  # Topics with a job of the workspace within this many days.
 ESSENCE, GOAL = 80, 100  # Characters of each topic's essence and goal in the block.
 
 
+DEFAULT = 3  # Unset.
+
+
 def count(environ=None) -> int:
-    """How many recent topics a new topic carries: COVEY_WORKSPACE_GISTS as a whole number from 1 to MAX; 0 (off)
-    unset, 0, or anything else."""
+    """How many recent topics a new topic carries: COVEY_WORKSPACE_GISTS as a whole number from 1 to MAX; DEFAULT unset
+    or empty; 0 (off) for 0, off and anything else."""
     raw = str(cenv.get(ENV, "", environ) or "").strip()
+    if not raw:
+        return DEFAULT
     return int(raw) if raw.isdigit() and 1 <= int(raw) <= MAX else 0
 
 

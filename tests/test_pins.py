@@ -518,13 +518,13 @@ class RoundTests(UnifiedCase):
     def test_off_unless_both_switches(self):
         (self.state / pins.RECORD).unlink()
         self.job("a", 1, topic="t1")
-        with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: ""}):
+        with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: "0"}):
             self.overview.tick(self.ctx, NOW)
             self.assertEqual(self.feishu.calls, [("pin", "om_index1")])  # The index card's own pin only.
             self.assertFalse((self.state / pins.RECORD).exists())
             card = self.app.messenger.create_and_send_card.call_args.args[2]
             self.assertNotIn("Pin 着", json.dumps(card, ensure_ascii=False))
-        with mock.patch.dict(os.environ, {overview.ENV: ""}):
+        with mock.patch.dict(os.environ, {overview.ENV: "0"}):
             self.assertNotIn("overview", dict(self.app.worker_targets()))
 
 

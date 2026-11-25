@@ -42,7 +42,7 @@ SERVICE_ROOT="$(python3 -B bin/covey_paths.py service-root)"
       │   ├─ im.message.receive_v1          收消息
       │   ├─ card.action.trigger            卡片点击
       │   ├─ application.bot.menu_v6        机器人菜单（可选订阅）
-      │   └─ im.message.message_read_v1     已读（只在 COVEY_PINNED_TOPICS=1 时）
+      │   └─ im.message.message_read_v1     已读（COVEY_PINNED_TOPICS 没关时）
       ├─ 后台线程：scheduler、cards、menu、maintenance、connections、availability、outbox、policy，
       │   加上打开了的功能各自的后台线程（proxy、overview、digest、main-tools、app-setup 等）
       └─ 任务进程：bin/covey_runner.py，每个任务一个，在自己的会话里运行
@@ -155,7 +155,6 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ session_index.jsonl、system-rules-sessions/、native-session-guards/   会话指针与续接保护
 │  ├─ job-diffs/                   每轮的差异报告
 │  ├─ artifact-drive/、artifact-deliveries/、artifact-upload/   产物上传到云空间的记录和中转
-│  ├─ turn-exports/                “下载请求与结果”的打包记录
 │  └─ policy-stops/、policy-inbox/、policy-source*.json   官方拒绝的停止记录（见 policy-stop.md）
 ├─ 卡片与表单
 │  ├─ cards/                       卡片锁（.locks/）
@@ -169,7 +168,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ workspace-config.json        工作区列表和默认工作区
 │  ├─ groups/                      每个主人 @ 过机器人的群：是否外部群、是否对成员开放、免@
 │  ├─ principles.json              主人的原则（管家的工具写）
-│  ├─ knowledge/                   知识条目（`COVEY_KNOWLEDGE=1` 才有）：`owner.jsonl`/`.md`、`workspaces/<工作区>.jsonl`/`.md`、`owner-brief.md`
+│  ├─ knowledge/                   知识条目（`COVEY_KNOWLEDGE` 没关才有）：`owner.jsonl`/`.md`、`workspaces/<工作区>.jsonl`/`.md`、`owner-brief.md`
 │  ├─ main-thread.json             私聊模式和管家设置，子 Agent 的模型 `subagents`（`COVEY_BUTLER=0` 时设置卡没有它，默认 `light`，要跟主模型手写 `"same"`）
 │  └─ redaction/                   脱敏词表、看板口令、每轮替换数
 ├─ 可选功能
@@ -181,7 +180,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ revisits/                    到点回来看（`COVEY_REVISIT`）：每个话题一个，几点回来看、看什么、排出的那一轮
 │  ├─ limit-notices/               几个话题同一原因停下的合并提示（`COVEY_LIMIT_NOTICE`）：每组一个，发没发过
 │  ├─ digest.json                  早晚汇总
-│  ├─ memory-candidates.json       晚间汇总里“你反复说的”候选和主人点的「记下」「不用」（`COVEY_MEMORY=1`）
+│  ├─ memory-candidates.json       晚间汇总里“你反复说的”候选和主人点的「记下」「不用」（`COVEY_MEMORY` 没关）
 │  ├─ memory-usage.json、memory-tidy.json、memory-harvest.json   记忆自己长（`COVEY_MEMORY_LEARN=1`）：每条记忆最后一次被用到的时间、每晚整理记忆收起了什么（撤销用）、读过的 Codex 和 Claude Code 自己的记忆
 │  ├─ projects/                    专项（`COVEY_PROJECTS`）：`<专项>.json`；`<专项>/` 里是记忆 `memory.json`、资料库索引 `library.json` 和复制的文件 `library/`、收件箱 `inbox/`；整理专项的记录 `tidy/`
 │  ├─ owner-send/                  代发的草稿和发送记录
@@ -285,7 +284,7 @@ python3 -B bin/covey_devices.py --state-dir "$STATE_DIR" list                 # 
 
 ### Harness 能不能调通
 
-`core/harness_probe.py` 的 `probe(名字)` 对 Claude 跑 `claude -p`、对 Codex 跑 `codex exec`（短超时，一次最便宜的问法），返回 `ok`、`reason`（`ok|not_installed|not_logged_in|network|timeout|other`）和 `detail`。安装器、`covey_doctor --probe-harnesses` 用它；`covey_doctor` 不带参数时只读缓存（`<数据根>/harness-probe/<名字>.json`，通过 6 小时、失败 10 分钟，换了命令或代理设置作废）。Bridge 里默认不探测，设 `COVEY_HARNESS_PROBE=1`（可写进服务清单）后，可用性检查把结果放进健康检查的 `model_access.preflight.<名字>.probe`，缓存里是“没登录”的 Harness 在启动卡上不可用（沿用现有的“模型后端尚未登录”提示），网络、超时等不挡任务。
+`core/harness_probe.py` 的 `probe(名字)` 对 Claude 跑 `claude -p`、对 Codex 跑 `codex exec`（短超时，一次最便宜的问法），返回 `ok`、`reason`（`ok|not_installed|not_logged_in|network|timeout|other`）和 `detail`。安装器、`covey_doctor --probe-harnesses` 用它；`covey_doctor` 不带参数时只读缓存（`<数据根>/harness-probe/<名字>.json`，通过 6 小时、失败 10 分钟，换了命令或代理设置作废）。Bridge 里的可用性检查不做真实调用，只看本机命令和登录；`COVEY_HARNESS_PROBE` 这个开关已经没有了。
 
 ### 问题卡问得多不多
 
@@ -378,9 +377,9 @@ Bridge 的 maintenance 后台线程每小时检查一次（`core/maintenance.py`
 | 同时做几件事里这些事用过的 Claude 会话文件 | 按 `main-thread/tracks/` 账本里的 `session_id`，那一轮结束满 3 天、文件 3 天没改没读的删（`remove_track_sessions`）；不在账本里的不动 |
 | `runs/` 运行目录 | 任务进程已不在、最新文件早于 7 天的删除；任务记录和执行过程保留 |
 | 代答批次 `proxy/batches/` | 只删已结束且 30 天没改动的 |
-| 专项记录 `projects/`（`COVEY_PROJECTS`，开发中） | 只删状态是 `done` 或 `cancelled` 且 180 天没改动的，连同它的 `projects/<id>/` 目录（`remove_projects`）；`active`、`paused` 的不动 |
+| 专项记录 `projects/`（`COVEY_PROJECTS`） | 只删状态是 `done` 或 `cancelled` 且 180 天没改动的，连同它的 `projects/<id>/` 目录（`remove_projects`）；`active`、`paused` 的不动 |
 | 主动记录 `patrol/candidates/`、`patrol/decisions/`（`COVEY_PATROL`） | 日文件 14 天没改动的删（`remove_patrol`）；`state.json` 不动 |
-| 专项的记忆和资料库 `projects/<id>/memory.json`、`library/`（`COVEY_PROJECT_MEMORY`，开发中） | 已结束（做完、已取消）的专项，记忆条目写下 180 天后删（含墓碑，风格行留着，`trim_project_memory`；在做和停住的不动）；专项 `done` 且记录 30 天没改动后，资料库的文件删掉、索引留着名字和 sha256（`purge_project_files`）；单个专项的文件超过 200 MiB 时从最旧的删（话题的产物在前，主人发的文件在后）。备份收专项记录、记忆和资料库索引，不收资料库复制的文件 `library/` |
+| 专项的记忆和资料库 `projects/<id>/memory.json`、`library/`（`COVEY_PROJECT_MEMORY`） | 已结束（做完、已取消）的专项，记忆条目写下 180 天后删（含墓碑，风格行留着，`trim_project_memory`；在做和停住的不动）；专项 `done` 且记录 30 天没改动后，资料库的文件删掉、索引留着名字和 sha256（`purge_project_files`）；单个专项的文件超过 200 MiB 时从最旧的删（话题的产物在前，主人发的文件在后）。备份收专项记录、记忆和资料库索引，不收资料库复制的文件 `library/` |
 | 锁文件 `.locks/` | 记录已不存在或 7 天未改动的删除；`cards/.locks/` 里没人持有的都删 |
 | `job-diffs/` | 超过 30 天的删除；总量超过 200 MiB 时从最旧的删，但只删云空间上传已确认的，一天内写的不删 |
 | 备份 | 最多 7 份、合计不超过 400 MiB，超出时从最旧的删，最新一份总保留；重启打断留下的 `.tmp` 一天后删 |

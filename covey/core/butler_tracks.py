@@ -16,17 +16,18 @@ import functools
 import hashlib
 
 from covey.core import env as cenv
+from covey.core.process_env import env_flag
 
-ENV = "COVEY_BUTLER_TRACKS"  # ``1``: on; anything else, unset too: off.
+ENV = "COVEY_BUTLER_TRACKS"  # On unset; 0/off/false/no: off.
 MAX_ENV = "COVEY_BUTLER_TRACKS_MAX"  # How many tracks may run at once, 2 to 4: see ``limit``.
 SLOTS = 4  # Slots 1..SLOTS besides slot 0: the most tracks a deployment can have.
 DEFAULT_LIMIT, MIN_LIMIT, MAX_LIMIT = 3, 2, 4
 
 
 def enabled() -> bool:
-    """Whether COVEY_BUTLER_TRACKS=1 (only ``1``; read on every call). Whether the butler itself is on is
-    core/butler.py ``enabled``: with it off a slot is still no topic, and nothing starts a track."""
-    return str(cenv.get(ENV, "")).strip() == "1"
+    """Whether COVEY_BUTLER_TRACKS is on: unset or anything but 0/off/false/no (read on every call). Whether the butler
+    itself is on is core/butler.py ``enabled``: with it off a slot is still no topic, and nothing starts a track."""
+    return env_flag(ENV, True)
 
 
 def limit() -> int:

@@ -307,51 +307,5 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(protocol.retry_reason('rate_limited', 'proxy 429'), protocol.RATE_LIMITED_REASON)
 
 
-class AvailabilityProbeTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        patch = mock.patch.dict(os.environ, {'COVEY_DATA_HOME': self.tmp.name})
-        patch.start()
-        self.addCleanup(patch.stop)
-        from covey.app import availability
-        self.availability = availability
-        self.ctx = SimpleNamespace(backend_cmd=['sh'], workdir=Path(self.tmp.name), model='m')
-
-    def cache(self, reason):
-        ok = reason == 'ok'
-        row = {'ok': ok, 'reason': reason, 'detail': '', 'checked_at': time.time(),
-               'fingerprint': harness_probe._fingerprint('codex', ['sh'], self.availability.child_process_env(self.ctx.workdir))}
-        (harness_probe.probe_directory()).mkdir(parents=True)
-        (harness_probe.probe_directory() / 'codex.json').write_text(json.dumps(row))
-
-    def test_off_by_default_nothing_changes(self):
-        self.cache('not_logged_in')
-        self.assertEqual(self.availability.local_check('codex', self.ctx)['status'], 'configured')
-
-    def test_on_a_cached_login_failure_makes_the_harness_unavailable_but_a_network_one_does_not(self):
-        self.cache('not_logged_in')
-        with mock.patch.dict(os.environ, {self.availability.PROBE_ENV: '1'}):
-            check = self.availability.local_check('codex', self.ctx)
-        self.assertEqual((check['status'], check['reason']), ('unavailable', 'authentication'))
-        (harness_probe.probe_directory() / 'codex.json').unlink()
-        harness_probe.probe_directory().rmdir()
-        self.cache('network')
-        with mock.patch.dict(os.environ, {self.availability.PROBE_ENV: '1'}):
-            self.assertEqual(self.availability.local_check('codex', self.ctx)['status'], 'configured')
-
-    def test_the_watch_puts_the_probe_into_the_health_snapshot_when_on(self):
-        harness = SimpleNamespace(context=self.ctx)
-        gateway = SimpleNamespace(harnesses={'codex': harness}, runtime=SimpleNamespace())
-        self.ctx.state_dir = Path(self.tmp.name)
-        self.cache('network')
-        with mock.patch.dict(os.environ, {self.availability.PROBE_ENV: '1'}):
-            self.availability.sample(gateway, self.ctx)
-        probe = gateway.runtime.availability_health['preflight']['codex']['probe']
-        self.assertEqual((probe['ok'], probe['reason'], probe['cached']), (False, 'network', True))
-        self.availability.sample(gateway, self.ctx)
-        self.assertNotIn('probe', gateway.runtime.availability_health['preflight']['codex'])
-
-
 if __name__ == '__main__':
     unittest.main()

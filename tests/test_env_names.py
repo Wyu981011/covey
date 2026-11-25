@@ -96,6 +96,8 @@ class RenamedTest(unittest.TestCase):
         err = io.StringIO()
         with mock.patch.dict(os.environ, {"COVEY_MAIN_TRACKS": "1", "LARK_BRIDGE_MAIN_DISPATCH_CARD": "1"}), \
                 contextlib.redirect_stderr(err):
+            for new in ("COVEY_BUTLER_TRACKS", "COVEY_DISPATCH_CARD"):  # Set off for every test (support.UNSET_OFF).
+                os.environ.pop(new, None)
             cenv._warned.clear()
             self.assertEqual(cenv.get("COVEY_BUTLER_TRACKS"), "1")
             self.assertEqual(cenv.get("COVEY_DISPATCH_CARD"), "1")

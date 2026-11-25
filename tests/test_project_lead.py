@@ -16,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from support import UNSET_OFF
 from support import enter_context
 from support.fake_backends import codex_context
 from support.records import state_dir, write_job, write_topic
@@ -51,7 +52,7 @@ class Case(unittest.TestCase):
         self.state = state_dir(self)
         self.addCleanup(butler.configure_state, butler.configure_state(self.state))
         env = {name: value for name, value in os.environ.items() if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}
-        enter_context(self, mock.patch.dict(os.environ, {**env, **ON}, clear=True))
+        enter_context(self, mock.patch.dict(os.environ, {**env, **UNSET_OFF, **ON}, clear=True))
         write_json(self.state / settings.FILE, {"mode": "agent"})
         butler.forget_mode()
         self.record = projects.create(self.state, projects.new_record(chat_id=CHAT, name="迁移账单", goal="把账单迁到新库，对账一致",
@@ -90,7 +91,7 @@ class RulesTest(Case):
         # T647 P0-6: they promised "会有下一轮叫醒你" with COVEY_PROJECT_AUTOWAKE off, and the lead promised the owner to follow up.
         with mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: "1"}):
             self.assertIn(project_lead.WOKEN, project_lead.lead_rules())
-        with mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: "0"}):
             rules = project_lead.lead_rules()
         self.assertNotIn(project_lead.WOKEN, rules)
         self.assertIn("话题有了结果不会叫醒你（没开叫醒负责人）：它的回执留在收件箱，主人下次找你时一起读", rules)
@@ -98,7 +99,8 @@ class RulesTest(Case):
         def start(environ):
             return next(tool for tool in butler_tool_specs.lead_tools(environ) if tool["name"] == "project_topic_start")
         self.assertIn(butler_tool_specs.WOKEN, start({butler_tool_specs.AUTOWAKE_ENV: "1"})["description"])
-        off = start({})["description"]
+        self.assertIn(butler_tool_specs.WOKEN, start({})["description"])  # Unset is on.
+        off = start({butler_tool_specs.AUTOWAKE_ENV: "0"})["description"]
         self.assertNotIn(butler_tool_specs.WOKEN, off)
         self.assertIn(butler_tool_specs.NOT_WOKEN, off)
         self.assertIn(butler_tool_specs.WOKEN, start(None)["description"])  # No environment to tell from: as before.
@@ -288,7 +290,7 @@ class RebuildTest(Case):
         job = SimpleNamespace(topic_id=LEAD, chat_id=CHAT, message_id="lead-2", job_id=2, model="m")
         sessions = SimpleNamespace(clear_session=mock.Mock(), capture_session=mock.Mock())
         ctx = SimpleNamespace(state_dir=self.state, model="m")
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(project_lead.settle_session(ctx, job, sessions, SimpleNamespace(), 7, "sid"), (7, "sid"))
 
 
@@ -430,21 +432,25 @@ class ConfigTest(Case):
         self.assertNotIn(butler.LEAD_ENV, plain["mcpServers"]["bridge"]["env"])
         lead = butler.mcp_config(Path("/r"), self.state, "k", sys.executable, lead=PID)
         self.assertEqual(lead["mcpServers"]["bridge"]["env"][butler.LEAD_ENV], PID)
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             off = butler.mcp_config(Path("/r"), self.state, "k", sys.executable, lead=PID)
             plain_off = butler.mcp_config(Path("/r"), self.state, "k", sys.executable)
-        self.assertEqual(off, plain_off)  # With the switch off the lead's variable and the butler's are not handed on.
+        # With the switch off the lead's variable is not handed on, and the server is told it is off (unset would mean on).
+        self.assertNotIn(butler.LEAD_ENV, off["mcpServers"]["bridge"]["env"])
+        self.assertEqual(off["mcpServers"]["bridge"]["env"][projects.ENV], "0")
         self.assertEqual(plain["mcpServers"]["bridge"]["env"][projects.ENV], "1")
-        self.assertNotIn(projects.ENV, plain_off["mcpServers"]["bridge"]["env"])
+        self.assertEqual(plain_off["mcpServers"]["bridge"]["env"][projects.ENV], "0")
 
     def test_the_server_lists_the_leads_tools_when_told_and_the_butlers_otherwise(self):
         names = lambda env: [tool["name"] for tool in butler_mcp.tool_list(env)]  # noqa: E731
-        self.assertEqual(names({butler.LEAD_ENV: PID}), LEAD_NAMES)
-        self.assertEqual(names({}), list(butler_tool_specs.NAMES))
-        self.assertFalse(set(butler_tool_specs.PROJECT_NAMES) & set(names({"COVEY_KNOWLEDGE": "1", "COVEY_BUTLER_RULES": "1"})))
-        self.assertNotIn("project_answer", names({butler.LEAD_ENV: PID}))  # Phase 2's triage: defined, not listed.
-        self.assertNotIn("project_escalate", names({butler.LEAD_ENV: PID}))
-        self.assertEqual(butler_tool_specs.listed({}), butler_tool_specs.TOOLS)
+        off = {"COVEY_PROJECT_TRIAGE": "0", "COVEY_PROJECTS": "0", "COVEY_PROJECT_TIDY": "off", "COVEY_KNOWLEDGE": "0", "COVEY_BUTLER_RULES": "0"}
+        self.assertEqual(names({butler.LEAD_ENV: PID, **off, "COVEY_PROJECTS": "1"}), LEAD_NAMES)
+        self.assertEqual(names(off), list(butler_tool_specs.NAMES))
+        self.assertFalse(set(butler_tool_specs.PROJECT_NAMES) & set(names({**off, "COVEY_KNOWLEDGE": "1", "COVEY_BUTLER_RULES": "1"})))
+        self.assertNotIn("project_answer", names({butler.LEAD_ENV: PID, **off}))  # Triage off: defined, not listed.
+        self.assertNotIn("project_escalate", names({butler.LEAD_ENV: PID, **off}))
+        self.assertIn("project_answer", names({butler.LEAD_ENV: PID}))  # Unset is on.
+        self.assertEqual(butler_tool_specs.listed(off), butler_tool_specs.TOOLS)
 
     def test_the_lead_has_none_of_the_tools_that_start_topics_for_the_owner_or_change_settings(self):
         listed = set(names["name"] for names in butler_tool_specs.lead_tools())
@@ -457,7 +463,7 @@ class ConfigTest(Case):
         self.assertTrue(answer["isError"])
         self.assertIn("没有开 project_note", answer["content"][0]["text"])
         server.submit.assert_not_called()
-        lead = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "k", butler.LEAD_ENV: PID},
+        lead = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "k", butler.LEAD_ENV: PID, "COVEY_PROJECT_TRIAGE": "0"},
                                submit=mock.Mock(return_value={"ok": True, "text": "好"}))
         self.assertFalse(lead.call({"name": "project_note", "arguments": {"text": "x"}})["isError"])
         self.assertTrue(lead.call({"name": "project_answer", "arguments": {}})["isError"])  # Not listed: not callable.
@@ -884,13 +890,14 @@ class RecordToolsTest(ToolsCase):
         self.assertEqual(set(spec["input_schema"]["properties"]), {"report", "detail"})
         self.assertNotIn("派活", spec["description"])
 
-    def test_the_style_is_kept_for_the_next_project_only_with_the_switch(self):
-        self.tool("project_style", report="ask_only")
-        self.assertFalse((self.state / project_lead.STYLE_FILE).exists())  # Off: nothing is kept.
-        with mock.patch.dict(os.environ, {projects.STYLE_KEEP_ENV: "1"}):
-            self.tool("project_style", detail="全")
-            self.assertEqual(project_lead.last_style(self.state), {"report": "ask_only", "detail": "全"})
-            self.tool("project_style")  # Only reading it changes nothing.
+    def test_the_style_is_kept_for_the_next_project(self):
+        # T813: no switch any more (COVEY_PROJECT_STYLE_KEEP retired); a manifest that sets it off changes nothing.
+        with mock.patch.dict(os.environ, {"COVEY_PROJECT_STYLE_KEEP": "0"}):
+            self.tool("project_style", report="ask_only")
+        self.assertEqual(project_lead.last_style(self.state), {"report": "ask_only", "detail": "简"})  # The record's style, default detail with it.
+        self.tool("project_style", detail="全")
+        self.assertEqual(project_lead.last_style(self.state), {"report": "ask_only", "detail": "全"})
+        self.tool("project_style")  # Only reading it changes nothing.
         self.assertEqual(json.loads((self.state / project_lead.STYLE_FILE).read_text())["detail"], "全")
         (self.state / project_lead.STYLE_FILE).write_text('{"report": "bogus", "detail": "简", "spawn": "积极"}')
         self.assertEqual(project_lead.last_style(self.state), {"detail": "简"})  # Each choice is checked.
@@ -950,7 +957,7 @@ class RefusalTest(ToolsCase):
         self.assertFalse(gone["ok"])
 
     def test_with_the_switch_off_they_are_refused(self):
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             answer = ButlerTools(self.env, butler_tools.TOOLS).execute(Request("q3", "project_note", {"text": "x"}, "lead-job", 0.0))
         self.assertFalse(answer["ok"])
         self.assertEqual(self.reload().get("notes"), None)
@@ -1039,13 +1046,14 @@ class HandoffTest(unittest.TestCase):
 
 class OffTest(Case):
     def test_with_the_switch_off_the_turn_and_the_tool_list_are_the_butlers_as_before(self):
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             job = SimpleNamespace(topic_id=LEAD, chat_id=CHAT, message_id="lead-1", job_id=1, kind="chat")
             ctx = dataclasses.replace(codex_context(self.state, "stream-json"), state_dir=self.state)
             out, message = session.butler_turn(ctx, job, "叫醒", None, mock.Mock(), self.logs.append)
             self.assertIs(out, ctx)
             self.assertEqual(message, "叫醒")
-            self.assertEqual([tool["name"] for tool in butler_mcp.tool_list({})], list(butler_tool_specs.NAMES))
+            self.assertEqual([tool["name"] for tool in butler_mcp.tool_list(
+                {"COVEY_KNOWLEDGE": "0", "COVEY_BUTLER_RULES": "0", "COVEY_PROJECTS": "0", "COVEY_PROJECT_TIDY": "off"})], list(butler_tool_specs.NAMES))
             self.assertEqual(project_lead.settle_session(ctx, job, SimpleNamespace(), SimpleNamespace(), 1, "s"), (1, "s"))
             self.assertFalse(butler.is_lead(LEAD, CHAT))
 

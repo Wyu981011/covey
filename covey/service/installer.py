@@ -114,10 +114,11 @@ ACCOUNT_PREFIXES = {"claude": ("ANTHROPIC_", "CLAUDE_CODE_", "AWS_", "CLOUD_ML_"
                     "codex": ("OPENAI_", "AZURE_OPENAI_", "CODEX_"),
                     "agy": ("GEMINI_", "GOOGLE_GEMINI_", "AGY_")}
 # The words the closing lines name a service's switches by (docs/install.md 装好以后, docs/configuration.md 演示套餐); every
-# switch of core/switches.py INSTALL and SHOWCASE has one (a test keeps them so).
+# switch of core/switches.py INSTALL and SHOWCASE has one (a test keeps them so), the ones on unset (DEFAULTS) are said on
+# unless the manifest sets them off.
 SWITCH_WORDS = {"COVEY_PROJECTS": "专项", "COVEY_PROJECT_AUTOWAKE": "叫醒负责人", "COVEY_PROJECT_ASK": "停住问你",
                 "COVEY_PROJECT_MEMORY": "专项记忆", "COVEY_PROJECT_TRIAGE": "问题分流", "COVEY_PROJECT_TIDY": "整理专项",
-                "COVEY_BOARD": "菜单「看板」", "COVEY_REVIEW": "独立复核", "COVEY_REVISIT": "到点回来看", "COVEY_MEMORY": "记忆",
+                "COVEY_REVIEW": "独立复核", "COVEY_REVISIT": "到点回来看", "COVEY_MEMORY": "记忆",
                 "COVEY_KNOWLEDGE": "知识条目", "COVEY_COLLAB": "协作（开发中）", "COVEY_PINNED_OVERVIEW": "置顶的「手上的事」",
                 "COVEY_PINNED_TOPICS": "话题看板", "COVEY_DIGEST_TIMES": "早晚汇总", "COVEY_BUTLER_TRACKS": "管家同时做几件事",
                 "COVEY_DISPATCH_CARD": "派发卡", "COVEY_EVENT_TRANSPORT": "飞书 SDK 收消息（收下先落盘，重启不丢）",
@@ -127,7 +128,7 @@ SDK_REQUIREMENTS = ("lark-oapi==1.7.4", "cryptography>=43")
 SDK_PROBE = ("import importlib.metadata as m, sys; import cryptography; "
              "sys.exit(0 if m.version('lark-oapi') == sys.argv[1] else 3)")
 PROJECT_PARTS = ("COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY", "COVEY_PROJECT_TRIAGE")
-PROJECT_SWITCHES = ("COVEY_PROJECTS", "COVEY_PROJECT_TIDY", *PROJECT_PARTS)  # What harness_lines turns on where 专项 is off.
+PROJECT_SWITCHES = ("COVEY_PROJECTS", "COVEY_PROJECT_TIDY", *PROJECT_PARTS)  # What harness_lines turns on where 专项 is set off.
 HARNESS_TITLES = {"claude": "Claude Code", "codex": "Codex", "agy": "Antigravity", "dsh": "DeepSeek Harness"}
 # Besides Claude Code, the probed Harnesses that can run the butler and a project's lead (core/harness.py bridge_tools), in
 # the roster's order: where Claude Code did not answer, a new service's butler is preset to the first of them that did.
@@ -1378,14 +1379,14 @@ class Installer:
         时: the butler, a project's lead and the small model's judgments run on the Harness that works) and what to do once
         it works; with Claude Code working, a line while the butler's settings name Codex or Antigravity (a preset's or the
         owner's choice). Where 专项
-        is off on such a service (one an older release installed with Codex only left it off), the command that turns it
+        is set off on such a service (an older release installed with Codex only wrote it off), the command that turns it
         and 整理专项 on, which need Claude Code no more."""
         set_now = dict(switches.shown(environment))
-        projects = str(set_now.get("COVEY_PROJECTS", "")).strip().lower() not in switches.OFF_VALUES
+        projects = switches.is_on("COVEY_PROJECTS", set_now)
         butler = self.butler_harness()
         title = HARNESS_TITLES.get(butler, butler)
         turn_on = f"{self.entry('covey_service.py')} set --state-dir {state} " + " ".join(
-            f"{key}={switches.INSTALL[key]}" for key in PROJECT_SWITCHES)
+            f"{key}={switches.DEFAULTS[key]}" for key in PROJECT_SWITCHES)
         more = "" if projects else f"；专项和整理专项没开，要开：{turn_on}"
         if "claude" in self.working:
             if butler in BUTLER_HARNESSES:
@@ -1497,26 +1498,26 @@ class Installer:
     def feature_words(self, environment):
         """What the service runs with, in the words of docs/install.md 装好以后: the butler (its Harness working,
         COVEY_BUTLER not off; one on another Harness than Claude Code says which) and the switches of SWITCH_WORDS it has on
-        (core/switches.py shown: its manifest's, either spelling)."""
+        (core/switches.py shown: its manifest's, either spelling; one of DEFAULTS it does not set is on)."""
         set_now = dict(switches.shown(environment))
 
         def on(key):
-            return key in set_now and str(set_now[key]).strip().lower() not in switches.OFF_VALUES
+            return switches.is_on(key, set_now)
 
         words = []
         butler = self.butler_harness()
         if butler in self.working + self.extra and str(set_now.get("COVEY_BUTLER", "1")).strip().lower() not in switches.OFF_VALUES:
             words.append("管家" if butler == "claude" else f"管家（{HARNESS_TITLES.get(butler, butler)}）")
         for key, word in SWITCH_WORDS.items():
-            if key in PROJECT_PARTS or not on(key):
+            if key in PROJECT_PARTS or not on(key) or (key == "COVEY_PROJECT_TIDY" and not on("COVEY_PROJECTS")):
                 continue
             if key == "COVEY_PROJECTS":
                 parts = [SWITCH_WORDS[part] for part in PROJECT_PARTS if on(part)]
                 word += f"（{'、'.join(parts)}）" if parts else ""
-            elif key == "COVEY_PROJECT_TIDY" and set_now[key] == "suggest":
+            elif key == "COVEY_PROJECT_TIDY" and switches.holds(key, set_now) == "suggest":
                 word += "（只提议）"
-            elif key == "COVEY_DIGEST_TIMES" and set_now[key] != switches.HIDDEN:
-                word += f"（{set_now[key].replace(',', '、')}）"
+            elif key == "COVEY_DIGEST_TIMES" and switches.holds(key, set_now) != switches.HIDDEN:
+                word += f"（{switches.holds(key, set_now).replace(',', '、')}）"
             words.append(word)
         if web_selfhost.enabled(environment):
             words.append("网页工作台")

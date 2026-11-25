@@ -118,7 +118,7 @@ class RouteTest(Held):
         with mock.patch.dict(os.environ, {triage.ENV: "0"}):
             self.assertEqual(self.route(), flow.OWNER)
         self.assertNotIn("triage", self.saved())
-        os.environ.pop(projects.ENV)
+        os.environ[projects.ENV] = "0"
         os.environ[triage.ENV] = "1"  # The projects switch is the first one.
         self.assertFalse(triage.enabled())
         self.assertEqual(self.route(), flow.OWNER)
@@ -363,7 +363,7 @@ class SweepTest(SweepCase):
         self.assertEqual(triage.state(self.saved()), triage.ESCALATED)
 
     def test_with_the_switch_off_the_sweep_sends_no_receipt(self):
-        with mock.patch.dict(os.environ, {triage.ENV: ""}):
+        with mock.patch.dict(os.environ, {triage.ENV: "0"}):
             flow.sweep(self.env, time.time())
         self.assertEqual(self.receipts(), [])
 
@@ -551,7 +551,7 @@ class ToolTest(ToolsCase):
         self.assertIn("没有交给你", again["text"])
 
     def test_without_the_switch_they_say_it_is_off(self):
-        os.environ.pop(triage.ENV)
+        os.environ[triage.ENV] = "0"
         for name, args in (("project_answer", {"thread": "T1", "answers": {"0": "新版"}}), ("project_escalate", {"thread": "T1", "why": "x"})):
             answer = self.tool(name, **args)
             self.assertFalse(answer["ok"])
@@ -573,7 +573,7 @@ class LeadSideTest(Held):
     def test_without_the_switch_the_pack_and_the_rules_are_what_they_were(self):
         self.write()
         self.route()
-        os.environ.pop(triage.ENV)
+        os.environ[triage.ENV] = "0"
         self.assertNotIn("交给你的话题问题", project_lead.state_pack(self.state, self.reload(), "lead-1", full=False))
         rules = project_lead.lead_rules()
         self.assertIn(project_lead.NOT_YET, rules)
@@ -587,17 +587,18 @@ class LeadSideTest(Held):
 
     def test_the_two_tools_are_listed_to_the_lead_only_with_the_switch(self):
         names = lambda environ: [tool["name"] for tool in butler_tool_specs.listed({butler.LEAD_ENV: PID, **environ})]  # noqa: E731
-        self.assertNotIn("project_answer", names({}))
+        self.assertNotIn("project_answer", names({triage.ENV: "0"}))
         self.assertNotIn("project_escalate", names({triage.ENV: "0"}))
         self.assertEqual(names({triage.ENV: "1"})[-2:], ["project_answer", "project_escalate"])
-        self.assertEqual(names({triage.ENV: "1"})[:-2], names({}))
+        self.assertEqual(names({}), names({triage.ENV: "1"}))  # Unset is on.
+        self.assertEqual(names({triage.ENV: "1"})[:-2], names({triage.ENV: "0"}))
         self.assertNotIn("project_answer", [tool["name"] for tool in butler_tool_specs.listed({triage.ENV: "1"})])  # Not the butler's.
 
     def test_the_server_is_told_the_switch_only_when_it_is_on(self):
         config = lambda: butler.mcp_config(Path("/r"), self.state, "k", "python3", lead=PID)["mcpServers"]["bridge"]["env"]  # noqa: E731
         self.assertIn(triage.ENV, config())
-        os.environ.pop(triage.ENV)
-        self.assertNotIn(triage.ENV, config())
+        os.environ[triage.ENV] = "0"
+        self.assertEqual(config()[triage.ENV], "0")  # The server is told it is off: unset would mean on.
 
 
 class CardTest(Held):
@@ -812,7 +813,7 @@ class HeldDeliveryTest(HeldFixture):
         self.assertEqual(triage.state(saved), triage.ESCALATED)
 
     def test_with_the_switch_off_the_card_goes_out_as_always(self):
-        os.environ.pop(triage.ENV)
+        os.environ[triage.ENV] = "0"
         self.assertTrue(self.deliver())
         self.assertTrue(self.app.questions.publish_question_card.called)
         self.assertNotIn("triage", json.loads(self.path.read_text()))
@@ -839,7 +840,7 @@ class HeldLiveQuestionTest(HeldFixture):
         self.assertTrue(find_job_record(self.state, self.job.message_id)["question_delivery_ok"])
 
     def test_with_the_switch_off_the_form_is_sent_as_always(self):
-        os.environ.pop(triage.ENV)
+        os.environ[triage.ENV] = "0"
         self.record.update(native_live_question=True, display_pending=True, body_delivery_required=False)
         self.path.write_text(json.dumps(self.record))
         record = json.loads(self.path.read_text())
@@ -950,7 +951,7 @@ class MemoryInterplayTest(Held):
         flow.correct(self.reload(), TOKEN, "库版本的事要等我看过")
         self.assertEqual([(kind, source) for kind, source, _ in self.notes()], [("decision", "owner_fix")])
         self.assertIn("库版本的事要等我看过", self.notes()[0][2])
-        with mock.patch.dict(os.environ, {projects.MEMORY_ENV: ""}):  # Off: the decision log has it, the memory does not grow.
+        with mock.patch.dict(os.environ, {projects.MEMORY_ENV: "0"}):  # Off: the decision log has it, the memory does not grow.
             flow.log_row(self.state, PID, "答了：T41 · 另一题 → 旧版", token="d" * 16, topic=THREAD, kind="answered")
             flow.correct(self.reload(), "d" * 16, "也要等我")
         self.assertEqual(len(self.notes()), 1)
@@ -1005,7 +1006,7 @@ class PauseInterplayTest(Held):
 
 class ToolListInterplayTest(unittest.TestCase):
     """The tool lists with the triage's switch off and on, and COVEY_DIRECTIONS (gone) doing nothing."""
-    BUTLER = {"COVEY_BUTLER_RULES": "1", "COVEY_PROJECTS": "1"}
+    BUTLER = {"COVEY_BUTLER_RULES": "1", "COVEY_PROJECTS": "1", triage.ENV: "0"}
 
     def test_off_nothing_of_the_new_features_is_listed(self):
         listed = {tool["name"]: tool for tool in butler_tool_specs.listed(self.BUTLER)}
@@ -1095,14 +1096,14 @@ class ClosedTest(Held):
         self.addCleanup(patch.stop)
 
     def test_the_sweep_with_the_switch_off_hands_every_held_question_to_the_owner(self):
-        with mock.patch.dict(os.environ, {triage.ENV: ""}):
+        with mock.patch.dict(os.environ, {triage.ENV: "0"}):
             flow.sweep(self.env, time.time())
         record = self.saved()
         self.assertEqual((triage.state(record), record["triage"]["why"], record["display_pending"]), (triage.ESCALATED, "问题分流已关闭", False))
         self.assertEqual(self.shown, [TOKEN])
 
     def test_with_the_projects_switch_off_too(self):
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             flow.settle_closed(self.env)
         self.assertEqual(triage.state(self.saved()), triage.ESCALATED)
 
@@ -1120,7 +1121,7 @@ class ClosedTest(Held):
         data = self.saved()
         data["triage"]["answering"] = time.time()
         write_json(self.path, data, ensure_ascii=False)
-        with mock.patch.dict(os.environ, {triage.ENV: ""}):
+        with mock.patch.dict(os.environ, {triage.ENV: "0"}):
             flow.sweep(self.env, time.time())
         self.assertEqual(triage.state(self.saved()), triage.HELD)
 
@@ -1376,7 +1377,7 @@ class StrandedCheckpointQuestionTest(HeldFixture):
 
     def test_with_the_switch_off_the_sweep_does_not_send_it_again(self):
         self.escalate()
-        os.environ.pop(triage.ENV)
+        os.environ[triage.ENV] = "0"
         self.app.questions.publish_question_card.return_value = True
         self.sweep(triage.of(self.saved())["at"] + 10 * flow.RESHOW_EVERY)
         self.assertEqual(self.app.questions.publish_question_card.call_count, 1)

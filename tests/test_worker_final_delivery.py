@@ -162,11 +162,10 @@ class ChatFinalDeliveryTest(unittest.TestCase):
         from covey.cards.recovery import result_actions
         from covey.cards.rewind import rewind_button
         from covey.cards.steer_receipts import receipt_card
-        from covey.cards.turn_export import export_panel
         from covey.cards.elements import text_button
 
         record = {"status": "held", "topic_id": "t", "token": "x", "job_id": 1, "text": "补一句", "waiting": []}
-        cards = {"download": export_panel("t", 1), "rewind": rewind_button("t", 1, "claude", 2),
+        cards = {"rewind": rewind_button("t", 1, "claude", 2),
                  "receipt": receipt_card(record), "held note": note_card(record),
                  "retry": result_actions("t", 1, "检查并继续", stop_kind="k")}
         for name, element in cards.items():

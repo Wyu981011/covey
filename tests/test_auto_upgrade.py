@@ -33,7 +33,7 @@ class Case(TestCase):
         self.logs, self.sent, self.busy, self.ok = [], [], "", True
         self.started = []
         self.status = dict(STATUS)
-        self.environ = {"COVEY_AUTO_UPGRADE": "05:00"}
+        self.environ = {"COVEY_AUTO_UPGRADE": "05:00", "COVEY_QUIET_HOURS": "off"}
 
         def popen(argv, **kwargs):
             self.started.append(argv)

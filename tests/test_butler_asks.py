@@ -118,7 +118,7 @@ class RuleTest(Case):
         self.assertFalse(self.offered(topic="b2" * 16))
 
     def test_off_without_projects_or_the_butler(self):
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertFalse(self.offered())
         with mock.patch.object(butler, "enabled", return_value=False):
             self.assertFalse(self.offered())
@@ -135,7 +135,7 @@ class RuleTest(Case):
     def test_the_butlers_rule_reads_the_handed_message(self):
         self.assertIn(prompts.ASKED_RULE, prompts.project_rules())
         self.assertIn(asks.HEAD.format(label="T12"), prompts.ASKED_RULE)
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(prompts.project_rules(), ())
 
     def test_the_checkpoint_field_is_read_as_written_and_cut(self):
@@ -306,7 +306,7 @@ class HandOnTest(Case):
         self.assertEqual(read_object(asks.record_path(self.state, "om_turn1"))["butler_job"], "om_handed")
 
     def test_nothing_at_all_with_the_switch_off(self):
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             asks.collect(self.gateway, self.turn(ask=self.ASK), self.ctx)
         self.send_text.assert_not_called()
         self.assertFalse((self.state / asks.FOLDER).exists())

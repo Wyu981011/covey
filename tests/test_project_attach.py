@@ -83,14 +83,14 @@ class AttachTest(unittest.TestCase):
 
     def test_off_the_snapshot_has_no_projects_group_and_reads_as_before(self):
         self.make("aaa111", "迁移订单库", "迁库")
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             groups = self.groups()
             self.assertEqual(set(groups), set(GROUP))
             self.assertNotIn("专项", session.render_snapshot(groups, {}, full=True, at="t", receipts=True))
 
     def test_the_rule_is_there_only_with_the_projects_and_the_rules_around_it_do_not_change(self):
         on = prompts.butler_rules()
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             off = prompts.butler_rules()
             self.assertEqual(prompts.project_rules(), ())
         self.assertNotIn(prompts.PROJECT_RULE, off)

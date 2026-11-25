@@ -25,6 +25,11 @@
 | 两卡式或 schema 3 之前的旧启动卡 | 点了只回“此启动卡已失效，请在主聊天重新发送消息开始任务。”，不改表单和等着的消息 |
 | 管家的“直接开工”设置（`main-thread.json` 的 `start`）和“记住的工作区”（`trusted`），以及设置卡上它们的行和按钮（`bridge_main_start_row`、`bridge_main_start`、`bridge_main_untrust`）、网页设置页的 `start_note`、`trusted` 和 `untrust` 操作 | 管家开的话题一律直接开工（运行方式是独立 worktree 的除外，仍出启动卡），不再读这两个字段：旧文件里有也能读，不报错，设置卡下次保存时不再写回。旧卡上点这三个按钮，设置卡回“直接开工已下线…”并重画，不改设置；网页的 `untrust` 回 failed。管家不再问、也不再记“以后这类直接开工吗” |
 | 以后这类按推荐走（`COVEY_STANDING_ANSWERS`）：问题卡下面的按钮和它那张卡（`bridge_question_standing`、`bridge_standing_save`、`bridge_standing_edit`、`bridge_standing_cancel`） | 不再读这个变量，清单里留着也不报错，`./install` 不再写它。旧卡上点这几个按钮只回一句“已下线”（`app/card_actions.py` 的 `MOVED_CARDS`），不记原则、不回答。以前记下的原则（`source.by` 为 `standing_answer`）照旧生效；`<state>/standing-forms/` 留在盘上，备份照旧跳过，可以手动删 |
+| 任务卡「下载请求与结果」（`COVEY_TURN_EXPORT`） | 整块删掉，不再读这个变量，清单里留着也不报错。已经发出的卡上的旧按钮点了只回一句“📥 下载请求与结果已下线，这次点击没有打包任何东西。”，不崩、不开工；要看一轮的请求和回答，读 Harness 自己的会话文件。Harness 能力 `turn_export` 改名 `session_files`，只给子 Agent 恢复读会话文件用 |
+| 可用性检查里的真实模型调用（`COVEY_HARNESS_PROBE`） | 不再读这个变量。可用性检查只看本机的命令和登录，不再对 Claude、Codex 各做一次真实调用；`core/harness_probe.py` 的探测留给 `./install` 和 `bin/covey_doctor.py` |
+| 小模型判断走模型网关（`COVEY_JUDGE_GATEWAY`） | 不再读这个变量，走网关的那条路径删了。同时做几件事的分流、整理专项、我本来想找你的事、晚间的“你反复说的”、看看现在都问启用了的 Claude Code（Haiku），没有时问 Codex，再没有问 Antigravity 自己的命令行；只有 DeepSeek Harness 时没有小模型判断，见[配置 · 小模型判断](configuration.md#小模型判断) |
+| 菜单「看板」的开关（`COVEY_BOARD`） | 不再读这个变量，菜单「看板」每个部署都有，早晚汇总关了也有（应用菜单和斜杠命令都一直要这一项） |
+| 专项汇报风格的开关（`COVEY_PROJECT_STYLE_KEEP`） | 不再是开关，也不读这个变量。负责人用 `project_style` 改过的汇报风格总会记进 `<state>/project-style.json`，新开的专项从它开始 |
 | 其他已下线卡片的按钮 | 见[已下线的功能](reference.md#已下线的功能) |
 
 ## 不再读取的变量

@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from support import UNSET_OFF
 from covey.app import memory_candidates, memory_harvest
 from covey.app.track_standby import Failed
 from covey.backends.claude.sessions import encode_project_dir
@@ -34,7 +35,7 @@ class Case(unittest.TestCase):
         self.state.mkdir()
         work.mkdir()
         patcher = mock.patch.dict(os.environ, {name: value for name, value in os.environ.items()
-                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}, clear=True)
+                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))} | UNSET_OFF, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.env = {"CODEX_HOME": str(self.codex), "CLAUDE_CONFIG_DIR": str(self.claude)}

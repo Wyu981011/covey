@@ -44,7 +44,10 @@ def ids(needs):
 
 class ManifestTests(unittest.TestCase):
     def test_switches_add_their_needs(self):
-        bare = ids(manifest.required({}))
+        unset = ids(manifest.required({}))  # The pinned topics and the board are on unless set to 0.
+        self.assertIn("event:im.message.message_read_v1", unset)
+        self.assertIn("scope:im:message.pins:read", unset)
+        bare = ids(manifest.required({"COVEY_PINNED_TOPICS": "0", "COVEY_PINNED_OVERVIEW": "0"}))
         self.assertIn("callback:card.action.trigger", bare)
         self.assertIn("event:im.message.receive_v1", bare)
         # Slash commands replace the legacy bottom custom menu by default: no console menu required.
@@ -93,9 +96,9 @@ class ManifestTests(unittest.TestCase):
             self.assertNotIn("proxy", [c.command for c in manifest.slash_commands({})])
             self.assertNotIn("menu:proxy_settings", ids(manifest.required({}, bottom_menu=True)))
         with mock.patch.object(manifest, "proxy_sender", return_value=True):
-            self.assertEqual([c.command for c in manifest.slash_commands({})], ["usage", "proxy", "settings"])
+            self.assertEqual([c.command for c in manifest.slash_commands({})], ["usage", "board", "proxy", "settings"])
             menu = [n for n in manifest.required({}, bottom_menu=True) if n.kind == "menu"]
-        self.assertEqual([n.name for n in menu], ["weekly_usage", "proxy_settings", "bridge_settings"])
+        self.assertEqual([n.name for n in menu], ["weekly_usage", "digest_board", "proxy_settings", "bridge_settings"])
         with mock.patch("covey.core.extensions.manifests", side_effect=OSError):
             self.assertFalse(manifest.proxy_sender())
 

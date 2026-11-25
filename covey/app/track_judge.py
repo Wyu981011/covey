@@ -11,8 +11,7 @@ one line of JSON, had a confidence below CONFIDENCE_MIN, or an index outside the
 Two channels, COVEY_TRACK_JUDGE: ``claude`` (the default: the name is the old one; it means "the small model where it is")
 and ``cmd:/absolute/path``, which starts that command instead, with one JSON object on its standard input and one JSON line
 expected on its standard output. Where the default channel asks (``tools`` picks it, ``ask`` puts every other small-model
-question the same way: 整理专项, the patrol, the memory candidates, 看看): the model gateway COVEY_JUDGE_GATEWAY names
-(app/judge_gateway.py) when it is set, the owner's explicit choice; else the Claude Harness when it is enabled, a one-shot
+question the same way: 整理专项, the patrol, the memory candidates, 看看): the Claude Harness when it is enabled, a one-shot
 Claude Code on Haiku in an empty directory of its own with no tools, MCP servers, hooks or saved session, its argv given to
 the Harness's ``backend.wrap_argv`` and its environment from ``backend.child_env`` so the machine's login shell, proxy and
 variables apply (the caller hands in the backend and a context for it; this module imports no backend); else the first of
@@ -48,7 +47,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from covey.app import judge_gateway, track_standby
+from covey.app import track_standby
 from covey.app.track_standby import Failed
 from covey.core import env as cenv
 from covey.core.harness import AskFailed, backend_capabilities
@@ -145,14 +144,12 @@ def native(backend, ctx) -> bool:
 
 
 def available(apps, environ=None) -> bool:
-    """Whether the small model's questions have somewhere to go: a gateway set, the Claude Harness, or a native one."""
-    return judge_gateway.configured(environ) is not None or tools(apps)[0] is not None
+    """Whether the small model's questions have somewhere to go: the Claude Harness or a native one."""
+    return tools(apps)[0] is not None
 
 
 def via_of(backend, ctx, environ=None) -> str:
-    """What answers a question asked with (``backend``, ``ctx``): "gateway", "claude", the native Harness's name, or ""."""
-    if judge_gateway.configured(environ) is not None:
-        return "gateway"
+    """What answers a question asked with (``backend``, ``ctx``): "claude", the native Harness's name, or ""."""
     if native(backend, ctx):
         return str(ctx.options.get("harness_id") or "native")
     return CLAUDE if backend is not None and ctx is not None else ""
@@ -254,12 +251,11 @@ def standby_target(backend, ctx):
 
 def warm(backend, ctx, environ=None) -> bool:
     """Have a Claude Code ready for the next question (app/track_standby.py): started and primed now unless a live one is
-    waiting. Nothing when the channel is not ``claude``, a gateway is set, the warm standby is off, or ``backend`` or ``ctx``
+    waiting. Nothing when the channel is not ``claude``, the warm standby is off, or ``backend`` or ``ctx``
     is missing or a native Harness's (``tools``: no Claude Code here). Never raises, never waits (the Popen only). True when
     a process was started."""
     try:
-        if mode(environ) != "claude" or not warm_enabled(environ) or backend is None or ctx is None \
-                or judge_gateway.configured(environ) is not None or native(backend, ctx):
+        if mode(environ) != "claude" or not warm_enabled(environ) or backend is None or ctx is None or native(backend, ctx):
             return False
         return track_standby.warm(*standby_target(backend, ctx), spares=hedge(environ) - 1)
     except Exception:  # noqa: BLE001  A standby that cannot start is a one-shot later.
@@ -267,13 +263,11 @@ def warm(backend, ctx, environ=None) -> bool:
 
 
 def ask(system: str, data: str, *, backend, ctx, limit: float, cwd, model: str = MODEL, environ=None) -> str:
-    """One question's raw answer, as Claude Code's JSON envelope (``answer_text`` reads it): through the model gateway
-    COVEY_JUDGE_GATEWAY names (app/judge_gateway.py) when it is set; else through ``backend`` and ``ctx`` (``tools``): a
+    """One question's raw answer, as Claude Code's JSON envelope (``answer_text`` reads it): through ``backend`` and
+    ``ctx`` (``tools``): a
     native Harness's own CLI (``ask_native``; ``model`` other than MODEL makes it a heavy question), or the Claude Harness
     the way ``judge`` asks Haiku, in ``cwd``; Failed("no_backend") with none. ``system``, ``model``: the question's own
     (app/patrol_judge.py, app/project_sorter.py)."""
-    if judge_gateway.configured(environ) is not None:
-        return judge_gateway.ask(system, data, limit, state_dir=getattr(ctx, "state_dir", None), environ=environ)
     if native(backend, ctx):
         return ask_native(system, data, backend=backend, ctx=ctx, limit=limit, cwd=cwd, heavy=model != MODEL)
     if backend is not None and ctx is not None:
@@ -372,12 +366,11 @@ def judge(message: Message, *, question: str = "", redacted: bool = False, backe
     ``backend`` and ``ctx``: what ``tools`` picked, the Claude Harness's or a native one's (``claude`` channel only)."""
     started = time.monotonic()
     via = mode(environ)
-    gateway = via == "claude" and judge_gateway.configured(environ) is not None  # The owner's explicit choice comes first.
-    own = via == "claude" and not gateway and native(backend, ctx)
+    own = via == "claude" and native(backend, ctx)
 
     def done(verdict: Verdict, how: str = "", **fields) -> Verdict:
         verdict = dataclasses.replace(verdict, ms=round((time.monotonic() - started) * 1000))
-        shown = "gateway" if gateway else via_of(backend, ctx, environ) if own else via.split(":")[0]
+        shown = via_of(backend, ctx, environ) if own else via.split(":")[0]
         if how:
             log(f"track judge {how} reason={verdict.why} ms={verdict.ms} via={shown}" + "".join(f" {k}={v}" for k, v in fields.items()))
         else:
@@ -397,9 +390,7 @@ def judge(message: Message, *, question: str = "", redacted: bool = False, backe
     data = json.dumps(payload(message, tasks, question), ensure_ascii=False)
     limit = limit_ms(environ, native=own) / 1000
     try:
-        if gateway:  # The model gateway COVEY_JUDGE_GATEWAY names (app/judge_gateway.py).
-            raw = judge_gateway.ask(SYSTEM, data, limit, environ=environ)
-        elif own:  # No Claude Code here: Codex's or Antigravity's own CLI, one question (core/harness.py ask_once).
+        if own:  # No Claude Code here: Codex's or Antigravity's own CLI, one question (core/harness.py ask_once).
             raw = ask_native(SYSTEM, data, backend=backend, ctx=ctx, limit=limit, cwd=Path(ctx.state_dir) / "track-judge")
         elif via == "claude":
             if backend is None or ctx is None:

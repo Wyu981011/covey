@@ -21,7 +21,6 @@ from covey.core.process import device_of
 from covey.core.harness import BackendConfig, BridgeContext, HarnessSpec, RunRequest, RunResult, UUID_RE
 from covey.core.providers import retired_provider, retired_provider_notice
 from covey.core.state import ensure_private_dir
-from covey.backends.codex.sessions import rollout_root
 from covey.backends.codex import gateway as gateway_models
 from covey.backends.codex.appserver import run_appserver, sandbox_mode
 from covey.backends.codex.consult import ConsultHome, ReadingHome
@@ -99,7 +98,7 @@ class CodexBackend(BackendRuntime):
         # collab: a 协作 ask held to CONSULT in a private CODEX_HOME (backends/codex/consult.py; C8 on the installed CLI:
         # tests/test_collab_c8.py, the exec-policy, apps, network and memory checks). rate_limit_retry, fault_retry: what
         # backends/codex/turn.py codex_failure_code tells apart. ask_once: backends/codex/judge.py.
-        return for_device(HarnessCapabilities(questions=True, steering=True, native_fork=True, turn_export=True,
+        return for_device(HarnessCapabilities(questions=True, steering=True, native_fork=True, session_files=True,
                                               bridge_tools=True, read_only=True, collab=True, rate_limit_retry=True,
                                               fault_retry=True, ask_once=True), ctx)
 
@@ -185,14 +184,6 @@ class CodexBackend(BackendRuntime):
             return "", "出错（" + str(exc).split("；")[0].split("。")[0][:60] + "）"
         except (OSError, RuntimeError) as exc:
             return "", f"出错（{type(exc).__name__}）"
-
-    def export_turn(self, ctx, session_id, since, until):
-        """The turn's requests and responses from Codex's rollouts (backends/codex/export.py)."""
-        from covey.backends.codex.export import export_turn
-        return export_turn(ctx, session_id, since, until, self.rollout_dir())
-
-    def rollout_dir(self):
-        return rollout_root()
 
     def prompt_runtime_note(self, ctx: BridgeContext) -> str:
         return f"Codex 沙箱模式：{self.sandbox(ctx)}"

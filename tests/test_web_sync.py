@@ -1347,7 +1347,7 @@ class BoardGroupTest(WebCase):
         self.assertEqual((asks["stopped"], data["board"]), (1, "stopped"))
 
     def test_without_the_board_there_is_no_board_field(self):
-        os.environ.pop("COVEY_PINNED_OVERVIEW")
+        os.environ["COVEY_PINNED_OVERVIEW"] = "0"
         self.topic()
         self.sync.push_once(T0)
         self.assertNotIn("board", self.web.items("topic")[-1]["data"])

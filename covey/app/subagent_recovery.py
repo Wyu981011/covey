@@ -30,6 +30,16 @@ def _cut(text):
     return text if len(text) <= TEXT_CHARS else text[:TEXT_CHARS].rstrip() + "…"
 
 
+def turn_start(record) -> float:
+    """When ``record``'s turn began, in epoch seconds: its backend request (or the record's creation); ValueError when
+    it says none."""
+    timings = record.get("timings") if isinstance(record.get("timings"), dict) else {}
+    start = timings.get("backend_requested") or timings.get("backend_started") or record.get("created_at")
+    if not isinstance(start, (int, float)):
+        raise ValueError("这一轮没有开始执行的时间")
+    return float(start)
+
+
 def collect(harness, ctx, record):
     """``{"items", "more", "files"}`` of ``record``'s turn (and the dead turns before it that were carried on), or None."""
     try:
@@ -43,10 +53,9 @@ def _collect(harness, ctx, record):
         return None
     backend = harness.backend
     read = getattr(backend, "subagent_report", None)
-    if read is None or not backend_capabilities(backend, ctx).turn_export:
+    if read is None or not backend_capabilities(backend, ctx).session_files:
         return None
-    from covey.app.turn_export import turn_window
-    since, _ = turn_window(record)
+    since = turn_start(record)
     fresh = read(ctx, record["session_id"], since)
     older = (record.get("recovery_context") or {}).get("subagents")
     carried = list(older.get("items") or []) if isinstance(older, dict) else []

@@ -43,8 +43,8 @@ ENDED = frozenset({"done", "continued", "waiting_user"})
 
 
 def enabled() -> bool:
-    """Whether answer cards offer 独立复核 (COVEY_REVIEW=1; off unset)."""
-    return env_flag(ENV, False)
+    """Whether answer cards offer 独立复核 (COVEY_REVIEW; on unset, 0/off/false/no turn it off)."""
+    return env_flag(ENV, True)
 
 
 def buttons(job) -> list:

@@ -23,6 +23,7 @@ import json
 import os
 
 from covey.core import env as cenv
+from covey.core.process_env import env_flag
 
 MESSAGE_EVENT = "im.message.receive_v1"
 MENU_EVENT = "application.bot.menu_v6"
@@ -75,8 +76,8 @@ PIN_SCOPES = (("im:message.pins:read", "置顶看板"), ("im:message.pins:write_
 GROUP_ALL_SCOPES = (("im:chat.members:read", "群聊免@ 选人"),)
 GROUP_ALL_REVIEW = ("im:message.group_msg", "群聊免@ 收群里全部消息")
 
-# The bot menu (docs/usage.md 机器人菜单: 看板 · 用量 · 代答 · 设置). 看板 with COVEY_BOARD=1 or the digest (``board``),
-# 代答 only where an enabled extension has the proxy_sender hook (``proxy_sender``).
+# The bot menu (docs/usage.md 机器人菜单: 看板 · 用量 · 代答 · 设置). 代答 only where an enabled extension has the
+# proxy_sender hook (``proxy_sender``).
 MENU = (("weekly_usage", "用量", "insert-chart_outlined"), ("digest_board", "看板", "bitablekanban_outlined"),
         ("proxy_settings", "代答", "robot_outlined"), ("bridge_settings", "设置", "setting_outlined"))
 # Older items that still work (app/bot_menu.py KEYS): counted toward the limit, never replaced or removed.
@@ -110,11 +111,8 @@ SLASH_COMMANDS = (
 
 def slash_commands(env=None):
     """The slash commands this deployment registers, in panel order."""
-    env = os.environ if env is None else env
-    shown = board(env)
     proxy = proxy_sender()
-    return tuple(item for item in SLASH_COMMANDS
-                 if (item.key != "digest_board" or shown) and (item.key != "proxy_settings" or proxy))
+    return tuple(item for item in SLASH_COMMANDS if item.key != "proxy_settings" or proxy)
 
 
 def slash_key(text):
@@ -151,16 +149,9 @@ def switch(env, name):
     return str(cenv.get(name, "", env)).strip() == "1"
 
 
-def board_switch(env=None) -> bool:
-    """COVEY_BOARD=1: the bot menu has 看板 without 早晚汇总 too (app/digest.py menu_items; ./install writes it). Unset
-    or 0, 看板 comes with the digest alone, as before the switch."""
-    return str(cenv.get("COVEY_BOARD", "", os.environ if env is None else env)).strip() == "1"
-
-
-def board(env=None) -> bool:
-    """Whether the app's menu needs 看板: COVEY_BOARD=1 or a COVEY_DIGEST_TIMES set."""
-    env = os.environ if env is None else env
-    return board_switch(env) or bool(str(cenv.get("COVEY_DIGEST_TIMES", "", env)).strip())
+def on_unless_off(env, name):
+    """A switch that is on unless set to 0/off/false/no (core/process_env.py env_flag)."""
+    return env_flag(name, True, env)
 
 
 def required(env=None, *, bottom_menu=False):
@@ -172,11 +163,11 @@ def required(env=None, *, bottom_menu=False):
     if bottom_menu:
         needs.append(Need("event", MENU_EVENT, "机器人菜单的点击"))
     needs.append(Need("callback", CARD_CALLBACK, "卡片按钮的点击"))
-    pinned = switch(env, "COVEY_PINNED_TOPICS")
+    pinned = on_unless_off(env, "COVEY_PINNED_TOPICS")
     if pinned:
         needs.append(Need("event", READ_EVENT, "话题看过没有（已读）"))
     scopes = list(SCOPES)
-    if pinned or switch(env, "COVEY_PINNED_OVERVIEW"):
+    if pinned or on_unless_off(env, "COVEY_PINNED_OVERVIEW"):
         scopes += PIN_SCOPES
     group_all = switch(env, "COVEY_GROUP_ALL_MESSAGES")
     if group_all:
@@ -186,9 +177,8 @@ def required(env=None, *, bottom_menu=False):
         needs.append(Need("scope", GROUP_ALL_REVIEW[0], GROUP_ALL_REVIEW[1], review=True))
     if bottom_menu:
         needs.append(Need("menu_enable", "menu", "自定义菜单"))
-        shown = board(env)
         for key, label, icon in MENU:
-            if (key != "digest_board" or shown) and (key != "proxy_settings" or proxy_sender()):
+            if key != "proxy_settings" or proxy_sender():
                 needs.append(Need("menu", key, f"菜单「{label}」", label=label, icon=icon))
     return needs
 

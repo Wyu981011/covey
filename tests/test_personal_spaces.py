@@ -185,7 +185,7 @@ class GroupBoardTests(GroupFixture, UnifiedCase):
         self.assertIn('只列这个私聊里的任务', cards['oc_dm'])
 
     def test_without_personal_groups_or_the_overview_no_thread(self):
-        with mock.patch.dict(os.environ, {'COVEY_PINNED_OVERVIEW': ''}):
+        with mock.patch.dict(os.environ, {'COVEY_PINNED_OVERVIEW': '0'}):
             self.assertEqual(self.app.group_boards.threads(), ())
         setspaces(self.access, personal_groups=frozenset())
         self.assertEqual(self.app.group_boards.threads(), ())
@@ -201,7 +201,7 @@ class GroupBoardTests(GroupFixture, UnifiedCase):
         self.tick(NOW + pins.GAP)
         self.assertEqual(self.record('oc_room')['pins'], [])
         self.assertEqual([pin['message_id'] for pin in self.record('oc_dm')['pins']], ['om_dm_res'])
-        with mock.patch.dict(os.environ, {'COVEY_PINNED_TOPICS': ''}):
+        with mock.patch.dict(os.environ, {'COVEY_PINNED_TOPICS': '0'}):
             self.assertEqual(self.app.group_boards.owner_active(self.ctx, 'oc_room', NOW + 1), {})
 
     def test_a_group_message_of_the_owner_reaches_owner_active(self):

@@ -20,6 +20,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from support import UNSET_OFF
 from support.records import state_dir, write_job, write_topic
 
 from covey.app import memory_turn, project_context, project_lead, project_tools
@@ -64,7 +65,7 @@ def question_record(token=TOKEN, questions=QUESTIONS, answers=ANSWERS, **fields)
 
 def environment(test, **extra):
     env = {name: value for name, value in os.environ.items() if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}
-    patch = mock.patch.dict(os.environ, {**env, **extra}, clear=True)
+    patch = mock.patch.dict(os.environ, {**env, **UNSET_OFF, **extra}, clear=True)
     patch.start()
     test.addCleanup(patch.stop)
 

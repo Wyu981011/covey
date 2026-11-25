@@ -10,9 +10,10 @@ app/triage.py, under the question lock.
 Switch off, no record has the field and every function here says "not held"."""
 from __future__ import annotations
 
-from covey.core import env as cenv, projects
+from covey.core import projects
+from covey.core.process_env import env_flag
 
-ENV = "COVEY_PROJECT_TRIAGE"  # ``1`` (and COVEY_PROJECTS=1): on; anything else, unset too: off.
+ENV = "COVEY_PROJECT_TRIAGE"  # On unset (and with 专项 on); 0/off/false/no: off.
 DEADLINE = 180  # Seconds a question is held for the lead before it goes to the owner.
 ANSWERING = 90  # Seconds an answer the lead is sending is left alone by the timeout.
 HELD, ANSWERED, ESCALATED = "held", "answered_by_lead", "escalated"
@@ -21,8 +22,8 @@ STATES = frozenset(TRIAGE_TRANSITIONS)
 
 
 def enabled() -> bool:
-    """Whether COVEY_PROJECTS=1 and COVEY_PROJECT_TRIAGE=1 (read on every call)."""
-    return projects.enabled() and str(cenv.get(ENV, "")).strip() == "1"
+    """Whether 专项 and COVEY_PROJECT_TRIAGE are on (unset is on; read on every call)."""
+    return projects.enabled() and env_flag(ENV, True)
 
 
 def of(record) -> dict:

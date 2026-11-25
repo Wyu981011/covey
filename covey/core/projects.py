@@ -25,6 +25,7 @@ from collections import namedtuple
 from pathlib import Path
 
 from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.core.locks import resource_lock
 from covey.core.state import keyed_json_path, read_object, write_json
 
@@ -55,18 +56,19 @@ ID_RE = re.compile(r"[0-9a-z]{6,32}")
 TOPIC_RE = re.compile(r"[0-9a-f]{16,128}")
 
 
-def enabled() -> bool:
-    """Whether COVEY_PROJECTS=1 (only ``1``; read on every call). The predicates below are all False without it."""
-    return str(cenv.get(ENV, "")).strip() == "1"
+def enabled(environ=None) -> bool:
+    """Whether 专项 is on: COVEY_PROJECTS unset or anything but 0/off/false/no (read on every call; ``environ`` as in
+    core/env.py ``get``). The predicates below are all False with it off."""
+    return env_flag(ENV, True, environ)
 
 
-MEMORY_ENV = "COVEY_PROJECT_MEMORY"  # ``1``: the project's memory and library reach its topics, the lead and the card's 资料库 (docs/butler.md).
+MEMORY_ENV = "COVEY_PROJECT_MEMORY"  # On unset (0/off: off): the project's memory and library reach its topics, the lead and the card's 资料库 (docs/butler.md).
 
 
 def memory_enabled() -> bool:
-    """Whether COVEY_PROJECTS=1 and COVEY_PROJECT_MEMORY=1 (read on every call). Off: the memory is still one place
+    """Whether 专项 (``enabled``) and COVEY_PROJECT_MEMORY are on (read on every call). Off: the memory is still one place
     (core/project_memory.py), but nothing is put into a topic's turn, no answer is noted and no library is kept."""
-    return enabled() and str(cenv.get(MEMORY_ENV, "")).strip() == "1"
+    return enabled() and env_flag(MEMORY_ENV, True)
 
 
 def valid_id(project_id) -> bool:
@@ -413,19 +415,13 @@ RESUMABLE = (*GUARD_REASONS, OWNER_STOP, IDLE)
 REASON_WORDS = {"tokens": "token 用完了", "wakes": "连续唤醒次数到上限", "stalled": "很久没有动静"}
 
 
-ASK_ENV = "COVEY_PROJECT_ASK"  # ``1``: a project a guard paused sends the owner a card (继续 / 收尾 / 停); else it only shows 停住.
+ASK_ENV = "COVEY_PROJECT_ASK"  # On unset: a project a guard paused sends the owner a card (继续 / 收尾 / 停); 0/off: it only shows 停住.
 STALL_ENV = "COVEY_PROJECT_STALL_SECONDS"  # Seconds of idle for one reminder (and as long again for the pause); STALL_SECONDS when unset.
-STYLE_KEEP_ENV = "COVEY_PROJECT_STYLE_KEEP"  # ``1``: a new project starts with the style last set on any project.
 
 
 def ask_enabled() -> bool:
-    """Whether COVEY_PROJECT_ASK=1 (and COVEY_PROJECTS=1): a guard's pause is put to the owner on a card of its own."""
-    return enabled() and str(cenv.get(ASK_ENV, "")).strip() == "1"
-
-
-def style_keep_enabled() -> bool:
-    """Whether COVEY_PROJECT_STYLE_KEEP=1 (and COVEY_PROJECTS=1): the style set last is the next project's start."""
-    return enabled() and str(cenv.get(STYLE_KEEP_ENV, "")).strip() == "1"
+    """Whether 专项 and COVEY_PROJECT_ASK are on (unset is on): a guard's pause is put to the owner on a card of its own."""
+    return enabled() and env_flag(ASK_ENV, True)
 
 
 def stall_seconds() -> int:
@@ -475,8 +471,8 @@ def count_words(number) -> str:
 
 
 def autowake_enabled() -> bool:
-    """Whether every kind of receipt wakes the lead (COVEY_PROJECTS=1 and COVEY_PROJECT_AUTOWAKE=1)."""
-    return enabled() and str(cenv.get(AUTOWAKE_ENV, "")).strip() == "1"
+    """Whether every kind of receipt wakes the lead (专项 and COVEY_PROJECT_AUTOWAKE on; unset is on)."""
+    return enabled() and env_flag(AUTOWAKE_ENV, True)
 
 
 def token_limit() -> int:

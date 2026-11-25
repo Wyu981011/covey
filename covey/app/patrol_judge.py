@@ -2,8 +2,7 @@
 candidates app/patrol_rules.py found and says, for each, drop it, note it or handle it, why in one short line, and
 what the butler would do about it. One call takes at most BATCH candidates; it is one process with no tools, MCP servers
 or saved session, killed at COVEY_PATROL_JUDGE_MS (default 30000), and nothing it answers is acted on. It goes where
-app/track_judge.py ``ask`` puts the small model's questions: the model gateway COVEY_JUDGE_GATEWAY names when it is set, else
-the Claude Harness, else Codex's or Antigravity's own CLI (``tools``); with none, nothing (``no_backend``).
+app/track_judge.py ``ask`` puts the small model's questions: the Claude Harness, else Codex's or Antigravity's own CLI (``tools``); with none, nothing (``no_backend``).
 
 The input is one JSON object: ``items`` (index from 1, ``kind`` in words, ``title``, ``what``, ``waited`` words) and the
 owner's ``principles`` (core/principles.py: what he asked to be told or not told about, newest last, at most
@@ -19,7 +18,7 @@ from __future__ import annotations
 
 import json
 
-from covey.app import judge_gateway, track_judge
+from covey.app import track_judge
 from covey.app.track_standby import Failed
 from covey.core import patrol, principles, redaction
 from covey.core.metrics import took_text
@@ -111,7 +110,7 @@ def ask(data, backend, ctx, limit):
 def decide(state_dir, batch, *, backend, ctx, log=print, environ=None):
     """(the decisions on ``batch``, reason). ``backend`` and ``ctx``: what app/track_judge.py ``tools`` picked."""
     try:
-        if (backend is None or ctx is None) and judge_gateway.configured(environ) is None:
+        if backend is None or ctx is None:
             raise Failed("no_backend")
         limit = patrol.number("judge_ms", environ) / 1000
         raw = ask(json.dumps(payload(state_dir, batch), ensure_ascii=False), backend, ctx, limit)

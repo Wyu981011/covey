@@ -78,12 +78,12 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(len(seen), 101)
         self.assertEqual(seen["shared"], NOW - 100 + 4 * 20 + 19)
 
-    def test_the_switch_is_on_only_at_1(self):
-        for value, on in (("1", True), (" 1 ", True), ("yes", False), ("0", False), ("", False)):
+    def test_the_switch_is_off_only_at_0(self):
+        for value, on in (("1", True), (" 1 ", True), ("yes", True), ("", True), ("0", False), ("off", False), (" No ", False)):
             with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: value}):
                 self.assertIs(topic_seen.enabled(), on, value)
         with mock.patch.dict(os.environ, {}, clear=True):
-            self.assertFalse(topic_seen.enabled())
+            self.assertTrue(topic_seen.enabled())
 
 
 class ReadEventTests(UnifiedCase):
@@ -102,13 +102,15 @@ class ReadEventTests(UnifiedCase):
         self.app.topic_seen.handle({"event_id": "ev1", "reader_id": reader, "read_time": read_time,
                                     "message_ids": list(messages)}, self.ctx)
 
-    def test_off_unless_the_switch_is_set(self):
-        with mock.patch.dict(os.environ):
-            os.environ.pop(PINNED_TOPICS_ENV, None)
+    def test_off_at_0(self):
+        with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: "0"}):
             self.assertNotIn("topic-seen", dict(self.app.worker_targets()))
             self.assertEqual(self.app.topic_seen.threads(), ())
+        with mock.patch.dict(os.environ):
+            os.environ.pop(PINNED_TOPICS_ENV, None)  # Unset: on.
+            self.assertIn("topic-seen", dict(self.app.worker_targets()))
         with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: "yes"}):
-            self.assertNotIn("topic-seen", dict(self.app.worker_targets()))
+            self.assertIn("topic-seen", dict(self.app.worker_targets()))
 
     def test_on_its_worker_consumes_the_read_event_and_stops_with_the_others(self):
         with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: "1"}):

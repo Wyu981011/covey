@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from support import UNSET_OFF
 from support import enter_context, make_context, quiet
 from support.fake_backends import FakeBackend
 from support.records import state_dir, write_job, write_topic
@@ -38,7 +39,7 @@ ON = {projects.ENV: "1", projects.MEMORY_ENV: "1"}
 
 def environment(test, **extra):
     env = {name: value for name, value in os.environ.items() if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}
-    enter_context(test, mock.patch.dict(os.environ, {**env, **extra}, clear=True))
+    enter_context(test, mock.patch.dict(os.environ, {**env, **UNSET_OFF, **extra}, clear=True))
 
 
 class Case(unittest.TestCase):
@@ -151,7 +152,7 @@ class RunsTest(unittest.TestCase):
         self.assertTrue(resumed.endswith(CHECKPOINT_RULES))
 
     def test_with_the_switch_off_the_rules_have_no_project_block(self):
-        os.environ.pop(projects.MEMORY_ENV)
+        os.environ[projects.MEMORY_ENV] = "0"
         rules = self.runs.bridge_rules(self.ctx, self.job)
         self.assertNotIn("专项", rules)
         resumed = self.runs._with_rules(self.ctx, self.job, "MSG", rules, system=False, fresh=False, rules_session=False)
@@ -271,7 +272,7 @@ class SubmittedAnswerTest(QuestionFixture, unittest.TestCase):
                          [("decision", "owner_answer", "主人答：范围？→全部")])
 
     def test_with_the_switch_off_it_is_not(self):
-        os.environ.pop(projects.MEMORY_ENV)
+        os.environ[projects.MEMORY_ENV] = "0"
         self.app.questions.submit_answer(self.ctx_topic, "oc_chat", self.token, {"option_0": "0"}, "answer-1")
         self.assertEqual(memory.live(self.state, projects.read_record(self.state, PID)), [])
 
@@ -383,7 +384,7 @@ class IndexTest(Case):
         pack = project_lead.state_pack(self.state, self.record(), "lead-1", full=True)
         self.assertIn("资料库：\n- 交付（话题的交付，", pack)
         self.assertIn("提交 a6bc148", pack)
-        os.environ.pop(projects.MEMORY_ENV)
+        os.environ[projects.MEMORY_ENV] = "0"
         self.assertNotIn("资料库", project_lead.state_pack(self.state, self.record(), "lead-1", full=True))
 
     def test_the_entries_are_capped_and_a_dropped_ones_copy_goes(self):

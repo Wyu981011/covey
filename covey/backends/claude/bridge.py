@@ -156,7 +156,7 @@ class ClaudeBackend(BackendRuntime):
         from covey.core.attachments import MAX_IMAGE_BYTES
         return for_device(HarnessCapabilities(questions=True, image_bytes=MAX_IMAGE_BYTES, image_frame=IMAGE_FRAME, steering=True,
             native_fork=True, rate_limit_retry=True, incomplete_retry=True, fault_retry=True, steer_reads=True, compaction=True,
-            command_stop=True, turn_export=True, redaction=True, rewind=True, bridge_tools=True, read_only=True,
+            command_stop=True, session_files=True, redaction=True, rewind=True, bridge_tools=True, read_only=True,
             # 协作 asks held to CONSULT in a fork (C8 on the installed CLI: tests/test_collab_c8.py).
             collab=True), ctx)
 
@@ -231,11 +231,6 @@ class ClaudeBackend(BackendRuntime):
                     return summarize(self, ctx, session_id, prompt, env, cancel=cancel)
         except redaction.Unavailable:
             return "", "敏感词中继不可用，没有发送"
-
-    def export_turn(self, ctx, session_id, since, until):
-        """The turn's requests and responses from Claude Code's session records (backends/claude/export.py)."""
-        from covey.backends.claude.export import export_turn
-        return export_turn(ctx, session_id, since, until, self.child_env(ctx))
 
     def subagent_report(self, ctx, session_id, since):
         """Each subagent of the session's turn from ``since``: its description, end and last text (backends/claude/subagent_report.py)."""

@@ -50,7 +50,7 @@
 
 三种情况的做法见[实现细节 · 路由的细节](butler-internals.md#路由的细节)。
 
-**挂住的请求不再堵住后面的话**（`app/unstick.py`）：管家的一轮在等模型回应时没有任何动静，而你后来的话还在等它（补充没被读到，或开了[同时做几件事](#同时做几件事开关默认关)时排在这一路后面）：满 3 分钟，在每条等着的消息下说一句它在等哪一轮、已经多久没动静；满 10 分钟（`COVEY_BUTLER_HUNG_MINUTES`，`0` 关）停下这一轮，记成失败（“模型请求长时间没有回应，Bridge 停下了这一轮”，可检查并继续），你后来的话各自作为新一轮接着跑。在等命令、等你回答、请求在重试或排队等空位的不算没动静；普通话题不自动停，卡上有停止和看看。负责人的轮一样。
+**挂住的请求不再堵住后面的话**（`app/unstick.py`）：管家的一轮在等模型回应时没有任何动静，而你后来的话还在等它（补充没被读到，或开了[同时做几件事](#同时做几件事)时排在这一路后面）：满 3 分钟，在每条等着的消息下说一句它在等哪一轮、已经多久没动静；满 10 分钟（`COVEY_BUTLER_HUNG_MINUTES`，`0` 关）停下这一轮，记成失败（“模型请求长时间没有回应，Bridge 停下了这一轮”，可检查并继续），你后来的话各自作为新一轮接着跑。在等命令、等你回答、请求在重试或排队等空位的不算没动静；普通话题不自动停，卡上有停止和看看。负责人的轮一样。
 
 ### 直答与转交
 
@@ -72,7 +72,7 @@
 
 ### 管家规则
 
-`COVEY_BUTLER_RULES=1` 时，[直答与转交](#直答与转交)的前两条换成 `app/prompts.py` 的 `BUTLER_RULES`（两条），让管家只快答和分派，这样它接得住主人的连问；`topic_start` 的工具说明里同样的话也换了；其余规则不动。
+`COVEY_BUTLER_RULES` 开着（默认）时，[直答与转交](#直答与转交)的前两条换成 `app/prompts.py` 的 `BUTLER_RULES`（两条），让管家只快答和分派，这样它接得住主人的连问；`topic_start` 的工具说明里同样的话也换了；其余规则不动；设成 `0` 就回到只读的自己做完、超过一两分钟交给话题的老说法。
 
 - **快答**：不用工具，或只用一两次只读的查询（看一眼文件或日志、查一项配置、`topic_read`、`topics_list`），几秒内能答完，直接答、不开话题。
 - **派出去**：要查一圈、要跑命令、要改代码或文件、要联网或多步操作、预计超过半分钟的；拿不准也派。新的事 `topic_start`，和已有话题是同一件事 `topic_send`。
@@ -83,16 +83,16 @@
 
 规则每轮重新拼，重新注册后管家的下一轮就用新规则；续接会话里新旧规则怎么共存见[实现细节 · 管家规则什么时候生效](butler-internals.md#管家规则什么时候生效)。
 
-### 同时做几件事（开关默认关）
+### 同时做几件事
 
-`COVEY_BUTLER_TRACKS=1` 打开（[配置](configuration.md#环境变量与选项一览)）。管家这一轮在做事时，主人的下一句不被挡在后面：管家变成一个**话题家族**，现在的管家话题之外再有固定 4 路，每路是管家会话的一个分叉，各自跑一轮普通的管家任务。`COVEY_BUTLER_TRACKS_MAX` 是同时在跑的件数上限（默认 3，取值 2 到 4），到了上限的新事排在最空的那一路后面。
+默认开，`COVEY_BUTLER_TRACKS=0` 关（[配置](configuration.md#环境变量与选项一览)）。管家这一轮在做事时，主人的下一句不被挡在后面：管家变成一个**话题家族**，现在的管家话题之外再有固定 4 路，每路是管家会话的一个分叉，各自跑一轮普通的管家任务。`COVEY_BUTLER_TRACKS_MAX` 是同时在跑的件数上限（默认 3，取值 2 到 4），到了上限的新事排在最空的那一路后面。
 
 - 新的一句先按规则分流（引用了哪件事就给哪件），判不出时问小模型：并进某件在做的事、另起一件，或停止。
 - 说“停”“别做了”停掉对应的那件，不建任务、不进模型。
 - 管家的下一轮开头带上别的几路这段时间答了什么，所以管家记得住。
 - 开了又关：几路的话题留在盘上，这时它们是普通话题，回答、引用老卡照样能接着用。
 
-分流、表情、停止和账本的细节见[实现细节 · 同时做几件事的细节](butler-internals.md#同时做几件事的细节)，底座和运行时见[架构 · 管家同时做几件事](architecture.md#管家同时做几件事默认关)。
+分流、表情、停止和账本的细节见[实现细节 · 同时做几件事的细节](butler-internals.md#同时做几件事的细节)，底座和运行时见[架构 · 管家同时做几件事](architecture.md#管家同时做几件事)。
 
 ### 提问不开串
 
@@ -102,7 +102,7 @@
 - 专项负责人的轮一律不发任务卡（`task_card` 格是 NONE）：你引用专项卡说的、管家转给它的、网页上对它说的、它自己醒来的都一样，跑多久都不发，负责人在做什么看专项卡；答复、汇报和没做完的通知照样是聊天区新消息。
 - 答案、结论、问题卡副本和通知都是聊天区新消息，第一行是头像行，写谁对你哪句话做了什么（说话人：管家“**管家** 回你 12:31「原话…」”，话题“**T12 标题**”加状态标签和“做完了你 09:12 交代的事”，负责人“**专项名 · 负责人**”，各有自己的头像，不用彩色标题栏）。
 - 引用这些消息说话，交给发出它的话题、负责人或管家；引用手上的事、早晚汇总卡或发在私聊顶层的告警（节点告警、内存看门狗）也交给管家（`Butler.app_for`；告警发出时记进 `top-notices.json`，`app/pins.py` 的 `remember_notice`），不在它上面另开话题、等你点开始。
-- 只做了交接的一轮不发答案，Get 就是回执；转给已有话题的，再在主人那条消息下回一张“→ T12「标题」 ›”的小卡（这次转交发了[派发卡](#派发卡开关默认关)的话题不回）。
+- 只做了交接的一轮不发答案，Get 就是回执；转给已有话题的，再在主人那条消息下回一张“→ T12「标题」 ›”的小卡（这次转交发了[派发卡](#派发卡)的话题不回）。
 - 要主人定的事写进检查点的问题，进“等你”，不只在回复末尾问一句。
 
 表情、说话人的句式、没卡时的失败通知、重试和续接见[实现细节 · 提问不开串的细节](butler-internals.md#提问不开串的细节)。
@@ -185,12 +185,12 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `principles_list` | 无 | 列出原则 |
 | `settings_panel` | 无 | 在私聊发设置卡（`app/butler_panel.py`） |
 | `topics_switch` | topics*、basis*、harness、model、effort | 在私聊发批量换配置卡，主人点「确认更换」后才逐个换（[批量换配置](usage.md#批量换配置)） |
-| `knowledge_save` | scope*、kind*、text*、workspace、why、source_topic | 记一条知识条目（只有 `COVEY_KNOWLEDGE=1` 才列） |
+| `knowledge_save` | scope*、kind*、text*、workspace、why、source_topic | 记一条知识条目（知识条目没关才列） |
 | `knowledge_update` | id*、text*、reason*、kind、why | 改写：新 id 取代旧 id（同上） |
 | `knowledge_drop` | id*、reason* | 作废一条（同上） |
 | `knowledge_search` | query*、workspace、history | 搜当前条目；`history` 时也搜已取代、已作废的（同上） |
 | `history_search` | query*、workspace、since | 搜 Claude、Codex、Bridge 的历史轮次（只有 `COVEY_HISTORY_CMD` 是绝对路径才列） |
-| `projects_list` | 无 | 列专项：id、名字、状态、专项的话题的 T 号、负责人最近一句（只有 `COVEY_PROJECTS=1` 才列） |
+| `projects_list` | 无 | 列专项：id、名字、状态、专项的话题的 T 号、负责人最近一句（专项没关才列） |
 | `project_send` | pid*、text*、topics | 把主人的话交给专项的负责人，按主人触发的一轮处理（同上）；`topics` 里的已有话题先直接收进这个专项 |
 | `projects_tidy` | scope | 整理一遍专项（只在开了[整理专项](projects.md#整理专项)时列） |
 
@@ -236,7 +236,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 管家派出去的每件事是一个话题：话题串挂在提出它的那条提问下面；同一件事用 `topic_send` 追加。
 
 - **开**：管家开着、查得到提问、提问的别名还指向管家时（`core/topics.py` 的 `claim_area_root`），以这条提问为根：先把别名改给新话题（`move_topic_message`），再建上下文，不发话题卡。`opened/` 记 `area_root`、`area_taken`。
-- **一条提问只挂一个串**：同一条提问的第二个话题、查不到提问时，提问的串里已挂着同一轮转交的[派发卡](#派发卡开关默认关)时，根是顶层新发的话题卡；分叉挂不上时把源话题合并转发到私聊当根。第二个话题的“你问”仍写那条提问，链接打开它自己的串。
+- **一条提问只挂一个串**：同一条提问的第二个话题、查不到提问时，提问的串里已挂着同一轮转交的[派发卡](#派发卡)时，根是顶层新发的话题卡；分叉挂不上时把源话题合并转发到私聊当根。第二个话题的“你问”仍写那条提问，链接打开它自己的串。
 - **引用直达**：引用专项负责人的回答，交给负责人（`app/butler.py` 的 `app_for`；负责人算管家一家，`core/butler.py` 的 `is_lead`）。管家这一轮的卡只交给了一个话题时，卡的别名记上 `routes_to`。回带的结论、问题卡副本也记成话题的消息并带 `routes_to`。引用它们就是对那个话题说话（`context_for_topic` 先看 `routes_to`），不经管家。纯话题模式下串里不看 `routes_to`。这样说的话下面没有卡，表情跟着那个话题的这一轮走（[架构 · 引用卡片接着说的表情](architecture.md#引用卡片接着说的表情)）。
 
 ## 结论回到顶层
@@ -284,7 +284,7 @@ Bridge 记一份主人的长期原则，所有 Harness 的话题和管家都带�
 
 ## 知识库
 
-主人说“记一下”的东西集中存放，所有 Harness 的新会话都带上，管家能搜索和修改。`COVEY_KNOWLEDGE=1` 才开（`./install` 新装的默认开，见[配置](configuration.md#知识条目与历史搜索)）；关着时不建目录、规则和提示词一字不变、工具清单里没有这些工具、汇总里没有这一节。
+主人说“记一下”的东西集中存放，所有 Harness 的新会话都带上，管家能搜索和修改。默认开（`COVEY_KNOWLEDGE=0` 关，见[配置](configuration.md#知识条目与历史搜索)）；关着时不建目录、规则和提示词一字不变、工具清单里没有这些工具、汇总里没有这一节。
 
 - **存储**（`core/knowledge.py`，只用标准库）：`<state>/knowledge/` 下通用一份、每个工作区一份，只追加的事件（新增、改写、作废），读时重放。条目分 decision、practice、pitfall、fact、question 五类，正文最多 200 字。
 - **管家**：`knowledge_save`、`knowledge_update`、`knowledge_drop`、`knowledge_search`（`app/butler_knowledge.py`）；以后每次都要遵守的做法仍用 `principle_save`。查以前的事按 `knowledge_search` → `topics_search` → `history_search`。
@@ -296,9 +296,9 @@ Bridge 记一份主人的长期原则，所有 Harness 的话题和管家都带�
 
 存储格式、收集的条件和注入的顺序见[实现细节 · 知识库的细节](butler-internals.md#知识库的细节)。
 
-## 记忆（开关默认关）
+## 记忆
 
-`COVEY_MEMORY=1` 才开（`./install` 新装的默认开，见[配置](configuration.md#记忆)）；关着时规则、续接提醒、答案卡和任务记录逐字不变，不读不写话题的 `memory.json`。它把“主人的原则”“知识库”“专项记忆”和话题自己的记忆合成一种东西，对主人只说“记忆”。
+默认开（`COVEY_MEMORY=0` 关，见[配置](configuration.md#记忆)）；关着时规则、续接提醒、答案卡和任务记录逐字不变，不读不写话题的 `memory.json`。它把“主人的原则”“知识库”“专项记忆”和话题自己的记忆合成一种东西，对主人只说“记忆”。
 
 - **一个读口**（`core/memory.py`；每轮的接线 `app/memory_turn.py`）：原则、知识条目、专项记忆（`core/project_memory.py`）和话题记忆（`core/topic_memory.py`）拼成一块，每条一行“`- M12 · 管这个专项 · 当前决定 · 你说的：…`”：编号、管哪儿（全局、这个工作区、这个专项、这个话题）、专项的条目在哪一段（长期约定、当前决定、待核对参考）、谁说的。谁读什么和原来一样：全局的只在主人自己的一轮，代答的话题什么都不带。
 - **标出处**：主人自己的话是“你说的”，负责人总结的是“它总结的”；块后面的规则写明谁说了算。
@@ -312,7 +312,7 @@ Bridge 记一份主人的长期原则，所有 Harness 的话题和管家都带�
 
 ### 记忆自己长（开关默认关）
 
-`COVEY_MEMORY_LEARN=1`（要 `COVEY_MEMORY=1`，[配置](configuration.md#记忆)）才有；关着时上面写的一字不差。原来只有模型主动在检查点里写、主人说了“以后/别再”才记，实际几乎记不下；Harness 自己记的（Claude Code 的自动记忆、Codex 的记忆）各管各的，主人看不到。打开后：
+`COVEY_MEMORY_LEARN=1`（要 `COVEY_MEMORY` 开着，[配置](configuration.md#记忆)）才有；关着时上面写的一字不差。原来只有模型主动在检查点里写、主人说了“以后/别再”才记，实际几乎记不下；Harness 自己记的（Claude Code 的自动记忆、Codex 的记忆）各管各的，主人看不到。打开后：
 
 - **每轮之后读一遍**（`app/memory_learn.py`）：主人自己的一轮正常结束、原话里有纠正的字眼，Bridge 用小模型读他自己的话（问题卡那一轮只读他答的和补充的，不读题面），引用核对过的长期要求直接记下：通用的、某个工作区的记成原则，只对这件事的记到专项或话题。答案卡上照旧一行“记下了…”带“不对”，记成原则的那行写“管全局”“管这个工作区”，“不对”删掉那条原则。管家自己的一轮也读（管家转交的轮次不读，读的是管家那一轮）；代答话题、负责人的话题、开了脱敏的话题不读。
 - **用到才留**：这一轮照着哪几条做了，模型在检查点的 `memory_used` 里写编号，回复里提到的编号也算（`core/memory_usage.py`）。同一个范围放不下时，最近用过的先带。
@@ -338,7 +338,7 @@ Harness 自己的记忆在代答话题和脱敏的一轮里不读不写，开没
 - **压缩和快照**：Claude Code 和 Antigravity 由 Bridge 压缩（capability `compaction`；Antigravity 用 agy 自己的 `/compact`，见 [harnesses.md](harnesses.md#antigravity)）。Codex 自己压缩，Bridge 看不到，所以每一轮都给完整快照，不只给变了的行。
 - **脱敏**：只有 Claude Code 能脱敏。开着脱敏时不能换到别的 Harness；换过去以后脱敏一行不显示。
 - **专项负责人**：有自己的 Harness、模型和预算（[专项 · 负责人用哪个 Harness](projects.md#负责人用哪个-harness)）：新建时先看管家开专项时你点名的，再看设置卡「配置」页“专项负责人”一段，都没有才照管家的（`app/lead_harness.py` 的 `binding`；管家还没在这个私聊跑过一轮时，照它现在会用的，`app/butler_harness.py` 的 `unwritten_topic`）；之后管家换 Harness 不影响已有的负责人，要换点专项卡上的「换配置」。负责人在哪个 Harness 上都只读（[专项 · 负责人只读](projects.md#负责人只读)）。
-- **不跟着管家换的**：小模型判断（同时做几件事的分流、整理专项、“我本来想找你的事”、晚间的“你反复说的”、“看看”）由 `app/track_judge.py` 的 `tools` 和 `ask` 选地方：设了 `COVEY_JUDGE_GATEWAY` 就问网关；否则启用了 Claude Code 就问它（Haiku，带待命进程）；否则问 Codex、再否则 Antigravity 自己的命令行，一问一答（[配置 · 小模型判断](configuration.md#小模型判断)）。和管家用哪个 Harness 无关。子 Agent 一项只对 Claude Code 生效。
+- **不跟着管家换的**：小模型判断（同时做几件事的分流、整理专项、“我本来想找你的事”、晚间的“你反复说的”、“看看”）由 `app/track_judge.py` 的 `tools` 和 `ask` 选地方：启用了 Claude Code 就问它（Haiku，带待命进程）；否则问 Codex、再否则 Antigravity 自己的命令行，一问一答；只有 DeepSeek Harness 时没有小模型判断（[配置 · 小模型判断](configuration.md#小模型判断)）。和管家用哪个 Harness 无关。子 Agent 一项只对 Claude Code 生效。
 - **新装没有 Claude Code 时**：`./install` 第 3 步 Claude Code 没调通、Codex 或 Antigravity 调通了时，在服务第一次启动前把 `harness` 写成调通的第一个（先 Codex 后 Antigravity；`core/butler_settings.py` 的 `preset_harness`，只写这一项，私聊模式照旧由第一次启动写成管家）；专项、整理专项照常开。之后装好 Claude Code 也不自动换回，在这一段换；见[安装 · 没有 Claude Code 时](install.md#没有-claude-code-时)。
 - **回退旧版本**：旧版本不读 `harness`，管家回到 Claude Code，但模型还是新 Harness 的模型 id；回退前先在设置卡上把 Harness 换回 Claude Code。
 
@@ -348,9 +348,9 @@ Harness 自己的记忆在代答话题和脱敏的一轮里不读不写，开没
 
 | 页 | 内容 |
 | --- | --- |
-| 配置 | 一段一处，一次只展开一段（`SECTIONS`，卡片的 `view.open`；CardKit 一张卡约 200 个元素，放不下所有段的选项），其余段是标题、“展开”和一行灰字写着现在的值（`summary`）；点哪一行就展开哪一段（`PART_OF`）。**新话题**（默认展开）：所有新话题的预选，启动卡 `app/preselection.py` 和管家开的话题都照它，第一行 Harness、供应商、模型、思考预算，第二行工作区、运行方式、脱敏（`lines`：模型四项一行、其余一行，私聊模式单独一行；一行里各项是并排的小格，标签和当前值同一行，窄屏自动换行，各自点开选项，见 [cards.md](cards.md#设置卡配置页的格子版式)）。**管家**（部署不允许时没有）：第一行 Harness（能跑管家的才列；开着脱敏时只列能脱敏的，段下写一句先关脱敏才能换，`REDACT_FIRST`）、供应商、模型、思考预算，第二行工作区、脱敏（Harness 能脱敏才有）、压缩阈值（Bridge 会压缩的 Harness 才有，即 Claude Code、Antigravity），私聊模式单独一行（`MODE_CHOICES`）；纯话题模式下只有私聊模式一行。**独立复核**（`COVEY_REVIEW=1` 才有，`review_setting_list`）：Harness 第一项“自动挑（优先换一家厂商）”，选了 Harness 才有供应商、模型、思考预算（四项一行），存在 `main-thread.json` 的 `review`。**专项负责人**（`COVEY_PROJECTS=1` 才有，`lead_setting_list`）：新建专项的负责人用什么，Harness 第一项“跟管家一样”，只列能接 Bridge 工具的（开着管家的脱敏时只列能脱敏的），选了 Harness 才有供应商、模型、思考预算，存在 `main-thread.json` 的 `lead`；已有的负责人在专项卡上换。“更多”里子 Agent：轻量（Sonnet，搜索用 Haiku）/ 跟主模型 |
+| 配置 | 一段一处，一次只展开一段（`SECTIONS`，卡片的 `view.open`；CardKit 一张卡约 200 个元素，放不下所有段的选项），其余段是标题、“展开”和一行灰字写着现在的值（`summary`）；点哪一行就展开哪一段（`PART_OF`）。**新话题**（默认展开）：所有新话题的预选，启动卡 `app/preselection.py` 和管家开的话题都照它，第一行 Harness、供应商、模型、思考预算，第二行工作区、运行方式、脱敏（`lines`：模型四项一行、其余一行，私聊模式单独一行；一行里各项是并排的小格，标签和当前值同一行，窄屏自动换行，各自点开选项，见 [cards.md](cards.md#设置卡配置页的格子版式)）。**管家**（部署不允许时没有）：第一行 Harness（能跑管家的才列；开着脱敏时只列能脱敏的，段下写一句先关脱敏才能换，`REDACT_FIRST`）、供应商、模型、思考预算，第二行工作区、脱敏（Harness 能脱敏才有）、压缩阈值（Bridge 会压缩的 Harness 才有，即 Claude Code、Antigravity），私聊模式单独一行（`MODE_CHOICES`）；纯话题模式下只有私聊模式一行。**独立复核**（独立复核没关才有，`review_setting_list`）：Harness 第一项“自动挑（优先换一家厂商）”，选了 Harness 才有供应商、模型、思考预算（四项一行），存在 `main-thread.json` 的 `review`。**专项负责人**（专项没关才有，`lead_setting_list`）：新建专项的负责人用什么，Harness 第一项“跟管家一样”，只列能接 Bridge 工具的（开着管家的脱敏时只列能脱敏的），选了 Harness 才有供应商、模型、思考预算，存在 `main-thread.json` 的 `lead`；已有的负责人在专项卡上换。“更多”里子 Agent：轻量（Sonnet，搜索用 Haiku）/ 跟主模型 |
 | 工作区 | 工作区列表；每行一行灰字写用途，“改用途”换成输入框，“保存用途”存 |
-| 记忆（`COVEY_MEMORY=1`） | 下一轮带上什么（选工作区，带几条、各范围用了多少、快满或放不下的提示、原文），按范围列出的条目，每条“删除”，原则多一个“常驻”（`app/memory_panel.py`） |
+| 记忆（`COVEY_MEMORY` 开着） | 下一轮带上什么（选工作区，带几条、各范围用了多少、快满或放不下的提示、原文），按范围列出的条目，每条“删除”，原则多一个“常驻”（`app/memory_panel.py`） |
 | 能做什么 | 只读：启用的 Harness 和现在用不了的、开着的功能和读的开关、没开的怎么开、启用的扩展（`app/about_panel.py`） |
 
 每行点开是选项，点一个就记下并整卡重画；只有主人能改。模型和思考预算只列说得出是哪一个的选项：模型行没有 Claude Code 目录里的“Default (recommended)”，思考预算行没有“推荐”和“模型原生默认”（`core/menu_choice.py` 的 `explicit`、`plain_budgets`），因为看不出它们实际跑哪个；管家、独立复核两段的这两行也没有“默认”。新话题段的空选项留着，写的是它现在跟到哪个（“跟上次一样：Opus 5.5”）。以前存下的这类值照旧画出、打勾，换掉后就不再出现。代答的模型行（`cards/proxy_panel.py`）用同一套行，也一样。启动卡、换配置卡和网页开新话题也一样（`cards/launch_config.py` 的 `model_settings` 用 `offered_models`、`plain_budgets`，预选和点击记下的档用 `named_budget`）：不列“Default (recommended)”“推荐 · xhigh”“模型原生默认”，以前记下的这几项画成它实际跑的那一档；新话题段只选了 Harness、或上次用的是“Default (recommended)”时，预选这个 Harness 的具体模型（`app/preselection.py` 的 `harness_model`），话题正绑在它上面时换配置卡照旧列出它（[UI 规范 · 拍板记录](ui.md#13-拍板记录) U5）。私聊模式改成纯话题要再点“确定改”。子 Agent 一项对 Bridge 起的每一轮 Claude Code 都生效（`backends/claude/subagents.py`）。独立复核选了模型时，点「独立复核」就用它（`app/review.py` 的 `configured`），同一家厂商也照用；它的 Harness 本机没启用或现在用不了、模型不在目录里了、原话题开着脱敏而它不能脱敏、或思考预算模型不再支持时，照没设时自动挑，并在开复核的那句回复里说一句原因。旧卡按钮的去向、脱敏默认的迁移和子 Agent 的参数见[实现细节 · 设置卡的细节](butler-internals.md#设置卡的细节)。
@@ -363,9 +363,9 @@ Harness 自己的记忆在代答话题和脱敏的一轮里不读不写，开没
 - 位置由 `feishu/message_read.py` 的 `fetch_message_detail` 读一次，记在 `<state>/topic-links.json`，每个话题留 `KEPT`（8）条。
 - 读不到保持纯文字；读消息在所有锁外（规则 1、2）；只改显示的文字，保存的回复（规则 5）不变。
 
-### 派发卡（开关默认关）
+### 派发卡
 
-`COVEY_DISPATCH_CARD=1` 时（见[配置 · 派发卡](configuration.md#派发卡)），管家用 `topic_send` 把事转给**已有话题**的那一刻，主人那条提问下面多一张**进度卡**：回复到提问、进提问的串，和新开的话题挂在提问下面一样；聊天区顶层只留管家的一个回答，提问在聊天区的预览就是“T12 在做 · 标题”。话题照旧在原处、有串、有自己的任务卡。关着时没有这个调用、没有后台线程。
+默认开（`COVEY_DISPATCH_CARD=0` 关，见[配置 · 派发卡](configuration.md#派发卡)）。管家用 `topic_send` 把事转给**已有话题**的那一刻，主人那条提问下面多一张**进度卡**：回复到提问、进提问的串，和新开的话题挂在提问下面一样；聊天区顶层只留管家的一个回答，提问在聊天区的预览就是“T12 在做 · 标题”。话题照旧在原处、有串、有自己的任务卡。关着时没有这个调用、没有后台线程。
 
 - **串里的卡**：串根就是提问，卡上不再有“你问”块，卡头是话题的 T 号和标题，折叠面板是“进度 · 工作区”。
 - **串里怎么回**：引用这张卡说话进那个话题（卡的别名带 `routes_to`）；在串里直接发、不引用卡的，串根是主人的提问、归管家，管家再决定交给谁（和管家跑久了挂进提问串的任务卡一样）。补充、停止用卡上的按钮。

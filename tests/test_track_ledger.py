@@ -168,7 +168,7 @@ class Delivered(Switched):
 
     def test_with_the_switch_off_nothing_is_written(self):
         job = self.job()
-        with mock.patch.dict(os.environ, {butler_tracks.ENV: ""}):
+        with mock.patch.dict(os.environ, {butler_tracks.ENV: "0"}):
             track_digest.record(self.delivery(job), True, "done", now=NOW)
         self.assertFalse((self.state / "main-thread" / "tracks").exists())
 
@@ -267,7 +267,7 @@ class Handed(ButlerCase):
 
     def test_with_the_switch_off_the_message_is_what_it_was(self):
         ledger.write(self.state, ledger.make("k1", CHAT, 1, "om_a", "查失败原因", "有三类", "done", time.time() - 5, "", ()))
-        with mock.patch.dict(os.environ, {butler_tracks.ENV: ""}):
+        with mock.patch.dict(os.environ, {butler_tracks.ENV: "0"}):
             prompt, _ = self.turn()
         self.assertNotIn(ledger.HEADER, prompt)
         self.assertEqual(read_object(ledger.path(self.state, "k1"))["digested_by"], "")

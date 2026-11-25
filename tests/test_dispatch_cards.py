@@ -332,7 +332,7 @@ class CreatedTest(DispatchCase):
         self.assertEqual(len(self.dispatch_sends()), 1)
 
     def test_with_the_switch_off_nothing_is_called_and_no_record_is_made(self):
-        with mock.patch.dict(os.environ, {dispatch_cards.ENV: ""}):
+        with mock.patch.dict(os.environ, {dispatch_cards.ENV: "0"}):
             self.assertTrue(self.dispatched("off")["ok"])
             self.assertEqual(self.cards.threads(), ())
         self.assertEqual(self.dispatch_sends(), [])
@@ -529,7 +529,7 @@ class RefreshTest(DispatchCase):
 
     def test_threads_exist_only_with_the_switch_on(self):
         self.assertEqual([name for name, _ in self.cards.threads()], ["dispatch_cards"])
-        with mock.patch.dict(os.environ, {dispatch_cards.ENV: ""}):
+        with mock.patch.dict(os.environ, {dispatch_cards.ENV: "0"}):
             self.assertEqual(self.cards.threads(), ())
 
 
@@ -610,7 +610,7 @@ class SettleTest(DispatchCase):
         self.assertEqual((self.record()["state"], self.record()["settled_by"]), ("settled", "ended"))
 
     def test_the_note_is_not_left_without_a_card_or_with_the_switch_off(self):
-        with mock.patch.dict(os.environ, {dispatch_cards.ENV: ""}):
+        with mock.patch.dict(os.environ, {dispatch_cards.ENV: "0"}):
             relay_send.dispatch_note(self.ctx.state_dir, self.target, "done", "sent", "om_x")
         self.assertFalse(records.relay_note(self.ctx.state_dir, self.token()))
         dispatch_cards.relayed(self.ctx.state_dir, {"token": "nothing"}, "done", "sent", "om_x")

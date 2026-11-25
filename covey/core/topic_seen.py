@@ -1,7 +1,7 @@
 """When the owner last saw each topic: <state>/topic-seen.json, a JSON object of topic_id -> the epoch seconds
 (float) of the latest read receipt (im.message.message_read_v1) for a message the bot sent in that topic.
 app/topic_seen.py writes it from the read events; the pinned topics board reads it to tell a result the owner has
-not looked at from one they have. Both are off unless COVEY_PINNED_TOPICS=1 (docs/configuration.md).
+not looked at from one they have. Both are on unless COVEY_PINNED_TOPICS is 0 (docs/configuration.md).
 
 A topic keeps its latest time only: a receipt older than the one saved changes nothing. A topic last seen more than
 KEEP seconds ago is dropped, and of the rest at most LIMIT, the most recent, so the file stays small. One process
@@ -13,7 +13,7 @@ import math
 import time
 from pathlib import Path
 
-from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.core.locks import resource_lock
 from covey.core.state import read_object, write_json
 
@@ -24,7 +24,8 @@ LIMIT = 2000
 
 
 def enabled() -> bool:
-    return cenv.get(PINNED_TOPICS_ENV, "").strip() == "1"
+    """COVEY_PINNED_TOPICS: on unset, 0/off/false/no turn it off."""
+    return env_flag(PINNED_TOPICS_ENV, True)
 
 
 def seen_path(state_dir: Path) -> Path:

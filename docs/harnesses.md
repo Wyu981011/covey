@@ -25,8 +25,8 @@ Harness 是执行任务的 Agent 程序。本篇按上手顺序写：有哪些�
 - **原生问答**：Claude 的问题在原任务里等回答；Codex 必须回答的问题先结束本轮，回答排成续接任务。所有 Harness 都能经检查点提问（[回答模型的问题](usage.md#回答模型的问题)）。
 - **原生图片**：不支持时只给本地路径。Claude 单张超过 5 MiB 或合计超出 8 MiB 帧时，放不下的只给路径（`app/runs.py` 的 `_fit_images`）。
 - **分叉**：管家分叉出的话题（[开话题、转交、分叉](butler.md#开话题转交分叉)）复制原话题的原生会话；不支持或原话题正在执行时改用已完成的对话记录。**换配置**除只改脱敏外都开新会话。
-- **只有 Claude Code 有的**：[敏感词脱敏](usage.md#敏感词脱敏)、[回退一步](usage.md#回退一步)、本轮未全部完成后自动继续、轮前压缩。“下载请求与结果”只有 Claude Code 和 Codex 有。
-- **管家、专项负责人和小模型判断**：管家和专项负责人跑在能接 Bridge 工具的 Harness 上，核心的四个都能：Claude Code、Codex、Antigravity，以及 DeepSeek Harness（自带的 `dsh-mcp-client`）（`HarnessCapabilities.bridge_tools`）；设置卡没指定时先用 Claude Code，没有就依次找 Codex、Antigravity，再找 DeepSeek Harness（`app/butler_harness.py`）。负责人可以和管家不同：设置卡“专项负责人”一段、专项卡的「换配置」（[专项 · 负责人用哪个 Harness](projects.md#负责人用哪个-harness)）。负责人只读：Claude Code 只给读和搜索的工具，Codex 跑只读轮（见[执行权限](#执行权限)），Antigravity 用本轮的拒绝规则，DeepSeek Harness 用 read-only 权限预设（没有可用沙箱的机器上 bash 整个不能用），见[专项 · 负责人只读](projects.md#负责人只读)。小模型判断不跟管家换：设了模型网关就问网关，否则问 Claude Code，再否则问 Codex、Antigravity 自己的命令行（`ask_once`，[配置 · 小模型判断](configuration.md#小模型判断)）。扩展里的 Harness 没声明 `bridge_tools` 的不能当管家、负责人。
+- **只有 Claude Code 有的**：[敏感词脱敏](usage.md#敏感词脱敏)、[回退一步](usage.md#回退一步)、本轮未全部完成后自动继续、轮前压缩。
+- **管家、专项负责人和小模型判断**：管家和专项负责人跑在能接 Bridge 工具的 Harness 上，核心的四个都能：Claude Code、Codex、Antigravity，以及 DeepSeek Harness（自带的 `dsh-mcp-client`）（`HarnessCapabilities.bridge_tools`）；设置卡没指定时先用 Claude Code，没有就依次找 Codex、Antigravity，再找 DeepSeek Harness（`app/butler_harness.py`）。负责人可以和管家不同：设置卡“专项负责人”一段、专项卡的「换配置」（[专项 · 负责人用哪个 Harness](projects.md#负责人用哪个-harness)）。负责人只读：Claude Code 只给读和搜索的工具，Codex 跑只读轮（见[执行权限](#执行权限)），Antigravity 用本轮的拒绝规则，DeepSeek Harness 用 read-only 权限预设（没有可用沙箱的机器上 bash 整个不能用），见[专项 · 负责人只读](projects.md#负责人只读)。小模型判断不跟管家换：先问启用了的 Claude Code，没有时问 Codex、再没有问 Antigravity 自己的命令行（`ask_once`；只有 DeepSeek Harness 时没有小模型判断；[配置 · 小模型判断](configuration.md#小模型判断)）。扩展里的 Harness 没声明 `bridge_tools` 的不能当管家、负责人。
 - **每个内置 Harness 都有的**：限流（429）和临时故障（过载、5xx、连接断开）后[自动重试](reference.md#自动重试)（`rate_limit_retry`、`fault_retry`）。各家怎么认出这两类写在下面各自的“失败”一行；登录失效、额度用完、模型不存在、请求被拒、安全拒绝和停止不重试。
 - **交接摘要**（[换配置之后](reference.md#换配置之后)）：Claude Code、Codex 在原会话的分叉上写；Antigravity 和 dsh 的命令行只能续接会话（`--conversation`、`--session-id`），续接会把摘要这一轮留在原会话里，所以不写，新模型拿最近 3 轮原文。
 
@@ -74,7 +74,7 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **运行方式**：每个任务一个 `codex app-server`，经 stdio 通信。命令、文件修改、MCP 工具、计划和子 Agent 都进执行过程（命令没有写说明的字段，桥接规则要它在命令第一行写一行 `# 这一步做什么`，执行过程显示这句；没写时显示去掉开头样板以后真正在跑的命令）；模型、推理强度、工作区和权限每轮传入；`agents.max_threads=4`。桥接规则在新会话首轮的用户输入开头，续接轮附提醒和约定（[一次运行](architecture.md#一次运行)）。
 - **原生提问**：不需要停下的显示在任务卡上，其他工作继续；必须先回答的让本轮先结束，回答后在同一会话继续。
 - **工作区只读工具**：每个会话挂本任务专用的 `bridge_workspace` MCP 服务，可读工作区、附件目录和换配置的 `handoff/`，拒绝 `..`、符号链接和二进制；实际权限只由 `--sandbox` 决定。
-- **本轮结果**：thread 和 turn 双重绑定，只用当前 turn 的完整 items（不完整时按 ID 回读），取 `final_answer` 阶段的 agentMessage。下载请求与结果从 rollout 还原，不记的部分列在 `not_recorded`。
+- **本轮结果**：thread 和 turn 双重绑定，只用当前 turn 的完整 items（不完整时按 ID 回读），取 `final_answer` 阶段的 agentMessage。子 Agent 恢复要读的会话文件在 rollout 里（能力 `session_files`）。
 - **执行指标**：token 取 `thread/tokenUsage/updated` 的累计减本轮基线（`CodexTurnUsage`），子 Agent 会话各自减基线；生成时间从 `turn/start` 计，扣除工具和提问区间（重试也算在内，token/s 会偏低）；TTFT `codex_item`、`codex_delta`。
 - **管家的工具**：管家跑在 Codex 上时（设置卡「配置」页的“管家”一段的 Harness），它那一轮的线程另挂 Bridge 工具服务 `bridge`（`backends/codex/appserver.py` 的 `bridge_servers`），工具等待上限 `tool_timeout_sec` 150 秒，比服务自己的 120 秒长。`approvalPolicy: never` 下调用不弹审批（0.167.2 实测）。
 - **失败**（`backends/codex/turn.py` 的 `codex_failure_code`，按 `codexErrorInfo` 分，不看原文）：`usageLimitExceeded`、`rateLimitExceeded` 或 429 记 `rate_limited`，原文说 quota exceeded、billing、要升级套餐的记 `quota_exhausted`；`serverOverloaded`、`internalServerError`、`flexUnavailable`，以及连接失败或中断（`httpConnectionFailed`、`responseStream*`、`responseTooManyFailedAttempts`）没有状态码或是 500、502、503、504、529 的记 `server_fault`（原文说的是账号的事，如 could not authenticate、sign in again 记 `authentication_error`，insufficient_quota、额度用完记 `quota_exhausted`：`core/limit_reset.py` 的 `account_fault`）；带别的状态码的连接错误还是 `transport_error`；`unauthorized` 和 401、403 记 `authentication_error`（网关每日额度的 403 记 `quota_exhausted`）；模型不存在、请求错误、上下文超长、各类策略拦截和其余的记 `root_failed`。
@@ -97,7 +97,7 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **本轮结果与收尾**：只取当前调用的 JSONL，result 文本等于最后一条完整根消息才算数。最终 result 后关输入，约 10 秒后停止进程组（还有补充没被接收时不关）；后台命令或子 Agent 结束时 Claude Code 会再起一轮通知，机器人等它们全部结束，只受 `--claude-timeout` 约束，这一轮的回复是各轮回复按顺序连起来（紧挨着的相同段落只留一段，`backends/claude/completion.py` 的 `final_texts`）。有结果后 CLI 非零退出时按部分结果投递（会话封住）；因停止或超时结束、已有完整回复的照常发出并加说明。原生错误详情在 `<状态目录>/claude-diagnostics/<run-id>.json`，不要外传。
 - **命令先排队等席位**（只对用 `--claude-cmd` 指向包装脚本的部署有用，默认不生效）：包装脚本要先排队等网关空位时，CLI 还没启动，initialize 没人应答。脚本在 stderr 至少每 30 秒写一行 `covey queue: {"ahead": 1, "running": 3, "cap": 3, "limit": 3600, "name": "<网关名>"}`（字段都可省；`limit` 是它最多等几秒，到了自己退出），轮到时写 `covey queue: {"admitted": true}` 再启动 Claude Code。Bridge 据此一直等它的初始化回答（不超过 `limit`，最多 4 小时，此后再等 30 秒），任务卡状态行写“排队”；停写超过 30 秒、过了 `limit`，或还没轮到就自己退出，都记 `queue_timeout`。不写这种行的命令照旧只等 30 秒（`initialize_timeout`）。这些行不进失败日志的 stderr 摘录。
 - **限流与额度**：429 记 `rate_limited`（会自动重试），529、500、502、503、504、连接重置、流空闲超时记 `server_fault`（临时故障，会自动重试；但原文说的是账号的事时不算：网关把登录失效、额度用完也回成 5xx，Claude Code 照样说“服务端问题，通常是暂时的”，这时按原文记 `authentication_error` 或 `quota_exhausted`，不自动重试，`core/limit_reset.py` 的 `account_fault`），402 记 `quota_exhausted`，451 记 `model_blocked`（后两种提示换配置）。明确的官方拒绝或降级会停止当前任务，见[官方拒绝与降级停止](policy-stop.md)。
-- **执行指标**：输出 token 是每条消息最大的 `output_tokens` 之和；缓存取 `cache_read_input_tokens`、`cache_creation_input_tokens`；子任务按 `parent_tool_use_id` 算，退出后读 `subagents/agent-*.jsonl` 补值；上下文取 result 的 `modelUsage`；生成时间扣除 tool_use 到 tool_result；TTFT `claude_delta`。下载请求与结果从会话记录的 `api-request*` 行还原，按 `requestDigest` 核对上的记 `digest_verified`。
+- **执行指标**：输出 token 是每条消息最大的 `output_tokens` 之和；缓存取 `cache_read_input_tokens`、`cache_creation_input_tokens`；子任务按 `parent_tool_use_id` 算，退出后读 `subagents/agent-*.jsonl` 补值；上下文取 result 的 `modelUsage`；生成时间扣除 tool_use 到 tool_result；TTFT `claude_delta`。
 
 ## Antigravity
 
@@ -114,7 +114,7 @@ Antigravity 是 Google 的 Agent 开发平台，这里用它的命令行 `agy`�
 - **换个环境接着做**（扩展的 `agy_turn` 钩子，[架构 · 扩展](architecture.md#扩展)）：核心只认一个钩子，没有扩展时一轮和以前一样。有的话，钩子给本机每一轮第一个 agy 进程的环境；某个进程以额度用完、限流或没登录失败时再问它一次，它给回另一个环境就在那里接着同一个对话：agy 已经收下这一轮的话（有 `user_input` 那一步）时发一句“接着完成上面的要求”，没收下就把原话再发一遍；执行过程里多一条钩子写的说明；一轮最多换 3 次，钩子说没有就照旧失败、交给自动重试。用途是一台机器上的几个 Google 账号：一个账号一个 `HOME`，对话是本机文件，另一个账号能接着跑（1.5.14 实测）。账号表、额度查询（`agy -p /usage --output-format json`，不耗 token）和挑哪个账号都在扩展里。
 - **管家的工具**：agy 只从 `~/.gemini/config/mcp_config.json`（和插件）读 MCP 服务，`--settings` 不收 `mcpServers`。管家跑在 agy 上时，那一轮的 `HOME` 换成 `<state>/tmp/agy-home-*`（`backends/agy/home.py`；同一个话题每一轮用同一个目录名，按话题和真实主目录算出来，旁边的 `.lock` 保证同一时刻只有一轮在用，被占着时这一轮另起一个随机名。agy 把 `HOME` 写进提示词开头（App Data Directory 和每个 skill 的路径），以前每轮随机名，提示词从那里起就和上一轮不同，每轮第一个请求一点缓存都用不上）：真实主目录的每一项、`.gemini` 和它的 `config` 里的每一项都是指回原处的符号链接，只有 `mcp_config.json` 是这一轮自己的：主人原有的服务（文件是纯 JSON 时；带注释的读不了，这一轮就不带，`bridge.log` 记一行）加上 Bridge 的 `bridge`。开跑前问一次服务的 `tools/list`，这一轮要用的工具标 `tools.<名字>.eager`：agy 把它们当模型自己的工具给出去；没标的 agy 只在提示里列名字，模型要先读工具说明文件，再经它的 `call_mcp_tool` 调用。全部标上不行：agy 把一轮的 skills 和 MCP 工具算进同一份预算，超了就从最大的开始整个丢掉，声明和提示里的清单都不留，也不报（1.5.16 实测：装了很多 skills 时，管家开着专项的 21 个工具里最大的 `topic_start`（5 KB 多）没了，管家只好拿 `topic_fork` 分叉别的话题来开新的事）。所以 Bridge 按顺序挑：先是交给话题的（`topic_start`、`topic_send`、`topic_fork`、`project_send`，负责人的 `project_topic_start`、`project_topic_send`），再是其余常用的，原则、知识条目、历史搜索、看板优先、设置卡、整理专项（`core/butler_tool_specs.py` 的 `SECONDARY`）排最后，加起来不超过 15000 字节（描述加参数 schema；`COVEY_AGY_EAGER_BYTES` 可改，0 是全部只列名字），其余只列名字。一轮结束后 Bridge 只读查 agy 会话库里最近一次请求的 MCP 清单（`backends/agy/bridge.py` 的 `left_out`），Bridge 的工具有不在里面的就在日志里记一条警告，写明是哪几个；看到它就把 `COVEY_AGY_EAGER_BYTES` 调小，或少装些 skills。`timeoutSeconds` 150。登录、会话、日志都经链接写回原处；这一轮在主目录顶层新建的文件随私有目录一起删掉。agy 会在 `~/.gemini/antigravity-cli/mcp/bridge/` 留工具说明的缓存。
 - **管家的压缩**（capability `compaction`，`backends/agy/compaction.py`）：管家跑在 agy 上、一轮结束时上下文过了设置卡的压缩阈值，Bridge 等 180 秒（主人的快速追问先走），话题还空着就在同一会话上跑 agy 自己的 `/compact`：一个不带 `--disable-slash-commands`、其余参数和环境（模型、档位、`HOME`、Bridge 工具）都跟这一轮一样的进程，正文只有 `/compact`。agy 发一个 `checkpoint` 类型的请求写摘要，流里是一个 `step_type` 为 `checkpoint` 的步骤（带这次请求的用量）和空的 `result`，会话 ID 不变（1.5.16 实测：7 万上下文的摘要约 30 秒，请求的 96% 读缓存）。参数和环境一样，是为了这次请求的开头和上一轮相同、在服务端缓存还热时（Neon High 约 5 分钟，XHigh 不到 1 分钟）只按缓存计。会话太短时 agy 不压缩，把 `/compact` 当消息交给模型回答，没有 `checkpoint` 就不算压缩。`/compact` 后面的说明文字 agy 也会在压完后当消息让模型回答，所以不带说明。没赶上空闲压缩的（主人很快又发了消息），上下文到阈值 1.5 倍时下一轮开头先压，任务卡执行过程里有这一步。
-- 没有原生问答、原生图片（只给路径，它用自带的 `read_file` 打开）、原生分叉（所以换配置时不写交接摘要）、脱敏、回退一步、下载请求与结果；在设备上的差别见[在设备上运行](#在设备上运行)。
+- 没有原生问答、原生图片（只给路径，它用自带的 `read_file` 打开）、原生分叉（所以换配置时不写交接摘要）、脱敏、回退一步；在设备上的差别见[在设备上运行](#在设备上运行)。
 
 ## 模型网关（Codex 与 dsh）
 
@@ -194,7 +194,7 @@ dsh 是 DeepSeek 开源的 Agent Harness（npm 包 `@deepseek-ai/dsh`，预览�
 
 - **设备上要有的**：Harness 的命令、登录、会话文件、模型目录、代理和证书。Bridge 不替设备登录，也不转发令牌。设备上的环境从空开始，只带设备档案里白名单内的代理和证书变量，再加 `devices.json` 的 `env`；`--claude-cmd`、`--codex-cmd`、`--agy-cmd` 在设备上换成自检时记下的路径，登录 shell 写设备的 `login_shell`。
 - **启动前**：新加或改了设备先跑自检 `bin/covey_devices.py check <别名>`（[运维](operations.md#设备自检)），它在设备上对每个声明的 Harness 真跑一次最小请求（`core/harness_probe.py` 的 `command_for`；没有最小请求的 Harness 只查程序在不在，Antigravity 再查登录文件，结论里写明）；每轮开始前只读最近的自检和设备最近的答复，没登录当场拒绝。
-- **和本机的差别**：没有回退、下载请求与结果、压缩、分叉和敏感词脱敏（开着脱敏的话题在设备上拒绝）；不取 git diff 快照。补充（Antigravity 除外）、原生问答和图片照常，消息里的文件先放到设备的 `.covey/incoming/`；产物和 `show_images` 从设备取回再上传。启动卡列的模型仍是 Bridge 本机的目录。
+- **和本机的差别**：没有回退、压缩、分叉和敏感词脱敏（开着脱敏的话题在设备上拒绝）；不取 git diff 快照。补充（Antigravity 除外）、原生问答和图片照常，消息里的文件先放到设备的 `.covey/incoming/`；产物和 `show_images` 从设备取回再上传。启动卡列的模型仍是 Bridge 本机的目录。
 - **断线**：设备端小程序守着 Agent，Bridge 断线时照常跑；超过耐心值才按中断处理，恢复后先停旧进程再续接。
 
 ## 执行权限
@@ -276,8 +276,8 @@ Codex 的参数写在 bootstrap 命令上（`setup_harness_bridge.sh` 不接受�
 
 | 后端 | 代码位置 |
 | --- | --- |
-| Claude Code（`backends/claude/`） | `runtime.py` 一轮的收发与收尾（`run_stream`、空闲压缩 `compact_only`）；`process.py` CLI 进程和 JSONL 传输（`ClaudeProcess`、`TRANSPORT_FAILURES`）；`control.py` 输入、补充、问答和权限请求（`ClaudeControl`）；`argv.py` 启动参数和环境（`stream_argv`、`turn_env`）；`events.py` 事件（`ClaudeEventAdapter`）；`completion.py` 结果边界；`usage.py` 用量和 TTFT；`models.py` 目录行；`compaction.py`、`rewind.py`、`export.py` 压缩、回退、下载；`policy.py` 官方拒绝；`redaction.py` 脱敏中继 |
-| Codex（`backends/codex/`） | `appserver.py` 一轮的开会话、起 turn、收尾（`run_appserver`）；`rpc.py` App Server 进程与 JSON-RPC（`AppServer`、`RpcError`）；`turn.py` 读一个 turn 到结束（`read_turn`、`close_turn`）；`events.py` 事件（`CodexEventAdapter`）；`usage.py` 用量；`gateway.py` 按会话分的 provider；`workspace_reader.py` 只读 MCP；`export.py` 下载 |
+| Claude Code（`backends/claude/`） | `runtime.py` 一轮的收发与收尾（`run_stream`、空闲压缩 `compact_only`）；`process.py` CLI 进程和 JSONL 传输（`ClaudeProcess`、`TRANSPORT_FAILURES`）；`control.py` 输入、补充、问答和权限请求（`ClaudeControl`）；`argv.py` 启动参数和环境（`stream_argv`、`turn_env`）；`events.py` 事件（`ClaudeEventAdapter`）；`completion.py` 结果边界；`usage.py` 用量和 TTFT；`models.py` 目录行；`compaction.py`、`rewind.py` 压缩、回退；`policy.py` 官方拒绝；`redaction.py` 脱敏中继 |
+| Codex（`backends/codex/`） | `appserver.py` 一轮的开会话、起 turn、收尾（`run_appserver`）；`rpc.py` App Server 进程与 JSON-RPC（`AppServer`、`RpcError`）；`turn.py` 读一个 turn 到结束（`read_turn`、`close_turn`）；`events.py` 事件（`CodexEventAdapter`）；`usage.py` 用量；`gateway.py` 按会话分的 provider；`workspace_reader.py` 只读 MCP |
 | Antigravity（`backends/agy/`） | `bridge.py` 参数、进程、事件（`AntigravityEventAdapter`）、结果（`stream_outcome`）、模型目录、`agy_turn` 钩子（`extension_turn`、`Homes`）；`home.py` 管家的私有主目录；`judge.py` 小模型判断 |
 | dsh（`backends/dsh/`） | 只有 `bridge.py`：进程、补丁、事件（`DshEventAdapter`）、结果 |
 | 模型网关（`backends/gateway/`，配置在 `core/gateways.py`） | `connection.py` 密钥、目录、请求头、`BUSY_WINDOW`；`relay.py` 中继；`catalog.py` 目录行和繁忙提示；每日额度用完记在 `core/quota_hold.py` |

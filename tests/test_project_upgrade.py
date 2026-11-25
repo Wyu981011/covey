@@ -18,6 +18,7 @@ from covey.app import butler_topics, project_cards, project_clicks, project_lead
 from covey.app import butler_projects, project_members as members, projects as upgrades
 from covey.cards.elements import find_element
 from covey.core import dispatch_records as records
+from covey.core import env as cenv
 from covey.core import butler_mcp, butler, butler_opened, butler_settings, butler_tool_specs, devices, projects
 from covey.core.jobs import BridgeReplyJob, find_job_record, upsert_job_record
 from covey.core.butler_requests import Request
@@ -67,7 +68,7 @@ class UpCase(DispatchCase):
 
     def plain(self, request_id="r1", **args):
         """A topic the butler opened and handed work again with the upgrade off: its 派发卡 stays live."""
-        with mock.patch.dict(os.environ, {upgrades.ENV: ""}):
+        with mock.patch.dict(os.environ, {upgrades.ENV: "off"}):
             answer = self.dispatched(request_id, **args)
         self.assertTrue(answer["ok"], answer)
         return answer["data"]["topic_id"], self.record(request_id)
@@ -92,9 +93,9 @@ class UpCase(DispatchCase):
 
 
 class SwitchTest(UpCase):
-    def test_the_upgrade_is_off_by_default_and_the_butlers_flag_changes_nothing_then(self):
+    def test_the_upgrade_off_and_the_butlers_flag_changes_nothing_then(self):
         self.long()
-        with mock.patch.dict(os.environ, {upgrades.ENV: ""}):
+        with mock.patch.dict(os.environ, {upgrades.ENV: "off"}):
             answer = self.dispatched()
         self.assertTrue(answer["ok"], answer)
         self.assertEqual(self.projects_on_disk(), [])
@@ -102,13 +103,15 @@ class SwitchTest(UpCase):
         self.assertEqual(upgrades.mode(), "butler")
         with mock.patch.dict(os.environ, {upgrades.ENV: "word"}):
             self.assertEqual(upgrades.mode(), "butler")  # The old value, the same meaning.
-        for bad in ("", "off", "yes", "1"):
+        for bad in ("off", "yes", "1"):
             with mock.patch.dict(os.environ, {upgrades.ENV: bad}):
                 self.assertEqual(upgrades.mode(), "off", bad)
+        with mock.patch.dict(os.environ, {upgrades.ENV: ""}):
+            self.assertEqual(upgrades.mode(), "butler")  # Unset or empty is the default now.
 
     def test_with_the_total_switch_off_nothing_is_done_whatever_the_upgrade_says(self):
         self.long()
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(self.up.threads(), ())
             answer = self.dispatched()
             self.assertEqual(self.up.consider(self.record()["token"]), "")
@@ -172,7 +175,7 @@ class SwitchTest(UpCase):
         self.assertEqual(butler_topics.project_hint(request), {"project": True})
         self.assertEqual(butler_topics.project_hint(SimpleNamespace(args={"project": "yes"})), {})
         self.assertEqual(butler_topics.project_hint(SimpleNamespace(args={})), {})
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(butler_topics.project_hint(request), {})
 
     def test_a_thread_and_a_lead_are_never_upgraded_again(self):
@@ -298,7 +301,7 @@ class UpgradeTest(UpCase):
         projects.set_state(self.state, f"{0:012x}", projects.PAUSED)
         self.assertEqual(projects.active_count(self.state), 2)
         self.assertTrue(self.up.upgrade(dispatch, "word"))
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(projects.active_count(self.state), 0)
 
     def test_a_stale_write_of_the_dispatch_thread_is_dropped_after_the_upgrade(self):
@@ -624,7 +627,7 @@ class DirectTest(UpCase):
         self.assertEqual(len(self.receipts(pid)), 1)
 
     def test_without_the_total_switch_or_for_a_lead_project_is_ignored_and_a_topic_opens(self):
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             answer = self.start("q1", project=True)
         self.assertTrue(answer["ok"], answer)
         self.assertIn("topic_id", answer["data"])
@@ -635,14 +638,14 @@ class DirectTest(UpCase):
         self.assertEqual(self.projects_on_disk(), [])
 
     def test_direct_does_not_need_the_upgrade_switch(self):
-        with mock.patch.dict(os.environ, {upgrades.ENV: ""}):
+        with mock.patch.dict(os.environ, {upgrades.ENV: "off"}):
             answer = self.start("q3", project=True)
         self.assertIn("project_id", answer["data"])
 
 
 class StyleKeepTest(UpCase):
-    """COVEY_PROJECT_STYLE_KEEP=1 on the project's two entrances; off, a project is what it was. The direction layer is gone:
-    COVEY_DIRECTIONS and the direction arguments change nothing."""
+    """The style last set on any project is the next one's start, on the project's two entrances (T813: no switch). The
+    direction layer is gone: COVEY_DIRECTIONS and the direction arguments change nothing."""
 
     def on(self, **env):
         patcher = mock.patch.dict(os.environ, env)
@@ -665,11 +668,8 @@ class StyleKeepTest(UpCase):
         projects.update(self.state, pid, lambda data: data.update(direction={"name": "数据平台", "source": "owner"}))
         self.assertFalse(hasattr(facts(self.state, projects.read_record(self.state, pid), time.time()), "direction"))
 
-    def test_a_new_project_starts_from_the_style_last_set_only_with_the_switch(self):
+    def test_a_new_project_starts_from_the_style_last_set(self):
         project_lead.keep_style(self.state, {"report": "ask_only", "detail": "全"})
-        off = projects.read_record(self.state, self.start("p1", project=True)["data"]["project_id"])
-        self.assertNotIn("style", off)
-        self.on(COVEY_PROJECT_STYLE_KEEP="1")
         made = projects.read_record(self.state, self.start("p2", project=True)["data"]["project_id"])
         self.assertEqual(made["style"], {"report": "ask_only", "detail": "全"})
         self.assertEqual(project_lead.style_of(made)["detail"], "全")
@@ -678,7 +678,6 @@ class StyleKeepTest(UpCase):
         self.assertNotIn("style", none)  # Nothing was set yet: the defaults.
 
     def test_an_upgraded_project_starts_from_the_style_last_set_too(self):
-        self.on(COVEY_PROJECT_STYLE_KEEP="1")
         (self.state / project_lead.STYLE_FILE).write_text('{"detail": "一行", "spawn": "保守"}')  # An older release's file.
         self.long()
         self.dispatched("r1")
@@ -792,13 +791,16 @@ class ToolTest(UpCase):
         return topic, project
 
     def test_the_list_has_the_tools_only_with_the_switch_on_and_with_it_off_not_a_word_differs(self):
-        base = butler_tool_specs.listed({})
+        quiet = {"COVEY_BUTLER_RULES": "0", "COVEY_KNOWLEDGE": "0", "COVEY_PROJECT_TIDY": "off"}
+        base = butler_tool_specs.listed({**quiet, "COVEY_PROJECTS": "0"})
         self.assertEqual(base, butler_tool_specs.TOOLS)
-        for environ in ({"COVEY_PROJECTS": "0"}, {"COVEY_PROJECTS": ""}, {"COVEY_PROJECTS": "yes"}):
-            self.assertEqual(butler_tool_specs.listed(environ), base)
+        for environ in ({"COVEY_PROJECTS": "off"}, {"COVEY_PROJECTS": "false"}):
+            self.assertEqual(butler_tool_specs.listed({**quiet, **environ}), base)
+        for environ in ({}, {"COVEY_PROJECTS": ""}, {"COVEY_PROJECTS": "yes"}):  # On: no key, empty, any other value.
+            self.assertIn("project_send", [tool["name"] for tool in butler_tool_specs.listed({**quiet, **environ})])
         for switches in ({}, {"COVEY_BUTLER_RULES": "1"}, {"COVEY_KNOWLEDGE": "1"}):
-            off = butler_tool_specs.listed(switches)
-            on = butler_tool_specs.listed({**switches, "COVEY_PROJECTS": "1"})
+            off = butler_tool_specs.listed({**quiet, **switches, "COVEY_PROJECTS": "0"})
+            on = butler_tool_specs.listed({**quiet, **switches, "COVEY_PROJECTS": "1"})
             self.assertEqual([tool["name"] for tool in on], [tool["name"] for tool in off] + ["projects_list", "project_send"])
             for before, after in zip(off, on):
                 if before["name"] in ("topic_start", "topic_send"):
@@ -816,7 +818,8 @@ class ToolTest(UpCase):
         self.assertIn("project_note", names)
 
     def test_a_server_without_the_switch_refuses_the_butlers_project_tools(self):
-        server = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "k"}, submit=mock.Mock())
+        server = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "k", "COVEY_PROJECTS": "0"},
+                                   submit=mock.Mock())
         answer = server.call({"name": "project_send", "arguments": {"pid": "x", "text": "y"}})
         self.assertIn("没有开 project_send", json.dumps(answer, ensure_ascii=False))
 
@@ -834,7 +837,7 @@ class ToolTest(UpCase):
         with mock.patch.object(butler_topics, "lead_of", return_value=(project["id"], "p")):  # The lead's own call is not refused.
             answer = butler_topics.TOOLS["topic_send"](self.env, Request("s2", "topic_send", {"topic": topic, "text": "加"}, "main-job", 0.0))
         self.assertNotIn("project_send", answer["text"])
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):  # And with the switch off it is a topic like any.
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):  # And with the switch off it is a topic like any.
             answer = butler_topics.TOOLS["topic_send"](self.env, Request("s3", "topic_send", {"topic": topic, "text": "加"}, "main-job", 0.0))
         self.assertNotIn("project_send", answer["text"])
 
@@ -855,7 +858,7 @@ class ToolTest(UpCase):
         self.assertEqual([row.split(" · ")[2] for row in rows[1:]], ["做完"] * 3)
         with mock.patch.object(butler_topics, "lead_of", return_value=(project["id"], "p")):
             self.assertFalse(self.call("projects_list", "t3")["ok"])
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertFalse(self.call("projects_list", "t4")["ok"])
 
     def test_project_send_gives_a_running_lead_turn_a_supplement_and_an_idle_lead_the_next_turn_as_the_owners(self):
@@ -967,12 +970,17 @@ class ToolTest(UpCase):
 
 
 class McpTest(UpCase):
-    def test_the_switch_is_handed_on_to_the_server_only_when_it_is_on(self):
+    def test_the_switch_is_handed_on_to_the_server_only_when_it_is_set(self):
         config = butler.mcp_config(self.ctx.state_dir, self.ctx.state_dir, "k", "python3")
         self.assertEqual(config["mcpServers"]["bridge"]["env"]["COVEY_PROJECTS"], "1")
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             config = butler.mcp_config(self.ctx.state_dir, self.ctx.state_dir, "k", "python3")
-        self.assertNotIn("COVEY_PROJECTS", config["mcpServers"]["bridge"]["env"])
+        self.assertEqual(config["mcpServers"]["bridge"]["env"]["COVEY_PROJECTS"], "0")  # Handed on as it is: off at 0.
+        with mock.patch.dict(os.environ):
+            for name in cenv.spellings(projects.ENV):
+                os.environ.pop(name, None)
+            config = butler.mcp_config(self.ctx.state_dir, self.ctx.state_dir, "k", "python3")
+        self.assertNotIn("COVEY_PROJECTS", config["mcpServers"]["bridge"]["env"])  # Unset: nothing to hand on, on there.
         self.assertNotIn("LARK_BRIDGE_PROJECTS", config["mcpServers"]["bridge"]["env"])
 
 

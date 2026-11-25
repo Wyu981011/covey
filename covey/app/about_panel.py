@@ -80,7 +80,7 @@ def _tidy(probe):
                        else "先开专项（COVEY_PROJECTS=1），再设 COVEY_PROJECT_TIDY=suggest"), project_proposals.ENV
     from covey.app import track_judge
     if not track_judge.available(probe.apps):
-        return (False, "开着，但没有能判断的模型：Claude Code、Codex、Antigravity 都没启用，也没设 COVEY_JUDGE_GATEWAY",
+        return (False, "开着，但没有能判断的模型：Claude Code、Codex、Antigravity 都没启用",
                 project_proposals.ENV)
     return True, "", project_proposals.ENV
 
@@ -151,13 +151,6 @@ def _nodes(probe):
     if nodes.enabled():
         return True, "", nodes.LISTEN_ENV
     return False, "设 COVEY_NODE_LISTEN=设备能连进来的监听地址", nodes.LISTEN_ENV
-
-
-def _board(probe):
-    from covey.core import app_manifest
-    if app_manifest.board():
-        return True, "", "COVEY_BOARD"
-    return False, "设 COVEY_BOARD=1", "COVEY_BOARD"
 
 
 def _digest(probe):
@@ -247,7 +240,7 @@ FEATURES = (
     ("在跑时补一句", SAFE, "任务在跑时在话题里补一句，直接送进去，不另开一轮", _steer),
     ("敏感词脱敏", SAFE, "发给模型服务前换掉词表里的词，只支持 Claude 的模型", _redaction),
     ("设备与机器状况", SAFE, "设备连进来报机器状况，内存紧、盘满、失联会告警", _nodes),
-    ("看板", SEE, "菜单「看板」随时看等你、停住了、在做的事", _board),
+    ("看板", SEE, "菜单「看板」随时看等你、停住了、在做的事", _always),
     ("早晚汇总", SEE, "到点在私聊发一张汇总卡", _digest),
     ("手上的事", SEE, "私聊置顶一张「手上的事」，等你、在做、有结果的话题也能自动 Pin 上", _overview),
     ("派发卡", SEE, "管家把事转给已有话题后，你的提问下面挂一张实时刷新的卡", _dispatch),

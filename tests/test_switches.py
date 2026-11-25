@@ -33,6 +33,40 @@ class SwitchesTests(unittest.TestCase):
         self.assertEqual([name for name in switches.KNOWN if name not in rows], [])
         self.assertEqual([name for name in switches.KNOWN if switches.SECRET_NAME.search(name)], [])
 
+    def test_each_switch_on_unset_is_on_where_its_feature_reads_it_and_off_at_0(self):
+        """T813: the default-off switches the owner turned on are on unset, each read where its feature is; DEFAULTS
+        says the same, and 0 turns each off."""
+        from covey.app import dispatch_cards, prompts, review, workspace_gists
+        from covey.app import projects as upgrade
+        from covey.app.overview import Overview
+        from covey.core import butler_tracks, knowledge, memory, project_proposals, projects, quiet_hours, revisits
+        from covey.core import env as cenv, topic_seen, triage
+        readers = {
+            "COVEY_PROJECTS": projects.enabled, "COVEY_PROJECT_AUTOWAKE": projects.autowake_enabled,
+            "COVEY_PROJECT_ASK": projects.ask_enabled, "COVEY_PROJECT_MEMORY": projects.memory_enabled,
+            "COVEY_PROJECT_TRIAGE": triage.enabled, "COVEY_PROJECT_TIDY": project_proposals.mode,
+            "COVEY_PROJECT_UPGRADE": upgrade.mode, "COVEY_REVIEW": review.enabled, "COVEY_REVISIT": revisits.enabled,
+            "COVEY_MEMORY": memory.enabled, "COVEY_KNOWLEDGE": knowledge.enabled, "COVEY_PINNED_OVERVIEW": Overview.enabled,
+            "COVEY_PINNED_TOPICS": topic_seen.enabled, "COVEY_DIGEST_TIMES": quiet_hours.digest_times,
+            "COVEY_DISPATCH_CARD": dispatch_cards.enabled, "COVEY_BUTLER_TRACKS": butler_tracks.enabled,
+            "COVEY_BUTLER_RULES": prompts.butler_on, "COVEY_WORKSPACE_GISTS": workspace_gists.count}
+        self.assertEqual(set(readers), set(switches.DEFAULTS))
+        spelled = {spelling for name in readers for spelling in cenv.spellings(name)}
+        clean = {key: value for key, value in os.environ.items() if key not in spelled}
+        with mock.patch.dict(os.environ, clean, clear=True):
+            for name, read in readers.items():
+                with self.subTest(name=name):
+                    held = read()
+                    self.assertTrue(held)
+                    if not isinstance(held, bool):
+                        self.assertEqual(str(held), switches.DEFAULTS[name])
+                    with mock.patch.dict(os.environ, {name: "0"}):
+                        self.assertIn(read(), (False, 0, "", "off"))
+            self.assertTrue(switches.is_on("COVEY_PROJECTS", {}))
+            self.assertFalse(switches.is_on("COVEY_PROJECTS", {"COVEY_PROJECTS": "0"}))
+            self.assertTrue(switches.is_on("COVEY_REVIEW", {"COVEY_REVIEW": switches.EMPTY}))  # Empty is unset.
+            self.assertFalse(switches.is_on("COVEY_COLLAB", {}))  # Not one of DEFAULTS: off unset.
+
     def test_a_manifest_environment_in_its_stored_spellings_gives_names_and_values(self):
         found = switches.shown({"LARK_BRIDGE_MAIN_THREAD": "1", "COVEY_REVISIT": "1", "COVEY_DIGEST_TIMES": "09:30,21:30",
                                 "COVEY_PROJECT_TIDY": "", "PATH": "/usr/bin", "COVEY_NOT_A_SWITCH": "1"})
@@ -41,11 +75,9 @@ class SwitchesTests(unittest.TestCase):
         self.assertEqual(switches.words(found[:2]), "COVEY_BUTLER=1；COVEY_PROJECT_TIDY=空")
 
     def test_install_and_showcase_name_known_switches_and_the_showcase_holds_the_install_set(self):
-        self.assertEqual(switches.INSTALL, {"COVEY_PROJECTS": "1", "COVEY_PROJECT_TIDY": "suggest", "COVEY_BOARD": "1",
-                                            "COVEY_REVIEW": "1", "COVEY_REVISIT": "1", "COVEY_MEMORY": "1",
-                                            "COVEY_KNOWLEDGE": "1", "COVEY_PROJECT_AUTOWAKE": "1", "COVEY_PROJECT_ASK": "1",
-                                            "COVEY_PROJECT_MEMORY": "1", "COVEY_PROJECT_TRIAGE": "1",
-                                            "COVEY_EVENT_TRANSPORT": "sdk", "COVEY_CARD_TRANSPORT": "sdk"})
+        self.assertEqual(switches.INSTALL, {"COVEY_EVENT_TRANSPORT": "sdk", "COVEY_CARD_TRANSPORT": "sdk"})
+        self.assertEqual(switches.SHOWCASE, {**switches.INSTALL, "COVEY_COLLAB": "1"})
+        self.assertEqual([name for name in switches.DEFAULTS if name not in switches.KNOWN], [])
         self.assertEqual({k: v for k, v in switches.SHOWCASE.items() if k in switches.INSTALL}, switches.INSTALL)
         self.assertEqual([name for name in switches.SHOWCASE if name not in switches.KNOWN], [])
         lines = (REPO / "docs" / "configuration.md").read_text().splitlines()
@@ -54,13 +86,10 @@ class SwitchesTests(unittest.TestCase):
         self.assertEqual([name for name in extra if f"`{name}=" not in showcase], [])  # Its table names each one.
 
     def test_a_preset_turns_on_what_is_unset_or_off_whatever_the_spelling_and_keeps_other_values(self):
-        environ = {"LARK_BRIDGE_DIGEST_TIMES": "10:00", "LARK_BRIDGE_MAIN_TRACKS": "off", "COVEY_PROJECT_TIDY": "auto",
-                   "COVEY_REVIEW": "1", "COVEY_MEMORY": "", "COVEY_COLLAB": "No"}
+        environ = {"LARK_BRIDGE_EVENT_TRANSPORT": "cli", "LARK_BRIDGE_CARD_TRANSPORT": "off", "COVEY_COLLAB": "No"}
         found = switches.preset_changes("showcase", environ)
-        self.assertEqual({name: found.get(name) for name in ("COVEY_DIGEST_TIMES", "COVEY_PROJECT_TIDY", "COVEY_REVIEW")},
-                         {"COVEY_DIGEST_TIMES": None, "COVEY_PROJECT_TIDY": None, "COVEY_REVIEW": None})
-        self.assertEqual((found["COVEY_BUTLER_TRACKS"], found["COVEY_MEMORY"], found["COVEY_COLLAB"]), ("1", "1", "1"))
-        self.assertEqual(set(found), set(switches.SHOWCASE) - {"COVEY_DIGEST_TIMES", "COVEY_PROJECT_TIDY", "COVEY_REVIEW"})
+        self.assertEqual(found, {"COVEY_CARD_TRANSPORT": "sdk", "COVEY_COLLAB": "1"})  # cli is a value of its own: kept.
+        self.assertEqual(switches.preset_changes("showcase", {}), switches.SHOWCASE)
         self.assertEqual(switches.preset_changes("showcase", dict(switches.SHOWCASE)), {})
         with self.assertRaises(KeyError):
             switches.preset_changes("other", {})

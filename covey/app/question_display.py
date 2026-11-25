@@ -26,7 +26,7 @@ from covey.core.locks import resource_lock
 from covey.cards.pages import fits
 from covey.cards.question_cards import (OTHERS, SET_ASIDE, answer_notice_card, mirror_card, output_pages, question_card,
                                         question_element, triage_element)
-from covey.core import app_manifest, butler, placement, triage
+from covey.core import butler, placement, triage
 from covey.core.jobs import find_job_record
 from covey.core.state import read_object, write_private_text
 from covey.core.store import update_question
@@ -118,7 +118,7 @@ class QuestionDisplay:
         except Exception as exc:  # noqa: BLE001 - the card without its line
             self.runtime.log(f"waiting count unreadable: {type(exc).__name__}")
             return record
-        return {**record, OTHERS: {"n": waiting, "board": app_manifest.board()}} if waiting else record
+        return {**record, OTHERS: {"n": waiting, "board": True}} if waiting else record
 
     def paint(self, ctx, record):
         record = self.with_others(ctx, record)

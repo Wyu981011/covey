@@ -63,7 +63,7 @@ class ViewTests(StateCase):
         knowledge.save(self.state, knowledge.OWNER, "fact", "一条知识")
         for n in range(30):
             principles.save(self.state, principles.OWNER, f"第 {n} 条很长的原则：" + "要" * 60)
-        with mock.patch.dict(os.environ, {"COVEY_KNOWLEDGE": ""}):
+        with mock.patch.dict(os.environ, {"COVEY_KNOWLEDGE": "0"}):
             data = web_memory.view(self.state)
         group = self.group(data)
         self.assertFalse(data["knowledge"])
@@ -169,7 +169,7 @@ class OpTests(StateCase):
         self.assertTrue(Ops.memory_edit(self.ops(), self.state, "oc_chat", {}, payload).startswith("已记下"))
         with self.assertRaisesRegex(ValueError, "只有主人"):
             Ops.memory_edit(self.ops(owner=False), self.state, "oc_chat", {}, payload)
-        with mock.patch.dict(os.environ, {"COVEY_MEMORY": ""}), self.assertRaisesRegex(ValueError, "记忆没开"):
+        with mock.patch.dict(os.environ, {"COVEY_MEMORY": "0"}), self.assertRaisesRegex(ValueError, "记忆没开"):
             Ops.memory_edit(self.ops(), self.state, "oc_chat", {}, payload)
 
 
@@ -178,7 +178,7 @@ class MemoryPushTest(WebCase):
 
     def setUp(self):
         super().setUp()
-        self.enterContext(mock.patch.dict(os.environ, {"COVEY_MEMORY": "1", "COVEY_KNOWLEDGE": ""}))
+        self.enterContext(mock.patch.dict(os.environ, {"COVEY_MEMORY": "1", "COVEY_KNOWLEDGE": "0"}))
 
     def pushed(self):
         return [each for batch in self.web.upserts for each in batch["items"] if each["key"] == "memory"]
@@ -192,13 +192,13 @@ class MemoryPushTest(WebCase):
         principles.save(self.state, principles.OWNER, "数字要有出处")
         self.assertEqual(self.sync.push_memory(), 1)
         self.assertEqual({e["text"] for e in self.pushed()[-1]["data"]["groups"][0]["entries"]}, {"数字要有出处", "先给结论"})
-        with mock.patch.dict(os.environ, {"COVEY_MEMORY": ""}):
+        with mock.patch.dict(os.environ, {"COVEY_MEMORY": "0"}):
             self.assertEqual(self.sync.push_memory(), 1)  # The page had the tab: it is told the memory is off.
             self.assertEqual(self.sync.push_memory(full=True), 0)
         self.assertEqual(self.pushed()[-1]["data"], {"on": False})
 
     def test_never_on_never_pushed(self):
-        with mock.patch.dict(os.environ, {"COVEY_MEMORY": ""}):
+        with mock.patch.dict(os.environ, {"COVEY_MEMORY": "0"}):
             self.assertEqual(self.sync.push_memory(full=True), 0)
         self.assertEqual(self.pushed(), [])
 

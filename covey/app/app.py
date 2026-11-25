@@ -13,7 +13,6 @@ its own module that receives its collaborators here:
 - ``forks`` (app/forks.py): the topics the butler's topic_fork opens, and their first run.
 - ``compaction`` (app/compaction.py): the butler's compaction requests, taken by its next turn.
 - ``rewinds`` (app/rewind.py): a ↩️ 回退 the topic's next turn resumes for, and each turn's prompt.
-- ``turn_export`` (app/turn_export.py): 下载请求与结果 on an ended task card.
 - ``stuck_check`` (app/stuck_check.py): 看看 on the task card of a turn that may be stuck.
 - ``diag_summary`` (app/diag_summary.py): 复制诊断 beside 看原因 on a turn that did not succeed.
 - ``questions`` (app/questions.py): native and checkpoint questions, answers, held notes.
@@ -56,7 +55,6 @@ from covey.app.steering import Steering
 from covey.app.submission import HarnessChanged, Submission
 from covey.app.topics import RetiredHarness
 from covey.app.task_controls import TaskControls
-from covey.app.turn_export import TurnExport
 from covey.app.stuck_check import StuckCheck
 from covey.app.diag_summary import DiagSummary
 from covey.app.worker import process_bridge_reply_job
@@ -109,7 +107,6 @@ class BridgeApp:
                                    enqueue_chat_job=enqueue_chat_job)
         self.artifacts = Artifacts(harness, runtime=runtime, messenger=messenger, cards=self.cards,
                                    copies=self.questions)
-        self.turn_export = TurnExport(harness, runtime=runtime, cards=self.cards, artifacts=self.artifacts)
         self.stuck_check = StuckCheck(harness, runtime=runtime, messenger=messenger, topics=topics)
         self.diag_summary = DiagSummary(harness, runtime=runtime, messenger=messenger)
         self.switch = SwitchHandoff(harness, runtime=runtime, cards=self.cards, topics=topics)
@@ -184,13 +181,11 @@ class BridgeApp:
                 self.artifacts.attach_artifact_controls(ctx, job)
             except Exception as exc:
                 self.runtime.log(f"Artifact controls unavailable: {type(exc).__name__}")
-            self.attach_export_controls(ctx, job)  # First: the 换配置/回退 panel then goes in above it.
             try:
                 self.switch.attach_topic_controls(ctx, job)
             except Exception as exc:
                 self.runtime.log(f"Topic controls unavailable: {type(exc).__name__}")
         if status in {'failed', 'cancelled', 'interrupted'}:
-            self.attach_export_controls(ctx, job)
             try:
                 self.switch.attach_switch_controls(ctx, job)
             except Exception as exc:
@@ -199,12 +194,6 @@ class BridgeApp:
             self.questions.update_continuation_card(ctx, job, status)
         except Exception as exc:
             self.runtime.log(f"Continuation card update failed: {type(exc).__name__}")
-
-    def attach_export_controls(self, ctx, job):
-        try:
-            self.turn_export.attach_export_controls(ctx, job)
-        except Exception as exc:
-            self.runtime.log(f"Export controls unavailable: {type(exc).__name__}")
 
     def process_reply_job(self, job: ReplyJob, ctx: BridgeContext) -> None:
         try:

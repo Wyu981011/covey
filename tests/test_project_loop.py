@@ -64,8 +64,7 @@ class Loop(Case):
         self.env = SimpleNamespace(state_dir=self.state, topics=SimpleNamespace(apps={"claude": self.app}))
         self.stop = mock.Mock(return_value=0)
         self.loop = ProjectLoop(self.runtime, self.env, self.stop)
-        os.environ.pop(projects.AUTOWAKE_ENV, None)
-        budget = mock.patch.dict(os.environ, {projects.BUDGET_ENV: str(BUDGET)})
+        budget = mock.patch.dict(os.environ, {projects.AUTOWAKE_ENV: "0", projects.BUDGET_ENV: str(BUDGET)})
         budget.start()
         self.addCleanup(budget.stop)
 

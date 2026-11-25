@@ -1,7 +1,7 @@
 """知识条目 (docs/butler.md 知识库): short entries the owner asked to be remembered ("记一下"), kept in one place so
 every Harness reads them (app/prompts.py knowledge_block: a new topic's first turn carries them) and the butler
 searches and changes them (app/butler_knowledge.py knowledge_save, knowledge_update, knowledge_drop, knowledge_search).
-Off unless COVEY_KNOWLEDGE=1: without it nothing here is called, no directory is made and no prompt, tool list
+On unless COVEY_KNOWLEDGE is 0: with it off nothing here is called, no directory is made and no prompt, tool list
 or digest changes.
 
 <state>/knowledge/::
@@ -39,6 +39,7 @@ import time
 from pathlib import Path
 
 from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.core.locks import shared_file_lock
 from covey.core.state import epoch_seconds, write_private_text
 
@@ -60,8 +61,8 @@ STATE_WORDS = {CURRENT: "当前", SUPERSEDED: "已取代", DROPPED: "已作废"}
 
 
 def enabled(environ=None) -> bool:
-    """Whether COVEY_KNOWLEDGE=1: the owner's own deployment only (read on every call)."""
-    return str(cenv.get(ENV, "", environ)).strip() == "1"
+    """Whether 知识条目 is on: COVEY_KNOWLEDGE unset or anything but 0/off/false/no (read on every call)."""
+    return env_flag(ENV, True, environ)
 
 
 def history_cmd(environ=None) -> str:

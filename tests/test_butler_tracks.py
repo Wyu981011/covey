@@ -30,11 +30,11 @@ from covey.core.topics import remember_topic_message
 
 CHAT = "oc_dm"
 OTHER_CHAT = "oc_other"
-CLEAN = {butler_tracks.ENV: "", "LARK_BRIDGE_MAIN_TRACKS": "", butler_tracks.MAX_ENV: "", "LARK_BRIDGE_MAIN_TRACKS_MAX": ""}
+CLEAN = {butler_tracks.ENV: "0", "LARK_BRIDGE_MAIN_TRACKS": "0", butler_tracks.MAX_ENV: "", "LARK_BRIDGE_MAIN_TRACKS_MAX": ""}
 
 
 class Env(unittest.TestCase):
-    """The tracks' two variables cleared, then set by ``tracks`` (switch) and ``more`` until the test ends."""
+    """The tracks' switch off (0) and its limit cleared, then set by ``tracks`` (switch) and ``more`` until the test ends."""
 
     def setUp(self):
         patch = mock.patch.dict(os.environ, CLEAN)
@@ -72,21 +72,27 @@ class SlotIdsTest(Env):
 
 
 class SwitchTest(Env):
-    def test_off_unless_exactly_1(self):
+    def test_off_at_0(self):
         self.assertFalse(butler_tracks.enabled())
-        for value in ("", "0", "true", "yes", " ", "2"):
+        for value in ("0", "off", "false", "no", " 0 "):
             with mock.patch.dict(os.environ, {butler_tracks.ENV: value}):
                 self.assertFalse(butler_tracks.enabled(), value)
-        for value in ("1", " 1 "):
+        for value in ("", "1", " 1 ", "true", "yes", " "):
             with mock.patch.dict(os.environ, {butler_tracks.ENV: value}):
                 self.assertTrue(butler_tracks.enabled(), value)
 
-    def test_the_old_spelling_works_and_the_new_one_wins(self):
-        with mock.patch.dict(os.environ, {"LARK_BRIDGE_MAIN_TRACKS": "1"}):
-            del os.environ[butler_tracks.ENV]  # The cleared new spelling would win; patch.dict puts it back afterwards.
+    def test_unset_is_on(self):
+        with mock.patch.dict(os.environ, CLEAN):
+            for name in (butler_tracks.ENV, "LARK_BRIDGE_MAIN_TRACKS"):
+                del os.environ[name]
             self.assertTrue(butler_tracks.enabled())
-        with mock.patch.dict(os.environ, {"LARK_BRIDGE_MAIN_TRACKS": "1", butler_tracks.ENV: "0"}):
+
+    def test_the_old_spelling_works_and_the_new_one_wins(self):
+        with mock.patch.dict(os.environ, {"LARK_BRIDGE_MAIN_TRACKS": "0"}):
+            del os.environ[butler_tracks.ENV]  # The new spelling would win; patch.dict puts it back afterwards.
             self.assertFalse(butler_tracks.enabled())
+        with mock.patch.dict(os.environ, {"LARK_BRIDGE_MAIN_TRACKS": "0", butler_tracks.ENV: "1"}):
+            self.assertTrue(butler_tracks.enabled())
 
     def test_the_limit_is_3_unset_or_unreadable_and_held_to_2_to_4_otherwise(self):
         self.assertEqual(butler_tracks.limit(), 3)
@@ -135,7 +141,7 @@ class PredicateTest(Env):
         self.assertIsNone(track_of("ab" * 16, CHAT))
 
     def test_the_root_predicate_does_not_depend_on_the_switch(self):
-        for value in ("", "1"):
+        for value in ("0", "1"):
             with mock.patch.dict(os.environ, {butler_tracks.ENV: value}):
                 self.assertTrue(is_butler_root(butler_topic_id(CHAT), CHAT))
                 self.assertFalse(is_butler_root(track_topic_id(CHAT, 1), CHAT))

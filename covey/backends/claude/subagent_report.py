@@ -13,7 +13,8 @@ from pathlib import Path
 
 from covey.backends.claude.sessions import ClaudeSessionStore, claude_projects_root
 from covey.backends.claude.transcript import json_row
-from covey.core.turn_export_rows import MARGIN
+
+MARGIN = 5  # Seconds before the turn's start: its first subagent file can be written just before the request is stamped.
 
 FINISHED, FAILED, UNFINISHED = "finished", "failed", "unfinished"
 MAX_AGENTS = 60  # Newest files only: a turn with more is not a turn to rebuild from.

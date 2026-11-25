@@ -71,7 +71,7 @@ class Backend:
         self.found, self.asked = found, []
 
     def capabilities(self, ctx):
-        return HarnessCapabilities(turn_export=True)
+        return HarnessCapabilities(session_files=True)
 
     def subagent_report(self, ctx, session_id, since):
         self.asked.append((session_id, since))
@@ -169,7 +169,7 @@ class SubagentBackend(Failing):
     found = [agent(1), agent(2, "unfinished", "半截")]
 
     def capabilities(self, ctx):
-        return HarnessCapabilities(rate_limit_retry=True, incomplete_retry=True, turn_export=True)
+        return HarnessCapabilities(rate_limit_retry=True, incomplete_retry=True, session_files=True)
 
     def subagent_report(self, ctx, session_id, since):
         return self.found

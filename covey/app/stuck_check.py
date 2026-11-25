@@ -6,8 +6,8 @@ may be the stuck one) and looks in a thread of its own (``look``): the job's tas
 the processes under it and which of them used the CPU over SAMPLE_SECONDS (``processes``: names and states, never their
 command lines), when its runner.log was last written and its last lines, the trace's latest steps and the turn's
 progress. ``verdict`` says in one sentence what that means (still working, waiting for a command, waiting for the
-model, its runner gone); for a topic that does not redact, the small model (app/track_judge.py ``ask``: the gateway
-COVEY_JUDGE_GATEWAY names, else Haiku through this Bridge's Claude Harness, else Codex's or Antigravity's own CLI; no tools, no
+model, its runner gone); for a topic that does not redact, the small model (app/track_judge.py ``ask``:
+Haiku through this Bridge's Claude Harness, else Codex's or Antigravity's own CLI; no tools, no
 session, killed at MODEL_SECONDS) words that sentence from the same facts, on any Harness's topic (#17: a topic of another
 Harness is asked about through those), and the rules' sentence stands when it cannot. The reply is that sentence and the facts it rests on. Nothing is stopped,
 changed or started, and no task runs.
@@ -198,8 +198,8 @@ def reply_text(found, sentence, job_id, now=None) -> str:
 
 def ask_model(found, rule, backend, ctx, limit=MODEL_SECONDS, state_dir=None) -> str:
     """The small model's sentence of ``found`` (``rule``: the rules' own), '' when it cannot be had. Where
-    app/track_judge.py ``ask`` puts it: the gateway COVEY_JUDGE_GATEWAY names, Claude Code (``backend``, ``ctx``), or
-    Codex's or Antigravity's own CLI. ``state_dir``: where its directory is when there is no ``ctx`` (a gateway's)."""
+    app/track_judge.py ``ask`` puts it: Claude Code (``backend``, ``ctx``), or Codex's or Antigravity's own CLI.
+    ``state_dir``: where its directory is when there is no ``ctx``."""
     from covey.app import track_judge
     data = json.dumps({"rule": rule, **{key: found[key] for key in ("processes", "log", "steps")},
                        "phase": found["progress"].get("phase"), "plan": turn_progress.plan_words(found["progress"]),
@@ -278,12 +278,9 @@ class StuckCheck:
                 return ""
         except ValueError:
             return ""
-        from covey.app import judge_gateway
         backend, judge_ctx = self.judge(ctx)
         if backend is None or judge_ctx is None or not getattr(judge_ctx, "backend_cmd", None):
-            backend = judge_ctx = None
-            if judge_gateway.configured() is None:
-                return ""
+            return ""
         return ask_model(found, rule, backend, judge_ctx, state_dir=ctx.state_dir)
 
     def judge(self, ctx):

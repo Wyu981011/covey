@@ -63,9 +63,9 @@ LEAD_DROPS = ("topic_id", "main_thread", "track", "project", "origin", "root_id"
 
 
 def mode() -> str:
-    """COVEY_PROJECT_UPGRADE: ``butler`` (``word``, the old name, means the same) or ``auto``; anything else, unset too, is
-    ``off`` (read on every call)."""
-    value = str(cenv.get(ENV, "")).strip().lower()
+    """COVEY_PROJECT_UPGRADE: ``butler`` (unset or empty too; ``word``, the old name, means the same) or ``auto``; anything
+    else is ``off`` (read on every call)."""
+    value = str(cenv.get(ENV, "") or "").strip().lower() or BUTLER
     return BUTLER if value in (BUTLER, WORD) else AUTO if value == AUTO else OFF
 
 
@@ -233,12 +233,11 @@ class Projects:
         return pid
 
     def seed_style(self, record) -> None:
-        """The new project's record starts with the style last set on any project (COVEY_PROJECT_STYLE_KEEP=1; the file is
-        app/project_lead.py ``last_style``), none without it or before one was set."""
-        if projects.style_keep_enabled():
-            style = project_lead.last_style(self.env.state_dir)
-            if style:
-                record["style"] = style
+        """The new project's record starts with the style last set on any project (the file is app/project_lead.py
+        ``last_style``), none before one was set."""
+        style = project_lead.last_style(self.env.state_dir)
+        if style:
+            record["style"] = style
 
     def advance(self, pid) -> bool:
         """Do the steps of project ``pid`` that are not ticked off in its record, in order, ticking each one when it is

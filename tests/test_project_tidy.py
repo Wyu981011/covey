@@ -214,7 +214,7 @@ class GistTest(TidyCase):
         self.assertIn("本质：" + A, note)
         butler_job = SimpleNamespace(topic_id=upgrades.butler.butler_topic_id(CHAT), chat_id=CHAT)
         self.assertEqual(Runs._gist_note(ctx, butler_job), "")
-        with mock.patch.dict(os.environ, {proposals.ENV: ""}):
+        with mock.patch.dict(os.environ, {proposals.ENV: "off"}):
             self.assertEqual(Runs._gist_note(ctx, job), "")
 
 
@@ -958,7 +958,7 @@ class MomentTest(TidyCase):
 class OffTest(TidyCase):
     def test_with_the_switch_off_nothing_is_read_judged_listed_or_pushed(self):
         topic = self.topic(A, gist={"essence": A})
-        for environ in ({proposals.ENV: ""}, {proposals.ENV: "suggest", projects.ENV: ""}, {proposals.ENV: "yes"}):
+        for environ in ({proposals.ENV: "off"}, {proposals.ENV: "suggest", projects.ENV: "0"}, {proposals.ENV: "yes"}):
             with mock.patch.dict(os.environ, environ):
                 self.assertFalse(proposals.enabled())
                 self.assertEqual(self.tidy.threads(), ())
@@ -971,11 +971,18 @@ class OffTest(TidyCase):
                 self.assertIsNone(Collector.gist(self.state, topic))
         self.assertEqual(self.asked, [])
 
-    def test_the_code_default_is_off_and_install_writes_suggest(self):
+    def test_the_code_default_is_suggest_and_install_writes_suggest(self):
         from covey.service import installer
 
-        with mock.patch.dict(os.environ, {proposals.ENV: "", projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {proposals.ENV: "off", projects.ENV: "1"}):
             self.assertEqual(proposals.mode(), proposals.OFF)
+        with mock.patch.dict(os.environ, {proposals.ENV: "", projects.ENV: "0"}):
+            self.assertEqual(proposals.mode(), proposals.OFF)  # 专项 off turns it off too.
+        clean = {name: value for name, value in os.environ.items() if name not in cenv.spellings(proposals.ENV) + cenv.spellings(projects.ENV)}
+        with mock.patch.dict(os.environ, clean, clear=True):
+            self.assertEqual(proposals.mode(), proposals.SUGGEST)  # Unset is suggest.
+        with mock.patch.dict(os.environ, {proposals.ENV: "", projects.ENV: "1"}):
+            self.assertEqual(proposals.mode(), proposals.SUGGEST)
         ins = SimpleNamespace(env={"COVEY_PROJECT_TIDY": "off"}, feishu_sdk=lambda: True)
         installer.Installer.default_switches(ins)
         self.assertEqual(ins.env, {**installer.INSTALL_SWITCHES, "COVEY_PROJECT_TIDY": "off"})
@@ -995,7 +1002,6 @@ class OffTest(TidyCase):
         saved = runtime_environment(ins.env)
         self.assertEqual(saved["LARK_BRIDGE_PROJECTS"], "0")
         self.assertEqual(saved["LARK_BRIDGE_PROJECT_TIDY"], "off")
-        self.assertEqual(saved["LARK_BRIDGE_BOARD"], "1")
 
     def test_the_patrol_reads_the_tidys_proposals_instead_of_its_own_word_match(self):
         from covey.app import patrol_rules
@@ -1006,7 +1012,7 @@ class OffTest(TidyCase):
         found = patrol_rules.find(patrol_rules.look(self.state, CHAT, time.time()))
         groups = [item for item in found if item.kind == "group"]
         self.assertEqual([item.key for item in groups], [f"group:{made['id'][:10]}"])
-        with mock.patch.dict(os.environ, {proposals.ENV: ""}):
+        with mock.patch.dict(os.environ, {proposals.ENV: "off"}):
             found = patrol_rules.find(patrol_rules.look(self.state, CHAT, time.time()))
             self.assertFalse(any(item.key == f"group:{made['id'][:10]}" for item in found))
 

@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from support import UNSET_OFF
 from support import make_context
 from support.records import write_job, write_topic
 
@@ -38,7 +39,7 @@ class Case(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patcher = mock.patch.dict(os.environ, {name: value for name, value in os.environ.items()
-                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}, clear=True)
+                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))} | UNSET_OFF, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         self.env(**ON)
@@ -87,8 +88,10 @@ class SwitchTest(unittest.TestCase):
         self.assertTrue(memory.learning({"LARK_BRIDGE_MEMORY": "1", "LARK_BRIDGE_MEMORY_LEARN": "1"}))
         self.assertTrue(memory.learning({"COVEY_MEMORY": "1", "LARK_BRIDGE_MEMORY_LEARN": "1"}))
         self.assertFalse(memory.enabled({"COVEY_MEMORY": "0", "LARK_BRIDGE_MEMORY": "1"}))  # The new name, when set, decides.
-        self.assertFalse(memory.learning({"LARK_BRIDGE_MEMORY_LEARN": "1"}))
-        self.assertFalse(memory.enabled({}))
+        self.assertFalse(memory.learning({"COVEY_MEMORY": "0", "LARK_BRIDGE_MEMORY_LEARN": "1"}))  # Learning needs the memory.
+        self.assertFalse(memory.learning({"LARK_BRIDGE_MEMORY": "0", "LARK_BRIDGE_MEMORY_LEARN": "1"}))
+        self.assertFalse(memory.enabled({"LARK_BRIDGE_MEMORY": "0"}))
+        self.assertTrue(memory.enabled({}))  # Unset is on.
         with mock.patch.dict(os.environ, {"LARK_BRIDGE_MEMORY": "1"}, clear=True):
             self.assertTrue(memory.enabled())
 

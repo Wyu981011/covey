@@ -107,7 +107,7 @@ class HarnessCapabilities:
     # (app/steer_interrupt.py)
     command_stop: bool = False
     compaction: bool = False  # compacts a resumed session before the turn on ``compact_first`` (the butler's threshold)
-    turn_export: bool = False  # export_turn(ctx, session_id, since, until): the turn's model requests (下载请求与结果)
+    session_files: bool = False  # its session records are on this machine: subagent_report reads a turn's subagents
     redaction: bool = False  # runs a topic that chose redaction through the term relay (core/redaction.py)
     # rewind_point/rewind_files(ctx, session_id, prompt_uuid), ``resume_at`` and the prompt_read event: drops a
     # session's last turn (↩️ 回退, app/rewind.py)
@@ -166,7 +166,7 @@ def backend_capabilities(backend, ctx):
 # bridge_tools: the butler's tools are a process on this machine, its state directory too. collab: no device ran C8, and
 # its session store is the device's (app/collab_checks.py refuses a topic on a device). ask_once: its private home and
 # directory are this machine's.
-DEVICE_OFF = ("native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools", "collab",
+DEVICE_OFF = ("native_fork", "compaction", "session_files", "redaction", "rewind", "command_stop", "bridge_tools", "collab",
               "ask_once")
 
 

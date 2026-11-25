@@ -366,7 +366,7 @@ class RoutingTest(unittest.TestCase):
         patch = mock.patch.dict(os.environ, {"COVEY_TRACK_JUDGE_WARM": "0"})
         patch.start()
         self.addCleanup(patch.stop)
-        for name in ("COVEY_JUDGE_GATEWAY", "LARK_BRIDGE_JUDGE_GATEWAY", "COVEY_TRACK_JUDGE", "COVEY_TRACK_JUDGE_MS"):
+        for name in ("COVEY_TRACK_JUDGE", "COVEY_TRACK_JUDGE_MS"):
             os.environ.pop(name, None)
 
     def test_claude_code_first_then_codex_then_antigravity_and_never_one_that_cannot_answer_alone(self):
@@ -380,7 +380,7 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual(track_judge.tools({}), (None, None))
         self.assertFalse(track_judge.available({"dsh": dsh}, environ={}))
         self.assertTrue(track_judge.available({"codex": codex}, environ={}))
-        self.assertTrue(track_judge.available({}, environ={"COVEY_JUDGE_GATEWAY": "gw:model"}))
+        self.assertFalse(track_judge.available({}, environ={"COVEY_JUDGE_GATEWAY": "gw:model"}))  # Retired (T813).
 
     def test_a_native_harness_gets_the_question_and_its_answer_comes_back_as_an_envelope(self):
         codex = self.app("codex", ask_once=True)
@@ -400,14 +400,11 @@ class RoutingTest(unittest.TestCase):
             track_judge.ask("系统", "{}", backend=None, ctx=None, limit=30, cwd="/c", environ={})
         self.assertEqual(caught.exception.reason, "no_backend")
 
-    def test_the_gateway_set_comes_first(self):
+    def test_a_retired_judge_gateway_setting_is_not_read(self):
         codex = self.app("codex", ask_once=True)
         backend, ctx = track_judge.tools({"codex": codex})
-        with mock.patch.object(track_judge.judge_gateway, "ask", return_value='{"result":"x"}') as gateway:
-            track_judge.ask("s", "{}", backend=backend, ctx=ctx, limit=5, cwd="/c",
-                            environ={"COVEY_JUDGE_GATEWAY": "gw:model"})
-        gateway.assert_called_once()
-        self.assertEqual(backend.calls, [])
+        track_judge.ask("s", "{}", backend=backend, ctx=ctx, limit=5, cwd="/c", environ={"COVEY_JUDGE_GATEWAY": "gw:model"})
+        self.assertEqual(len(backend.calls), 1)  # Codex answered: COVEY_JUDGE_GATEWAY is gone (T813).
 
     def test_the_router_asks_codex_with_its_own_limit_logs_where_and_warms_no_claude_code(self):
         codex = self.app("codex", ask_once=True)

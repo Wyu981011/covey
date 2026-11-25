@@ -144,7 +144,7 @@ def ask_note(ask) -> str:
 
 
 class ProjectCards:
-    """The Bridge's feature object (app/unified.py PARTS ``project_cards``): the refresh thread, off unless COVEY_PROJECTS=1,
+    """The Bridge's feature object (app/unified.py PARTS ``project_cards``): the refresh thread, off with 专项 off (COVEY_PROJECTS=0),
     and nothing else (no menu item, no click it claims: the buttons route as the lead topic's)."""
     name = "project_cards"
 

@@ -299,7 +299,7 @@ def build_stream_card(
                                     slim_details([e for e in (io_box(job), request, *buttons) if e])) if e]
         else:
             # The answer card's look: its row (T number, title, the state as a tag), the 输入/输出 lines, the body, then
-            # 本轮请求 and 执行过程 folded; no 任务详情 (task_details_panel) and no 下载请求与结果 (app/turn_export.py).
+            # 本轮请求 and 执行过程 folded; no 任务详情 (task_details_panel).
             elements = [e for e in (task_head(job, heading, status or "等待处理"), more_element(), io_box(job), answer,
                                     request, *buttons) if e]
     card = {

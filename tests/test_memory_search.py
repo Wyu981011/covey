@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from support import UNSET_OFF
 from support import REPO
 from support.records import write_topic
 
@@ -27,7 +28,7 @@ class Case(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.state = Path(tmp.name)
         patcher = mock.patch.dict(os.environ, {name: value for name, value in os.environ.items()
-                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}, clear=True)
+                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))} | UNSET_OFF, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         projects.create(self.state, projects.new_record(chat_id=CHAT, name="网关", project_id=PID, now=NOW))

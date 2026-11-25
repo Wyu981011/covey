@@ -230,9 +230,11 @@ class StoreTest(StateCase):
         self.assertEqual(([e["id"] for e in owner], space), ([new["id"]], []))  # b was dropped.
 
     def test_the_switches(self):
-        self.assertFalse(knowledge.enabled({}))
+        self.assertTrue(knowledge.enabled({}))
         self.assertTrue(knowledge.enabled({knowledge.ENV: " 1 "}))
-        self.assertFalse(knowledge.enabled({knowledge.ENV: "true"}))
+        self.assertTrue(knowledge.enabled({knowledge.ENV: ""}))
+        self.assertFalse(knowledge.enabled({knowledge.ENV: "0"}))
+        self.assertFalse(knowledge.enabled({knowledge.ENV: "off"}))
         self.assertEqual(knowledge.history_cmd({knowledge.HISTORY_ENV: " /a/kb-history "}), "/a/kb-history")
         self.assertEqual(knowledge.history_cmd({knowledge.HISTORY_ENV: "kb-history"}), "")
         self.assertEqual(knowledge.history_cmd({}), "")
@@ -316,7 +318,7 @@ class TurnTest(StateCase):
         knowledge.save(self.ctx.state_dir, "workspace", "fact", "别处的事实", workspace="other")
 
     def test_with_both_variables_unset_the_rules_and_the_resumed_reminder_are_word_for_word_what_they_were(self):
-        self.env(**{knowledge.ENV: "", knowledge.HISTORY_ENV: ""})
+        self.env(**{knowledge.ENV: "0", knowledge.HISTORY_ENV: ""})
         self.save()  # Entries on disk change nothing while the switch is off.
         runs = self.app().runs
         job = self.job()
@@ -329,7 +331,7 @@ class TurnTest(StateCase):
         fresh = runs._with_rules(self.ctx, job, "MSG", rules, system=False, fresh=True, rules_session=False)
         self.assertEqual(fresh, rules + "\n\nMSG")
         self.assertEqual(butler_rules(), "\n".join(("[管家规则]", *AREA_OPENING, *SHARED_RULES, USAGE_RULE, area_rule())))
-        self.assertEqual(butler_tool_specs.listed({}), butler_tool_specs.TOOLS)
+        self.assertEqual(butler_tool_specs.listed({"COVEY_KNOWLEDGE": "0", "COVEY_PROJECTS": "0", "COVEY_BUTLER_RULES": "0"}), butler_tool_specs.TOOLS)
         self.assertFalse(Path(self.ctx.state_dir, "knowledge", "x").exists())
 
     def test_a_new_session_reads_the_entries_before_the_checkpoint_rules_with_the_remember_rule_after_them(self):
@@ -364,7 +366,7 @@ class TurnTest(StateCase):
                 self.assertEqual(REMEMBER_RULE in rules, owner)
 
     def test_the_history_command_is_there_without_any_entry_and_without_the_other_switch(self):
-        self.env(**{knowledge.ENV: "", knowledge.HISTORY_ENV: "/absolute/kb-history"})
+        self.env(**{knowledge.ENV: "0", knowledge.HISTORY_ENV: "/absolute/kb-history"})
         rules = self.app().runs.bridge_rules(self.ctx, self.job())
         self.assertIn(history_line("/absolute/kb-history"), rules)
         self.assertNotIn(REMEMBER_RULE, rules)
@@ -454,14 +456,16 @@ class TurnTest(StateCase):
 
 class SpecsTest(StateCase):
     def test_the_tools_are_listed_only_where_the_variables_say_so(self):
-        names = lambda env: [t["name"] for t in butler_tool_specs.listed(env)]  # noqa: E731
+        quiet = {"COVEY_PROJECTS": "0"}
+        names = lambda env: [t["name"] for t in butler_tool_specs.listed({**quiet, **env})]  # noqa: E731
         base = [t["name"] for t in butler_tool_specs.TOOLS]
-        self.assertEqual(names({}), base)
         self.assertEqual(names({knowledge.ENV: "0"}), base)
+        self.assertEqual(names({}), base + ["knowledge_save", "knowledge_update", "knowledge_drop", "knowledge_search"])
+        self.assertIn("knowledge_save", [t["name"] for t in butler_tool_specs.listed({})])  # No key at all: on.
         self.assertEqual(names({knowledge.ENV: "1"}), base + ["knowledge_save", "knowledge_update", "knowledge_drop",
                                                              "knowledge_search"])
-        self.assertEqual(names({knowledge.HISTORY_ENV: "/a/kb-history"}), base + ["history_search"])
-        self.assertEqual(names({knowledge.HISTORY_ENV: "kb-history"}), base)
+        self.assertEqual(names({knowledge.ENV: "0", knowledge.HISTORY_ENV: "/a/kb-history"}), base + ["history_search"])
+        self.assertEqual(names({knowledge.ENV: "0", knowledge.HISTORY_ENV: "kb-history"}), base)
         self.assertEqual(len(names({knowledge.ENV: "1", knowledge.HISTORY_ENV: "/a"})), len(base) + 5)
         for tool in butler_tool_specs.KNOWLEDGE_TOOLS + butler_tool_specs.HISTORY_TOOLS:
             self.assertEqual(set(tool), {"name", "description", "input_schema"})
@@ -472,8 +476,10 @@ class SpecsTest(StateCase):
     def test_the_mcp_server_lists_and_accepts_what_its_environment_says(self):
         seen = []
         submit = lambda state, name, args, job_key: seen.append(name) or {"ok": True, "text": "ok", "data": {}}  # noqa: E731
-        plain = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "j"}, submit=submit)
-        on = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "j", **ON,
+        quiet = {"COVEY_PROJECTS": "0"}
+        plain = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "j", knowledge.ENV: "0", **quiet},
+                                  submit=submit)
+        on = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "j", **quiet, **ON,
                               knowledge.HISTORY_ENV: "/absolute/kb-history"}, submit=submit)
         self.assertEqual(len(butler_mcp.tool_list(plain.environ)), len(butler_tool_specs.TOOLS))
         self.assertEqual(len(butler_mcp.tool_list(on.environ)), len(butler_tool_specs.TOOLS) + 5)
@@ -485,17 +491,18 @@ class SpecsTest(StateCase):
         self.assertEqual(seen, ["history_search"])
 
     def test_the_mcp_config_hands_the_variables_on_only_when_the_bridge_has_them(self):
-        self.env(**{knowledge.ENV: "", knowledge.HISTORY_ENV: ""})
-        plain = butler.mcp_config(Path("/r"), Path("/s"), "job-1", "/usr/bin/python3")
-        self.assertEqual(plain["mcpServers"]["bridge"]["env"],
-                         cenv.mirrored({butler.STATE_ENV: "/s", butler.JOB_ENV: "job-1"}))
+        mine = {butler.STATE_ENV, butler.JOB_ENV, knowledge.ENV, knowledge.HISTORY_ENV}
+        mine |= {name for key in mine for name in cenv.spellings(key)}
+        handed = lambda: {k: v for k, v in butler.mcp_config(Path("/r"), Path("/s"), "job-1", "/usr/bin/python3")  # noqa: E731
+                          ["mcpServers"]["bridge"]["env"].items() if k in mine}
+        self.env(**{knowledge.ENV: "0", knowledge.HISTORY_ENV: ""})
+        self.assertEqual(handed(), cenv.mirrored({butler.STATE_ENV: "/s", butler.JOB_ENV: "job-1", knowledge.ENV: "0"}))
         self.env(**ON, **{knowledge.HISTORY_ENV: " /absolute/kb-history "})
-        env = butler.mcp_config(Path("/r"), Path("/s"), "job-1", "/usr/bin/python3")["mcpServers"]["bridge"]["env"]
-        self.assertEqual(env, cenv.mirrored({butler.STATE_ENV: "/s", butler.JOB_ENV: "job-1", knowledge.ENV: "1",
-                                             knowledge.HISTORY_ENV: "/absolute/kb-history"}))
+        self.assertEqual(handed(), cenv.mirrored({butler.STATE_ENV: "/s", butler.JOB_ENV: "job-1", knowledge.ENV: "1",
+                                                  knowledge.HISTORY_ENV: "/absolute/kb-history"}))
 
     def test_the_butlers_rules_name_the_order_of_looking_things_up(self):
-        self.env(**{knowledge.ENV: "", knowledge.HISTORY_ENV: ""})
+        self.env(**{knowledge.ENV: "0", knowledge.HISTORY_ENV: ""})
         self.assertNotIn("knowledge_search", butler_rules())
         self.assertNotIn("history_search", butler_rules())
         self.env(**ON)
@@ -506,7 +513,7 @@ class SpecsTest(StateCase):
         self.assertNotIn("history_search", rules)
         self.env(**{knowledge.HISTORY_ENV: "/absolute/kb-history"})
         self.assertIn("knowledge_search → topics_search → history_search", butler_rules())
-        self.env(**{knowledge.ENV: ""})
+        self.env(**{knowledge.ENV: "0"})
         self.assertIn("topics_search → history_search", butler_rules())
         self.assertNotIn("knowledge_save", butler_rules())
 
@@ -527,7 +534,7 @@ class ToolTest(StateCase):
         return butler_knowledge.TOOLS[name](self.env_, butler_requests.Request("r1", name, args, "main-1", time.time()))
 
     def test_every_tool_says_so_when_the_switch_is_off(self):
-        self.env(**{knowledge.ENV: ""})
+        self.env(**{knowledge.ENV: "0"})
         for name, args in (("knowledge_save", {"scope": "owner", "kind": "fact", "text": "x"}),
                            ("knowledge_update", {"id": "k000000", "text": "x", "reason": "r"}),
                            ("knowledge_drop", {"id": "k000000", "reason": "r"}), ("knowledge_search", {"query": "x"})):
@@ -795,7 +802,7 @@ class CollectTest(StateCase):
         self.assertEqual(self.logs, [f"knowledge remember ignored reason=no-trigger job=#{job.job_id}"])
 
     def test_off_it_does_not_even_read_the_checkpoint(self):
-        self.env(**{knowledge.ENV: ""})
+        self.env(**{knowledge.ENV: "0"})
         with mock.patch.object(knowledge_collect, "read_checkpoint", side_effect=AssertionError("read")):
             self.collect(self.turn())
         self.assertEqual((self.written(), self.logs), ([], []))
@@ -858,7 +865,7 @@ class DigestTest(StateCase):
     def test_the_part_lists_new_rewritten_and_dropped_entries_and_is_left_out_when_off_or_empty(self):
         a, _ = knowledge.save(self.state, "owner", "fact", "旧的")
         now = time.time()
-        self.env(**{knowledge.ENV: ""})
+        self.env(**{knowledge.ENV: "0"})
         self.assertEqual(digest.knowledge_view(self.state, now - 60, now + 60), {})
         self.env(**ON)
         view = digest.knowledge_view(self.state, now - 60, now + 60)
@@ -902,7 +909,7 @@ class DigestTest(StateCase):
         knowledge.save(self.state, "owner", "fact", "新的")
         view = digest.collect(self.state, DM, now + 60, now - 3600, now + 60)
         self.assertEqual(view["knowledge"]["rows"][0]["text"], "新的")
-        self.env(**{knowledge.ENV: ""})
+        self.env(**{knowledge.ENV: "0"})
         self.assertNotIn("knowledge", digest.collect(self.state, DM, now + 60, now - 3600, now + 60))
 
 

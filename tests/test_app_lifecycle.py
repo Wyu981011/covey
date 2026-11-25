@@ -317,9 +317,10 @@ class WorkerTargetsTest(unittest.TestCase):
         # The state directory's disk (app/storage_alerts.py) is watched on every deployment.
         always = ["scheduler", "cards", "menu", "maintenance", "connections", "availability", "outbox", "policy",
                   "memguard", "storage-alerts", *(["proxy", "proxy-in"] if proxy else [])]
-        on = {"COVEY_PINNED_OVERVIEW": "1"}
+        # 手上的事 is on unless COVEY_PINNED_OVERVIEW=0 (and it is what shows 看板 in the menu).
+        off = {"COVEY_PINNED_OVERVIEW": "0"}
         # The butler's workers and menu key, unless the deployment rules it out (docs/butler.md 私聊模式).
-        main, ruled_out = ["main-tools", "main-search"], {"COVEY_BUTLER": "0"}
+        main, ruled_out = ["main-tools", "main-search"], {"COVEY_BUTLER": "0", **off}
         # The Feishu app's check (app/app_setup.py), on unless COVEY_APP_CHECK=0; the owner's recalled or edited messages
         # (app/source_watch.py), on unless COVEY_SOURCE_WATCH=0; 等主人的账's 对账 (app/owner_ledger.py Reconcile), on
         # unless COVEY_LEDGER_RECONCILE=0.
@@ -327,14 +328,13 @@ class WorkerTargetsTest(unittest.TestCase):
         # 工作区 and 脱敏 are tabs of 设置 since 2026-11-09; their old keys open it there.
         menu = ["weekly_usage", *(["proxy_settings"] if proxy else []), "manage_groups", "bridge_settings",
                 "manage_workspaces", "redaction_dashboard"]
-        for env, extra in (({}, main + app_setup), (on, ["overview", *main, *app_setup]),
-                           (ruled_out, app_setup)):
+        for env, extra in ((off, main + app_setup), ({}, ["overview", *main, *app_setup]), (ruled_out, app_setup)):
             with self.subTest(env=sorted(env)), mock.patch.dict(os.environ, env):
-                for name in set(on) - set(env):
-                    os.environ.pop(name, None)
+                if "COVEY_PINNED_OVERVIEW" not in env:
+                    os.environ.pop("COVEY_PINNED_OVERVIEW", None)
                 app = UnifiedBridgeApp(script_path=REPO / "bin/covey_bridge.py")
                 self.assertEqual([name for name, _ in app.worker_targets()], always + extra)
-                self.assertEqual(list(app.menu.actions), menu + ([] if env is ruled_out else ["main_thread_settings"]))
+                self.assertEqual(list(app.menu.actions), menu + ([] if env is ruled_out else ["main_thread_settings"]) + ["digest_board"])  # 看板 is always in the menu.
 
 
 if __name__ == "__main__":

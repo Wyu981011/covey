@@ -44,8 +44,7 @@ topics, each with 「记下」「不用」. A click on one (cards/digest.py REME
 ``decide``) and, once acknowledged, redraws the card from its saved view (``remembered``). The counts never make a card be
 sent; an open candidate does, as the line of old questions does.
 
-看板 (the bot menu's BOARD_KEY, with a time set or COVEY_BOARD=1, core/app_manifest.py board_switch: with neither, no
-such item) is cards/board.py's card at any time, 随时查看 · HH:MM in its title (the view's ``asked``): what waits and runs now, and what ended since the
+看板 (the bot menu's BOARD_KEY, in every deployment, the digest off too) is cards/board.py's card at any time, 随时查看 · HH:MM in its title (the view's ``asked``): what waits and runs now, and what ended since the
 last digest time (``last_slot``, ``board_since``; without the digest, the last day). It reads digest.json and never writes it: the times and their
 sends go on as before. Nothing to list, the card says so (a click wants an answer). Its record is
 <state>/BOARD_FOLDER/<token>.json (app/menu_panel.py), the view in ``digest``; the bot menu keeps one such card and a
@@ -65,7 +64,6 @@ import time
 from concurrent import futures as concurrent_futures
 from pathlib import Path
 
-from covey.core import env as cenv
 from covey.app import memory_candidates, weekly_usage
 from covey.app.overview import dismissable
 from covey.app.pins import board_look, kept, laid, record_path, taken_off as taken_off_now
@@ -77,7 +75,7 @@ from covey.app.card_lanes import after_ack
 from covey.cards.board import (KINDS as BOARD_KINDS, OPEN_KIND, PROJECT_GO_KIND, RECOVER_KIND, REVISIT_KIND, SEEN_KIND,
                                SEEN_MAX, board_card)
 from covey.cards.digest import MEMORY_KIND, ORIGIN, REMEMBER_KIND, digest_card, digest_text, folded_board
-from covey.core import app_manifest, board_read, failure, knowledge, look, memory, patrol, projects, turn_words, web_sync
+from covey.core import board_read, failure, knowledge, look, memory, patrol, projects, quiet_hours, turn_words, web_sync
 from covey.core import project_proposals
 from covey.core import progress as turn_progress
 from covey.core.board_read import ended_at, order, started_at, unrun
@@ -126,8 +124,9 @@ def parse_times(raw, log=lambda _: None):
 
 
 def configured(log=lambda _: None):
-    """The digest times COVEY_DIGEST_TIMES lists (``parse_times``), [] when unset: the digest is off."""
-    raw = cenv.get(ENV, "").strip()
+    """The digest times COVEY_DIGEST_TIMES lists (``parse_times``; core/quiet_hours.py ``digest_times``: 09:30,21:30
+    unset), [] when it is ``off``: the digest is off."""
+    raw = quiet_hours.digest_times()
     return parse_times(raw, log) if raw else []
 
 
@@ -506,16 +505,12 @@ class Digest:
         self.topics = None
 
     def menu_items(self):
-        """The bot menu's 看板, with a digest time set or COVEY_BOARD=1 (app/unified.py menu)."""
-        return {BOARD_KEY: self.board} if self.board_on() else {}
+        """The bot menu's 看板, always (app/unified.py menu)."""
+        return {BOARD_KEY: self.board}
 
     def menu_folds(self):
         """A second 看板 on its card, the newest in the chat (app/bot_menu.py)."""
-        return {BOARD_KEY: self.fold_board} if self.board_on() else {}
-
-    def board_on(self) -> bool:
-        """Whether the bot menu has 看板: the digest's times, or the board on its own (core/app_manifest.py)."""
-        return app_manifest.board_switch() or bool(self.times())
+        return {BOARD_KEY: self.fold_board}
 
     def board_view(self, ctx, chat, now=None):
         """看板's view now (``asked``): ``chat``'s digest.json only read. Feishu calls (the T links), so outside any
@@ -713,7 +708,7 @@ class Digest:
         if kind == OPEN_KIND:
             # 去看板 under an answered question: the bot menu's 看板, a new card for this click (its event id keys it).
             chat, source = str(event.get("chat_id") or ""), str(event.get("event_id") or "")
-            if not self.board_on() or not source or not chat or chat != (self.fixed or self.runtime.access.notify_chat()):
+            if not source or not chat or chat != (self.fixed or self.runtime.access.notify_chat()):
                 return "board_open_ignored"
             after_ack(lambda: self.board(ctx, chat, source))
             return "board_open"

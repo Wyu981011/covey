@@ -43,10 +43,9 @@ class Runs:
 
     def scheduled(self, ctx, chat, now) -> None:
         """整理 at the 早晚汇总's times (COVEY_DIGEST_TIMES), each time once (its own ``last_slot``)."""
-        from covey.app.digest import due, parse_times
-        from covey.core import env as cenv
+        from covey.app.digest import configured, due
 
-        times = parse_times(cenv.get("COVEY_DIGEST_TIMES", "").strip())
+        times = configured()
         if not times:
             return
         slot = due(times, now, proposals.load(ctx.state_dir).get("last_slot"))

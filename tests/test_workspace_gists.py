@@ -1,5 +1,5 @@
 """A new topic carries the 话题要点 of its workspace's last topics (app/workspace_gists.py, COVEY_WORKSPACE_GISTS; T604 #30):
-off unset (the rules as before); on, only a new session's rules, only the owner's own turn in an ordinary topic, only topics
+off at 0 (the rules as before; unset is 3); on, only a new session's rules, only the owner's own turn in an ordinary topic, only topics
 of the same chat and workspace, a redacting topic's gist only for a redacting one, the newest first."""
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class WorkspaceGistsTests(unittest.TestCase):
         return workspace_gists.block(ctx, job, owner_turn=lambda: owner)
 
     def test_the_switch(self):
-        for raw, count in (("", 0), ("0", 0), ("3", 3), ("10", 10), ("11", 0), ("x", 0), (" 2 ", 2)):
+        for raw, count in (("", 3), ("0", 0), ("3", 3), ("10", 10), ("11", 0), ("x", 0), (" 2 ", 2)):
             with mock.patch.dict(os.environ, {"COVEY_WORKSPACE_GISTS": raw}):
                 self.assertEqual(workspace_gists.count(), count, raw)
 
@@ -69,7 +69,7 @@ class WorkspaceGistsTests(unittest.TestCase):
         self.assertTrue(self.block())
         self.assertEqual(self.block(owner=False), "")
         self.assertEqual(self.block(workspace=""), "")
-        with mock.patch.dict(os.environ, {"COVEY_WORKSPACE_GISTS": ""}):
+        with mock.patch.dict(os.environ, {"COVEY_WORKSPACE_GISTS": "0"}):
             self.assertEqual(self.block(), "")
 
     def test_a_redacting_topics_gist_goes_only_to_a_redacting_topic(self):
