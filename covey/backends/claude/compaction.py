@@ -19,6 +19,7 @@ import time
 import uuid
 
 from covey.backends.claude.events import compacted_sizes
+from covey.backends.claude.process import QueueNotes
 from covey.backends.claude.sessions import ClaudeSessionStore, claude_projects_root
 from covey.backends.claude.transcript import json_row
 from covey.core.process import device_of
@@ -146,7 +147,9 @@ def compact_before_turn(request, env, spawn, emit, flush, usage):
     meta = outcome = process = None
     try:
         process = spawn()
-        process.initialize()
+        queue = QueueNotes(emit, flush)  # Before the turn: its command may wait for a seat first.
+        process.initialize(on_queue=queue)
+        queue.end()
         input_id = str(uuid.uuid4())
         process.send({"type": "user", "uuid": input_id, "session_id": session_id, "parent_tool_use_id": None,
                       "message": {"role": "user", "content": [{"type": "text", "text": command(ctx)}]}})

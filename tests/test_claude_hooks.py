@@ -145,7 +145,7 @@ class ControlTest(Clean):
         def answer():
             return {"type": "control_response", "response": {"subtype": "success", "request_id": sent[-1]["request_id"],
                                                              "response": {}}}
-        fake = SimpleNamespace(send=sent.append, receive=answer, prelude=[])
+        fake = SimpleNamespace(send=sent.append, receive=answer, prelude=[], queue=None)
         registration = hooks.TurnHooks(context(mcp_config=BRIDGE)).registration()
         ClaudeProcess.initialize(fake, registration)
         self.assertEqual(sent[0]["request"], {"subtype": "initialize", "forwardSubagentText": True, "hooks": registration})

@@ -268,7 +268,7 @@ class ScriptedClaudeProcess:
         self.rows_sent = False
         self.ended = False
 
-    def initialize(self, hooks=None):
+    def initialize(self, hooks=None, on_queue=None):
         self.hooks = hooks  # backends/claude/hooks.py registration, as the real process sends it.
         return {}
 
