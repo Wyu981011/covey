@@ -47,7 +47,7 @@ from covey.core.harness import HarnessRegistry, JobCancelled, RunInputs, RunRequ
 from covey.core.jobs import BridgeReplyJob, find_job_record
 from covey.core.protocol import HarnessEvent
 from covey.core.result import ExecutionOutcome, VerifiedRootReply
-from covey.core.saved_results import has_saved_reply, load_authorized_reply
+from covey.core.saved_results import _index, has_saved_reply, load_authorized_reply
 from covey.core.session_guard import session_is_blocked
 from covey.core.attachments import native_image_attachments
 from covey.core.trace import ToolTrace
@@ -226,7 +226,8 @@ class BackendContractTests(unittest.TestCase):
             write_topic(run.ctx, {"chat_id": run.job.chat_id, "harness_id": driver.name})
             fresh = harness_app(run.app.spec, run.app.backend, type(run.app.store)())
             run.tx.ok = True
-            lock, seen = run.ctx.state_dir / "verified-results" / ".lock", []
+            index = _index(run.ctx.state_dir, find_job_record(run.ctx.state_dir, run.job.message_id)["key"])
+            lock, seen = index.parent / ".locks" / (index.name + ".lock"), []
 
             def probing_send(*args, **kwargs):
                 probe = subprocess.run([sys.executable, "-c", LOCK_PROBE, str(lock)], capture_output=True, text=True,

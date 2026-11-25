@@ -163,9 +163,9 @@ for _ in range(20):
             with _locked_guard(self.cloud / "guards" / "id"):
                 pass
             ctx = SimpleNamespace(state_dir=self.cloud)
-            with _locked_results(ctx, create=True):
+            with _locked_results(ctx, "job", create=True):
                 pass
-            with _locked_results(ctx):
+            with _locked_results(ctx, "job"):
                 pass
             with config_lock(self.cloud / "manager"):
                 pass
@@ -229,16 +229,16 @@ with open(sys.argv[1], "r+") as handle:
         from covey.core.saved_results import _locked_results
         ctx = SimpleNamespace(state_dir=self.cloud)
         with self.assertRaises(FileNotFoundError):
-            with _locked_results(ctx):
+            with _locked_results(ctx, "job"):
                 pass
         self.assertFalse((self.cloud / "verified-results").exists())
-        with _locked_results(ctx, create=True):
+        with _locked_results(ctx, "job", create=True):
             pass
         # Simulate a reboot only after every holder has exited.
         for path in self.runtime.iterdir():
             path.unlink()
         self.runtime.rmdir()
-        with _locked_results(ctx):
+        with _locked_results(ctx, "job"):
             self.assertTrue(self.runtime.is_dir())
 
     def test_rejects_symlink_or_nonprivate_root_and_files(self):

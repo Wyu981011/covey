@@ -249,6 +249,21 @@ class StorageMaintenanceTest(unittest.TestCase):
         self.assertEqual(sorted(Path(name).name for name in plan["remove_locks"]), ["c1", "c2"])
         self.assertEqual(sorted(p.name for p in folder.iterdir()), ["c2.lock"])  # Its holder keeps it.
 
+    def test_saved_results_lock_files_go_with_their_jobs_index(self):
+        # T769: a job's saved results have a lock of their own beside its index, one file a job; it goes a week
+        # after the index last changed, unless held, as a record's would.
+        from covey.core.locks import shared_file_lock
+        now = __import__("time").time() + 8 * DAY
+        old = self.write("verified-results/index-" + "a" * 64 + ".json", "{}")
+        fresh = self.write("verified-results/index-" + "b" * 64 + ".json", "{}")
+        for index in (old, fresh):
+            with shared_file_lock(index):
+                pass
+        os.utime(fresh, (now, now))
+        maintain(self.state, apply=True, now=now)
+        self.assertEqual(sorted(p.name for p in (self.state / "verified-results" / ".locks").iterdir()),
+                         [fresh.name + ".lock"])
+
     def test_a_lock_file_removed_while_waiting_for_it_is_not_taken_as_held(self):
         from covey.core import locks
         record = self.write("jobs/r.json", "{}")

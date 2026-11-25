@@ -215,7 +215,8 @@ continued、done、failed、cancelled、interrupted：终态
 | `topics/<topic_id>/topic.json` | 绑定：工作区、`harness_id`、`binding_revision`、模型快照 | Bridge | 改写持 `LOCK`，进程内（建话题、给旧话题编号、钉 Harness 另持 `_LOCK`）；读不持锁 |
 | `topics/aliases/` | 消息、卡片和话题串到话题的对应 | Bridge | 每个别名文件一把进程内锁；读不持锁 |
 | `topics/<topic_id>/*_session_id` | 原生会话指针，比较 revision 更新 | 两者 | 同名 `.lock` 的 flock |
-| `verified-results/`、`native-session-guards/` | 已验证回复的候选与授权；会话保护 | 两者 | 目录下 `.lock` 的 flock |
+| `verified-results/` | 已验证回复的候选与授权 | 两者 | 每个任务一把：`.locks/` 里挨着它索引的锁文件，跨进程；一个任务卡在锁里只挡它自己 |
+| `native-session-guards/` | 会话保护 | 两者 | 目录下 `.lock` 的 flock |
 | `inbound-messages/` | 每个收到的消息 ID 一个空标记，飞书重投时跳过 | Bridge | 无：`O_EXCL` 新建 |
 | `event-spool/` | 事件长连接走 SDK 时，收下还没处理完的消息、卡片点击和菜单点击，每个一个文件，处理完删 | Bridge 的 `event-spool` 线程 | 无：只有这一个线程写，整文件替换 |
 | `stranger-replies/` | 别人私聊时回过的那句：每人每天一个空标记 | Bridge | 无：`O_EXCL` 新建 |
@@ -486,7 +487,7 @@ cancelled、superseded：终态
 - **送达闸门**：`CheckpointQuestions.undelivered_jobs` 列出还要重投的任务，话题的新消息和换配置据此拦下。
 - **幂等写**：`feishu/transport.py` 发请求前先写 `delivery-receipts/` 回执并 fsync；同一 UUID 配不同内容失败（`idempotency_conflict`）；不确定的写只在有限时间内用原 UUID 重试，之后返回 `reconciliation_required`，不换键盲发。写已有卡片时，前一次不确定后的重试收到 200770 或 300315 算前一次已生效。
 - **传输**：开了 SDK（[飞书 SDK 与直连](configuration.md#飞书-sdk-与直连)）时由 `feishu/sdk.py` 发，请求由 `feishu/message_request.py` 从 lark-cli 的 argv 重建、逐字节相同，新旧进程共用回执；请求发出后不换传输。
-- **重投**：在 `verified-results` 锁内核对任务号、运行 ID、代际和指纹，只读已授权的正文，不启动模型；放开锁再发。只有 Bridge 重投。
+- **重投**：在这个任务的保存结果锁内核对任务号、运行 ID、代际和指纹，只读已授权的正文，不启动模型；放开锁再发。只有 Bridge 重投。
 - **outbox**：`app/outbox.py` 定时扫描已授权、未送达、未暂停、到时的记录，从不运行 Harness；可重试的失败指数退避，用完转 `paused` 等用户处理。
 - **自动重试**（`app/auto_retry.py`，见[自动重试](reference.md#自动重试)）按 `KINDS` 分限流、临时故障（`server_fault`）、本轮未全部完成、重启打断四种，各有次数上限，相加不相乘；做了实事的限流或故障重试把次数清零，在恢复时间重试后连续没有进展就停（`MAX_IDLE`）。恢复时间由 `core/limit_reset.py` 从 Claude 的输出读出，经 `RunResult.limit` 到 `plan`。到点时锁内 `pending` → `submitting`，锁外重试，状态只按 `AUTO_RETRY_TRANSITIONS` 前进；唯一例外是官方拒绝的停止直接转 `cancelled`。官方安全拒绝后换旧模型重试一次（`app/policy_retry.py`，[policy-stop.md](policy-stop.md#换旧模型重试一次)）不走 `auto_retry_state`，另用 `policy_retry_state` 和 `POLICY_RETRY_TRANSITIONS`（同样两步），由 `policy_retry.tick` 经 `TaskControls.requeue(fallback=…)` 排上。
 - **重跑还是拒绝**：什么都没保存的一轮按原快照重新排队；有保留候选的拒绝重跑；候选全部作废、从没授权过的（`withdrawn_unauthorized`）算没保存。各后端的投递不变量由 `test_backend_contract` 验证。
