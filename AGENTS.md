@@ -49,6 +49,7 @@
 | 启动卡与工作区 | `app/launch.py`、`app/launch_submit.py`、`app/model_picker.py`、`app/directory_picker.py`、`core/workspaces.py` | [开始一个任务](docs/usage.md#开始一个任务) |
 | 任务卡与执行过程 | `app/cards.py`、`app/task_card.py`、`core/trace.py`、`cards/streaming.py` | [cards.md](docs/cards.md)、[执行指标口径](docs/architecture.md#执行指标口径) |
 | 问题卡与回答；什么时候问（部署、删除、花钱、对外发送、占机器才问，其余按推荐做；方案先交完整的） | `app/questions.py`、`app/native_questions.py`、`app/checkpoint_questions.py`、`app/answers.py`（提交回答 `with_note`）、`cards/question_cards.py`；问不问 `core/checkpoint.py` 的 `ASK_RULE`、`PLAN_RULE`，派活那头 `core/butler_tool_specs.py` 的 `ASK_NOTE`、`app/butler_handoff.py` 的 `lead_note`；问得多不多 `scripts/question_stats.py` | [问题与回答](docs/architecture.md#问题与回答)、[问题卡问得多不多](docs/operations.md#问题卡问得多不多) |
+| 改外观先选样张、UI 拍板记录（改卡片和网页的样子之前先出 2~3 版让主人点选；定下的规则逐条机检） | `core/ui_samples.py`（选项的 `sample`：登记时读一次、清成点不动的）、`cards/question_cards.py` 的 `with_samples`、`scripts/ui_samples.py`（`golden` 取现在的样子、`check` 照 Bridge 的读法查）、`tests/test_ui_rules.py`（`MATRIX`：每条规则 × 管家、负责人、话题、专项的话题、网页开的话题） | [UI 规范 · 改外观先选样张](docs/ui.md#12-改外观先选样张)、[拍板记录](docs/ui.md#13-拍板记录) |
 | 补充 | `app/steering.py`、`core/deliveries.py`、`core/steer.py` | [补充投递](docs/architecture.md#补充投递) |
 | 主人撤回或编辑消息（`COVEY_SOURCE_WATCH`，默认开） | `app/source_watch.py`（读回、停止、补充）、`core/source_book.py`（登记的消息）、`cards/source_note.py` | [撤回与编辑](docs/architecture.md#撤回与编辑) |
 | 换配置 | `app/harness_switch.py`、`app/binding.py`、`app/switch_handoff.py` | [话题中途换配置](docs/architecture.md#话题中途换配置) |
@@ -489,6 +490,7 @@
 | `core/turn_export_rows.py` | The rows of a turn export |
 | `core/turn_source.py` | 轮次来源: what started a turn, as a field only the Bridge writes, so no reader guesses it from a message id or a … |
 | `core/turn_words.py` | The words the cards, the pinned board and the butler say about a turn and a topic, in one place |
+| `core/ui_samples.py` | 样张: a checkpoint question's option may carry `sample`, the absolute path of a JSON file with a card (schema … |
 | `core/updates.py` | Per-task coalesced UI updates, isolated from backend event handling |
 | `core/usage.py` | Numeric-only output throughput |
 | `core/web_backup.py` | 自托管网页的数据库备份与恢复: the page's own PGlite database in the daily backup and back out of it |
@@ -649,6 +651,7 @@
 - 动了扩展里用隔离解释器的后端或它导入的 `core/` 模块：再按扩展自己的 README 用那个解释器跑它的测试和 `--check-runtime`。核心测试另在 `COVEY_EXTENSIONS=''` 下跑一次全量，确认没有扩展也过。
 - 不改行为的改动：改前在基线上录两次 `scripts/golden_trace.py record`，改后录一次再 `compare --noise`；搬模块前跑 `scripts/test_map.py patches <模块>`，看哪些测试按旧路径打补丁（`docs/testing.md` 副作用轨迹与补丁清单）。
 - 新测试在旧代码上该失败：`scripts/test_map.py prove --base <提交>`；部署用 `scripts/deploy_bridge.sh`（先 `--check-only`）。
+- 改卡片或网页的样子：先照 [docs/ui.md 第 12 节](docs/ui.md#12-改外观先选样张) 出样张让主人点选；`tests/test_ui_rules.py`（[拍板记录](docs/ui.md#13-拍板记录)）不过就是把定好的样子改回去了，不靠 `GOLDEN_CARDS=update` 绕过。
 - 改公共核心或 `runs/` 协议（规则 10）：先跑 `scripts/cross_release.py run --old <现网 release> --out <目录>` 再 `compare`；`tests/golden/run_dir.json` 有 diff 就是改了协议（`docs/testing.md` 任务进程协议与跨版本检查）。
 - 新读环境变量或加命令行参数：在 `docs/configuration.md` 的「环境变量与选项一览」加一行（`test_structure` 的 `InventoryTest` 核对）。
 - 加、删、搬模块或改了模块 docstring 首句：`python3 -B scripts/code_map.py --write`（`--check` 只检查）。

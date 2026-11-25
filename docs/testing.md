@@ -97,6 +97,8 @@ GOLDEN_CARDS=update python3 -B -m unittest discover -s tests -p test_card_golden
 git diff --stat tests/golden/cards.json
 ```
 
+主人拍板的 UI 规则（[UI 规范 · 拍板记录](ui.md#13-拍板记录)）由 `tests/test_ui_rules.py` 读这份金样逐条核对，`MATRIX` 给每条规则按入口（管家、负责人、话题、专项的话题、网页开的话题）列出查哪些样本；重写金样不会让它通过，它不过就是把定好的样子改回去了。改外观之前的样张用 `scripts/ui_samples.py` 做和查（[改外观先选样张](ui.md#12-改外观先选样张)）。
+
 金样只覆盖这组样本。改到样本没画的分支（新卡片、新状态、新按钮、超预算才走的折叠和截断）时先补样本，并临时改一处文案确认测试会失败。样本只用假的 open_id、群和消息 ID，路径写 `/absolute/...`。
 
 ### 卡片示意图
