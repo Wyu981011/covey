@@ -1,15 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Play, Sparkles } from 'lucide-react';
 import type {
-  ActivityItem, FeedItem, OutboxStatus, QuestionView, SnapshotProject, SnapshotResponse, SnapshotTopic, StatsResponse, UsageDay,
+  ActivityItem, FeedItem, QuestionView, SnapshotProject, SnapshotResponse, SnapshotTopic, StatsResponse, UsageDay,
 } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { newOpId, postOutboxQuiet, prefetchTurns, useSendOutbox, useSettings, useSnapshot, useStats, useTidy, useUsage } from '@client/src/hooks/use-workbench';
-import { fetchOutboxStatus } from '@client/src/api/workbench';
+import { newOpId, postOutboxQuiet, prefetchTurns, useSettings, useSnapshot, useStats, useTidy, useUsage } from '@client/src/hooks/use-workbench';
 import { errorText, oneLineText } from '@client/src/lib/workbench-format';
-import { cleanLabel, isRec, quickAnswerable, useAnswer } from './Question';
+import { cleanLabel, isRec, quickAnswerable } from './Question';
 import { Head, SyncDot } from './Shell';
 import { ConclusionBand, Dot, Pill, RollNum, Spark, StateBar, StepCells, TodoBar, useTick } from './ui';
 import { byNumberDesc, byRecent, fmtTok, hhmm, pref, setPref, staleWords, toneOf, waitText, type ToneKey } from './lib';
@@ -23,9 +22,9 @@ import { DismissButton, RecoverActions, useBoardOn } from './RecoverBits';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { PaneHandle } from './PaneHandle';
 import { BOARD_RAIL } from './panes';
-import { useOutboxOp } from './sendOp';
+import { trackedOf, trackOp, useOutboxOp, useSendOutbox, useTrackedOp } from './sendOp';
 import { LaterPanel, ProjectOps } from './V34Bits';
-import { OP_WAIT_MS, opWords } from './opWords';
+import { opWords } from './opWords';
 
 const topicPath = (t: SnapshotTopic): string => `/topics/${encodeURIComponent(t.key)}`;
 const tno = (t: SnapshotTopic): string => (t.number ? `T${t.number}` : '');
@@ -45,7 +44,8 @@ const ActCard: React.FC<{ t: SnapshotTopic; tone: ToneKey; snap: SnapshotRespons
   const nav = useNavigate();
   const qc = useQueryClient();
   const now: number = useTick(30000);
-  const ans = useAnswer(t.key);
+  // 看板上的快速答题（T765 F2）：点了就锁，写“已发出，等 Covey 处理…”，到回执才放开；办好了按钮一直锁着，等快照里这张卡消失
+  const quickOp = useOutboxOp();
   const board: boolean = useBoardOn();
   const feishu: string = useSettings().data?.data?.feishu ?? '';
   const p: SnapshotProject | undefined = snap.projects.find((x: SnapshotProject) => x.key === t.project_key);
@@ -85,10 +85,11 @@ const ActCard: React.FC<{ t: SnapshotTopic; tone: ToneKey; snap: SnapshotRespons
       {quick && q && item ? (
         <div className="nb-opts">
           {item.options.map((o) => (
-            <button type="button" key={o.label} className={`btn sm${isRec(o) ? ' pri' : ''}`} disabled={ans.pending} onClick={() => ans.send(q, { [item.id]: o.label })} title="点一下就写入回答">
+            <button type="button" key={o.label} className={`btn sm${isRec(o) ? ' pri' : ''}`} disabled={quickOp.busy || quickOp.phase === 'done'} onClick={() => void quickOp.run({ op_id: newOpId(), kind: 'answer', topic_key: t.key, payload: { token: q.token, answers: { [item.id]: o.label }, note: '' } })} title="点一下就写入回答">
               {cleanLabel(o)}
             </button>
           ))}
+          {quickOp.line ? <span className={`rc-said${quickOp.phase === 'failed' || quickOp.phase === 'unsent' ? ' bad' : ''}`} role={quickOp.phase === 'failed' || quickOp.phase === 'unsent' ? 'alert' : 'status'}>{quickOp.line}</span> : null}
         </div>
       ) : null}
       {tone === 'stopped' ? (
@@ -123,7 +124,6 @@ const ActCard: React.FC<{ t: SnapshotTopic; tone: ToneKey; snap: SnapshotRespons
           <span className="nb-meta nb-proj">{p && t.kind === 'topic' ? p.title : ''}</span>
         </div>
       )}
-      {ans.error ? <div role="alert" className="a-errt">{opWords('unsent', ans.error)}</div> : null}
     </article>
   );
 };
@@ -284,9 +284,11 @@ const WeekUsage: React.FC<{ st: StatsResponse | undefined }> = ({ st }) => {
 const TIDY_KEY = 'tidy.op';
 const TIDY_SHOW_MS = 30 * 60 * 1000;
 
-/** 「整理」：发件箱写一条 tidy，按钮旁边原地显示 Covey 回的结果（说法同 opWords：等满一分钟没回音不算失败）。只在开了整理专项时出现 */
+/** 「整理」：发件箱写一条 tidy，按钮旁边原地显示 Covey 回的结果（说法同 opWords：等满一分钟没回音不算失败）。只在开了整理专项时出现。
+ * 回执由跟踪器问（cv/sendOp.ts，T765 F1）；刷新过页面还在 30 分钟内的那条，打开时接着问 */
 const TidyButton: React.FC = () => {
   const send = useSendOutbox();
+  const qc = useQueryClient();
   const [op, setOp] = useState<{ id: string; at: number } | null>(() => {
     try {
       const v = JSON.parse(pref(TIDY_KEY, 'null')) as { id: string; at: number } | null;
@@ -296,14 +298,11 @@ const TidyButton: React.FC = () => {
     }
   });
   const [err, setErr] = useState<string>('');
-  const now: number = useTick(5000);
-  const st = useQuery<OutboxStatus>({
-    queryKey: ['outbox', op?.id],
-    queryFn: () => fetchOutboxStatus(op?.id ?? ''),
-    enabled: !!op && !send.isPending,
-    refetchInterval: (q) => (q.state.data && q.state.data.state !== 'new' ? false : 2000),
-    retry: 2,
-  });
+  const tr = useTrackedOp(op?.id);
+  useEffect(() => {
+    // 刷新页面以后小仓库是空的：接着问这一条的回执
+    if (op && !trackedOf(op.id)) void trackOp(qc, { op_id: op.id, kind: 'tidy', payload: { scope: '' } });
+  }, [op, qc]);
   const go = (): void => {
     const id: string = newOpId();
     setErr('');
@@ -319,16 +318,16 @@ const TidyButton: React.FC = () => {
       },
     );
   };
-  const s: OutboxStatus | undefined = st.data;
-  const waiting: boolean = !!op && (!s || s.state === 'new');
-  const late: boolean = waiting && !!op && now * 1000 - op.at > OP_WAIT_MS;
-  const busy: boolean = send.isPending || (waiting && !late);
+  const waiting: boolean = !!op && (!tr || tr.phase === 'waiting');
+  const late: boolean = tr?.phase === 'timeout';
+  const busy: boolean = send.isPending || waiting;
   let note: React.ReactNode = null;
   if (err) note = <span className="a-errt">{opWords('unsent', err)}</span>;
   else if (send.isPending) note = <span className="a-faint">{opWords('sending')}</span>;
-  else if (waiting) note = <span className="a-faint">{opWords(late ? 'timeout' : 'waiting')}</span>;
-  else if (s?.state === 'done') note = <span className="a-okt">{opWords('done', s.message || '已开始整理，结果发到私聊')}</span>;
-  else if (s?.state === 'failed') note = <span className="a-errt">{opWords('failed', s.message)}</span>;
+  else if (waiting) note = <span className="a-faint">{opWords('waiting')}</span>;
+  else if (late) note = <span className="a-faint">{opWords('timeout')}</span>;
+  else if (tr?.phase === 'done') note = <span className="a-okt">{opWords('done', tr.message || '已开始整理，结果发到私聊')}</span>;
+  else if (tr?.phase === 'failed') note = <span className="a-errt">{opWords('failed', tr.message)}</span>;
   return (
     <span className="a-tidy">
       {note}

@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { LaunchData, LaunchModel, SnapshotTopic, SwitchPayload } from '@shared/api.interface';
-import { newOpId, SNAPSHOT_KEY, turnsKey, useSettings } from '@client/src/hooks/use-workbench';
+import { newOpId, useSettings } from '@client/src/hooks/use-workbench';
 import { LaunchPanel, type PanelBox } from './LaunchPanel';
 import { engineText } from './lib';
 import { opWords } from './opWords';
@@ -130,13 +130,12 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
         setPhase('failed');
         setMessage(m);
       };
-      const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'switch', topic_key: topic.key, payload: { ...payload } }, undefined, () => !alive.current);
+      const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'switch', topic_key: topic.key, payload: { ...payload } }, qc, undefined, () => !alive.current);
       if (r.phase !== 'done') {
         fail(opWords(r.phase, r.message));
         return;
       }
-      void qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
-      void qc.invalidateQueries({ queryKey: turnsKey(topic.key) });
+      // 回执后跟踪器已经取了这个话题的轮次和快照（opTrack.pullPlan）
       toast.success(opWords('done', r.message || '已换配置'));
       if (alive.current) {
         setPhase('idle');

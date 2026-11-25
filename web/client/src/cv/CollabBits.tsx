@@ -9,7 +9,7 @@ import { hhmm, type ToneKey } from './lib';
 import { Pill } from './ui';
 import { askLines, collabHead, collabHref, mentionInfo, participantOf, nameOf, type AskLine, type QuoteRef, type Receipt } from './collab';
 import { Who } from './RoomBits';
-import { sendAndWait } from './sendOp';
+import { useSendAndWait } from './sendOp';
 import './collab.css';
 
 /* 协作往返（汇总方的话题页、大厅）和协助方的回执（协助方的话题页），包 E，docs/web.md 协作与三层记忆 */
@@ -104,6 +104,7 @@ export const CollabBlock: React.FC<{
 }> = ({ c, seq, snap, butler, focus = false, onQuote }) => {
   const [open, setOpen] = useState<boolean>(() => focus || c?.state === 'open');
   const [stopping, setStopping] = useState<boolean>(false);
+  const sendWait = useSendAndWait();
   useEffect(() => {
     if (focus) setOpen(true);
   }, [focus]);
@@ -114,7 +115,7 @@ export const CollabBlock: React.FC<{
   const stop = async (): Promise<void> => {
     setStopping(true);
     // 只停这次协作排队和在跑的咨询轮，汇总方和协助方别的工作不动（stop 带 payload.collab）
-    await sendAndWait({ op_id: newOpId(), kind: 'stop', topic_key: c.integrator, payload: { collab: c.key } }, '已发出：停止本次协作');
+    await sendWait({ op_id: newOpId(), kind: 'stop', topic_key: c.integrator, payload: { collab: c.key } }, '已发出：停止本次协作');
     setStopping(false);
   };
   const quote = (l: AskLine): void => onQuote?.({

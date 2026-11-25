@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, Pencil, Pin, PinOff, Plus, Search, Trash2, X } from 'lucide-react';
 import type { MainMemoryCandidate, MainMemoryData, MainMemoryEntry, MainMemoryGroup, MemoryEditPayload } from '@shared/api.interface';
-import { MEMORY_KEY, newOpId, useMemory } from '@client/src/hooks/use-workbench';
+import { newOpId, useMemory } from '@client/src/hooks/use-workbench';
 import { sendOp, type OpResult } from './sendOp';
 import {
   addPayload, byWords, checkDraft, editPayload, edited, filterGroups, hitRanges, kindLabel, placeOptions, previewOptions,
@@ -26,8 +26,9 @@ const SAVE_HINT = /Mac|iPhone|iPad/u.test(typeof navigator === 'undefined' ? '' 
 function useMemoryOp(): (payload: MemoryEditPayload) => Promise<OpResult> {
   const qc = useQueryClient();
   return useCallback(async (payload: MemoryEditPayload): Promise<OpResult> => {
-    const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'memory_edit', payload: payload as unknown as Record<string, unknown> });
-    if (r.phase === 'done') await qc.invalidateQueries({ queryKey: MEMORY_KEY });
+    // 跟踪器在回执后重取主记忆（开着这一页才取）；等它取回来再返回，页面上的条目已经是新的
+    const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'memory_edit', payload: payload as unknown as Record<string, unknown> }, qc);
+    if (r.settled) await r.settled;
     return r;
   }, [qc]);
 }

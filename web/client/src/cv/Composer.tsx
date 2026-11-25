@@ -4,7 +4,8 @@ import { ArrowUp, Code2, ExternalLink, FileText, Maximize2, Minimize2, Plus, Rot
 import { toast } from 'sonner';
 import type { SayFile, SayPayload } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { newOpId, useSendOutbox } from '@client/src/hooks/use-workbench';
+import { newOpId } from '@client/src/hooks/use-workbench';
+import { useSendOutbox } from './sendOp';
 import { addPending, getDraft, patchPending, setDraft } from '@client/src/lib/conv-store';
 import { errorText } from '@client/src/lib/workbench-format';
 import { blobOf, useAttachments, type Attachment } from './attachments';
@@ -160,6 +161,8 @@ export const Composer: React.FC<{
   placeholder: string;
   hint?: React.ReactNode;
   onStop?: () => void;
+  /** 停止已经发出、话题还没停下：停止钮禁用，写“正在停…”（T765 F2） */
+  stopping?: boolean;
   extra?: React.ReactNode;
   config?: React.ReactNode;
   value?: string;
@@ -174,7 +177,7 @@ export const Composer: React.FC<{
   launchOnly?: boolean;
   /** 大厅给（T624）：输入框上沿的 @、引用条和 @ 候选；发出交给 route.send（它决定交给谁），返回 true 才清空 */
   route?: ComposerRoute | null;
-}> = ({ topicKey, maxSeq, placeholder: basePlaceholder, hint, onStop, extra, config, value, onValue, onSubmit, canSubmit, sendLabel: baseLabel = '发送', inputRef, launch, route, launchOnly = false }) => {
+}> = ({ topicKey, maxSeq, placeholder: basePlaceholder, hint, onStop, stopping = false, extra, config, value, onValue, onSubmit, canSubmit, sendLabel: baseLabel = '发送', inputRef, launch, route, launchOnly = false }) => {
   const [own, setOwn] = useState<string>(() => getDraft(topicKey));
   const text: string = value ?? own;
   const desktop: boolean = useIsDesktop();
@@ -511,8 +514,8 @@ export const Composer: React.FC<{
             {area}
           </div>
           {onStop ? (
-            <button type="button" className="stopb" onClick={onStop} aria-label="停止" style={{ height: 40, borderRadius: 20 }}>
-              <Square /> 停止
+            <button type="button" className="stopb" onClick={onStop} disabled={stopping} aria-label={stopping ? '正在停' : '停止'} style={{ height: 40, borderRadius: 20 }}>
+              <Square /> {stopping ? '正在停…' : '停止'}
             </button>
           ) : null}
           <button type="button" className="send" onClick={submit} disabled={!sendable} aria-label={sendLabel} title={route?.blocked || route?.title || sendLabel} style={{ border: 0 }}>
@@ -540,8 +543,8 @@ export const Composer: React.FC<{
           <span className="sp" />
           {tools}
           {onStop ? (
-            <button type="button" className="stopb" onClick={onStop}>
-              <Square /> 停止
+            <button type="button" className="stopb" onClick={onStop} disabled={stopping} aria-label={stopping ? '正在停' : undefined}>
+              <Square /> {stopping ? '正在停…' : '停止'}
             </button>
           ) : null}
           <button type="button" className="send" onClick={submit} disabled={!sendable} aria-label={sendLabel} title={route?.blocked || `${route?.title ? `${route.title}：` : ''}${sendLabel}${sendOnEnter ? `（${SEND_KEY}）` : ''}`} style={{ border: 0 }}>

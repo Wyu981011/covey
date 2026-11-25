@@ -159,7 +159,7 @@ export function useLaunchBox(): LaunchBox | null {
         }
       };
       // 开话题要先取回附件，回执可能比别的操作慢：多等一会（2 分钟），等满了也不算失败
-      const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'launch', payload: { ...payload } }, undefined, () => !alive.current, 120000);
+      const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'launch', payload: { ...payload } }, qc, undefined, () => !alive.current, 120000);
       if (r.phase === 'unsent' || r.phase === 'failed') {
         show('failed', opWords(r.phase, r.message));
         return;
@@ -171,16 +171,18 @@ export function useLaunchBox(): LaunchBox | null {
       put({ touched: null });
       if (alive.current) onDone();
       show('done', r.message);
+      // 等新话题推上来再跳：跟踪器回执后每 0.5 秒取快照，最长 3 秒（opTrack.expectation：快照里有这个 T 号）；
+      // 还没到就每 0.5 秒看缓存（快照自己每秒在取），最多等 90 秒（现网第一次验收等了一分多钟）
       const num: number = Number(/T(\d+)/.exec(r.message)?.[1] ?? 0);
-      // 等新话题推上来再跳（Covey 回执前就推它；现网第一次验收等了一分多钟，这里最多等 90 秒）
-      for (let k = 0; num && k < 90 && alive.current; k += 1) {
-        void qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
+      if (!num) return;
+      await r.settled;
+      for (let k = 0; k < 180 && alive.current; k += 1) {
         const t = qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY)?.topics.find((x) => x.number === num && x.kind === 'topic');
         if (t) {
           nav(`/topics/${encodeURIComponent(t.key)}`);
           return;
         }
-        await sleep(1000);
+        await sleep(500);
       }
     })();
   };

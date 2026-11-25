@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { SnapshotProject } from '@shared/api.interface';
-import { newOpId, TIDY_KEY, useSnapshot, useTidy } from '@client/src/hooks/use-workbench';
+import { newOpId, useSnapshot, useTidy } from '@client/src/hooks/use-workbench';
 import { pref, setPref } from './lib';
 import { opWords, plainReceipt } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
@@ -72,19 +72,16 @@ const OpenCard: React.FC<{ p: TidyProposal; onDecided: (id: string) => void }> =
   }, []);
   const decide = async (choice: 'ok' | 'decline'): Promise<void> => {
     const put = (x: Phase): void => { if (alive.current) setPh(x); };
-    const refetch = (): void => void qc.invalidateQueries({ queryKey: TIDY_KEY });
     onDecided(p.id);
     put({ phase: 'saving', message: choice === 'ok' ? `正在${p.verb}…` : opWords('sending') });
     // 说法同 opWords（P1-C2）：没发出去、没办成写原因；等满一分钟没回音不算失败，操作还在发件箱里
-    const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'tidy_decide', payload: { proposal: p.id, choice } }, undefined, () => !alive.current);
+    // 回执后整理建议和快照由跟踪器取（opTrack.pullPlan：先取一次，再每 0.5 秒补取几次），这里不再硬等 1.5 秒、4 秒
+    const r: OpResult = await sendOp({ op_id: newOpId(), kind: 'tidy_decide', payload: { proposal: p.id, choice } }, qc, undefined, () => !alive.current);
     if (r.phase === 'done' || r.phase === 'failed') {
       put({ phase: r.phase, message: r.phase === 'done' ? (plainReceipt(r.message) || TIDY_WORD[choice === 'ok' ? 'done' : 'declined']) : opWords('failed', r.message) });
-      window.setTimeout(refetch, 1500);
-      window.setTimeout(refetch, 4000);
       return;
     }
     put({ phase: r.phase === 'timeout' ? 'late' : 'failed', message: opWords(r.phase, r.message) });
-    if (r.phase === 'timeout') window.setTimeout(refetch, 4000);
   };
   const busy: boolean = ph?.phase === 'saving';
   return (

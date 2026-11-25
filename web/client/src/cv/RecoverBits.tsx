@@ -68,7 +68,8 @@ export const RecoverActions: React.FC<{
   onSwitch?: () => void;
   className?: string;
 }> = ({ failure, topicKey, jobId, canSwitch, extra, noJob, onSwitch, className }) => {
-  const op = useOutboxOp();
+  // 停住的一轮、右栏总览、看板卡各有一组按钮：点一处，处处锁住（同一个话题同一时刻只有一条恢复操作在等）
+  const op = useOutboxOp(`recover:${topicKey}`);
   const feishu: string = useSettings().data?.data?.feishu ?? '';
   const now: number = useTick(15000);
   const plan: RecoverPlan = recoverPlan(failure, { canSwitch: canSwitch ?? true });
@@ -128,7 +129,8 @@ export const RecoverActions: React.FC<{
  * 点了以后按钮收起，原地写 Covey 的回执；没回音照 opWords 说，不当成失败。
  */
 export const DismissButton: React.FC<{ topicKey: string; className?: string }> = ({ topicKey, className }) => {
-  const op = useOutboxOp();
+  // 话题页上停住的一轮和右栏总览各有一个：点一处，另一处也收起、写同一句话
+  const op = useOutboxOp(`dismiss:${topicKey}`);
   const failed: boolean = op.phase === 'failed' || op.phase === 'unsent';
   return (
     <>

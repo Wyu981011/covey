@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import type { LibraryItem, MemoryItem, SnapshotProject, SnapshotTopic } from '@shared/api.interface';
 import { newOpId, useTopicByNumber } from '@client/src/hooks/use-workbench';
 import { toDate } from '@client/src/lib/workbench-format';
-import { sendAndWait } from './sendOp';
+import { useSendAndWait } from './sendOp';
 import { useTick } from './ui';
 import { fmtDur, fmtTok, isRunning, topicHref } from './lib';
 import { isLayered } from './memoryLayers';
@@ -117,6 +117,7 @@ const MemRow: React.FC<{ m: MemoryItem; open: boolean; onToggle: () => void; onF
 };
 
 const MemBlock: React.FC<{ p: SnapshotProject }> = ({ p }) => {
+  const sendWait = useSendAndWait();
   const [all, setAll] = useState<boolean>(false);
   const [who, setWho] = useState<Who>('all');
   const [open, setOpen] = useState<string | null>(null);
@@ -126,7 +127,7 @@ const MemBlock: React.FC<{ p: SnapshotProject }> = ({ p }) => {
   const shown: MemoryItem[] = all ? pick : pick.slice(0, MEM_FIRST);
   // 「不对」：作废这条专项记忆（同飞书专项卡上的删、三层记忆面板的不对），等 Covey 的回执（“已作废：…”）再说结果
   const forget = (m: MemoryItem): void => {
-    void sendAndWait({ op_id: newOpId(), kind: 'forget', project_key: p.key, payload: { project_key: p.key, entry_id: m.id } }, '已发出：作废这条记忆');
+    void sendWait({ op_id: newOpId(), kind: 'forget', project_key: p.key, payload: { project_key: p.key, entry_id: m.id } }, '已发出：作废这条记忆');
   };
   const keyOf = (m: MemoryItem, i: number): string => m.id ?? `i${i}`;
   return (

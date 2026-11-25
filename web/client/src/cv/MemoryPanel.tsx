@@ -12,7 +12,7 @@ import {
   appliesText, carriedCount, carriedWord, fixesFor, isLayered, isLive, layers, originOf, quoteOf, replacedBy, sourceOf, summary, VALID_WORD, whoCounts,
   type Layer, type LayerKey, type Part, type Who,
 } from './memoryLayers';
-import { sendAndWait } from './sendOp';
+import { useSendAndWait } from './sendOp';
 import './rail.css';
 import './memory.css';
 
@@ -73,6 +73,7 @@ const Row: React.FC<{
   const [editing, setEditing] = useState<boolean>(false);
   const [applies, setApplies] = useState<string>(() => appliesText(m.applies));
   const [busy, setBusy] = useState<boolean>(false);
+  const sendWait = useSendAndWait();
   const src = sourceOf(m);
   const cond: string = appliesText(m.applies);
   const live: boolean = isLive(m);
@@ -88,14 +89,14 @@ const Row: React.FC<{
       payload: { ...where, entry_id: m.id, what, ...(what === 'scope' ? { applies: applies.trim() } : {}) },
     };
     setBusy(true);
-    const r = await sendAndWait(body, sent);
+    const r = await sendWait(body, sent);
     setBusy(false);
     if (r === 'done') setEditing(false);
   };
   const forget = async (): Promise<void> => {
     if (!m.id || !('project_key' in scope)) return;
     setBusy(true);
-    await sendAndWait({ op_id: newOpId(), kind: 'forget', project_key: scope.project_key, payload: { project_key: scope.project_key, entry_id: m.id } }, '已发出：作废这条记忆');
+    await sendWait({ op_id: newOpId(), kind: 'forget', project_key: scope.project_key, payload: { project_key: scope.project_key, entry_id: m.id } }, '已发出：作废这条记忆');
     setBusy(false);
   };
   return (

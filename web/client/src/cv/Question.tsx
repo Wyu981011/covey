@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, CircleHelp } from 'lucide-react';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
 import type { OutboxView, QuestionItem, QuestionOption, QuestionView } from '@shared/api.interface';
-import { newOpId, useSendOutbox } from '@client/src/hooks/use-workbench';
+import { newOpId } from '@client/src/hooks/use-workbench';
+import { useSendOutbox, useTrackedOp } from './sendOp';
 import { errorText } from '@client/src/lib/workbench-format';
 import { BREAK_KEY, SEND_KEY } from './composerText';
 import { opWords } from './opWords';
@@ -29,23 +30,30 @@ export function useAnswer(topicKey: string): {
   pending: boolean;
   error: string;
   opId: string;
+  /** 这条动作的请求已经写进网页库（POST 回来了） */
+  posted: boolean;
   act: QuestionAct | '';
 } {
   const m = useSendOutbox();
   const [error, setError] = useState<string>('');
   const [opId, setOpId] = useState<string>('');
+  const [postedId, setPostedId] = useState<string>('');
   const [act, setAct] = useState<QuestionAct | ''>('');
   const fire = (what: QuestionAct, payload: Record<string, unknown>): void => {
     setError('');
     const id: string = newOpId();
     setOpId(id);
     setAct(what);
-    m.mutate({ op_id: id, kind: what === 'stop' ? 'stop' : 'answer', topic_key: topicKey, payload }, { onError: (e: Error) => setError(errorText(e)) });
+    m.mutate(
+      { op_id: id, kind: what === 'stop' ? 'stop' : 'answer', topic_key: topicKey, payload },
+      { onSuccess: () => setPostedId(id), onError: (e: Error) => setError(errorText(e)) },
+    );
   };
   return {
     pending: m.isPending,
     error,
     opId,
+    posted: !!opId && postedId === opId,
     act,
     send: (q: QuestionView, answers: Record<string, AnswerValue>, note = ''): void =>
       fire('answer', { token: q.token, answers, note: note.trim() }),
@@ -96,7 +104,8 @@ export interface QuestionForm {
   stop: () => void;
   /** 最近这次动作是哪一种 */
   act: QuestionAct | '';
-  phase: 'idle' | 'sent' | 'done' | 'failed';
+  /** sending：请求还在路上；sent：写进网页库了，等 Covey（T765 F2：以前 op_id 一设就算 sent）；done、failed 是 Covey 的回执 */
+  phase: 'idle' | 'sending' | 'sent' | 'done' | 'failed';
   failedMsg: string;
   /** 没办成是因为请求本身没发出去（网络、校验），不是 Covey 说不行 */
   unsent: boolean;
@@ -118,12 +127,16 @@ export function useQuestionForm(topicKey: string, question: QuestionView | null,
   const [askedFor, setAskedFor] = useState<string>('');
   const opId: string = askedFor === token ? ans.opId : '';
   const row: OutboxView | undefined = opId ? ops.find((o: OutboxView) => o.op_id === opId) : undefined;
+  // 跟踪器问到的回执比话题的发件行早到（发件行要等下一次取话题）：两边谁先到听谁的
+  const tr = useTrackedOp(opId || undefined);
+  const got: string = row && row.state !== 'new' ? row.state : tr?.phase === 'done' || tr?.phase === 'failed' ? tr.phase : '';
   const unsent: boolean = !!opId && !!ans.error;
-  const failedMsg: string = unsent ? ans.error : row?.state === 'failed' ? row.message || '' : '';
-  const phase: QuestionForm['phase'] = !opId ? 'idle' : unsent || row?.state === 'failed' ? 'failed' : row?.state === 'done' ? 'done' : 'sent';
-  // 动作发出后锁住，等页面更新
+  const failedMsg: string = unsent ? ans.error : got === 'failed' ? (row && row.state === 'failed' ? row.message : tr?.message) || '' : '';
+  const phase: QuestionForm['phase'] = !opId ? 'idle' : unsent || got === 'failed' ? 'failed' : got === 'done' ? 'done' : ans.posted ? 'sent' : 'sending';
+  // 动作发出后锁住，等页面更新；等满了没回音（timeout）放开，再点一次 Covey 会说定过没有
   const closing: boolean = askedFor === token;
-  const locked: boolean = (closing && (phase === 'sent' || phase === 'done')) || (ans.pending && askedFor === token);
+  const gaveUp: boolean = tr?.phase === 'timeout';
+  const locked: boolean = (closing && !gaveUp && (phase === 'sending' || phase === 'sent' || phase === 'done')) || (ans.pending && askedFor === token);
   const items: QuestionItem[] = question?.questions ?? [];
   const single: boolean = items.length === 1;
   const choice = (q: QuestionItem): Choice => cur.choices[q.id] ?? NONE;
@@ -421,6 +434,7 @@ export const QuestionPanel: React.FC<{ form: QuestionForm; text: string; onWrite
 /** 动作发出后的一行（说法同 opWords，P1-C2）：没办成的原因、已发出等 Covey、已执行 */
 const PhaseLine: React.FC<{ form: QuestionForm }> = ({ form }) => {
   if (form.phase === 'failed') return <div role="alert" style={{ color: 'var(--fail)', fontSize: 12, marginTop: 6 }}>{opWords(form.unsent ? 'unsent' : 'failed', form.failedMsg)}，可以再试一次</div>;
+  if (form.phase === 'sending') return <div role="status" className="t3" style={{ fontSize: 12, marginTop: 6 }}>{opWords('sending')}</div>;
   if (form.phase === 'sent') return <div role="status" className="t3" style={{ fontSize: 12, marginTop: 6 }}>{opWords('waiting')}</div>;
   if (form.phase !== 'done') return null;
   const words: string = form.act === 'aside' ? '已先不管，等页面更新' : form.act === 'restore' ? '已撤销，等页面更新' : '已执行，等页面更新';
@@ -431,7 +445,7 @@ const PhaseLine: React.FC<{ form: QuestionForm }> = ({ form }) => {
 const AsidePanel: React.FC<{ form: QuestionForm }> = ({ form }) => {
   const question: QuestionView | null = form.question;
   if (!question || !question.restorable) return null;
-  const busy: boolean = form.pending || (form.act === 'restore' && (form.phase === 'sent' || form.phase === 'done'));
+  const busy: boolean = form.pending || (form.act === 'restore' && (form.phase === 'sending' || form.phase === 'sent' || form.phase === 'done'));
   return (
     <div className="qc" aria-label="先不管的题" style={{ borderColor: 'var(--line)', boxShadow: 'none' }}>
       <div className="qh" style={{ color: 'var(--t2)' }}>
