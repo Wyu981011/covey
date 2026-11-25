@@ -48,25 +48,21 @@ class MenuTests(UnifiedCase):
     def test_the_real_features_are_wired_to_the_keys(self):
         fresh = type(self.app)(script_path=self.app.runtime.script_path)
         # The butler's old key too, unless COVEY_BUTLER=0 (docs/butler.md 私聊模式).
-        self.assertEqual(set(fresh.menu.actions), set(KEYS) | {'main_thread_settings'})
+        self.assertEqual(set(fresh.menu.actions), set(KEYS) | {'main_thread_settings', 'digest_board'})
         self.assertEqual({key: action.__func__ for key, action in fresh.menu.actions.items()}, {
+            'digest_board': type(fresh.digest).board,
             'weekly_usage': type(fresh.weekly_usage).send, 'manage_workspaces': type(fresh.settings_hub).open_workspaces,
             'proxy_settings': type(fresh.proxy.panel).open, 'redaction_dashboard': type(fresh.settings_hub).open_redaction,
             'manage_groups': type(fresh.group_manager).open, 'bridge_settings': type(fresh.settings_hub).open,
             'main_thread_settings': type(fresh.settings_hub).open_main})
         with mock.patch.dict('os.environ', {'COVEY_BUTLER': '0'}):
             ruled_out = type(self.app)(script_path=self.app.runtime.script_path)
-        self.assertEqual(set(ruled_out.menu.actions), set(KEYS))
+        self.assertEqual(set(ruled_out.menu.actions), set(KEYS) | {'digest_board'})
         # Each folds its newest card in place (app/bot_menu.py); the old 工作区 and 脱敏 keys send a 设置 card.
         self.assertEqual({key: fold.__func__ for key, fold in fresh.menu.folds.items()}, {
             'weekly_usage': type(fresh.weekly_usage).fold, 'proxy_settings': type(fresh.proxy.panel).fold,
-            'manage_groups': type(fresh.group_manager).fold, 'bridge_settings': type(fresh.settings_hub).fold})
-        # 看板 only with the digest's times set (app/digest.py).
-        self.assertNotIn('digest_board', fresh.menu.actions)
-        with mock.patch.dict('os.environ', {'COVEY_DIGEST_TIMES': '09:30,23:30'}):
-            timed = type(self.app)(script_path=self.app.runtime.script_path)
-        self.assertEqual((timed.menu.actions['digest_board'].__func__, timed.menu.folds['digest_board'].__func__),
-                         (type(timed.digest).board, type(timed.digest).fold_board))
+            'manage_groups': type(fresh.group_manager).fold, 'bridge_settings': type(fresh.settings_hub).fold,
+            'digest_board': type(fresh.digest).fold_board})  # 看板 in every deployment, the digest off too (T813).
 
     def test_others_unknown_keys_and_a_second_delivery_are_logged_and_ignored(self):
         self.dm('m1')
