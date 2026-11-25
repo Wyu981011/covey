@@ -1469,3 +1469,16 @@ class StageNotesTest(unittest.TestCase):
         self.assertEqual(with_stage_notes(" 只有回答 ", []), "只有回答")
         self.assertTrue(with_stage_notes("", notes).startswith(STAGE_HEADING))
         self.assertEqual(stage_notes(None), [])
+
+
+class StageNotesFoldTest(unittest.TestCase):
+    def test_the_stage_reports_under_a_reply_are_a_closed_fold(self):
+        from covey.cards.review import reply_shown
+        from covey.core.trace import with_stage_notes
+
+        shown = reply_shown(with_stage_notes("最终回答", [(None, "x" * 300), (None, "y" * 400)]), "relay_reply")
+        self.assertEqual([part["tag"] for part in shown], ["markdown", "collapsible_panel"])
+        self.assertEqual(shown[0]["content"], "最终回答")
+        self.assertFalse(shown[1]["expanded"])
+        self.assertIn("这一轮中途的汇报", shown[1]["header"]["title"]["content"])
+        self.assertEqual(len(reply_shown("没有汇报的回答")), 1)
