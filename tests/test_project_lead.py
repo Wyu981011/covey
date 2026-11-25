@@ -999,7 +999,6 @@ class HandoffTest(unittest.TestCase):
     def test_a_handoff_need_not_say_never_to_ask(self):
         # P0-B: handoffs had to say "never ask" themselves. The butler's and the lead's tools that open a topic say the
         # topic knows when to ask, and so does the lead's rule on writing a handoff.
-        self.assertIn(checkpoint.ASK_SHORT, butler_tool_specs.ASK_NOTE)
         self.assertIn("不用写“严禁发问题卡”", butler_tool_specs.ASK_NOTE)
         tools = {tool["name"]: tool for tool in (*butler_tool_specs.TOOLS, *butler_tool_specs.PROJECT_TOOLS)}
         for name in ("topic_start", "topic_fork", "project_topic_start"):

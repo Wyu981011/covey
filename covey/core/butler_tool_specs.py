@@ -9,12 +9,11 @@ Every handler answers {"ok": bool, "text": what the model reads, "data": {...}};
 from __future__ import annotations
 
 from covey.core import env as cenv
-from covey.core.checkpoint import ASK_SHORT
 
 TOPIC = {"type": "string", "description": "话题：T 号（如 T412）或 topic_id"}
-# What a handoff need not say (core/checkpoint.py ASK_RULE): every topic is told when to ask the owner.
-ASK_NOTE = (f"什么时候问主人话题自己知道（{ASK_SHORT}才问，其余按推荐做、写明怎么改回；要方案的先交完整方案），"
-            "不用写“严禁发问题卡”“别问我”这类话")
+# What a handoff need not say (core/checkpoint.py ASK_RULE): every topic is told when to ask the owner. Short: it is on
+# topic_start and topic_fork, which agy loads up front within backends/agy/home.py EAGER_BYTES.
+ASK_NOTE = "什么时候问主人话题自己知道，不用写“严禁发问题卡”“别问我”"
 TASK = ("交给话题的任务说明：做什么、范围、约束，用主人的说法；不含路由用语（开话题、放到哪个 T 号、转给谁）和本机路径。"
         "主人原话和附件由 Bridge 附上。" + ASK_NOTE)
 ATTACHMENTS = {"description": "可选，主人这条消息的附件交给它哪些：all 全部（默认）、none 不给、或序号列表（如 [\"图片 1\", \"文件 2\"]，"
