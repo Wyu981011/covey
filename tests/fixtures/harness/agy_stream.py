@@ -49,6 +49,8 @@ def emit(row):
 
 
 def step(index, state, kind, **fields):
+    if scenario == "result-usage":  # No request says its usage: only the result does.
+        fields.pop("usage", None)
     emit({"event": "step_update", "step_update": {"conversation_id": sid, "step_index": index, "state": state,
                                                   "step_type": kind, **fields}})
 

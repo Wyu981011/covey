@@ -8,6 +8,13 @@ turn's, the owner's own servers (when the file reads as JSON) with the Bridge's 
 conversations and everything else agy or a command writes go through the links to where they always are; only a new
 file at the top of the home (or of those two directories) stays in the private one and goes with it.
 
+The directory has the same name at each turn of a topic (``home_name``): agy writes the HOME it runs in into the start
+of its prompt (the App Data Directory and every skill's path), so a name of its own each turn made the prompt differ from
+the previous turn's there and the model's cache served none of the conversation after it (T776: the butler's and the
+leads' first request of a turn read nothing from the cache, at any interval; an idle compaction neither). A turn finds
+it under a lock (``<name>.lock`` beside it); when another turn of the topic holds it (an idle compaction being stopped),
+the turn takes a name of its own as before.
+
 Each Bridge server waits for its tools longer than core/butler_requests.py waits for an answer (``TOOL_SECONDS``),
 and lists the tools a turn works with eagerly (``tools.<name>.eager``): agy gives the model those as tools of their own,
 and names the others in its prompt, in a file the model must read before it calls one, the way Claude Code's tool
@@ -24,6 +31,8 @@ backends/agy/bridge.py ``left_out`` says after the turn when agy dropped some al
 """
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +42,7 @@ import tempfile
 
 from covey.core import env as cenv
 from covey.core.butler_tool_specs import HANDING, SECONDARY
+from covey.core.file_lock import open_lock
 from covey.core.state import ensure_private_dir
 
 TOOL_SECONDS = 150  # Above core/butler_requests.py's 120 seconds.
@@ -121,22 +131,51 @@ def linked(source: Path, target: Path, keep: str) -> None:
             os.symlink(entry.path, target / entry.name)
 
 
+def home_name(key, home) -> str:
+    """The private home's name for ``key`` (a topic) over the real ``home``: the same at each of its turns."""
+    return "agy-home-" + hashlib.sha256(f"{key}\0{home}".encode()).hexdigest()[:16]
+
+
 class PrivateHome:
-    """``with PrivateHome(state_dir, home, config, env) as path``: the turn's HOME, removed on the way out. ``home`` is
-    the real one, ``config`` the turn's --mcp-config, ``env`` the turn's environment (the servers start with it).
+    """``with PrivateHome(state_dir, home, config, env, key) as path``: the turn's HOME, removed on the way out. ``home``
+    is the real one, ``config`` the turn's --mcp-config, ``env`` the turn's environment (the servers start with it),
+    ``key`` the topic whose turns share the name (``home_name``; "": a name of its own).
     ``note``: why the owner's own servers are not there, "" when they are (or there are none). ``listed``: the tools
     each of ``config``'s servers listed, {server: [name]}."""
 
-    def __init__(self, state_dir, home, config, env):
+    def __init__(self, state_dir, home, config, env, key=""):
         self.state_dir, self.home, self.config, self.env = Path(state_dir), Path(home), config, env
+        self.key = str(key or "")
         self.path = None
+        self.lock = None  # The descriptor that holds the topic's name while the turn runs.
         self.note = ""
         self.listed = {}
+
+    def claim(self, tmp: Path):
+        """The topic's home, made empty, with its lock held; None without a key or when another turn holds it."""
+        if not self.key:
+            return None
+        name = home_name(self.key, self.home)
+        try:
+            lock = open_lock(tmp / f"{name}.lock")
+        except (OSError, ValueError):
+            return None
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            path = tmp / name
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)  # What a turn that was killed left; links are removed, never followed.
+            os.mkdir(path, 0o700)
+        except OSError:
+            os.close(lock)
+            return None
+        self.lock = lock
+        return path
 
     def __enter__(self) -> Path:
         tmp = self.state_dir / "tmp"
         ensure_private_dir(tmp)
-        self.path = Path(tempfile.mkdtemp(prefix="agy-home-", dir=str(tmp)))  # mkdtemp is 0700.
+        self.path = self.claim(tmp) or Path(tempfile.mkdtemp(prefix="agy-home-", dir=str(tmp)))  # mkdtemp is 0700.
         try:
             real = self.home / GEMINI
             linked(self.home, self.path, GEMINI)
@@ -177,3 +216,6 @@ class PrivateHome:
         if self.path is not None:
             shutil.rmtree(self.path, ignore_errors=True)  # Links are removed, never followed.
             self.path = None
+        if self.lock is not None:  # After the removal: the next turn of the topic makes it again.
+            os.close(self.lock)
+            self.lock = None
