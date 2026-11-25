@@ -115,7 +115,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 ├─ browsers/、tmp/、workspace/     ./install 用的无头浏览器、临时目录、默认工作区
 ├─ install.json                    ./install 上次注册时的设置（重跑时比较它，没变就不重新注册）
 ├─ install-harnesses.json          ./install 上次写 harnesses.json 时哪些 Harness 能用（重跑时据此只加新能用的）
-├─ upgrade.json                    网页「版本与更新」怎么查新版本、怎么升级（能升级这个部署的安装器写，见 web.md 版本与更新）
+├─ upgrade.json                    网页「版本与更新」和定时自动升级怎么查新版本、怎么升级（能升级这个部署的安装器写，见 web.md 版本与更新）
 └─ harnesses.json                  --harness-config 指向它（./install 写这个文件）
 ```
 

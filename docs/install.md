@@ -26,7 +26,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 2. **准备 `lark-cli`**：没有就装；Skills 默认不同步（要用加 `--skills`）。
 3. **检查 Harness**：对 Claude Code、Codex 和 Antigravity 各真实调用一次模型（Antigravity 没登录时不调，它会等一分钟浏览器登录；调的那次在一个临时主目录里，对话不留在你的 `~/.gemini`）。没登录、网络不通会分别说明；没调通的不启用。终端的 `PATH` 里找不到的，再看 `~/.local/bin` 和 `~/.claude/local`（Claude Code 自己的安装器放的地方，后者平时靠 shell 别名才找得到），在那里找到就把那个目录加进服务的 `PATH`。没装的合成一行，写明不用每个都装、以后装了重跑就加上。装了 dsh、给它用的模型网关的密钥也在文件里时直接启用（不调用模型；密钥只在终端的环境变量里时服务拿不到，会说写进哪个文件），没装 dsh 不提。网络不通时问一次代理地址，通过后代理和飞书域名的 `NO_PROXY` 一起写进服务环境。启用了扩展时，扩展的安装钩子也在这一步运行（装它要的工具、报告它提供的 Harness）。
 4. **飞书应用**：默认直接用手机扫码 3 步（建应用、授权、一键订阅事件与回调），并通过官方接口自动注册斜杠命令（`/usage`、`/board`、`/settings`；有代答扩展时加 `/proxy`），无需下载或启动无头浏览器，也不受企业租户条件访问/电脑端设备认证拦截。若在允许网页登录的机器上想扫一次码由浏览器代点，可加 `--browser`（登录态只在本次运行的临时目录里，结束就删，`--keep-login` 留下；若触发条件访问仍会自动切回手机扫码）。
-5. **注册并启动服务**：把服务注册给后台的 Manager 托管并启动，再注册开机自启：Linux 用 systemd 用户服务，macOS 用 launchd，都没有但有 `crontab` 时加一行 `@reboot`（`--no-autostart` 不加），什么都没有时开机不会自启，安装器会说明。细节见[服务托管](operations.md#服务托管)。终端里设了 Harness 可能靠它登录的变量（`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`OPENAI_API_KEY` 这类，或名字像密钥的）时，安装器按服务自己的环境再调一次模型：服务清单不存凭据，终端里能调通不代表服务里也能。调不通时只列变量名（不打印值）和改法，见下面「出问题」。
+5. **注册并启动服务**：把服务注册给后台的 Manager 托管并启动，再注册开机自启：Linux 用 systemd 用户服务，macOS 用 launchd，都没有但有 `crontab` 时加一行 `@reboot`（`--no-autostart` 不加），什么都没有时开机不会自启，安装器会说明。细节见[服务托管](operations.md#服务托管)。终端里设了 Harness 可能靠它登录的变量（`ANTHROPIC_API_KEY`、`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`OPENAI_API_KEY` 这类，或名字像密钥的）时，安装器按服务自己的环境再调一次模型：服务清单不存凭据，终端里能调通不代表服务里也能。调不通时只列变量名（不打印值）和改法，见下面「出问题」。新服务收消息和写卡片走飞书 SDK（`COVEY_EVENT_TRANSPORT=sdk`、`COVEY_CARD_TRANSPORT=sdk`，收下的消息和点击先记在状态目录里，重启不丢）：服务的 Python 里没有 `lark-oapi` 时先用 pip 装（装进用户目录，或它所在的虚拟环境），装不上就照旧走 lark-cli、不影响使用，并说怎么补。在 git 检出里运行时，还在数据根写 `upgrade.json`，网页「版本与更新」和[定时自动升级](deploy.md#定时自动升级)照它升级。
 6. **等待就绪，等第一个回答**：诊断通过后先打几行“装在这里”：数据根、状态目录（日志 `bridge.log` 在里面）、默认工作区、服务开着哪些功能，和多开的现成命令（演示套餐、单个开关、诊断），再打印「去飞书私聊机器人「Covey」发一句话」。没就绪时打出诊断的中文摘要。在终端里运行时，安装器接着读状态目录里的记录，等私聊里第一句话真的有了回答，最多 10 分钟，每到一步打一行（欢迎卡已发、收到了、启动卡在等你点「开始任务」、已回答）。Ctrl-C 不等；没有终端（`--non-interactive`、管道或后台运行）时不等，和以前一样打印完就退出；之前已经有过回答的部署也不等。等到超时不算安装失败，最后一行说该查什么（[排障](troubleshooting.md#扫码后机器人没反应)）。
 
 `harnesses.json`（`<数据根>/harnesses.json`）里只写能用的 Harness；重跑时已启用的照旧，这次能用、上次写这个文件时不能用的 Claude Code、Codex、Antigravity 或 dsh 加进去（之后装好了它，重跑一次就启用；上次停在注册之前也一样，每次的结果记在 `<数据根>/install-harnesses.json`），你自己从文件里删掉的不加回；别的 Harness 见[手工加一个 Harness](harnesses.md#手工加一个-harness)。
@@ -108,10 +108,10 @@ bash web/deploy/selfhost/build.sh <数据根>/web/app && python3 -B -m covey.ser
 
 ## 装好以后
 
-- **默认开着的**：管家、专项（连同叫醒负责人、停住问你、专项记忆、问题分流四个进阶开关）、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目、撤回或编辑消息后跟着处理、自动补齐飞书应用；没有 Claude Code 时也一样（[没有 Claude Code 时](#没有-claude-code-时)）。推荐再打开的（早晚汇总、置顶的「手上的事」等）见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做；想一次都打开，装的时候加 `--showcase`（[演示套餐](configuration.md#演示套餐)）。
+- **默认开着的**：管家、专项（连同叫醒负责人、停住问你、专项记忆、问题分流四个进阶开关）、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目、撤回或编辑消息后跟着处理、自动补齐飞书应用、飞书 SDK 收消息和写卡片（装得上 SDK 时）；没有 Claude Code 时也一样（[没有 Claude Code 时](#没有-claude-code-时)）。推荐再打开的（早晚汇总、置顶的「手上的事」等）见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做；想一次都打开，装的时候加 `--showcase`（[演示套餐](configuration.md#演示套餐)）。
 - **怎么用**：一页纸的[五分钟上手](quickstart.md)；[使用指南](usage.md)从[第一次使用](usage.md#第一次使用)开始。
 - **扩展**：装好后用 `bin/covey_plugins.py` 查看、启用、停用，见[扩展的装和卸](operations.md#扩展的装和卸)。
-- **升级**：在仓库里运行 `scripts/upgrade.sh`（先加 `--dry-run` 看看）：它取上游的新提交，照服务清单原样的开关做部署前检查，再部署成固定的 release、重启机器人，成功后把检出快进过去，见[日常升级](deploy.md#日常升级)。不要直接 `git pull`：`./install` 装的服务直接从这个检出运行，拉代码之后新开的任务立刻用新代码，机器人本身却还是旧的。
+- **升级**：在仓库里运行 `scripts/upgrade.sh`（先加 `--dry-run` 看看）：它取上游的新提交，照服务清单原样的开关做部署前检查，再部署成固定的 release、重启机器人，成功后把检出快进过去，自托管的网页也跟着换成新版，见[日常升级](deploy.md#日常升级)。想每天自己升一次：服务清单里设 `COVEY_AUTO_UPGRADE=05:00`，见[定时自动升级](deploy.md#定时自动升级)。不要直接 `git pull`：`./install` 装的服务直接从这个检出运行，拉代码之后新开的任务立刻用新代码，机器人本身却还是旧的。
 
 ## 出问题
 

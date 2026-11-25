@@ -73,7 +73,7 @@
 | 节点与机器状况（`COVEY_NODE_LISTEN`） | `core/node_agent.py`（设备和本机上常驻的节点）、`core/nodes.py`（名单、口令、记录）、`core/node_rules.py`（告警规则）、`app/node_gateway.py`（TLS 服务）、`app/node_alerts.py`、`app/nodes.py`、`cards/node_cards.py` | [节点](docs/architecture.md#节点默认关)、[配置](docs/configuration.md#节点与机器状况默认关) |
 | 维护与备份 | `core/maintenance.py`（规则表在 `core/maintenance_rules.py`，备份在 `core/backup.py`）、`app/stale.py`、`core/migrate.py` | [备份、归档与维护](docs/operations.md#备份归档与维护) |
 | 服务、看门狗、诊断 | `service/manager.py`（停了告诉主人 `service/down_notice.py`）、`service/boot.py`、`service/memguard.py`、状态目录写不进与慢锁慢读 `core/storage_watch.py`、`app/storage_alerts.py`、`service/doctor.py`（终端里的中文摘要 `service/doctor_words.py`；设置卡「诊断」`app/doctor_panel.py`） | [服务组成](docs/operations.md#服务组成)、[troubleshooting.md](docs/troubleshooting.md) |
-| 安装与日常升级（`./install`、`scripts/upgrade.sh`） | `service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh` | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级) |
+| 安装与日常升级（`./install`、`scripts/upgrade.sh`）；网页上升级和定时自动升级（`COVEY_AUTO_UPGRADE`） | `service/installer.py`（默认工作区、服务环境里再探测一次、收尾几行、停下时的下一步、新装默认开飞书 SDK `ensure_feishu_sdk`、写 `upgrade.json`）、`service/install_probe.py`、`core/welcome.py` 的 `seed_workspace`；`scripts/upgrade.sh` 套 `scripts/deploy_bridge.sh`（`--status`，网页跟着升级 `service/web_upgrade.py`）；`app/self_upgrade.py`（`upgrade.json`、查和升级）、`app/auto_upgrade.py`（每天到点、遇忙推迟、不强切不回滚） | [install.md](docs/install.md)、[日常升级](docs/deploy.md#日常升级)、[定时自动升级](docs/deploy.md#定时自动升级) |
 
 ## 模块表
 
@@ -94,6 +94,7 @@
 | `app/artifact_policy.py` | What of a task's artifacts may be published |
 | `app/artifacts.py` | Publish only explicitly recorded, bounded artifacts of a task |
 | `app/auto_retry.py` | Automatic 检查并继续 after a turn that ended without a reply as one of KINDS |
+| `app/auto_upgrade.py` | 定时自动升级: with COVEY_AUTO_UPGRADE=HH:MM and an upgrader set up, the Bridge upgrades itself and the web page … |
 | `app/availability.py` | Separate local backend readiness from recently observed model access |
 | `app/binding.py` | A topic's binding (Harness, model, budget, work mode, place and 敏感词脱敏) and what may change it |
 | `app/bot_menu.py` | The bot's custom menu (机器人自定义菜单): the owner's commands, since typed ones misfired |
@@ -548,6 +549,7 @@
 | `service/pairing.py` | Issue a one-time owner pairing code for an explicitly configured bot app |
 | `service/plugins.py` | Extensions (插件) from the command line |
 | `service/web_selfhost.py` | 自托管网页工作台的准备和托管参数: what `COVEY_WEB_SELFHOST=1` asks of the Manager (`wanted`, `spec` |
+| `service/web_upgrade.py` | The self-hosted web page brought along when scripts/upgrade.sh upgrades the Bridge |
 
 ### backends/agy
 

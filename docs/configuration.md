@@ -8,7 +8,7 @@
 
 ### 默认已开
 
-`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目和专项的四个进阶开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`；没有 Claude Code、只有 Codex 或 Antigravity 调通时也一样，见[安装 · 没有 Claude Code 时](install.md#没有-claude-code-时)），代码本身的默认是关，所以装这个版本之前注册的服务不变（重跑 `./install` 也只保留服务清单里已有的设置，不加新默认），要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。安装器在补飞书应用之前就定好这些开关，所以它们要的菜单和权限（菜单「看板」、置顶）一次补齐。
+`./install` 新装的服务就有这些。专项、整理专项、看板、独立复核、到点回来看、记忆、知识条目、专项的四个进阶开关和飞书 SDK 的两个开关是安装器写进服务清单的（`core/switches.py` 的 `INSTALL`；没有 Claude Code、只有 Codex 或 Antigravity 调通时也一样，见[安装 · 没有 Claude Code 时](install.md#没有-claude-code-时)），代码本身的默认是关，所以装这个版本之前注册的服务不变（重跑 `./install` 也只保留服务清单里已有的设置，不加新默认），要的照[改开关三步](#改开关三步)打开，或一次打开[演示套餐](#演示套餐)；其余是代码默认开。安装器在补飞书应用之前就定好这些开关，所以它们要的菜单和权限（菜单「看板」、置顶）一次补齐。
 
 | 功能 | 开关 | 怎么确认开着 | 怎么关 |
 | --- | --- | --- | --- |
@@ -22,6 +22,7 @@
 | [知识条目](#知识条目与历史搜索) | `COVEY_KNOWLEDGE=1`（`./install` 写） | 说“记一下”的事记成条目，那一轮结束时卡上说记下了；话题首轮带上，汇总多一节 | `COVEY_KNOWLEDGE=0` |
 | [专项的进阶](projects.md#使用者概览) | `COVEY_PROJECT_AUTOWAKE=1`、`COVEY_PROJECT_ASK=1`、`COVEY_PROJECT_MEMORY=1`、`COVEY_PROJECT_TRIAGE=1`（`./install` 写，都要 `COVEY_PROJECTS=1`） | 依次是：话题一轮结束就叫醒负责人（负责人多跑几轮，多花些 token）；专项停住时发卡问你继续、收尾还是停；专项有自己的记忆和资料库；话题的选择题先给负责人分流 | 各设成 `0` |
 | [等你的事补卡](architecture.md#等主人的账) | `COVEY_LEDGER_RECONCILE`（默认每 300 秒） | 要你回答的问题卡没发出去时，几分钟内自动补发到它的话题（最多 3 次）；补发了几次、发出几次见设置卡「诊断」和 `bin/covey_ledger.py` | `COVEY_LEDGER_RECONCILE=0`（只记账不补发也不起线程） |
+| [飞书 SDK 收消息、写卡片](#飞书-sdk-与直连) | `COVEY_EVENT_TRANSPORT=sdk`、`COVEY_CARD_TRANSPORT=sdk`（`./install` 写；服务的 Python 里没有飞书 SDK 时安装器先用 pip 装 `lark-oapi`，装不上就不写，照旧走 lark-cli，最后几行会说） | `bridge.log` 有 `event-websocket`；收下的消息和点击处理完之前记在状态目录的 `event-spool/`，重启、部署时还没处理的下次启动补处理 | 两个都设成 `cli` |
 | 撤回与编辑 | `COVEY_SOURCE_WATCH`（默认开） | 撤回一条已变成任务的消息，任务跟着停；编辑后任务收到改后的内容 | `COVEY_SOURCE_WATCH=0` |
 | [任务在跑时发的话补充给它](usage.md#追问排队与并行) | `COVEY_TOPIC_STEER`（默认开） | 话题里任务在跑时发一句，那张卡变成回执“已补充到 #N，不另开一轮”，你那句话上加一个 ✅ 表情（DONE），不再排成下一轮 | `COVEY_TOPIC_STEER=0`（照旧排成下一轮） |
 | [追问只发答案卡](usage.md#追问排队与并行) | `COVEY_QUICK_ANSWER_SECONDS`（默认 10） | 话题里追问一句、它不用工具几秒内就答完时，串里只有答案卡，没有任务卡 | `COVEY_QUICK_ANSWER_SECONDS=0`（每轮先出任务卡） |
@@ -68,9 +69,10 @@
 | [管家规则](#管家规则) | 想让管家只快答和分派、不自己干活 | `COVEY_BUTLER_RULES=1` |
 | [我本来想找你的事](butler.md#我本来想找你的事开关默认关只记不打扰) | 只记不打扰，看看管家会提醒你什么 | `COVEY_PATROL=shadow` |
 | [新话题带上最近话题的要点](#新话题带上最近话题的要点) | 要先有话题要点（整理专项开着时才写） | `COVEY_WORKSPACE_GISTS=3` |
-| [飞书 SDK](#飞书-sdk-与直连) | 在运行 Bridge 的 Python 里装 `.[feishu-sdk]` | `COVEY_CARD_TRANSPORT=sdk`、`COVEY_EVENT_TRANSPORT=sdk` |
+| [飞书 SDK](#飞书-sdk-与直连)（装这个版本之前注册的服务） | 在运行 Bridge 的 Python 里装 `.[feishu-sdk]` | `COVEY_CARD_TRANSPORT=sdk`、`COVEY_EVENT_TRANSPORT=sdk` |
 | [内存看门狗](operations.md#内存看门狗) | 不是环境变量 | `python3 -B bin/covey_memguard.py enable` |
 | [本机运行锁](runtime-locks.md) | 同一台机器上有几个服务要共用锁 | `COVEY_LOCK_ROOT` |
+| [定时自动升级](deploy.md#定时自动升级) | 数据根里有 `upgrade.json`（扩展的 `./install`、核心在 git 检出里的 `./install` 装好或升级好后写） | `COVEY_AUTO_UPGRADE=05:00`（每天几点，按 Asia/Shanghai） |
 
 ### 演示套餐
 
@@ -421,6 +423,8 @@
 
 ### 飞书 SDK 与直连
 
+`./install` 新装的服务默认写下面两个开关（`core/switches.py` 的 `SDK_SWITCHES`）：服务的 Python 里没有 `lark-oapi` 时先 `pip install`（装进用户目录，或这个 Python 所在的虚拟环境），装不上就不写、照旧走 lark-cli，安装器最后几行说怎么补。装这个版本之前注册的服务不变，要的照下面装好依赖再用[改开关三步](#改开关三步)打开。
+
 - `COVEY_CARD_TRANSPORT=sdk`：CardKit 卡片接口、消息的发送和回复、读消息详情都用常驻的 `lark-oapi` 客户端；上传文件和图片、转发话题等只有 lark-cli 做得了的仍走 lark-cli（见[投递、重投与 outbox](architecture.md#投递重投与-outbox)）。先在运行 Bridge 的那个 Python 里 `python3 -m pip install '.[feishu-sdk]'`。SDK 只支持显式命名的 profile，应用密钥只在内存里读取。请求发出前取不到凭据时退回 CLI（日志 `CardKit SDK unavailable locally; using CLI`）；请求已发出后不换传输重发。
 - `COVEY_EVENT_TRANSPORT=sdk`：Bridge 不起 lark-cli 的事件消费者，用一个 `lark_oapi` WebSocket 长连接收四类事件（消息、卡片点击、机器人菜单、已读回执），卡片点击在应答里立刻回 toast“收到”。Bridge 重启时它在核对完身份后就连上，启动恢复期间的点击和消息先收下（点击回“收到，机器人刚重启，稍后处理”），恢复做完再处理。收下的消息和点击处理完之前一直记在状态目录的 `event-spool/`，停止、重启或崩溃时还没处理的，下次启动先补处理（消息 24 小时内、点击 10 分钟内、菜单 2 分钟内的），不会重复建任务。同一个应用只能有一个事件长连接，所以**打开后四类事件全走 SDK**，同时也不能在别处再跑这个应用的 `lark-cli event consume`。依赖同上（`.[feishu-sdk]`），要显式命名的 profile。切回：去掉这个变量（或设 `cli`）并重启 Bridge。细节见[事件长连接走 SDK](architecture.md#事件长连接走-sdk默认关)。
 - `COVEY_FEISHU_DIRECT`：默认直连飞书开放平台，`0`（也认 `false`、`no`、`off`）时都走环境里的代理。直连时 Bridge 启动先试一次连 `open.feishu.cn:443`（lark 品牌是 `open.larksuite.com`），连得上就把它加进本进程的 `no_proxy`、`NO_PROXY`，之后的子进程都继承，日志 `Feishu direct: lark-cli reaches open.feishu.cn without the proxy`；连不上记 `Feishu direct unavailable (<异常类型>); lark-cli keeps the proxy`，环境不动。事件长连接的主机不在其中，仍走代理。
@@ -449,8 +453,9 @@
 | `COVEY_PROFILE` | `backends/codex/bridge.py`、`backends/dsh/bridge.py`、`backends/agy/bridge.py`（Bridge 的 `--profile`） | 空：lark-cli 的默认 profile | 否 |
 | `COVEY_MESSAGE_FORMAT`、`LARK_CLAUDE_BRIDGE_MESSAGE_FORMAT`、`LARK_DSH_BRIDGE_MESSAGE_FORMAT`、`COVEY_AGY_MESSAGE_FORMAT` | `feishu/messenger.py`（各 Harness 发消息时读） | `markdown` | 否 |
 | `COVEY_MESSAGE_CHUNK_LIMIT`、`LARK_CLAUDE_BRIDGE_MESSAGE_CHUNK_LIMIT`、`LARK_DSH_BRIDGE_MESSAGE_CHUNK_LIMIT`、`COVEY_AGY_MESSAGE_CHUNK_LIMIT` | `feishu/messenger.py` | 12000 | 否 |
-| `COVEY_CARD_TRANSPORT` | `feishu/sdk.py`（`enabled()`） | 空：lark-cli；`sdk` 走 SDK | 否 |
-| `COVEY_EVENT_TRANSPORT` | `feishu/ws_intake.py`（`enabled()`） | 空：lark-cli 的事件消费者；`sdk` 走 SDK 长连接 | 否 |
+| `COVEY_CARD_TRANSPORT` | `feishu/sdk.py`（`enabled()`） | 空：lark-cli；`sdk` 走 SDK（`./install` 新装写 `sdk`） | 否 |
+| `COVEY_EVENT_TRANSPORT` | `feishu/ws_intake.py`（`enabled()`） | 空：lark-cli 的事件消费者；`sdk` 走 SDK 长连接（`./install` 新装写 `sdk`） | 否 |
+| `COVEY_AUTO_UPGRADE` | `app/auto_upgrade.py`（`at()`） | 空：不自动升级；`HH:MM`：每天这个时间（Asia/Shanghai）照 `upgrade.json` 安全升级一次，见 [deploy.md 定时自动升级](deploy.md#定时自动升级) | 否 |
 | `COVEY_FEISHU_DIRECT` | `feishu/sdk.py` | 开：直连飞书，`0` 走代理 | 否 |
 | `LARKSUITE_CLI_DATA_DIR` | `feishu/sdk.py`（找 lark-cli 的凭据） | `~/.local/share` | 否 |
 | `COVEY_OUTGOING_MEDIA_DIRS` | `feishu/outgoing_images.py` | 空 | 否 |

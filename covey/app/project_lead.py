@@ -25,6 +25,7 @@ Rules 1 and 6 (AGENTS.md): the records are written under their own lock and noth
 from __future__ import annotations
 
 import dataclasses
+import re
 import secrets
 import sys
 import time
@@ -36,7 +37,7 @@ from covey.app.triage_view import pack_block
 from covey.core import board_read, butler, collab, devices, project_checklist, project_library, project_memory, projects, triage
 from covey.core import memory as core_memory
 from covey.core import turn_source
-from covey.core.checkpoint import read_checkpoint
+from covey.core.checkpoint import checked, checkpoint_delivery, delivery_commits, read_checkpoint, short_commit
 from covey.core.harness import CONSULT, LEAD, PROXY, READ, TOOL_LIMIT
 from covey.core.jobs import job_key, job_path, read_job_record, topic_job_records
 from covey.core.locks import resource_lock
@@ -143,7 +144,11 @@ TOOL_RULES = (
     "收进来的话题做完不等于专项完成：主人在里面说过话或你派过活之前它也会拒绝，先汇报现状、等主人。"
     "收过尾的专项，主人再在里面说话就会自动重开，按主人的新要求接着做。主人要停专项里的某个话题（包括停掉"
     "一个还在等主人回答的话题），用 project_topic_stop：它停掉那个话题排队和在跑的任务、收掉它等主人回答的问题，话题仍记在专项里、算结束。",
-    "- 部署、发布、对外发送、花钱、删东西、不可逆的操作，你没有工具，也不要替主人决定：这些在话题里做，话题会照旧问主人。"
+    "- 部署攒批：专项的话题合进主干后不各自问部署，“专项状态”的“合进待部署”列着它们。该合的都合了、主人要用了，或攒了半天，"
+    "就一次问主人要不要部署这一批（主人在场的这一轮直接在回复里问，叫醒你的轮用 project_note 标 report）：列出话题、提交和各自的自检，"
+    "一句话说部署会动什么。主人点头后用 project_topic_send 交给其中一个话题（或 project_topic_start 开一个）部署这一批，任务说明写明"
+    "“主人已同意部署这一批”和提交清单。不要每合一个就问一次，也不要没问主人就派部署。",
+    "- 发布、对外发送、花钱、删东西、不可逆的操作，你没有工具，也不要替主人决定：这些在话题里做，话题会照旧问主人。"
     "话题里问到主人的选择题，不由你答（分流还没开）。",
     "- 对主人说话要克制：这一轮的回复只有主人在场触发的轮才会发给他；叫醒你的轮，回复不发，要说的话用 project_note 并标 report。",
     "- 主人在场的这一轮里你开的话题、给话题加的话，那一轮结束时 Bridge 会把它的结论（或它停了）直接发给主人；"
@@ -328,6 +333,54 @@ def member_rows(state_dir, record) -> list:
 def live_members(state_dir, record) -> list:
     """The labels of the members with a turn running or waiting for the owner."""
     return [row["label"] for row in member_rows(state_dir, record) if row["live"]]
+
+
+# A delivery's ``deployed`` that says it was not deployed (an empty one says nothing at all).
+NOT_DEPLOYED = re.compile(r"(?:未|没|没有|不|尚未|暂未|还没有?|待|等[^，。；,;]{0,12})\s*(?:部署|上线|发布)|not (?:yet )?deployed"
+                          r"|^\s*(?:无|none|n/?a|-|—|否|no)\s*$", re.IGNORECASE)
+DEPLOY_ROWS = 12  # The 合进待部署 lines a pack shows; the rest counted.
+
+
+def deployed(delivery) -> bool:
+    """Whether a checkpoint's ``delivery`` says its turn deployed something."""
+    words = str((delivery or {}).get("deployed") or "").strip()
+    return bool(words) and not NOT_DEPLOYED.search(words)
+
+
+def waiting_deploys(state_dir, record) -> list:
+    """部署攒批: the member topics' ended turns that merged commits (their checkpoint's ``delivery``, kept on the job record) and that no
+    deploy came after, oldest first: [{label, commits, checked, ended}]. A turn whose delivery says it deployed covers every turn that ended
+    before it started (a deploy takes the trunk as it is), whichever topic it was in."""
+    rows, deploys = [], []
+    for topic_id in record.get("threads") or ():
+        if not isinstance(topic_id, str):
+            continue
+        label = topic_label(state_dir, topic_id) or topic_id[:8]
+        for job in topic_job_records(state_dir, topic_id):
+            if job.get("status") not in ENDED and job.get("status") != "continued":
+                continue
+            delivery = checkpoint_delivery({"delivery": job.get("delivery")})
+            if not delivery:
+                continue
+            if deployed(delivery):
+                deploys.append(epoch_seconds(job.get("created_at")) or 0)
+            elif delivery_commits(delivery):
+                rows.append({"label": label, "commits": delivery_commits(delivery), "checked": checked(delivery),
+                             "ended": epoch_seconds(job.get("updated_at")) or 0})
+    last = max(deploys, default=0)
+    return sorted((row for row in rows if row["ended"] > last), key=lambda row: row["ended"])
+
+
+def deploy_block(state_dir, record) -> str:
+    """The pack's 合进待部署 (TOOL_RULES 部署攒批), '' when nothing waits."""
+    rows = waiting_deploys(state_dir, record)
+    if not rows:
+        return ""
+    lines = [f"- {row['label']} · " + " ".join(short_commit(c) for c in row["commits"][:4])
+             + (f" 等 {len(row['commits'])} 个提交" if len(row["commits"]) > 4 else "")
+             + f" · {'已自检' if row['checked'] else '未自检'} · {stamp(row['ended'])} 合进" for row in rows[-DEPLOY_ROWS:]]
+    more = f"（另有更早的 {len(rows) - DEPLOY_ROWS} 轮没列）" if len(rows) > DEPLOY_ROWS else ""
+    return (f"合进待部署（{len(rows)} 轮，按部署攒批一次问主人）{more}：\n" + "\n".join(lines))
 
 
 def thread_line(row) -> str:
@@ -525,6 +578,9 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
                + ("\n" + "\n".join(map(thread_line, rows)) if rows else ""))
     if collab_on:
         out.append(checklist_block(state_dir, record, rows))
+    waiting = deploy_block(state_dir, record)
+    if waiting:
+        out.append(waiting)
     view = core_memory.project_view(project_memory.entries(state_dir, record), record["id"], redacted=redacted,
                                     since=None if full else since)
     memory = memory_lines(view)

@@ -14,7 +14,8 @@ install, an extension's installer before it wrote one) nothing here runs: no thr
 ``web-upgrade`` thread (app/web_sync.py) checks CHECK_SECONDS apart, and soon after an upgrade from the page ended. ``start`` runs
 ``run`` in a process of its own session (app/runner_spawn.py's way: the Bridge's restart, which is the upgrade's own deploy, never
 reaches it) under a wrapper that writes its end into ``<state>/upgrade/run.json``; the new Bridge reads it there. ``view`` is the
-``settings`` item ``upgrade`` the page draws. No Feishu call, no model.
+``settings`` item ``upgrade`` the page draws. ``shared`` is the one SelfUpgrade of a state directory: the page's and the daily automatic
+upgrade's (app/auto_upgrade.py, COVEY_AUTO_UPGRADE) checks never run at once. No Feishu call, no model.
 """
 from __future__ import annotations
 
@@ -73,6 +74,20 @@ except OSError:
     tail = []
 update(code=code, finished_at=time.time(), tail=tail)
 """ % TAIL
+
+
+_shared: dict = {}
+_shared_lock = threading.Lock()
+
+
+def shared(state_dir, log=lambda text: None) -> "SelfUpgrade":
+    """The SelfUpgrade of ``state_dir`` this process shares (made at the first call, with that call's ``log``)."""
+    key = str(Path(state_dir).resolve())
+    with _shared_lock:
+        found = _shared.get(key)
+        if found is None:
+            found = _shared[key] = SelfUpgrade(state_dir, log)
+        return found
 
 
 def config(home=None) -> dict | None:
@@ -263,14 +278,15 @@ class SelfUpgrade:
             return run if alive(run["pid"]) else None
         return run if self.clock() - (run.get("started_at") or 0) < SPAWN_SECONDS else None
 
-    def start(self, op_id) -> str:
-        """Check, then start ``run`` for the page's operation ``op_id``; what the ack says. ValueError: nothing started, and why."""
+    def start(self, op_id, status=None, by="page") -> str:
+        """Check (or take ``status``, a check made just now), then start ``run`` for the operation ``op_id``: the page's, or
+        ``by`` "auto" the daily automatic upgrade's (app/auto_upgrade.py); what the ack says. ValueError: nothing started, and why."""
         cfg = self.config()
         if cfg is None:
             raise ValueError("这台 Covey 没配网页上升级（数据根里没有 upgrade.json）：在终端里按安装说明升级")
         if self.running():
             raise ValueError("已经在升级了：等它做完")
-        status = self.check()
+        status = self.check() if status is None else status
         if status.get("error") and not status.get("latest"):
             raise ValueError(f"查不到新版本：{status['error']}")
         if status.get("blocked"):
@@ -278,9 +294,9 @@ class SelfUpgrade:
         if not available(status):
             raise ValueError("已经是最新，不用升级")
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(self.clock()))
-        log = (self.home or data_home()) / "deploy-runs" / f"{stamp}-page" / "upgrade.log"
+        log = (self.home or data_home()) / "deploy-runs" / f"{stamp}-{'auto' if by == 'auto' else 'page'}" / "upgrade.log"
         log.parent.mkdir(parents=True, exist_ok=True)
-        record = {"state": RUNNING, "op_id": str(op_id), "started_at": self.clock(), "log": str(log),
+        record = {"state": RUNNING, "op_id": str(op_id), "by": str(by), "started_at": self.clock(), "log": str(log),
                   "from": status.get("live") or "", "to": status.get("latest") or ""}
         write(self.run_path, record)
         argv = [sys.executable, "-B", "-I", "-c", WRAPPER, str(self.run_path), str(log), *cfg["run"]]

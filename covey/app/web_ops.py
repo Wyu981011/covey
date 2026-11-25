@@ -139,7 +139,7 @@ class Ops:
         """版本与更新 (``upgrade``, v39, app/self_upgrade.py): its checks and the upgrade it starts, one for the Bridge (app/web_sync.py
         pushes its item and runs its thread); None before the state directory is known."""
         if self._upgrader is None and self.env.state_dir:
-            self._upgrader = self_upgrade.SelfUpgrade(self.env.state_dir, self.runtime.log)
+            self._upgrader = self_upgrade.shared(self.env.state_dir, self.runtime.log)
         return self._upgrader
 
     def run(self, row) -> tuple:

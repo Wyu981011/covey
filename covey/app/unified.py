@@ -23,7 +23,7 @@ from typing import Any
 
 from covey.core import env as cenv
 from covey.app.app import BridgeApp
-from covey.app import auto_retry, limit_notice, policy_retry
+from covey.app import auto_retry, auto_upgrade, limit_notice, policy_retry
 from covey.app.availability import watch as watch_availability
 from covey.app.card_lanes import CardLanes
 from covey.app.card_routing import INBOUND_DIR, CardRouting
@@ -555,7 +555,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
                 ('outbox', lambda ctx: run_outbox(self, ctx, *OUTBOX_STEPS)),
                 ('policy', lambda ctx: run_policy_guard(self, ctx)),
                 *(thread for feature in self.features for thread in getattr(feature, 'threads', tuple)()),
-                *self.group_menu.threads(), *self.group_boards.threads()]
+                *self.group_menu.threads(), *self.group_boards.threads(), *auto_upgrade.targets(self)]
 
     def maintenance_target(self, ctx):
         """The maintenance thread. Its modules are imported when the thread starts, not when the targets are listed:

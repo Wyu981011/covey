@@ -976,10 +976,10 @@ class OffTest(TidyCase):
 
         with mock.patch.dict(os.environ, {proposals.ENV: "", projects.ENV: ""}):
             self.assertEqual(proposals.mode(), proposals.OFF)
-        ins = SimpleNamespace(env={"COVEY_PROJECT_TIDY": "off"})
+        ins = SimpleNamespace(env={"COVEY_PROJECT_TIDY": "off"}, feishu_sdk=lambda: True)
         installer.Installer.default_switches(ins)
         self.assertEqual(ins.env, {**installer.INSTALL_SWITCHES, "COVEY_PROJECT_TIDY": "off"})
-        ins = SimpleNamespace(env={})
+        ins = SimpleNamespace(env={}, feishu_sdk=lambda: True)
         installer.Installer.default_switches(ins)
         self.assertEqual(ins.env, installer.INSTALL_SWITCHES)
 
@@ -990,7 +990,7 @@ class OffTest(TidyCase):
         from covey.service.manager import runtime_environment
 
         shell = {"COVEY_PROJECTS": "0", "COVEY_PROJECT_TIDY": "off"}
-        ins = SimpleNamespace(env=cenv.canonical(shell))
+        ins = SimpleNamespace(env=cenv.canonical(shell), feishu_sdk=lambda: True)
         installer.Installer.default_switches(ins)
         saved = runtime_environment(ins.env)
         self.assertEqual(saved["LARK_BRIDGE_PROJECTS"], "0")

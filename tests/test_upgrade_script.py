@@ -255,5 +255,104 @@ class RealCheckTests(UpgradeCase):
         self.assertFalse((self.data / "releases").exists())
 
 
+# A fake web/deploy/selfhost/build.sh in a release: writes build.sh's mark naming the release's web/ (exit 0), or fails.
+FAKE_BUILD = """#!/bin/bash
+[ -n "$FAKE_BUILD_FAIL" ] && { echo "npm ERR! network"; exit 1; }
+printf '%s\\n' "covey web selfhost build; source $(cd "$(dirname "$0")/../../.." && pwd)/web" > "$1/.covey-selfhost-build"
+echo "built $1 $2"
+"""
+
+
+class StatusAndWebTests(UpgradeCase):
+    """--status says what an upgrade would do and changes nothing (app/self_upgrade.py reads its last line); an upgrade brings a
+    page build.sh built along and writes <data>/upgrade.json for the page and COVEY_AUTO_UPGRADE (T785)."""
+
+    def status(self, *argv):
+        code, out = self.upgrade("--status", "--json", *argv)
+        self.assertEqual(code, 0, out)
+        return json.loads(out.strip().splitlines()[-1]), out
+
+    def selfhost(self):
+        target = self.tmp / "web-app"
+        target.mkdir()
+        (target / ".covey-selfhost-build").write_text(f"covey web selfhost build; source {self.checkout}/web\n")
+        self.saved = {**self.saved, "LARK_BRIDGE_WEB": "1", "LARK_BRIDGE_WEB_SELFHOST": "1",
+                      "LARK_BRIDGE_WEB_SELFHOST_DIR": str(target / "app")}
+        self.manifest()
+        build = self.data / "releases" / self.newer / "web" / "deploy" / "selfhost" / "build.sh"
+        build.parent.mkdir(parents=True)
+        build.write_text(FAKE_BUILD)
+        return target
+
+    def test_status_says_what_is_newer_and_changes_nothing(self):
+        found, out = self.status()
+        self.assertEqual((found["live"], found["latest"], found["bridge"], found["count"], found["blocked"], found["web"]),
+                         (f"检出 {self.first[:8]}", self.newer[:8], True, 1, "", None))
+        self.assertEqual([row["subject"] for row in found["changes"]], ["newer"])
+        self.assertIn("1 个新提交", out)
+        self.assertEqual((self.calls(), self.head()), ([], self.first))
+        self.assertFalse((self.data / "upgrade.json").exists())
+
+    def test_status_says_what_blocks_an_upgrade_instead_of_stopping(self):
+        (self.checkout / "README.md").write_text("changed\n")
+        found, _ = self.status()
+        self.assertIn("没提交的改动", found["blocked"])
+        self.assertEqual(found["latest"], self.newer[:8])  # Still what an upgrade would deploy.
+        mixed = self.data / "releases" / f"{self.first[:8]}-0123abcd"
+        (mixed / "bin").mkdir(parents=True)
+        (mixed / "RELEASE_MANIFEST").write_text(f"core {self.first}\nextension {'0' * 40} covey_internal\n")
+        git(self.checkout, "checkout", "-q", "README.md")
+        self.manifest(entry=mixed / "bin" / "covey_bridge.py")
+        found, _ = self.status()
+        self.assertIn("带着扩展", found["blocked"])
+
+    def test_an_upgrade_writes_the_upgrader_and_leaves_an_extension_s_alone(self):
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        written = json.loads((self.data / "upgrade.json").read_text())
+        self.assertEqual(written["by"], "covey")
+        self.assertEqual(written["status"], [str(self.checkout / "scripts" / "upgrade.sh"), "--status", "--json",
+                                             "--state-dir", str(self.state)])
+        self.assertEqual(written["run"], [str(self.checkout / "scripts" / "upgrade.sh"), "--state-dir", str(self.state)])
+        (self.data / "upgrade.json").write_text(json.dumps({"by": "covey-internal", "status": ["/x"], "run": ["/y"]}))
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads((self.data / "upgrade.json").read_text())["by"], "covey-internal")
+
+    def test_a_self_hosted_page_comes_along_and_a_failed_build_is_exit_4(self):
+        target = self.selfhost()
+        found, _ = self.status()
+        self.assertEqual(found["web"], {"kind": "selfhost", "current": False, "manual": False})
+        code, out = self.upgrade(FAKE_BUILD_FAIL="1")
+        self.assertEqual(code, 4, out)  # The Bridge went through: exit 4, never a rollback.
+        self.assertIn("升级好了", out)
+        self.assertIn("[网页] 没更新上（Bridge 已经是新版，不用回滚）", out)
+        release = self.data / "releases" / self.newer
+        (release / "bin").mkdir(parents=True, exist_ok=True)
+        self.manifest(entry=release / "bin" / "covey_bridge.py")  # As the real deploy registers it.
+        found, _ = self.status()
+        self.assertEqual((found["bridge"], found["web"]["current"]), (False, False))  # Still offered: the page lags.
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        self.assertIn("已经是最新", out)
+        self.assertIn("[网页] 更新好了", out)
+        self.assertIn(f"source {release / 'web'}", (target / ".covey-selfhost-build").read_text())
+        found, _ = self.status()
+        self.assertEqual(found["web"]["current"], True)
+        (target / ".covey-selfhost-build").write_text(f"covey web selfhost build; source {self.checkout}/web\n")
+        code, out = self.upgrade("--no-web")
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("[网页]", out)
+
+    def test_a_page_made_another_way_is_only_said(self):
+        self.saved = {**self.saved, "LARK_BRIDGE_WEB": "1", "LARK_BRIDGE_WEB_CONFIG": "/absolute/web.json"}
+        self.manifest()
+        found, _ = self.status()
+        self.assertEqual(found["web"], {"kind": "app", "current": False, "manual": True})
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        self.assertIn("没有替你更新", out)
+
+
 if __name__ == "__main__":
     unittest.main()

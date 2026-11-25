@@ -2,7 +2,8 @@
 # 日常升级（docs/deploy.md 日常升级）：把 ./install 装的机器人换到上游的新提交。真正的部署还是 scripts/deploy_bridge.sh
 # （docs/deploy.md 升级与回滚），这里替你做它前后那几步：
 #
-#   scripts/upgrade.sh [--dry-run] [--state-dir DIR] [--ref REV] [--no-fetch]
+#   scripts/upgrade.sh [--dry-run] [--state-dir DIR] [--ref REV] [--no-fetch] [--no-web]
+#   scripts/upgrade.sh --status [--json] [--state-dir DIR] [--ref REV]
 #
 #   1. 检出要干净（没提交的改动不会被部署，先提交或 git stash），git fetch 上游（--no-fetch 不取）；要升到的提交（--ref，默认
 #      当前分支的上游，没有上游时 origin/main）必须包含检出的 HEAD：检出里有它没有的提交时停下，从不强制拉取、不重置。
@@ -15,9 +16,16 @@
 #      --dry-run 到此为止，什么都不换。
 #   5. 部署：机器人重启（几秒内收不到消息和点击，在跑的任务不中断、由新进程接管），日志在 <数据根>/deploy-runs/<时间>/。
 #      成功后检出快进（git merge --ff-only）到这个提交；还有任务进程用着检出里的代码时先不快进，下次运行时补上。
+#   6. 网页：用 web/deploy/selfhost/build.sh 自托管的网页跟着换成新 release 的 web/（--restart，Manager 拉起新版；
+#      covey/service/web_upgrade.py），Bridge 已经是最新时也补上；别的办法部署的网页只提示。--no-web 不动网页。
+#      最后写 <数据根>/upgrade.json：网页「版本与更新」和定时自动升级（COVEY_AUTO_UPGRADE）照它查新版本、升级（扩展的安装器
+#      写的不覆盖）。
 #
-# 退出码：0 升级好了（或已经是最新、--dry-run 检查都过了），1 某项检查没过（部署前停下的什么都没换），2 参数不对或找不到
-# 机器人，3 另一个部署正在跑（等它结束再运行）。
+# --status 只查不换（git fetch，不部署、不动检出）：现网、要升到的提交、新提交、网页要不要更新、为什么现在不能升；--json 时
+# 最后一行是给 Bridge 的 JSON（app/self_upgrade.py）。
+#
+# 退出码：0 升级好了（或已经是最新、--dry-run 检查都过了、--status 查完），1 某项检查没过（部署前停下的什么都没换），2 参数
+# 不对或找不到机器人，3 另一个部署正在跑（等它结束再运行），4 Bridge 升级好了、网页没更新上（不用回滚 Bridge）。
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec python3 -I - "$ROOT" "$@" <<'PY'
@@ -27,6 +35,7 @@ from pathlib import Path
 ROOT = Path(sys.argv[1])
 sys.path.insert(0, str(ROOT))
 from covey.core.paths import data_home, service_root  # noqa: E402
+from covey.service import web_upgrade  # noqa: E402
 from covey.service.manager import persistable  # noqa: E402
 
 KNOWN = ("--harness", "--state-dir", "--workdir", "--profile", "--app-id", "--harness-config")
@@ -48,11 +57,36 @@ PRE_WORDS = {
 }
 
 
+CHANGES = 20  # The newest commits --status lists.
+NOISE = ("Test map rebuilt",)  # Commits that change no behaviour, left out of what --status says is new.
+UPGRADER = "upgrade.json"  # Under the data home: how app/self_upgrade.py checks and runs this script.
+outlook = {"live": "", "latest": "", "bridge": False, "web": None, "count": 0, "changes": [], "blocked": ""}  # --status
+
+
 def say(text=""):
     print(text, flush=True)
 
 
+def report():
+    """--status's end: what it found in words, and with --json the line app/self_upgrade.py reads."""
+    say(f"现网 {outlook['live'] or '?'}；升级会部署 {outlook['latest'] or '?'}" + ("" if outlook["bridge"] else "（Bridge 已经是这一版）"))
+    web = outlook["web"]
+    if web:
+        say("网页：" + ("不是 build.sh 建的，升级不动它" if web["manual"] else "已经是这一版" if web["current"] else "升级时会跟着更新"))
+    say(f"{outlook['count']} 个新提交" + ("：" if outlook["changes"] else ""))
+    for row in outlook["changes"][:10]:
+        say(f"    {row['sha']} {row['subject'][:100]}")
+    if outlook["blocked"]:
+        say(f"现在不能升级：{outlook['blocked']}")
+    if args.json:
+        say(json.dumps(outlook, ensure_ascii=False))
+    sys.exit(0)
+
+
 def stop(code, why, next_step=""):
+    if args.status:  # What would stop an upgrade now is what --status says blocks it.
+        outlook["blocked"] = outlook["blocked"] or (why + (f"（{next_step}）" if next_step else ""))[:300]
+        report()
     say(f"升级停在这里：{why}")
     if next_step:
         say(f"下一步：{next_step}")
@@ -64,6 +98,9 @@ ap.add_argument("--dry-run", action="store_true", help="只取新提交、跑部
 ap.add_argument("--state-dir", help="要升级的机器人的状态目录（服务根下只有一个机器人时不用给）")
 ap.add_argument("--ref", help="升级到哪个提交（默认当前分支的上游，没有上游时 origin/main）")
 ap.add_argument("--no-fetch", action="store_true", help="不 git fetch，只用本地已有的提交")
+ap.add_argument("--no-web", action="store_true", help="不动网页（默认：build.sh 自托管的网页跟着换成新 release 的）")
+ap.add_argument("--status", action="store_true", help="只查升级会换什么（git fetch，不部署、不动检出）")
+ap.add_argument("--json", action="store_true", help="和 --status 一起：最后一行输出 JSON（网页「版本与更新」、定时自动升级读它）")
 ap.add_argument("--repo", default=str(ROOT), help=argparse.SUPPRESS)  # The checkout to upgrade (tests); this one by default.
 args = ap.parse_args(sys.argv[2:])
 repo = Path(args.repo).resolve()
@@ -87,8 +124,10 @@ if git("rev-parse", "--git-dir").returncode:
     stop(2, f"{repo} 不是 git 检出")
 dirty = [line for line in git("status", "--porcelain", "--untracked-files=no").stdout.splitlines() if line.strip()]
 if dirty:  # Each line is "XY path": the leading space of X matters, so the output is not stripped.
-    stop(1, "检出里有没提交的改动：" + "、".join(line[3:] for line in dirty[:5]),
-         "先提交或 git stash，再运行 scripts/upgrade.sh（升级部署的是提交，不含没提交的改动）")
+    why = "检出里有没提交的改动：" + "、".join(line[3:] for line in dirty[:5])
+    if not args.status:  # --status goes on: what an upgrade would deploy is still worth saying.
+        stop(1, why, "先提交或 git stash，再运行 scripts/upgrade.sh（升级部署的是提交，不含没提交的改动）")
+    outlook["blocked"] = why + "：先提交或 git stash"
 ref = args.ref
 if not ref:
     upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}")
@@ -106,9 +145,24 @@ if not target:
 head = git("rev-parse", "HEAD").stdout.strip()
 if git("merge-base", "--is-ancestor", head, target).returncode:
     ahead = git("rev-list", "--count", f"{target}..{head}").stdout.strip() or "?"
-    stop(1, f"检出里有 {ref} 没有的提交（{ahead} 个）：升级会部署 {ref}，不含它们",
-         "要部署检出现在的提交：scripts/upgrade.sh --ref HEAD；要跟上游一致，先自己处理这些提交（本脚本不强制拉取、不重置）")
+    why = f"检出里有 {ref} 没有的提交（{ahead} 个）：升级会部署 {ref}，不含它们"
+    if not args.status:
+        stop(1, why, "要部署检出现在的提交：scripts/upgrade.sh --ref HEAD；要跟上游一致，先自己处理这些提交（本脚本不强制拉取、不重置）")
+    outlook["blocked"] = outlook["blocked"] or why
 newer = git("rev-list", "--count", f"{head}..{target}").stdout.strip() or "0"
+outlook["latest"] = short(target)
+
+
+def commits(since, until):
+    """[{repo, sha, subject, at}] of ``since..until``, newest first, without NOISE; [] when either is unknown here."""
+    if not since or not until or git("cat-file", "-e", f"{since}^{{commit}}").returncode:
+        return []
+    rows = []
+    for line in git("log", "--format=%H%x09%ct%x09%s", f"{since}..{until}").stdout.splitlines():
+        sha, at, subject = (line.split("\t", 2) + ["", ""])[:3]
+        if subject and not subject.startswith(NOISE):
+            rows.append({"repo": "covey", "sha": sha[:8], "subject": subject, "at": int(at) if at.isdigit() else 0})
+    return rows
 
 # ---- 2. the service
 root = Path(service_root())
@@ -154,9 +208,51 @@ if rel is not None and len(rel.parts) > 1:
     with_extensions = any(row[:1] == ["extension"] for row in rows) or ("-" in live_id and not rows)
     if live_core is None and re.fullmatch(r"[0-9a-f]{40}", live_id):
         live_core = live_id
+outlook["live"] = (short(live_id) if re.fullmatch(r"[0-9a-f]{40}", live_id) else live_id) if live_id else f"检出 {short(head)}"
+live_commit = live_core if live_id is not None else head
+outlook["bridge"] = live_commit != target
+rows = commits(live_commit, target)
+outlook["count"], outlook["changes"] = len(rows), rows[:CHANGES]
 if with_extensions:
     stop(1, f"这个机器人的现网 release（{live_id}）带着扩展",
          "按扩展自己的升级说明做（它底下也用 scripts/deploy_bridge.sh，要加 --ext-repo）")
+
+
+def release_dir(commit):
+    """Where deploy_bridge.sh puts the release of ``commit`` (a core-only release is named by its commit)."""
+    return data / "releases" / commit
+
+
+if not args.no_web:
+    outlook["web"] = web_upgrade.view(manifest, release_dir(target))
+
+
+def write_upgrader():
+    """<data>/upgrade.json for app/self_upgrade.py (the page's 版本与更新, COVEY_AUTO_UPGRADE): this script's --status --json and
+    a run, for this bot. Not over one an extension's installer wrote; a failure to write is said and stops nothing."""
+    path = data / UPGRADER
+    try:
+        by = json.loads(path.read_text()).get("by")
+    except (OSError, ValueError, AttributeError):
+        by = None
+    if by not in (None, "", "covey"):
+        return
+    script = str(repo / "scripts" / "upgrade.sh")
+    where = ["--state-dir", state]
+    record = {"by": "covey", "status": [script, "--status", "--json", *where], "run": [script, *where]}
+    try:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+        tmp.replace(path)
+    except OSError as exc:
+        say(f"没写成 {path}（{type(exc).__name__}）：网页上不能点一下升级、定时自动升级也不会跑；终端里的 scripts/upgrade.sh 照常能用")
+
+
+def web_step(release):
+    """The page after the Bridge (covey/service/web_upgrade.py); 4 when an update was tried and did not go through, else 0."""
+    if args.no_web:
+        return 0
+    return 4 if web_upgrade.update(data, manifest, release, say) == web_upgrade.FAILED else 0
 
 
 def in_use():
@@ -196,11 +292,15 @@ say("升级 Covey")
 say(f"    检出      {repo}（{short(head)}）")
 say(f"    升到      {ref} = {short(target)}" + (f"（比检出新 {newer} 个提交）" if newer != "0" else ""))
 say(f"    机器人    {state}（现网：" + (f"release {live_id}" if live_id else "直接从检出运行") + "）")
-if (live_core if live_id is not None else head) == target:  # A service run from the checkout runs its HEAD.
+if args.status:
+    report()
+if live_commit == target:  # A service run from the checkout runs its HEAD.
     say(f"已经是最新（{short(target)}），不用升级。")
-    if not args.dry_run:
-        fast_forward()
-    sys.exit(0)
+    if args.dry_run:
+        sys.exit(0)
+    fast_forward()
+    write_upgrader()
+    sys.exit(web_step(release_dir(target) if live_id is not None else repo))
 
 # ---- 3. dependencies
 python = command[0] if command else "python3"
@@ -298,4 +398,6 @@ if live_id is None:
     say("以后改开关用 python3 -B bin/covey_service.py set（docs/configuration.md「改开关三步」）；不要再用 ./install 改，"
         "它会把服务注册回检出目录。")
 fast_forward()
+write_upgrader()
+sys.exit(web_step(data / "releases" / release))
 PY

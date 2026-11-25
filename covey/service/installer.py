@@ -120,7 +120,12 @@ SWITCH_WORDS = {"COVEY_PROJECTS": "专项", "COVEY_PROJECT_AUTOWAKE": "叫醒负
                 "COVEY_BOARD": "菜单「看板」", "COVEY_REVIEW": "独立复核", "COVEY_REVISIT": "到点回来看", "COVEY_MEMORY": "记忆",
                 "COVEY_KNOWLEDGE": "知识条目", "COVEY_COLLAB": "协作（开发中）", "COVEY_PINNED_OVERVIEW": "置顶的「手上的事」",
                 "COVEY_PINNED_TOPICS": "话题看板", "COVEY_DIGEST_TIMES": "早晚汇总", "COVEY_BUTLER_TRACKS": "管家同时做几件事",
-                "COVEY_DISPATCH_CARD": "派发卡"}
+                "COVEY_DISPATCH_CARD": "派发卡", "COVEY_EVENT_TRANSPORT": "飞书 SDK 收消息（收下先落盘，重启不丢）",
+                "COVEY_CARD_TRANSPORT": "飞书 SDK 写卡片"}
+# pyproject.toml's ``feishu-sdk``: what the service's Python needs for switches.SDK_SWITCHES (a test keeps the two the same).
+SDK_REQUIREMENTS = ("lark-oapi==1.7.4", "cryptography>=43")
+SDK_PROBE = ("import importlib.metadata as m, sys; import cryptography; "
+             "sys.exit(0 if m.version('lark-oapi') == sys.argv[1] else 3)")
 PROJECT_PARTS = ("COVEY_PROJECT_AUTOWAKE", "COVEY_PROJECT_ASK", "COVEY_PROJECT_MEMORY", "COVEY_PROJECT_TRIAGE")
 PROJECT_SWITCHES = ("COVEY_PROJECTS", "COVEY_PROJECT_TIDY", *PROJECT_PARTS)  # What harness_lines turns on where 专项 is off.
 HARNESS_TITLES = {"claude": "Claude Code", "codex": "Codex", "agy": "Antigravity", "dsh": "DeepSeek Harness"}
@@ -132,6 +137,7 @@ WEB_BUILD_SECONDS = 1200  # A build that takes longer than this is a failure (th
 WEB_BUILD_SCRIPT = "web/deploy/selfhost/build.sh"
 WEB_BUILD_MARK = ".covey-selfhost-build"  # What build.sh writes in a folder it built: its presence means a re-run upgrades.
 YES = ("y", "yes", "是", "要", "好")
+UPGRADER = "upgrade.json"  # Under the data root: app/self_upgrade.py's config, written by write_upgrader.
 
 
 def butler_preset(working) -> str:
@@ -298,8 +304,9 @@ class Installer:
 
     def __init__(self, args, *, env=None, say=say_now, ask=input, interactive=None, probe=install_probe.probe,
                  browser_factory=None, survey_app=survey, app_id_of=profile_app_id, app_name_of=profile_app_name, prepare_browser=browser_setup.prepare,
-                 web_prepare=None, web_suggest=None, sync_slash=slash_commands.sync):
+                 web_prepare=None, web_suggest=None, sync_slash=slash_commands.sync, feishu_sdk=None):
         self.args, self.say, self.ask = args, say, ask
+        self.feishu_sdk = feishu_sdk or self.ensure_feishu_sdk  # () -> whether the service's Python has the Feishu SDK.
         # The old spelling inside: what is saved, fingerprinted and passed on is what an older release reads too (core/env.py).
         self.env = cenv.canonical(dict(os.environ if env is None else env))
         self.interactive = (not args.non_interactive and sys.stdin.isatty()) if interactive is None else interactive
@@ -1152,10 +1159,50 @@ class Installer:
         saves in the manifest; one the environment already sets stays, under either spelling (``self.env`` holds the old
         one: ``COVEY_PROJECTS=0`` is ``LARK_BRIDGE_PROJECTS`` there)."""
         showcase = getattr(getattr(self, "args", None), "showcase", False)
-        table = switches.SHOWCASE if showcase else INSTALL_SWITCHES
+        table = dict(switches.SHOWCASE if showcase else INSTALL_SWITCHES)
+        wanted = [key for key in switches.SDK_SWITCHES if key in table and not str(cenv.get(key, "", self.env)).strip()]
+        if wanted and not self.feishu_sdk():
+            for key in wanted:
+                table.pop(key)
         for key, value in table.items():
             if not str(cenv.get(key, "", self.env)).strip():
                 self.env[key] = value
+
+    def service_python(self):
+        """The python3 the bootstrap registers the service with (the first on this run's PATH)."""
+        return self.which("python3") or sys.executable
+
+    def ensure_feishu_sdk(self):
+        """Whether the service's Python has the Feishu SDK (SDK_REQUIREMENTS), installed with pip when it has not (into the
+        user's site, or the virtualenv the Python is); False (said, the events and cards then stay on lark-cli) when that did
+        not work. Asked once a run."""
+        if getattr(self, "_feishu_sdk", None) is not None:
+            return self._feishu_sdk
+        python, pinned = self.service_python(), SDK_REQUIREMENTS[0].split("==", 1)[1]
+
+        def has():
+            try:
+                return subprocess.run([python, "-c", SDK_PROBE, pinned], env=self.env, capture_output=True,
+                                      timeout=60).returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+        ok = has()
+        if not ok:
+            self.note("安装飞书 SDK（lark-oapi，收消息和写卡片用；pip）")
+            try:
+                venv = subprocess.run([python, "-c", "import sys; print(sys.prefix != sys.base_prefix)"], env=self.env,
+                                      capture_output=True, text=True, timeout=30).stdout.strip() == "True"
+                code, tail = self.run_logged("feishu-sdk", [python, "-m", "pip", "install", "--quiet",
+                                                            *([] if venv else ["--user"]), *SDK_REQUIREMENTS], timeout=600)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                code, tail = 1, type(exc).__name__
+            ok = code == 0 and has()
+            if not ok:
+                self.note(f"飞书 SDK 没装上（{tail or '见 ' + str(self.log('feishu-sdk'))}）：收消息和写卡片照旧用 lark-cli，不影响使用。"
+                          f"装好后（{python} -m pip install {' '.join(SDK_REQUIREMENTS)}）再打开：python3 -B bin/covey_service.py set "
+                          "--state-dir <状态目录> COVEY_EVENT_TRANSPORT=sdk COVEY_CARD_TRANSPORT=sdk")
+        self._feishu_sdk = ok
+        return ok
 
     def service_up(self):
         root = self.data / "bridge-services"
@@ -1256,9 +1303,29 @@ class Installer:
         if code != 0:
             raise Fail(f"服务没注册成功：{tail_boot}", next=f"看 {self.log('bootstrap')} 里的报错，改好后{AGAIN}")
         write_json(record, now)
+        self.write_upgrader()
         if not hosted:
             self.leftovers.append("开机自启没注册上（服务已在运行，重启这台机器后要再运行 ./install）：" + tail)
         self.check_service_env()
+
+    def write_upgrader(self):
+        """<data>/upgrade.json, how the page's 版本与更新 and the daily COVEY_AUTO_UPGRADE check and upgrade this service
+        (app/self_upgrade.py, app/auto_upgrade.py): this checkout's scripts/upgrade.sh (``--status --json``, and a run) for this
+        app's state directory. Only when this runs from a git checkout (a release is upgraded by whoever made it: an extension's
+        installer writes its own) and never over one another installer wrote; a failure is only said."""
+        if not (REPO_ROOT / ".git").exists():
+            return
+        path = self.data / UPGRADER
+        found = read_json(path, None)
+        if isinstance(found, dict) and found.get("by") not in (None, "", "covey"):
+            return
+        script = str(REPO_ROOT / "scripts" / "upgrade.sh")
+        where = ["--state-dir", str(self.service_state())]
+        try:
+            write_json(path, {"by": "covey", "status": [script, "--status", "--json", *where], "run": [script, *where]})
+        except OSError as exc:
+            self.note(f"没写成 {path}（{exc.strerror or type(exc).__name__}）：网页上不能点一下升级、定时自动升级不会跑；"
+                      "终端里的 scripts/upgrade.sh 照常能用")
 
     def showcase_running(self):
         """`--showcase` for a service running unchanged: the 演示套餐 goes into its manifest the way `covey_service.py set

@@ -418,6 +418,8 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **查新版本**：有升级器时多一个 `web-upgrade` 线程，Bridge 起来 2 分钟后查一次，之后每 6 小时一次，网页点了升级、升级结束 30 秒后再查一次（网页不再提示刚装上的版本）；网页上的「检查更新」（`upgrade` 的 `check`）马上查。一次最多 180 秒、同时只查一次，升级在跑时不查（它在拉检出）。结果在 `<状态目录>/upgrade/status.json`，查不成时写 `error`、旧的结果照留。
 - **升级**（`upgrade` 的 `run`）：先查一次；已经是最新、`blocked` 不空、已经在升级时回 failed 并写原因。否则在自己的会话里起升级进程（`start_new_session`，和任务进程一样，Bridge 重启停不到它）：外面包一层，输出写进 `<数据根>/deploy-runs/<时间>-page/upgrade.log`，结束时把退出码、结束时间和最后几行写进 `<状态目录>/upgrade/run.json`。回执马上回“开始升级…”。升级里的部署会重启 Bridge，在跑的任务不中断；新的 Bridge 从 `run.json` 读进度和结果，推给网页。升级进程不见了又没写结果时，网页说“结果不确定，看日志”。
 - 这条操作走自己的车道，查的这一两分钟不挡设置、开新话题这些。
+- 只有核心、在 git 检出里 `./install` 装的部署，安装器和 `scripts/upgrade.sh` 写一份用 `scripts/upgrade.sh --status --json` 和 `scripts/upgrade.sh` 的 `upgrade.json`（`by` 是 `covey`；不覆盖扩展写的），自托管网页跟着升级，见 [deploy.md 日常升级](deploy.md#日常升级)。
+- 网页上的查和升级，与[定时自动升级](deploy.md#定时自动升级)（`COVEY_AUTO_UPGRADE`，`app/auto_upgrade.py`）用的是同一个升级器（`self_upgrade.shared`），同时只查一次；定时升级起的那次在 `run.json` 里 `by` 是 `auto`，日志在 `deploy-runs/<时间>-auto/`。
 
 ### 更快的取数（可选参数）
 
