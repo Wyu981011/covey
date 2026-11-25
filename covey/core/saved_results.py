@@ -6,18 +6,15 @@ import hashlib
 import json
 from pathlib import Path
 import re
-import threading
 
 from covey.core.jobs import find_job_record, job_key, upsert_job_record
 from covey.core.locks import shared_file_lock
-from covey.core.file_lock import file_lock
 from covey.core.result import ExecutionOutcome, VerifiedRootReply
 from covey.core.roster import HARNESSES, PAUSED_QUESTIONS
 from covey.core.state import write_private_text
 from covey.core.harness import JobCancelled
 from covey.core.store import transition_question, directory_store
 
-_LOCK = threading.RLock()
 RETRY_POLICY = "saved_delivery_only"
 # Harnesses whose withdrawn candidate is gone for good (Claude, dsh). Codex also keeps a
 # withdrawn generation for a native question it paused on: that turn is not run again (reruns_after_withdrawal).
@@ -49,13 +46,20 @@ def _folder(state):
 
 
 @contextmanager
-def _locked_results(ctx, *, create=False):
-    with _LOCK:
-        folder = _folder(ctx.state_dir)
-        if create:
-            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with file_lock(folder / ".lock", create=create):
-            yield
+def _locked_results(ctx, key, *, create=False):
+    """Job ``key``'s saved results (its index, its result files and its record) under that job's own lock: a file
+    beside its index in ``verified-results/.locks/``, across threads and processes (locks.shared_file_lock). Every
+    task runner takes its job's for each candidate, each turn's end and each answer's start, and the Bridge for each
+    saved reply it reads, so one that stalls while it holds it (a write to the state directory that does not come
+    back) holds up only its own job: a lock of the whole directory once kept every other turn from starting or
+    ending for as long (T769). Without ``create`` a missing directory is not made: FileNotFoundError."""
+    folder = _folder(ctx.state_dir)
+    if create:
+        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    elif not folder.is_dir():
+        raise FileNotFoundError(str(folder))
+    with shared_file_lock(_index(ctx.state_dir, key)):
+        yield
 
 
 def _path(state, key):
@@ -123,8 +127,8 @@ def _generation(ctx, scope):
 
 def observe_verified_reply(ctx, job, backend, reply):
     """None persistently advances the generation, including before any candidate."""
-    with _locked_results(ctx, create=True):
-        scope = _scope(ctx, job, backend)
+    scope = _scope(ctx, job, backend)
+    with _locked_results(ctx, scope["job_key"], create=True):
         key = hashlib.sha256(json.dumps(scope, sort_keys=True).encode()).hexdigest()
         generation = _generation(ctx, scope)
         path = _path(ctx.state_dir, key)
@@ -164,7 +168,7 @@ def authorize_verified_reply(ctx, job, backend, reply, outcome):
     if (not isinstance(reply, VerifiedRootReply) or not isinstance(outcome, ExecutionOutcome)
             or not outcome.delivery_authorized or outcome.reply_fingerprint != reply.fingerprint):
         return False
-    with _locked_results(ctx):
+    with _locked_results(ctx, job_key(job.message_id, job.job_id)):
         if job.verified_reply != reply:
             return False
         path = _path(ctx.state_dir, job.verified_result_key)
@@ -288,8 +292,9 @@ def mark_paused_question_delivery(ctx, job, backend, session_id, control, text):
             or getattr(control, "thread_id", None) != session_id
             or process is None or type(process.poll()) is not int or process.poll() != 0):
         raise ValueError("原生问答后端未确认暂停和清理")
-    with _locked_results(ctx):
-        path, saved = _paused_question_marker(ctx, _scope(ctx, job, backend), proof, session_id)
+    scope = _scope(ctx, job, backend)
+    with _locked_results(ctx, scope["job_key"]):
+        path, saved = _paused_question_marker(ctx, scope, proof, session_id)
         saved["paused_question_delivery"] = proof
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         saved["paused_question_text_sha256"] = digest
@@ -329,7 +334,7 @@ def _redelivery_lock(ctx, record):
 def paused_question_delivery(ctx, record, backend, chat_id):
     """As authorized_delivery, for a paused native question's body and forms."""
     with _redelivery_lock(ctx, record):
-        with _locked_results(ctx):
+        with _locked_results(ctx, record.get("key")):
             current = find_job_record(ctx.state_dir, record.get("key"))
             if not current or current.get("paused_question_delivery") != record.get("paused_question_delivery"):
                 raise ValueError("原生问答运行已变化")
@@ -345,7 +350,8 @@ def consume_paused_question_answer(ctx, job, backend, current_session):
     if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{16}", token) or job.message_id != "answer-" + token:
         raise ValueError("原生问答续答任务不匹配")
     from covey.core.session_guard import transfer_question_session
-    with _locked_results(ctx):
+    # The question's job's lock: its saved pause is what is checked, and what a redelivery of the question reads.
+    with _locked_results(ctx, grant["source_key"]):
         if job.cancel_event.is_set():
             raise JobCancelled("回答任务已停止")
         original = find_job_record(ctx.state_dir, grant["source_key"])
@@ -378,19 +384,19 @@ def paused_question_delivery_key(prefix, key, proof):
 
 def load_authorized_reply(ctx, record, backend, chat_id):
     """Read only; missing directories are not created by loading."""
-    with _locked_results(ctx):
+    with _locked_results(ctx, record.get("key")):
         return _load_authorized(ctx, record, backend, chat_id)
 
 
 @contextmanager
 def authorized_delivery(ctx, record, backend, chat_id):
-    """Serialize one job's redeliveries and reread its persistent ledger under the verified-results
-    lock. That lock is let go before the caller sends: every task runner takes it for each candidate,
-    each turn's end and each answer's start, so it is never held across a Feishu call (rule 1). The
+    """Serialize one job's redeliveries and reread its persistent ledger under the job's saved-results
+    lock (_locked_results). That lock is let go before the caller sends: the job's task runner takes it
+    for each candidate and the turn's end, so it is never held across a Feishu call (rule 1). The
     saved reply of an ended job no longer changes, and its send keys are fixed, so a send after the
     check sends what was checked."""
     with _redelivery_lock(ctx, record):
-        with _locked_results(ctx):
+        with _locked_results(ctx, record.get("key")):
             current = find_job_record(ctx.state_dir, record.get("key"))
             identity = ("job_id", "verified_result_key", "result_run_id", "verified_reply_generation",
                         "verified_reply_fingerprint")

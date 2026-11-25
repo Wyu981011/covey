@@ -50,7 +50,8 @@ DIFF_BYTES = 200 * 1024 * 1024
 
 # cards/ holds only the lock files of cards (core/locks.configure_card_locks): with no record beside them, each
 # goes once no one holds it, and is made again by the next write.
-LOCK_DIRS = ("jobs", "questions", "held-notes", "interaction-deliveries", "cards", "answer-cards", "projects")
+LOCK_DIRS = ("jobs", "questions", "held-notes", "interaction-deliveries", "cards", "answer-cards", "projects",
+             "verified-results")
 
 
 # main-thread/tracks (core/track_ledger.py): a track's ledger record stays this long (the Temporary rule); the track's

@@ -401,6 +401,39 @@ class SavedResultAcceptance(unittest.TestCase):
         self.assertEqual(self.saved()["generation"], 1)
         self.assertNotIn("authorization", self.saved())
 
+    def test_a_job_stalled_inside_its_lock_holds_up_only_itself(self):
+        # T769: a task runner that stalled while it held the lock of the whole verified-results directory kept every
+        # other turn from starting (agy withdraws first) or ending (its candidate, its authorization) for 18 minutes.
+        import threading
+        other = SimpleNamespace(bridge_run_id=OTHER_RUN_ID, job_id=8, message_id="other-fixture", chat_id="chat-fixture",
+                                topic_id=self.ctx.topic_id, verified_reply=None, verified_result_key=None)
+        upsert_job_record(self.state, other.message_id, job_id=other.job_id, chat_id=other.chat_id,
+                          topic_id=other.topic_id, status="running", execution_status="running")
+        inside, release = threading.Event(), threading.Event()
+        self.addCleanup(release.set)
+
+        def stalled(state, key, **fields):
+            if key == self.job.message_id:
+                inside.set()
+                release.wait(10)
+            return upsert_job_record(state, key, **fields)
+
+        with mock.patch("covey.core.saved_results.upsert_job_record", side_effect=stalled):
+            stuck = threading.Thread(target=self.stage, daemon=True)
+            stuck.start()
+            self.assertTrue(inside.wait(5))
+            other_turn = threading.Thread(target=observe_verified_reply, daemon=True,
+                                          args=(self.ctx, other, self.backend, reply_value(run_id=OTHER_RUN_ID)))
+            other_turn.start()
+            other_turn.join(5)
+            held_up = other_turn.is_alive()
+            release.set()
+            stuck.join(5)
+            other_turn.join(5)
+        self.assertFalse(held_up)
+        self.assertEqual(read_job_record(job_path(self.state, other.message_id))["verified_reply_state"], "candidate")
+        self.assertEqual(self.record()["verified_reply_state"], "candidate")
+
     def test_none_revokes_candidate_and_prevents_old_authorization(self):
         reply = self.stage()
         observe_verified_reply(self.ctx, self.job, self.backend, None)
@@ -823,7 +856,8 @@ class SavedResultAcceptance(unittest.TestCase):
         record["final_text"] = "Unverified latest progress"
         allowed_paths = {path.resolve() for path in self.saved_path().parent.glob("*.json")}
         allowed_paths.add(job_path(self.state, self.job.message_id).resolve())
-        original_read = Path.read_text
+        original_read, original_mkdir = Path.read_text, Path.mkdir
+        locks = (self.saved_path().parent / ".locks").resolve()
 
         def checked_read(path, *args, **kwargs):
             # Durable generation indexes and job authorization facts are valid
@@ -831,9 +865,16 @@ class SavedResultAcceptance(unittest.TestCase):
             self.assertIn(path.resolve(), allowed_paths)
             return original_read(path, *args, **kwargs)
 
+        def checked_mkdir(path, *args, **kwargs):
+            # Load must not create directories: the job's lock (locks.shared_file_lock) only makes sure of the folder
+            # of its lock file, there since the turn saved its reply.
+            self.assertEqual(path.resolve(), locks)
+            self.assertTrue(path.is_dir(), "load must not create directories")
+            return original_mkdir(path, *args, **kwargs)
+
         with (
             mock.patch.object(Path, "read_text", autospec=True, side_effect=checked_read),
-            mock.patch.object(Path, "mkdir", side_effect=AssertionError("load must not create directories")),
+            mock.patch.object(Path, "mkdir", autospec=True, side_effect=checked_mkdir),
             mock.patch("covey.core.saved_results.write_private_text", side_effect=AssertionError("load must not write")),
             mock.patch("covey.core.saved_results.upsert_job_record", side_effect=AssertionError("load must not update jobs")),
         ):
