@@ -127,7 +127,9 @@ class LimitTests(unittest.TestCase):
 
 class ClaudeArgvTests(unittest.TestCase):
     def argv(self, **options):
-        ctx = make_context(Path('/x'), backend_cmd=['claude'], options=options)
+        # A turn in a repository under the home (/x): the home-search hook of a turn started from the home itself is
+        # tests/test_home_search.py's.
+        ctx = make_context(Path('/x'), workdir=Path('/x/repo'), backend_cmd=['claude'], options=options)
         return claude_argv.stream_argv(ClaudeBackend(), ctx)
 
     @staticmethod

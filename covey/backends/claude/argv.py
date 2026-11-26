@@ -4,10 +4,12 @@ session's subagent transcripts are (subagents_dir). Which models its subagents r
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from covey.backends.claude import redaction, subagents, tool_guard
 from covey.backends.claude.sessions import ClaudeSessionStore, claude_projects_root
 from covey.core.harness import CONSULT, LEAD, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES
+from covey.core.home import home_dir
 
 # No MCP server at all: the catalog's probe, and a turn held to READ, PROXY or CONSULT (none of the owner's MCP servers).
 NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
@@ -36,6 +38,20 @@ def merge_hooks(*given) -> dict:
         for event, groups in hooks.items():
             merged.setdefault(event, []).extend(groups)
     return merged
+
+
+def home_hooks(ctx) -> dict:
+    """The home-search hook (backends/claude/tool_guard.py) of a turn started from the home, the service's --workdir
+    (core/home.py home_dir): no Bash, Grep or Glob call of it walks the whole home unbounded. Empty for a turn in another
+    directory, or on a device (the hook would run there, where this machine's script is not)."""
+    if getattr(ctx, "device", "") or not getattr(ctx, "default_workdir", None) or not getattr(ctx, "workdir", None):
+        return {}
+    home = home_dir(ctx.default_workdir)
+    try:
+        started_there = Path(ctx.workdir).resolve() == Path(home).resolve()
+    except (OSError, RuntimeError):
+        return {}
+    return tool_guard.home_search_settings(home) if started_there else {}
 
 
 def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""):
@@ -112,13 +128,16 @@ def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""
         # the app sets the subagents' model (a retry after a refusal).
         argv += subagents.argv(ctx)
         # One --settings: a redacted topic's turn, its compaction included, talks to the model through the term relay;
-        # a 代答 turn's shell and edit tools go through its PreToolUse hook (backends/claude/tool_guard.py); the extensions'
-        # hooks (TURN_HOOKS) go into any other but a CONSULT one.
+        # a 代答 turn's shell and edit tools go through its PreToolUse hook (backends/claude/tool_guard.py); a turn started
+        # from the home has the home-search hook (home_hooks) ahead of the extensions' (TURN_HOOKS), in any but a CONSULT
+        # one.
         settings = redaction.settings(ctx)
         if limit == PROXY:
             settings["hooks"] = tool_guard.settings(ctx.options.get(TOOL_NOTES, ""))
-        elif limit != CONSULT and ctx.options.get(TURN_HOOKS):
-            settings["hooks"] = merge_hooks(ctx.options[TURN_HOOKS])
+        elif limit != CONSULT:
+            hooks = merge_hooks(home_hooks(ctx), ctx.options.get(TURN_HOOKS))
+            if hooks:
+                settings["hooks"] = hooks
         argv += ["--settings", json.dumps(settings, ensure_ascii=False)] if settings else []
     return backend.wrap_argv(argv, ctx)
 
