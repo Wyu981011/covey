@@ -548,6 +548,7 @@
 | `service/manager.py` | Persistent single-host service management for all bridge entrypoints |
 | `service/memguard.py` | Memory watchdog: stop runaway search tools before they exhaust the machine |
 | `service/pairing.py` | Issue a one-time owner pairing code for an explicitly configured bot app |
+| `service/personal_extensions.py` | Personal extensions: git checkouts under the data home's `extensions/` that every deploy packs into the … |
 | `service/plugins.py` | Extensions (插件) from the command line |
 | `service/web_selfhost.py` | 自托管网页工作台的准备和托管参数: what `COVEY_WEB_SELFHOST=1` asks of the Manager (`wanted`, `spec` |
 | `service/web_upgrade.py` | The self-hosted web page brought along when scripts/upgrade.sh upgrades the Bridge |

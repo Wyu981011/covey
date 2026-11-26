@@ -70,10 +70,10 @@ scripts/upgrade.sh              # 部署：机器人重启一次，成功后检�
 它替你做[升级与回滚](#升级与回滚)里那几步，真正的部署还是 `scripts/deploy_bridge.sh`：
 
 1. 检出要干净：有没提交的改动时停下（部署的是提交，不含这些改动；先提交或 `git stash`）。`git fetch` 上游（`--no-fetch` 不取），要升到的提交是当前分支的上游（没有上游时 `origin/main`，`--ref` 可改），它必须包含检出的 `HEAD`：检出里有它没有的提交时停下，从不强制拉取、不重置。
-2. 找到机器人：服务根里只有一个时就是它，几个时用 `--state-dir` 指定。现网已经是这个提交时（从检出直接运行的，看检出的 `HEAD`）只说“已经是最新”。现网 release 带扩展时停下，照扩展自己的升级说明做。
+2. 找到机器人：服务根里只有一个时就是它，几个时用 `--state-dir` 指定。现网已经是这个提交（从检出直接运行的，看检出的 `HEAD`）、数据根 `extensions/` 下的[个人扩展](#个人扩展)也和现网带的一样时只说“已经是最新”；只有个人扩展有新提交时照样升级，核心不变。现网 release 带扩展（`--ext-repo` 装的）时停下，照扩展自己的升级说明做。
 3. 核对依赖：服务清单里的 `python3` 是 3.10 以上，服务的 `PATH` 里有 `lark-cli`（没有只提示）。
-4. 照服务清单载入环境：清单里的变量原样，终端里别的本项目变量（`COVEY_*`、代理）不带进去，所以开关和代理都不变；`--workdir`、`--profile`、`--app-id`、`--state-dir`、`--harness-config` 和其余参数从清单的启动命令抄。先跑 `deploy_bridge.sh --check-only`，没过的项用中文写出来（有任务重启会被打断、另一个部署在跑、权限变量……），什么都不换；`--dry-run` 到此为止。
-5. 部署：机器人重启，几秒后就收得到消息和点击，在跑的任务不中断、由新进程接管。日志在 `$COVEY_DATA_HOME/deploy-runs/<时间>/`（检查是 `<时间>-check/`）。成功后检出快进到这个提交；第一次升级时还有任务进程用着检出里的代码的，先不快进，下次运行时补上。
+4. 照服务清单载入环境：清单里的变量原样，终端里别的本项目变量（`COVEY_*`、代理）不带进去，所以开关和代理都不变；`BASH_ENV`、`ENV` 也不带（bash 会先执行它们指向的文件，有的 ssh 会话里它指向 `.bashrc`，改了的 `PATH` 让预检报 `env_value_diff`）；`--workdir`、`--profile`、`--app-id`、`--state-dir`、`--harness-config` 和其余参数从清单的启动命令抄。先跑 `deploy_bridge.sh --check-only`，没过的项用中文写出来（有任务重启会被打断、另一个部署在跑、权限变量……），什么都不换；`--dry-run` 到此为止。
+5. 部署：机器人重启，几秒后就收得到消息和点击，在跑的任务不中断、由新进程接管。日志在 `$COVEY_DATA_HOME/deploy-runs/<时间>/`（检查是 `<时间>-check/`）。成功后检出快进到这个提交；第一次升级时还有任务进程用着检出里的代码的，先不快进，下次运行时补上。最后列“升级后要你补的”：这一版起默认打开、服务清单没设的开关（`pre.switches_on`），和诊断列出的要手工补的事（`post.owner_todo`，即 `covey_doctor.py` 每个服务的 `todo`：事件通道还是 lark-cli、飞书应用缺的权限、网页发布要的 lark-cli 能力）。
 6. 网页：用 `web/deploy/selfhost/build.sh` 自托管的网页（`./install --web` 装的）跟着换成新 release 的 `web/`（`web/deploy/selfhost/build.sh <目录> --restart`，Manager 几秒内拉起新版，日志在 `deploy-runs/<时间>-web/`）；Bridge 已经是最新、网页还是旧的时只补网页。别的办法部署的网页只提示，不动；`--no-web` 不动网页。最后写 `upgrade.json`（见上）。
 
 `scripts/upgrade.sh --status` 只查不换：取新提交，说现网、升级会部署的提交、新提交、网页要不要更新、现在为什么不能升（有没提交的改动、带扩展……）；加 `--json` 时最后一行是给 Bridge 的 JSON（网页「版本与更新」和定时自动升级读它）。
@@ -127,7 +127,7 @@ scripts/deploy_bridge.sh --workdir /absolute/workspace --profile covey --app-id 
 - `--commit` 是要部署的提交（默认是检出的 `HEAD`）；服务换到 release 运行以后，检出就可以随意 `git pull` 了。`--workdir`、`--profile` 照清单命令里的抄（`./install` 装的 profile 默认是 `covey`）。`COVEY_DATA_HOME` 载入清单后就有（清单里写作 `LARK_BRIDGE_DATA_HOME`，两个名字都认）；`--run-dir` 和 `TMPDIR` 至少给一个，否则退出码 2。
 - 带扩展的部署：每个扩展检出加一对 `--ext-repo /absolute/<扩展检出> --ext-commit <提交>`（不写提交就是它的 `HEAD`），release 里会带上这些扩展，见[核心和扩展分开检出](#核心和扩展分开检出)。
 - 输出是一行 JSON：退出码 0 成功，1 某项检查没过（`error` 写明哪项；预检没过时什么都没换，部署后的检查没过看 `post`），2 参数不对，3 另一个部署正在跑（等它结束再跑一次）。先跑 `--check-only`，预检全过再去掉它。
-- 预检里最常见的是 `env_missing`、`env_extra`、`env_value_diff`：终端和清单的变量不一致，按上面重新载入。要改开关的，先按[改设置后重新注册](#改设置后重新注册)改完，再升级。
+- 预检里最常见的是 `env_missing`、`env_extra`、`env_value_diff`：终端和清单的变量不一致，按上面重新载入。要改开关的，先按[改设置后重新注册](#改设置后重新注册)改完，再升级。只有 `PATH` 不一样、终端设了 `BASH_ENV`（或 `ENV`）时，是 bash 在脚本第一行之前执行了它指向的文件（有的 ssh 会话里是 `.bashrc`），结果里 `pre.shell_startup_env` 会写出来：`env -u BASH_ENV -u ENV` 重跑。
 - 部署后它自己核对新 Bridge 起来、事件就绪、`covey_doctor --runtime-only` 通过、原来在跑的任务都被接管；`post.app_config` 报飞书应用还缺什么（不算失败，补法见[飞书应用配置](feishu-app.md)）。
 - 已知限制：脚本开头会 `unset HTTPS_PROXY`，所以清单里有大写 `HTTPS_PROXY` 的服务预检总报 `env_missing`。现在的 `./install` 把代理存成小写的 `https_proxy`；更早装的服务（在 `./install` 里输入过代理地址，或终端里设的是大写）清单里还是大写。先在载入清单的终端里 `export https_proxy="$HTTPS_PROXY"; unset HTTPS_PROXY`，按[改设置后重新注册](#改设置后重新注册)注册一次，代理就改存成小写的 `https_proxy`，之后照常部署。
 
@@ -172,8 +172,25 @@ scripts/deploy_bridge.sh --workdir <目录> --profile <profile> --repo /absolute
 ```
 
 - 打包由 `scripts/assemble_release.py` 做：核心 `git archive` 到 release，每个扩展包 `git archive` 到 `release/extensions/<包名>/`，去掉包里的 `standalone/`，包的 `bin/*.py` 入口（如扩展自己的运行时脚本）放进 `release/bin/` 盖掉核心里的转发脚本，写 `extensions/enabled`（按 `--ext-repo` 的顺序列出所有包名）和 `RELEASE_MANIFEST`（各检出的完整提交号），再重写 `AGENTS.md` 的模块表。形状和单仓库的 release 相同，服务清单、`runs/<任务键>/` 协议、回滚都不变。拼装按提交取，不看检出的工作区。
-- release id 是 `<核心前 8 位>-<扩展前 8 位>[-<第二个扩展前 8 位>…]`，release 目录、`bridge started … release=<id>` 的匹配都用它；结果 JSON 的 `commit` 仍是核心完整提交号，另有 `ext_commits` 和 `release_id`。不给 `--ext-repo` 时 release 目录名是核心提交号。回滚只回一半：核心提交不变、`--ext-commit` 设成旧值，得到一个新 id 的 release。
-- 额外的预检（`--check-only` 同样做）：扩展检出是 git 仓库、提交存在（否则退出码 2）；扩展库的 `core.lock` 写的核心提交和 `--commit` 不一致时拦下（`pre.core_lock_mismatch`；试新核心时加 `--allow-core-mismatch` 放行）；服务清单和当前终端里不能有 `COVEY_EXTENSION_PATH`、`COVEY_EXTENSIONS`（`pre.extension_env`；它们会盖过 release 里的 `extensions/`，unset 后重新注册）；启用的扩展自己的检查要过（`pre.extension_checks`，说明在 `pre.extension_notes`）：脚本把要部署的 release 拼到运行目录的 `tmp/`（release 已存在时直接用它），在里面跑 `bin/covey_plugins.py deploy-check --harness-config <配置>`，跑完删掉，所以扩展看到的是这次要部署的代码和服务实际用的配置（例如隔离解释器的源码是不是 release 固定的版本）；确认无碍时加 `--allow-extension-checks` 放行。回滚到还没有 `deploy-check` 的旧核心时不检查，`pre.extension_notes` 里说明。
+- release id 是 `<核心前 8 位>-<扩展前 8 位>[-<第二个扩展前 8 位>…]`（有[个人扩展](#个人扩展)时接着是它们的前 8 位），release 目录、`bridge started … release=<id>` 的匹配都用它；结果 JSON 的 `commit` 仍是核心完整提交号，另有 `ext_commits` 和 `release_id`。不给 `--ext-repo` 时 release 目录名是核心提交号。回滚只回一半：核心提交不变、`--ext-commit` 设成旧值，得到一个新 id 的 release。
+- 额外的预检（`--check-only` 同样做）：扩展检出是 git 仓库、提交存在（否则退出码 2）；扩展库的 `core.lock` 写的核心提交和 `--commit` 不一致时拦下（`pre.core_lock_mismatch`；试新核心时加 `--allow-core-mismatch` 放行）；服务清单和当前终端里不能有 `COVEY_EXTENSION_PATH`、`COVEY_EXTENSIONS`（`pre.extension_env`；它们会盖过 release 里的 `extensions/`，unset 后重新注册）；启用的扩展自己的检查要过（`pre.extension_checks`，说明在 `pre.extension_notes`；先把每个启用包的钩子模块和 `features` 模块试导入一遍，再问它的 `deploy_check` 钩子）：脚本把要部署的 release 拼到运行目录的 `tmp/`（release 已存在时直接用它），在里面跑 `bin/covey_plugins.py deploy-check --harness-config <配置>`，跑完删掉，所以扩展看到的是这次要部署的代码和服务实际用的配置（例如隔离解释器的源码是不是 release 固定的版本）；确认无碍时加 `--allow-extension-checks` 放行。回滚到还没有 `deploy-check` 的旧核心时不检查，`pre.extension_notes` 里说明。
+
+### 个人扩展
+
+只给自己用的扩展包（比如把 Claude Code 的命令转到别的机器上跑的），放在数据根的 `extensions/` 下，每个是一个 git 检出，布局和扩展库一样：根下每个含 manifest 文件的目录是一个包，根下可选的 `enabled` 文件列默认启用哪些（没有就全部启用）。
+
+```text
+$COVEY_DATA_HOME/extensions/
+  enabled            # covey_plugins.py enable|disable 写的本部署选择（不是检出）
+  <名字>/            # git 检出
+    <包名>/manifest.py
+    enabled          # 可选
+```
+
+- 每次部署（`deploy_bridge.sh`，以及套着它的 `scripts/upgrade.sh`、扩展的安装器、网页上的升级、定时自动升级）自己扫一层这个目录（`covey/service/personal_extensions.py`），把每个检出 `HEAD` 的包和核心、`--ext-repo` 的扩展一起拼进 release，排在最后；结果的 `personal_extensions` 列出它们，release id 末尾多它们的前 8 位，`RELEASE_MANIFEST` 里记成 `personal <提交> <包>…`。运行时仍只从 release 加载：回滚时个人扩展跟着回，改了检出要再升级一次才生效，没提交的改动不带（`pre.personal_notes` 提示）。
+- 预检照常在拼好的 release 里跑扩展自检（`pre.extension_checks`），个人扩展也在里面：每个启用的包的钩子模块和 `features` 模块都试导入一遍，坏了的在部署前就拦下，什么都不换。拦下的是个人扩展时，`pre.extension_disable` 给出临时关掉它的命令（`COVEY_DATA_HOME=… python3 -B …/bin/covey_plugins.py disable <包>`，写的是数据根的选择），关掉后照常升级，改好再 `enable`、升级一次。
+- 不打包、只提示的：不是 git 检出的目录、`HEAD` 里没有包的检出。拦下的（`pre.personal_problems`）：属主不是当前用户、或同组和其他人可写的检出（它的代码以 Bridge 的权限运行），还没有提交的检出。几个检出里有同名的包时拼装报错，谁也不盖住谁。
+- 能分享给同事的包，直接提进扩展库、不写进它的 `enabled`，要用的人 `covey_plugins.py enable <包>`；数据根的个人扩展只留给真正私有的代码。不要用 `COVEY_EXTENSION_PATH` 指过去：它只给开发用，服务清单里有它时预检会拦。
 
 ### 预编译字节码
 

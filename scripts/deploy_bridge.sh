@@ -50,7 +50,17 @@
 # with --harness-config, so an extension finds what this release would run with (an isolated interpreter whose
 # source is not the revision the release pins, say); --allow-extension-checks lets a failing one go. A release whose
 # core has no deploy-check (an older one, for a rollback) is not checked (a note says so).
-# Without --ext-repo nothing changes.
+# Personal extensions (covey/service/personal_extensions.py, docs/deploy.md 个人扩展): each git checkout under
+# $COVEY_DATA_HOME/extensions/ with a package at HEAD is packed too, after the --ext-repo ones (assemble_release.py
+# --personal; RELEASE_MANIFEST "personal" lines, which the rollback check leaves out), its 8 characters added to the release
+# id; "personal_extensions" lists them. A checkout another user could change, or one without a commit, stops the deploy
+# ("pre.personal_problems"); what is not packed is said in "pre.personal_notes". When the extension check fails for a
+# personal package, "pre.extension_disable" gives the command that turns it off for this deployment (covey_plugins.py
+# disable, the data home's choice), to upgrade without it until it is fixed.
+# Without --ext-repo and personal extensions nothing changes.
+# Said, never stopping: "pre.switches_on", the switches on unset (core/switches.py DEFAULTS) in the checkout that were not
+# in the live release and the manifest does not set (an upgrade turns them on); "post.owner_todo", what covey_doctor lists
+# for this service to do by hand (its "todo").
 # Post-checks: a new `bridge started … release=<id>` line, two `ready event_key=` after it,
 # /proc/<pid>/cmdline runs the new release, covey_doctor --runtime-only exits 0, (reported only) what the
 # Feishu app lacks (bin/covey_app_setup.py check),
@@ -59,7 +69,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 unset HTTPS_PROXY
 exec python3 -I - "$ROOT" "$@" <<'PY'
-import argparse, fcntl, glob, json, os, re, shutil, socket, subprocess, sys, time
+import argparse, fcntl, glob, json, os, re, shlex, shutil, socket, subprocess, sys, time
 from pathlib import Path
 
 result = {"ok": False}
@@ -209,11 +219,25 @@ for number, ext_dir in enumerate(args.ext_repo):
     lock = sh(["git", "show", f"{ext_sha}:core.lock"], cwd=ext_path)
     words = [ln.split()[0] for ln in lock.stdout.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
     exts.append((ext_path, ext_sha, words[0] if lock.returncode == 0 and words else None))
-release_id = "-".join([commit[:8], *(sha[:8] for _, sha, _ in exts)]) if exts else commit
+# The data home's personal extensions, found by this script's own checkout (the module is not in an older --repo).
+personal_code = "import sys; from covey.service.personal_extensions import main; sys.exit(main())"
+mine_found = json_of(["python3", "-B", "-c", personal_code, str(DATA), *(str(path) for path, _, _ in exts)], sys.argv[1],
+                     "personal extensions")
+personal = []  # (checkout, full commit, core.lock's commit or None, packages)
+for found_repo in mine_found.get("repos") or []:
+    lock = sh(["git", "show", f"{found_repo['commit']}:core.lock"], cwd=found_repo["path"])
+    words = [ln.split()[0] for ln in lock.stdout.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    personal.append((Path(found_repo["path"]), found_repo["commit"], words[0] if lock.returncode == 0 and words else None,
+                     list(found_repo["packages"])))
+packed = exts + [(path, sha, lock) for path, sha, lock, _ in personal]  # Everything the release is assembled from.
+release_id = "-".join([commit[:8], *(sha[:8] for _, sha, _ in packed)]) if packed else commit
 release = DATA / "releases" / release_id
 result.update(commit=commit, release=str(release))
-if exts:
+if packed:
     result.update(ext_commits=[sha for _, sha, _ in exts], release_id=release_id)
+if personal:
+    result["personal_extensions"] = [{"path": str(path), "commit": sha, "packages": packages}
+                                     for path, sha, _, packages in personal]
 
 service_root = Path(sh(["python3", "-B", "bin/covey_paths.py", "service-root"], cwd=repo).stdout.strip())
 
@@ -255,6 +279,9 @@ else:
 
 # ---- pre-checks
 pre = {"deploy_running": running}
+pre["personal_problems"] = list(mine_found.get("problems") or [])
+if mine_found.get("notes"):
+    pre["personal_notes"] = list(mine_found["notes"])
 before = status(repo)
 pre["restart_blockers"] = before.get("restart_blockers")
 pre["creating_worktree"] = [Path(p).name for p in glob.glob(str(S / "launch-forms" / "*.json"))
@@ -293,6 +320,13 @@ pre["env_names"] = len(theirs)
 pre["env_missing"] = sorted(set(theirs) - set(mine))
 pre["env_extra"] = sorted(set(mine) - set(theirs))
 pre["env_value_diff"] = sorted(k for k in set(mine) & set(theirs) if mine[k] != theirs[k])
+# A shell with BASH_ENV (or sh's ENV) set ran that file before this script's first line (some ssh setups point it at
+# .bashrc), so PATH may differ from the manifest's for no reason the diff shows: said, so the deployer knows what to unset.
+startup = [name for name in ("BASH_ENV", "ENV") if os.environ.get(name)]
+if startup:
+    pre["shell_startup_env"] = startup
+    pre["shell_startup_note"] = (f"this shell sets {' and '.join(startup)}: bash ran that file before this script and may have "
+                                 f"changed PATH; run it again without them (env -u BASH_ENV -u ENV bash ...)")
 loose_code = ("import json, sys; from covey.core.ignored_env import loosened; "
               "print(json.dumps(sorted(set(loosened(json.loads(sys.argv[1])) + loosened(json.loads(sys.argv[2]))))"
               " + [f'service {name}: {line}' for name, env in sorted(json.loads(sys.argv[3]).items())"
@@ -303,8 +337,8 @@ live = manifest.get("command") or []
 planned = [shutil.which("python3") or "python3", "-B"]
 same = live[:2] == planned and live[3:] == BRIDGE_ARGS
 pre["command_diff"] = {} if same else {"live": live[:2] + live[3:], "planned": planned + BRIDGE_ARGS}
-if exts:
-    pre["core_lock_mismatch"] = [f"{path.name}: core.lock {lock} vs --commit {commit[:8]}" for path, _, lock in exts
+if packed:
+    pre["core_lock_mismatch"] = [f"{path.name}: core.lock {lock} vs --commit {commit[:8]}" for path, _, lock in packed
                                  if lock and not commit.startswith(lock) and not lock.startswith(commit[:len(lock)])]
     pre["extension_env"] = sorted({name for env in (manifest.get("environment") or {}, mine) for name in env
                                    if name.removeprefix("COVEY_").removeprefix("LARK_BRIDGE_")
@@ -314,38 +348,52 @@ if exts:
                                      "unset them in the shell and re-register without them")
 
 
+def assemble_command(out):
+    cmd = ["python3", "-B", "-I", str(Path(sys.argv[1]) / "scripts" / "assemble_release.py"), "--core", str(repo),
+           "--core-ref", commit, "--out", str(out)]
+    for path, sha, _ in exts:
+        cmd += ["--ext", str(path), "--ext-ref", sha]
+    for path, sha, _, _ in personal:
+        cmd += ["--personal", str(path), "--personal-ref", sha]
+    return cmd
+
+
 def extension_checks():
-    """(problems, notes) of `covey_plugins.py deploy-check` run in the release this deploy would make: the existing
-    one, else one assembled into the run dir's tmp/ and removed after (a check touches nothing outside the run dir)."""
+    """(problems, notes, packages with a problem) of `covey_plugins.py deploy-check` run in the release this deploy would
+    make: the existing one, else one assembled into the run dir's tmp/ and removed after (a check touches nothing outside
+    the run dir)."""
     probe = release if (release / "bin" / "covey_bridge.py").exists() else run / "tmp" / "extension-check-release"
     try:
         if probe != release:
             shutil.rmtree(probe, ignore_errors=True)
-            cmd = ["python3", "-B", "-I", str(Path(sys.argv[1]) / "scripts" / "assemble_release.py"), "--core", str(repo),
-                   "--core-ref", commit, "--out", str(probe)]
-            for path, sha, _ in exts:
-                cmd += ["--ext", str(path), "--ext-ref", sha]
-            built = sh(cmd, timeout=600, log="extension-check-assemble.log")
+            built = sh(assemble_command(probe), timeout=600, log="extension-check-assemble.log")
             if built.returncode:
-                return [f"assembling the release to check failed: {(built.stderr or built.stdout).strip()[-300:]}"], []
+                return [f"assembling the release to check failed: {(built.stderr or built.stdout).strip()[-300:]}"], [], []
         if "deploy-check" not in sh(["python3", "-B", "bin/covey_plugins.py", "--help"], cwd=probe).stdout:
-            return [], ["this release's core has no covey_plugins.py deploy-check: extensions not checked"]
+            return [], ["this release's core has no covey_plugins.py deploy-check: extensions not checked"], []
         done = sh(["python3", "-B", "bin/covey_plugins.py", "deploy-check", "--harness-config", HARNESS_CONFIG],
                   cwd=probe, timeout=300, log="extension-check.log")
         try:
             said = json.loads(done.stdout.strip().splitlines()[-1])
-            return list(said.get("problems") or []), list(said.get("notes") or [])
+            return list(said.get("problems") or []), list(said.get("notes") or []), list(said.get("packages") or [])
         except (ValueError, IndexError, AttributeError):
-            return [f"deploy-check failed (exit {done.returncode}): {(done.stderr or done.stdout).strip()[-300:]}"], []
+            return [f"deploy-check failed (exit {done.returncode}): {(done.stderr or done.stdout).strip()[-300:]}"], [], []
     except subprocess.TimeoutExpired as exc:
-        return [f"extension checks timed out: {exc}"], []
+        return [f"extension checks timed out: {exc}"], [], []
     finally:
         if probe != release:
             shutil.rmtree(probe, ignore_errors=True)
 
 
-if exts:
-    pre["extension_checks"], pre["extension_notes"] = extension_checks()
+if packed:
+    pre["extension_checks"], pre["extension_notes"], failing = extension_checks()
+    # A personal package that stopped it: the command that turns it off for this deployment until it is fixed.
+    plugins = Path(sys.argv[1]) / "bin" / "covey_plugins.py"
+    mine_packages = {name for _, _, _, packages in personal for name in packages}
+    disable = {name: f"COVEY_DATA_HOME={shlex.quote(str(DATA))} python3 -B {shlex.quote(str(plugins))} disable {name}"
+               for name in failing if name in mine_packages}
+    if disable:
+        pre["extension_disable"] = disable
 
 
 def live_commits(entry):
@@ -402,9 +450,24 @@ pairs = [(live_shas[0], repo, commit, "core")] if live_shas else []
 if live_shas and len(live_shas) - 1 == len(exts):
     pairs += [(sha, path, new, f"extension {path.name}") for sha, (path, new, _) in zip(live_shas[1:], exts)]
 pre["rollback"] = [why for why in (not_after(*pair) for pair in pairs) if why]
+# The switches an upgrade turns on: on unset in the checkout (core/switches.py DEFAULTS), not in the live release, and not
+# set in the manifest. Said, never stopping; a live release without the table (older) is not compared.
+switch_code = ("import json, sys\ntry:\n    from covey.core.switches import DEFAULTS\n    from covey.core import env\n"
+               "except ImportError:\n    print('null'); raise SystemExit(0)\nsaved = json.loads(sys.argv[1])\n"
+               "print(json.dumps(sorted(name for name in DEFAULTS if not env.has(name, saved))))")
+switches_new = json_of(["python3", "-B", "-c", switch_code, json.dumps(theirs)], repo, "switches") or []
+switches_live = None
+if live_dir and (live_dir / "covey").is_dir():
+    found = sh(["python3", "-B", "-c", switch_code, "{}"], cwd=live_dir, timeout=60)
+    try:
+        switches_live = json.loads(found.stdout) if found.returncode == 0 else None
+    except ValueError:
+        switches_live = None
+if switches_live is not None:
+    pre["switches_on"] = [name for name in switches_new if name not in switches_live]
 old = before.get("status") or {}
 result.update(pre=pre, old={"generation": old.get("generation"), "pid": (old.get("process") or {}).get("pid")})
-blocked = [k for k in ("restart_blockers", "creating_worktree", "proxy_sending",
+blocked = [k for k in ("personal_problems", "restart_blockers", "creating_worktree", "proxy_sending",
                        "env_missing", "env_extra", "env_value_diff", "permission_env", "command_diff",
                        "extension_env", "core_lock_mismatch", "extension_checks", "rollback", "dropped_config") if pre.get(k)
            and not (k == "command_diff" and args.allow_command_change)
@@ -422,12 +485,8 @@ live_runners = runners()
 result["runners_before"] = {str(pid): job for pid, job in sorted(live_runners.items())}
 if not (release / "bin" / "covey_bridge.py").exists():
     release.mkdir(parents=True, exist_ok=True)
-    if exts:
-        cmd = ["python3", "-B", "-I", str(Path(sys.argv[1]) / "scripts" / "assemble_release.py"), "--core", str(repo),
-               "--core-ref", commit, "--out", str(release)]
-        for path, sha, _ in exts:
-            cmd += ["--ext", str(path), "--ext-ref", sha]
-        pack = sh(cmd, timeout=600, log="assemble.log")
+    if packed:
+        pack = sh(assemble_command(release), timeout=600, log="assemble.log")
         what = "assemble_release.py"
     else:
         pack = subprocess.run(f"git archive {commit} | tar -x -C '{release}'", shell=True, cwd=repo,
@@ -499,6 +558,13 @@ while True:
     time.sleep(10)
 post["doctor_exit"] = doctor.returncode
 post["doctor_tries"] = tries
+# What the doctor lists for this service to do by hand (its "todo": the event transport, the Feishu app, the page's publish
+# tool); a doctor without the list says nothing.
+try:
+    post["owner_todo"] = next((list(row.get("todo") or []) for row in json.loads(doctor.stdout).get("services") or []
+                               if row.get("id") == manifest.get("id")), [])
+except (ValueError, AttributeError, TypeError):
+    post["owner_todo"] = []
 # The Feishu app's configuration (docs/feishu-app.md 自动补齐飞书应用): reported, never a failed deploy; the Bridge
 # itself offers the owner what is missing.
 check = sh(["python3", "-B", "bin/covey_app_setup.py", "check", "--profile", args.profile, "--app-id", args.app_id,

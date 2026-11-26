@@ -314,6 +314,45 @@ class TurnTests(Base):
         self.assertEqual(backend.prompt_notes(self.ctx)[-1], REDACTION_NOTE)
         self.assertTrue(backend.capabilities(self.ctx).redaction)
 
+    def test_two_packages_hooks_both_reach_the_settings_merged_by_event(self):
+        """Each enabled package's claude_turn gives its own Claude Code hooks (argv.TURN_HOOKS); one never replaces the
+        other's (T830 W3, after Wyu981011/covey 50fc367e)."""
+        import contextlib
+        from types import SimpleNamespace
+        from covey.backends.claude.argv import TURN_HOOKS
+        from covey.core import extensions
+
+        seen = []
+
+        def package(name, hooks):
+            @contextlib.contextmanager
+            def turn(ctx, env, *, run_id=""):
+                seen.append((name, ctx.options.get(TURN_HOOKS)))
+                yield dataclasses.replace(ctx, options={**ctx.options, TURN_HOOKS: hooks}), env
+            return name, SimpleNamespace(turn=turn)
+
+        audit = {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/abs/audit"}]}]}
+        remote = {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "/abs/remote"}]}],
+                  "SessionEnd": [{"hooks": [{"type": "command", "command": "/abs/end"}]}]}
+        with mock.patch.object(extensions, "hooks", return_value=[package("a", audit), package("b", remote)]), \
+                mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran") as run_stream:
+            self.assertEqual(ClaudeBackend().run(self.request()), "ran")
+        self.assertEqual(seen, [("a", None), ("b", None)])  # Each is handed none of the others'.
+        ctx = run_stream.call_args.args[1].context
+        merged = {"PreToolUse": audit["PreToolUse"] + remote["PreToolUse"], "SessionEnd": remote["SessionEnd"]}
+        self.assertEqual(ctx.options[TURN_HOOKS], merged)
+        argv = stream_argv(ClaudeBackend(), ctx)
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["hooks"], merged)
+        # Hooks of another shape fail the turn naming the package.
+        with mock.patch.object(extensions, "hooks", return_value=[package("a", audit), package("bad", ["/abs/x"])]), \
+                mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran"), \
+                self.assertRaisesRegex(extensions.ExtensionError, "extension 'bad': claude_turn_hooks must map"):
+            ClaudeBackend().run(self.request())
+        with mock.patch.object(extensions, "hooks", return_value=[]), \
+                mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran") as run_stream:
+            ClaudeBackend().run(self.request())
+        self.assertNotIn(TURN_HOOKS, run_stream.call_args.args[1].context.options)  # None enabled: as before.
+
     def test_claude_turn_hook_wraps_unredacted_and_chains_with_redaction(self):
         import contextlib
         from types import SimpleNamespace

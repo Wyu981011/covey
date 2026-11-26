@@ -300,6 +300,9 @@ class BrowserSession:
             self.proc.kill()
 
 
+STARTUP_ENV = ("BASH_ENV", "ENV")  # Files a non-interactive bash (or sh) runs before its script.
+
+
 class Installer:
     """One run of ./install. ``say``, ``ask`` and the callables below are replaceable so tests need no network."""
 
@@ -310,6 +313,11 @@ class Installer:
         self.feishu_sdk = feishu_sdk or self.ensure_feishu_sdk  # () -> whether the service's Python has the Feishu SDK.
         # The old spelling inside: what is saved, fingerprinted and passed on is what an older release reads too (core/env.py).
         self.env = cenv.canonical(dict(os.environ if env is None else env))
+        # Not BASH_ENV or sh's ENV: every bash it starts (bootstrap_harness_bridge.sh, the hosting hooks) would run the file
+        # they name first (some ssh setups point BASH_ENV at .bashrc), and the PATH that file sets would be registered
+        # as the service's, which a later upgrade's pre-check then finds differs from a clean shell's (T818).
+        for name in STARTUP_ENV:
+            self.env.pop(name, None)
         self.interactive = (not args.non_interactive and sys.stdin.isatty()) if interactive is None else interactive
         self.probe, self.survey_app, self.app_id_of, self.app_name_of = probe, survey_app, app_id_of, app_name_of
         self.sync_slash = sync_slash

@@ -493,6 +493,28 @@ class AssembleReleaseTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("covey_nope", err)
 
+    def test_a_personal_checkout_comes_after_the_extensions_and_a_package_in_two_checkouts_is_refused(self):
+        mine = self.root / "mine"
+        mine_sha = make_repo(mine, {"covey_mine/manifest.py": "HARNESSES = {}\n", "covey_mine/__init__.py": ""})
+        code, out, err = self.assemble(self.root / "r6", "--ext", str(self.second), "--personal", str(mine))
+        self.assertEqual(code, 0, err)
+        got = tree(self.root / "r6")
+        self.assertIn("extensions/covey_mine/manifest.py", got)
+        self.assertEqual([ln for ln in got["extensions/enabled"].splitlines() if not ln.startswith("#")],
+                         ["covey_second", "covey_mine"])
+        # A line of its own: the rollback check (deploy_bridge.sh) compares the --ext ones only.
+        self.assertEqual(got["RELEASE_MANIFEST"].splitlines()[1:],
+                         [f"extension {self.second_sha} covey_second", f"personal {mine_sha} covey_mine"])
+        info = json.loads(out)
+        self.assertEqual(([e["commit"] for e in info["extensions"]], [e["commit"] for e in info["personal"]]),
+                         ([self.second_sha], [mine_sha]))
+        twin = self.root / "twin"
+        make_repo(twin, {"covey_second/manifest.py": "HARNESSES = {}\n"})
+        code, _, err = self.assemble(self.root / "r7", "--ext", str(self.second), "--personal", str(twin))
+        self.assertEqual(code, 1)
+        self.assertIn(f"covey_second in {self.second} and {twin}", err)
+        self.assertIn("none overrides another", err)
+
     def test_a_non_empty_target_or_a_checkout_without_a_package_is_refused(self):
         (self.root / "full").mkdir()
         (self.root / "full" / "x").write_text("x")
@@ -581,6 +603,96 @@ class DeployExtensionTests(DeployFixture):
                 self.assertEqual((code, out["ok"]), (1, False), out)
                 self.assertIn("extension_env", out["error"])
                 self.assertIn("EXTENSION", " ".join(out["pre"]["extension_env"]))
+
+    def personal(self, name="mine", files=None):
+        """A personal extension checkout under the data home's extensions/ (covey/service/personal_extensions.py)."""
+        path = self.data / "extensions" / name
+        sha = make_repo(path, files or {"covey_mine/manifest.py": "HARNESSES = {}\n", "covey_mine/__init__.py": ""})
+        for each in (path, path / ".git"):
+            each.chmod(0o755)
+        return path, sha
+
+    def test_a_personal_extension_under_the_data_home_is_packed_after_the_extensions(self):
+        (self.data / "extensions").mkdir(parents=True)
+        (self.data / "extensions" / "enabled").write_text("-other\n")  # covey_plugins.py's choices: not a checkout.
+        loose = self.data / "extensions" / "loose"
+        (loose / "covey_loose").mkdir(parents=True)
+        (loose / "covey_loose" / "manifest.py").write_text("HARNESSES = {}\n")
+        mine, sha = self.personal()
+        (mine / "notes.txt").write_text("not committed\n")
+        code, out = self.check("--ext-repo", str(self.ext))
+        self.assertEqual(code, 0, out)
+        self.assertEqual((out["ext_commits"], out["release_id"]),
+                         ([self.ext_sha], f"{self.head[:8]}-{self.ext_sha[:8]}-{sha[:8]}"))
+        self.assertEqual(out["personal_extensions"], [{"path": str(mine), "commit": sha, "packages": ["covey_mine"]}])
+        self.assertEqual(out["pre"]["extension_checks"], [])  # Assembled with it and imported.
+        self.assertEqual(out["pre"]["personal_problems"], [])
+        notes = " ".join(out["pre"]["personal_notes"])
+        self.assertIn(f"{loose}: not a git checkout", notes)
+        (mine / "covey_mine" / "manifest.py").write_text("HARNESSES = {'x': 1}\n")
+        code, out = self.check("--ext-repo", str(self.ext))
+        self.assertIn("changes not committed are not packed", " ".join(out["pre"]["personal_notes"]))
+        # A core-only deploy packs it too; the same checkout given as --ext-repo is not packed twice.
+        code, out = self.check()
+        self.assertEqual((code, out["release_id"], out["ext_commits"]), (0, f"{self.head[:8]}-{sha[:8]}", []), out)
+        code, out = self.check("--ext-repo", str(mine))
+        self.assertEqual((code, out["release_id"]), (0, f"{self.head[:8]}-{sha[:8]}"), out)
+        self.assertNotIn("personal_extensions", out)
+        # A checkout others can write stops the deploy.
+        mine.chmod(0o775)
+        code, out = self.check()
+        self.assertEqual((code, out["ok"]), (1, False), out)
+        self.assertIn("personal_problems", out["error"])
+        self.assertIn("chmod go-w", out["pre"]["personal_problems"][0])
+
+    def test_a_broken_personal_extension_stops_the_check_and_is_named_with_the_command_that_turns_it_off(self):
+        _, sha = self.personal(files={"covey_mine/manifest.py": "HOOKS = {'claude_turn': 'covey_mine.turn'}\n",
+                                      "covey_mine/__init__.py": "",
+                                      "covey_mine/turn.py": "from covey.core.extensions import no_such_name\n"})
+        code, out = self.check()
+        self.assertEqual((code, out["ok"]), (1, False), out)
+        self.assertIn("extension_checks", out["error"])
+        [problem] = out["pre"]["extension_checks"]
+        self.assertTrue(problem.startswith("covey_mine: cannot import hook claude_turn (covey_mine.turn): ImportError"), problem)
+        command = out["pre"]["extension_disable"]["covey_mine"]
+        self.assertTrue(command.endswith("bin/covey_plugins.py disable covey_mine"), command)
+        done = subprocess.run(["bash", "-c", command], env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        code, out = self.check()  # Turned off for this deployment: packed, not imported, the deploy goes on.
+        self.assertEqual((code, out["ok"], out["release_id"]), (0, True, f"{self.head[:8]}-{sha[:8]}"), out)
+        self.assertNotIn("extension_disable", out["pre"])
+
+    def test_bash_env_in_the_shell_is_said(self):
+        startup = self.root / "bashrc"
+        startup.write_text('export PATH="/absolute/login/bin:$PATH"\n')
+        code, out = self.check(env={**self.env, "BASH_ENV": str(startup)})
+        self.assertEqual((code, out["ok"]), (1, False), out)
+        self.assertEqual(out["pre"]["env_value_diff"], ["PATH"])
+        self.assertEqual(out["pre"]["shell_startup_env"], ["BASH_ENV"])
+        self.assertIn("env -u BASH_ENV -u ENV", out["pre"]["shell_startup_note"])
+        code, out = self.check()
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("shell_startup_env", out["pre"])
+
+    def test_the_switches_an_upgrade_turns_on_are_said(self):
+        from covey.core.switches import DEFAULTS
+        live = self.data / "releases" / "0123abcd"
+        (live / "covey" / "core").mkdir(parents=True)
+        (live / "covey" / "__init__.py").write_text("")
+        (live / "covey" / "core" / "__init__.py").write_text("")
+        (live / "covey" / "core" / "env.py").write_text("def has(name, environ=None):\n    return False\n")
+        kept = sorted(DEFAULTS)[:2]
+        (live / "covey" / "core" / "switches.py").write_text(f"DEFAULTS = {dict.fromkeys(kept, '1')!r}\n")
+        set_here = sorted(DEFAULTS)[2]
+        self.manifest({**runtime_environment(self.env), "LARK_BRIDGE_" + set_here.removeprefix("COVEY_"): "0"},
+                      self.args)
+        record = json.loads((self.services / "services" / "a.json").read_text())
+        record["command"][2] = str(live / "bin" / "covey_bridge.py")
+        (self.services / "services" / "a.json").write_text(json.dumps(record))
+        env = {**self.env, "LARK_BRIDGE_" + set_here.removeprefix("COVEY_"): "0"}
+        code, out = self.check("--allow-rollback", env=env)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out["pre"]["switches_on"], [name for name in sorted(DEFAULTS) if name not in kept + [set_here]])
 
     def test_a_missing_checkout_or_commit_or_an_orphan_ext_commit_is_a_usage_error(self):
         code, out = self.check("--ext-repo", str(self.root / "nowhere"))

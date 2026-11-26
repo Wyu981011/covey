@@ -2,7 +2,7 @@
 """把“核心检出 + 若干扩展检出”拼成一个 release 目录，形状和旧单仓库 `git archive` 出来的一样（scripts/deploy_bridge.sh 用它）。
 
     python3 -B scripts/assemble_release.py --core CHECKOUT [--core-ref REV] --out DIR
-        [--ext CHECKOUT [--ext-ref REV]] ... [--precompile [PYTHON]]
+        [--ext CHECKOUT [--ext-ref REV]] ... [--personal CHECKOUT [--personal-ref REV]] ... [--precompile [PYTHON]]
 
 - 核心：`git archive <核心提交>` 到 DIR。核心里若还带着扩展（旧单仓库），以扩展检出为准：先删掉同名的
   extensions/<包名>/ 和 extensions/enabled。
@@ -12,12 +12,14 @@
 - 写 DIR/extensions/enabled：按 --ext 的顺序，每个扩展检出列出它根目录 `enabled` 文件里的包名（一行一个，# 开头是注释，
   必须是这个检出里的包）；检出没有 `enabled` 文件就列出它所有的包。没列的包随 release 带着，但默认不启用、DIR/RELEASE_MANIFEST（每个检出的完整提交号）；
   最后重写 DIR/AGENTS.md 里的模块表（scripts/code_map.py，和单仓库一样包含扩展的模块）。
-- --ext 可重复，--ext-ref 按顺序和它配对（少给的用 HEAD）。不给 --ext 时就是纯核心的 git archive，
-  不建 extensions/enabled。按提交取，不看工作区；DIR 必须不存在或为空。只用标准库，核心代码里不写任何扩展名。
+- --ext 可重复，--ext-ref 按顺序和它配对（少给的用 HEAD）。--personal（同样可重复，--personal-ref 配对）是数据根
+  extensions/ 下的个人扩展检出（covey/service/personal_extensions.py，scripts/deploy_bridge.sh 自己找）：装法和 --ext 一样，
+  排在所有 --ext 后面，RELEASE_MANIFEST 里记成 `personal <提交> <包>...`（不是 `extension`，回滚检查只比 --ext 的）。
+  几个检出里有同名的包一律报错，不让谁盖住谁。不给 --ext 和 --personal 时就是纯核心的 git archive，不建 extensions/enabled。按提交取，不看工作区；DIR 必须不存在或为空。只用标准库，核心代码里不写任何扩展名。
 - `--precompile [PYTHON]`（默认不预编译，release 的文件清单不变）：拼完后用 PYTHON（缺省是运行本脚本的解释器；要给服务实际运行的那个，
   .pyc 带解释器版本标签）运行 scripts/precompile_release.py，给 DIR 里的 covey/、extensions/ 写 __pycache__；服务一律带 -B
   运行、不会自己写，没有它每个进程启动都从源码重新编译。失败只在 stderr 告警，不让拼装失败。
-- 最后一行输出 JSON：{"core": 完整提交, "extensions": [{"repo", "commit", "packages"}...], "out": DIR}，带 --precompile 时多一项
+- 最后一行输出 JSON：{"core": 完整提交, "extensions": [{"repo", "commit", "packages"}...], "personal": [同样的], "out": DIR}，带 --precompile 时多一项
   "precompile"（precompile_release.py 的结果）。
 """
 from __future__ import annotations
@@ -84,27 +86,34 @@ def enabled_of(repo: Path, sha: str, packages: list[str]) -> list[str]:
     return names
 
 
-def assemble(core: Path, core_ref: str, exts: list[tuple[Path, str]], out: Path) -> dict:
+def assemble(core: Path, core_ref: str, exts: list[tuple[Path, str]], out: Path,
+             personal: list[tuple[Path, str]] = ()) -> dict:
     out = out.resolve()
     core_sha = resolve(core, core_ref)
     found = []
-    for repo, ref in exts:
-        sha = resolve(repo, ref)
-        packages = packages_of(repo, sha)
-        if not packages:
-            raise AssembleError(f"{repo} at {sha[:8]} has no extension package (a top-level directory with manifest.py)")
-        found.append((repo, sha, packages))
+    for kind, repos in (("extension", exts), ("personal", personal)):
+        for repo, ref in repos:
+            sha = resolve(repo, ref)
+            packages = packages_of(repo, sha)
+            if not packages:
+                raise AssembleError(f"{repo} at {sha[:8]} has no extension package (a top-level directory with manifest.py)")
+            found.append((repo, sha, packages, kind))
     if out.exists() and any(out.iterdir()):
         raise AssembleError(f"{out} is not empty")
     extract(core, core_sha, out)
     manifest = [f"core {core_sha}"]
     if found:
-        names = [name for _, _, packages in found for name in packages]
-        if len(set(names)) != len(names):
-            raise AssembleError(f"the same extension package twice: {sorted(n for n in names if names.count(n) > 1)}")
+        owners = {}
+        for repo, _, packages, _ in found:
+            for name in packages:
+                owners.setdefault(name, []).append(str(repo))
+        twice = {name: repos for name, repos in owners.items() if len(repos) > 1}
+        if twice:
+            raise AssembleError("the same extension package twice (rename one; none overrides another): " + "; ".join(
+                f"{name} in {' and '.join(repos)}" for name, repos in sorted(twice.items())))
         (out / "extensions").mkdir(exist_ok=True)
         (out / "extensions" / "enabled").unlink(missing_ok=True)
-        for repo, sha, packages in found:
+        for repo, sha, packages, kind in found:
             for name in packages:
                 shutil.rmtree(out / "extensions" / name, ignore_errors=True)  # A core that still carries it: ours wins.
             extract(repo, sha, out / "extensions", *packages)
@@ -115,7 +124,7 @@ def assemble(core: Path, core_ref: str, exts: list[tuple[Path, str]], out: Path)
                     (out / "bin").mkdir(exist_ok=True)
                     for script in sorted(scripts.glob("*.py")):
                         shutil.copy2(script, out / "bin" / script.name)
-            manifest.append(f"extension {sha} {' '.join(packages)}")
+            manifest.append(f"{kind} {sha} {' '.join(packages)}")
         # The code map in AGENTS.md lists the extensions' modules too, as in the single repository.
         code_map = out / "scripts" / "code_map.py"
         if code_map.exists():
@@ -123,11 +132,12 @@ def assemble(core: Path, core_ref: str, exts: list[tuple[Path, str]], out: Path)
                                   capture_output=True, text=True)
             if done.returncode:
                 raise AssembleError(f"code_map.py --write failed: {(done.stderr or done.stdout).strip()[-300:]}")
-        turned_on = [n for repo, sha, packages in found for n in enabled_of(repo, sha, packages)]
+        turned_on = [n for repo, sha, packages, _ in found for n in enabled_of(repo, sha, packages)]
         (out / "extensions" / "enabled").write_text(ENABLED_HEADER + "".join(f"{n}\n" for n in turned_on))
         (out / "RELEASE_MANIFEST").write_text("\n".join(manifest) + "\n")
     return {"core": core_sha, "out": str(out),
-            "extensions": [{"repo": str(r), "commit": s, "packages": p} for r, s, p in found]}
+            "extensions": [{"repo": str(r), "commit": s, "packages": p} for r, s, p, kind in found if kind == "extension"],
+            "personal": [{"repo": str(r), "commit": s, "packages": p} for r, s, p, kind in found if kind == "personal"]}
 
 
 def precompile(python: str, out: Path) -> dict:
@@ -150,15 +160,18 @@ def main(argv=None) -> int:
     ap.add_argument("--core-ref", default="HEAD")
     ap.add_argument("--ext", action="append", default=[], type=Path)
     ap.add_argument("--ext-ref", action="append", default=[])
+    ap.add_argument("--personal", action="append", default=[], type=Path)
+    ap.add_argument("--personal-ref", action="append", default=[])
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--precompile", nargs="?", const=sys.executable, metavar="PYTHON",
                     help="afterwards write the release's .pyc files with this interpreter (default: this one)")
     args = ap.parse_args(argv)
-    if len(args.ext_ref) > len(args.ext):
-        ap.error("more --ext-ref than --ext")
+    if len(args.ext_ref) > len(args.ext) or len(args.personal_ref) > len(args.personal):
+        ap.error("more --ext-ref than --ext, or --personal-ref than --personal")
     refs = args.ext_ref + ["HEAD"] * (len(args.ext) - len(args.ext_ref))
+    mine = args.personal_ref + ["HEAD"] * (len(args.personal) - len(args.personal_ref))
     try:
-        info = assemble(args.core, args.core_ref, list(zip(args.ext, refs)), args.out)
+        info = assemble(args.core, args.core_ref, list(zip(args.ext, refs)), args.out, list(zip(args.personal, mine)))
     except (AssembleError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         print(f"assemble_release: {exc}", file=sys.stderr)
         return 1

@@ -1216,6 +1216,13 @@ class ServiceEnvTest(InstallerCase):
         ins.app_id, ins.workdir, ins.working = "cli_fake", self.root / "work", ["claude", "codex"]
         return ins
 
+    def test_bash_env_and_env_are_not_passed_to_the_scripts_it_runs(self):
+        """bash runs the file BASH_ENV names before bootstrap_harness_bridge.sh: the PATH it sets would be registered (T818)."""
+        ins = self.make(env=self.env(BASH_ENV=str(self.root / "bashrc"), ENV=str(self.root / "shrc")))
+        self.assertNotIn("BASH_ENV", ins.env)
+        self.assertNotIn("ENV", ins.env)
+        self.assertEqual(ins.env["PATH"], self.env()["PATH"])
+
     def test_a_key_only_this_shell_has_is_named_with_the_fix_and_never_its_value(self):
         ins = self.ready(**self.SHELL)
         self.probes["claude"] = lambda env: (Probe(True, "ok") if env.get("ANTHROPIC_AUTH_TOKEN")

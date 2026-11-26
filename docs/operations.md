@@ -251,14 +251,14 @@ python3 -B bin/covey_workspaces.py --state-dir "$STATE_DIR" prune
 
 ### 扩展的装和卸
 
-扩展是带清单（`manifest` 模块）的包。Bridge 在运行的代码目录的 `extensions/` 下找它（release 由 `deploy_bridge.sh --ext-repo` 拼进去；`./install` 的检出里按扩展自己的安装说明放），启用哪些看两份名单：代码目录里的 `extensions/enabled`（release 自带的默认），加上数据根的 `extensions/enabled`（本部署的增减，跨部署保留）。
+扩展是带清单（`manifest` 模块）的包。Bridge 在运行的代码目录的 `extensions/` 下找它（release 由 `deploy_bridge.sh --ext-repo` 拼进去，数据根 `extensions/` 下的个人扩展检出也每次自动拼进去，见 [deploy.md 个人扩展](deploy.md#个人扩展)；`./install` 的检出里按扩展自己的安装说明放），启用哪些看两份名单：代码目录里的 `extensions/enabled`（release 自带的默认），加上数据根的 `extensions/enabled`（本部署的增减，跨部署保留）。
 
 ```bash
 python3 -B bin/covey_plugins.py list          # 找到了哪些、哪些启用、来自哪份名单
 python3 -B bin/covey_plugins.py enable <包>   # 先按 Bridge 的方式试加载，加载不了或和别的冲突就不写
 python3 -B bin/covey_plugins.py disable <包>
 python3 -B bin/covey_plugins.py doctor        # 启用的扩展能不能一起加载
-python3 -B bin/covey_plugins.py deploy-check  # 启用的扩展自己检查这份代码能不能在本机跑（部署预检也跑它）
+python3 -B bin/covey_plugins.py deploy-check  # 启用的扩展都试导入一遍、再自己检查这份代码能不能在本机跑（部署预检也跑它）
 python3 -B bin/covey_service.py restart --state-dir "$STATE_DIR"   # 改了名单要重启 Bridge 才生效
 ```
 

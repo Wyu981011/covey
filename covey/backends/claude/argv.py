@@ -15,6 +15,27 @@ NO_MCP = ["--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}']
 READ_TOOLS = ("Read", "Grep", "Glob")
 FILE_TOOLS = ("Edit", "Write", "NotebookEdit")  # What a LOOK turn goes without: Claude Code's tools that change files.
 NO_AUTO_MEMORY = "CLAUDE_CODE_DISABLE_AUTO_MEMORY"  # Claude Code's auto memory off for the one process (turn_env).
+# Claude Code hooks an extension's ``claude_turn`` (core/extensions.py) gives the turn: event name -> matcher groups, as
+# Claude Code's settings write them. Each package puts its own here; backends/claude/bridge.py merges every package's by
+# event (merge_hooks) and they go into the turn's one --settings, never on a 代答 turn (its hooks are its tool guard's alone)
+# or a CONSULT one (it keeps nothing it was given). A hook's command runs where that Claude Code runs: on the device, for a
+# device's turn. After Wyu981011/covey 50fc367e (its second half).
+TURN_HOOKS = "claude_turn_hooks"
+
+
+def merge_hooks(*given) -> dict:
+    """The hooks tables of ``given`` (each {event: [matcher group, ...]} or empty) merged by event: an event's groups in the
+    order given, none replacing another's. ValueError for a table of another shape."""
+    merged = {}
+    for hooks in given:
+        if not hooks:
+            continue
+        if not isinstance(hooks, dict) or not all(isinstance(event, str) and isinstance(groups, (list, tuple))
+                                                  for event, groups in hooks.items()):
+            raise ValueError(f"{TURN_HOOKS} must map a Claude Code hook event to a list of matcher groups, got {hooks!r}")
+        for event, groups in hooks.items():
+            merged.setdefault(event, []).extend(groups)
+    return merged
 
 
 def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""):
@@ -91,10 +112,13 @@ def stream_argv(backend, ctx, session_id=None, *, catalog=False, instructions=""
         # the app sets the subagents' model (a retry after a refusal).
         argv += subagents.argv(ctx)
         # One --settings: a redacted topic's turn, its compaction included, talks to the model through the term relay;
-        # a 代答 turn's shell and edit tools go through its PreToolUse hook (backends/claude/tool_guard.py).
+        # a 代答 turn's shell and edit tools go through its PreToolUse hook (backends/claude/tool_guard.py); the extensions'
+        # hooks (TURN_HOOKS) go into any other but a CONSULT one.
         settings = redaction.settings(ctx)
         if limit == PROXY:
             settings["hooks"] = tool_guard.settings(ctx.options.get(TOOL_NOTES, ""))
+        elif limit != CONSULT and ctx.options.get(TURN_HOOKS):
+            settings["hooks"] = merge_hooks(ctx.options[TURN_HOOKS])
         argv += ["--settings", json.dumps(settings, ensure_ascii=False)] if settings else []
     return backend.wrap_argv(argv, ctx)
 

@@ -8,14 +8,16 @@
 #   1. 检出要干净（没提交的改动不会被部署，先提交或 git stash），git fetch 上游（--no-fetch 不取）；要升到的提交（--ref，默认
 #      当前分支的上游，没有上游时 origin/main）必须包含检出的 HEAD：检出里有它没有的提交时停下，从不强制拉取、不重置。
 #   2. 找机器人：服务根（COVEY_SERVICE_ROOT，或数据根下的 bridge-services）里唯一一个，几个时用 --state-dir 指定。它的现网
-#      release（直接从检出运行的，是检出的 HEAD）已经是这个提交时说“已经是最新”就结束；现网 release 带扩展时停下（按扩展
-#      自己的升级说明做）。
+#      release（直接从检出运行的，是检出的 HEAD）已经是这个提交、数据根 extensions/ 下的个人扩展（docs/deploy.md 个人扩展）
+#      也和现网带的一样时说“已经是最新”就结束；现网 release 带扩展（--ext-repo 装的）时停下（按扩展自己的升级说明做）。
 #   3. 核对依赖：服务清单里的 python3 是 3.10+，服务的 PATH 里有 lark-cli（没有只提示）。
-#   4. 照服务清单载入环境（清单里的变量原样，终端里别的本项目变量不带进去，所以开关和代理都不变），从清单的启动命令抄出
+#   4. 照服务清单载入环境（清单里的变量原样，终端里别的本项目变量不带进去，所以开关和代理都不变；BASH_ENV、ENV 也不带：
+#      bash 会先执行它们指向的文件，改了 PATH 预检就报 env_value_diff），从清单的启动命令抄出
 #      --workdir、--profile、--app-id、--state-dir、--harness-config 和其余参数，先跑 deploy_bridge.sh --check-only；
 #      --dry-run 到此为止，什么都不换。
 #   5. 部署：机器人重启（几秒内收不到消息和点击，在跑的任务不中断、由新进程接管），日志在 <数据根>/deploy-runs/<时间>/。
 #      成功后检出快进（git merge --ff-only）到这个提交；还有任务进程用着检出里的代码时先不快进，下次运行时补上。
+#      最后列“升级后要你补的”：这一版起默认打开、你的清单没设的开关，诊断（covey_doctor）列出的要你手工补的事。
 #   6. 网页：用 web/deploy/selfhost/build.sh 自托管的网页跟着换成新 release 的 web/（--restart，Manager 拉起新版；
 #      covey/service/web_upgrade.py），Bridge 已经是最新时也补上；别的办法部署的网页只提示。--no-web 不动网页。
 #      最后写 <数据根>/upgrade.json：网页「版本与更新」和定时自动升级（COVEY_AUTO_UPGRADE）照它查新版本、升级（扩展的安装器
@@ -35,7 +37,7 @@ from pathlib import Path
 ROOT = Path(sys.argv[1])
 sys.path.insert(0, str(ROOT))
 from covey.core.paths import data_home, service_root  # noqa: E402
-from covey.service import web_upgrade  # noqa: E402
+from covey.service import personal_extensions, web_upgrade  # noqa: E402
 from covey.service.manager import persistable  # noqa: E402
 
 KNOWN = ("--harness", "--state-dir", "--workdir", "--profile", "--app-id", "--harness-config")
@@ -54,6 +56,9 @@ PRE_WORDS = {
     "command_diff": "这次要注册的启动命令和现网的不一样：照 docs/deploy.md「升级与回滚」手工部署",
     "rollback": "要部署的提交没包含现网的提交：{value}",
     "extension_env": "清单或终端里有 COVEY_EXTENSIONS / COVEY_EXTENSION_PATH：{value}",
+    "personal_problems": "数据根 extensions/ 下的个人扩展不能打包：{value}",
+    "core_lock_mismatch": "扩展的 core.lock 和要部署的核心提交对不上：{value}",
+    "extension_checks": "扩展自检没过（在要部署的 release 里试导入、跑各包的检查）：{value}",
     "dropped_config": ("升级后这些配置不再生效（现网还在用）：{value}。看过、确认可以不要了，再加 --allow-dropped-config 运行"
                        "（docs/deploy.md「升级不丢配置」）"),
 }
@@ -214,7 +219,13 @@ if rel is not None and len(rel.parts) > 1:
         live_core = live_id
 outlook["live"] = (short(live_id) if re.fullmatch(r"[0-9a-f]{40}", live_id) else live_id) if live_id else f"检出 {short(head)}"
 live_commit = live_core if live_id is not None else head
-outlook["bridge"] = live_commit != target
+# The data home's personal extensions (covey/service/personal_extensions.py): a commit there the live release was not packed
+# with is an upgrade too, with the core where it is.
+mine_found = personal_extensions.discover(data)
+personal_now = [found["commit"] for found in mine_found["repos"]]
+personal_live = [found["commit"] for found in personal_extensions.in_release(data / "releases" / live_id)] if live_id else []
+personal_changed = personal_now != personal_live
+outlook["bridge"] = live_commit != target or personal_changed
 rows = commits(live_commit, target)
 outlook["count"], outlook["changes"] = len(rows), rows[:CHANGES]
 if with_extensions:
@@ -223,8 +234,9 @@ if with_extensions:
 
 
 def release_dir(commit):
-    """Where deploy_bridge.sh puts the release of ``commit`` (a core-only release is named by its commit)."""
-    return data / "releases" / commit
+    """Where deploy_bridge.sh puts the release of ``commit`` (a core-only release is named by its commit, one with personal
+    extensions by its 8 characters and theirs)."""
+    return data / "releases" / ("-".join([commit[:8], *(sha[:8] for sha in personal_now)]) if personal_now else commit)
 
 
 if not args.no_web:
@@ -298,13 +310,16 @@ say(f"    升到      {ref} = {short(target)}" + (f"（比检出新 {newer} 个�
 say(f"    机器人    {state}（现网：" + (f"release {live_id}" if live_id else "直接从检出运行") + "）")
 if args.status:
     report()
-if live_commit == target:  # A service run from the checkout runs its HEAD.
+if personal_changed:
+    say("    个人扩展  " + ("、".join(f"{Path(found['path']).name}（{short(found['commit'])}）" for found in mine_found["repos"])
+                         or "（数据根 extensions/ 下已经没有）") + "：和现网带的不一样，这次一起换")
+if live_commit == target and not personal_changed:  # A service run from the checkout runs its HEAD.
     say(f"已经是最新（{short(target)}），不用升级。")
     if args.dry_run:
         sys.exit(0)
     fast_forward()
     write_upgrader()
-    sys.exit(web_step(release_dir(target) if live_id is not None else repo))
+    sys.exit(web_step(data / "releases" / live_id if live_id is not None else repo))
 
 # ---- 3. dependencies
 python = command[0] if command else "python3"
@@ -319,7 +334,9 @@ if not shutil.which("lark-cli", path=saved.get("PATH", "")):
     say("提示：服务的 PATH 里找不到 lark-cli（机器人收发消息要用它）；升级照常做，之后用 ./install 检查")
 
 # ---- 4. the service's own environment and the pre-check
-env = {key: value for key, value in os.environ.items() if not persistable(key)}
+# Not BASH_ENV or sh's ENV either: bash runs the file they name before deploy_bridge.sh's first line (some ssh setups
+# point BASH_ENV at .bashrc), and the PATH it changes is not the manifest's.
+env = {key: value for key, value in os.environ.items() if not persistable(key) and key not in ("BASH_ENV", "ENV")}
 env.update({key: value for key, value in saved.items() if isinstance(value, str)})
 values, options, rest = {}, [], command[3:]
 index, sandboxed = 0, False
@@ -374,6 +391,11 @@ def explain(code, result, run_dir):
             found.append(words.format(value=shown, state=state))
     if any("HTTPS_PROXY" in str(pre.get(key)) for key in ("env_missing", "env_value_diff")):
         found.append("清单里存的是大写的 HTTPS_PROXY：照 docs/deploy.md「升级与回滚」的已知限制改存成小写的 https_proxy 再升级")
+    for name, command in (pre.get("extension_disable") or {}).items():
+        found.append(f"拦下升级的是个人扩展 {name}：改好之前可以先关掉它再升级（这个部署不再启用它，改好后把 disable 换成 enable"
+                     f"、再升级一次）：{command}")
+    if pre.get("shell_startup_note"):
+        found.append("这个终端设了 " + "、".join(pre.get("shell_startup_env") or []) + "：去掉后重跑（env -u BASH_ENV -u ENV …）")
     for line in found:
         say(f"    {line}")
     stop(code or 1, result.get("error") or "部署没成功", f"日志在 {run_dir}；处理好再运行 scripts/upgrade.sh")
@@ -386,6 +408,8 @@ if code or not result.get("ok"):
     say("部署前的检查没过：")
     explain(code, result, check_dir)
 say("部署前的检查都过了。")
+for line in (result.get("pre") or {}).get("personal_notes") or []:
+    say(f"    提示：{line}")
 if args.dry_run:
     say("--dry-run：什么都没换。去掉 --dry-run 就会部署 " + short(target) + "。")
     sys.exit(0)
@@ -400,9 +424,19 @@ if code or not result.get("ok"):
 post = result.get("post") or {}
 release = result.get("release_id") or Path(str(result.get("release") or target)).name
 say(f"升级好了：机器人第 {post.get('generation') or '?'} 代，从 release {short(release) if len(release) == 40 else release} 运行。")
+for found in result.get("personal_extensions") or []:
+    say(f"    个人扩展 {Path(found['path']).name} {short(found['commit'])}：{'、'.join(found['packages'])}")
 if live_id is None:
     say("以后改开关用 python3 -B bin/covey_service.py set（docs/configuration.md「改开关三步」）；不要再用 ./install 改，"
         "它会把服务注册回检出目录。")
+todo = [f"这一版起默认打开（你的服务清单没设）：{'、'.join(switches_on)}；不要哪个就 python3 -B bin/covey_service.py set "
+        f"--state-dir {state} <名字>=0（docs/configuration.md「默认已开」）"
+        for switches_on in [(result.get("pre") or {}).get("switches_on") or []] if switches_on]
+todo += list(post.get("owner_todo") or [])
+if todo:
+    say("升级后要你补的：")
+    for number, line in enumerate(todo, 1):
+        say(f"    {number}. {line}")
 fast_forward()
 write_upgrader()
 sys.exit(web_step(data / "releases" / release))

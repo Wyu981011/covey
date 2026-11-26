@@ -27,6 +27,7 @@ from covey.core.process_env import child_process_env, process_device
 from covey.core.harness import BackendConfig, BridgeContext, HarnessSpec, RunRequest, RunResult, UUID_RE
 from covey.backends.claude.models import model_catalog, with_extension_models
 from covey.backends.claude import redaction, rewind
+from covey.backends.claude.argv import TURN_HOOKS, merge_hooks
 from covey.core.providers import retired_provider, retired_provider_notice
 
 STATE_DIR_NAME = "claude-lark-bridge"
@@ -289,10 +290,22 @@ class ClaudeBackend(BackendRuntime):
 def _extension_turn(ctx, env, *, run_id=""):
     """Optional extension hooks around a Claude Code turn (core/extensions.py ``claude_turn``): every enabled
     package's, nested in the order they are enabled (the first is the outermost, so the last one's context and
-    environment reach Claude Code)."""
+    environment reach Claude Code). The Claude Code hooks each puts under argv.TURN_HOOKS are its own (it is handed the
+    context without the ones outside it gave); they are merged by event in the same order, so no package's replace
+    another's. ExtensionError, with the package, for hooks of another shape."""
+    given = [ctx.options.get(TURN_HOOKS)]
     with contextlib.ExitStack() as stack:
-        for _package, hook in extensions.hooks("claude_turn"):
+        for package, hook in extensions.hooks("claude_turn"):
+            if TURN_HOOKS in ctx.options:
+                ctx = dataclasses.replace(ctx, options={k: v for k, v in ctx.options.items() if k != TURN_HOOKS})
             ctx, env = stack.enter_context(hook.turn(ctx, env, run_id=run_id))
+            try:
+                given.append(merge_hooks(ctx.options.get(TURN_HOOKS)))
+            except ValueError as error:
+                raise extensions.ExtensionError(package, str(error)) from None
+        merged = merge_hooks(*given)
+        if merged:
+            ctx = dataclasses.replace(ctx, options={**ctx.options, TURN_HOOKS: merged})
         yield ctx, env
 
 

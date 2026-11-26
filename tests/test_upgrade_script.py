@@ -223,6 +223,68 @@ class UpgradeTests(UpgradeCase):
         self.assertIn("部署没成功", out)
         self.assertEqual(self.head(), self.first)  # Not fast-forwarded after a deploy that did not go through.
 
+    def test_bash_env_and_env_are_not_handed_to_the_deploy(self):
+        code, out = self.upgrade("--dry-run", BASH_ENV=str(self.tmp / "bashrc"), ENV=str(self.tmp / "shrc"))
+        self.assertEqual(code, 0, out)
+        [call] = self.calls()
+        self.assertNotIn("BASH_ENV", call["env"])
+        self.assertNotIn("ENV", call["env"])
+
+    def personal(self, name="mine"):
+        path = self.data / "extensions" / name
+        (path / "covey_mine").mkdir(parents=True)
+        (path / "covey_mine" / "manifest.py").write_text("HARNESSES = {}\n")
+        git(path, "init", "-q", "-b", "main")
+        git(path, "add", "-A")
+        git(path, "commit", "-q", "-m", "mine")
+        for each in (path, path / ".git"):
+            each.chmod(0o755)
+        return path, git(path, "rev-parse", "HEAD")
+
+    def test_a_personal_extension_not_in_the_live_release_is_an_upgrade_and_the_receipt_says_what_to_do(self):
+        release = self.data / "releases" / self.newer
+        (release / "bin").mkdir(parents=True)
+        self.manifest(entry=release / "bin" / "covey_bridge.py")
+        path, sha = self.personal()
+        self.answer.write_text(json.dumps({"deploy": [0, {
+            "ok": True, "release_id": f"{self.newer[:8]}-{sha[:8]}",
+            "personal_extensions": [{"path": str(path), "commit": sha, "packages": ["covey_mine"]}],
+            "pre": {"switches_on": ["COVEY_REVISIT"]},
+            "post": {"generation": 9, "owner_todo": ["飞书应用待补：卡片按钮（card.action.trigger）"]}}]}))
+        code, out = self.upgrade(FAKE_DEPLOY_ANSWER=str(self.answer))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("已经是最新", out)
+        self.assertIn(f"个人扩展  mine（{sha[:8]}）：和现网带的不一样，这次一起换", out)
+        self.assertEqual([("--check-only" in call["argv"]) for call in self.calls()], [True, False])
+        self.assertIn(f"个人扩展 mine {sha[:8]}：covey_mine", out)
+        self.assertIn("升级后要你补的：", out)
+        self.assertIn("1. 这一版起默认打开（你的服务清单没设）：COVEY_REVISIT", out)
+        self.assertIn("2. 飞书应用待补：卡片按钮", out)
+        # Packed in the live release already: up to date.
+        live = self.data / "releases" / f"{self.newer[:8]}-{sha[:8]}"
+        (live / "bin").mkdir(parents=True)
+        (live / "RELEASE_MANIFEST").write_text(f"core {self.newer}\npersonal {sha} covey_mine\n")
+        self.manifest(entry=live / "bin" / "covey_bridge.py")
+        code, out = self.upgrade()
+        self.assertEqual(code, 0, out)
+        self.assertIn("已经是最新", out)
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_a_personal_extension_that_stops_the_check_is_named_with_the_command_that_turns_it_off(self):
+        self.personal()
+        command = f"COVEY_DATA_HOME={self.data} python3 -B /absolute/covey/bin/covey_plugins.py disable covey_mine"
+        self.answer.write_text(json.dumps({"check": [1, {"ok": False, "error": "pre-checks failed: ['extension_checks']",
+                                                         "pre": {"extension_checks": ["covey_mine: cannot import hook "
+                                                                                      "claude_turn (covey_mine.turn): ImportError"],
+                                                                 "extension_disable": {"covey_mine": command}}}]}))
+        code, out = self.upgrade(FAKE_DEPLOY_ANSWER=str(self.answer))
+        self.assertEqual(code, 1, out)
+        self.assertIn("扩展自检没过", out)
+        self.assertIn("covey_mine: cannot import hook claude_turn", out)
+        self.assertIn("拦下升级的是个人扩展 covey_mine：改好之前可以先关掉它再升级", out)
+        self.assertIn(command, out)
+        self.assertEqual(len(self.calls()), 1)
+
     def test_a_service_python_that_cannot_run_and_bad_arguments_stop(self):
         self.manifest(python="/absolute/no/python3")
         code, out = self.upgrade()

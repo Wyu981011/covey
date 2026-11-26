@@ -24,7 +24,7 @@ from covey.backends.claude import redaction, tool_guard
 from covey.backends.claude.bridge import ClaudeBackend
 from covey.backends.codex import appserver
 from covey.cards.group_manager import ask_card, ask_text, group_manager_card
-from covey.core.harness import (LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES, HarnessCapabilities, JobCancelled,
+from covey.core.harness import (CONSULT, LOOK, PROXY, READ, TOOL_LIMIT, TOOL_NOTES, HarnessCapabilities, JobCancelled,
                                 backend_capabilities)
 from covey.core.groups import save_group
 from covey.core.jobs import find_job_record, upsert_job_record
@@ -147,6 +147,33 @@ class ClaudeArgvTests(unittest.TestCase):
         self.assertEqual(self.value(argv, '--disallowedTools'), 'Edit,Write,NotebookEdit')
         self.assertNotIn('--tools', argv)
         self.assertNotIn('--strict-mcp-config', argv)
+
+    def test_the_extensions_hooks_go_into_the_one_settings_but_not_a_proxy_or_consult_turn(self):
+        """backends/claude/argv.py TURN_HOOKS, after Wyu981011/covey 50fc367e: an extension adds Claude Code hooks to a
+        topic's turns without touching the user's or the project's settings."""
+        hooks = {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': '/abs/hook'}]}],
+                 'SessionStart': [{'hooks': [{'type': 'command', 'command': '/abs/start'}]}]}
+        for options in ({}, {TOOL_LIMIT: LOOK}, {TOOL_LIMIT: READ}):
+            argv = self.argv(**options, **{claude_argv.TURN_HOOKS: hooks, redaction.SETTINGS_ENV: {'A': 'b'}})
+            self.assertEqual(argv.count('--settings'), 1)
+            self.assertEqual(json.loads(self.value(argv, '--settings')), {'env': {'A': 'b'}, 'hooks': hooks})
+        settings = json.loads(self.value(self.argv(**{TOOL_LIMIT: PROXY, claude_argv.TURN_HOOKS: hooks}), '--settings'))
+        self.assertEqual(list(settings['hooks']), ['PreToolUse'])  # Its tool guard's alone.
+        self.assertIn('covey_tool_guard.py', settings['hooks']['PreToolUse'][0]['hooks'][0]['command'])
+        self.assertNotIn('--settings', self.argv(**{TOOL_LIMIT: CONSULT, claude_argv.TURN_HOOKS: hooks}))
+        self.assertNotIn('--settings', self.argv(**{claude_argv.TURN_HOOKS: {}}))
+
+    def test_hooks_merge_by_event_and_a_table_of_another_shape_is_refused(self):
+        first = {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': '/a'}]}]}
+        second = {'PreToolUse': [{'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': '/b'}]}],
+                  'Stop': [{'hooks': [{'type': 'command', 'command': '/c'}]}]}
+        self.assertEqual(claude_argv.merge_hooks(first, None, second, {}),
+                         {'PreToolUse': first['PreToolUse'] + second['PreToolUse'], 'Stop': second['Stop']})
+        self.assertEqual(first['PreToolUse'][0]['matcher'], 'Bash')  # The tables given are not changed.
+        self.assertEqual(len(first['PreToolUse']), 1)
+        for bad in (['PreToolUse'], {'PreToolUse': {'matcher': 'Bash'}}, {1: []}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                claude_argv.merge_hooks(bad)
 
     def test_a_proxy_turn_has_its_hook_beside_the_relay_in_one_settings(self):
         argv = self.argv(**{TOOL_LIMIT: PROXY, TOOL_NOTES: '/abs/notes', redaction.SETTINGS_ENV: {'A': 'b'}})
