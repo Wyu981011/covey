@@ -224,6 +224,23 @@ def board_since(times, now, last):
     return max(start, now - LOOKBACK)
 
 
+def review_view(state_dir, log=lambda _: None) -> dict:
+    """{"review": {pending, url}} when the memory has items waiting for the owner (app/web_memory.py overview ``counts.pending``,
+    ``url`` the 网页记忆中心's 待审核 tab with the web page on, else ''): the line ``记忆：待审核 N 条`` of the 早晚汇总. {} with none
+    waiting, or when the memory cannot be read (the digest goes out without the line)."""
+    from covey.app import web_memory
+
+    if not web_memory.enabled():
+        return {}  # COVEY_MEMORY=0: the digest is as it was without the memory.
+    try:
+        pending = int(web_memory.overview(state_dir)["counts"]["pending"])
+        url = web_memory.center_url("review")
+    except Exception as exc:  # noqa: BLE001 - the digest goes out without the line
+        log(f"digest review count unreadable: {type(exc).__name__}")
+        return {}
+    return {"review": {"pending": pending, "url": url}} if pending > 0 else {}
+
+
 def web_view() -> dict:
     """{"web": the web page's address} with COVEY_WEB=1 and the address set (core/web_sync.py page_url): the 看板's and the
     早晚汇总's last line has 打开网页; {} otherwise, the card as it was."""
@@ -995,6 +1012,8 @@ class Digest:
         view = {**collect(ctx.state_dir, chat, slot, since_of(times, slot, last), now, board=dismissable(), asked=True),
                 **self.where(chat), **web_view()}
         view.update(self.asks_view(ctx, chat))
+        if not self.fixed:
+            view.update(review_view(ctx.state_dir, self.runtime.log))
         if not self.fixed and last_of_day(times, slot):
             view.update(self.daily(ctx, chat, slot, now))
         waits = (any(row.get("state") == memory_candidates.OPEN for row in view.get("remember") or ())

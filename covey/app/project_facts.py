@@ -15,7 +15,7 @@ from covey.cards.facts import tile_count
 from covey.cards.project_card import (CANCELLED, CORRECTED, DONE, IDLE, RUNNING, STOPPED, STUCK, WAITING, Member,
                                       Project)
 from covey.app.card_publish import clock, words
-from covey.core import board_read, look, memory, memory_usage, project_library, project_memory, projects
+from covey.core import board_read, look, memory, memory_usage, memstore, project_library, project_memory, projects
 from covey.core import progress as turn_progress
 from covey.core.jobs import topic_job_records
 from covey.core.metrics import run_seconds, timings_of
@@ -174,6 +174,29 @@ def memory_listing(state_dir, record) -> tuple:
     return tuple(rows[:LIST_CAP]), len(rows)
 
 
+def memory_counts(state_dir, project_id) -> tuple:
+    """(rules, decisions, notes, waiting for review) of the project's memory in use (core/memstore.py), and () when the store cannot
+    be read. 待审核 are the open items whose suggestion names this project."""
+    try:
+        found = memstore.entries(state_dir, scope="project", owner_key=project_id)
+        waiting = sum(1 for item in memstore.review_items(state_dir)
+                      if isinstance(item.get("suggest"), dict) and item["suggest"].get("scope") == "project"
+                      and item["suggest"].get("project_key") == project_id)
+    except (OSError, ValueError, KeyError, TypeError):
+        return ()
+    return tuple(sum(1 for entry in found if entry.kind == kind) for kind in memstore.KINDS) + (waiting,)
+
+
+def memory_url() -> str:
+    """The 网页记忆中心's address, '' without the web page or when it cannot be read."""
+    from covey.app import web_memory
+
+    try:
+        return web_memory.center_url()
+    except (OSError, ValueError, TypeError):
+        return ""
+
+
 def memory_rows(state_dir, record) -> tuple:
     """(entry id, text) of the project's memory, the newest first (``memory_listing``)."""
     return memory_listing(state_dir, record)[0]
@@ -248,7 +271,8 @@ def facts(state_dir, record, now, titles=None, links=None, avatar="") -> Project
                    members=members, avatar=str(avatar or ""),
                    elapsed=elapsed, tokens=tokens,
                    lead_state=projects.reason_words(record) or lead_state(state_dir, record, now), lead_note=lead_note(record),
-                   triage=triage_lines(record), joins=join_lines(state_dir, record), memory=listed[0], memory_total=listed[1], library=library_rows(state_dir, pid),
+                   triage=triage_lines(record), joins=join_lines(state_dir, record), memory=listed[0], memory_total=listed[1],
+                   memory_counts=memory_counts(state_dir, pid), memory_url=memory_url(), library=library_rows(state_dir, pid),
                    inputs=inputs, outputs=tuple(answer_card.output_lines(parts, answer_card.RUNNING_LINES)),
                    ask_text=str(ask.get("text") or ""), ask_at=str(ask.get("at") or ""), ask_url=str(ask.get("url") or ""),
                    origin_note=origin_words((record.get("origin") or {}).get("note") if isinstance(record.get("origin"), dict) else ""))

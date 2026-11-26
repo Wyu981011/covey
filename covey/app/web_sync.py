@@ -30,6 +30,9 @@ there is no thread and no request.
   a line of the page's own (role event) for a member's end and for what a silent wake-up started; ``started_topics`` says which turn started
   which member. A turn's process, plan and figures (app/web_turns.py) and a question's times ride on the items; the memory and library rows
   say who wrote them (data contract v3).
+- The ``settings`` items of their own, each built when its few stats moved: 整理专项 (push_tidy), the 记忆 tab of v37 (push_memory), the
+  memory center's ``memory:*`` keys of v43 (push_memory_center: one stat of the memory's sentinel; a key gone taken back), 版本与更新
+  (push_upgrade) and 账号与额度 (push_quota).
 - The key is read from the config's key_file and appears in no log line and no record.
 
 Rule 1 (AGENTS.md): no lock is held across a request; records are read, not locked."""
@@ -69,6 +72,7 @@ BUSY_EVERY = 60  # A quick look given up for a busy store is logged the first ti
 MAX_LEFT = 3  # Left-behind steps still stuck: with this many no new thread is started until one of them ends, or LEFT_WAIT has passed.
 LEFT_WAIT = 300  # Seconds waited at MAX_LEFT; then the next step runs in a new thread anyway (an open stuck for good must not stop the push).
 IMAGES_WAIT = 300  # Seconds images are held back after the page did not take one (push_images).
+CENTER_WAIT, CENTER_WAIT_MAX = 60.0, 1800.0  # The memory center's keys after a refused post: tried again this long after, doubled each time.
 INBOX_WAIT = 8  # Seconds a page that knows ``wait`` holds an empty /sync/inbox (it answers ``waited``); within the client's TIMEOUT.
 OP_WAIT = 5.0  # Seconds an inbox step waits for the operations it handed to their lanes before it asks again.
 PACE_SECONDS = 60.0  # A quick look's, a touch's and a reread's step times are logged once this often (Pace).
@@ -192,6 +196,10 @@ class WebSync:
         self.settings_lock = threading.Lock()  # push_settings runs in both threads.
         self.tidy_stamps, self.tidy_lock, self.tidy_failed = None, threading.Lock(), 0  # The 整理专项 item (push_tidy).
         self.memory_stamps, self.memory_lock, self.memory_failed = None, threading.Lock(), 0  # The 记忆 item (push_memory).
+        # The memory center's keys (push_memory_center, data contract v43): the sentinel last built at, when (monotonic), failures in a
+        # row and no try before (monotonic) while the page refuses them; the builder, made once the state directory is known.
+        self.center_stamps, self.center_built, self.center_lock, self.center_failed = None, None, threading.Lock(), 0
+        self.center_wait, self.memory_center = 0.0, None
         self.upgrade_stamps, self.upgrade_lock, self.upgrade_failed = None, threading.Lock(), 0  # The 版本与更新 item (push_upgrade).
         self.quota_stamps, self.quota_lock, self.quota_failed = None, threading.Lock(), 0  # The 账号与额度 item (push_quota).
         self.asks_failed, self.asks_tried, self.asks_full = 0, None, False  # The 要你处理 item (push_asks): failures in a row, the rev tried last, a pass began.
@@ -723,6 +731,8 @@ class WebSync:
         self.push_tidy(now, full=full)
         passer.mark("memory")
         self.push_memory(full=full)
+        passer.mark("memory_center")
+        self.push_memory_center(full=full)
         passer.mark("upgrade")
         self.push_upgrade(full=full)
         passer.mark("quota")
@@ -952,6 +962,70 @@ class WebSync:
         finally:
             self.memory_lock.release()
 
+    def push_memory_center(self, full=False, force=False) -> int:
+        """The memory center's ``settings`` items (data contract v43, app/web_memory.py Center): every ``memory:*`` key whose rev
+        the page does not have, the data keys first and ``memory:index`` (whose ``revs`` name theirs) last, in requests of their own
+        after the 记忆 item's; a key gone since (a project cancelled, fewer import pages) taken back with a ``deleted`` row. Built
+        when the memory's one sentinel moved (``stamps``: one stat, from the pass thread each step), on a full pass at most every
+        REBUILD_SECONDS, and ``force``d from the inbox thread after the page changed the memory, before the ack. With COVEY_MEMORY
+        off: ``memory:index`` says so and the rest is taken back; nothing at all when the page never had any. A page older than
+        v43 refuses the keys: logged the first time and every tenth, tried again later and later (at most CENTER_WAIT_MAX).
+        How many items went."""
+        state = getattr(self.env, "state_dir", None)
+        if not state or not self.center_lock.acquire(blocking=False):
+            return 0
+        try:
+            on = web_memory.enabled()
+            had = [key for kind, key in list(self.sent) if kind == "settings" and web_sync.MEMORY_KEY_RE.match(key)]
+            if not on and not had:
+                return 0
+            stamps = (on, web_memory.stamps(state)) if on else (False,)
+            clock = time.monotonic()
+            due = force or self.center_stamps is None or stamps != self.center_stamps or \
+                (full and clock - (self.center_built or 0) >= web_memory.REBUILD_SECONDS)
+            if not due or (not force and clock < self.center_wait):
+                return 0
+            if on:
+                if self.memory_center is None:
+                    self.memory_center = web_memory.Center(state)
+                built = self.memory_center.build()
+            else:
+                built = {web_memory.INDEX_KEY: web_memory.off_index()}
+            self.center_stamps, self.center_built = stamps, clock
+            items = [web_sync.item("settings", key, data) for key, data in built.items()]
+            index = [each for each in items if each["key"] == web_memory.INDEX_KEY]
+            fresh = [each for each in items if each["key"] != web_memory.INDEX_KEY and self.sent.get(("settings", each["key"])) != each["rev"]]
+            index = [each for each in index if self.sent.get(("settings", each["key"])) != each["rev"]]
+            gone = [{"type": "settings", "key": key} for key in had if key not in built]
+            if not fresh and not index and not gone:
+                return 0
+            try:
+                for batch in web_sync.batches(fresh):
+                    self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
+                    for each in batch:
+                        self.sent[("settings", each["key"])] = each["rev"]
+                    self.sent_changed = True
+                self.client.request("POST", "/sync/upsert", {"items": index, "deleted": gone})
+            except Exception as exc:  # noqa: BLE001 - logged; tried again later (the keys not sent stay due)
+                self.center_failed += 1
+                self.center_stamps = None
+                self.center_wait = clock + min(CENTER_WAIT * 2 ** (self.center_failed - 1), CENTER_WAIT_MAX)
+                if self.center_failed == 1 or self.center_failed % 10 == 0:
+                    self.runtime.log(f"web memory center not pushed ({self.center_failed}): {type(exc).__name__}: {self.why(exc)}")
+                return 0
+            self.center_failed, self.center_wait = 0, 0.0
+            for each in index:
+                self.sent[("settings", each["key"])] = each["rev"]
+            for each in gone:
+                self.sent.pop(("settings", each["key"]), None)
+            self.sent_changed = True
+            return len(fresh) + len(index) + len(gone)
+        except Exception as exc:  # noqa: BLE001 - a memory that cannot be read stops nothing
+            self.runtime.log(f"web memory center not built: {type(exc).__name__}")
+            return 0
+        finally:
+            self.center_lock.release()
+
     def upgrade_once(self) -> int:
         """The web-upgrade thread's step: a check of a newer version when one is due (app/self_upgrade.py due), then the item."""
         upgrader = self.ops.self_upgrade
@@ -1159,3 +1233,5 @@ class WebSync:
             self.memory_stamps = None
         self.push_tidy(time.time())
         self.push_memory()
+        if kind == "memory_edit":
+            self.push_memory_center(force=True)  # The page reads the center as the change left it when it sees done.

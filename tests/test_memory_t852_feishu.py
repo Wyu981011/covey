@@ -1,7 +1,7 @@
-"""T852 飞书与核心包: the quota a project's parts lend each other (core/memory.py SPARE_ORDER, REFERENCE_CAP), the 记忆 tab's
-workspaces, 常驻 hint, history and 升为全局 (app/memory_panel.py), the project card's count and the one choice of a turn and the
-card (app/project_facts.py, core/memory.py project_view ``used``), the lookup's label, the use that goes with a line made global
-(core/memory_usage.py carry) and the answer card's 记下了 line out of the fold (cards/answer_card.py tail)."""
+"""T852 飞书与核心包: the quota a project's parts lend each other (core/memory.py SPARE_ORDER, REFERENCE_CAP), the project card's
+count and the one choice of a turn and the card (app/project_facts.py, core/memory.py project_view ``used``), the lookup's label,
+the use that goes with a line made global (core/memory_usage.py carry) and the answer card's 记下了 line out of the fold
+(cards/answer_card.py tail). The 记忆 tab's workspaces, 常驻 hint and 升为全局 are gone (M4: tests/test_memory_panel.py)."""
 from __future__ import annotations
 
 import os
@@ -12,11 +12,10 @@ from unittest import mock
 
 from support import UNSET_OFF, make_context
 
-from covey.app import memory_candidates, memory_panel, project_facts
+from covey.app import memory_candidates, project_facts
 from covey.cards import answer_card as cards
-from covey.cards import memory_panel as panel_cards
 from covey.cards.project_card import row_fold
-from covey.core import memory, memory_search, memory_usage, principles, project_memory, projects
+from covey.core import memory, memory_search, memory_usage, project_memory, projects
 
 ON = {memory.ENV: "1", memory.LEARN_ENV: "1", projects.ENV: "1", projects.MEMORY_ENV: "1"}
 PID, CHAT = "a1b2c3d4e5f6", "oc_owner_dm"
@@ -68,51 +67,18 @@ class QuotaTest(Case):
         self.assertEqual(len(room["left"]), 20)
 
 
-class PanelTest(Case):
-    def test_every_workspace_is_offered_and_the_ones_with_memory_first(self):
-        names = [f"ws{i:02d}" for i in range(14)]
-        principles.save(self.state, principles.WORKSPACE, "covey 里回复用中文", workspace="ws13")
-        data = memory_panel.facts(self.state, names, "ws00")["preview"]
-        self.assertEqual(sorted(data["workspaces"]), names)  # Not the first eight.
-        self.assertEqual(data["workspaces"][:2], ["ws00", "ws13"])
-        card = panel_cards.memory_card("tok", {"revision": 1}, memory_panel.facts(self.state, names, "ws00"))
-        self.assertIn("ws13", str(card))
-
-    def test_the_pin_hint_is_only_for_what_can_be_pinned(self):
-        knowledge_left = {"used": 900, "limit": 800, "left": [{"ref": "knowledge:k1"}]}
-        self.assertNotIn("常驻", memory_panel.room_line("专项「网关」", knowledge_left))
-        self.assertIn("删掉", memory_panel.room_line("专项「网关」", knowledge_left))
-        principle_left = {"used": 900, "limit": 800, "left": [{"ref": "principle:p1"}]}
-        self.assertIn("「常驻」", memory_panel.room_line("全局", principle_left))
-
+class ProjectMemoryLineTest(Case):
     def project_rows(self):
-        data = memory_panel.facts(self.state, ["ws"], "ws")
-        return {row["key"].rpartition(":")[2]: row for part in data["parts"] if part["scope"] == memory.PROJECT for row in part["rows"]}
+        """(entry id, text) of the project's lines as the card's older rows listed them (``memory_listing``)."""
+        return dict(project_facts.memory_rows(self.state, self.record()))
 
-    def test_history_is_not_listed_and_only_the_owners_plain_lines_can_go_global(self):
+    def test_history_is_not_listed(self):
         rule = self.line("发布前跑一遍冒烟", kind="constraint")
         answer = self.line("主人答：用蓝绿发布", source="owner_answer")
         old = self.line("旧的约定", kind="constraint")
         lead_old = self.line("负责人记的旧事", source="lead", kind="fact")
         project_memory.settle(self.state, PID, [{"id": old, "valid": "done"}, {"id": lead_old, "valid": "superseded"}])
-        rows = self.project_rows()
-        self.assertEqual(set(rows), {rule, answer})
-        self.assertTrue(rows[rule]["promotable"])
-        self.assertFalse(rows[answer]["promotable"])
-        for key, why in ((answer, "问答"), (old, "历史")):
-            with self.assertRaises(ValueError, msg=why):
-                memory_panel.promote(self.state, f"project:{PID}:{key}")
-        self.assertEqual(memory_panel.promote(self.state, f"project:{PID}:{rule}"), "发布前跑一遍冒烟")
-
-    def test_the_line_made_global_takes_its_use_along(self):
-        rule = self.line("发布前跑一遍冒烟", kind="constraint")
-        memory_usage.note(self.state, [f"project:{PID}:{rule}"], now=NOW)
-        memory_panel.promote(self.state, f"project:{PID}:{rule}")
-        used = memory_usage.read(self.state)
-        self.assertNotIn(f"project:{PID}:{rule}", used)
-        (ref, row), = used.items()
-        self.assertTrue(ref.startswith("principle:"))
-        self.assertEqual((row["n"], row["last"]), (1, NOW))
+        self.assertEqual(set(self.project_rows()), {rule, answer})
 
 
 class UsageCarryTest(Case):

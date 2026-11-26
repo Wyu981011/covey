@@ -523,7 +523,7 @@ class CardTest(Case):
         for words in ("记下了：不用 Redis · 管这个专项", "作废了：先问侧重点", "已撤销：旧的"):
             self.assertIn(words, text)
         self.assertEqual(text.count('"不对"'), 1)
-        self.assertEqual(text.count('"升为全局"'), 1)  # Beside 不对 on a project's or a topic's line (T647 E4).
+        self.assertEqual(text.count('"升为全局"'), 0)  # Moving to a larger scope is the 网页记忆中心's now.
         self.assertIn('"entry_id": "ab12"', text)
         for scope, redacted in (("管全局", False), ("管这个话题", True)):
             line = cards.memory_element([{**notes[0], "scope": scope, **({"redacted": True} if redacted else {})}], "t1", 7)

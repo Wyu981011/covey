@@ -190,6 +190,9 @@ def _drawn(view, shown):
     lines = daily_lines(view)
     if lines:
         elements.append(md("\n".join(lines)))
+    review = review_line(view)
+    if review:
+        elements.append(md(review, size="notation"))
     elements += remember_elements(view)
     elements += memory_elements(view)
     elements += knowledge_elements(view)
@@ -214,6 +217,20 @@ def daily_lines(view):
         unsent = int(proxied.get("unsent") or 0)
         lines.append(f"今天代答发出 {int(proxied.get('sent') or 0)} 条" + (f"，{unsent} 条没发出，在菜单「代答」里看" if unsent else ""))
     return lines
+
+
+def review_line(view, *, plain=False) -> str:
+    """The memory's 待审核 line (``view["review"]``: {pending, url}, app/digest.py review_view): ``记忆：待审核 N 条`` and, with the web
+    page on, the link to the 网页记忆中心's 待审核 tab; '' when nothing waits or the view has none."""
+    part = view.get("review")
+    waiting = int(part.get("pending") or 0) if isinstance(part, dict) else 0
+    if waiting <= 0:
+        return ""
+    url = str(part.get("url") or "")
+    line = f"记忆：待审核 {waiting} 条"
+    if not url:
+        return line
+    return f"{line} · {url}" if plain else f"{line} · [去网页处理]({url})"
 
 
 def remember_meta(row, *, plain=False):
@@ -375,6 +392,8 @@ def digest_text(view):
     if len(lines) == 1:
         lines.append(EMPTY.format(clock(view["slot"]), clock(view["since"])))
     lines += daily_lines(view)
+    if review_line(view, plain=True):
+        lines.append(review_line(view, plain=True))
     rows = view.get("remember") or []
     if rows:
         lines.append(f"**{REMEMBER_TITLE}（{len(rows)}）**")

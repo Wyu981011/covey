@@ -180,19 +180,28 @@ class CardTest(UnifiedCase):
         self.assertEqual(len(rows(card)), 4)
         self.assertEqual(find_element(card, "pj_ended")["header"]["title"]["content"], "做完 7 个")
 
-    def test_memory_and_library_rows_carry_their_delete_button_the_triage_none(self):
+    def test_the_library_rows_carry_their_delete_button_the_triage_none_and_the_memory_is_one_line_of_counts(self):
         card = view.project_card(project(triage=("答了 一条", "转给你 一条"), memory=(("m1", "窗口在周六"), ("m2", "只读到周日")),
-                                         library=(("方案.md",), ("表清单.csv",))))
-        for name, count in (("pj_triage", 2), ("pj_mem", 2), ("pj_lib", 2)):
+                                         memory_counts=(3, 1, 2, 4), library=(("方案.md",), ("表清单.csv",))))
+        for name, count in (("pj_triage", 2), ("pj_lib", 2)):
             fold = find_element(card, name)
             self.assertFalse(fold["expanded"])
             self.assertIn(f"· {count}", fold["header"]["title"]["content"])
+        line = find_element(card, "pj_mem")  # No fold, no rows, no 删除: the counts, 待审核 when some wait.
+        self.assertEqual(line["content"], "<font color='grey'>专项记忆 · 规矩 3 · 决定 1 · 资料 2 · 待审核 4</font>")
+        self.assertNotIn("bridge_project_mem_del", text(card))
         dels = [button for button in iter_buttons(card) if button.get("text", {}).get("content") == "删除"]
         values = [button["behaviors"][0]["value"] for button in dels]
-        self.assertEqual([(value["kind"], value.get("entry") or value.get("name")) for value in values],
-                         [("bridge_project_mem_del", "m1"), ("bridge_project_mem_del", "m2"),
-                          ("bridge_project_lib_del", "方案.md"), ("bridge_project_lib_del", "表清单.csv")])
+        self.assertEqual([(value["kind"], value.get("name")) for value in values],
+                         [("bridge_project_lib_del", "方案.md"), ("bridge_project_lib_del", "表清单.csv")])
         self.assertTrue(all(value["project_id"] == PID and value["topic_id"] == LEAD for value in values))
+
+    def test_the_memory_line_links_to_the_memory_center_only_with_the_web_page_and_is_left_out_empty(self):
+        linked = view.project_card(project(memory_counts=(1, 0, 0, 0), memory_url="https://covey.example.test/memory"))
+        self.assertEqual(find_element(linked, "pj_mem")["content"],
+                         "<font color='grey'>专项记忆 · 规矩 1 · 决定 0 · 资料 0</font> · [去网页记忆中心](https://covey.example.test/memory)")
+        self.assertNotIn("去网页记忆中心", text(view.project_card(project(memory_counts=(1, 0, 0, 0)))))
+        self.assertIsNone(find_element(view.project_card(project(memory_counts=(0, 0, 0, 0))), "pj_mem"))
 
     def test_buttons_follow_the_state(self):
         def names(status):
@@ -300,13 +309,14 @@ class BudgetTest(unittest.TestCase):
         self.assertLessEqual(element_count(built), CARD_NODES)
         self.assertLessEqual(json_size(built), CARD_BYTES)
         self.assertIsNotNone(find_element(built, "pj_more"))  # Topics left out are still said.
-        shown = [find_element(built, name) for name in ("pj_triage", "pj_mem", "pj_lib")]
+        shown = [find_element(built, name) for name in ("pj_triage", "pj_lib")]
         self.assertTrue(all(shown))
+        self.assertIsNotNone(find_element(built, "pj_mem"))
         self.assertTrue(all(any("另有" in json.dumps(each, ensure_ascii=False) for each in fold["elements"]) for fold in shown))
 
     def test_a_card_that_fits_is_drawn_whole_as_before(self):
         built = self.card(3, 3)
-        self.assertEqual(len(find_element(built, "pj_mem")["elements"]), 3)
+        self.assertEqual(len(find_element(built, "pj_lib")["elements"]), 3)
         self.assertIsNone(find_element(built, "pj_more"))
 
     def test_the_longest_list_the_folds_take_still_leaves_every_button_of_the_card(self):
@@ -672,7 +682,7 @@ class ButtonTest(CardCase):
 
     def test_a_click_for_another_topic_or_a_project_not_there_is_refused(self):
         handlers = (self.claude.controls.project_stop, self.claude.controls.project_downgrade, self.claude.steering.project_steer,
-                    self.claude.controls.project_mem_del, self.claude.controls.project_lib_del)
+                    self.claude.controls.project_lib_del)
         for handler in handlers:
             with self.assertRaises(ValueError):
                 handler(self.lead_ctx, self.event("x", topic_id="other"))
@@ -742,20 +752,21 @@ class ButtonTest(CardCase):
         self.assertIn("降回普通话题", self.said())
         self.assertEqual((self.record()["state"], self.record()["state_reason"]), ("cancelled", "downgraded"))
 
-    def test_a_memory_entry_and_a_library_file_are_deleted_by_their_own_row_alone(self):
+    def test_the_memory_delete_of_a_card_drawn_before_is_offline_and_deletes_nothing(self):
+        folder = projects.folder(self.state) / PID
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "memory.json").write_text(json.dumps({"entries": [{"id": "m1", "text": "窗口在周六"}]}))
+        before = (folder / "memory.json").read_text()
+        self.assertTrue(self.claude.controls.project_mem_del(self.lead_ctx, self.event("bridge_project_mem_del", entry="m1")))
+        self.assertEqual(self.said(), "删除已下线：到网页记忆中心收起或作废")
+        self.assertEqual((folder / "memory.json").read_text(), before)
+
+    def test_a_library_file_is_deleted_by_its_own_row_alone(self):
         folder = projects.folder(self.state) / PID
         (folder / "library").mkdir(parents=True)
         for name in ("方案.md", "表清单.csv"):
             (folder / "library" / name).write_text("x")
         (folder / "outside.txt").write_text("keep")
-        (folder / "memory.json").write_text(json.dumps({"entries": [{"id": "m1", "text": "窗口在周六"}, {"id": "m2", "text": "只读到周日"}]}))
-        self.assertTrue(self.claude.controls.project_mem_del(self.lead_ctx, self.event("bridge_project_mem_del", entry="m1")))
-        rows = json.loads((folder / "memory.json").read_text())["entries"]  # Struck out, not removed: a tombstone.
-        self.assertEqual([(row["id"], bool(row["deleted"])) for row in rows], [("m1", True), ("m2", False)])
-        self.assertTrue(self.claude.controls.project_mem_del(self.lead_ctx, self.event("bridge_project_mem_del", entry="m1")))
-        self.assertIn("已经不在了", self.said())
-        self.assertTrue(self.claude.controls.project_mem_del(self.lead_ctx, self.event("bridge_project_mem_del", entry="9")))
-        self.assertIn("已经不在了", self.said())
         self.assertTrue(self.claude.controls.project_lib_del(self.lead_ctx, self.event("bridge_project_lib_del", name="方案.md")))
         self.assertEqual(sorted(path.name for path in (folder / "library").iterdir()), ["表清单.csv"])
         for name in ("../outside.txt", "/etc/passwd", ".hidden", "不在.md"):

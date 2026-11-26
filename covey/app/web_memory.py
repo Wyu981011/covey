@@ -1,29 +1,51 @@
-"""The web page's 记忆 tab (data contract v37, COVEY_MEMORY=1): the owner's main memory, 全局 and each workspace's, read and changed
-as the 设置 card's 记忆 tab reads and changes it.
+"""The web page's memory: the 记忆 tab of data contract v37 (COVEY_MEMORY=1) and the memory center of data contract v43.
 
-``view`` is the ``settings`` item ``memory`` (app/web_sync.py push_memory): the principles (core/principles.py), with
-COVEY_KNOWLEDGE=1 the knowledge entries (core/knowledge.py) and with COVEY_MEMORY_LEARN=1 the open candidates
-(app/memory_candidates.py), each group with the room it uses of its scope's limit and which entries the next turn carries,
-through core/memory.py ``items``, ``fill`` and ``select`` exactly as a turn does (app/memory_turn.py), and the block a new topic's
-turn in each workspace would read (app/prompts.py memory_block). Projects' and topics' memory are on their own pages, not here.
+v37 (``view``, ``edit``): the ``settings`` item ``memory`` (app/web_sync.py push_memory), the owner's main memory, 全局 and each
+workspace's, read and changed as the 设置 card's 记忆 tab once did: the principles (core/principles.py), with COVEY_KNOWLEDGE=1
+the knowledge entries (core/knowledge.py) and with COVEY_MEMORY_LEARN=1 the open candidates (app/memory_candidates.py), each
+group with the room it uses of its scope's limit and which entries the next turn carries, through core/memory.py ``items``,
+``fill`` and ``select`` exactly as a turn does, and the block a new topic's turn in each workspace would read (app/prompts.py
+memory_block). ``edit`` is the ``memory_edit`` operation without ``v`` (app/web_ops.py): add a principle or a knowledge entry,
+change its words (only while it still reads ``base``), 常驻 or not, delete a principle or void a knowledge entry, keep (记下)
+or drop (不用) a candidate, each through the store's own function under its own lock. An older page keeps all of it.
 
-``edit`` is the ``memory_edit`` operation (app/web_ops.py): add a principle or a knowledge entry to 全局 or a workspace, change its
-words (only when it still reads what the page started from, ``base``), mark a principle 常驻 or not, delete a principle or void a
-knowledge entry, keep (记下) or drop (不用) a candidate. Every change goes through the store's own function under its own lock,
-the same ones the butler's tools and the 设置 card use, so the card and the page read one memory. No model, no Feishu call.
+v43 (``Center``, ``edit_v43``; docs/web.md 数据约定 v43, tests/golden/web_memory_v43.json): the memory center's ``settings``
+items, each a key of core/web_sync.py ``MEMORY_KEY_RE`` read from the one store (core/memstore.py):
+
+- ``memory:index``, the small key the page polls: the counts (``counts.pending`` is the badge: the open items of 待审核), each
+  scope's summary with the room its rules use, every other key's ``rev``, the health check's non-zero findings, the imports'
+  summary and the ⌘K title table (``titles``: [code, title, key], at most TITLES).
+- ``memory:global``: the 全局 entries, the open items of 待审核 (``review``) and the latest LOG_SHOWN changes (``log``); past
+  KEY_BYTES the log alone is cut, never the review.
+- ``memory:topics``: the entries of the topics with memory written in the last TOPIC_DAYS days (core/memstore.py ``topics``:
+  no topic directory is walked), ``memory:p:<project id>`` one project's.
+- ``memory:import:<page>``: what the Harnesses' own memory offers (core/harness_memory.py ``page``), scanned at most every
+  IMPORT_SECONDS; ``memory:previews``: what the next turn of the PREVIEW_TOPICS latest topics and of a new ordinary topic
+  carries (app/memory_turn.py ``preview`` once it has one, else ``preview_of`` here).
+
+What a turn did with an entry (how often it was carried, used) is never in an entry: an entry's ``rev`` moves only when what
+the page shows of it does, so a turn does not make every key go again. ``stamps`` stats the one sentinel ``memory/.rev`` that
+every memory write touches (core/memory_rev.py). ``edit_v43`` does the 17 actions of a ``memory_edit`` with ``v: 43`` through
+core/memstore.py, core/harness_memory.py and, for 待审核, core/memory_review.py ``decide``/``decide_all`` (``review_decide``:
+this module's own way while that one is not there); the operation's id is the change's ``undo_token``. No model, no Feishu call.
 """
 from __future__ import annotations
 
+import inspect
+import json
 import re
+import time
 from pathlib import Path
 
-from covey.app import memory_candidates
+from covey.app import memory_candidates, memory_turn
 from covey.app.prompts import memory_block
-from covey.core import knowledge, memory, memory_usage, principles
-from covey.core.jobs import job_path, read_job_record
-from covey.core.state import read_object
+from covey.cards.memory_panel import center_url as memory_card_url
+from covey.core import (harness_memory, knowledge, memory, memory_review, memory_rev, memory_usage, memstore, principles,
+                        projects, web_sync)
+from covey.core.jobs import job_path, read_job_record, select_job_records
+from covey.core.state import epoch_seconds, read_object
 from covey.core.topics import topic_file
-from covey.core.workspaces import config_path, load_config
+from covey.core.workspaces import load_config
 
 GLOBAL, WORKSPACE = memory.GLOBAL, memory.WORKSPACE
 PRINCIPLE, KNOWLEDGE, CANDIDATE = "principle", "knowledge", "candidate"
@@ -44,22 +66,21 @@ def enabled() -> bool:
 
 
 def stamps(state_dir) -> tuple:
-    """What a change of the memory shows in, read each step of the pass thread: the principles', the candidates', the usage's and the
-    workspace list's mtimes, and each knowledge file's."""
-    state = Path(state_dir)
-    files = [principles.path(state), memory_candidates.path(state), memory_usage.path(state), config_path(state)]
-    root = knowledge.root(state)
+    """What a change of the memory shows in, read each step of the pass thread: the one sentinel ``memory/.rev`` (its mtime and
+    its ctime, which a touch with a given time still moves), which every memory write touches. Planted on the first look when
+    it is not there yet, so the older stores' writes (core/memory_rev.py ``touch`` with ``create`` False) touch it from then on."""
+    path = memstore.rev_path(state_dir)
     try:
-        files += sorted(root.iterdir())
-    except OSError:
-        pass
-    out = []
-    for file in files:
+        found = path.stat()
+    except FileNotFoundError:
+        memory_rev.touch(state_dir)
         try:
-            out.append((file.name, file.stat().st_mtime_ns))
+            found = path.stat()
         except OSError:
-            out.append((file.name, 0))
-    return tuple(out)
+            return (0, 0)
+    except OSError:
+        return (0, 0)
+    return (found.st_mtime_ns, found.st_ctime_ns)
 
 
 def workspace_names(state_dir, default_workdir) -> tuple[str, list]:
@@ -365,3 +386,807 @@ def _edit(state_dir, kind, rid, payload) -> str:
                                  source={**old["source"], "edited_via": "web"}, by=old["by"])  # Where it came from stays.
         return "已保存：" + short(entry["text"])
     raise ValueError("候选不能改，记下以后再改")
+
+
+# ================================================================================ data contract v43: the memory center
+
+V43 = 43
+INDEX_KEY, GLOBAL_KEY, TOPICS_KEY, PREVIEWS_KEY = "memory:index", "memory:global", "memory:topics", "memory:previews"
+PROJECT_PREFIX, IMPORT_PREFIX = "memory:p:", "memory:import:"
+TOPIC_DAYS = 30  # A topic's memory is in memory:topics while something was written to it this recently.
+TITLES = 2000  # Rows of the ⌘K title table.
+KEY_BYTES = 256 * 1024  # Of one key's data as sent (UTF-8).
+LOG_SHOWN = 100  # Latest changes in memory:global's log.
+PREVIEW_TOPICS = 20  # Topics memory:previews shows the next turn of, the latest first (and a new ordinary topic).
+PREVIEW_DAYS = 7  # How far back the latest topics are looked for (the job records updated since; the index, no walk).
+NEW_TOPIC, NEW_TITLE = "new", "新的普通话题"
+# The rules a turn carries whole, per scope: items and characters (MASTER-PLAN 裁决 A9; app/memory_turn.py carries the same).
+# Past them a rule is not dropped: the turn lists its title (``over_cap``), the page's bar turns red.
+RULE_LIMITS = {"global": (15, 1200), "project": (10, 1000), "topic": (5, 400)}
+LISTED = 10  # Codes a preview lists of the notes it does not carry.
+STALE_DAYS, IDLE_DAYS = 60, 30  # 体检: a note not verified this long (core/memory_rank.py freshness), an entry no turn used.
+IMPORT_SECONDS = 600  # The Harnesses' memory files scanned at most this often (core/harness_memory.py scan).
+IMPORT_PAGES = 1000  # memory:import:<page> has three digits.
+REBUILD_SECONDS = 300  # A full pass builds the keys again at most this often while the sentinel did not move.
+ORIGIN_TEXT = ("topic_key", "quote", "message_id", "question", "file", "harness")
+FLAGS = ("vague", "dynamic", "repeat", "old_repo")
+LIVE = ("active", "pending")
+
+
+def _shown_origin(origin) -> dict:
+    """An entry's origin as the contract has it (MemoryEntryOrigin): when, and of where it came from only the words the page shows."""
+    origin = origin if isinstance(origin, dict) else {}
+    out = {"at": float(memstore._number(origin.get("at")))}
+    for key in ORIGIN_TEXT:
+        value = " ".join(str(origin.get(key) or "").split())
+        if value:
+            out[key] = value[:QUOTE_SHOWN] if key == "quote" else value[:200]
+    number = origin.get("topic_number")
+    if type(number) is int:
+        out["topic_number"] = number
+    return out
+
+
+def entry_view(entry, *, carried, over_cap=False, topic_number=None) -> dict:
+    """One entry as the page reads it (MemoryEntry): never how often a turn carried or used it."""
+    origin = _shown_origin(entry.origin)
+    if entry.scope == "topic":  # Written in that topic: its own key and number when the line does not say.
+        origin.setdefault("topic_key", entry.owner_key)
+        if type(topic_number) is int:
+            origin.setdefault("topic_number", topic_number)
+    out = {"key": entry.ref, "code": entry.code, "kind": entry.kind, "scope": entry.scope, "title": entry.title,
+           "text": entry.text, "status": entry.status, "said": entry.said, "by": entry.by, "origin": origin,
+           "carried_next": bool(carried), "rev": memstore.rev_of(entry)}
+    if entry.scope == "project":
+        out["project_key"] = entry.owner_key
+    elif entry.scope == "topic":
+        out["topic_key"] = entry.owner_key
+        if type(topic_number) is int:
+            out["topic_number"] = topic_number
+    if entry.why:
+        out["why"] = entry.why
+    if entry.repos:
+        out["repos"] = list(entry.repos)
+    if entry.device:
+        out["device"] = entry.device
+    if entry.verified_at:
+        out["verified_at"] = entry.verified_at
+    if over_cap:
+        out["over_cap"] = True
+    if entry.superseded_by:
+        out["superseded_by"] = entry.superseded_by
+    if entry.edited_at:
+        out["edited"] = True
+    if entry.kind == "decision":
+        out["in_progress"] = in_progress(entry)
+    return out
+
+
+def in_progress(entry) -> bool:
+    """Whether a decision is 在办 (carried by its topic's and its project's turns): while it is active; a topic that ended or
+    a newer answer to the same question settles it (core/memstore.py ``settle``; docs/web.md 数据约定 v43, app/memory_turn.py)."""
+    return entry.kind == "decision" and entry.status == "active"
+
+
+def rule_room(entries, scope) -> tuple[set, dict]:
+    """(the refs of the rules of one store past its room, {items, chars, item_limit, char_limit}): the active rules, the
+    owner's first, then the oldest, carried while they fit; never dropped by use (裁决 A9)."""
+    items_limit, chars_limit = RULE_LIMITS[scope]
+    rules = sorted((e for e in entries if e.kind == "rule" and e.status == "active"), key=lambda e: (e.said != "owner", e.at, e.ref))
+    over, items, chars = set(), 0, 0
+    for entry in rules:
+        if items + 1 > items_limit or chars + len(entry.text) > chars_limit:
+            over.add(entry.ref)
+        else:
+            items, chars = items + 1, chars + len(entry.text)
+    return over, {"items": len(rules), "chars": sum(len(e.text) for e in rules), "item_limit": items_limit,
+                  "char_limit": chars_limit}
+
+
+def _carried(entry, over) -> bool:
+    if entry.status != "active":
+        return False
+    if entry.kind == "rule":
+        return entry.ref not in over
+    if entry.kind == "decision":
+        return in_progress(entry)
+    return True  # A note: carried when the turn finds it relevant (memory:previews says which).
+
+
+def _counts(entries, pending=0) -> dict:
+    found = {"rule": 0, "decision": 0, "note": 0, "pending": pending}
+    for entry in entries:
+        if entry.status == "active":
+            found[entry.kind] += 1
+    return found
+
+
+def _topic_facts(state_dir, topic_id, cache) -> dict:
+    """{number, title, project, proxy} of a topic's topic.json, read once a build."""
+    if topic_id not in cache:
+        try:
+            data = read_object(topic_file(Path(state_dir), str(topic_id)))
+        except (OSError, ValueError, TypeError):
+            data = {}
+        project = data.get("project") if isinstance(data.get("project"), dict) else {}
+        number = data.get("topic_number")
+        title = " ".join(str(data.get("title") or data.get("topic_title") or "").split())
+        cache[topic_id] = {"number": number if type(number) is int else None, "title": title[:80],
+                           "project": str(project.get("id") or "") if projects.valid_id(project.get("id")) else "",
+                           "proxy": bool(data.get("proxy"))}
+    return cache[topic_id]
+
+
+class Store:
+    """One read of the memory for a build: every entry of 全局, of each project not cancelled and of the topics with memory
+    written in the last TOPIC_DAYS days, each store's rules' room, the open items of 待审核."""
+
+    def __init__(self, state_dir, now=None) -> None:
+        self.state = Path(state_dir)
+        self.now = time.time() if now is None else now
+        self.topic_cache = {}
+        self.globals = memstore.entries(self.state, scope="global", statuses=None)
+        self.projects = {}  # pid -> (title, entries)
+        for record in projects.records(self.state):
+            pid = str(record.get("id") or "")
+            if not projects.valid_id(pid) or record.get("state") == projects.CANCELLED:
+                continue
+            found = memstore.entries(self.state, scope="project", owner_key=pid, statuses=None)
+            if found or record.get("state") != projects.DONE:
+                self.projects[pid] = (" ".join(str(record.get("name") or "").split())[:60] or pid, found)
+        cutoff = self.now - TOPIC_DAYS * 86400
+        listed = sorted(((tid, at) for tid, at in memstore.topics(self.state).items() if memstore._number(at) >= cutoff),
+                        key=lambda pair: -memstore._number(pair[1]))
+        self.topics = {}  # tid -> entries, the latest written first
+        for tid, _ in listed:
+            found = memstore.entries(self.state, scope="topic", owner_key=tid, statuses=None)
+            if found:
+                self.topics[tid] = found
+        self.review = memstore.review_items(self.state)
+        self.over, self.rooms = set(), {}
+        for key, found, scope in [("global", self.globals, "global"),
+                                  *((f"p:{pid}", found, "project") for pid, (_, found) in self.projects.items()),
+                                  *((f"t:{tid}", found, "topic") for tid, found in self.topics.items())]:
+            over, room = rule_room(found, scope)
+            self.over |= over
+            self.rooms[key] = room
+
+    def all(self) -> list:
+        return [*self.globals, *(e for _, found in self.projects.values() for e in found),
+                *(e for found in self.topics.values() for e in found)]
+
+    def topic(self, tid) -> dict:
+        return _topic_facts(self.state, tid, self.topic_cache)
+
+    def view(self, entry) -> dict:
+        number = self.topic(entry.owner_key)["number"] if entry.scope == "topic" else None
+        return entry_view(entry, carried=_carried(entry, self.over), over_cap=entry.ref in self.over, topic_number=number)
+
+    def pending(self) -> dict:
+        """Open items of 待审核 per scope summary key ('global', 'topics', 'p:<id>'), by where each would go."""
+        found = {}
+        for item in self.review:
+            suggest = item.get("suggest") if isinstance(item.get("suggest"), dict) else {}
+            pid = str(suggest.get("project_key") or "")
+            key = f"p:{pid}" if suggest.get("scope") == "project" and pid in self.projects else \
+                "topics" if suggest.get("scope") == "topic" else "global"
+            found[key] = found.get(key, 0) + 1
+        return found
+
+
+def review_view(item, views) -> dict:
+    """An open item of 待审核 as the page reads it (MemoryReviewItem); ``views`` ref -> entry view, for a group's entries."""
+    suggest = item.get("suggest") if isinstance(item.get("suggest"), dict) else {}
+    kind = suggest.get("kind") if suggest.get("kind") in memstore.KINDS else "note"
+    scope = suggest.get("scope") if suggest.get("scope") in memstore.SCOPES else "global"
+    out = {"key": str(item["key"]), "type": str(item.get("type") or ""), "title": memstore.clean(item.get("title"), memstore.TITLE_CHARS),
+           "text": memstore.clean(item.get("text"), memstore.DECISION_CHARS), "suggest": {"kind": kind, "scope": scope},
+           "created_at": float(memstore._number(item.get("created_at")))}
+    if scope == "project" and projects.valid_id(suggest.get("project_key")):
+        out["suggest"]["project_key"] = str(suggest["project_key"])
+    if str(item.get("quote") or "").strip():
+        out["quote"] = memstore.clean(item["quote"], QUOTE_SHOWN)
+    origin = item.get("origin") if isinstance(item.get("origin"), dict) else {}
+    where = {}
+    if str(origin.get("topic_key") or origin.get("topic") or "").strip():
+        where["topic_key"] = str(origin.get("topic_key") or origin.get("topic"))
+    if type(origin.get("topic_number")) is int:
+        where["topic_number"] = origin["topic_number"]
+    if where:
+        out["from"] = where
+    if str(item.get("conflict_with") or "").strip():
+        out["conflict_with"] = str(item["conflict_with"])
+    if item.get("type") != "import":
+        group = [views[ref] for ref in item.get("items") or () if isinstance(ref, str) and ref in views]
+        if group:
+            out["items"] = group
+    flags = [flag for flag in item.get("flags") or () if flag in FLAGS]
+    if flags:
+        out["flags"] = flags
+    return out
+
+
+def log_view(rows) -> list:
+    """The latest changes (memory/log.jsonl, newest first) as the page reads them (MemoryLogItem): an ``undo_token`` only on a
+    change that can still be taken back (not one undone already, not an undo itself)."""
+    undone = {str(row.get("undid")) for row in rows if row.get("action") == "undo" and row.get("undid")}
+    out = []
+    for row in rows:
+        item = {"at": float(memstore._number(row.get("at"))), "who": str(row.get("who") or "bridge"),
+                "action": str(row.get("action") or ""), "refs": [str(ref) for ref in row.get("refs") or ()],
+                "title": memstore.clean(row.get("title"), memstore.TITLE_CHARS)}
+        because = row.get("because") if isinstance(row.get("because"), dict) else {}
+        why = {}
+        if type(because.get("topic_number")) is int:
+            why["topic_number"] = because["topic_number"]
+        if str(because.get("quote") or "").strip():
+            why["quote"] = memstore.clean(because["quote"], QUOTE_SHOWN)
+        if why:
+            item["because"] = why
+        token = str(row.get("undo_token") or "")
+        if token and row.get("action") != "undo" and token not in undone:
+            item["undo_token"] = token
+        out.append(item)
+    return out
+
+
+def _size(data) -> int:
+    return len(json.dumps(data, ensure_ascii=False).encode())
+
+
+def fit(data, cuts) -> dict:
+    """``data`` within KEY_BYTES: the lists named in ``cuts`` (in order) lose their last rows until it fits; what is not named is
+    never cut (memory:global's review)."""
+    for name in cuts:
+        rows = data.get(name)
+        while isinstance(rows, list) and rows and _size(data) > KEY_BYTES:
+            del rows[max(len(rows) - max(len(rows) // 8, 1), 0):]
+    return data
+
+
+def _shelved_last(views) -> list:
+    """Entries with the live ones first, so a key past its size loses the archived and the void ones."""
+    return sorted(views, key=lambda view: view["status"] not in LIVE)
+
+
+def health(state_dir, store, now=None) -> dict:
+    """体检's non-zero findings (MemoryHealth; {} when all is well): core/memory_review.py ``health`` once it has one, else
+    what can be told without a model: the same words twice in a store (``dup``), an open conflict (``conflict``), rules past
+    their room (``over_cap``), notes not verified for STALE_DAYS (``stale``), entries no turn used for IDLE_DAYS (``idle``)."""
+    found = _m2(memory_review, "health", ("now",))
+    if found is not None:
+        try:
+            return {key: value for key, value in dict(found(state_dir, now=now) or {}).items() if value}
+        except NotImplementedError:
+            pass
+    now = store.now if now is None else now
+    out = {}
+    groups = {}
+    for entry in store.all():
+        if entry.status == "active" and entry.kind != "decision":
+            groups.setdefault((entry.kind, entry.scope, entry.owner_key, memstore.same_key(entry.text)), []).append(entry.ref)
+    dup = [ref for refs in groups.values() if len(refs) > 1 for ref in refs]
+    conflict = [[str(item["conflict_with"]), str(item["key"])] for item in store.review
+                if item.get("type") == "conflict" and item.get("conflict_with")]
+    stale = [e.ref for e in store.all() if e.kind == "note" and e.status == "active"
+             and (e.verified_at or e.at) and now - (e.verified_at or e.at) > STALE_DAYS * 86400]
+    try:
+        used = memory_usage.counts(state_dir)
+    except (OSError, ValueError, TypeError):
+        used = None
+    idle = [] if used is None else [
+        e.ref for e in store.all() if e.kind != "decision" and e.status == "active" and e.at and now - e.at > IDLE_DAYS * 86400
+        and now - float((used.get(e.ref) or {}).get("last") or 0) > IDLE_DAYS * 86400
+        and not any((used.get(e.ref) or {}).get(key) for key in ("e", "t", "h"))]
+    for key, value in (("dup", dup), ("conflict", conflict), ("stale", stale), ("idle", idle), ("over_cap", sorted(store.over))):
+        if value:
+            out[key] = value
+    return out
+
+
+def _m2(module, name, keywords):
+    """``module.name`` when it is package M2's (its keywords include ``keywords``), else None: until M2 is in, this module's own
+    way is taken (core/memory_review.py has only A0's shapes)."""
+    found = getattr(module, name, None)
+    if not callable(found):
+        return None
+    try:
+        params = inspect.signature(found).parameters
+    except (TypeError, ValueError):
+        return None
+    return found if all(word in params for word in keywords) else None
+
+
+# ---------------------------------------------------------------------------------------------- previews
+
+
+def preview_of(store, topic_key="", *, project_key="", title="") -> dict:
+    """What the next turn of a topic carries (MemoryPreview) as can be told without the search: the rules that fit (全局 on the
+    owner's own turn, the project's, the topic's), the decisions in progress, no note found relevant yet (the search is
+    app/memory_turn.py's), and the codes of the notes it would list by title. ``chars``: the characters of the lines carried."""
+    pool = list(store.globals)
+    if project_key in store.projects:
+        pool += store.projects[project_key][1]
+    if topic_key and topic_key in store.topics:
+        pool += store.topics[topic_key]
+    rules = [e for e in pool if e.kind == "rule" and _carried(e, store.over)]
+    decisions = sorted((e for e in pool if e.kind == "decision" and in_progress(e)), key=lambda e: -e.at)
+    listed = [e.code for e in sorted((e for e in pool if e.kind == "note" and e.status == "active" and e.scope != "global"),
+                                     key=lambda e: -e.at) if e.code][:LISTED]
+    chars = sum(len(e.code) + 1 + len(e.text) for e in (*rules, *decisions))
+    return {"topic_key": topic_key or NEW_TOPIC, "title": title or NEW_TITLE, "chars": chars,
+            "rules": [e.code for e in rules if e.code], "decisions": [e.code for e in decisions if e.code], "notes": [],
+            "listed": listed}
+
+
+def latest_topics(state_dir, store, now=None) -> list:
+    """The topics of the latest job records (updated in the last PREVIEW_DAYS days, the job index: no walk), the latest first,
+    each once, not a 代答 topic (which carries nothing): at most PREVIEW_TOPICS."""
+    cutoff = (store.now if now is None else now) - PREVIEW_DAYS * 86400
+
+    def recent(fields):
+        at = epoch_seconds(fields.get("updated_at"))
+        return at is None or at >= cutoff
+
+    out = []
+    try:
+        records = select_job_records(Path(state_dir), None, narrow=recent)
+    except (OSError, ValueError):
+        return out
+    for record in records:
+        tid = str(record.get("topic_id") or "")
+        if not tid or tid in out or store.topic(tid)["proxy"]:
+            continue
+        out.append(tid)
+        if len(out) >= PREVIEW_TOPICS:
+            break
+    return out
+
+
+def previews(state_dir, store, now=None) -> dict:
+    """memory:previews: each latest topic's next turn, then a new ordinary topic's (app/memory_turn.py ``preview`` once package
+    M2 has one, else ``preview_of``)."""
+    made = _m2(memory_turn, "preview", ("project_key", "title", "query", "repos"))
+    out = []
+    for tid in [*latest_topics(state_dir, store, now), ""]:
+        facts = store.topic(tid) if tid else {"project": "", "title": ""}
+        title = facts["title"] or (f"T{facts['number']}" if facts.get("number") else "")
+        try:
+            row = dict(made(state_dir, tid, project_key=facts["project"], title=title)) if made else None
+        except NotImplementedError:
+            row = None
+        if row is None:
+            row = preview_of(store, tid, project_key=facts["project"], title=title)
+        row["topic_key"] = tid or NEW_TOPIC
+        row["title"] = row.get("title") or title or NEW_TITLE
+        out.append(row)
+    return {"previews": out}
+
+
+# ---------------------------------------------------------------------------------------------- the keys
+
+
+class Center:
+    """The memory center's keys, built by app/web_sync.py push_memory; keeps the last scan of the Harnesses' memory files
+    (``imports``) between builds. ``home``: whose Harness memory is offered (None: this process's user)."""
+
+    def __init__(self, state_dir, home=None) -> None:
+        self.state, self.home = Path(state_dir), home
+        self.scanned, self.scanned_at = None, None
+
+    def imports(self, now, *, force=False) -> list:
+        """The Harnesses' memory entries (core/harness_memory.py ``scan``), scanned again after IMPORT_SECONDS; [] when they
+        cannot be read."""
+        if force or self.scanned is None or now - (self.scanned_at or 0) >= IMPORT_SECONDS:
+            try:
+                self.scanned = harness_memory.scan(self.state, Path.home() if self.home is None else self.home)
+            except Exception:  # noqa: BLE001 - the center goes on without the imports
+                self.scanned = []
+            self.scanned_at = now
+        return self.scanned
+
+    def build(self, now=None) -> dict:
+        """key -> data of every memory:* key, memory:index last (its ``revs`` name the others' revs)."""
+        now = time.time() if now is None else now
+        store = Store(self.state, now)
+        return keys(self.state, store, self.imports(now), now=now, home=self.home)
+
+
+def off_index() -> dict:
+    """memory:index with the memory off: the page shows that it is, the other keys are taken back."""
+    return {"on": False, "version": V43, "counts": {"rule": 0, "decision": 0, "note": 0, "pending": 0}, "scopes": [], "revs": {},
+            "health": {}, "imports": {"total": 0, "new": 0, "pages": 0},
+            "limits": {"title": memstore.TITLE_CHARS, "text": memstore.TEXT_CHARS, "decision_text": memstore.DECISION_CHARS},
+            "titles": []}
+
+
+def keys(state_dir, store, imported=(), *, now=None, home=None) -> dict:
+    """Every memory:* key's data of ``store`` (``Store``) and ``imported`` (``harness_memory.scan``'s)."""
+    now = store.now if now is None else now
+    views = {entry.ref: store.view(entry) for entry in store.all()}
+    pending = store.pending()
+    out = {}
+    out[GLOBAL_KEY] = fit({"key": "global", "entries": _shelved_last([views[e.ref] for e in store.globals]),
+                           "review": [review_view(item, views) for item in store.review],
+                           "log": log_view(memstore.log_read(state_dir, limit=LOG_SHOWN))}, ("log", "entries"))
+    topics = []
+    for tid, found in store.topics.items():
+        facts = store.topic(tid)
+        row = {"topic_key": tid, "title": facts["title"] or (f"T{facts['number']}" if facts["number"] else tid[:8]),
+               "entries": _shelved_last([views[e.ref] for e in found])}
+        if facts["number"] is not None:
+            row["topic_number"] = facts["number"]
+        if facts["project"]:
+            row["project_key"] = facts["project"]
+        topics.append(row)
+    out[TOPICS_KEY] = fit({"topics": topics}, ("topics",))
+    for pid, (title, found) in store.projects.items():
+        out[PROJECT_PREFIX + pid] = fit({"key": f"p:{pid}", "title": title,
+                                         "entries": _shelved_last([views[e.ref] for e in found])}, ("entries",))
+    summary = {"total": 0, "new": 0, "pages": 0}
+    if imported:
+        summary = harness_memory.summary(state_dir, imported)
+        for number in range(min(summary["pages"], IMPORT_PAGES)):
+            out[f"{IMPORT_PREFIX}{number}"] = harness_memory.page(state_dir, Path.home() if home is None else home, number,
+                                                                  items=imported)
+    out[PREVIEWS_KEY] = previews(state_dir, store, now)
+    revs = {key: web_sync.rev(data) for key, data in out.items()}
+
+    def scope(key, title, found, room, waiting):
+        return {"key": key, "title": title, "counts": _counts(found, waiting), "rules": room,
+                "rev": revs.get(GLOBAL_KEY if key == "global" else TOPICS_KEY if key == "topics" else "memory:" + key, "")}
+
+    topic_room = {"items": 0, "chars": 0, "item_limit": 0, "char_limit": 0}
+    for tid in store.topics:
+        for name, value in store.rooms[f"t:{tid}"].items():
+            topic_room[name] += value
+    if not store.topics:
+        topic_room["item_limit"], topic_room["char_limit"] = RULE_LIMITS["topic"]
+    scopes = [scope("global", "全局", store.globals, store.rooms["global"], pending.get("global", 0)),
+              scope("topics", "话题", [e for found in store.topics.values() for e in found], topic_room, pending.get("topics", 0)),
+              *(scope(f"p:{pid}", title, found, store.rooms[f"p:{pid}"], pending.get(f"p:{pid}", 0))
+                for pid, (title, found) in store.projects.items())]
+    titled = sorted((e for e in store.all() if e.code and e.status != "void"), key=lambda e: (e.status not in LIVE, -e.at))
+    index = {"on": True, "version": V43, "counts": _counts(store.all(), len(store.review)), "scopes": scopes,
+             "revs": dict(revs), "health": health(state_dir, store, now), "imports": summary,
+             "limits": {"title": memstore.TITLE_CHARS, "text": memstore.TEXT_CHARS, "decision_text": memstore.DECISION_CHARS},
+             "titles": [[e.code, e.title[:memstore.TITLE_CHARS], e.ref] for e in titled[:TITLES]]}
+    index["revs"][INDEX_KEY] = web_sync.rev(index)
+    out[INDEX_KEY] = index
+    return out
+
+
+def center_url(tab="") -> str:
+    """The memory center's address on the web page (``page_url`` + /memory, a tab after it), '' without the page: the cards'
+    rule (cards/memory_panel.py center_url, which a card reads without importing app/)."""
+    return memory_card_url(tab)
+
+
+def overview(state_dir, now=None) -> dict:
+    """What the 设置 card's 记忆 tab and the evening digest show (app/memory_panel.py, app/digest.py): {counts (the active
+    rules, decisions and notes, ``pending`` the open items of 待审核), scopes [{key, title, counts}] (全局, 话题, each project
+    with memory), review: the open items, the oldest first [{key, type, title, text, suggest}], rules: the active rules
+    [{key, code, title, scope, over_cap}] of 全局 and the projects}."""
+    store = Store(state_dir, now)
+    pending = store.pending()
+    scopes = [{"key": "global", "title": "全局", "counts": _counts(store.globals, pending.get("global", 0))},
+              {"key": "topics", "title": "话题", "counts": _counts([e for f in store.topics.values() for e in f],
+                                                                     pending.get("topics", 0))},
+              *({"key": f"p:{pid}", "title": title, "counts": _counts(found, pending.get(f"p:{pid}", 0))}
+                for pid, (title, found) in store.projects.items())]
+    rules = [{"key": e.ref, "code": e.code, "title": e.title, "scope": e.scope, "over_cap": e.ref in store.over,
+              "project_key": e.owner_key if e.scope == "project" else ""}
+             for e in [*store.globals, *(e for _, found in store.projects.values() for e in found)]
+             if e.kind == "rule" and e.status == "active"]
+    return {"counts": _counts(store.all(), len(store.review)), "scopes": scopes,
+            "review": [review_view(item, {}) for item in store.review], "rules": rules}
+
+
+# ---------------------------------------------------------------------------------------------- 待审核 decided
+
+
+REVIEW_ACTIONS = ("accept", "reject", "keep_left", "keep_right", "keep_both")
+ALL_ACTIONS = ("accept_all", "reject_all")
+BY_OF = {"learn": "learn", "candidate": "learn", "lead": "lead", "import": "import", "class3": "owner", "migrate": "owner",
+         "conflict": "owner", "tidy": "owner"}
+
+
+def _review_item(state_dir, key) -> dict:
+    item = next((row for row in memstore.review_items(state_dir) if row.get("key") == key), None)
+    if item is None:
+        raise ValueError("这条待审核已经处理过了（或不在了），页面会按最新的重画")
+    return item
+
+
+def _place(item, edits) -> tuple[str, str, str]:
+    """(kind, scope, owner key) an accepted item is written to: the owner's choice on the page over the item's suggestion. A
+    project's key is only a project's, a topic's only a topic's (ValueError when the place names none)."""
+    suggest = item.get("suggest") if isinstance(item.get("suggest"), dict) else {}
+    kind = edits.get("kind") or suggest.get("kind") or "note"
+    scope = edits.get("scope") or suggest.get("scope") or "global"
+    same = suggest.get("scope") == scope
+    if scope == "project":
+        owner = str(edits.get("project_key") or (suggest.get("project_key") or suggest.get("owner_key") if same else "") or "")
+    elif scope == "topic":
+        owner = str(edits.get("topic_key") or (suggest.get("owner_key") or suggest.get("topic_key") if same else "") or "")
+    else:
+        owner = ""
+    if scope != "global" and not owner:
+        raise ValueError("要选记在哪个专项" if scope == "project" else "要选记在哪个话题")
+    return kind, scope, owner
+
+
+def _write_item(state_dir, item, edits, *, who, token, now) -> list:
+    """The entry an accepted proposal becomes, 你定的 (the owner accepted it): [its ref]."""
+    kind, scope, owner = _place(item, edits)
+    text = edits.get("text") or item.get("text") or ""
+    title = edits.get("title") or item.get("title") or ""
+    origin = {key: value for key, value in (item.get("origin") or {}).items() if key in ("topic_key", "topic_number", "quote", "harness", "file")} \
+        if isinstance(item.get("origin"), dict) else {}
+    if item.get("quote") and "quote" not in origin:
+        origin["quote"] = item["quote"]
+    by = BY_OF.get(str(item.get("type")), "owner")
+    if kind == "decision":
+        entry = memstore.add_decision(state_dir, scope=scope, owner_key=owner, text=text, title=title, said="owner", by=by,
+                                      origin=origin, who=who, token=token, now=now)
+    else:
+        entry = memstore.add(state_dir, kind=kind, scope=scope, owner_key=owner, text=text, title=title, said="owner", by=by,
+                             origin=origin, who=who, token=token, now=now)
+    return [entry.ref]
+
+
+def _baseline_decide(state_dir, key, action, *, edits, who, token, now) -> list:
+    """One item of 待审核 decided without package M2 (core/memory_review.py ``decide`` is A0's shape): the refs written."""
+    item = _review_item(state_dir, key)
+    kind = str(item.get("type") or "")
+    refs = [str(ref) for ref in item.get("items") or () if isinstance(ref, str)]
+    written = []
+    if action == "accept" and kind == "migrate":
+        written = [memstore.confirm(state_dir, ref, who=who, token=token, now=now).ref for ref in refs if memstore.find(state_dir, ref)]
+    elif action == "reject" and kind == "migrate":
+        written = [memstore.set_kind(state_dir, ref, "note", who=who, token=token, now=now).ref for ref in refs
+                   if memstore.find(state_dir, ref)]
+    elif action == "accept" and kind == "tidy":
+        written = [memstore.archive(state_dir, ref, who=who, token=token, now=now).ref for ref in refs
+                   if (found := memstore.find(state_dir, ref)) is not None and found.status in LIVE]
+    elif action == "accept" and kind == "import" and refs:
+        kind3, scope, owner = _place(item, edits)
+        written = [entry.ref for entry in harness_memory.take(state_dir, Path.home(), refs, kind=kind3, scope=scope, owner_key=owner,
+                                                              who=who, token=token, now=now)] or \
+            _write_item(state_dir, item, edits, who=who, token=token, now=now)
+        if written:
+            memstore.imports_set(state_dir, refs, "imported", entry_ref=written[0], now=now)
+    elif action == "reject" and kind == "import" and refs:
+        harness_memory.ignore(state_dir, refs, now=now)
+    elif action in ("keep_right",) and item.get("conflict_with") and memstore.find(state_dir, str(item["conflict_with"])):
+        written = [memstore.edit(state_dir, str(item["conflict_with"]), text=edits.get("text") or item.get("text"),
+                                 title=edits.get("title") or item.get("title") or None, who=who, token=token, now=now).ref]
+    elif action in ("accept", "keep_both", "keep_right"):
+        written = _write_item(state_dir, item, edits, who=who, token=token, now=now)
+    memstore.review_set(state_dir, key, "rejected" if action in ("reject", "keep_left") else "accepted", by=who, now=now,
+                        refs=written, action=action, **({"token": token} if token else {}))
+    return written
+
+
+def reopen(state_dir, token, *, who="owner", now=None) -> list:
+    """The items of 待审核 decided with ``token`` (``_baseline_decide``) open again, as ``undo`` takes their change back: the keys."""
+    if not token:
+        return []
+    done = []
+    for item in memstore.review_items(state_dir, states=("accepted", "rejected")):
+        if item.get("token") == token:
+            memstore.review_set(state_dir, str(item["key"]), "open", by=who, now=now, token="", refs=[], action="")
+            done.append(str(item["key"]))
+    return done
+
+
+def review_decide(state_dir, keys, action, *, edits=None, who="owner", token="", now=None) -> dict:
+    """待审核 decided by the owner: ``action`` one of REVIEW_ACTIONS on the item among ``keys`` (keep_*: the review key of the
+    pair [the entry, the item]), or ALL_ACTIONS on ``keys`` (empty: every open item). ``edits`` {title, text, kind, scope,
+    project_key, topic_key}: what the owner changed before accepting. Through core/memory_review.py ``decide``/``decide_all``
+    once package M2 has them (the edits laid on the item first), else ``_baseline_decide``. {decided: [keys], refs: [written]}."""
+    stamp = time.time() if now is None else now
+    edits = {k: v for k, v in dict(edits or {}).items() if v not in (None, "")}
+    if action in ALL_ACTIONS:
+        wanted = [str(k) for k in keys or () if str(k).startswith("review:")]
+        open_keys = [str(item["key"]) for item in memstore.review_items(state_dir)]
+        chosen = [k for k in open_keys if not wanted or k in wanted]
+        if not chosen:
+            raise ValueError("没有要处理的待审核")
+        whole = _m2(memory_review, "decide_all", ("keys", "who", "token"))
+        if whole is not None:
+            try:
+                found = dict(whole(state_dir, action, keys=chosen, who=who, token=token, now=stamp) or {})
+                return {"decided": chosen, "refs": [str(r) for r in found.get("refs") or found.get("written") or ()]}
+            except NotImplementedError:
+                pass
+        single, refs, done = "accept" if action == "accept_all" else "reject", [], []
+        for key in chosen:
+            try:
+                refs += _decide_one(state_dir, key, single, edits={}, who=who, token=token, now=stamp)
+                done.append(key)
+            except ValueError:
+                continue  # One gone meanwhile: the others are still decided.
+        if not done:
+            raise ValueError("这些待审核都已经处理过了")
+        return {"decided": done, "refs": refs}
+    if action not in REVIEW_ACTIONS:
+        raise ValueError("不认识的记忆操作")
+    key = next((str(k) for k in keys or () if str(k).startswith("review:")), "")
+    if not key:
+        raise ValueError("要选一条待审核")
+    return {"decided": [key], "refs": _decide_one(state_dir, key, action, edits=edits, who=who, token=token, now=stamp)}
+
+
+def _decide_one(state_dir, key, action, *, edits, who, token, now) -> list:
+    one = _m2(memory_review, "decide", ("who", "token"))
+    if one is not None:
+        item = _review_item(state_dir, key)
+        if edits:  # The owner's words and place go on the item first: M2's decide takes the item as it is.
+            suggest = dict(item.get("suggest") or {})
+            for name in ("kind", "scope", "project_key"):
+                if edits.get(name):
+                    suggest[name] = edits[name]
+            if edits.get("scope") == "topic" and edits.get("topic_key"):
+                suggest["owner_key"] = edits["topic_key"]
+            memstore.review_set(state_dir, key, "open", by=who, now=now, suggest=suggest,
+                                **{name: edits[name] for name in ("title", "text") if edits.get(name)})
+        try:
+            found = dict(one(state_dir, key, action, who=who, token=token, now=now) or {})
+            return [str(r) for r in found.get("refs") or found.get("written") or ()]
+        except NotImplementedError:
+            pass
+    return _baseline_decide(state_dir, key, action, edits=edits, who=who, token=token, now=now)
+
+
+# ---------------------------------------------------------------------------------------------- memory_edit v43
+
+
+ACTIONS_V43 = ("add", "edit", "move", "archive", "restore", "void", "accept", "reject", "accept_all", "reject_all",
+               "keep_left", "keep_right", "keep_both", "promote", "import", "ignore", "undo")  # web/shared/api.interface.ts
+DONE_WORDS = {"archive": "已归档", "restore": "已放回", "void": "已作废", "accept": "已采纳", "reject": "不要了", "keep_left": "留了原来的",
+              "keep_right": "换成了新的", "keep_both": "两条都留了", "accept_all": "全部采纳", "reject_all": "全部不要"}
+
+
+def token_of(op_id) -> str:
+    """The change's undo token of the page's operation ``op_id`` (core/memstore.py log_change: ≤64)."""
+    return ("w-" + "".join(ch for ch in str(op_id or "") if ch.isalnum() or ch in "-_"))[:64] if op_id else ""
+
+
+def _owner_of(payload, scope) -> str:
+    if scope == "global":
+        return ""
+    found = str(payload.get("project_key") if scope == "project" else payload.get("topic_key") or "").strip()
+    if not found:
+        raise ValueError("要选记在哪个专项" if scope == "project" else "要选记在哪个话题")
+    return found
+
+
+def _keys(payload) -> list:
+    keys = payload.get("keys")
+    return [str(key) for key in keys if isinstance(key, str) and key.strip()] if isinstance(keys, list) else []
+
+
+def _one(state_dir, payload):
+    keys = _keys(payload)
+    if not keys:
+        raise ValueError("要选一条记忆")
+    entry = memstore.find(state_dir, keys[0])
+    if entry is None:
+        raise ValueError("这条记忆已经不在了（可能刚在别处改掉），页面会按最新的重画")
+    return entry
+
+
+def _short_entry(entry) -> str:
+    return short(entry.title or entry.text)
+
+
+def edit_v43(state_dir, payload, *, token="", now=None, home=None) -> dict:
+    """One ``memory_edit`` of data contract v43 (``payload["action"]`` one of ACTIONS_V43), as the owner: {message (the
+    receipt the page shows), undo_token (``token``, what ``undo`` takes back; '' for an undo, an ignore or nothing written),
+    refs (the entries written)}. ValueError says why nothing changed."""
+    action = str(payload.get("action") or "")
+    if action not in ACTIONS_V43:
+        raise ValueError("不认识的记忆操作")
+    stamp = time.time() if now is None else now
+    who, base = "owner", str(payload.get("base") or "")
+    text = payload.get("text") if isinstance(payload.get("text"), str) else None
+    title = payload.get("title") if isinstance(payload.get("title"), str) else None
+    why = payload.get("why") if isinstance(payload.get("why"), str) else None
+    refs, message = [], ""
+    if action == "add":
+        kind, scope = str(payload.get("kind") or ""), str(payload.get("scope") or "")
+        owner = _owner_of(payload, scope) if scope in memstore.SCOPES else ""
+        new = True
+        if kind == "decision":
+            if scope == "global":
+                raise ValueError("决定记在专项或话题里")
+            entry = memstore.add_decision(state_dir, scope=scope, owner_key=owner, text=text or "", title=title or "",
+                                          said="owner", by="web", who=who, token=token, now=stamp)
+        else:
+            if kind in memstore.KINDS and scope in memstore.SCOPES:  # The store returns the live one that says the same.
+                same = memstore.same_key(text or "")
+                new = not any(memstore.same_key(e.text) == same for e in memstore.entries(
+                    state_dir, scope=scope, owner_key=owner, kinds=(kind,), statuses=LIVE))
+            entry = memstore.add(state_dir, kind=kind, scope=scope, owner_key=owner, text=text or "", title=title or "",
+                                 why=why or "", said="owner", by="web", repos=payload.get("repos") or (), who=who, token=token,
+                                 now=stamp)
+        refs, message = [entry.ref], ("已记下：" if new else "已有同样的一条，没再记：") + _short_entry(entry)
+        if not new:
+            token = ""
+    elif action == "edit":
+        entry = _one(state_dir, payload)
+        kind = payload.get("kind") if payload.get("kind") in memstore.KINDS and payload.get("kind") != entry.kind else None
+        after = memstore.change(state_dir, entry.ref, action="edit", base=base, who=who, token=token, now=stamp, title=title,
+                                text=text, why=why, kind=kind, repos=payload.get("repos") if isinstance(payload.get("repos"), list) else None)
+        if memstore.snapshot(after) == memstore.snapshot(entry):
+            return {"message": "没有变化", "undo_token": "", "refs": []}
+        refs, message = [after.ref], "已保存：" + _short_entry(after)
+    elif action in ("move", "promote"):
+        entry = _one(state_dir, payload)
+        scope = str(payload.get("scope") or "")
+        if scope not in memstore.SCOPES:
+            raise ValueError("要选挪到哪个范围")
+        owner = _owner_of(payload, scope)
+        if action == "move":
+            new = memstore.move(state_dir, entry.ref, scope=scope, owner_key=owner, base=base, who=who, token=token, now=stamp)
+        else:
+            if base and base != memstore.rev_of(entry):
+                raise ValueError("这条刚在别处改过，先看看现在的内容再改")
+            repos = payload.get("repos") if isinstance(payload.get("repos"), list) else None
+            new = memstore.promote(state_dir, entry.ref, scope=scope, owner_key=owner, repos=repos, who=who, token=token, now=stamp)
+        if new.ref == entry.ref:
+            return {"message": "已经在这个范围了", "undo_token": "", "refs": []}
+        refs, message = [entry.ref, new.ref], ("已换范围：" if action == "move" else "已提到更大的范围：") + _short_entry(new)
+    elif action in ("archive", "restore", "void"):
+        entry = _one(state_dir, payload)
+        if action == "restore" and entry.status in LIVE:
+            return {"message": "这条本来就在用", "undo_token": "", "refs": []}
+        if action == "archive" and entry.status in ("archived", "done"):
+            return {"message": "这条已经归档了", "undo_token": "", "refs": []}
+        if action == "void" and entry.status == "void":
+            return {"message": "这条已经作废了", "undo_token": "", "refs": []}
+        because = {"quote": memstore.clean(why, memstore.TEXT_CHARS)} if why and why.strip() else None
+        after = getattr(memstore, action)(state_dir, entry.ref, base=base, who=who, because=because, token=token, now=stamp)
+        refs, message = [after.ref], f"{DONE_WORDS[action]}：" + _short_entry(after)
+    elif action in REVIEW_ACTIONS or action in ALL_ACTIONS:
+        edits = {name: payload.get(name) for name in ("title", "text", "kind", "scope", "project_key", "topic_key")
+                 if isinstance(payload.get(name), str) and payload.get(name).strip()}
+        found = review_decide(state_dir, _keys(payload), action, edits=edits, who=who, token=token, now=stamp)
+        refs = found["refs"]
+        count = len(found["decided"])
+        message = f"{DONE_WORDS[action]} {count} 条" if action in ALL_ACTIONS else DONE_WORDS[action]
+    elif action == "import":
+        fps = _keys(payload)
+        if not fps:
+            raise ValueError("要选导入哪几条")
+        scope = str(payload.get("scope") or "global")
+        if scope not in memstore.SCOPES:
+            raise ValueError("要选导入到哪个范围")
+        kind = payload.get("kind") if payload.get("kind") in ("rule", "note") else ""
+        made = harness_memory.take(state_dir, Path.home() if home is None else home, fps, kind=kind, scope=scope,
+                                   owner_key=_owner_of(payload, scope), who=who, token=token, now=stamp)
+        if not made:
+            raise ValueError("这几条在原工具里已经找不到了（文件改过或删了），页面会按最新的重画")
+        refs, message = [entry.ref for entry in made], f"已导入 {len(made)} 条"
+    elif action == "ignore":
+        fps = _keys(payload)
+        if not fps:
+            raise ValueError("要选哪几条留在原工具")
+        harness_memory.ignore(state_dir, fps, now=stamp)
+        return {"message": f"{len(fps)} 条留在原工具，不再提", "undo_token": "", "refs": []}
+    else:  # undo
+        wanted = memstore.clean(payload.get("undo_token"), 64)
+        if not wanted:
+            raise ValueError("没有要撤销的")
+        decided = [item for item in memstore.review_items(state_dir, states=("accepted", "rejected")) if item.get("token") == wanted]
+        try:
+            back = memstore.undo(state_dir, wanted, who=who, now=stamp)
+        except ValueError as exc:
+            if not decided or "找不到这一步" not in str(exc):
+                raise  # A change made since, or undone already: nothing is put back, the item stays decided too.
+            back = []  # 不要 on 待审核 wrote nothing: its item alone goes back.
+        opened = reopen(state_dir, wanted, who=who, now=stamp)
+        words = "、".join(part for part in (f"{len(back)} 条放回原样" if back else "", f"{len(opened)} 条回到待审核" if opened else "") if part)
+        return {"message": f"已撤销（{words}）" if words else "已撤销", "undo_token": "", "refs": back}
+    return {"message": message, "undo_token": token if refs else "", "refs": refs}

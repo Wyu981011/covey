@@ -310,32 +310,34 @@ def box(element_id, inputs, outputs, outputs_id=""):
 
 MEMORY_ID = "answer_memory"
 MEMORY_WRONG_KIND = "bridge_memory_wrong"
-MEMORY_PROMOTE_KIND = "bridge_memory_promote"
+MEMORY_PROMOTE_KIND = "bridge_memory_promote"  # 升为全局 of the older card: no longer drawn, the click says it is offline (app/task_controls.py).
 MEMORY_LINES = {"remembered": "记下了", "voided": "作废了", "undone": "已撤销", "superseded": "收起了", "pending": "待审核"}
 UNDOABLE = ("remembered", "superseded", "pending")  # The lines with a 不对 (app/memory_collect.py take_back).
-PROMOTE_LABEL = "升为全局"
-PROMOTABLE = ("管这个专项", "管这个话题")  # app/memory_collect.py PROJECT_WORDS, TOPIC_WORDS: what 升为全局 takes.
+EDIT_LABEL = "改"
 
 
-def memory_element(notes, topic_id="", job_id=""):
+def memory_element(notes, topic_id="", job_id="", url=None):
     """The grey lines at the bottom of a turn's answer card (COVEY_MEMORY=1, app/memory_collect.py): one per note of the job
-    record's ``memory_notes`` ({kind, text, scope, entry_id, redacted?}), "记下了：<text> · 管这个专项" and a 不对 button that takes it
-    back (``MEMORY_WRONG_KIND``), before it 升为全局 (``MEMORY_PROMOTE_KIND``, T647 E4) for a line of 管这个专项 or 管这个话题 not from a
-    topic with redaction on, which makes it one for every topic ("· 管全局" then); "作废了：<text>", "已撤销：<text>" once taken
-    back. None without a note."""
+    record's ``memory_notes`` ({kind, text, scope, entry_id, title?, code?, redacted?}), "记下了：<title, else text> · 管这个专项" and a
+    不对 button that takes it back (``MEMORY_WRONG_KIND``), then with the web page on a 改 button that opens the 网页记忆中心 (``url``,
+    default: the page's address; no button without the page); "作废了：<text>", "已撤销：<text>" once taken back. There is no
+    升为全局 here: moving an entry to a larger scope is the page's. None without a note."""
+    from covey.cards.memory_panel import center_url, url_button
+
+    url = center_url() if url is None else url
     rows = []
     for note in notes or ():
         kind = note.get("kind")
         if kind not in MEMORY_LINES:
             continue
-        text = literal_text(note.get("text"))
+        text = literal_text(note.get("title") or note.get("text"))
         words = f"{MEMORY_LINES[kind]}：{text}" + (f" · {note.get('scope')}" if kind in UNDOABLE and note.get("scope") else "")
         line = md(grey(words), size="notation")
         if kind in UNDOABLE:
             value = {"topic_id": topic_id, "job_id": job_id, "entry_id": str(note.get("entry_id") or "")}
             buttons = [text_button("不对", {"kind": MEMORY_WRONG_KIND, **value})]
-            if note.get("scope") in PROMOTABLE and not note.get("redacted"):
-                buttons.insert(0, text_button(PROMOTE_LABEL, {"kind": MEMORY_PROMOTE_KIND, **value}))
+            if url:
+                buttons.append(url_button(EDIT_LABEL, url))
             rows.append(item(line, *buttons))
         else:
             rows.append(line)

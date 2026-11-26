@@ -1,4 +1,4 @@
-"""What the buttons of a 专项卡 run: stop the project or a task, the pause card's choices, 不要专项, the 分流记录's 不对 form, deleting a memory or library row.
+"""What the buttons of a 专项卡 run: stop the project or a task, the pause card's choices, 不要专项, the 分流记录's 不对 form, a deleted library row (the memory's 删 is offline: it only says so).
 
 Each click is checked first: it must belong to the project's lead topic, the topic the card's message routes to (``click``).
 ``host`` is the component the click came to (its runtime, messenger and voice); app/card_actions.py claims the kinds
@@ -15,7 +15,7 @@ from covey.app import project_loop
 from covey.app.card_publish import words
 from covey.cards.project_card import ASK_KINDS
 from covey.core import dispatch_records as drecords
-from covey.core import project_library, project_memory, projects
+from covey.core import project_library, projects
 from covey.core.locks import topic_lock
 from covey.core.state import read_object
 from covey.core.topics import clear_topic_project, move_topic_message, route_message, topic_file, topic_label
@@ -264,12 +264,9 @@ def downgrade_project(host, ctx, event) -> bool:
 
 
 def delete_memory(host, ctx, event) -> bool:
-    """删 on a row of 专项记忆: the entry becomes a tombstone in projects/<id>/memory.json (the lead's pack lists it for 30
-    days, so it is not noted again)."""
-    raw, record = click(ctx, event)
-    if not project_memory.delete(ctx.state_dir, record["id"], str(raw.get("entry") or "")):
-        return say(host, ctx, event, "这条记忆已经不在了。", "project-mem-gone")
-    return say(host, ctx, event, "已删掉这条记忆。", "project-mem-del")
+    """删 on a row of 专项记忆 of a card drawn before (the card now says the counts and the way to the web page): deletes
+    nothing; managing a project's memory (收起, 作废) is the 网页记忆中心's."""
+    return say(host, ctx, event, "删除已下线：到网页记忆中心收起或作废", "project-mem-offline")
 
 
 def delete_library(host, ctx, event) -> bool:

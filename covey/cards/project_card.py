@@ -21,8 +21,10 @@ lead's speaker row, as the lead's answers have (cards/ui.py speaker_row, docs/ui
   its state's dot and word, its title, what it does or why it stopped, its Harness and 用时; the whole row opens its
   thread); ``s`` is the state's letter. At most the step's count (``FIT_STEPS``), the rest one grey line ``pj_more``;
 - ``pj_ended``: the members done or stopped by the owner (做完, 已停止), one fold, a line each (its T number a link);
-- ``pj_triage``, ``pj_mem``, ``pj_lib``: the 分流记录, 专项记忆 and 资料库 folds (closed), drawn only with rows; each row of
-  the last two has a 删 button, and a row of the first that the lead answered for the owner a 不对 button (``triage_rows``);
+- ``pj_triage``, ``pj_lib``: the 分流记录 and 资料库 folds (closed), drawn only with rows; each row of the second has a 删
+  button, and a row of the first that the lead answered for the owner a 不对 button (``triage_rows``);
+- ``pj_mem``: 专项记忆 as one grey line of counts (规矩 · 决定 · 资料, 待审核 when some wait) and, with the web page on, the link to
+  the 网页记忆中心; no rows and no 删 button here (managing the memory is the page's; the older card's 删 says it is offline);
 - ``pj_io``: the grey 输入/输出 box (cards/answer_card.py ``box``);
 - ``pj_btns``: 补充 (``pj_steer``), 换配置 (``pj_switch``: the lead's Harness, model and budget, app/harness_switch.py's card
   with the project named, ``SWITCH_LEAD``), 停止专项 (``pj_stop``, while the project is at work), 不要专项 (``pj_down``).
@@ -56,7 +58,7 @@ FIT_STEPS = ((MAX_ROWS, MAX_FOLDS), (6, MAX_FOLDS), (4, 6), (3, 5), (2, 4), (1, 
 ROW_CHARS = 90
 CORRECTED = "（已纠正）"  # The end of a 分流记录 line the owner corrected (app/project_facts.py triage_lines), kept when it is clipped.
 STEER_KIND, STOP_KIND, DOWN_KIND = "bridge_project_steer", "bridge_project_stop", "bridge_project_downgrade"
-MEM_DEL_KIND, LIB_DEL_KIND = "bridge_project_mem_del", "bridge_project_lib_del"
+MEM_DEL_KIND, LIB_DEL_KIND = "bridge_project_mem_del", "bridge_project_lib_del"  # MEM_DEL_KIND: no longer drawn, kept to take a card drawn before.
 TRIAGE_WRONG_KIND = "bridge_project_triage_wrong"
 SWITCH_LEAD = "project_id"  # In 换配置's value (app/harness_switch.py LEAD): the project whose lead it changes.
 # The pause card's buttons (choice -> kind): app/project_loop.py CHOICES.
@@ -112,6 +114,8 @@ class Project:
     joins: tuple = ()  # The 归入记录: (line, topic id) each, the newest first; a topic id '' when the line has no 移出 button.
     memory: tuple = ()
     memory_total: int = 0  # How many lines the memory holds in all (``memory`` lists the newest LIST_CAP of them); 0: as many as listed.
+    memory_counts: tuple = ()  # (rules, decisions, notes, waiting for review) of the project's memory (core/memstore.py); () when not read.
+    memory_url: str = ""  # The 网页记忆中心's address (app/web_memory.py center_url); '' without the web page.
     library: tuple = ()
     inputs: tuple = ()
     outputs: tuple = ()
@@ -276,11 +280,20 @@ def join_rows(project) -> list:
     return rows
 
 
-def memory_rows(project) -> list:
-    return [item(md(literal_text(clipped(text, ROW_CHARS)), size="normal_v2"),
-                 text_button("删除", {"kind": MEM_DEL_KIND, "project_id": project.project_id, "topic_id": project.lead_topic,
-                                    "entry": str(entry_id)}, tone="danger"))
-            for entry_id, text in project.memory]
+def memory_line(project) -> dict | None:
+    """专项记忆 as a line of counts (``pj_mem``): ``规矩 N · 决定 N · 资料 N`` and ``· 待审核 N`` when some wait, with the web page on a
+    link to the 网页记忆中心. None when the project has none and nothing waits."""
+    if project.memory_counts:
+        rules, decisions, notes, waiting = project.memory_counts
+        if not (rules or decisions or notes or waiting):
+            return None
+        words = f"规矩 {rules} · 决定 {decisions} · 资料 {notes}" + (f" · 待审核 {waiting}" if waiting else "")
+    elif project.memory_total or project.memory:
+        words = f"{max(project.memory_total, len(project.memory))} 条"
+    else:
+        return None
+    link = f" · [去网页记忆中心]({project.memory_url})" if project.memory_url else ""
+    return md(grey(f"专项记忆 · {words}") + link, element_id="pj_mem", size="notation")
 
 
 def library_rows(project) -> list:
@@ -318,7 +331,7 @@ def project_elements(project, rows, folds) -> list:
     elements += member_elements(project, folds, rows)
     elements += [row_fold("pj_join", "归入记录", join_rows(project), rows),
                  row_fold("pj_triage", "分流记录", triage_rows(project), rows),
-                 row_fold("pj_mem", "专项记忆", memory_rows(project), rows, project.memory_total),
+                 memory_line(project),
                  row_fold("pj_lib", "资料库", library_rows(project), rows),
                  answer_card.box("pj_io", answer_card.input_lines(project.inputs), list(project.outputs)),
                  *buttons(project)]

@@ -990,12 +990,16 @@ def answer_tail_cards():
             "answer_card_memory": answer_card(text, "✅ T439 · 结论", [*tail(files, inputs, outputs), memory_element([
                 {"kind": "remembered", "text": "选型类的事不用先问侧重点", "scope": "管这个专项", "entry_id": "a1b2c3"},
                 {"kind": "voided", "text": "选型前先问侧重点", "scope": "管这个专项", "entry_id": "d4e5f6"},
-                {"kind": "undone", "text": "产物放 out/", "scope": "管这个话题", "entry_id": "0a1b2c"}], "tf0001", 439)]),
-            # T647 E4: a line 升为全局 says 管全局 and keeps only 不对; one from a topic with redaction on is not offered it.
+                {"kind": "undone", "text": "产物放 out/", "scope": "管这个话题", "entry_id": "0a1b2c"}], "tf0001", 439, url="")]),
+            # With the web page on, 改 opens the 网页记忆中心 (a URL button); a note with a title says the title.
+            "answer_card_memory_web": answer_card(text, "✅ T439 · 结论", [*tail(files, inputs, outputs), memory_element([
+                {"kind": "remembered", "text": "选型类的事不用先问侧重点，直接开工", "title": "选型不先问侧重点", "code": "R4K2M",
+                 "scope": "管这个专项", "entry_id": "a1b2c3"}], "tf0001", 439, url="https://covey.example.test/memory")]),
+            # A line of 管全局 (the 升为全局 button is gone: moving to a larger scope is the web page's).
             "answer_card_memory_global": answer_card(text, "✅ T439 · 结论", [*tail(files, inputs, outputs), memory_element([
                 {"kind": "remembered", "text": "回答先给结论", "scope": "管全局", "entry_id": "p1a2b3c"},
                 {"kind": "remembered", "text": "项目代号用简称", "scope": "管这个话题", "entry_id": "0a1b2d", "redacted": True}],
-                "tf0001", 439)]),
+                "tf0001", 439, url="")]),
             # An ordinary topic's reply that put something off with nothing to come back (app/revisit_hint.py): the line, and
             # with COVEY_REVISIT=1 its 约 30 分钟后回来看 button.
             "answer_card_unwatched": answer_card(text, "✅ T439 · 结论", tail(files, inputs, outputs, buttons=[
@@ -1439,46 +1443,34 @@ FULL_TABS = ["config", "repos", "redaction", "groups", "memory", "nodes", "about
 
 
 def memory_tab_cards():
-    """The 设置 card's 记忆 tab (cards/memory_panel.py, COVEY_MEMORY=1; T604 #29, #27): the next turn's block for the chosen
-    workspace with each scope's room (one past it: 放不下 2 条), the entries by scope (常驻, 这次带不上, 它总结的, a topic's), a
-    section open on its page with an entry asking 确认删除, and no memory at all."""
-    from covey.app.prompts import memory_block
+    """The 设置 card's 记忆 tab (cards/memory_panel.py, COVEY_MEMORY=1): the counts by scope, 待审核 with 采纳 and 不要, and without the
+    web page the rules to 收起 (one asking 确认收起 on page 2); with the web page the two links and no rules; no memory at all."""
     from covey.cards.memory_panel import memory_card
     from covey.cards.settings_hub import tab_row
 
-    def entry(key, text, *, by="你说的", pinned=False, out=False, where="", at=0):
-        return {"key": key, "text": text, "by": by, "pinned": pinned, "pinnable": key.startswith("principle:"),
-                "where": where, "out": out, "at": at}
-    kept = [{"n": "M12", "scope": "global", "by": "owner", "text": "回答先给结论，细节放后面"},
-            {"n": "M240", "scope": "global", "by": "owner", "text": "测试通过就合并进 main 并推送，不用再问"},
-            {"n": "M31", "scope": "workspace", "by": "owner", "text": "决定：卡片 JSON 变了要真实客户端验收"}]
-    data = {"preview": {"workspace": "bridge", "workspaces": ["bridge", "docs"], "count": 3, "chars": 1132, "left": 2,
-                        "rooms": [["全局", 1100, 1200], ["工作区 bridge", 32, 800]],
-                        "warnings": ["⚠️ 全局放不下 2 条，下一轮不带它们（最早的先放不下）：要一直带上的点「常驻」，用不着的删掉。"],
-                        "text": memory_block(kept, 2)},
-            "parts": [{"scope": "global", "title": "全局", "rows": [
-                          entry("principle:p00000c", "回答先给结论，细节放后面", pinned=True),
-                          entry("principle:p0000f0", "测试通过就合并进 main 并推送，不用再问"),
-                          entry("knowledge:k000001", "坑：NAS 上别递归扫整个工作区", out=True),
-                          entry("principle:p000001", "周报用表格", out=True)]},
-                      {"scope": "workspace", "title": "工作区 bridge", "rows": [
-                          entry("knowledge:k00001f", "决定：卡片 JSON 变了要真实客户端验收")],
-                       "others": "其他工作区：docs 3 条（上面的工作区一行换着看）"},
-                      {"scope": "project", "title": "专项", "rows": [
-                          entry("project:acc0unt1:a1b2c3", "额度低于 10% 先停新话题", by="它总结的", where="专项「账号额度运行台」")]},
-                      {"scope": "topic", "title": "话题", "rows": [
-                          entry(f"topic:{'ab' * 8}:d4e5f6", "这个话题不要再问部署", where="T412")]}]}
-    view = {"revision": 3, "hub": True, "token": "c" * 24, "workspace": "bridge", "open": "", "page": 0}
+    counts = {"rule": 5, "decision": 3, "note": 8, "pending": 4}
+    scopes = [{"key": "global", "title": "全局", "counts": {"rule": 2, "decision": 0, "note": 3, "pending": 1}},
+              {"key": "topics", "title": "话题", "counts": {"rule": 1, "decision": 0, "note": 2, "pending": 0}},
+              {"key": "p:acc0unt1", "title": "账号额度运行台", "counts": {"rule": 2, "decision": 3, "note": 3, "pending": 3}}]
+    review = [{"key": "review:learn:a1b2c3", "type": "learn", "title": "回答先给结论", "text": "你多次说过：回答先给结论，细节放后面",
+               "suggest": {"kind": "rule", "scope": "global"}},
+              {"key": "review:lead:d4e5f6", "type": "lead", "title": "额度低于 10% 先停新话题", "text": "负责人总结：额度低于 10% 先停新话题",
+               "suggest": {"kind": "rule", "scope": "project", "project_key": "acc0unt1"}}]
+    rules = [{"key": "global:p00000c", "code": "R3K9M", "title": "回答先给结论", "scope": "global", "over_cap": False, "project_key": ""},
+             {"key": "global:p0000f0", "code": "R7T2A", "title": "测试通过就合并进 main 并推送", "scope": "global", "over_cap": True,
+              "project_key": ""},
+             {"key": "project:acc0unt1:a1b2c3", "code": "R5H8Q", "title": "额度低于 10% 先停新话题", "scope": "project", "over_cap": False,
+              "project_key": "acc0unt1"}]
+    base = {"counts": counts, "scopes": scopes, "review": review, "rules": rules}
+    web = {**base, "url": "https://covey.example.test/memory", "review_url": "https://covey.example.test/memory/review"}
+    local = {**base, "url": "", "review_url": ""}
+    empty = {"counts": {"rule": 0, "decision": 0, "note": 0, "pending": 0}, "scopes": scopes[:2], "review": [], "rules": [],
+             "url": "", "review_url": ""}
+    view = {"revision": 3, "hub": True, "token": "c" * 24, "review_page": 0, "rules_page": 0}
     row = [tab_row("memory", "c" * 24, FULL_TABS)]
-    empty = {"preview": {"workspace": "bridge", "workspaces": ["bridge"], "count": 0, "chars": 0, "left": 0,
-                         "rooms": [["全局", 0, 1200], ["工作区 bridge", 0, 800]], "warnings": [], "text": ""},
-             "parts": [{"scope": "global", "title": "全局", "rows": []},
-                       {"scope": "workspace", "title": "工作区 bridge", "rows": []},
-                       {"scope": "project", "title": "专项", "rows": [], "empty": "专项的记忆没开（COVEY_PROJECT_MEMORY=1）"},
-                       {"scope": "topic", "title": "话题", "rows": []}]}
-    return {"memory": memory_card("c" * 24, view, data, top=row),
-            "memory_open": memory_card("c" * 24, {**view, "open": "global", "confirm": "principle:p0000f0",
-                                                  "notice": "已标常驻：回答先给结论，细节放后面"}, data, top=row),
+    return {"memory": memory_card("c" * 24, view, local, top=row),
+            "memory_open": memory_card("c" * 24, {**view, "confirm": "global:p0000f0", "notice": "已采纳：回答先给结论"}, local, top=row),
+            "memory_web": memory_card("c" * 24, view, web, top=row),
             "memory_empty": memory_card("c" * 24, view, empty, top=row)}
 
 
@@ -1634,6 +1626,9 @@ def digest_cards():
                                                                    "url": "https://applink.feishu.cn/t/488"}]}],
                                  "web": "https://example.invalid/app/covey"}),
             "done_only": digest_card({**view, "waiting": [], "running": [], "done": view["done"][:1]}),
+            # 记忆：待审核 N 条 with the link to the 网页记忆中心's 待审核 tab (app/digest.py review_view).
+            "memory_review": digest_card({**view, "waiting": [], "running": [], "done": view["done"][:1],
+                                          "review": {"pending": 3, "url": "https://covey.example.test/memory/review"}}),
             # Results not seen that ended before the digest before are listed too, the heading says how many.
             "older_unseen": digest_card({**view, "waiting": [], "running": [], "done": view["done"][:2], "older": 1}),
             "old_questions": digest_card(old),
@@ -1857,7 +1852,8 @@ def project_cards():
         outputs=("**开始** 09:12　**已运行** 2小时3分", "**token** 33万"), ask_text="把订单库迁到新集群，周末前要有结果",
         ask_at="09:10", ask_url=ask)
     full = pc.Project(**{**work.__dict__, "triage": ("09:40 答了：用哪个库版本？", "10:05 转给你：能不能停服务？"),
-                         "memory": (("m1", "迁移窗口在周六凌晨"), ("m2", "旧集群只读到周日")),
+                         "memory": (("m1", "迁移窗口在周六凌晨"), ("m2", "旧集群只读到周日")), "memory_counts": (2, 1, 3, 1),
+                         "memory_url": "https://covey.example.test/memory",
                          "library": (("迁移方案.md",), ("表清单.csv",))})
     many = tuple(pc.Member(f"{index:02x}" * 3 + "0" * 10, pc.DONE if index % 3 else pc.RUNNING, f"T{600 + index}", f"话题 {index}",
                            "做完了", "5分00秒") for index in range(11))

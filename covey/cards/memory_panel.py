@@ -1,166 +1,183 @@
-"""The 设置 card's 记忆 tab (app/memory_panel.py, COVEY_MEMORY=1): the owner's memory by scope, and what the next turn carries.
+"""The 设置 card's 记忆 tab (app/memory_panel.py, COVEY_MEMORY=1): the memory's counts, the 待审核 to decide, and the way to the web.
 
-One layer under the tab row:
+Feishu keeps three things of the memory: looking at the numbers, the light handling of 待审核 (采纳 or 不要, one item at a time),
+and the way to the 网页记忆中心 (managing it all is there: editing, moving to another scope, 作废). One layer under the tab row:
 
-- 下一轮带上什么: a 工作区 row (a settings-list row, cards/launch_config.py setting_row: the workspace whose new topic it
-  shows), one line of how many entries and characters an ordinary new topic there carries on the owner's own turn, the room
-  each scope used (全局 1,050/1,200 字), a line for each scope that is near its limit or could not carry all (放不下 N 条: the
-  dropped count, said here instead of only to the model), and a fold 看原文 with the block itself (app/prompts.py
-  memory_block, cut to PREVIEW characters).
-- 全局, 工作区 <name>, 专项, 话题: a section each with its entries, the newest first, each one line (你说的 or 它总结的, 常驻,
-  where it came from, 这次带不上 for one the next turn leaves out) with 删除 (two steps: 删除, then 确认删除 or 取消) and, for one
-  that can be (a principle), 常驻 or 取消常驻; a line of 你说的 in a project's or a topic's memory (not from a topic with redaction
-  on) 升为全局 (T647 E4), one of the 全局 principles then. A section shows SHOWN entries and 展开 (共 N 条); the one ``open``
-  shows a page of PAGE with 上一页 / 下一页 / 收起, the others only their heading then.
+- the header's subtitle ``规矩 N · 决定 N · 资料 N · 待审核 N``; a line of counts for each scope (全局, 话题, the projects: the
+  first PROJECTS of them, then 另有 N 个专项);
+- 待审核: the oldest items (title and a line of text), each with 采纳 and 不要, a page of REVIEW_PAGE with 上一页 / 下一页;
+  with the web page on (``url``) a button 打开网页记忆中心 and, under 待审核, one 去网页逐条看 (URL buttons, they carry no kind);
+- without the web page: the titles of the 全局 and the projects' rules (short code and title, 超额 marked), each with 收起
+  (two steps: 收起, then 确认收起 or 取消; core/memstore.py archive), a page of RULE_PAGE.
 
-Each button's value carries its kind, the card's token and the revision drawn. ``view``: revision, notice, workspace, open,
-page, confirm (the key of the entry asking 确认删除); ``data``: app/memory_panel.py ``facts``. The lines are cut (TEXT,
-WHERE, OTHERS, NAME, at most WORKSPACES workspaces, those with memory first), and a card that would still be too much for CardKit is drawn again
-with less (LESS: the block shorter, then one entry a closed section).
+The buttons keep the kinds the tab had (the closed set of kinds is frozen, tests/golden/concepts.json): ``ACCEPT`` is
+``bridge_memory_pin`` (it was 常驻), ``DELETE`` is 不要 on a 待审核 item (``key`` ``review:…``, ``op`` reject) and 收起 on a rule
+(``op`` ask, confirm or cancel), ``OPEN`` pages. ``WORKSPACE`` and ``PROMOTE`` (and 常驻 as the old ``PIN``) stay in KINDS only to
+take the click of a card drawn before: they change nothing and say so (app/memory_panel.py).
+
+Each button's value carries its kind, the card's token and the revision drawn. ``view``: revision, notice, review_page,
+rules_page, confirm (the key of the rule asking 确认收起); ``data``: app/memory_panel.py ``facts``. A card that would be too much
+for CardKit (cards/elements.py CARD_NODES, CARD_BYTES) is drawn again with fewer rows.
 """
 from __future__ import annotations
 
 from covey.cards import ui
-from covey.cards.elements import (CARD_BYTES, CARD_NODES, element_count, fold, grey, item, json_size, md, note, panel_header,
+from covey.cards.elements import (CARD_BYTES, CARD_NODES, element_count, grey, item, json_size, md, note, panel_header, plain,
                                   section, styled_panel, text_button)
-from covey.cards.launch_config import setting_row, workspace_setting
+from covey.core import web_sync
 from covey.core.text import cut, literal
 
 TITLE = "记忆"
 ICON = "member_outlined"
-WORKSPACE = "bridge_memory_workspace"  # The 工作区 row's option: the workspace of the preview and the 工作区 section.
-OPEN = "bridge_memory_open"  # 展开 / 上一页 / 下一页 / 收起: ``scope`` ('' closes) and ``page``.
-DELETE = "bridge_memory_delete"  # 删除: ``key`` of the entry, ``op`` ask, confirm or cancel.
-PIN = "bridge_memory_pin"  # 常驻 / 取消常驻: ``key`` of a principle, ``on``.
-PROMOTE = "bridge_memory_to_global"  # 升为全局: ``key`` of a project's or a topic's entry.
-KINDS = frozenset({WORKSPACE, OPEN, DELETE, PIN, PROMOTE})
-PROMOTE_LABEL = "升为全局"
-SHOWN = 2  # Entries a closed section shows.
-PAGE = 8  # Entries a page of the open section shows.
-PREVIEW = 1800  # Characters of the block 看原文 shows (a card holds 30000 bytes of JSON).
-TEXT = 80  # Characters of an entry's line.
-NAME = 24  # Characters of a workspace's name on the 工作区 row.
-WORKSPACES = 30  # Workspaces the 工作区 row offers, the chosen one first, then those with memory (app/memory_panel.py facts), at two nodes each.
-WHERE = 20  # Characters of where an entry came from (专项「…」, T12).
-OTHERS = 120  # Characters of the line of the other workspaces.
-FOOT = ("删掉的下一轮就不带了。标「常驻」的不会因为放不下被挤掉（每组最多 8 条）。专项、话题里你说的点「升为全局」，以后每个话题都带。"
-        "全局的只在你自己的一轮带；工作区的谁在这个工作区开话题都带；代答话题什么都不带。")
+WORKSPACE = "bridge_memory_workspace"  # Offline: the 工作区 row of the older tab. A click says so and changes nothing.
+OPEN = "bridge_memory_open"  # 上一页 / 下一页: ``scope`` (review or rules) and ``page``.
+DELETE = "bridge_memory_delete"  # 不要 (``key`` review:…, ``op`` reject) and 收起 (``key`` of a rule, ``op`` ask, confirm or cancel).
+ACCEPT = "bridge_memory_pin"  # 采纳 a 待审核 item (``key`` review:…, ``op`` accept): the kind that was 常驻, kept so no kind is new.
+PIN = ACCEPT  # What the older tab's 常驻 carried (``key`` of a principle, ``on``): offline, answered with a line.
+PROMOTE = "bridge_memory_to_global"  # Offline: 升为全局 of the older tab.
+KINDS = frozenset({WORKSPACE, OPEN, DELETE, ACCEPT, PROMOTE})
+REVIEW = "review"  # OPEN's ``scope`` of the 待审核 list.
+RULES = "rules"  # OPEN's ``scope`` of the rules list (without the web page).
+REVIEW_PAGE = 5  # Items of 待审核 a page shows.
+RULE_PAGE = 8  # Rules a page shows.
+PROJECTS = 5  # Projects whose counts get a line.
+TITLE_CHARS = 30  # Characters of an item's or a rule's title.
+TEXT = 60  # Characters of an item's line of text.
+URL_LABEL = "打开网页记忆中心"
+REVIEW_URL_LABEL = "去网页逐条看"
+OFFLINE = "这个选项已下线：记忆按范围管，改动到网页记忆中心"
 EMPTY = "还没有记忆：你在话题里说“以后…”“别再…”这类长期要求，那一轮结束后会记下。"
 
 
-def entry_line(row) -> str:
-    """One entry: who said it, 常驻, where it came from, its text; 这次带不上 when the next turn leaves it out."""
-    tags = [grey(row["by"])]
-    if row.get("pinned"):
-        tags.append("**常驻**")
-    if row.get("where"):
-        tags.append(grey(literal(cut(row["where"], WHERE))))
-    text = literal(cut(row.get("text"), TEXT))
-    out = " " + grey("· 这次带不上") if row.get("out") else ""
-    return " · ".join(tags) + f"：{text}{out}"
+def center_url(tab="") -> str:
+    """The 网页记忆中心's address (app/web_memory.py center_url, the same rule: a card may not import app/): ``page_url`` +
+    /memory[/tab], '' without the web page."""
+    url = web_sync.page_url()
+    if not url or "?" in url or "#" in url:
+        return url
+    return url.rstrip("/") + "/memory" + (f"/{tab}" if tab else "")
 
 
-def entry_row(row, view, value):
-    key = row["key"]
-    if view.get("confirm") == key:
-        buttons = [text_button("确认删除", value(DELETE, key=key, op="confirm"), tone="danger"),
-                   text_button("取消", value(DELETE, key=key, op="cancel"))]
-    else:
-        buttons = [text_button("删除", value(DELETE, key=key, op="ask"), tone="danger")]
-        if row.get("pinnable"):
-            buttons.insert(0, text_button("取消常驻" if row.get("pinned") else "常驻",
-                                          value(PIN, key=key, on=not row.get("pinned"))))
-        if row.get("promotable"):
-            buttons.insert(0, text_button(PROMOTE_LABEL, value(PROMOTE, key=key)))
-    return item(md(entry_line(row)), *buttons)
+def url_button(label, url):
+    """A small borderless button that opens ``url`` (it carries no kind: a click never reaches the Bridge)."""
+    return {"tag": "button", "text": plain(label), "type": "text", "size": "small",
+            "behaviors": [{"type": "open_url", "default_url": url}]}
 
 
-def preview_elements(preview, token, view, value, limit=PREVIEW):
-    """下一轮带上什么: the 工作区 row, the counts, each scope's room and the lines of the ones near or past it, the block."""
-    names = list(dict.fromkeys([preview.get("workspace") or "", *(preview.get("workspaces") or [])]))
-    names = [name for name in names if name][:WORKSPACES]
-    elements = [section("下一轮带上什么")]
-    if names:
-        setting = workspace_setting("mem_ws", WORKSPACE, preview.get("workspace") or "", names,
-                                    labels={name: name if len(name) <= NAME else name[:NAME - 1] + "…" for name in names})
-        # The element's ID changes with each draw, so a choice's redraw closes the row (an ID is at most 20 characters).
-        elements.append(setting_row(setting, token=token, stamp=f"r{view.get('revision', 1) % 100000}",
-                                    value={"revision": view.get("revision", 1)}))
-    where = literal(preview.get("workspace") or "")
-    lead = f"在工作区 **{where}** 新开话题、你自己的一轮" if where else "新开话题、你自己的一轮"
-    elements.append(md(f"{lead}带上 **{preview.get('count', 0)} 条**，约 {preview.get('chars', 0):,} 字"
-                       + (f"；另有 {preview['left']} 条放不下" if preview.get("left") else "") + "。"))
-    rooms = " ｜ ".join(f"{title} {used:,}/{limit:,} 字" for title, used, limit in preview.get("rooms") or ())
-    if rooms:
-        elements.append(note(rooms))
-    elements += [md(line) for line in preview.get("warnings") or ()]
-    text = str(preview.get("text") or "")
-    if text:
-        shown = text if len(text) <= limit else text[:limit] + "\n…（后面略）"
-        elements.append(fold(f"mem_block_r{view.get('revision', 1) % 100000}", md(grey("看原文（模型读到的就是这一块）")),
-                             [md("```text\n" + shown.replace("```", "'''") + "\n```")], padding="0px 0px 0px 0px"))
+def counts_words(counts, *, pending=True) -> str:
+    """``规矩 N · 决定 N · 资料 N`` and ``· 待审核 N``."""
+    counts = counts or {}
+    parts = [f"规矩 {counts.get('rule', 0)}", f"决定 {counts.get('decision', 0)}", f"资料 {counts.get('note', 0)}"]
+    if pending:
+        parts.append(f"待审核 {counts.get('pending', 0)}")
+    return " · ".join(parts)
+
+
+def scope_lines(scopes, projects=PROJECTS) -> list:
+    """A line of counts for 全局, 话题 and the first ``projects`` projects, one more line for the rest."""
+    scopes = list(scopes or ())
+    fixed = [row for row in scopes if row.get("key") in ("global", "topics")]
+    each = [row for row in scopes if str(row.get("key") or "").startswith("p:")]
+    lines = [md(f"**{literal(cut(row.get('title') or '', 24))}** · {counts_words(row.get('counts'))}", size="notation")
+             for row in [*fixed, *each[:projects]]]
+    if len(each) > projects:
+        lines.append(note(f"另有 {len(each) - projects} 个专项"))
+    return lines
+
+
+def pager(scope, page, pages, value):
+    buttons = []
+    if page > 0:
+        buttons.append(text_button("上一页", value(OPEN, scope=scope, page=page - 1)))
+    if page + 1 < pages:
+        buttons.append(text_button("下一页", value(OPEN, scope=scope, page=page + 1)))
+    return item(note(f"第 {page + 1}/{pages} 页"), *buttons)
+
+
+def page_of(rows, view, field, size):
+    pages = max(1, -(-len(rows) // size))
+    page = min(max(int(view.get(field) or 0), 0), pages - 1)
+    return rows[page * size:(page + 1) * size], page, pages
+
+
+def review_elements(review, view, value, data, size=REVIEW_PAGE):
+    """待审核: the oldest items with 采纳 and 不要, the way to the web page when there is one."""
+    elements = [section(f"待审核（{len(review)}）")]
+    if not review:
+        return [*elements, note("没有待审核的")]
+    shown, page, pages = page_of(review, view, "review_page", size)
+    for row in shown:
+        key = str(row.get("key") or "")
+        line = f"**{literal(cut(row.get('title') or row.get('text') or '', TITLE_CHARS))}**"
+        text = literal(cut(row.get("text") or "", TEXT))
+        if text and text != literal(cut(row.get("title") or "", TITLE_CHARS)):
+            line += "\n" + grey(text)
+        elements.append(item(md(line, size="normal_v2"), text_button("采纳", value(ACCEPT, key=key, op="accept")),
+                             text_button("不要", value(DELETE, key=key, op="reject"))))
+    if pages > 1:
+        elements.append(pager(REVIEW, page, pages, value))
+    if data.get("review_url"):
+        elements.append(item(note("每条的全文、改了再采纳、归到别的范围，在网页上"), url_button(REVIEW_URL_LABEL, data["review_url"])))
     return elements
 
 
-def scope_elements(part, view, value, shown_closed=SHOWN):
-    """A section: its heading with the count, its rows (SHOWN, a page when open, none while another is open), its buttons."""
-    rows, scope = part.get("rows") or [], part["scope"]
-    opened = view.get("open") or ""
-    heading = section(f"{literal(part['title'])}（{len(rows)}）")
-    if not rows:
-        return [heading, note(part.get("empty") or "没有")] + ([note(literal(cut(part["others"], OTHERS)))] if part.get("others") else [])
-    if opened and opened != scope:
-        return [item(heading, text_button("展开", value(OPEN, scope=scope, page=0)))]
-    if opened == scope:
-        pages = max(1, -(-len(rows) // PAGE))
-        page = min(max(int(view.get("page") or 0), 0), pages - 1)
-        shown = rows[page * PAGE:(page + 1) * PAGE]
-        buttons = []
-        if page > 0:
-            buttons.append(text_button("上一页", value(OPEN, scope=scope, page=page - 1)))
-        if page + 1 < pages:
-            buttons.append(text_button("下一页", value(OPEN, scope=scope, page=page + 1)))
-        buttons.append(text_button("收起", value(OPEN, scope="", page=0)))
-        tail = [item(note(f"第 {page + 1}/{pages} 页"), *buttons)]
-    else:
-        shown = rows[:shown_closed]
-        tail = [item(note(f"另有 {len(rows) - shown_closed} 条"), text_button("展开", value(OPEN, scope=scope, page=0)))] \
-            if len(rows) > shown_closed else []
-    elements = [heading, *(entry_row(row, view, value) for row in shown), *tail]
-    if part.get("others"):
-        elements.append(note(literal(cut(part["others"], OTHERS))))
+def rule_line(row, titles) -> str:
+    where = "全局" if row.get("scope") == "global" else titles.get(f"p:{row.get('project_key')}", "专项")
+    over = " " + grey("· 超额") if row.get("over_cap") else ""
+    return (f"{grey(str(row.get('code') or ''))} {literal(cut(row.get('title') or '', TITLE_CHARS))} "
+            f"{grey('· ' + literal(cut(where, 12)))}{over}")
+
+
+def rule_elements(rules, scopes, view, value, size=RULE_PAGE):
+    """Without the web page: the titles of the rules in use, each 收起 (two steps)."""
+    elements = [section(f"规矩（{len(rules)}）")]
+    if not rules:
+        return [*elements, note("没有")]
+    titles = {str(row.get("key")): str(row.get("title") or "") for row in scopes or ()}
+    shown, page, pages = page_of(rules, view, "rules_page", size)
+    for row in shown:
+        key = str(row.get("key") or "")
+        if view.get("confirm") == key:
+            buttons = [text_button("确认收起", value(DELETE, key=key, op="confirm"), tone="danger"),
+                       text_button("取消", value(DELETE, key=key, op="cancel"))]
+        else:
+            buttons = [text_button("收起", value(DELETE, key=key, op="ask"))]
+        elements.append(item(md(rule_line(row, titles), size="normal_v2"), *buttons))
+    if pages > 1:
+        elements.append(pager(RULES, page, pages, value))
     return elements
 
 
-# A card that would be too much for CardKit (cards/elements.py CARD_NODES, CARD_BYTES) is drawn again with less: the block
-# cut shorter, then one entry a closed section.
-LESS = ((PREVIEW, SHOWN), (600, SHOWN), (600, 1))
+# A card too much for CardKit is drawn again with fewer rows: (items of 待审核, rules, projects).
+LESS = ((REVIEW_PAGE, RULE_PAGE, PROJECTS), (3, 4, 3), (2, 2, 1))
 
 
 def memory_card(token, view, data, *, top=()):
-    """The tab for ``view`` over ``data`` (app/memory_panel.py facts: preview, parts)."""
-    for limit, shown in LESS:
-        card = _memory_card(token, view, data, top, limit, shown)
+    """The tab for ``view`` over ``data`` (app/memory_panel.py facts)."""
+    for review, rules, projects in LESS:
+        card = _memory_card(token, view, data, top, review, rules, projects)
         if element_count(card["body"]["elements"]) <= CARD_NODES and json_size(card) <= CARD_BYTES:
             break
     return card
 
 
-def _memory_card(token, view, data, top, limit, shown):
+def _memory_card(token, view, data, top, review_size, rule_size, projects):
     def value(kind, **more):
         return {"kind": kind, "token": token, "revision": view.get("revision", 1), **more}
 
     elements = [*top]
     if view.get("notice"):
         elements.append(ui.receipt(view["notice"]))
-    parts = data.get("parts") or []
-    elements += preview_elements(data.get("preview") or {}, token, view, value, limit)
-    if not any(part.get("rows") for part in parts):
+    counts = data.get("counts") or {}
+    if data.get("error"):
+        elements.append(md(literal(data["error"])))
+    elif not any(counts.get(name) for name in ("rule", "decision", "note", "pending")):
         elements.append(md(EMPTY))
-    for part in parts:
-        elements += scope_elements(part, view, value, shown)
-    elements.append(note(FOOT))
-    total = sum(len(part.get("rows") or ()) for part in parts)
-    preview = data.get("preview") or {}
-    subtitle = f"共 {total} 条 · 下一轮带 {preview.get('count', 0)} 条"
+    if data.get("url"):
+        elements.append(item(note("记忆按范围管：看全貌、改、整理，都在网页记忆中心"), url_button(URL_LABEL, data["url"])))
+    elements += scope_lines(data.get("scopes"), projects)
+    elements += review_elements(data.get("review") or [], view, value, data, review_size)
+    if not data.get("url"):
+        elements += rule_elements(data.get("rules") or [], data.get("scopes"), view, value, rule_size)
+    subtitle = counts_words(counts)
     return styled_panel(panel_header(ICON, TITLE, subtitle), elements, f"{TITLE} · {subtitle}")
