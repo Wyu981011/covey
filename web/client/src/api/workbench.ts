@@ -19,7 +19,7 @@ import type {
   UploadDoneResponse,
   UploadPartRequest,
   UploadStartRequest,
-  UploadStartResponse, MainMemoryResponse, UpgradeResponse, QuotaResponse,
+  UploadStartResponse, MainMemoryResponse, UpgradeResponse, QuotaResponse, MemoryKeyResponse,
 } from '@shared/api.interface';
 
 export async function fetchMe(): Promise<{ name: string | null }> {
@@ -109,6 +109,14 @@ export async function fetchSettings(): Promise<SettingsResponse | null> {
 export async function fetchMemory(): Promise<MainMemoryResponse | null> {
   const res = await axiosForBackend({ url: '/api/memory', method: 'GET' });
   const d = res.data as MainMemoryResponse | '';
+  return d && typeof d === 'object' && d.data && typeof d.data === 'object' ? d : null;
+}
+
+/** v43：记忆中心的一键（memory:index、memory:global、memory:p:<专项>…）；Covey 没推过时是 null（空响应体）。
+ *  旧服务端不认 ?key=，回的是 v37 的 memory：形状对不上由调用方（memoryCenter.ts 的 isMemoryIndex 等）当没有 */
+export async function fetchMemoryKey<T = unknown>(key: string): Promise<MemoryKeyResponse<T> | null> {
+  const res = await axiosForBackend({ url: '/api/memory', method: 'GET', params: { key } });
+  const d = res.data as MemoryKeyResponse<T> | '';
   return d && typeof d === 'object' && d.data && typeof d.data === 'object' ? d : null;
 }
 

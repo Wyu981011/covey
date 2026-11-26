@@ -10,7 +10,8 @@ import { useTick } from './ui';
 import { engineText, shortWhen, toneOf, topicHref } from './lib';
 import { topicColor } from './look.gen';
 import { firstParagraph, lastDoneAgent, shownText } from './topicText';
-import { board, ownerDecisions, quoteOf, withQuote, type Board, type Decision, type Placed } from './progressData';
+import { board, projectDecisions, quoteOf, withQuote, type Board, type Decision, type Placed } from './progressData';
+import { useV43ProjectEntries } from './MemoryList';
 import {
   ACT_CLS, ACT_ICON, ACT_ORDER, ACT_WORD, briefOf, edgeOn, fitText, GBOX, itemKind, itemName, ITEM_ICON, ITEM_WORD, lastWord, nextStepOf, phaseOf, positionOf, quoteAction,
   quoteTopic, restWords, sessionsOf, stepLine, topicRefs, TONE_CLS, TONE_ICON, toneWordOf, traceOf, waitsOwner,
@@ -268,9 +269,9 @@ const TaskGraph: React.FC<{ b: Brief; hl: string | null; pick: (key: string) => 
   );
 };
 
-const Decisions: React.FC<{ rows: Decision[]; now: number }> = ({ rows, now }) => (
+const Decisions: React.FC<{ rows: Decision[]; now: number; v43?: boolean }> = ({ rows, now, v43 }) => (
   <section className="pb-card pb-dec">
-    <h3 className="pb-h">近 10 条决定<span className="pb-hint">主人答过的，自动记</span></h3>
+    <h3 className="pb-h">近 10 条决定<span className="pb-hint">{v43 ? '决定记录，新的在前' : '主人答过的，自动记'}</span></h3>
     {rows.length ? (
       rows.map((d: Decision) => (
         <div key={d.id || d.text} className="pb-dc" title={d.text}>
@@ -281,7 +282,7 @@ const Decisions: React.FC<{ rows: Decision[]; now: number }> = ({ rows, now }) =
         </div>
       ))
     ) : (
-      <p className="pb-muted">还没有主人答过的决定</p>
+      <p className="pb-muted">还没有决定</p>
     )}
   </section>
 );
@@ -438,7 +439,9 @@ const ProjectBrief: React.FC<{ p: SnapshotProject; snap: SnapshotResponse; lead:
   const b: Brief = useMemo(() => briefOf(p, snap, now), [p, snap, now]);
   const topicsByKey = useMemo(() => new Map<string, SnapshotTopic>(snap.topics.map((t: SnapshotTopic) => [t.key, t])), [snap.topics]);
   const placed: Board = useMemo(() => board(p.checklist, topicsByKey), [p.checklist, topicsByKey]);
-  const decisions: Decision[] = useMemo(() => ownerDecisions(p.memory, snap.topics, 10), [p.memory, snap.topics]);
+  // v43：读记忆中心里这个专项的决定记录（memory:p:<专项>）；旧 Covey 照旧读专项记忆里主人答过的
+  const v43 = useV43ProjectEntries(p.key);
+  const decisions: Decision[] = useMemo(() => projectDecisions(p.memory, v43, snap.topics, 10), [p.memory, v43, snap.topics]);
   const keep = (k: string, v: string | null, also?: [string, string | null]): void => {
     const n = new URLSearchParams(params);
     for (const [key, val] of [[k, v], ...(also ? [also] : [])] as [string, string | null][]) {
@@ -505,7 +508,7 @@ const ProjectBrief: React.FC<{ p: SnapshotProject; snap: SnapshotResponse; lead:
               </section>
             ) : null}
             <TaskGraph b={b} hl={hl} pick={pick} graph={graph} wrap={tg} />
-            <Decisions rows={decisions} now={now} />
+            <Decisions rows={decisions} now={now} v43={Array.isArray(v43)} />
           </div>
           <Rail b={b} now={now} canSay={!!lead} say={sayText} discuss={discuss} />
         </div>

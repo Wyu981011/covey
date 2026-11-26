@@ -1076,6 +1076,8 @@ export interface LaunchPreselect {
   workspace?: string;
   /** v43：可选（新 Covey 不推） */
   run_mode?: string;
+  /** v43（WEB 包加，向后兼容）：执行设备，LaunchData.devices 里的 name。只在 Covey 推了 2 台及以上设备时网页才带；不带 = 本机 */
+  device?: string;
 }
 export interface LaunchData {
   models: LaunchModel[];
@@ -1732,3 +1734,9 @@ export interface SettingsReposPage {
   worktrees: { total: number; prunable: { repo: string; branch: string; tail: string; topic_number?: number; ended_at?: number }[] };
 }
 // SettingsData.repos?: SettingsReposPage | SettingsError;（「工作区」页 workspace 保留给旧 Covey）
+/** v43（WEB 包加）：GET /api/memory?key=<memory:* 键> 的响应，sync_state 里那一行（rev 是 Covey 给的内容哈希）；没推过是 null */
+export interface MemoryKeyResponse<T = unknown> {
+  rev: string;
+  data: T;
+  at: string;
+}

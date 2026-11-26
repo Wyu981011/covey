@@ -51,7 +51,7 @@ import {
   type TurnImage,
   type TurnView,
   type WaitingItem,
-  type SettingsAsks, type MainMemoryData, type MainMemoryResponse, type UpgradeData, type UpgradeResponse, type QuotaData, type QuotaResponse } from '@shared/api.interface';
+  type SettingsAsks, type MainMemoryData, type MainMemoryResponse, type UpgradeData, type UpgradeResponse, type QuotaData, type QuotaResponse, type MemoryKeyResponse } from '@shared/api.interface';
 import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
@@ -1110,6 +1110,15 @@ export class WorkbenchQueryService {
     return { rev: str(o.rev), data: o.data as MainMemoryData, at: str(o.at) };
   }
 
+  /** v43：记忆中心的一键（memory:index、memory:global…，键已由调用方按 MEMORY_KEY_RE 核过）；Covey 没推过、或 data 不是对象是 null */
+  async memoryKey(name: string): Promise<MemoryKeyResponse | null> {
+    const res = await this.db.execute(sql`select value from sync_state where name = ${name}`);
+    const v = asRows<{ value: unknown }>(res)[0]?.value;
+    const o: Record<string, unknown> = obj(typeof v === 'string' ? JSON.parse(v) : v);
+    if (!o.data || typeof o.data !== 'object' || Array.isArray(o.data)) return null;
+    return { rev: str(o.rev), data: o.data, at: str(o.at) };
+  }
+
   /** v39：版本与更新（设置条目 key upgrade）；Covey 没推过、或形状不对是 null */
   async upgrade(): Promise<UpgradeResponse | null> {
     const res = await this.db.execute(sql`select value from sync_state where name = ${'upgrade'}`);
@@ -1250,6 +1259,8 @@ export class WorkbenchQueryService {
       if (payload.run_mode !== undefined && !(LAUNCH_RUN_MODES as readonly string[]).includes(str(payload.run_mode))) throw new BadRequestException('launch 的 run_mode 要是 direct 或 worktree');
       const repoErr: string | null = launchReposError(payload.repos);
       if (repoErr) throw new BadRequestException(repoErr);
+      // v43：执行设备（可选，只在多设备时网页才带）
+      if (payload.device !== undefined && (typeof payload.device !== 'string' || Array.from(payload.device).length > 64)) throw new BadRequestException('device 要是最多 64 字的文字');
       if (payload.redaction !== 'on' && payload.redaction !== 'off') throw new BadRequestException('launch 的 redaction 要是 on 或 off');
       if (typeof payload.work_mode !== 'string' || Array.from(payload.work_mode).length > 200) throw new BadRequestException('launch 的 work_mode 要是文字（可为空）');
       return;
@@ -1268,6 +1279,8 @@ export class WorkbenchQueryService {
       }
       const repoErr: string | null = launchReposError(payload.repos);
       if (repoErr) throw new BadRequestException(repoErr);
+      // v43：执行设备（可选，只在多设备时网页才带）
+      if (payload.device !== undefined && (typeof payload.device !== 'string' || Array.from(payload.device).length > 64)) throw new BadRequestException('device 要是最多 64 字的文字');
       for (const k of ['effort', 'work_mode'] as const) {
         const v: unknown = payload[k];
         if (typeof v !== 'string' || Array.from(v).length > 200) throw new BadRequestException(`switch 的 ${k} 要是文字（可为空）`);

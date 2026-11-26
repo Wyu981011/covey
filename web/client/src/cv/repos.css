@@ -1,0 +1,57 @@
+/* 设置页「仓库」页：每个仓库一行（桌面），≤640px 切成卡片；颜色只用 token，类名前缀 rp-。
+   状态标签复用 pill（短标签规则在 tags.css），这里的新类名都不是短标签 */
+.cv .rp-row{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:16px;row-gap:6px;align-items:start;padding:12px 16px;border-top:1px solid var(--line);min-width:0}
+.cv .rp-row:first-child{border-top:0}
+.cv .rp-main{min-width:0;display:flex;flex-direction:column;gap:3px}
+.cv .rp-hd{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.cv .rp-name{font-size:14px;color:var(--t1);overflow-wrap:anywhere}
+.cv .rp-row.dim .rp-name{color:var(--t2)}
+.cv .rp-note{font-size:13px;line-height:1.5;color:var(--t2);overflow-wrap:anywhere}
+.cv .rp-meta{font-size:12px;line-height:1.5;color:var(--t3);overflow-wrap:anywhere;word-break:break-word}
+.cv .rp-act{display:flex;align-items:center;gap:14px;padding-top:2px}
+/* 行内编辑、确认、回执占满整行 */
+.cv .rp-edit,.cv .rp-row>.st-ask,.cv .rp-row>.st-rc{grid-column:1/-1}
+.cv .rp-edit{display:flex;flex-wrap:wrap;align-items:center;gap:10px;min-width:0}
+.cv .rp-f{display:flex;align-items:center;gap:8px;min-width:0}
+.cv .rp-f:first-child{flex:1 1 280px}
+.cv .rp-f .st-in-t{min-width:0}
+.cv .rp-edit .st-sel{width:auto;min-width:112px}
+/* 添加仓库 */
+.cv .rp-add{display:flex;flex-direction:column;gap:8px;padding:10px 16px;align-items:flex-start}
+.cv .rp-addrow{display:flex;gap:10px;width:100%;min-width:0}
+.cv .rp-addrow .st-in-t{min-width:0}
+.cv .rp-addrow .btn{flex:none;height:32px}
+.cv .rp-more{padding:2px 0}
+/* 可清理的 worktree */
+.cv .rp-none{margin:16px 0 0;font-size:12.5px;color:var(--t3)}
+.cv .rp-pr-hd{padding:8px 16px;border-bottom:1px solid var(--line)}
+.cv .rp-chk{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--t2);cursor:pointer}
+.cv .rp-pr{display:flex;align-items:flex-start;gap:10px;padding:9px 16px;border-top:1px solid var(--line);cursor:pointer;min-width:0}
+.cv .rp-pr-hd+.rp-pr{border-top:0}
+.cv .rp-pr input,.cv .rp-chk input{margin:2px 0 0;accent-color:var(--a1);flex:none}
+.cv .rp-chk input{margin:0}
+.cv .rp-prt{min-width:0;font-size:12.5px;line-height:1.5;color:var(--t2);overflow-wrap:anywhere}
+.cv .rp-pr-ft{padding:10px 16px;border-top:1px solid var(--line);display:flex}
+.cv .rp-pr-ft .st-ask{padding:0;flex:1;min-width:0}
+
+@media (max-width:640px){
+  /* 卡片：名字+标签一行、用途一行、灰字折行、操作一行（点按区 ≥40px 高） */
+  .cv .rp-row{grid-template-columns:minmax(0,1fr);padding:12px}
+  .cv .rp-act{gap:8px;padding-top:4px}
+  .cv .rp-act .st-link{min-height:40px;min-width:56px;justify-content:center;padding:0 10px;font-size:14px}
+  .cv .rp-edit{flex-direction:column;align-items:stretch}
+  .cv .rp-f{flex-wrap:wrap}
+  .cv .rp-f:first-child{flex:none}
+  .cv .rp-f .st-in-t{flex:1 1 0;width:100%}
+  .cv .rp-edit .st-sel{flex:1 1 0;width:100%;min-width:0}
+  .cv .rp-edit .btn{height:40px}
+  .cv .rp-add{padding:10px 12px}
+  .cv .rp-addrow{flex-direction:column}
+  .cv .rp-addrow .btn{height:40px;width:100%}
+  .cv .rp-more{min-height:40px}
+  .cv .rp-pr-hd,.cv .rp-pr,.cv .rp-pr-ft{padding-left:12px;padding-right:12px}
+  .cv .rp-pr{min-height:44px;align-items:center}
+  .cv .rp-pr input,.cv .rp-chk input{width:18px;height:18px}
+  .cv .rp-chk{min-height:40px}
+  .cv .rp-pr-ft .btn{height:40px;width:100%}
+}

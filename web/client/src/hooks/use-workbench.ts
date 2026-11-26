@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import type {
   OutboxRequest,
@@ -12,8 +12,8 @@ import type {
   SnapshotResponse,
   SnapshotTopic,
   TurnView,
-  TurnsResponse, MainMemoryResponse, UpgradeResponse, QuotaResponse } from '@shared/api.interface';
-import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchUpgrade, fetchQuota, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
+  TurnsResponse, MainMemoryResponse, UpgradeResponse, QuotaResponse, MemoryIndex, MemoryKeyResponse } from '@shared/api.interface';
+import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchMemoryKey, fetchUpgrade, fetchQuota, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
 import { mergeCollabs } from '@client/src/cv/collab';
 import { mergeSnapshot, sinceFor } from '@client/src/cv/snapshotMerge';
 
@@ -220,9 +220,49 @@ export const MEMORY_KEY = ['memory'] as const;
 /** v16 整理专项的建议：看板上每 10 秒拉一次；点完按钮另外隔 1.5 秒、4 秒各拉一次（见 Tidy.tsx） */
 export const useTidy = () =>
   useQuery<TidyResponse>({ queryKey: TIDY_KEY, queryFn: fetchTidy, refetchInterval: 10000, staleTime: 3000, gcTime: KEEP_MS });
-/** v37：主记忆（设置页「记忆」）；改了以后 Covey 回执之前就推，页面收到 done 再取一次 */
-export const useMemory = () =>
-  useQuery<MainMemoryResponse | null>({ queryKey: MEMORY_KEY, queryFn: fetchMemory, refetchInterval: 30000, staleTime: 3000, gcTime: KEEP_MS });
+/** v37：主记忆（设置页「记忆」）；改了以后 Covey 回执之前就推，页面收到 done 再取一次。
+ *  enabled（v43）：收到了 memory:index 就不再取旧键（侧栏、记忆中心都只认新键） */
+export const useMemory = (enabled = true) =>
+  useQuery<MainMemoryResponse | null>({ queryKey: MEMORY_KEY, queryFn: fetchMemory, enabled, refetchInterval: 30000, staleTime: 3000, gcTime: KEEP_MS });
+
+/** v43：记忆中心的小键 memory:index（总数、待审核角标、各键 rev、体检、⌘K 标题表）。侧栏只轮询它，15 秒一次；
+ *  旧服务端不认 ?key= 时回的是 v37 的 memory，version 不是 43 就当没有（页面退回 v37）。查询键挂在 MEMORY_KEY 下，
+ *  memory_edit 回执后的取数（opTrack.pullPlan 的 memory）连它和下面各键一起重取 */
+export const MEMORY_INDEX_KEY = ['memory', 'memory:index'] as const;
+const indexOf = async (): Promise<MemoryKeyResponse<MemoryIndex> | null> => {
+  const r = await fetchMemoryKey<MemoryIndex>('memory:index');
+  return r && r.data && (r.data as { version?: unknown }).version === 43 && Array.isArray(r.data.scopes) ? r : null;
+};
+export const useMemoryIndex = (enabled = true) =>
+  useQuery<MemoryKeyResponse<MemoryIndex> | null>({ queryKey: MEMORY_INDEX_KEY, queryFn: indexOf, enabled, refetchInterval: 15000, staleTime: 3000, gcTime: KEEP_MS, retry: 1 });
+
+/** v43 还是 v37：先取 memory:index，取到了（version 43）就是记忆中心；取过了没有才退回取旧键 memory（v37 的设置页「记忆」）。
+ *  mode：v43 记忆中心、v37 旧页、off 记忆关着或都没推、loading 还在判断 */
+export type MemoryMode = 'v43' | 'v37' | 'off' | 'loading';
+export function useMemoryMode(): { mode: MemoryMode; index: MemoryIndex | null } {
+  const idx = useMemoryIndex();
+  const fallback: boolean = idx.isFetched && !idx.data;
+  const old = useMemory(fallback);
+  const index: MemoryIndex | null = idx.data?.data ?? null;
+  const mode: MemoryMode = index
+    ? (index.on ? 'v43' : 'off')
+    : !fallback ? 'loading'
+      : old.data?.data?.on ? 'v37' : old.isLoading ? 'loading' : 'off';
+  return { mode, index };
+}
+
+/** v43：记忆中心的一个数据键，按 memory:index.revs 里它的 rev 取：rev 没变就用缓存，不再取（Bridge 那头 rev 没变也不推）。
+ *  key 或 rev 是空的不取（index 里没有这个键）；换 rev 时先留着上一份，免得列表闪一下 */
+export const useMemoryKey = <T,>(key: string | null, rev: string | undefined) =>
+  useQuery<MemoryKeyResponse<T> | null>({
+    queryKey: ['memory', key ?? '', rev ?? ''],
+    queryFn: () => fetchMemoryKey<T>(key ?? ''),
+    enabled: !!key && !!rev,
+    staleTime: Infinity,
+    gcTime: KEEP_MS,
+    retry: 1,
+    placeholderData: keepPreviousData,
+  });
 
 export const UPGRADE_KEY = ['upgrade'] as const;
 /** v39：版本与更新。只在 Covey 认 upgrade 操作（settings.ops）时取：在查、在升级时每 3 秒，其余每分钟 */
@@ -249,3 +289,24 @@ export const useQuota = (enabled = true) =>
     gcTime: KEEP_MS,
     retry: 1,
   });
+
+/** v43：一次取几个记忆键（记忆中心用，键数随专项多少变，所以用 useQueries）。返回 键 → data（没取到是 undefined）和还有没有在取的 */
+export function useMemoryKeys(keys: readonly { key: string; rev: string }[]): { data: Record<string, unknown>; loading: boolean } {
+  const res = useQueries({
+    queries: keys.map((k: { key: string; rev: string }) => ({
+      queryKey: ['memory', k.key, k.rev],
+      queryFn: () => fetchMemoryKey(k.key),
+      staleTime: Infinity,
+      gcTime: KEEP_MS,
+      retry: 1,
+      // 键按名字排好序，同一位置换 rev 时先留着上一份（列表不闪）
+      placeholderData: keepPreviousData,
+    })),
+  });
+  const data: Record<string, unknown> = {};
+  keys.forEach((k: { key: string; rev: string }, i: number) => {
+    const d = res[i]?.data?.data;
+    if (d !== undefined) data[k.key] = d;
+  });
+  return { data, loading: res.some((r) => r.isLoading) };
+}

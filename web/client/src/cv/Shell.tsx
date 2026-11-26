@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemory, useQuota, useUpgrade } from '@client/src/hooks/use-workbench';
+import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemoryMode, useQuota, useUpgrade } from '@client/src/hooks/use-workbench';
 import { ageMs, errorText } from '@client/src/lib/workbench-format';
 import { byNumberDesc, byRecent, isRunning, isWaiting, pref, setPref, steadyAt, toneOf, toneWord, topicNumberOf, type ToneKey } from './lib';
 import { Avatar, Dot, useTick } from './ui';
@@ -280,7 +280,11 @@ function useQuotaCapsule(): string {
 }
 
 const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }) => {
-  const memoryOn: boolean = !!useMemory().data?.data?.on;
+  // 记忆：v43 只轮询小键 memory:index（角标是待审核数），去记忆中心；旧 Covey 只推 v37 的 memory，照旧去设置页「记忆」
+  const mem = useMemoryMode();
+  const memoryOn: boolean = mem.mode === 'v43' || mem.mode === 'v37';
+  const memoryTo: string = mem.mode === 'v43' ? '/memory' : '/settings/memory';
+  const pending: number = mem.mode === 'v43' ? mem.index?.counts.pending ?? 0 : 0;
   // 鼠标在侧栏里时先画它进来那刻的快照，移出或停着不动几秒再换新的：每秒的同步不让正要点的那行从鼠标底下挪走（sideHold.ts）
   const hold = useHeld(useSnapshot().data);
   const data = hold.view;
@@ -410,9 +414,19 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
             )}
           </Link>
           {memoryOn ? (
-            <Link to="/settings/memory" className={`row a-nav ${loc.pathname === '/settings/memory' ? 'on' : ''}`} title="记忆：全局和各工作区的原则、知识条目">
+            <Link
+              to={memoryTo}
+              className={`row a-nav ${loc.pathname === memoryTo || loc.pathname.startsWith('/memory/') ? 'on' : ''}`}
+              title={mem.mode === 'v43' ? `记忆：规矩、决定、资料${pending ? ` · 待审核 ${pending} 条` : ''}` : '记忆：全局和各工作区的原则、知识条目'}
+              data-testid="nav-memory"
+            >
               <Brain className="ic" />
-              {mini ? null : <span className="t">记忆</span>}
+              {mini ? null : (
+                <>
+                  <span className="t">记忆</span>
+                  {pending ? <span className="r"><em className="a-badge wait" title="待审核：要你定记不记">{pending}</em></span> : null}
+                </>
+              )}
             </Link>
           ) : null}
           {mini ? (

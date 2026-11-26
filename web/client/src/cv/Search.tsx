@@ -3,12 +3,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRight } from 'lucide-react';
 import type { SearchHit, SnapshotTopic } from '@shared/api.interface';
-import { prefetchTurns, useSearch, useSnapshot } from '@client/src/hooks/use-workbench';
+import { prefetchTurns, useMemoryIndex, useSearch, useSnapshot } from '@client/src/hooks/use-workbench';
 import { shortTime } from '@client/src/lib/workbench-format';
 import { Head } from './Shell';
 import { Dot } from './ui';
 import { toneOf, toneWord, topicNumberOf } from './lib';
 import { TopicBadge } from './RoleAvatar';
+import { codeHref, searchTitles, TAB_WORD, tabOfCode, type TitleHit } from './memoryCenter';
 
 const Marked: React.FC<{ text: string; q: string }> = ({ text, q }) => {
   const i: number = q ? text.toLowerCase().indexOf(q.toLowerCase()) : -1;
@@ -36,7 +37,10 @@ const SearchPage: React.FC = () => {
   const hits: SearchHit[] = (data ?? []).filter((h: SearchHit) => !(direct && h.seq === null && h.topic_key === direct.key));
   const topicHits: SearchHit[] = hits.filter((h: SearchHit) => h.seq === null);
   const msgHits: SearchHit[] = hits.filter((h: SearchHit) => h.seq !== null);
-  const total: number = hits.length + (direct ? 1 : 0);
+  // v43：记忆的标题表在 memory:index 里（侧栏一直在取），客户端直接筛，不等服务端
+  const memIdx = useMemoryIndex().data?.data;
+  const memHits: TitleHit[] = memIdx?.on ? searchTitles(memIdx.titles, term, 8) : [];
+  const total: number = hits.length + (direct ? 1 : 0) + memHits.length;
   // 页面上（不在输入框里）按回车：打开直达的那个话题
   useEffect(() => {
     if (!direct) return undefined;
@@ -58,7 +62,7 @@ const SearchPage: React.FC = () => {
       <Head title="搜索" sub={term ? `“${term}” · ${isFetching && !data ? '搜索中…' : `${total} 条`}` : undefined} back={undefined} />
       <div className="scroll">
         <div className="col" style={{ paddingTop: 12 }}>
-          {!term ? <p className="t3" style={{ padding: 24, textAlign: 'center' }}>输入关键词搜索话题标题和对话内容；输入 T 号（如 T514）回车直接打开那个话题。</p> : null}
+          {!term ? <p className="t3" style={{ padding: 24, textAlign: 'center' }}>输入关键词搜索话题标题、对话内容和记忆标题；输入 T 号（如 T514）回车直接打开那个话题。</p> : null}
           {direct ? (
             <Link
               to={`/topics/${encodeURIComponent(direct.key)}`}
@@ -75,6 +79,16 @@ const SearchPage: React.FC = () => {
             </Link>
           ) : null}
           {data && !total && !isFetching ? <p className="t3" style={{ padding: 24, textAlign: 'center' }}>没有找到。</p> : null}
+          {memHits.length ? <h3 className="a-ssec">记忆<em>{memHits.length}</em></h3> : null}
+          {memHits.map((m: TitleHit) => (
+            <Link key={`mem:${m.key}`} to={codeHref(m.code)} className="old a-shit" data-testid="search-memory-hit">
+              <div className="tl1">
+                <span className="a-sst">{TAB_WORD[tabOfCode(m.code)]}</span>
+                <b><Marked text={m.title} q={term} /></b>
+                <span>{m.code}</span>
+              </div>
+            </Link>
+          ))}
           {topicHits.length ? <h3 className="a-ssec">话题<em>{topicHits.length}</em></h3> : null}
           {topicHits.map((h: SearchHit, i: number) => (
             <Link key={`t:${h.topic_key}:${i}`} to={hitPath(h)} className="old a-shit" onMouseEnter={() => prefetchTurns(qc, h.topic_key)} onTouchStart={() => prefetchTurns(qc, h.topic_key)}>

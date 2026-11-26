@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { LaunchData, LaunchModel, LaunchPayload, LaunchWorkspace, SayFile, SettingsOption, SnapshotResponse } from '@shared/api.interface';
 import { newOpId, SNAPSHOT_KEY, useSettings } from '@client/src/hooks/use-workbench';
 import { pref, setPref } from './lib';
+import { applyDevice, isRepoMode, launchPayload, repoLabel, showDevice } from './launchRepos';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 
@@ -71,6 +72,8 @@ export function pickWorkspace(d: LaunchData, sel: Sel, name: string): Sel {
   if (ws.device) next = { ...next, run_mode: 'direct' };
   return next;
 }
+/** 新 Covey：选执行设备（Harness 不在设备能用的里面就换成第一个能用的模型） */
+export const pickDevice = (d: LaunchData, sel: Sel, name: string): Sel => applyDevice(d, sel, name, withModel);
 export const onDevice = (d: LaunchData, sel: Sel): boolean => !!workspaceOf(d, sel.workspace)?.device;
 
 /** 一行标签：Harness · 模型 · 思考 <预算> · 工作区 · 运行方式 · 脱敏/不脱敏（有工作模式加一个） */
@@ -80,7 +83,13 @@ export function summaryTags(d: LaunchData, sel: Sel): string[] {
   out.push(`思考 ${m?.budgets.find((b: SettingsOption) => b.value === sel.effort)?.text ?? sel.effort}`);
   // 卡上的叫法去掉括号里的说明（“自适应（按任务自己定）”→“自适应”）
   if (sel.work_mode) out.push((m?.work_mode_texts?.[sel.work_mode] ?? sel.work_mode).split('（')[0]);
-  out.push(sel.workspace, (d.run_modes ?? []).find((r: SettingsOption) => r.value === sel.run_mode)?.text ?? sel.run_mode);
+  if (isRepoMode(d)) {
+    // 新 Covey：没有工作区和运行方式；多设备时写执行设备，选了仓库写仓库
+    if (showDevice(d) && sel.device) out.push(sel.device);
+    if (sel.repos?.length) out.push(repoLabel(sel.repos));
+  } else {
+    out.push(sel.workspace ?? '', (d.run_modes ?? []).find((r: SettingsOption) => r.value === sel.run_mode)?.text ?? sel.run_mode ?? '');
+  }
   out.push(m?.redaction && sel.redaction === 'on' ? '脱敏' : '不脱敏');
   return out;
 }
@@ -148,7 +157,7 @@ export function useLaunchBox(): LaunchBox | null {
   const send = (text: string, onDone: () => void, files: SayFile[] = []): void => {
     const value: string = text.trim();
     if (!value || phase === 'sending') return;
-    const payload: LaunchPayload = { ...sel, text: value, run_mode: onDevice(data, sel) ? 'direct' : sel.run_mode, ...(files.length ? { files } : {}) };
+    const payload: LaunchPayload = launchPayload(data, sel, value, files, onDevice(data, sel));
     setPhase('sending');
     setMessage('');
     void (async (): Promise<void> => {
