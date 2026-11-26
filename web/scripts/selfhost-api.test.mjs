@@ -292,6 +292,33 @@ test('版本与更新（v39）：Covey 推 upgrade 条目、页面读到理好�
   }
 });
 
+test('账号与额度（v42）：Covey 推 quota 条目、页面读到理好的形状；发件 quota_refresh 不带话题、payload 空', async () => {
+  const cookie = approved.session;
+  assert.equal((await (await api('/api/quota', { cookie })).text()), ''); // 没推过：空
+  const pushed = await open('upsert', {
+    method: 'POST',
+    key: SECOND_KEY,
+    body: { items: [{ type: 'settings', key: 'quota', rev: 'q1', data: {
+      at: 1795600000, read_at: 1795600000, relogin: [{ source: 'agy', name: 'a@example.com' }],
+      refresh: { at: 0, busy: false, cooldown: 300 },
+      sources: [{ id: 'agy', kind: 'agy', title: 'agy', collected_at: 1795600000, ttl: 600, stale_after: 3600, accounts: [
+        { name: '主号', login: 'a@example.com', state: 'ok', pools: [{ key: 'gemini', label: 'Gemini', active: true, state: 'ok', windows: [{ kind: '5h', left: 0.64 }, { kind: '7d', left: 7 }] }] }, { login: 'x@y.example.com' }] }] } }] },
+  });
+  assert.equal(pushed.status < 300, true, await pushed.clone().text());
+  const got = await (await api('/api/quota', { cookie })).json();
+  assert.equal(got.rev, 'q1');
+  assert.equal(got.data.sources[0].accounts.length, 1); // 没有名字的号丢掉
+  assert.equal(got.data.sources[0].accounts[0].login, 'a@example.com');
+  assert.equal(got.data.sources[0].accounts[0].pools[0].windows[1].left, 1); // 超出 0~1 的收回来
+  const run = await api('/api/outbox', { method: 'POST', cookie, body: { op_id: 'qr-1', kind: 'quota_refresh', payload: {} } });
+  assert.equal(run.status < 300, true, await run.clone().text());
+  const inbox = await (await open('inbox', { key: SECOND_KEY })).json();
+  assert.ok(inbox.items.some((i) => i.op_id === 'qr-1' && i.kind === 'quota_refresh' && !i.topic_key));
+  for (const [id, body] of [['qr-2', { kind: 'quota_refresh', topic_key: 't1', payload: {} }], ['qr-3', { kind: 'quota_refresh', payload: { all: true } }]]) {
+    assert.equal((await api('/api/outbox', { method: 'POST', cookie, body: { op_id: id, ...body } })).status, 400, id);
+  }
+});
+
 test('更快的取数（v38）：取件 wait 挂着等、快照 since 增量、回执 wait 挂着等；不带参数和以前一样', async () => {
   const cookie = approved.session;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

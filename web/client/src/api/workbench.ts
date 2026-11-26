@@ -19,7 +19,7 @@ import type {
   UploadDoneResponse,
   UploadPartRequest,
   UploadStartRequest,
-  UploadStartResponse, MainMemoryResponse, UpgradeResponse,
+  UploadStartResponse, MainMemoryResponse, UpgradeResponse, QuotaResponse,
 } from '@shared/api.interface';
 
 export async function fetchMe(): Promise<{ name: string | null }> {
@@ -116,6 +116,13 @@ export async function fetchMemory(): Promise<MainMemoryResponse | null> {
 export async function fetchUpgrade(): Promise<UpgradeResponse | null> {
   const res = await axiosForBackend({ url: '/api/upgrade', method: 'GET' });
   const d = res.data as UpgradeResponse | '';
+  return d && typeof d === 'object' && d.data && typeof d.data === 'object' ? d : null;
+}
+
+/** v42：账号与额度；Covey 没推过时是 null（空响应体） */
+export async function fetchQuota(): Promise<QuotaResponse | null> {
+  const res = await axiosForBackend({ url: '/api/quota', method: 'GET' });
+  const d = res.data as QuotaResponse | '';
   return d && typeof d === 'object' && d.data && typeof d.data === 'object' ? d : null;
 }
 

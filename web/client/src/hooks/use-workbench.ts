@@ -12,8 +12,8 @@ import type {
   SnapshotResponse,
   SnapshotTopic,
   TurnView,
-  TurnsResponse, MainMemoryResponse, UpgradeResponse } from '@shared/api.interface';
-import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchUpgrade, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
+  TurnsResponse, MainMemoryResponse, UpgradeResponse, QuotaResponse } from '@shared/api.interface';
+import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchUpgrade, fetchQuota, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
 import { mergeCollabs } from '@client/src/cv/collab';
 import { mergeSnapshot, sinceFor } from '@client/src/cv/snapshotMerge';
 
@@ -232,6 +232,19 @@ export const useUpgrade = (enabled = true) =>
     queryFn: fetchUpgrade,
     enabled,
     refetchInterval: (q): number => (q.state.data?.data.running || q.state.data?.data.checking ? 3000 : 60000),
+    staleTime: 2000,
+    gcTime: KEEP_MS,
+    retry: 1,
+  });
+
+export const QUOTA_KEY = ['quota'] as const;
+/** v42：账号与额度。只在 Covey 认 quota_refresh 操作（settings.ops）时取：在重读时每 3 秒，其余每 30 秒（Covey 每分钟写一次快照） */
+export const useQuota = (enabled = true) =>
+  useQuery<QuotaResponse | null>({
+    queryKey: QUOTA_KEY,
+    queryFn: fetchQuota,
+    enabled,
+    refetchInterval: (q): number => (q.state.data?.data.refresh.busy ? 3000 : 30000),
     staleTime: 2000,
     gcTime: KEEP_MS,
     retry: 1,

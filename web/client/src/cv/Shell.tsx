@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemory, useUpgrade } from '@client/src/hooks/use-workbench';
+import { prefetchTurns, useSettings, useSnapshot, useWarmup, useMemory, useQuota, useUpgrade } from '@client/src/hooks/use-workbench';
 import { ageMs, errorText } from '@client/src/lib/workbench-format';
 import { byNumberDesc, byRecent, isRunning, isWaiting, pref, setPref, steadyAt, toneOf, toneWord, topicNumberOf, type ToneKey } from './lib';
 import { Avatar, Dot, useTick } from './ui';
@@ -19,6 +19,7 @@ import { StatusGroups } from './StatusGroups';
 import { useHeld } from './sideHold';
 import { SIDE_PANE, showSavedPanes } from './panes';
 import { upgradeMark } from './upgrade';
+import { capsuleOf } from './quota';
 import { canDo } from './v34';
 import './covey.css';
 import './layout-a.css';
@@ -30,6 +31,7 @@ import './sidebar.css';
 import './unify.css';
 import './v3.css';
 import './upgrade.css';
+import './quota.css';
 
 
 /** 侧栏话题行右下角画状态点的状态：要你处理、告诉你一声和在做的；做完、空闲、排队、已停止不画（灰点不带信息） */
@@ -268,6 +270,14 @@ function useUpgradeMark(): string {
   return on ? upgradeMark(up.data?.data) : '';
 }
 
+/** v42：搜索框下的一行：某个来源额度见底或有号要重新登录；Covey 认 quota_refresh 操作才去取条目；没有就是空串，什么都不画 */
+function useQuotaCapsule(): string {
+  const ops: readonly string[] | undefined = useSettings().data?.data?.ops;
+  const on: boolean = canDo(ops, 'quota_refresh');
+  const q = useQuota(on);
+  return on ? capsuleOf(q.data?.data) : '';
+}
+
 const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }) => {
   const memoryOn: boolean = !!useMemory().data?.data?.on;
   // 鼠标在侧栏里时先画它进来那刻的快照，移出或停着不动几秒再换新的：每秒的同步不让正要点的那行从鼠标底下挪走（sideHold.ts）
@@ -280,6 +290,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
   const scroller = React.useRef<HTMLDivElement>(null);
   const launchOn: boolean = !!useSettings().data?.data?.launch;
   const upMark: string = useUpgradeMark();
+  const capsule: string = useQuotaCapsule();
   const [unOpen, setUnOpen] = useState<boolean>(false);
   const [oldOpen, setOldOpen] = useState<boolean>(() => pref('grp.old', '0') === '1');
   const [oldWas, setOldWas] = useState<string>('');
@@ -358,6 +369,13 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
         )}
       </div>
       <SideSearch mini={mini} />
+      {capsule && !mini ? (
+        <Link to="/settings/quota" className="qcap" title="账号与额度">
+          <i />
+          <span>{capsule}</span>
+          <ChevronRight aria-hidden="true" />
+        </Link>
+      ) : null}
       <div ref={scroller} style={{ overflowY: 'auto', flex: 1, minHeight: 0 }} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
         <div onClick={go}>
           {launchOn ? (

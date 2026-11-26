@@ -31,7 +31,8 @@ export type Pull =
   | { t: 'settings' }
   | { t: 'tidy' }
   | { t: 'memory' }
-  | { t: 'upgrade' };
+  | { t: 'upgrade' }
+  | { t: 'quota' };
 
 export const pullId = (p: Pull): string => (p.t === 'turns' ? `turns:${p.key}` : p.t);
 
@@ -49,6 +50,8 @@ export function pullPlan(body: Pick<OutboxRequest, 'kind' | 'topic_key' | 'paylo
   if (kind === 'memory_edit') return { all: [{ t: 'memory' }], follow: [] };
   // v39：Covey 回执之前推好了检查的结果；开始升级后 running 随后推来，再补取一会儿
   if (kind === 'upgrade') return { all: [{ t: 'upgrade' }], follow: [{ t: 'upgrade' }] };
+  // v42：Covey 回执之前推了“正在读取”（或“刚查过”）；读完新的快照随后推来，再补取一会儿
+  if (kind === 'quota_refresh') return { all: [{ t: 'quota' }], follow: [{ t: 'quota' }] };
   if (kind === 'tidy' || kind === 'tidy_decide') return { all: [{ t: 'tidy' }, { t: 'snapshot' }], follow: [{ t: 'tidy' }] };
   if (kind === 'forget' || kind === 'memory_fix') return { all: [{ t: 'snapshot' }], follow: [] };
   if (kind === 'launch') return { all: [{ t: 'snapshot' }], follow: [{ t: 'snapshot' }] };

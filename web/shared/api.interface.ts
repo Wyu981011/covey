@@ -6,8 +6,8 @@ export type ProjectStatus = (typeof PROJECT_STATUSES)[number];
 export const TOPIC_STATES = ['等你', '在做', '做完', '已停止', '失败', '空闲'] as const;
 export type TopicState = (typeof TOPIC_STATES)[number];
 
-/** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload；upgrade（v39）：检查更新、全部更新，见 UpgradePayload */
-export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo', 'revisit_cancel', 'memory_edit', 'upgrade'] as const;
+/** memory_fix（v31）：三层记忆的纠正（改条件、只限当次、确认长期），见 MemoryFixPayload；upgrade（v39）：检查更新、全部更新，见 UpgradePayload；quota_refresh（v42）：账号与额度的「刷新」，不带 topic_key、project_key，payload 空 */
+export const OUTBOX_KINDS = ['say', 'answer', 'stop', 'reopen', 'seen', 'forget', 'tidy', 'tidy_decide', 'settings', 'dismiss', 'launch', 'switch', 'memory_fix', 'recover', 'project_finish', 'project_stop', 'memory_undo', 'revisit_cancel', 'memory_edit', 'upgrade', 'quota_refresh'] as const;
 export type OutboxKind = (typeof OUTBOX_KINDS)[number];
 export const isOutboxKind = (v: string): v is OutboxKind =>
   (OUTBOX_KINDS as readonly string[]).includes(v);
@@ -1166,7 +1166,7 @@ export interface SettingsData {
   asks?: SettingsAsks;
   tabs: SettingsTab[];
   feishu: string;
-  /** v34：这个 Covey 认的网页操作；有 project_finish、project_stop、memory_undo 才画收尾、停止和记忆的「不对」，有 revisit_cancel（v35）才画定时回看的「取消」，有 upgrade（v39）才画「版本与更新」 */
+  /** v34：这个 Covey 认的网页操作；有 project_finish、project_stop、memory_undo 才画收尾、停止和记忆的「不对」，有 revisit_cancel（v35）才画定时回看的「取消」，有 upgrade（v39）才画「版本与更新」，有 quota_refresh（v42）才画「账号与额度」 */
   ops?: string[];
   config?: SettingsConfigPage | SettingsError;
   /** v21 及以前：新话题、管家两页（v22 起并进 config） */
@@ -1193,8 +1193,8 @@ export type SettingsWhat = (typeof SETTINGS_WHATS)[number];
 /** v15：proxy 的 op */
 export const PROXY_OPS = ['enable', 'disable', 'row', 'pause', 'resume', 'remove'] as const;
 /** 同步条目 type=settings 的 key；settings 是设置快照，usage 是本周用量（v15），tidy 是整理专项的建议（v16），asks 是要你处理（v34），
- * memory 是主记忆（v37），upgrade 是版本与更新（v39） */
-export const SETTINGS_KEYS = ['settings', 'usage', 'tidy', 'asks', 'memory', 'upgrade'] as const;
+ * memory 是主记忆（v37），upgrade 是版本与更新（v39），quota 是账号与额度（v42） */
+export const SETTINGS_KEYS = ['settings', 'usage', 'tidy', 'asks', 'memory', 'upgrade', 'quota'] as const;
 export const isSettingsKey = (v: string): boolean => (SETTINGS_KEYS as readonly string[]).includes(v);
 
 /** v16：整理专项的建议。kind 对应的标签词、按钮字由 Covey 给（tag、verb），headline、from 也是 Covey 拼好的 */
@@ -1455,4 +1455,85 @@ export const UPGRADE_ACTIONS = ['check', 'run'] as const;
 export type UpgradeAction = (typeof UPGRADE_ACTIONS)[number];
 export interface UpgradePayload {
   action: UpgradeAction;
+}
+
+/* v42：账号与额度（设置条目 key quota）。Covey 有额度来源（<状态目录>/quota/ 里有快照）才推，同时 settings.ops 里才有 quota_refresh；
+ * 来源都没了推一次 sources: []，页面收起这一页。Covey 的 app/web_quota.py 的 view 是它的出处 */
+export const QUOTA_STATES = ['ok', 'spent', 'cooling', 'paused', 'login_required', 'expired', 'unknown'] as const;
+export type QuotaState = (typeof QUOTA_STATES)[number];
+export const QUOTA_KINDS = ['agy', 'gateway', 'command', 'url'] as const;
+export type QuotaKind = (typeof QUOTA_KINDS)[number];
+/** 一个额度窗口：kind 5h、7d（表里的两列）、day、other（不画）；left 是剩下的比例 0~1，读不到是 null（不是 0）；时刻都是秒 */
+export interface QuotaWindow {
+  kind: '5h' | '7d' | 'day' | 'other';
+  label: string;
+  left: number | null;
+  resets_at?: number;
+  checked_at?: number;
+  ceiling?: number;
+}
+/** 一个号的一个模型池：agy 是 Gemini、Claude/GPT（key gemini、3p），别的来源一个号一个池（key、label 是空串） */
+export interface QuotaPool {
+  key: string;
+  label: string;
+  /** 这一池现在在用这个号（agy 一次只用一个号，每池各有一个） */
+  active: boolean;
+  state: QuotaState;
+  available_at: number | null;
+  windows: QuotaWindow[];
+}
+export interface QuotaAccount {
+  /** 来源给的名字 */
+  name: string;
+  /** 这个号登录的邮箱（agy 从自己的日志读；唯一不脱敏的文字）；没有就显示 name */
+  login?: string;
+  state: QuotaState;
+  available_at: number | null;
+  pools: QuotaPool[];
+}
+export interface QuotaSource {
+  id: string;
+  kind: QuotaKind;
+  title: string;
+  /** 来源给的 https 链接，池主才有，页面上写“运维台↗” */
+  link?: string;
+  collected_at: number;
+  ttl: number;
+  /** 读数比这更早的数字变灰（秒） */
+  stale_after: number;
+  read_at: number;
+  /** 上次读没成功，数字是更早的 */
+  failing: boolean;
+  usable: number;
+  total: number;
+  next_available_at: number | null;
+  /** 整体见底：能用的号每个都有一个窗口剩不到 20%，或一个都不能用 */
+  low: boolean;
+  /** 一个能用的号都没有、有的会自己恢复 */
+  dry: boolean;
+  /** 页面默认展开（agy，或外接来源里有号要重新登录、用完） */
+  expand: boolean;
+  /** 要重新登录的号的显示名 */
+  relogin: string[];
+  accounts: QuotaAccount[];
+}
+export interface QuotaRefresh {
+  /** 最近一次「刷新」开始的时刻，0 没点过 */
+  at: number;
+  busy: boolean;
+  cooldown: number;
+}
+export interface QuotaData {
+  /** 这条生成的时刻，不算进 rev */
+  at: number;
+  read_at: number;
+  relogin: { source: string; name: string }[];
+  sources: QuotaSource[];
+  refresh: QuotaRefresh;
+}
+/** GET /api/quota：sync_state 里 name='quota' 的那一行；Covey 没推过是 null */
+export interface QuotaResponse {
+  rev: string;
+  data: QuotaData;
+  at: string;
 }

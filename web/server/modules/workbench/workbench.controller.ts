@@ -24,6 +24,7 @@ import type {
   UploadStartResponse,
   MainMemoryResponse,
   UpgradeResponse,
+  QuotaResponse,
 } from '@shared/api.interface';
 import { WorkbenchImagesService } from './workbench.images.service';
 import { WorkbenchQueryService } from './workbench.query.service';
@@ -86,6 +87,13 @@ export class WorkbenchController {
   upgrade(@Req() req: Request): Promise<UpgradeResponse | null> {
     mustBeOwner(req);
     return this.svc.upgrade();
+  }
+
+  /** v42：账号与额度（每个来源的号、两个窗口的剩余和时刻）；Covey 没推过就是 null */
+  @Get('quota')
+  quota(@Req() req: Request): Promise<QuotaResponse | null> {
+    mustBeOwner(req);
+    return this.svc.quota();
   }
 
   /** v16：整理专项的建议；Covey 还没推过就是 null */

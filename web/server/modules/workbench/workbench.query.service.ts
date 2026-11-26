@@ -51,7 +51,7 @@ import {
   type TurnImage,
   type TurnView,
   type WaitingItem,
-  type SettingsAsks, type MainMemoryData, type MainMemoryResponse, type UpgradeData, type UpgradeResponse } from '@shared/api.interface';
+  type SettingsAsks, type MainMemoryData, type MainMemoryResponse, type UpgradeData, type UpgradeResponse, type QuotaData, type QuotaResponse } from '@shared/api.interface';
 import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
@@ -61,6 +61,7 @@ import {
   revisitCancelShape, revisitOf,
 } from './workbench.v4';
 import { upgradeOf, upgradeShape } from './workbench.upgrade';
+import { quotaOf, quotaRefreshShape } from './workbench.quota';
 
 interface TopicRow {
   key: string;
@@ -1117,6 +1118,15 @@ export class WorkbenchQueryService {
     return data ? { rev: str(o.rev), data, at: str(o.at) } : null;
   }
 
+  /** v42：账号与额度（设置条目 key quota）；Covey 没推过、或形状不对是 null */
+  async quota(): Promise<QuotaResponse | null> {
+    const res = await this.db.execute(sql`select value from sync_state where name = ${'quota'}`);
+    const v = asRows<{ value: unknown }>(res)[0]?.value;
+    const o: Record<string, unknown> = obj(typeof v === 'string' ? JSON.parse(v) : v);
+    const data: QuotaData | undefined = quotaOf(o.data);
+    return data ? { rev: str(o.rev), data, at: str(o.at) } : null;
+  }
+
   /** v16：整理专项的建议；没收到过是 null */
   async tidy(): Promise<TidyResponse> {
     const d: Record<string, unknown> | null = await this.snapshotData('tidy');
@@ -1201,6 +1211,12 @@ export class WorkbenchQueryService {
     if (kind === 'upgrade') {
       // v39：检查更新、全部更新；能不能升级由 Covey 定（没有更新、正在升级、检出有改动都回 failed）
       const shape = upgradeShape(payload, str(req.topic_key), str(req.project_key));
+      if ('error' in shape) throw new BadRequestException(shape.error);
+      return;
+    }
+    if (kind === 'quota_refresh') {
+      // v42：账号与额度的「刷新」；冷却、只有主人能点由 Covey 定
+      const shape = quotaRefreshShape(payload, str(req.topic_key), str(req.project_key));
       if ('error' in shape) throw new BadRequestException(shape.error);
       return;
     }

@@ -3,7 +3,7 @@ import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-q
 import { toast } from 'sonner';
 import type { OutboxRequest, OutboxResponse, RoomResponse, TurnsResponse } from '@shared/api.interface';
 import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
-import { MEMORY_KEY, ROOM_KEY, SETTINGS_KEY, SNAPSHOT_KEY, TIDY_KEY, UPGRADE_KEY, turnsKey } from '@client/src/hooks/use-workbench';
+import { MEMORY_KEY, QUOTA_KEY, ROOM_KEY, SETTINGS_KEY, SNAPSHOT_KEY, TIDY_KEY, UPGRADE_KEY, turnsKey } from '@client/src/hooks/use-workbench';
 import { errorText } from '@client/src/lib/workbench-format';
 import { opWords, type OpPhase } from './opWords';
 import { expectation, pullPlan, settle, trackReceipt, type Pull, type TrackDeps, type View } from './opTrack';
@@ -73,6 +73,7 @@ async function pullOf(qc: QueryClient, p: Pull): Promise<void> {
     : p.t === 'settings' ? SETTINGS_KEY
     : p.t === 'tidy' ? TIDY_KEY
     : p.t === 'upgrade' ? UPGRADE_KEY
+    : p.t === 'quota' ? QUOTA_KEY
     : MEMORY_KEY;
   const filters = { queryKey: key, type: 'active' } as const;
   const inflight: boolean = qc.getQueryCache().find(filters)?.state.fetchStatus === 'fetching';
