@@ -1,16 +1,25 @@
-"""Which memory lines the turns used (COVEY_MEMORY_LEARN=1, docs/butler.md 记忆自己长), so what is never of use goes first
+"""Which memory lines the turns used and carried (docs/butler.md 记忆自己长), so what is never of use goes first
 and in time out of the way: ``<state>/memory-usage.json`` {schema_version, refs: {ref: {n, last}}}, ``ref`` as core/memory.py
 names an item ("principle:<id>", "project:<project>:<id>", "candidate:<id>", …), ``n`` how many turns used it, ``last`` when
 the latest did. The Bridge writes it once a turn has ended (app/memory_learn.py: the numbers the turn's checkpoint lists in
 ``memory_used`` and the ones its reply names, of the items the turn carried); core/memory.py orders by it and the nightly
 整理记忆 (app/memory_tidy.py) lets what nobody used for ``IDLE_DAYS`` go to the history. At most ``KEPT`` refs, the ones used
 longest ago dropped first. Written whole under its own lock; a read takes none; a file that cannot be read is read as empty
-and written over by the next note (it only ever orders and ages, nothing is lost with it). Standard library and core only."""
+and written over by the next note (it only ever orders and ages, nothing is lost with it).
+
+The counts the ranking of core/memory_rank.py takes are new, and an older release rewrites memory-usage.json with its own
+keys, so they lie beside it in ``memory/usage.json`` (core/memstore.py usage_path) {version, refs: {ref: {e, t, h}}}:
+``e`` how many turns carried the line's whole text (``carried``), ``t`` how many listed only its title (``listed``),
+``h`` the strong signals that it was of use, weighed as core/memory_rank.py SIGNAL_WEIGHTS says (``signal``: shown with
+``covey memory show``, a question it answered before, the owner confirming it, a checkpoint's ``memory_used``). ``counts``
+reads both files as one: an old ref (``principle:p…``) is read as the entry that has it among its aliases
+(memory/codes.json), its ``n`` and ``last`` added to the entry's. Standard library and core only."""
 from __future__ import annotations
 
 import time
 from pathlib import Path
 
+from covey.core import memory_rank, memstore
 from covey.core.locks import shared_file_lock
 from covey.core.state import read_object, write_json
 
@@ -83,3 +92,82 @@ def idle(usage, ref, written_at, *, now=None, days=IDLE_DAYS) -> bool:
     stamp = time.time() if now is None else now
     last = max(_number(written_at), (usage.get(ref) or {}).get("last", 0.0))
     return bool(last) and stamp - last >= days * 86400
+
+
+COUNTS = ("e", "t", "h")
+
+
+def _v2(state_dir) -> dict:
+    refs = read_object(memstore.usage_path(state_dir)).get("refs")
+    found = {}
+    for ref, row in (refs.items() if isinstance(refs, dict) else ()):
+        if isinstance(ref, str) and isinstance(row, dict):
+            found[ref] = {key: _number(row.get(key)) for key in COUNTS}
+    return found
+
+
+def counts(state_dir) -> dict:
+    """ref -> {e, t, h, n, last} of every line some turn carried or used: memory/usage.json and memory-usage.json read as
+    one, an old ref counted on the entry it became (memory/codes.json aliases)."""
+    aliases = memstore.codes(state_dir)["aliases"]
+    found = {}
+    for ref, row in read(state_dir).items():
+        mine = found.setdefault(aliases.get(ref, ref), {**dict.fromkeys(COUNTS, 0.0), "n": 0, "last": 0.0})
+        mine["n"] += row["n"]
+        mine["last"] = max(mine["last"], row["last"])
+    for ref, row in _v2(state_dir).items():
+        mine = found.setdefault(aliases.get(ref, ref), {**dict.fromkeys(COUNTS, 0.0), "n": 0, "last": 0.0})
+        for key in COUNTS:
+            mine[key] += row[key]
+    return found
+
+
+def _bump(state_dir, refs, key, amount) -> int:
+    refs = list(dict.fromkeys(str(ref) for ref in refs or () if ref))
+    if not refs or not amount:
+        return 0
+    path = memstore.usage_path(state_dir)
+    with shared_file_lock(path):
+        found = _v2(state_dir)
+        for ref in refs:
+            row = found.setdefault(ref, dict.fromkeys(COUNTS, 0.0))
+            row[key] = round(row[key] + amount, 3)
+        kept = dict(sorted(found.items(), key=lambda pair: -(pair[1]["e"] + pair[1]["h"]))[:KEPT * 2])
+        write_json(path, {"version": memstore.VERSION, "refs": kept}, ensure_ascii=False, separators=(",", ":"))
+    return len(refs)
+
+
+def carried(state_dir, refs) -> int:
+    """``refs`` whose whole text one turn carried: each one's ``e`` up by one."""
+    return _bump(state_dir, refs, "e", 1)
+
+
+def listed(state_dir, refs) -> int:
+    """``refs`` one turn listed by title only: each one's ``t`` up by one."""
+    return _bump(state_dir, refs, "t", 1)
+
+
+def signal(state_dir, refs, kind) -> int:
+    """A strong sign ``kind`` (core/memory_rank.py SIGNAL_WEIGHTS: show, dedup, confirm, memory_used) that ``refs`` were of
+    use: each one's ``h`` up by its weight. ValueError for another kind."""
+    if kind not in memory_rank.SIGNAL_WEIGHTS:
+        raise ValueError(f"signal {kind!r}")
+    return _bump(state_dir, refs, "h", memory_rank.SIGNAL_WEIGHTS[kind])
+
+
+def carry_v2(state_dir, old, new) -> bool:
+    """The counts of ``old`` in memory/usage.json go to ``new`` (an entry moved): added, ``old`` gone."""
+    old, new = str(old or ""), str(new or "")
+    if not old or not new or old == new:
+        return False
+    path = memstore.usage_path(state_dir)
+    with shared_file_lock(path):
+        found = _v2(state_dir)
+        row = found.pop(old, None)
+        if row is None:
+            return False
+        mine = found.setdefault(new, dict.fromkeys(COUNTS, 0.0))
+        for key in COUNTS:
+            mine[key] += row[key]
+        write_json(path, {"version": memstore.VERSION, "refs": found}, ensure_ascii=False, separators=(",", ":"))
+    return True

@@ -36,6 +36,7 @@
 | `export_look.py` | 把 `covey/core/look.py` 导出成网页读的 `look.json` |
 | `bridge_timing.py` | 从 Bridge 的毫秒计时日志看各条流程的时间花在哪 |
 | `question_stats.py` | 按时间窗统计问题卡、选推荐率和类别，比较改提问规则前后（[运维](../docs/operations.md#问题卡问得多不多)） |
+| `memory_migrate.py` | 记忆迁移：预演、立刻迁一次、各范围条数、回滚前把新写的导回旧格式（[运维](../docs/operations.md#记忆的存储与迁移)） |
 | `track_route_eval.py` | 用带标注的语料评估消息路由的准确度 |
 | `assemble_release.py` | 把核心检出和若干扩展检出拼成一个 release 目录 |
 | `precompile_release.py` | 给 release 目录写好 `.pyc`，服务启动时不用再编译 |

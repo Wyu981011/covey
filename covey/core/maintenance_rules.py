@@ -22,7 +22,7 @@ from covey.core.jobs import (FINISHED_UNREAD_FIELDS, job_file, read_job_record, 
 from covey.core.locks import LOCK, remove_unused_lock
 from covey.core.maintenance_report import mib, stale_lines, tree_bytes
 from covey.core.process import paths_in_use
-from covey.core import project_library, project_memory
+from covey.core import memstore, project_library, project_memory
 from covey.core.projects import CANCELLED, DONE, valid_id
 from covey.core.proxy import BATCH_TRANSITIONS
 from covey.core.run_dir import RUNS, runner_alive, runner_info
@@ -570,6 +570,18 @@ class ProjectMemories(Rule):
                 project_memory.forget(run.state, pid, run.cutoff(self.days))
 
 
+class MemoryFiles(Rule):
+    """The memory's own files (core/memstore.py upkeep): memory/log.jsonl past 90 days trimmed, each decisions.jsonl
+    compacted (a void decision past 30 days gone), memory/topics.json made again from the topic directories. Not in the plan
+    or the dry run."""
+
+    def apply(self, run, plan):
+        try:
+            memstore.upkeep(run.state, now=run.now)
+        except OSError:
+            pass
+
+
 class TrackSessions(Rule):
     """The Claude session file of a track of the butler (core/butler_tracks.py) whose turn ended TRACK_SESSION_DAYS
     ago: removed. The track forks the butler's session on every request, so each leaves a transcript of its own
@@ -753,12 +765,12 @@ HISTORY, CHECKPOINTS, TRACES, SLIM_RECORDS = History(), Checkpoints(), Traces(),
 TEMPORARY, RUNS_DIRS, PROXY_BATCHES, JOURNALS = Temporary(), Runs(), ProxyBatches(), Journals()
 LOCKS, DIFFS, BACKUPS, STALE = Locks(), Diffs(), Backups(), Stale()
 TRACK_SESSIONS, PROJECT_RECORDS, PATROL_RECORDS = TrackSessions(), ProjectRecords(), PatrolRecords()
-PROJECT_LIBRARIES, PROJECT_MEMORIES = ProjectLibraries(), ProjectMemories()
+PROJECT_LIBRARIES, PROJECT_MEMORIES, MEMORY_FILES = ProjectLibraries(), ProjectMemories(), MemoryFiles()
 
 
 # Every rule, in the order of the plan's keys (then "backup", the run's own, named by maintain).
 RULES = (HISTORY, CHECKPOINTS, TRACES, SLIM_RECORDS, TEMPORARY, RUNS_DIRS, PROXY_BATCHES, LOCKS, DIFFS, BACKUPS, STALE,
-         JOURNALS, TRACK_SESSIONS, PROJECT_RECORDS, PROJECT_LIBRARIES, PROJECT_MEMORIES, PATROL_RECORDS)
+         JOURNALS, TRACK_SESSIONS, PROJECT_RECORDS, PROJECT_LIBRARIES, PROJECT_MEMORIES, PATROL_RECORDS, MEMORY_FILES)
 
 
 class _NoJob(Rule):
@@ -771,7 +783,7 @@ class _NoJob(Rule):
 # The order the cleanup carries them out in. The steps under LOCK first; after _NoJob, outside LOCK: nothing a
 # job that starts now uses, and each item is checked again. Old backups go in maintain, stale records in close_stale.
 CLEANUP = (HISTORY, CHECKPOINTS, _NoJob(), TRACK_SESSIONS, TEMPORARY, RUNS_DIRS, PROXY_BATCHES, PROJECT_LIBRARIES, PROJECT_MEMORIES, PROJECT_RECORDS, PATROL_RECORDS, TRACES,
-           SLIM_RECORDS, JOURNALS, LOCKS, DIFFS)
+           SLIM_RECORDS, JOURNALS, MEMORY_FILES, LOCKS, DIFFS)
 
 
 # The plan's keys of what a cleanup removed, in RULES' order: maintenance_loop logs how many of each.
