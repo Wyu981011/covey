@@ -48,7 +48,7 @@ test('Covey 推来的条目理成页面要的形状：读不到是 null 不是 0
       { id: 'agy', kind: 'agy', title: 'agy', collected_at: NOW, ttl: 600, stale_after: 3600, accounts: [
         { name: '主号', login: 'main@example.com', state: 'ok', pools: [{ key: 'gemini', label: 'Gemini', active: true, state: 'ok', windows: [
           { kind: '5h', label: '5 小时', left: null }, { kind: '7d', left: 3 }, { kind: 'weird', left: 0.5 }, 7] }] },
-        { name: '副号', login: 'not an email', state: 'nope', pools: [] }, { login: 'x@y.example.com' }] },
+        { name: '副号', login: 'not an email', state: 'nope', pools: [] }, { login: 'x@example.com' }] },
       { id: 'gw', kind: 'mystery', title: '', link: 'http://insecure.example.com', failing: 'yes', accounts: 'many' }, 'nope'],
   });
   assert.equal(d.sources.length, 2);
@@ -171,10 +171,10 @@ test('侧栏胶囊：只在某个来源整体见底或有号要重新登录时�
   const dry = { ...fine, sources: [source({ title: 'agy', low: true, dry: true, next_available_at: at(17, 10) })] };
   assert.equal(Q.capsuleOf(dry), 'agy 额度见底 · 17:10 恢复');
   assert.equal(Q.capsuleOf({ ...fine, sources: [source({ title: 'agy', low: true })] }), 'agy 额度见底'); // 能用的号只是剩得少：没有恢复时刻
-  const login = { ...fine, relogin: [{ source: '我的 VPS', name: 'V2' }, { source: '我的 VPS', name: 'V3' }, { source: 'agy', name: 'a@b.example.com' }] };
+  const login = { ...fine, relogin: [{ source: '我的 VPS', name: 'V2' }, { source: '我的 VPS', name: 'V3' }, { source: 'agy', name: 'a@example.com' }] };
   assert.equal(Q.capsuleOf(login), '我的 VPS 有 2 个号要重新登录');
   assert.equal(Q.capsuleOf({ ...login, sources: [source({ low: true, title: 'X' })] }), 'X 额度见底'); // 两样都有：先说见底
-  assert.equal(Q.reloginLine(login), '我的 VPS · V2 要重新登录；我的 VPS · V3 要重新登录；agy · a@b.example.com 要重新登录');
+  assert.equal(Q.reloginLine(login), '我的 VPS · V2 要重新登录；我的 VPS · V3 要重新登录；agy · a@example.com 要重新登录');
   const r = { rev: '1', data: fine, at: '' };
   assert.equal(Q.quotaOn(undefined, r), false); // 旧 Covey 没有 ops
   assert.equal(Q.quotaOn(['say', 'upgrade'], r), false);

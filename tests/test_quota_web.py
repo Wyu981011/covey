@@ -58,7 +58,7 @@ class LoginField(TestCase):
         self.assertEqual([a.get("login") for a in kept["accounts"]], ["main@example.com", None, None, None, None])
         self.assertEqual(kept["accounts"][0]["alias"], "A")  # The alias is scrubbed as before; the login is the one text that is not.
         with self.assertRaises(ValueError):  # An e-mail alias is no alias: the login is the field for it.
-            quota.parse({"schema": 1, "collected_at": NOW, "ttl": 600, "accounts": [row("a@b.example.com")]})
+            quota.parse({"schema": 1, "collected_at": NOW, "ttl": 600, "accounts": [row("a@example.com")]})
 
 
 class ViewTest(Base):
@@ -121,11 +121,11 @@ class ViewTest(Base):
     def test_texts_pass_the_whitelist_but_the_login_does_not(self):
         self.store.saved("evil", "command", snap(row("A1", login="me@example.com")), title="https://x.example.com/secret", now=NOW)
         entry = self.store.read("evil")
-        entry["title"] = "see /home/tiger/key and 10.1.2.3"
+        entry["title"] = "see /home/tiger/key and 203.0.113.7"
         self.store._write("evil", entry)
         source = self.source("evil")
         self.assertNotIn("/home", source["title"])
-        self.assertNotIn("10.1.2.3", source["title"])
+        self.assertNotIn("203.0.113.7", source["title"])
         self.assertEqual(source["accounts"][0]["login"], "me@example.com")
 
     def test_the_item_carries_the_refresh_record(self):

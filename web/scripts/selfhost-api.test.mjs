@@ -302,7 +302,7 @@ test('账号与额度（v42）：Covey 推 quota 条目、页面读到理好的�
       at: 1795600000, read_at: 1795600000, relogin: [{ source: 'agy', name: 'a@example.com' }],
       refresh: { at: 0, busy: false, cooldown: 300 },
       sources: [{ id: 'agy', kind: 'agy', title: 'agy', collected_at: 1795600000, ttl: 600, stale_after: 3600, accounts: [
-        { name: '主号', login: 'a@example.com', state: 'ok', pools: [{ key: 'gemini', label: 'Gemini', active: true, state: 'ok', windows: [{ kind: '5h', left: 0.64 }, { kind: '7d', left: 7 }] }] }, { login: 'x@y.example.com' }] }] } }] },
+        { name: '主号', login: 'a@example.com', state: 'ok', pools: [{ key: 'gemini', label: 'Gemini', active: true, state: 'ok', windows: [{ kind: '5h', left: 0.64 }, { kind: '7d', left: 7 }] }] }, { login: 'x@example.com' }] }] } }] },
   });
   assert.equal(pushed.status < 300, true, await pushed.clone().text());
   const got = await (await api('/api/quota', { cookie })).json();
