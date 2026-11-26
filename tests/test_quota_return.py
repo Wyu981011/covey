@@ -33,6 +33,7 @@ class ReturnTest(unittest.TestCase):
             messenger=SimpleNamespace(send_message=self.send), voice=SimpleNamespace(safe_key=lambda key: key))
         self.ctx = SimpleNamespace(state_dir=self.state, profile="p")
         quota_return._last.clear()
+        self.enterContext(mock.patch.dict("os.environ", {"COVEY_QUIET_HOURS": "off"}))  # Whatever the hour the suite runs at.
         patch = mock.patch("covey.app.quota_return.quota_sources.enabled", return_value=True)
         patch.start()
         self.addCleanup(patch.stop)

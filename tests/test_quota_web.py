@@ -356,6 +356,7 @@ class NoticeTest(Base):
 
     def test_the_watch_sends_through_the_bridge_and_without_one_says_nothing(self):
         sent = []
+        self.enterContext(mock.patch.dict(os.environ, {quiet_hours.ENV: "off"}))  # The watch reads the real clock.
         runtime = SimpleNamespace(log=lambda text: None, access=SimpleNamespace(notify_chat=lambda: "oc_chat"))
         messenger = SimpleNamespace(send_message=lambda profile, chat, text, key, **kw: sent.append((chat, text)) or True)
         voice = SimpleNamespace(safe_key=lambda key: key)
