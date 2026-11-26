@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import unittest
 from types import SimpleNamespace
@@ -329,8 +330,9 @@ class ReadCase(Case):
         return memory_turn.block(self.ctx(), self.job(job_id=2), owner_turn=lambda: True)
 
     def lead(self, full):
-        return project_lead.state_pack(self.state, self.record(), "lead-4", full=full, receipts=[],
+        pack = project_lead.state_pack(self.state, self.record(), "lead-4", full=full, receipts=[],
                                        since=None if full else previous_start(self.state, LEAD, 4))
+        return re.sub(r"〔[0-9a-f-]+〕", "", pack)  # The lead's lines start with their ids (project_memory_revise takes them).
 
     def web(self):
         (item,) = Collector(SimpleNamespace(state_dir=self.state)).project_items(self.state, CHAT)

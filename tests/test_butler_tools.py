@@ -498,6 +498,7 @@ class GeminiSchemaTest(unittest.TestCase):
     def test_no_tool_has_what_gemini_refuses(self):
         tools = self.tools()
         self.assertIn("project_checklist", {tool["name"] for tool in tools})  # The switches reach the lead's 协作 tools.
+        self.assertIn("project_memory_revise", {tool["name"] for tool in tools})
         for tool in tools:
             with self.subTest(tool=tool["name"]):
                 self.assertEqual(tool["inputSchema"].get("type"), "object")

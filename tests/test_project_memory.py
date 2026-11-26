@@ -243,5 +243,91 @@ class ConcurrencyTest(Case):
         self.assertEqual(len(memory.live(self.state, self.record())), 24)
 
 
+class ReviseTest(Case):
+    """The lead's updating, replacing and putting away of a line (T852): the old text stays, in the meta or in the history."""
+
+    def view(self):
+        from covey.core import memory as core_memory
+        return core_memory.project_view(memory.entries(self.state, self.record()), PID)
+
+    def kept_ids(self):
+        return {item["ref"].split(":")[-1] for item in self.view()["kept"]}
+
+    def test_an_update_keeps_the_old_text_in_the_log(self):
+        item, _ = memory.add(self.state, PID, "窗口在周六", "fact", now=NOW)
+        row = memory.update(self.state, PID, item["id"], text="窗口在周日", why="主人改了", origin={"job": "j1"}, now=NOW + 5)
+        self.assertEqual((row["text"], row["kind"], row["at"]), ("窗口在周日", "fact", NOW + 5))
+        log = row["fixes"][-1]
+        self.assertEqual((log["what"], log["was"], log["why"], log["origin"]), ("edit", {"text": "窗口在周六", "kind": "fact"}, "主人改了", {"job": "j1"}))
+        memory.update(self.state, PID, item["id"], kind="constraint", now=NOW + 6)
+        self.assertEqual(len(memory.live(self.state, self.record())[0]["fixes"]), 2)
+        with self.assertRaises(ValueError):
+            memory.update(self.state, PID, item["id"], now=NOW + 7)  # Nothing to change.
+        with self.assertRaises(ValueError):
+            memory.update(self.state, PID, item["id"], text="窗口在周日", kind="constraint", now=NOW + 7)  # The same.
+
+    def test_an_update_into_a_line_that_is_there_or_that_the_owner_deleted_is_refused(self):
+        one, _ = memory.add(self.state, PID, "A", "fact", now=NOW)
+        memory.add(self.state, PID, "B", "fact", now=NOW)
+        gone, _ = memory.add(self.state, PID, "C", "fact", now=NOW)
+        memory.delete(self.state, PID, gone["id"], now=NOW + 1)
+        for text in ("B", "C"):
+            with self.assertRaises(ValueError):
+                memory.update(self.state, PID, one["id"], text=text, now=NOW + 2)
+
+    def test_a_new_line_takes_the_place_and_the_old_one_is_history_not_carried(self):
+        old, _ = memory.add(self.state, PID, "现网用 11170f", "fact", now=NOW)
+        before, version = self.kept_ids(), self.view()["version"]
+        self.assertIn(old["id"], before)
+        gone, new, made = memory.supersede(self.state, PID, old["id"], text="现网用 22281a", why="换了", now=NOW + 5)
+        self.assertTrue(made)
+        self.assertEqual((gone["valid"], gone["superseded_by"], gone["text"]), ("superseded", new["id"], "现网用 11170f"))
+        self.assertEqual((new["source"], new["kind"], new["text"]), ("lead", "fact", "现网用 22281a"))
+        self.assertEqual(gone["fixes"][-1]["was"], {"text": "现网用 11170f", "kind": "fact"})
+        kept = self.kept_ids()
+        self.assertNotIn(old["id"], kept)
+        self.assertIn(new["id"], kept)
+        self.assertNotEqual(self.view()["version"], version)
+        self.assertIn(old["id"], [row["id"] for row in memory.live(self.state, self.record())])  # Still there to read.
+
+    def test_two_lines_that_say_one_thing_merge_with_by(self):
+        one, _ = memory.add(self.state, PID, "接口叫 bill_v2", "fact", now=NOW)
+        two, _ = memory.add(self.state, PID, "账单接口是 bill_v2", "fact", now=NOW + 1)
+        gone, new, made = memory.supersede(self.state, PID, one["id"], by=two["id"], now=NOW + 5)
+        self.assertEqual((made, new["id"], gone["superseded_by"]), (False, two["id"], two["id"]))
+        self.assertEqual(self.kept_ids(), {two["id"]})
+        with self.assertRaises(ValueError):
+            memory.supersede(self.state, PID, two["id"], by=two["id"])
+        with self.assertRaises(ValueError):
+            memory.supersede(self.state, PID, two["id"], by=one["id"])  # History already.
+        with self.assertRaises(ValueError):
+            memory.supersede(self.state, PID, two["id"])  # Neither text nor by.
+
+    def test_retire_puts_a_line_into_the_history_with_the_why(self):
+        item, _ = memory.add(self.state, PID, "先用旧库", "decision", now=NOW)
+        row = memory.retire(self.state, PID, item["id"], why="已迁完", origin={"job": "j2"}, now=NOW + 3)
+        self.assertEqual((row["valid"], row["text"], row["fixes"][-1]["what"], row["fixes"][-1]["why"]), ("done", "先用旧库", "retire", "已迁完"))
+        self.assertNotIn(item["id"], self.kept_ids())
+        with self.assertRaises(ValueError):
+            memory.retire(self.state, PID, item["id"])
+        self.assertEqual(self.stored()[0]["deleted"], 0)  # Not a tombstone: the owner's delete is another thing.
+
+    def test_the_policy_runs_under_the_lock_and_a_refusal_writes_nothing(self):
+        item, _ = memory.add(self.state, PID, "窗口在周六", "fact", now=NOW)
+        before = memory.meta_path(self.state, PID).exists()
+        with self.assertRaises(ValueError) as caught:
+            memory.retire(self.state, PID, item["id"], allow=lambda action, entry, other: "不行")
+        self.assertEqual(str(caught.exception), "不行")
+        self.assertEqual(memory.meta_path(self.state, PID).exists(), before)
+        self.assertEqual(memory.live(self.state, self.record())[0].get("valid"), None)
+
+    def test_the_log_is_kept_to_ten(self):
+        item, _ = memory.add(self.state, PID, "v0", "fact", now=NOW)
+        for number in range(1, 14):
+            memory.update(self.state, PID, item["id"], text=f"v{number}", now=NOW + number)
+        row = memory.live(self.state, self.record())[0]
+        self.assertEqual((len(row["fixes"]), row["fixes"][-1]["was"]["text"]), (10, "v12"))
+
+
 if __name__ == "__main__":
     unittest.main()

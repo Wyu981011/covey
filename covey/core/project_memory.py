@@ -78,6 +78,8 @@ ORIGIN_KEYS = {"message_id": 120, "question": 16, "item": 64, "topic": 64, "job"
 LAYERS = ("rule", "decision", "history")  # 长期约定, 当前决定, 历史记录 (docs/web.md 三层记忆): a fix's layer.
 VALID = ("active", "done", "superseded")  # Of a live entry (a tombstone's is void).
 FIXES = ("scope", "once", "confirm")  # The owner's corrections (docs/web.md memory_fix).
+REVISIONS = ("edit", "retire", "supersede")  # What the lead's revise tools log in ``fixes`` too (``update``, ``supersede``, ``retire``).
+WHY = 100  # Characters of the reason a revision logs.
 ONCE = "只限当次"  # The conditions ``once`` gives a line.
 APPLIES = 200  # Characters of the conditions.
 FIXES_KEPT = 10  # Of an entry's log of corrections.
@@ -153,7 +155,7 @@ def _meta(value) -> dict:
     for key, size in (("applies", APPLIES), ("superseded_by", 40)):
         if isinstance(value.get(key), str) and value[key].strip():
             out[key] = clean(value[key], size)
-    fixes = [fix for fix in value.get("fixes") or () if isinstance(fix, dict) and fix.get("what") in FIXES]
+    fixes = [fix for fix in value.get("fixes") or () if isinstance(fix, dict) and fix.get("what") in (*FIXES, *REVISIONS)]
     if fixes:
         out["fixes"] = fixes[-FIXES_KEPT:]
     return {key: value for key, value in out.items() if value}
@@ -516,6 +518,133 @@ def settle(state_dir, project_id, changes, *, now=None) -> list:
             out.append((entry_id, before))
         return out
     return _edit(state_dir, project_id, edit, None, now)
+
+
+def _revisable(rows, meta, entry_id, allow, action):
+    """(the live entry ``entry_id`` of ``rows`` with its meta merged in, its row) for a revision by the lead; ValueError when it is
+    not there, is the style line, is history already, or ``allow(action, entry, None)`` (the caller's policy, run under the lock)
+    gives a reason."""
+    row = next((row for row in rows if row["id"] == str(entry_id) and not row["deleted"] and row["kind"] != "style"), None)
+    if row is None:
+        raise ValueError("这条记忆已经不在了（或是风格行）")
+    entry = {**row, **(meta.get(row["id"]) or {})}
+    if entry.get("valid") in SETTLED:
+        raise ValueError("这条已经收进历史了，不用再改")
+    reason = allow(action, entry, None) if allow else ""
+    if reason:
+        raise ValueError(reason)
+    return entry, row
+
+
+def _logged(meta, row, what, stamp, origin, why, was=None) -> dict:
+    """The meta of ``row`` with one more line in its ``fixes``: what was done, when, from which job, why and what it was."""
+    entry = dict(meta.get(row["id"]) or {})
+    log = {"what": what, "at": stamp, "origin": _origin(origin), "why": clean(why, WHY), **({"was": was} if was else {})}
+    entry["fixes"] = [*entry.get("fixes", ()), {key: value for key, value in log.items() if value}][-FIXES_KEPT:]
+    return entry
+
+
+def _free(rows, meta, text, kind, but="") -> None:
+    """ValueError when the owner deleted a line of ``kind`` with this ``text`` (it is not written back) or another live one says
+    the same (merge with it instead)."""
+    for row in rows:
+        if row["id"] != but and row["kind"] == kind and row["text"] == text:
+            if row["deleted"]:
+                raise ValueError("主人删掉过这条专项记忆，不再记回去。")
+            if (meta.get(row["id"]) or {}).get("valid") not in SETTLED:
+                raise ValueError(f"专项记忆里已有一条一样的（{row['id']}）：要合并就用 supersede，by 写它的 id。")
+
+
+def update(state_dir, project_id, entry_id, *, text="", kind="", why="", origin=None, allow=None, now=None) -> dict:
+    """The lead's correction of its live entry ``entry_id``: a new ``text`` and/or ``kind`` (one left out stays), the line as it
+    was kept in the meta's ``fixes`` (``what`` edit, ``was`` its text and kind, ``why``, ``origin``; at most ``FIXES_KEPT`` of
+    them). ``allow(action, entry, other)`` is the caller's policy, run under the lock (``other`` is the entry that takes the
+    place of a ``supersede``'s): a reason it returns is a ValueError. The entry as ``entries`` gives it. ValueError for nothing
+    to change, an entry that is not there or is history, or a text the owner deleted or another line has; KeyError for a
+    project with no record."""
+    stamp = time.time() if now is None else now
+    text = clean(text) if str(text or "").strip() else ""
+    kind = kind_of(kind) if kind else ""
+    if not text and not kind:
+        raise ValueError("要改就给 text 或 kind")
+
+    def edit(rows, meta):
+        entry, row = _revisable(rows, meta, entry_id, allow, "update")
+        text_after, kind_after = text or row["text"], kind or row["kind"]
+        if (text_after, kind_after) == (row["text"], row["kind"]):
+            raise ValueError("和原来一样，没有改")
+        _free(rows, meta, text_after, kind_after, row["id"])
+        meta[row["id"]] = _logged(meta, row, "edit", stamp, origin, why, {"text": row["text"], "kind": row["kind"]})
+        row.update(text=text_after, kind=kind_after, at=stamp)
+        return row["id"]
+    return _found(state_dir, project_id, _edit(state_dir, project_id, edit, None, stamp))
+
+
+def _found(state_dir, project_id, entry_id) -> dict:
+    return next(row for row in entries(state_dir, projects.read_record(state_dir, project_id)) if row["id"] == entry_id)
+
+
+def supersede(state_dir, project_id, entry_id, *, text="", kind="", by="", why="", origin=None, allow=None, now=None) -> tuple:
+    """The entry that takes the place of the live ``entry_id``, which goes to the history (``valid`` superseded, ``superseded_by``
+    the new id, its text stays): ``by`` is another live entry of the project (merging two that say the same), else ``text`` (and
+    ``kind``, the old one's if left out) is written as the lead's new entry in the same write (an equal live one is the one used).
+    ``allow`` as ``update``'s, asked with the replacement as ``other``. (old entry, new entry, whether the new one was written
+    now), as ``entries`` gives them. ValueError as ``update``'s, for a ``by`` that is not live or is the entry itself, or neither
+    ``by`` nor ``text``."""
+    stamp = time.time() if now is None else now
+    text = clean(text) if str(text or "").strip() else ""
+    if not by and not text:
+        raise ValueError("要替代就给 text（写新条），或 by（已有的一条的 id）")
+    made = _origin(origin)
+
+    def edit(rows, meta):
+        entry, row = _revisable(rows, meta, entry_id, None, "supersede")
+        if by:
+            if str(by) == row["id"]:
+                raise ValueError("不能用它自己替代自己")
+            new = next((r for r in rows if r["id"] == str(by) and not r["deleted"] and r["kind"] != "style"), None)
+            if new is None or (meta.get(new["id"]) or {}).get("valid") in SETTLED:
+                raise ValueError(f"by 的那条（{by}）不在专项记忆里，或已经在历史里")
+            created = False
+        else:
+            wanted = {"id": secrets.token_hex(3), "text": text, "kind": kind_of(kind) if kind else row["kind"], "source": "lead",
+                      "at": stamp, "deleted": 0, **({"redacted": True} if row.get("redacted") else {})}
+            same = next((r for r in rows if not r["deleted"] and r["kind"] == wanted["kind"] and r["text"] == text
+                         and (meta.get(r["id"]) or {}).get("valid") not in SETTLED), None)
+            created = same is None
+            new = wanted if created else same
+            if new["id"] == row["id"]:
+                raise ValueError("和原来一样，没有改：只改正文用 update")
+        reason = allow("supersede", entry, {**new, **(meta.get(new["id"]) or {})}) if allow else ""
+        if reason:
+            raise ValueError(reason)
+        if created:
+            _free(rows, meta, new["text"], new["kind"])
+            rows.append(new)
+            if made:
+                meta[new["id"]] = {"origin": made}
+        old = _logged(meta, row, "supersede", stamp, origin, why, {"text": row["text"], "kind": row["kind"]})
+        old.update(valid="superseded", superseded_by=new["id"])
+        meta[row["id"]] = old
+        return row["id"], new["id"], created
+    old_id, new_id, created = _edit(state_dir, project_id, edit, None, stamp)
+    return _found(state_dir, project_id, old_id), _found(state_dir, project_id, new_id), created
+
+
+def retire(state_dir, project_id, entry_id, *, why="", origin=None, allow=None, now=None) -> dict:
+    """The lead puts the live ``entry_id`` away into the history (``valid`` done, its text stays, a line in ``fixes`` with ``why``):
+    a turn does not carry it any more but it can be read, unlike a delete, which is the owner's tombstone. ``allow`` as
+    ``update``'s. The entry as ``entries`` gives it."""
+    stamp = time.time() if now is None else now
+
+    def edit(rows, meta):
+        entry, row = _revisable(rows, meta, entry_id, allow, "retire")
+        old = _logged(meta, row, "retire", stamp, origin, why)
+        old.update(valid="done")
+        old.pop("superseded_by", None)
+        meta[row["id"]] = old
+        return row["id"]
+    return _found(state_dir, project_id, _edit(state_dir, project_id, edit, None, stamp))
 
 
 def unsettle(state_dir, project_id, settled, *, now=None) -> list:

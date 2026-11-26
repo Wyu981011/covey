@@ -667,7 +667,7 @@ class PackTest(Case):
             self.assertEqual(project_lead.lead_rules(), rules)
         with mock.patch.dict(os.environ, TRIAGE):
             triaged = project_lead.state_pack(self.state, record, "lead-1", full=True, receipts=receipts)
-        for words in ("目标检查表", "〔", "先看：", "没处理的协作缺口", "主人在专项里说过的话", "msg:", "简报"):
+        for words in ("目标检查表", "先看：", "没处理的协作缺口", "主人在专项里说过的话", "msg:", "简报"):
             self.assertNotIn(words, pack)
             self.assertNotIn(words, triaged)
         self.assertIn("自上次唤醒以来的收件箱：\n" + "\n".join(map(project_lead.receipt_line, receipts)), pack)

@@ -299,11 +299,25 @@ PROJECT_TOOLS = (
          "text": {"type": "string", "description": "目标和完成标准，一两句，最多 200 字"}}}},
     {"name": "project_remember",
      "description": "记进专项记忆：这个专项里长期适用的决定、约束、联系人和事实，之后每次重建会话都会带上。"
-                    "只记主人说过的或已经定下的，不写令牌、密码这类机密；同类同文的不重复记；主人在专项卡上删掉的不要再记回去。",
+                    "只记主人说过的或已经定下的，不写令牌、密码这类机密；同类同文的不重复记；主人在专项卡上删掉的不要再记回去；发版号、现网第几代、集群余量、当前进度这类某一刻的快照不要记，写 project_note；已有的口径变了用 project_memory_revise。",
      "input_schema": {"type": "object", "required": ["kind", "text"], "properties": {
          "kind": {"type": "string", "enum": ["decision", "constraint", "contact", "fact"],
                   "description": "decision 决定，constraint 约束、做法和坑，contact 联系人，fact 事实"},
          "text": {"type": "string", "description": "条目本身，一句话，最多 200 字"}}}},
+    {"name": "project_memory_revise",
+     "description": "改专项记忆里已有的一条（id 是专项记忆每行开头〔〕里的）：口径变了、记错了、两条说的是一件事，都用它，"
+                    "不要再追加一条“XXX 作废”。op：update 改这条的正文或种类（改之前的原文留在修改记录里）；"
+                    "supersede 用新的替代旧的（text 写新条，或 by 写已有的一条的 id 来合并重复），旧的收进历史、不再每轮带上；"
+                    "retire 这条不再成立或已办完，收进历史。不能改、替代或作废主人的长期约定和他留下的限制（要改请问主人）；"
+                    "主人的当前决定不能改正文，办完了才能 retire，主人有了更新的答复才能被那条 supersede。",
+     "input_schema": {"type": "object", "required": ["op", "id"], "properties": {
+         "op": {"type": "string", "enum": ["update", "supersede", "retire"],
+                    "description": "update 改正文或种类；supersede 用新条或已有的一条替代旧的；retire 收进历史"},
+         "id": {"type": "string", "description": "要处理的那条的 id"},
+         "text": {"type": "string", "description": "update、supersede 的新正文，一句话，最多 200 字"},
+         "kind": {"type": "string", "enum": ["decision", "constraint", "contact", "fact"], "description": "可选，新的种类"},
+         "by": {"type": "string", "description": "supersede 用：已有的一条的 id，由它替代旧的（合并重复）；和 text 二选一"},
+         "why": {"type": "string", "description": "可选，一句话：为什么改（记进修改记录）"}}}},
     {"name": "project_style",
      "description": "主人说“少打扰我”“多报一点”这类时，改这个专项的汇报风格；只给要改的项。"
                     "report：ask_only 只在要主人定时说 / milestones 里程碑和完成 / each_thread 每个话题结束 / verbose 详细；"

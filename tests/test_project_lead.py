@@ -41,7 +41,7 @@ LEAD = projects.lead_topic_id(CHAT, PID)
 ON = {projects.ENV: "1"}
 NOW = 1_800_000_000.0
 LEAD_NAMES = ["topics_list", "topics_search", "topic_read", "workspaces_list", "topics_switch",
-              "project_topic_start", "project_topic_send", "project_topic_stop", "project_note", "project_goal", "project_remember",
+              "project_topic_start", "project_topic_send", "project_topic_stop", "project_note", "project_goal", "project_remember", "project_memory_revise",
               "project_style", "project_finish"]
 
 
@@ -161,7 +161,7 @@ class PackTest(Case):
         self.assertIn("把账单迁到新库，对账一致", pack)
         self.assertIn("T41 · 导出旧账单 · 在做 · 导出第 3 批", pack)
         self.assertIn("T42 · 写对账脚本 · 做完 · 放在 reconcile.py", pack)
-        self.assertIn("[constraint] 旧库时区是 UTC+0", pack)  # An older release's entry in the record, under the kind's new name.
+        self.assertIn("[constraint] 〔m1〕旧库时区是 UTC+0", pack)  # An older release's entry in the record, under the kind's new name.
         self.assertIn("风格：report=milestones；detail=简\n", pack)
         self.assertIn("没有新的。", pack)
 
@@ -170,7 +170,7 @@ class PackTest(Case):
         projects.update(self.state, PID, lambda r: r.update(memory=[{"id": "m1", "kind": "fact", "text": "记忆里的话", "at": NOW}]))
         pack = project_lead.state_pack(self.state, self.reload(), "lead-1", full=False)
         self.assertNotIn("目标和完成标准", pack)
-        self.assertIn("- [fact] 记忆里的话", pack)  # As a member topic reads it (core/memory.py project_view), every turn.
+        self.assertIn("- [fact] 〔m1〕记忆里的话", pack)  # As a member topic reads it (core/memory.py project_view), every turn.
         self.assertIn("T41", pack)
         self.assertIn("风格：", pack)
 
@@ -1012,6 +1012,73 @@ class RecordToolsTest(ToolsCase):
         self.assertIn("主人删掉的记忆", pack)
         self.assertIn("[decision] 先迁 2024 年", pack)
         self.assertNotIn("专项记忆：", pack)
+
+    def entries(self):
+        return {row["id"]: row for row in project_memory.live(self.state, self.reload())}
+
+    def test_the_lead_updates_replaces_and_retires_its_own_lines(self):
+        one = self.tool("project_remember", kind="fact", text="现网用 11170f")["data"]["id"]
+        self.tool("project_memory_revise", op="update", id=one, text="现网用 11170f，仅 A 区", why="补范围")
+        self.assertEqual(self.entries()[one]["text"], "现网用 11170f，仅 A 区")
+        data = self.tool("project_memory_revise", op="supersede", id=one, text="现网用 22281a")["data"]
+        self.assertEqual((data["old"], data["new"]), (one, True))
+        self.assertEqual(self.entries()[one]["valid"], "superseded")
+        pack = project_lead.state_pack(self.state, self.reload(), "lead-1", full=True)
+        self.assertIn("现网用 22281a", pack)
+        self.assertNotIn("11170f", pack)
+        self.assertIn(f"〔{data['id']}〕", pack)  # The lead sees the ids it passes to the tool.
+        done = self.tool("project_memory_revise", op="retire", id=data["id"], why="不用了")
+        self.assertIn("收进历史", done["text"])
+        self.assertIn("已经收进历史", self.refused("project_memory_revise", op="retire", id=data["id"]))
+        self.assertIn("op 要是", self.refused("project_memory_revise", op="delete", id=one))
+        self.assertIn("要替代就给", self.refused("project_memory_revise", op="supersede", id=one))
+
+    def test_the_owners_rules_and_limits_are_not_the_leads_to_change(self):
+        rule, _ = project_memory.add(self.state, PID, "部署前先问我", "fact", "owner")
+        limit, _ = project_memory.add(self.state, PID, "不许动生产库", "constraint", "owner")
+        mine = self.tool("project_remember", kind="fact", text="新条")["data"]["id"]
+        for entry in (rule, limit):
+            for args in ({"op": "update", "text": "改了"}, {"op": "supersede", "text": "改了"}, {"op": "supersede", "by": mine},
+                         {"op": "retire"}):
+                self.assertIn("主人的长期约定", self.refused("project_memory_revise", id=entry["id"], **args))
+        self.assertEqual({row["valid"] if "valid" in row else "active" for row in (self.entries()[rule["id"]], self.entries()[limit["id"]])}, {"active"})
+
+    def test_the_owners_confirmed_line_is_his_too(self):
+        mine = self.tool("project_remember", kind="fact", text="周五不发版")["data"]["id"]
+        project_memory.fix(self.state, PID, mine, "confirm", origin={"message_id": "om_1"})
+        self.assertIn("主人的长期约定", self.refused("project_memory_revise", op="retire", id=mine))
+
+    def test_the_owners_answer_keeps_its_words_and_is_replaced_only_by_a_later_one_of_his(self):
+        answer, _ = project_memory.add(self.state, PID, "先迁 2024 年", "decision", "owner_answer", now=NOW)
+        mine = self.tool("project_remember", kind="decision", text="先迁 2025 年")["data"]["id"]
+        self.assertIn("不能改正文", self.refused("project_memory_revise", op="update", id=answer["id"], text="先迁 2025 年"))
+        self.assertIn("只能被主人更新的答复替代", self.refused("project_memory_revise", op="supersede", id=answer["id"], text="先迁 2025 年"))
+        self.assertIn("只能被主人更新的答复替代", self.refused("project_memory_revise", op="supersede", id=answer["id"], by=mine))
+        later, _ = project_memory.add(self.state, PID, "改成先迁 2025 年", "decision", "owner_answer", now=NOW + 60)
+        self.tool("project_memory_revise", op="supersede", id=answer["id"], by=later["id"])
+        self.assertEqual((self.entries()[answer["id"]]["valid"], self.entries()[answer["id"]]["superseded_by"]), ("superseded", later["id"]))
+        self.tool("project_memory_revise", op="retire", id=later["id"], why="办完了")  # Done: allowed.
+        self.assertEqual(self.entries()[later["id"]]["valid"], "done")
+
+    def test_a_snapshot_is_not_remembered_and_is_pointed_to_project_note(self):
+        for text in ("现网第 459 代已上线", "当前是第462代部署", "集群余量 12 卡", "进度 60%"):
+            self.assertIn("project_note", self.refused("project_remember", kind="fact", text=text))
+        self.assertEqual(self.entries(), {})
+        entry = self.tool("project_remember", kind="fact", text="发版走灰度再全量")["data"]["id"]
+        self.assertIn("project_note", self.refused("project_memory_revise", op="update", id=entry, text="现网第 460 代"))
+        self.tool("project_note", text="现网第 459 代已上线")
+
+    def test_a_revised_line_the_owner_deleted_is_not_written_back(self):
+        one = self.tool("project_remember", kind="fact", text="甲")["data"]["id"]
+        gone = self.tool("project_remember", kind="fact", text="乙")["data"]["id"]
+        project_memory.delete(self.state, PID, gone)
+        self.assertIn("删掉过", self.refused("project_memory_revise", op="update", id=one, text="乙"))
+
+    def test_the_lead_is_told_to_revise_and_not_to_append_a_voiding_line(self):
+        rules = "\n".join(project_lead.TOOL_RULES)
+        self.assertIn("project_memory_revise", rules)
+        self.assertIn("不许再追加", rules)
+        self.assertIn("快照", rules)
 
     def test_the_style_changes_by_the_items_given_and_leaves_one_line_in_the_memory(self):
         shown = self.tool("project_style")

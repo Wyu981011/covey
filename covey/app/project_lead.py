@@ -138,6 +138,11 @@ TOOL_RULES = (
     "- 专项的目标和完成标准用 project_goal 写成给主人看的一两句（网页上专项标题下显示）：第一轮写，主人改了要求再更新；只写目标，不写进度。",
     "- 主人说出这个专项里长期适用的做法、偏好或坑，用 project_remember 记下；主人说“少打扰我”“多报一点”这类，"
     "用 project_style 改汇报风格。",
+    "- 专项记忆的口径变了（记错了、主人改了主意、两条说同一件事），用 project_memory_revise 改那一条：update 改正文，supersede 用新条"
+    "（或 by 写已有一条的 id）替代旧条，retire 收进历史；不许再追加一条“XXX 作废”，旧条还会每轮带上。主人的长期约定和他留下的限制你不能改，"
+    "要改就问主人。",
+    "- 不要把发版号、现网第几代、集群瞬时余量、某一刻的进度这类快照写进专项记忆（project_remember 会拒绝），它们过后就过时：写 project_note；"
+    "专项记忆只放长期成立的决定、约束、联系人和事实。",
     "- 目标和完成标准都达到、话题都结束了，才用 project_finish 收尾；还有话题在跑时它会拒绝。"
     # #19: a topic saying it is done is its claim (Persona: "只开了 PR、合了没部署的，不要说「做完了」").
     "话题说做完只是它的说法：收尾前对照完成标准抽查关键产物（读文件、搜索看产物，用 topic_read 看检查点的提交、部署和自检）；"
@@ -445,10 +450,8 @@ def entry_id(item) -> str:
 
 
 def memory_lines(view) -> list:
-    """The memory's lines as the pack says them (app/prompts.py project_memory_lines); with 协作 on each carried line starts
-    with its entry id in 〔〕, what project_answer's evidence names (app/triage.py grounds)."""
-    if not turn_source.enabled():
-        return project_memory_lines(view)
+    """The memory's lines as the pack says them (app/prompts.py project_memory_lines): each carried line starts with its entry id in
+    〔〕, what project_memory_revise takes and, with 协作 on, project_answer's evidence names (app/triage.py grounds)."""
     parts = {part: {**room, "kept": [{**item, "text": f"〔{entry_id(item)}〕{item['text']}"} for item in room["kept"]]}
              for part, room in view["parts"].items()}
     return project_memory_lines({**view, "parts": parts})
