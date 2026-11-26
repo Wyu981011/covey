@@ -39,7 +39,7 @@ class NestingTests(unittest.TestCase):
 
     def test_every_package_wraps_the_turn_first_enabled_outermost(self):
         seen = []
-        ctx = dataclasses.make_dataclass("C", [("model", str)])("m")
+        ctx = dataclasses.make_dataclass("C", [("model", str), ("options", dict)])("m", {})  # as BridgeContext
         pairs = [("a", self.hook("a", seen)), ("b", self.hook("b", seen))]
         with mock.patch.object(extensions, "hooks", return_value=pairs):
             with bridge._extension_turn(ctx, {}, run_id="r") as (inner, env):
@@ -48,7 +48,7 @@ class NestingTests(unittest.TestCase):
 
     def test_one_package_or_none_behaves_as_before(self):
         seen = []
-        ctx = dataclasses.make_dataclass("C", [("model", str)])("m")
+        ctx = dataclasses.make_dataclass("C", [("model", str), ("options", dict)])("m", {})  # as BridgeContext
         with mock.patch.object(extensions, "hooks", return_value=[("a", self.hook("a", seen))]):
             with bridge._extension_turn(ctx, {}) as (inner, _env):
                 self.assertEqual(inner.model, "m+a")
