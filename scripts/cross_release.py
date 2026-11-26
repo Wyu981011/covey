@@ -857,6 +857,11 @@ TIMING_LINE = re.compile(r"(?:\[[^\]]*\] )?timing ")
 # release alone flips between 更新了机器人 and 更新了进度 from run to run, old releases too), not the protocol.
 VOLATILE_RECORD = {"timings", "latency_ms", "revision", "card_update_failures", "token_rate", "context_tokens",
                    "elapsed_seconds", "last_progress_age_seconds", "long_task_summary", "last_activity"}
+# Job record fields the memory's per-turn bookkeeping added (T870, app/memory_turn.py record: memory_listed, by the runner;
+# app/memory_observe.py: memory_observed, by the Bridge once it counted the turn). Each is written by one side and read by
+# that side alone, and every release reads a record's fields it does not know as absent (rule 10), so a release that has
+# them and one that does not differ in their presence only. Left out of the comparison; everything else is compared.
+ADDED_RECORD = {"memory_listed", "memory_observed"}
 # The same, in one variant only: downkilled SIGKILLs the runner right after its first phase, so whether it got to record
 # the native session id first is the kill's timing; every other variant compares session_id as it is.
 VOLATILE_BY_VARIANT = {"downkilled": {"session_id"}}
@@ -897,6 +902,8 @@ def tidy(data, scratch, trees):
             if isinstance(facts.get(name), dict):
                 for field in volatile & set(facts[name]):
                     facts[name][field] = "<PRESENT>"
+                for field in ADDED_RECORD & set(facts[name]):
+                    del facts[name][field]
         # Order of lines and events of different threads is not the protocol, nor are timing lines (their
         # counts, such as journal=jobs:N, vary from run to run within one release).
         section["log"] = sorted(line for line in section["log"] or [] if not line.startswith("timing ") and not RACED_LOG.search(line))

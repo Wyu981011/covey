@@ -170,15 +170,16 @@ def in_progress(state_dir, entry, topic, *, now, cache=None) -> bool:
     return recent or now - last <= IN_PROGRESS_HOURS * 3600
 
 
-def decisions_of(state_dir, *, topic="", project="", redacted_on=False, now=None) -> list:
-    """The decisions in progress a turn of ``topic`` in ``project`` carries, the newest first, a question once."""
+def decisions_of(state_dir, *, topic="", project="", redacted_on=False, now=None, cache=None) -> list:
+    """The decisions in progress a turn of ``topic`` in ``project`` carries, the newest first, a question once. ``cache``:
+    the asking topics' job records as ``in_progress`` read them, shared by the caller (the web page's previews of one build)."""
     now = time.time() if now is None else now
     found = []
     if topic:
         found += memstore.entries(state_dir, scope="topic", owner_key=topic, kinds=("decision",))
     if project:
         found += memstore.entries(state_dir, scope="project", owner_key=project, kinds=("decision",))
-    cache: dict = {}
+    cache = {} if cache is None else cache
     seen, out = set(), []
     for entry in sorted(found, key=lambda e: -e.at):
         if not _readable(entry, redacted_on) or not in_progress(state_dir, entry, topic, now=now, cache=cache):
@@ -265,13 +266,13 @@ _PLANS_KEPT = 64
 
 
 def make_plan(state_dir, *, topic="", project="", owner=False, redacted_on=False, words="", title="", repos=(),
-              now=None) -> Plan:
+              now=None, cache=None) -> Plan:
     """What a turn of ``topic`` in ``project`` carries (``owner``: the owner's own turn; ``words``: the owner's words of
     it). The same arguments and memory give the same plan."""
     now = time.time() if now is None else now
     state_dir = Path(state_dir)
     rules, left = rules_of(state_dir, topic=topic, project=project, owner=owner, redacted_on=redacted_on)
-    decisions = decisions_of(state_dir, topic=topic, project=project, redacted_on=redacted_on, now=now)
+    decisions = decisions_of(state_dir, topic=topic, project=project, redacted_on=redacted_on, now=now, cache=cache)
     kept, shown = [], 0
     for entry in decisions:
         size = min(len(entry.text), DECISION_LINE)
@@ -399,7 +400,7 @@ def record(ctx, job, owner_turn, log=None) -> None:
 
 
 def preview(state_dir, topic_key: str = "", *, project_key: str = "", title: str = "", query: str = "",
-            repos: tuple = ()) -> dict:
+            repos: tuple = (), cache: dict | None = None) -> dict:
     """What a turn of ``topic_key`` would carry, as the web page shows it (data contract v43 MemoryPreview): {topic_key, title,
     chars, rules, decisions, notes: [{code, sim}], listed}; the owner's own turn, the topic's redaction as it is set."""
     state_dir = Path(state_dir)
@@ -416,7 +417,7 @@ def preview(state_dir, topic_key: str = "", *, project_key: str = "", title: str
         except (OSError, ValueError):
             shown = ""
     made = make_plan(state_dir, topic=topic, project=project, owner=True, redacted_on=hidden, words=query, title=title,
-                     repos=tuple(repos or ()))
+                     repos=tuple(repos or ()), cache=cache)
     text = memory_rules_block(made.rules, made.left, project_name=made.project_name, search="")
     text += memory_tail_block(made.decisions, made.notes, made.listed, numbers=made.numbers, project=made.project,
                               names=made.names)

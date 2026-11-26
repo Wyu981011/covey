@@ -767,7 +767,8 @@ def previews(state_dir, store, now=None) -> dict:
         facts = store.topic(tid) if tid else {"project": "", "title": ""}
         title = facts["title"] or (f"T{facts['number']}" if facts.get("number") else "")
         try:
-            row = dict(made(state_dir, tid, project_key=facts["project"], title=title)) if made else None
+            shared = {"cache": store.live_cache} if made and "cache" in inspect.signature(made).parameters else {}
+            row = dict(made(state_dir, tid, project_key=facts["project"], title=title, **shared)) if made else None
         except NotImplementedError:
             row = None
         if row is None:
