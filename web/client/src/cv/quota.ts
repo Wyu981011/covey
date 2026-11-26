@@ -135,11 +135,11 @@ export const sourceWarn = (source: QuotaSource, now: number): boolean => source.
 /** 展开还是折起：用户点过听用户的，否则 Covey 说展开（expand）就展开 */
 export const isOpen = (source: QuotaSource, picked: boolean | undefined): boolean => (picked === undefined ? source.expand : picked);
 
-/** 组名旁的小字：agy 写“N 个号 · 用完自动顺延”；展开的别的来源写“N 个号”；折起的写“k/n 个能用” */
+/** 组名旁的小字：agy 写“N 个号 · 用完自动顺延”；展开的外接来源写“N 个号”；网关和折起的写“k/n 个能用” */
 export function groupNote(source: QuotaSource, open: boolean): string {
   const n: number = source.accounts.length;
   if (source.kind === 'agy') return `${n} 个号 · 用完自动顺延`;
-  if (open) return `${n} 个号`;
+  if (open && source.kind !== 'gateway') return `${n} 个号`;
   return source.total > 0 ? `${source.usable}/${source.total} 个能用` : source.failing ? '读不到' : '';
 }
 

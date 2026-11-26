@@ -12,7 +12,7 @@
 .cv .mq-grp small{color:var(--t3);font-size:12px;margin-left:6px;font-weight:400}
 .cv .mq-name{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--t1);min-width:0}
 .cv .mq-name > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv .mq-name .dot{width:7px;height:7px;border-radius:50%;background:var(--accent-t,#3b6cf6);flex:none}
+.cv .mq-name .dot{width:7px;height:7px;border-radius:50%;background:var(--a1,#3b6cf6);flex:none}
 .cv .mq-name .nodot{width:7px;flex:none}
 .cv .mq-name .reddot,.cv .mq-gdot{width:7px;height:7px;border-radius:50%;background:var(--fail);flex:none}
 .cv .mq-gdot{margin-left:6px}
@@ -22,7 +22,7 @@
 .cv .mq-c.tight .n,.cv .mq-c.out .n{color:var(--fail)}
 .cv .mq-c.stale .n,.cv .mq-c.none .n{color:var(--t3);font-weight:400}
 .cv .mq-c .pool{font-size:11.5px;color:var(--t3);grid-column:1/-1;display:flex;align-items:center;gap:5px}
-.cv .mq-pdot{width:6px;height:6px;border-radius:50%;background:var(--accent-t,#3b6cf6);display:inline-block}
+.cv .mq-pdot{width:6px;height:6px;border-radius:50%;background:var(--a1,#3b6cf6);display:inline-block}
 .cv .mq-two{display:grid;gap:4px}
 .cv .mq-row.login .msg{grid-column:2/-1;font-size:13px;color:var(--fail)}
 .cv .mq-fold{cursor:pointer}

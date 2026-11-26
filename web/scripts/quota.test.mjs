@@ -156,7 +156,8 @@ test('折起来的来源：各列取平均，k/n 个能用，有冷却或低额�
   assert.equal(Q.sourceWarn(s, NOW), true);
   assert.equal(Q.sourceWarn(source({ accounts: [acct('A1', [pool([win('5h', 0.78), win('7d', 0.9)])])] }), NOW), false);
   assert.equal(Q.groupNote(s, false), '7/8 个能用');
-  assert.equal(Q.groupNote(s, true), '5 个号');
+  assert.equal(Q.groupNote(s, true), '7/8 个能用'); // 网关展开了也写几个能用
+  assert.equal(Q.groupNote(source({ kind: 'command', accounts }), true), '5 个号');
   assert.equal(Q.groupNote(source({ kind: 'agy', accounts: [acct('a', []), acct('b', [])] }), true), '2 个号 · 用完自动顺延');
   assert.equal(Q.isOpen(source({ expand: true }), undefined), true);
   assert.equal(Q.isOpen(source({ expand: true }), false), false); // 点过的听点的
