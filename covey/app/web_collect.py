@@ -336,15 +336,17 @@ class Collector:
         self.mark("")
         return items
 
-    def collect_touched(self, chat, topics, now) -> list:
+    def collect_touched(self, chat, topics, now, skip=()) -> list:
         """A look of its own at ``topics``, the ones the page just acted on (WebSync.touch_once): those alone are built, with the
-        board's reading the last quick look left in ``shared`` (it reads the board again soon after: Collector.touch). One whose read is
-        stuck in a left-behind thread is left to the quick look. ``groups`` says whose each item is and when it was read."""
+        board's reading the last quick look left in ``shared`` (it reads the board again soon after: Collector.touch). One whose read
+        is stuck in a left-behind quick look or pass is read again here all the same: a call hung on the network disk is that call's,
+        a new read of the same files comes back at once (2026-11-23 T673), and the page waits for what it just did (2026-11-26 T837:
+        an answer to T732 reached the page 3.5 minutes late, behind a quick look stuck on it). Only those in ``skip``, the ones a
+        touch's own read hangs on, are left to the quick look. ``groups`` says whose each item is and when it was read."""
         state = self.look_begins(chat, now)
-        out = self.shared.alive_stuck()
         self.mark("projects")
         self.read_projects(state, chat)
-        groups, _, _ = self.build_each(state, chat, [topic for topic in topics if topic not in out], now)
+        groups, _, _ = self.build_each(state, chat, [topic for topic in topics if topic not in skip], now)
         self.shared.built([topic for topic, _, _ in groups])
         self.groups = groups
         self.mark("")

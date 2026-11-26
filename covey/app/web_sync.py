@@ -149,6 +149,10 @@ class WebSync:
         # builds every running topic, about 3 s a look on the dev machine and now and then a minute on a stuck read (2026-11-25 T765).
         self.toucher = Collector(env, None, runtime.log, shared=self.shared)
         self.touch_due, self.touch_lock, self.touch_event = set(), threading.Lock(), threading.Event()
+        # topic -> the thread of a touch's read stuck on it (start_over_touch): touches leave that topic to the quick look while the thread
+        # lives (one stuck in a quick look or the pass a touch reads again: Collector.collect_touched); and touches given up in a row
+        # because a store was busy, logged as the quick look's are.
+        self.touch_hung, self.touch_busy = {}, 0
         self.post_lock = threading.Lock()  # Choosing what is fresh and posting it, one thread at a time (push_hot, touch_once).
         self.images_ready()
         self.ops = Ops(env, hear, fetch=self.client.request, login=login)
@@ -436,7 +440,10 @@ class WebSync:
 
     def touch_once(self, now=None) -> int:
         """Waits up to a second for topics the page acted on (touch_soon), builds just those (Collector.collect_touched: the board's
-        reading the last quick look left) and posts them; how many items went out. Each topic's read has its seq as every read has."""
+        reading the last quick look left) and posts them; how many items went out. Each topic's read has its seq as every read has.
+        A topic whose read is stuck in a left-behind quick look or pass is read again here (the page waits for what it just did); one
+        a touch's own read hangs on (``touch_hung``) is left to the quick look while that read lasts, and said so. A busy store or a
+        batch the page did not take puts the topics back for the next touch, and is logged: a touch never drops one silently."""
         if not self.touch_event.wait(1.0):
             return 0
         self.touch_event.clear()
@@ -448,41 +455,63 @@ class WebSync:
             return 0
         if not self.sent_loaded:
             return 0  # The quick look loads what the page has first; it builds these too (Collector.touch).
+        hung = self.touch_hung_now()
+        for topic in sorted(set(topics) & hung):
+            self.runtime.log(f"web sync touch leaves topic {topic[:12]} to the quick look: a touch's read of it is stuck")
         toucher = self.toucher
         toucher.touching = set(topics)
         try:
             with store.bounded(HOT_WAIT):
-                toucher.collect_touched(chat, sorted(topics), time.time() if now is None else now)
-        except store.Busy:
+                toucher.collect_touched(chat, sorted(topics), time.time() if now is None else now, skip=hung)
+        except store.Busy as exc:
+            self.touch_busy += 1
+            if self.touch_busy == 1 or self.touch_busy % BUSY_EVERY == 0:
+                self.runtime.log(f"web sync touch waits: the {exc} index is held by a read that has not ended ({self.touch_busy} touches given up)")
             self.touch_soon(topics)  # The quick look builds them all the same; this one tries again.
             return 0
+        if self.touch_busy:
+            self.runtime.log(f"web sync touch goes on: the index is free again after {self.touch_busy} touches given up")
+            self.touch_busy = 0
         if toucher is not self.toucher:
             return 0  # Left behind while it looked: what it read is old.
         toucher.mark("posting")
         count = 0
-        with self.post_lock:
-            with self.backlog_lock:
-                items = self.fresh_items(toucher.groups)
-            for batch in web_sync.batches(items):
-                self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
-                toucher.moved = time.monotonic()
+        try:
+            with self.post_lock:
                 with self.backlog_lock:
-                    for each in batch:
-                        self.sent[(each["type"], each["key"])] = each["rev"]
-                count += len(batch)
-                self.sent_changed = True
+                    items = self.fresh_items(toucher.groups)
+                for batch in web_sync.batches(items):
+                    self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
+                    toucher.moved = time.monotonic()
+                    with self.backlog_lock:
+                        for each in batch:
+                            self.sent[(each["type"], each["key"])] = each["rev"]
+                    count += len(batch)
+                    self.sent_changed = True
+        except WebError:
+            self.touch_soon(set(topics) - hung)  # Read again and sent once the page takes batches again (the loop waits it out).
+            raise
         toucher.touching = set()
         toucher.mark("")
         self.pace.note("touch", time.monotonic() - woke)
         return count
 
+    def touch_hung_now(self) -> set:
+        """The topics a touch's read is stuck on (start_over_touch), while the thread of that read lives."""
+        for topic, thread in list(self.touch_hung.items()):
+            if not thread.is_alive():
+                self.touch_hung.pop(topic, None)
+        return set(self.touch_hung)
+
     def start_over_touch(self) -> None:
         """After a touch was left behind (a read stuck on the network disk): a new collector for it, the topics it had taken back in
-        the queue but the one it is stuck on (the quick look builds that one when its read comes back)."""
+        the queue but the one it is stuck on (``touch_hung``: the quick look builds that one when its read comes back)."""
         old = self.toucher
         self.leave_out(old, "touch")
+        if old.at and old.thread is not None and old.thread.is_alive():
+            self.touch_hung[old.at] = old.thread
         self.toucher = Collector(self.env, None, self.runtime.log, self.images, shared=self.shared)
-        again = set(getattr(old, "touching", ()) or ()) - self.shared.alive_stuck()
+        again = set(getattr(old, "touching", ()) or ()) - self.touch_hung_now()
         if again:
             self.touch_soon(again)
 

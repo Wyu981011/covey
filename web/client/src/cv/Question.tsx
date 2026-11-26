@@ -7,6 +7,7 @@ import { useSendOutbox, useTrackedOp } from './sendOp';
 import { errorText } from '@client/src/lib/workbench-format';
 import { BREAK_KEY, SEND_KEY } from './composerText';
 import { opWords } from './opWords';
+import { answerAct, priorAnswer } from './opTrack';
 
 const REC = /[（(]?推荐[）)]?/u;
 export const isRec = (o: QuestionOption): boolean => REC.test(o.label);
@@ -125,16 +126,19 @@ export function useQuestionForm(topicKey: string, question: QuestionView | null,
   const cur = state.token === token ? state : { token, choices: {}, nudged: false };
   const ans = useAnswer(topicKey);
   const [askedFor, setAskedFor] = useState<string>('');
-  const opId: string = askedFor === token ? ans.opId : '';
+  const own: boolean = askedFor === token;
+  // 不是这里刚发的：刷新、换页面回来或另一个窗口之前交过、新状态还没推来的（T837），照发件行锁住、写同一行字
+  const prior: OutboxView | null = !own && token ? priorAnswer(ops, token) : null;
+  const opId: string = own ? ans.opId : prior?.op_id ?? '';
   const row: OutboxView | undefined = opId ? ops.find((o: OutboxView) => o.op_id === opId) : undefined;
   // 跟踪器问到的回执比话题的发件行早到（发件行要等下一次取话题）：两边谁先到听谁的
   const tr = useTrackedOp(opId || undefined);
   const got: string = row && row.state !== 'new' ? row.state : tr?.phase === 'done' || tr?.phase === 'failed' ? tr.phase : '';
-  const unsent: boolean = !!opId && !!ans.error;
+  const unsent: boolean = own && !!opId && !!ans.error;
   const failedMsg: string = unsent ? ans.error : got === 'failed' ? (row && row.state === 'failed' ? row.message : tr?.message) || '' : '';
-  const phase: QuestionForm['phase'] = !opId ? 'idle' : unsent || got === 'failed' ? 'failed' : got === 'done' ? 'done' : ans.posted ? 'sent' : 'sending';
+  const phase: QuestionForm['phase'] = !opId ? 'idle' : unsent || got === 'failed' ? 'failed' : got === 'done' ? 'done' : !own || ans.posted ? 'sent' : 'sending';
   // 动作发出后锁住，等页面更新；等满了没回音（timeout）放开，再点一次 Covey 会说定过没有
-  const closing: boolean = askedFor === token;
+  const closing: boolean = own || !!prior;
   const gaveUp: boolean = tr?.phase === 'timeout';
   const locked: boolean = (closing && !gaveUp && (phase === 'sending' || phase === 'sent' || phase === 'done')) || (ans.pending && askedFor === token);
   const items: QuestionItem[] = question?.questions ?? [];
@@ -215,7 +219,7 @@ export function useQuestionForm(topicKey: string, question: QuestionView | null,
       setAskedFor(token);
       ans.stop();
     },
-    act: askedFor === token ? ans.act : '',
+    act: own ? ans.act : prior ? answerAct(prior) : '',
     phase,
     failedMsg,
     unsent,

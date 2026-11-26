@@ -242,3 +242,24 @@ test('同一件事在页面上有几处按钮（停住的一轮、右栏总览�
   // 停止：先发请求，再写“正在停…”（点击里直接 setState 会先整页重画一遍）
   assert.match(read('cv/Conversation.tsx'), /window\.setTimeout\(\(\) => setStopOp\(/u);
 });
+
+test('交过的题等新状态时，题面照话题的发件行锁住：刷新、换页面回来、另一个窗口都不让再点一次（T837）', () => {
+  // 11-26 T732：回答 18:17 交给了任务，网页 3 分半后才收到新状态；页面重开后题又能点，主人点了“不处理”，回“这题你已经答过了”
+  const op = (seq, payload, state) => ({ seq, op_id: `op-${seq}`, kind: 'answer', topic_key: 't', project_key: null, payload, state, message: '', created_at: '' });
+  const ans = op(257, { token: 'tk', answers: { q1: '你自己点呗' }, note: '' }, 'done');
+  assert.equal(K.priorAnswer([ans], 'tk'), ans);
+  assert.equal(K.priorAnswer([{ ...ans, state: 'new' }], 'tk')?.op_id, 'op-257'); // 还在等 Covey 收
+  assert.equal(K.priorAnswer([{ ...ans, state: 'failed' }], 'tk'), null); // 没办成：照常能答
+  assert.equal(K.priorAnswer([ans], 'other'), null); // 别的题
+  assert.equal(K.priorAnswer([{ ...ans, kind: 'say' }], 'tk'), null);
+  const aside = op(258, { token: 'tk', aside: true }, 'done');
+  const restore = op(259, { token: 'tk', restore: true }, 'done');
+  assert.equal(K.answerAct(aside), 'aside');
+  assert.equal(K.priorAnswer([ans, aside], 'tk'), aside); // 按 seq 取最新的一条
+  assert.equal(K.priorAnswer([restore, aside, ans], 'tk'), null); // 撤销了不处理：题又开着
+  // 题面：锁不锁、那一行字不只看这个组件发过什么，也看发件行
+  const q = read('cv/Question.tsx');
+  assert.match(q, /const prior: OutboxView \| null = !own && token \? priorAnswer\(ops, token\) : null;/u);
+  assert.match(q, /const closing: boolean = own \|\| !!prior;/u);
+  assert.match(q, /act: own \? ans\.act : prior \? answerAct\(prior\) : ''/u);
+});

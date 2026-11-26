@@ -8,7 +8,7 @@
  *     直到看到预期的新状态（你的那一轮出现了、问题收起了、话题停了…）。
  * 取数一律“上一次还没回来就跳过”（cancelRefetch: false，在 sendOp.ts 的 pull 里）：CUA 第一版每 300 毫秒取整份快照并取消在途请求，
  * 单次取数一超过 300 毫秒就永远落不了地，反而慢到 11–14 秒。 */
-import type { OutboxRequest, RoomResponse, SnapshotResponse, TurnsResponse } from '@shared/api.interface';
+import type { OutboxRequest, OutboxView, RoomResponse, SnapshotResponse, TurnsResponse } from '@shared/api.interface';
 import { OP_WAIT_MS } from './opWords';
 
 /** 带给服务端的 wait（秒）：新服务端最多挂这么久等回执，旧服务端不认、马上回 */
@@ -110,6 +110,23 @@ export function expectation(body: Pick<OutboxRequest, 'op_id' | 'kind' | 'topic_
     default:
       return null;
   }
+}
+
+/** 一条 answer 发件是哪种动作：提交回答、不处理（aside）、撤销不处理（restore） */
+export const answerAct = (o: Pick<OutboxView, 'payload'>): 'answer' | 'aside' | 'restore' =>
+  o.payload?.restore === true ? 'restore' : o.payload?.aside === true ? 'aside' : 'answer';
+
+/**
+ * 这道题已经在网页上交过、Covey 的新状态还没推来时的那条发件（T837）：这个话题的发件行（取轮次时带的最近 20 条）里，对这道题
+ * （payload.token）最新的一条 answer，还在等 Covey（new）或者 Covey 办成了（done）。最新的是“撤销不处理”或没办成（failed）就是 null，
+ * 题照常能答。题面锁不锁由它定，不只看这个组件自己发过什么：刷新、换页面回来、在另一个窗口打开，交过的题都锁着，不会让人以为
+ * 没发出去再点一次（11-26 T732：回答 18:17 已交给任务，网页 3 分半后才收到新状态，其间又点了“不处理”，回“这题你已经答过了”）。
+ */
+export function priorAnswer(ops: ReadonlyArray<OutboxView>, token: string): OutboxView | null {
+  let last: OutboxView | null = null;
+  for (const o of ops) if (o.kind === 'answer' && o.payload?.token === token && (!last || o.seq > last.seq)) last = o;
+  if (!last || answerAct(last) === 'restore' || (last.state !== 'new' && last.state !== 'done')) return null;
+  return last;
 }
 
 /** 跟踪一条操作要用到的外面的东西：时钟、睡觉、问回执、取数、读缓存 */

@@ -2924,6 +2924,139 @@ class OpLaneTest(WebCase):
             self.assertEqual(self.sync.fresh[TOPIC], 7)
 
 
+class TouchPastStuckTest(WebCase):
+    """2026-11-26 T837: the owner answered T732's question on the page at 18:17:15. Covey took the answer and opened the next turn
+    within two seconds, yet the page said 等你 · 第 10 轮, the question open and no answer of his, until 18:20:43, and his 不处理
+    on it came back 没办成. A quick look's read of T732 had hung on the network disk at 18:17:05 and was left behind at 18:17:20;
+    every look after it, the touches for the answer too, left T732 out while that read lasted. A touch reads such a topic again
+    (a hung call is that call's); only a touch's own hung read leaves its topic to the quick look, and nothing is dropped silently."""
+
+    def wait_for(self, check, seconds=3.0):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            if check():
+                return True
+            time.sleep(0.02)
+        return check()
+
+    def hang_a_quick_look(self, topic=TOPIC):
+        """A quick look's read of ``topic`` hangs and is left behind (WebSync.loop's Stuck, then start_over_hot's leave_out)."""
+        hang = threading.Event()
+        self.addCleanup(hang.set)
+        thread = threading.Thread(target=hang.wait, args=(10,), daemon=True)
+        thread.start()
+        self.sync.leave_out(SimpleNamespace(at=topic, thread=thread), "push")
+        return hang
+
+    def test_the_answer_reaches_the_page_while_a_quick_look_is_stuck_on_its_topic(self):
+        self.topic(status="waiting_user")
+        self.question()
+        self.sync.push_once(T0)
+        self.assertEqual([item["data"]["state"] for item in self.web.items("question")], ["open"])
+        self.hang_a_quick_look()
+        self.assertIn(TOPIC, self.sync.shared.alive_stuck())
+        path = self.state / "questions" / f"{TOKEN}.json"
+
+        def submit(ctx, chat, token, fields, event):
+            # As app/questions.py: the answer is saved (submitting) at once; the history line, the next turn and answered after the ack.
+            write_json(path, {**read_object(path), "status": "submitting"})
+
+            def follow_up():
+                append_history(self.state / "topics" / TOPIC / "history.jsonl", "user", "你自己点呗", {"message_id": "answer-" + TOKEN})
+                write_job(self.state, f"k-{TOPIC[:4]}", topic_id=TOPIC, chat_id=CHAT, job_id=7, status="continued", model="opus",
+                          card_message_id="om_card")
+                write_job(self.state, "k-next", topic_id=TOPIC, chat_id=CHAT, job_id=8, status="running", model="opus",
+                          message_id="answer-" + TOKEN)
+                write_json(path, {**read_object(path), "status": "answered", "answers": {"q1": {"answers": ["你自己点呗"]}},
+                                  "continuation_job_id": 8})
+            card_lanes.after_ack(follow_up)
+        self.app.questions.submit_answer = submit
+        self.web.op("answer", 1, "op-a1", TOPIC, token=TOKEN, answers={"q1": "你自己点呗"})
+        self.sync.inbox_once()
+        self.assertTrue(self.wait_for(lambda: not self.sync.op_lanes.lanes))  # Done, acknowledged, its follow-up run.
+        self.assertEqual(self.web.acks[0]["state"], "done")
+        self.assertGreater(self.sync.touch_once(T0 + 1), 0)
+        self.assertEqual(self.web.items("question")[-1]["data"]["state"], "answered")
+        self.assertEqual(self.web.items("topic")[-1]["data"]["state"], "在做")
+        self.assertTrue([item for item in self.web.items("turn") if item["data"].get("body") == "你自己点呗"])
+
+    def test_a_touchs_own_hung_read_leaves_that_topic_to_the_quick_look_and_says_so(self):
+        self.topic()
+        self.topic(OTHER, number=8, title="写周报")
+        self.sync.push_once(T0)
+        hang, reads = threading.Event(), []
+        self.addCleanup(hang.set)
+        real = app_collect.Collector.topic_items
+
+        def topic_items(collector, state, chat, topic, records, now):
+            if topic == TOPIC and not hang.is_set():
+                reads.append(topic)
+                hang.wait(10)
+            return real(collector, state, chat, topic, records, now)
+
+        def touch():
+            count = self.sync.touch_once()
+            touched = {item["key"][:32] for item in self.web.items()[before:]}
+            if step["n"] == 0 and OTHER in touched:  # The others were put back and sent while the touch was stuck on TOPIC.
+                step["n"] = 1
+                self.sync.touch_soon([TOPIC])
+            elif step["n"] == 1 and any("leaves topic " + TOPIC[:12] + " to the quick look" in line for line in self.logs):
+                step["n"] = 2
+                hang.set()
+            elif step["n"] == 2 and not self.sync.touch_hung_now():
+                step["n"] = 3
+                self.sync.touch_soon([TOPIC])
+            elif step["n"] == 3 and TOPIC in touched:
+                self.runtime.shutdown.set()
+            return count
+        step, before = {"n": 0}, len(self.web.items())
+        for topic in (TOPIC, OTHER):  # Something of each changed: the page gets them again.
+            append_history(self.state / "topics" / topic / "history.jsonl", "user", "再看看", {"message_id": "m-again"})
+        guard = threading.Timer(8, self.runtime.shutdown.set)
+        guard.start()
+        self.addCleanup(guard.cancel)
+        self.sync.touch_soon([TOPIC, OTHER])
+        with mock.patch.object(app_collect.Collector, "topic_items", topic_items), mock.patch.object(app_web, "MAX_LEFT", 2):
+            self.sync.loop("touch", touch, lambda: 0, self.sync.start_over_touch, lambda: self.sync.toucher.moved, stuck=0.2,
+                           where=lambda: self.sync.toucher.doing)
+        self.assertEqual(step["n"], 3)
+        self.assertEqual(reads, [TOPIC])  # Read once while hung: the touch did not hang on it again.
+        self.assertTrue(any("web sync touch stuck" in line for line in self.logs))
+
+    def test_a_touch_given_up_for_a_busy_store_is_logged_and_tried_again(self):
+        from covey.core import store
+        self.topic()
+        self.sync.push_once(T0)
+        real, calls = app_collect.Collector.collect_touched, []
+
+        def collect(collector, chat, topics, now, skip=()):
+            calls.append(list(topics))
+            if len(calls) == 1:
+                raise store.Busy("jobs")
+            return real(collector, chat, topics, now, skip)
+        with mock.patch.object(app_collect.Collector, "collect_touched", collect):
+            self.sync.touch_soon([TOPIC])
+            self.assertEqual(self.sync.touch_once(T0 + 1), 0)
+            self.assertTrue(any(line.startswith("web sync touch waits: the jobs index") for line in self.logs))
+            self.sync.touch_once(T0 + 2)
+        self.assertEqual(calls, [[TOPIC], [TOPIC]])
+        self.assertTrue(any(line.startswith("web sync touch goes on") for line in self.logs))
+
+    def test_a_touch_the_page_did_not_take_is_sent_again(self):
+        self.topic(status="waiting_user")
+        self.question()
+        self.sync.push_once(T0)
+        path = self.state / "questions" / f"{TOKEN}.json"
+        write_json(path, {**read_object(path), "status": "answered", "answers": {"q1": {"answers": ["A"]}}})
+        self.web.fail = 500
+        self.sync.touch_soon([TOPIC])
+        with self.assertRaises(WebError):
+            self.sync.touch_once(T0 + 1)
+        self.web.fail = 0
+        self.assertGreater(self.sync.touch_once(T0 + 2), 0)
+        self.assertEqual(self.web.items("question")[-1]["data"]["state"], "answered")
+
+
 class KeepAliveTest(unittest.TestCase):
     """core/http_upstream.py KeepAlive: one connection per thread and host; one the server closed while idle is replaced once."""
 
