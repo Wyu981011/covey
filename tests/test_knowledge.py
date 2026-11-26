@@ -735,6 +735,20 @@ class CollectTest(StateCase):
         self.assertEqual(space["source"], {"job_key": "om5", "job_id": 5, "topic": "T483"})
         self.assertIn("knowledge remember written=2 job=#5", self.logs)
 
+    def test_with_the_memory_on_the_entries_go_to_the_one_memory_once_per_turn(self):
+        from covey.core import memstore
+        self.env(COVEY_MEMORY="1")
+        job = self.turn(remember=[*self.REMEMBER, {"kind": "fact", "text": "目前是第 3 代", "scope": "owner"}])
+        self.collect(job)
+        self.collect(job)
+        rows = {e.text: e for e in memstore.entries(self.state, scope="global")}
+        self.assertEqual(set(rows), {"rg 会扫 NAS", "发版前先跑全量"})  # 目前…: refused by the write gate.
+        space, owner = rows["rg 会扫 NAS"], rows["发版前先跑全量"]
+        self.assertEqual((space.kind, space.repos, space.why, space.said), ("note", ("bridge",), "爆过内存", "owner"))
+        self.assertEqual((owner.kind, owner.repos, owner.origin["topic_number"]), ("rule", (), 483))
+        self.assertEqual(self.written(), [])  # Not the old store.
+        self.assertEqual(find_job_record(self.state, job.message_id)["knowledge_remembered"], 2)
+
     def test_a_turn_waiting_for_the_owners_answer_counts_as_ended_normally(self):
         self.collect(self.turn(status="waiting_user"))
         self.assertEqual(len(self.written()), 2)

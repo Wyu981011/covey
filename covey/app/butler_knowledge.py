@@ -3,6 +3,11 @@ that asks the history command (COVEY_HISTORY_CMD). knowledge_save, knowledge_upd
 knowledge_search work only with COVEY_KNOWLEDGE=1 and are listed only then (core/butler_tool_specs.py listed);
 each takes the entry file's own lock and sends nothing to Feishu (rules 1 and 2).
 
+memory_save, memory_revise and memory_search (docs/butler.md 记忆) are the memory's own tools, the one set that replaces
+principle_* and knowledge_*: module-level functions ``(env, args) -> {ok, text, data}`` that app/butler_memory.py calls once
+it has put an older call's arguments in the new words (they are not in ``TOOLS``). A save goes through the write gate
+(core/memory_gate.py) and is written to core/memstore.py as the owner's own, by the butler.
+
 history_search runs ``<cmd> search [--workspace W] [--since Nd] -- <query>`` as a subprocess of its own in its own
 process group, waits HISTORY_TIMEOUT seconds at most (the command has its own 60 s limit; this one is the Bridge's)
 and stops the whole group when it is over, reads at most HISTORY_BYTES of its output (the command cuts at the same
@@ -14,12 +19,14 @@ from __future__ import annotations
 import re
 import subprocess
 import threading
+from pathlib import Path
 
 from covey.app.butler_env import reply
 from covey.app.butler_tools import workspace_spaces
-from covey.core import knowledge
+from covey.core import knowledge, memory_gate, memstore, projects
 from covey.core.jobs import job_path, read_job_record
 from covey.core.process import stop_group
+from covey.core.state import read_object
 
 HISTORY_TIMEOUT = 70  # Seconds.
 HISTORY_BYTES = 20 * 1024
@@ -155,6 +162,164 @@ def run_history(argv, command):
     if cut:
         text += f"\n\n（输出超过 {HISTORY_BYTES // 1024} KB，已截断；缩小范围再查，或用 workspace、since。）"
     return reply(True, text or "没有找到相关的历史轮次。", truncated=cut)
+
+
+def _project_of(state_dir, name):
+    """The id of the project ``name`` (its id or its name) names; '' when there is none."""
+    name = knowledge.clean_text(name)
+    if not name:
+        return ""
+    if projects.valid_id(name) and projects.read_record(state_dir, name):
+        return name
+    return next((row["id"] for row in projects.records(state_dir) if str(row.get("name") or "") == name), "")
+
+
+def _topic_of(state_dir, name):
+    """The id of the topic ``name`` (its id or its T number) names; '' when there is none."""
+    name = knowledge.clean_text(name)
+    base = Path(state_dir) / "topics"
+    if re.fullmatch(r"[A-Za-z0-9_.-]+", name) and (base / name).is_dir():
+        return name
+    if name[:1] in ("T", "t") and TOPIC_REF.fullmatch(name):
+        for path in sorted(base.glob("*/topic.json")):
+            if read_object(path).get("topic_number") == int(name[1:]):
+                return path.parent.name
+    return ""
+
+
+def _owner_of(env, scope, args):
+    """(owner key, why not): the project or topic id ``args`` name for ``scope``."""
+    if scope == "project":
+        name = args.get("project")
+        if not knowledge.clean_text(name):
+            return "", "管专项的条目要写是哪个专项：加 project（专项 id 或名字）。"
+        found = _project_of(env.state_dir, name)
+        return (found, "") if found else ("", f"没有叫 {name} 的专项。")
+    if scope == "topic":
+        name = args.get("topic")
+        if not knowledge.clean_text(name):
+            return "", "管话题的条目要写是哪个话题：加 topic（话题 id 或 T 号）。"
+        found = _topic_of(env.state_dir, name)
+        return (found, "") if found else ("", f"没有 {name} 这个话题。")
+    return "", ""
+
+
+def _where(entry) -> str:
+    return {"global": "管全局", "project": "管这个专项", "topic": "管这个话题"}.get(entry.scope, entry.scope)
+
+
+def _refused(verdict) -> dict:
+    text = verdict.reason or "这条写法不合适"
+    return reply(False, text + (f"。可以改成：{verdict.text}" if verdict.text else "") + "。没有记。", refused=True)
+
+
+def memory_save(env, args):
+    """memory_save: one entry in the memory (规矩, 资料 or 决定), through the write gate."""
+    kind, scope = str(args.get("kind") or "note"), str(args.get("scope") or "global")
+    text, title = knowledge.clean_text(args.get("text")), knowledge.clean_text(args.get("title"))
+    if not text:
+        return reply(False, "要写的内容（text）是空的。")
+    owner, why_not = _owner_of(env, scope, args)
+    if why_not:
+        return reply(False, why_not)
+    verdict = memory_gate.check(text, kind=kind, title=title)
+    if not verdict.ok:
+        return _refused(verdict)
+    try:
+        if kind == "decision":
+            entry = memstore.add_decision(env.state_dir, scope=scope, owner_key=owner, text=text, title=title, said="owner",
+                                          by="butler")
+        else:
+            entry = memstore.add(env.state_dir, kind=kind, scope=scope, owner_key=owner, text=text, title=title,
+                                 why=knowledge.clean_text(args.get("why")), said="owner", by="butler",
+                                 repos=tuple(args.get("repos") or ()), who="butler")
+    except ValueError as exc:
+        return reply(False, str(exc))
+    return reply(True, f"记下了：{entry.code} {entry.title} · {_where(entry)}", code=entry.code, ref=entry.ref,
+                 flags=list(verdict.flags))
+
+
+def memory_revise(env, args):
+    """memory_revise: update, supersede or retire the entry ``key`` names."""
+    key, action = knowledge.clean_text(args.get("key")), str(args.get("action") or "")
+    entry = memstore.find(env.state_dir, key) if key else None
+    if entry is None:
+        return reply(False, f"没有 {key}：先用 memory_search 找短码。")
+    if action not in ("update", "supersede", "retire"):
+        return reply(False, "action 只能是 update、supersede、retire。")
+    text, title = knowledge.clean_text(args.get("text")), knowledge.clean_text(args.get("title"))
+    if action != "retire":
+        if not text and not (action == "update" and (title or args.get("why") is not None)):
+            return reply(False, "要改成什么（text）没写。")
+        if text:
+            verdict = memory_gate.check(text, kind=entry.kind, title=title)
+            if not verdict.ok:
+                return _refused(verdict)
+    state = env.state_dir
+    try:
+        if action == "update":
+            fresh = memstore.edit(state, entry.ref, text=text or None, title=title or None,
+                                  why=knowledge.clean_text(args.get("why")) if args.get("why") is not None else None,
+                                  who="butler")
+            return reply(True, f"改好了：{fresh.code} {fresh.title} · {_where(fresh)}", code=fresh.code, ref=fresh.ref)
+        if action == "supersede":
+            if entry.kind == "decision":
+                new = memstore.add_decision(state, scope=entry.scope, owner_key=entry.owner_key, text=text,
+                                            title=title, said="owner", by="butler")
+            else:
+                new = memstore.add(state, kind=entry.kind, scope=entry.scope, owner_key=entry.owner_key, text=text,
+                                   title=title, why=knowledge.clean_text(args.get("why")), said="owner", by="butler",
+                                   repos=entry.repos, who="butler")
+            memstore.supersede(state, entry.ref, new.ref, who="butler")
+            return reply(True, f"换成新的了：{new.code} {new.title}（{entry.code} 已收起）", code=new.code, ref=new.ref,
+                         old=entry.ref)
+        done = (memstore.settle if entry.kind == "decision" else memstore.archive)(state, entry.ref, who="butler")
+    except ValueError as exc:
+        return reply(False, str(exc))
+    return reply(True, f"{done.code} {done.title} 已" + ("办完" if entry.kind == "decision" else "收起"), code=done.code,
+                 ref=done.ref)
+
+
+KIND_WORDS = {"rule": "规矩", "decision": "决定", "note": "资料"}
+SEARCH_STATUS = ("active", "done", "archived")
+STATE_WORDS = {"done": "（已办）", "archived": "（已收起）"}
+SEARCH_LIMIT, SEARCH_MAX, SEARCH_TEXT = 8, 20, 120
+
+
+def memory_search(env, args):
+    """memory_search: the entries that answer ``query`` (the most recent ones with none)."""
+    from covey.core import memory_search as ranking
+    query = knowledge.clean_text(args.get("query"))
+    try:
+        limit = max(1, min(int(args.get("limit") or SEARCH_LIMIT), SEARCH_MAX))
+    except (TypeError, ValueError):
+        limit = SEARCH_LIMIT
+    project = _project_of(env.state_dir, args.get("project")) if args.get("project") else ""
+    topic = _topic_of(env.state_dir, args.get("topic")) if args.get("topic") else ""
+    kinds = tuple(k for k in (args.get("kinds") or ()) if k in KIND_WORDS)
+    if query:
+        context = {"owner": True, "project": project, "topic": topic, "statuses": SEARCH_STATUS,
+                   **({"kinds": kinds} if kinds else {})}
+        rows = ranking.eval_search(env.state_dir, query, context, limit)
+        states = {}
+        for row in rows:  # The search says each hit's status; looked up only when it does not.
+            found = None if row.get("status") else memstore.find(env.state_dir, row["ref"])
+            states[row["ref"]] = row.get("status") or (found.status if found else "active")
+    else:
+        scope, owner = ("project", project) if project else ("topic", topic) if topic else ("", "")
+        found = memstore.entries(env.state_dir, scope=scope, owner_key=owner, **({"kinds": kinds} if kinds else {}))
+        found = sorted(found, key=lambda entry: entry.at, reverse=True)[:limit]
+        rows = [{"ref": e.ref, "code": e.code, "kind": e.kind, "scope": e.scope, "title": e.title, "text": e.text,
+                 "sim": 0.0} for e in found]
+        states = {}
+    if not rows:
+        return reply(True, "没有找到相关的记忆。", count=0, items=[])
+    scopes = {"global": "全局", "project": "专项", "topic": "话题"}
+    lines = [f"{row['code']} · {KIND_WORDS.get(row['kind'], row['kind'])} · {scopes.get(row['scope'], row['scope'])} · "
+             f"{' '.join(str(row['text']).split())[:SEARCH_TEXT]}{STATE_WORDS.get(states.get(row['ref'], ''), '')}"
+             for row in rows]
+    items = [{k: row.get(k) for k in ("code", "ref", "kind", "scope", "title", "sim")} for row in rows]
+    return reply(True, "\n".join(lines), count=len(rows), items=items)
 
 
 TOOLS = {"knowledge_save": knowledge_save, "knowledge_update": knowledge_update, "knowledge_drop": knowledge_drop,

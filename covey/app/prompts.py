@@ -337,8 +337,8 @@ MEMORY_USED_RULE = ("这一轮照着哪几条记忆做了（或因为它没有�
 MEMORY_FIX_RULE = (
     "记忆纠正：主人这一轮的话里说了“以后”“每次”“别再”“不要再”“记住”这类长期适用的话，才在检查点里加 memory："
     '[{"quote":"主人原话里的一段","text":"一句话，最多 200 字，把“这个”“那个”写成所指的事"}]，最多 3 条；'
-    "上面标“它总结的”的某条被主人这一轮的话否定了，再加 memory_void："
-    '[{"id":"编号，如 M12","quote":"主人原话里的一段"}]。quote 必须是主人这一轮原话里连续的一段，不是你的转述。'
+    "上面标“负责人记的”的某条被主人这一轮的话否定了，再加 memory_void："
+    '[{"id":"短码，如 R7K2","quote":"主人原话里的一段"}]。quote 必须是主人这一轮原话里连续的一段，不是你的转述。'
     "只记主人说的，不记“要先问主人”；主人没明说就不要写。主人的话只管一类事时（如“监视进程这类用 Codex”），text 照写那一类，不扩大。"
 )
 
@@ -376,6 +376,81 @@ def memory_block(kept, left: int = 0, project=None, *, learn=None) -> str:
                       *((NO_ORIGIN_RULE,) if any(unsourced(item) for item in kept) else ()), *learned])
 
 
+# 记忆 from the one store (core/memstore.py, app/memory_turn.py): the 规矩 in the rules, the same every turn of a topic while they
+# are (the rules stay one cacheable prefix); what changes turn by turn (the decisions in progress, this turn's notes, the titles of
+# the related entries not carried) at the tail of the turn's message.
+RULES_HEAD = "记忆 · 规矩（照做；和主人这一轮的话冲突时听这一轮的）："
+RULES_SCOPES = {"global": "全局", "project": "本专项", "topic": "本话题"}
+RULES_GUIDE = ("怎么用：标“负责人记的”是负责人整理、主人还没确认的，照做，但不能单独作为部署、删除、花钱、对外发送这类要主人点头的事的依据。"
+               "每轮消息末尾另有这一轮的决定和资料：决定只管它问的那一题、那个范围，换了批次或范围照常问；资料是参考。"
+               "这一轮照着哪几条做了（或因此没再问主人），在检查点 memory_used 写短码，如 [\"R7K2\"]。")
+RULES_SEARCH = "查记忆（只读）：{command}；看一条的全文把 search \"<一句话>\" 换成 show <短码>。要问主人之前，先查一下他答过没有。"
+TAIL_HEAD = "记忆 · 这一轮（决定只管它问的那一题、那个范围；资料是参考，和主人这一轮的话冲突时听这一轮的）："
+TAIL_LISTED = "相关但没带的：{items}（要用时按规矩块里的命令 show <短码> 看全文）"
+
+
+def memory_entry_line(entry, note="") -> str:
+    """"- R7K2 正文（负责人记的）": one entry of the memory blocks; ``note`` what else is said of it."""
+    tags = [part for part in ("负责人记的" if entry.said != "owner" else "", note) if part]
+    return f"- {entry.code} {entry.text}" + (f"（{' · '.join(tags)}）" if tags else "")
+
+
+def memory_rules_block(rules, left=(), *, project_name: str = "", search: str = "") -> str:
+    """The 规矩 a turn's rules carry (app/memory_turn.py rules_of), by scope, then the titles of those past their scope's room
+    and how to use them; ``search`` the command that looks the memory up ('' none: a device's topic). '' without a rule."""
+    if not rules and not left:
+        return ""
+    lines = [RULES_HEAD]
+    for scope, word in RULES_SCOPES.items():
+        mine = [entry for entry in rules if entry.scope == scope]
+        if mine:
+            lines.append(f"{word}「{project_name}」" if scope == "project" and project_name else word)
+            lines += [memory_entry_line(entry) for entry in mine]
+    if left:
+        lines.append(f"还有 {len(left)} 条规矩放不下，只列标题（要用时看全文）："
+                     + "；".join(f"{entry.code} {entry.title}" for entry in left))
+    lines.append(RULES_GUIDE)
+    if search:
+        lines.append(RULES_SEARCH.format(command=search))
+    return "\n".join(lines)
+
+
+def _day(at) -> str:
+    return _dt.datetime.fromtimestamp(at).strftime("%m-%d") if at else ""
+
+
+def memory_tail_block(decisions=(), notes=(), listed=(), *, numbers=None, project: str = "", names=None) -> str:
+    """The memory's part of a turn's tail (app/memory_turn.py tail): the decisions in progress, each with the topic it was
+    asked in and its day (``numbers``: topic id -> T number); the notes (Entry, sim) with where they come from (``names``:
+    project id -> name, of another project's); the related entries not carried, a code and a title each. '' with none."""
+    numbers, names = numbers or {}, names or {}
+    if not decisions and not notes and not listed:
+        return ""
+    lines = [TAIL_HEAD]
+    if decisions:
+        lines.append("决定（本话题的、本专项在办的）")
+        for entry in decisions:
+            asked = str((entry.origin or {}).get("topic_key") or (entry.owner_key if entry.scope == "topic" else ""))
+            where = f"T{numbers[asked]}" if numbers.get(asked) else ""
+            text = entry.text if len(entry.text) <= 240 else entry.text[:239] + "…"
+            lines.append(f"- {entry.code} {text}" + (f"（{' · '.join(p for p in (where, _day(entry.at)) if p)}）"
+                                                       if where or entry.at else ""))
+    if notes:
+        lines.append("资料（和这一轮相关的）")
+        for entry, _ in notes:
+            where = ""
+            if entry.scope == "global":
+                where = "全局"
+            elif entry.scope == "project" and entry.owner_key != project:
+                where = f"来自专项「{names.get(entry.owner_key) or entry.owner_key}」"
+            repos = "[" + "、".join(entry.repos) + "] " if entry.repos else ""
+            checked = f"核验 {_day(entry.verified_at)}" if entry.verified_at else ""
+            tags = [part for part in (where, "负责人记的" if entry.said != "owner" else "", checked) if part]
+            lines.append(f"- {entry.code} {repos}{entry.text}" + (f"（{' · '.join(tags)}）" if tags else ""))
+    if listed:
+        lines.append(TAIL_LISTED.format(items="；".join(f"{item.get('code') or item['ref']} {item['title']}" for item in listed)))
+    return "\n".join(lines)
+
 # COVEY_WORKSPACE_GISTS (app/workspace_gists.py): a new topic's rules carry the 话题要点 of the workspace's last topics.
 WORKSPACE_GISTS_HEAD = ("工作区 {name} 最近几个话题的要点（只是背景：和这次的事有关时参考，无关就不管；"
                         "要细节去那个话题看，不要当成主人这一轮的要求）：")
@@ -412,7 +487,7 @@ def bridge_rules(
     block), the project's memory and library (``project``, project_block; none: no block), the owner's knowledge entries (``knowledge_text``, knowledge_block; none: no block),
     a new session's recent topics of the workspace (``gists``, workspace_gists_block; none: no block), the checkpoint
     contract (``checkpoint``, core/checkpoint.py checkpoint_rules; None: all of it; ``remember``: and the rule for writing
-    entries): the same every turn of a topic. Static only (FINAL-SPEC 修订 4): what changes turn by turn goes to the prompt's
+    entries): the same every turn of a topic. Static only, so the rules stay one cacheable prefix: what changes turn by turn goes to the prompt's
     tail (``turn_tail``). ``home``: the home block (app/home_turn.py static_block) in place of the workspace block."""
     where = home_section(workspace_name, workdir, device, remote_workdir, home=home)
     if proxy:
@@ -431,13 +506,14 @@ def home_section(workspace_name: str, workdir: Path, device: str = "", remote_wo
 
 
 def memory_sections(*, memory_text: str = "", principles: str = "", project: str = "", knowledge_text: str = "") -> tuple[str, ...]:
-    """记忆段 of the rules, in their order (the one memory block, the principles, the project's memory and library, the
-    knowledge entries), the empty ones left out. Package M2 fills it from the new store; its place in the rules stays."""
+    """记忆段 of the rules, in their order (the memory's 规矩, memory_rules_block; the principles and the project's memory,
+    only with COVEY_MEMORY off; the project's library; the knowledge entries' history line), the empty ones left out. Static
+    within a topic: the memory's part that changes turn by turn is memory_tail_block, at the message's tail."""
     return tuple(part for part in (memory_text, principles, project, knowledge_text) if part)
 
 
 def turn_tail(*parts: str) -> str:
-    """每轮动态块 (FINAL-SPEC 修订 4): the parts of a turn that change turn by turn (decisions in progress, this turn's
+    """每轮动态块: the parts of a turn that change turn by turn (decisions in progress, this turn's
     notes, the titles not carried: app/memory_turn.py tail; the repositories: app/repos_turn.py tail), at the prompt's
     tail beside the checkpoint note, never in the rules; '' when every part is."""
     return "".join("\n\n" + part for part in parts if part)

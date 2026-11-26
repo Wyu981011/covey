@@ -14,7 +14,7 @@ from support import UNSET_OFF
 from covey.app import memory_candidates, memory_harvest
 from covey.app.track_standby import Failed
 from covey.backends.claude.sessions import encode_project_dir
-from covey.core import memory, principles
+from covey.core import memory, memory_review, principles
 from covey.core.state import write_json
 from covey.core.workspaces import config_path
 
@@ -109,24 +109,14 @@ class HarvestTest(Case):
 
 
 class CandidatesTest(Case):
-    def test_rows_offered_with_the_switch_are_carried_and_kept_until_decided(self):
-        with mock.patch.dict(os.environ, {memory.ENV: "1", memory.LEARN_ENV: "1"}):
-            memory_candidates.offer(self.state, "oc", NOW, lambda: [{"text": "汇报先给结论", "topics": ["a", "b"],
-                                                                      "labels": ["T1", "T2"], "workspace": ""}], now=NOW)
-        rows = memory_candidates.load(self.state)["rows"]
-        self.assertEqual((rows[0]["carried"], rows[0]["source"]), (True, memory_candidates.REPEAT))
-        later = NOW + 30 * 86400
-        self.assertEqual(len(memory_candidates.kept_rows(rows, later)), 1)  # Open and carried: past KEPT_DAYS too.
-        memory_candidates.decide(self.state, rows[0]["id"], "drop", now=later)
-        self.assertEqual(memory_candidates.kept_rows(memory_candidates.load(self.state)["rows"], later), [])
-
-    def test_without_the_switch_a_row_is_as_before(self):
-        with mock.patch.dict(os.environ, {memory.ENV: "1"}):
-            memory_candidates.offer(self.state, "oc", NOW, lambda: [{"text": "汇报先给结论", "topics": ["a", "b"],
-                                                                      "labels": [], "workspace": ""}], now=NOW)
-        row = memory_candidates.load(self.state)["rows"][0]
-        self.assertNotIn("carried", row)
-        self.assertNotIn("source", row)
+    def test_what_the_owner_repeated_waits_in_review_with_the_switch_or_without(self):
+        for env in ({memory.ENV: "1", memory.LEARN_ENV: "1"}, {memory.ENV: "1"}):
+            with mock.patch.dict(os.environ, env):
+                memory_candidates.offer(self.state, "oc", NOW, lambda: [{"text": "汇报先给结论", "topics": ["a", "b"],
+                                                                          "labels": ["T1", "T2"], "workspace": ""}], now=NOW)
+        self.assertEqual(memory_candidates.load(self.state)["rows"], [])  # No carried row of the older record any more.
+        queued = memory_review.items(self.state)
+        self.assertEqual([(item.type, item.text) for item in queued], [("candidate", "汇报先给结论")])  # Once: same proposal.
 
 
 if __name__ == "__main__":

@@ -23,9 +23,14 @@ holds, never the style line):
    它总结的 (source lead, kind constraint: a 待核对参考 carried at once, below the owner's own words). Nothing is deleted: a line
    put away is read back by 查记忆 (core/memory_search.py) and 撤销 puts it back.
 
+A project's lines are read LINES a night: the newest the first night, then the next ones round (the cursors in the record), so
+every line is looked at in a few nights. What is put away is also one line of 记录 (core/memstore.py ``log_change``, with the
+entries as they were); each new rule also waits in 待审核 (core/memory_review.py, type migrate) until the owner decides, and his
+确认长期 or 不对 on the card decides that item too.
+
 The candidates carried (app/memory_candidates.py) that no turn used for IDLE_DAYS are let go (``expire``).
 
-The record, <state>/memory-tidy.json: {schema_version, runs: [{id, slot, chat_id, at, projects: [{id, name, settled: [[entry,
+The record, <state>/memory-tidy.json: {schema_version, cursors: {project id: next line}, runs: [{id, slot, chat_id, at, projects: [{id, name, settled: [[entry,
 before, why]], rules: [{entry, text, state}], failed?}], expired: [candidate ids], undone?}]}, the last RUNS_KEPT; a slot is
 tidied once. ``view`` is what the evening digest card shows of a run (cards/digest.py memory_elements): how many lines went
 away and why, 撤销, each new rule with 确认长期 (core/project_memory.py fix ``confirm``: it becomes the owner's) and 不对 (a
@@ -40,7 +45,7 @@ from pathlib import Path
 
 from covey.app import memory_candidates, track_judge
 from covey.app.track_standby import Failed
-from covey.core import memory, memory_usage, principles, project_memory, project_proposals, projects
+from covey.core import memory, memory_review, memory_usage, memstore, principles, project_memory, project_proposals, projects
 from covey.core.locks import resource_lock
 from covey.core.state import read_object, write_json
 from covey.core.text import cut
@@ -50,7 +55,7 @@ SCHEMA = 1
 RUNS_KEPT = 14
 MAX_PROJECTS = 4
 MIN_LINES = 3  # A project with fewer carried lines than this is not read by the model.
-LINES = 60  # Of a project's lines sent, the newest.
+LINES = 60  # Of a project's lines sent a night: the newest the first night, then the next ones (``window``), a round in a few nights.
 TEXT = 200
 RULES = 2
 SECONDS = 60
@@ -87,12 +92,16 @@ def lock(state_dir):
 
 
 def load(state_dir) -> dict:
-    runs = [run for run in read_object(path(state_dir)).get("runs") or () if isinstance(run, dict) and run.get("id")]
-    return {"schema_version": SCHEMA, "runs": runs}
+    data = read_object(path(state_dir))
+    runs = [run for run in data.get("runs") or () if isinstance(run, dict) and run.get("id")]
+    cursors = data.get("cursors") if isinstance(data.get("cursors"), dict) else {}
+    return {"schema_version": SCHEMA, "runs": runs,
+            "cursors": {str(pid): int(at) for pid, at in cursors.items() if isinstance(at, int) and not isinstance(at, bool) and at >= 0}}
 
 
 def _save(state_dir, data) -> None:
-    write_json(path(state_dir), {"schema_version": SCHEMA, "runs": data["runs"][-RUNS_KEPT:]}, ensure_ascii=False, indent=1)
+    write_json(path(state_dir), {"schema_version": SCHEMA, "runs": data["runs"][-RUNS_KEPT:], "cursors": data.get("cursors") or {}},
+               ensure_ascii=False, indent=1)
 
 
 def carried_lines(state_dir, project_id) -> tuple[list, list]:
@@ -109,6 +118,16 @@ def carried_lines(state_dir, project_id) -> tuple[list, list]:
         elif facts["part"] == memory.RULE:
             held.append(line)
     return tidied, held
+
+
+def window(lines, cursor) -> tuple[list, int]:
+    """(the lines the model reads tonight, the cursor for the next night): ``lines`` (oldest first) newest first, LINES of them
+    from ``cursor`` on and round the end; all of them, cursor 0, when there are no more than LINES."""
+    if len(lines) <= LINES:
+        return list(lines), 0
+    order, start = lines[::-1], cursor % len(lines)
+    picked = (order + order)[start:start + LINES]
+    return picked[::-1], (start + LINES) % len(lines)
 
 
 def _day(at) -> str:
@@ -203,7 +222,7 @@ class MemoryTidy:
         usage = memory_usage.read(state)
         backend, judge_ctx = track_judge.tools(getattr(self.topics, "apps", None))
         started = time.monotonic()
-        found = []
+        found, cursors = [], dict(load(state)["cursors"])
         live = [record for record in projects.records(state, chat) if record.get("state") not in (projects.DONE, projects.CANCELLED)]
         sized = sorted(((record, *carried_lines(state, record["id"])) for record in live), key=lambda item: -len(item[1]))
         memories = project_memory.across(state)
@@ -224,8 +243,9 @@ class MemoryTidy:
             others = [str(item.get("name") or "")[:NAME] for item in live if item["id"] != pid][-OTHERS:]
             told = None
             if len(rest) >= MIN_LINES and time.monotonic() - started < BUDGET:
+                shown_lines, cursors[pid] = window(rest, cursors.get(pid, 0))
                 try:
-                    told = self._ask(record, rest[-LINES:], held, others, backend, judge_ctx, state)
+                    told = self._ask(record, shown_lines, held, others, backend, judge_ctx, state)
                 except Failed as exc:
                     outcome["failed"] = exc.reason
                     self.runtime.log(f"memory tidy judge failed project={pid} reason={exc.reason}")
@@ -234,10 +254,12 @@ class MemoryTidy:
                 changes += [{"id": item["id"], "valid": "superseded", "superseded_by": item["by"], "why": SUPERSEDED}
                             for item in told["superseded"]]
             why = {change["id"]: change["why"] for change in reversed(changes)}
+            before_logged = self._snapshots(state, pid, changes)
             settled = project_memory.settle(state, pid, changes, now=now) if changes else []
+            self._record(state, pid, settled, why, before_logged, now)
             outcome["settled"] = [[entry, before, why.get(entry, DONE)] for entry, before in settled]
             known = {principles.same_key(line["text"]) for line in (*tidied, *held)}
-            shown = {line["id"]: line for line in rest}
+            shown = {line["id"]: line for line in (shown_lines if told is not None else rest)}
             theirs = None
             for rule in (told or {}).get("rules") or ():
                 if principles.same_key(rule["text"]) in known:
@@ -255,6 +277,7 @@ class MemoryTidy:
                 if new:
                     known.add(principles.same_key(rule["text"]))
                     outcome["rules"].append({"entry": entry["id"], "text": entry["text"], "state": OPEN})
+                    self._propose(state, pid, entry, now)
             found.append(outcome)
             self.runtime.log(f"memory tidy project={pid} put_away={len(settled)} rules={len(outcome['rules'])}")
         expired = [row["id"] for row in memory_candidates.expire(state, [
@@ -267,8 +290,58 @@ class MemoryTidy:
             data = load(state)
             if not any(old.get("slot") == slot for old in data["runs"]):
                 data["runs"].append(run)
+                data["cursors"] = {**data["cursors"], **cursors}
                 _save(state, data)
         return run
+
+    @staticmethod
+    def _snapshots(state, pid, changes) -> dict:
+        """{line id: (ref, core/memstore.py ``snapshot``)} of the lines ``changes`` name, before they are put away (the change
+        log's ``before``)."""
+        found = {}
+        for change in changes:
+            try:
+                entry = memstore.find(state, f"project:{pid}:{change['id']}")
+            except (OSError, ValueError):
+                entry = None
+            if entry is not None:
+                found[change["id"]] = (entry.ref, memstore.snapshot(entry))
+        return found
+
+    def _record(self, state, pid, settled, why, before, now) -> None:
+        """What was put away, one line in 记录 (core/memstore.py ``log_change``, as ``archive``) with the entries as they were and
+        are, so that line's own 撤销 can put them back; never raises."""
+        try:
+            done = [entry for entry, _ in settled if entry in before]
+            if not done:
+                return
+            after = {before[entry][0]: memstore.snapshot(memstore.find(state, before[entry][0])) for entry in done}
+            memstore.log_change(state, who="butler", action="archive", refs=[before[entry][0] for entry in done],
+                                title="整理记忆收起了几条", before={before[entry][0]: before[entry][1] for entry in done},
+                                after=after, because={"reason": sorted({why.get(entry, DONE) for entry in done})}, now=now)
+        except Exception as exc:  # noqa: BLE001 - the record is not the tidying
+            self.runtime.log(f"memory tidy log failed: {type(exc).__name__}")
+
+    def _propose(self, state, pid, entry, now) -> None:
+        """A new rule, still carried as 它总结的, also waits in 待审核 until the owner decides it (a lead's line is no rule of
+        his); never raises."""
+        ref = f"project:{pid}:{entry['id']}"
+        try:
+            memory_review.add(state, memory_review.ReviewItem(
+                key="", type="migrate", title="", text=entry["text"], created_at=now, items=(ref,),
+                suggest={"kind": "rule", "scope": "project", "project_key": pid}))
+        except Exception as exc:  # noqa: BLE001
+            self.runtime.log(f"memory tidy review failed: {type(exc).__name__}")
+
+    def _settle_review(self, state, pid, entry, accepted, now) -> None:
+        """The owner's 确认长期 / 不对 on the digest decides the same rule's 待审核 item too."""
+        ref = f"project:{pid}:{entry}"
+        try:
+            for row in memstore.review_items(state):
+                if row.get("type") == "migrate" and list(row.get("items") or ()) == [ref]:
+                    memstore.review_set(state, row["key"], "accepted" if accepted else "rejected", by="owner", now=now, refs=[ref])
+        except Exception as exc:  # noqa: BLE001
+            self.runtime.log(f"memory tidy review failed: {type(exc).__name__}")
 
     def _ask(self, record, lines, held, others, backend, judge_ctx, state) -> dict:
         data = {"name": str(record.get("name") or ""), "goal": cut(record.get("goal"), 300), "others": others,
@@ -311,6 +384,7 @@ class MemoryTidy:
             except (KeyError, ValueError) as exc:
                 self.runtime.log(f"memory tidy {op} failed run={run_id}: {type(exc).__name__}")
                 return run
+            self._settle_review(state, project, entry, op == "confirm", now if now is not None else time.time())
             changed = {"rule": (project, entry, CONFIRMED if op == "confirm" else DROPPED)}
         else:
             return run

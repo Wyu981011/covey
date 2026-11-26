@@ -23,6 +23,10 @@ The record, <state>/memory-candidates.json: {schema_version, rows: [{id, text, t
 a digest time is looked at once (``ran``), rows older than KEPT_DAYS go. Written under its own lock, never across the model's call
 or a Feishu one (rule 1). Log lines never hold the owner's words.
 
+What it finds now goes to 待审核 (core/memory_review.py, type candidate, flagged ``repeat``), not into the rows below (the rows
+an older release wrote stay readable and can still be decided); ``carried`` gives nothing: a turn does not read an open
+candidate as 它总结的 any more. The rest of this paragraph is how the rows of an older release behaved.
+
 With COVEY_MEMORY_LEARN=1 too (core/memory.py learning, docs/butler.md 记忆自己长) what the owner repeated takes effect before
 his click: a row offered then is ``carried`` and, while open, every turn reads it as a line of 它总结的 (``carried``,
 app/memory_turn.py; 全局 ones on his own turns only), at most CARRIED of them, the newest; 记下 makes it his (a principle), 不用
@@ -48,7 +52,7 @@ from pathlib import Path
 
 from covey.app import track_judge
 from covey.app.track_standby import Failed
-from covey.core import memory, memory_usage, principles, topic_gist, turn_source
+from covey.core import memory, memory_review, memory_usage, principles, topic_gist, turn_source
 from covey.core.board_read import ended_at
 from covey.core.butler import is_butler_topic
 from covey.core.butler_opened import handed_on
@@ -306,22 +310,28 @@ def find(state_dir, chat, slot, *, owner_turn, backend=None, ctx=None, log=print
 
 
 def offer(state_dir, chat, slot, finder, *, now=None) -> list:
-    """The candidates of the digest time ``slot``: looked for once (``finder()``, outside the lock), then read back; the
-    rows offered then, as they stand now."""
+    """The candidates of the digest time ``slot``: looked for once (``finder()``, outside the lock); what it finds goes to 待审核
+    (core/memory_review.py, type candidate, flagged ``repeat``) and no longer into this record's rows. The rows of this record
+    offered at ``slot``, as they stand now (rows of an older release, and the learner's still waiting)."""
     now = time.time() if now is None else now
     with lock(state_dir):
         data = load(state_dir)
         if slot in data["ran"]:
             return [row for row in data["rows"] if shown_at(row, slot)]
     found = finder()
-    carried = memory.learning()
+    for item in found:
+        try:
+            memory_review.add(state_dir, memory_review.ReviewItem(
+                key="", type="candidate", title="", text=item["text"], suggest={"kind": "rule", "scope": "global"},
+                created_at=now, origin={"topics": list(item.get("topics") or ()), **({"workspace": item["workspace"]} if item.get("workspace") else {})},
+                flags=("repeat",)))
+        except (OSError, ValueError):
+            continue  # One that cannot be put in the queue is not offered; the digest goes out without it.
     with lock(state_dir):
         data = load(state_dir)
         if slot not in data["ran"]:
             data["ran"] = [*data["ran"], slot][-RAN_KEPT:]
             data["rows"] = kept_rows(data["rows"], now)
-            data["rows"] += [{"id": "c" + secrets.token_hex(4), **item, "slot": slot, "at": now, "state": OPEN,
-                              **({"carried": True, "source": REPEAT} if carried else {})} for item in found]
             save(state_dir, data)
         return [row for row in data["rows"] if shown_at(row, slot)]
 
@@ -332,8 +342,9 @@ def kept_rows(rows, now) -> list:
 
 
 def carried(state_dir, workspace_name) -> tuple[list, list]:
-    """(通用, the workspace's) open carried rows, each {id, text, at}, the newest CARRIED in all (COVEY_MEMORY_LEARN=1:
-    app/memory_turn.py reads them as 它总结的); ([], []) without the record."""
+    """(通用, the workspace's) open carried rows of the older record, each {id, text, at}, the newest CARRIED in all; ([], [])
+    without the record. A turn no longer reads them (app/memory_turn.py carries nothing that waits for the owner): the web
+    page's older 记忆 tab lists them, and new candidates wait in 待审核 (core/memory_review.py)."""
     rows = sorted((row for row in load(state_dir)["rows"] if row.get("carried") and row.get("state") == OPEN
                    and isinstance(row.get("text"), str) and row["text"].strip()), key=lambda row: -_at(row))[:CARRIED]
     shaped = [{"id": row["id"], "text": row["text"], "at": _at(row), "workspace": str(row.get("workspace") or "")}

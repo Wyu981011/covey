@@ -17,9 +17,8 @@ from support.records import write_job, write_topic
 
 from covey.app import memory_candidates, memory_collect, memory_learn, memory_turn
 from covey.app.answers import FEEDBACK_START
-from covey.app.prompts import MEMORY_USED_RULE, memory_block
 from covey.cards.answer_card import memory_element
-from covey.core import memory, memory_usage, principles, project_memory, projects, topic_memory
+from covey.core import memory, memory_review, memory_usage, memstore, principles, project_memory, projects, topic_memory
 from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.core.jobs import find_job_record
 from covey.core.state import write_json
@@ -53,6 +52,14 @@ class Case(unittest.TestCase):
         write_topic(self.state, topic_id="t1", topic_number=7, origin={"title": "选型"})
         self.ctx.topic_id = "t1"
         self.count = 4
+        self.reviewed = []  # The review queue (core/memory_review.py add) is package M2's other half: a stand-in keeps the items.
+
+        def add(state_dir, item):
+            self.reviewed.append(item)
+            return f"review:learn:{len(self.reviewed):06x}"
+        patcher = mock.patch.object(memory_review, "add", side_effect=add)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def env(self, **values):
         patcher = mock.patch.dict(os.environ, values)
@@ -120,23 +127,20 @@ class OwnerWordsTest(Case):
 
 
 class LearnTest(Case):
-    def test_a_line_for_every_topic_or_the_workspace_waits_in_the_candidates_never_a_principle(self):
+    def test_a_line_for_every_topic_waits_in_the_review_queue_and_a_workspace_one_is_the_topics(self):
         job = self.turn("以后汇报都先给结论，再给表；这个仓库别再跑全量测试")
         answer = {"remember": [{"quote": "以后汇报都先给结论，再给表", "text": "汇报先给结论再给表", "scope": "global"},
                                {"quote": "这个仓库别再跑全量测试", "text": "这个仓库不跑全量测试", "scope": "workspace"}],
                   "void": []}
         notes, asked, record = self.learn(job, answer)
+        # The workspace is no scope of the memory any more: that line is the topic's, written at once.
         self.assertEqual([(note["kind"], note["text"]) for note in notes],
-                         [("pending", "汇报先给结论再给表"), ("pending", "这个仓库不跑全量测试")])
-        self.assertEqual(principles.for_turn(self.state, "ws"), ([], []))  # Nothing takes effect before his 记下.
-        rows = memory_candidates.load(self.state)["rows"]
-        self.assertEqual([(row["text"], row["workspace"], row["source"], row["state"], row.get("carried")) for row in rows],
-                         [("汇报先给结论再给表", "", "learn", "open", None),
-                          ("这个仓库不跑全量测试", "ws", "learn", "open", None)])
-        self.assertEqual(rows[0]["quote"], "以后汇报都先给结论，再给表")
-        self.assertEqual(rows[0]["topics"], ["t1"])
-        self.assertEqual(memory_candidates.carried(self.state, "ws"), ([], []))  # Not read by any turn either.
-        self.assertEqual([row["id"] for row in memory_candidates.rows_of(self.state, 12345)], [row["id"] for row in rows])
+                         [("pending", "汇报先给结论再给表"), ("remembered", "这个仓库不跑全量测试")])
+        self.assertEqual(memstore.entries(self.state, scope="global"), [])  # Nothing global takes effect before his accept.
+        self.assertEqual([(item.type, item.text, item.suggest) for item in self.reviewed],
+                         [("learn", "汇报先给结论再给表", {"kind": "rule", "scope": "global"})])
+        self.assertEqual(self.reviewed[0].quote, "以后汇报都先给结论，再给表")
+        self.assertEqual(self.reviewed[0].origin, {"topic_key": "t1"})
         self.assertEqual(record["memory_notes"], notes)
         self.assertEqual(record["memory_learned"]["state"], "done")
         self.assertEqual(asked[0]["said"], "以后汇报都先给结论，再给表；这个仓库别再跑全量测试")
@@ -145,16 +149,17 @@ class LearnTest(Case):
         card = json.dumps(memory_element(notes, "t1", "4"), ensure_ascii=False)
         self.assertIn("待审核：汇报先给结论再给表", card)
         self.assertEqual(card.count("bridge_memory_wrong"), 2)  # 不对 on each: it drops the candidate.
-        after = memory_collect.take_back(self.state, "t1", record, notes[0]["entry_id"])
+        with mock.patch.object(memstore, "review_set") as rejected:
+            after = memory_collect.take_back(self.state, "t1", record, notes[0]["entry_id"])
         self.assertEqual(after[0]["kind"], "undone")
-        self.assertEqual(memory_candidates.load(self.state)["rows"][0]["state"], "declined")
+        rejected.assert_called_once_with(self.state, notes[0]["entry_id"], "rejected", by="owner")
 
     def test_a_workspace_line_in_a_topic_without_a_workspace_stays_in_the_topic(self):
         self.ctx.workspace_name = ""
         notes, _, _ = self.learn(self.turn(), {"remember": [
             {"quote": "以后汇报都先给结论", "text": "汇报先给结论", "scope": "workspace"}]})
         self.assertEqual([note["scope"] for note in notes], ["管这个话题"])
-        self.assertEqual(memory_candidates.load(self.state)["rows"], [])
+        self.assertEqual(self.reviewed, [])
 
     def test_a_topic_line_goes_to_the_narrowest_place_and_a_wrong_quote_is_dropped(self):
         notes, _, _ = self.learn(self.turn("这件事以后别再先问侧重点"), {"remember": [
@@ -251,16 +256,15 @@ class SupersedeTest(Case):
         memory_collect.take_back(self.state, "t1", record, entry["id"])
         self.assertEqual([row["text"] for row in topic_memory.live(self.state, "t1")], ["这件事先问侧重点"])
 
-    def test_a_principle_is_never_touched_what_he_says_now_waits_and_the_receipt_says_which(self):
-        principles.save(self.state, principles.OWNER, "回复用中文")
-        pid = principles.entries(self.state)[0]["id"]
-        ids = [{"n": "M01", "ref": f"principle:{pid}", "scope": "global", "by": "owner"}]
+    def test_an_entry_of_global_is_never_touched_what_he_says_now_waits_and_the_receipt_says_which(self):
+        old = memstore.add(self.state, kind="rule", scope="global", text="回复用中文")
+        ids = [{"n": "M01", "ref": old.ref, "scope": "global", "by": "owner"}]
         job = self.turn("以后这些回复用英文，不要用中文", memory_ids=ids)
         notes, _, _ = self.learn(job, {"supersede": [{"id": "M01", "quote": "以后这些回复用英文", "text": "回复用英文"}]})
         self.assertEqual([note["kind"] for note in notes], ["pending"])
         self.assertIn("和 M01：回复用中文 矛盾，那条没动", notes[0]["text"])
-        self.assertEqual([row["text"] for row in principles.entries(self.state)], ["回复用中文"])
-        self.assertEqual([row["text"] for row in memory_candidates.load(self.state)["rows"]], ["回复用英文"])
+        self.assertEqual([entry.text for entry in memstore.entries(self.state, scope="global")], ["回复用中文"])
+        self.assertEqual([item.text for item in self.reviewed], ["回复用英文"])
 
     def test_a_quote_that_is_not_his_or_an_id_the_turn_did_not_carry_changes_nothing(self):
         entry, _ = topic_memory.add(self.state, "t1", "这件事先问侧重点")
@@ -376,17 +380,14 @@ class AfterTurnTest(Case):
         self.assertNotIn("memory_learned", record)
         self.assertEqual(memory_usage.read(self.state), {})
 
-    def test_the_lines_a_turn_used_are_noted_once(self):
+    def test_the_lines_a_turn_used_are_counted_by_the_observer_not_here(self):
         ids = [{"n": "M12", "ref": "principle:p1", "scope": "global", "by": "owner"},
-               {"n": "M40", "ref": "candidate:c0a1b2c3d", "scope": "global", "by": "lead"},
-               {"n": "M77", "ref": "topic:x", "scope": "topic", "by": "owner"}]
+               {"n": "M40", "ref": "candidate:c0a1b2c3d", "scope": "global", "by": "lead"}]
         job = self.turn("帮我看看", memory_ids=ids, final_text="按（M12）做了，没再问", checkpoint={"memory_used": ["M40", "M99"]})
         with mock.patch.object(memory_learn, "start"):
             memory_learn.after_turn(self.gateway(), mock.Mock(), job, self.ctx)
-            memory_learn.after_turn(self.gateway(), mock.Mock(), job, self.ctx)
-        self.assertEqual(find_job_record(self.state, job.message_id)["memory_used"], ["principle:p1", "candidate:c0a1b2c3d"])
-        self.assertEqual({ref: row["n"] for ref, row in memory_usage.read(self.state).items()},
-                         {"principle:p1": 1, "candidate:c0a1b2c3d": 1})
+        self.assertNotIn("memory_used", find_job_record(self.state, job.message_id))
+        self.assertEqual(memory_usage.read(self.state), {})
 
 
 class TurnBlockTest(Case):
@@ -399,32 +400,28 @@ class TurnBlockTest(Case):
             {"id": "c0a1b2c3d", "text": text, "topics": [], "labels": [], "workspace": workspace, "slot": NOW, "at": NOW,
              "state": "open", "carried": True, "source": "repeat"}], "declined": [], "ran": []})
 
-    def test_a_carried_candidate_is_a_line_of_its_own_after_his_words(self):
+    def test_a_candidate_is_never_carried_and_the_rules_say_how_to_look_the_memory_up(self):
         self.carried()
-        principles.save(self.state, principles.OWNER, "用中文回复")
-        kept, _ = memory_turn.build(self.ctx, self.job(), lambda: True)
-        self.assertEqual([(item["ref"].split(":")[0], item["by"]) for item in kept],
-                         [("principle", memory.OWNER), ("candidate", memory.LEAD)])
+        memstore.add(self.state, kind="rule", scope="global", text="用中文回复")
         block = memory_turn.block(self.ctx, self.job(), owner_turn=lambda: True)
-        self.assertIn("管全局 · 它总结的：汇报先给结论", block)
-        self.assertIn(MEMORY_USED_RULE, block)
+        self.assertNotIn("汇报先给结论", block)  # It waits in 待审核, not in the turn.
+        self.assertIn("用中文回复", block)
+        self.assertIn("memory_used", block)
         self.assertIn("covey_memory.py search", block)
         self.assertIn("--owner", block)
+        self.assertNotIn("汇报先给结论", memory_turn.tail(self.ctx, self.job(), lambda: True))
 
-    def test_a_global_candidate_is_not_read_on_a_turn_not_his_and_a_workspace_one_is(self):
-        self.carried()
-        self.assertEqual(memory_turn.build(self.ctx, self.job(False), lambda: False)[0], [])
+    def test_a_workspace_candidate_is_not_read_on_anybodys_turn(self):
         self.carried(workspace="ws")
-        self.assertEqual([item["ref"] for item in memory_turn.build(self.ctx, self.job(False), lambda: False)[0]],
-                         ["candidate:c0a1b2c3d"])
+        self.assertEqual(memory_turn.block(self.ctx, self.job(False), owner_turn=lambda: False), "")
+        self.assertEqual(memory_turn.tail(self.ctx, self.job(False), lambda: False), "")
 
-    def test_off_the_candidate_is_not_read_and_the_block_is_as_before(self):
-        self.carried()
-        principles.save(self.state, principles.OWNER, "用中文回复")
+    def test_off_the_block_is_the_same_and_the_correction_rule_comes_back(self):
+        memstore.add(self.state, kind="rule", scope="global", text="用中文回复")
+        on = memory_turn.block(self.ctx, self.job(), owner_turn=lambda: True)
+        memory_turn._plans.clear()
         self.env(**{memory.LEARN_ENV: ""})
-        kept, left = memory_turn.build(self.ctx, self.job(), lambda: True)
-        self.assertEqual([item["ref"].split(":")[0] for item in kept], ["principle"])
-        self.assertEqual(memory_turn.block(self.ctx, self.job(), owner_turn=lambda: True), memory_block(kept, left))
+        self.assertEqual(memory_turn.block(self.ctx, self.job(), owner_turn=lambda: True), on)
         self.assertTrue(memory_turn.fix_rule(self.ctx, ReplyJob(job_id=2, user_text="以后都这样", chat_id=DM, message_id="om2",
                                                                 timeout=0, sender_id=OWNER, topic_id="t1"), lambda: True))
 

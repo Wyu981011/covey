@@ -1,0 +1,40 @@
+{"id": "q01", "query": "会话很长了以后能不能改用英语回复", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"g1": 2}, "group": "correction"}
+{"id": "q02", "query": "估算出来的数字可以写进报告结论吗", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"g2": 2}, "group": "correction"}
+{"id": "q03", "query": "要主人决定的事在回复最后问一句就行吗", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"g3": 2}, "group": "correction"}
+{"id": "q04", "query": "动手之前要先把现状摸清楚吗", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"g4": 2}, "group": "correction"}
+{"id": "q05", "query": "管家接到调研的活要先发启动卡等主人点开始吗", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"g5": 2}, "group": "correction"}
+{"id": "q06", "query": "同事的电脑上可以直接改配置吗", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a1": 2}, "group": "correction"}
+{"id": "q07", "query": "并行开发时能直接在共享检出上切分支吗", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a2": 2}, "group": "correction"}
+{"id": "q08", "query": "stable 分支什么时候推到新版本", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a3": 2}, "group": "correction"}
+{"id": "q09", "query": "镜像拉取不下来是不是要走代理", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a4": 2}, "group": "correction"}
+{"id": "q10", "query": "MASO 的测试用哪个解释器跑", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a5": 2}, "group": "short"}
+{"id": "q11", "query": "P0-A 合入之前能改看板卡片吗", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a6": 2}, "group": "short"}
+{"id": "q12", "query": "额度只剩不到两成时进度条什么颜色", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a7": 2}, "group": "dedup"}
+{"id": "q13", "query": "额度看板用哪版样张", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a8": 2}, "group": "dedup"}
+{"id": "q14", "query": "选 F", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a8": 2}, "group": "short"}
+{"id": "q15", "query": "测试应用要删掉吗", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a9": 2}, "group": "dedup"}
+{"id": "q16", "query": "网页改完谁来截图验收", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"a10": 2}, "group": "correction"}
+{"id": "q17", "query": "生产环境扩缩容要谁点头", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"b1": 2}, "group": "correction"}
+{"id": "q18", "query": "kvoff-idx256", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"b2": 2}, "group": "short"}
+{"id": "q19", "query": "910C 演练 sleep inf", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"b2": 2}, "group": "short"}
+{"id": "q20", "query": "长上下文模型能在哪些卡上跑", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"b3": 2}, "group": "correction"}
+{"id": "q21", "query": "单机 8 卡的服务怎么起", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"b4": 2}, "group": "dedup"}
+{"id": "q22", "query": "量化评估的裁判用谁", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"b5": 2}, "group": "dedup"}
+{"id": "q23", "query": "随机波动带来的差距可以不算吗", "context": {"project": "c0ffee000001"}, "relevant": {"c1": 2}, "group": "correction"}
+{"id": "q24", "query": "沙箱申请失败要等多久再试、最多试几次", "context": {"project": "c0ffee000001"}, "relevant": {"c2": 2}, "group": "correction"}
+{"id": "q25", "query": "Repair 能不能改题面", "context": {"project": "c0ffee000001"}, "relevant": {"c3": 2}, "group": "dedup"}
+{"id": "q26", "query": "换了集群 Maven 和 Gradle 还换源吗", "context": {"project": "c0ffee000001"}, "relevant": {"c4": 2}, "group": "dedup"}
+{"id": "q27", "query": "推理那边的生产变更要谁确认", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"b1": 2}, "group": "cross"}
+{"id": "q28", "query": "网关镜像怎么拉取", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"a4": 2}, "group": "cross"}
+{"id": "q29", "query": "网页改动的截图验收怎么做", "context": {"project": "c0ffee000001"}, "relevant": {"a10": 2}, "group": "cross"}
+{"id": "q30", "query": "沙箱失败重试几次", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"c2": 2}, "group": "cross"}
+{"id": "q31", "query": "并行改仓库用 worktree 吗", "context": {"project": "c0ffee000001"}, "relevant": {"a2": 2}, "group": "cross"}
+{"id": "q32", "query": "新策略验证要随机抽多少道", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"c1": 2}, "group": "cross"}
+{"id": "q33", "query": "Hopper 卡和昇腾分别支持什么", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {"b3": 2}, "group": "cross"}
+{"id": "q34", "query": "covey-internal 测试", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {"a5": 2}, "group": "short"}
+{"id": "q35", "query": "飞书日历的会议室怎么预定", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {}, "group": "negative"}
+{"id": "q36", "query": "要不要给网页加一个夜间自动备份数据库的功能", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {}, "group": "negative"}
+{"id": "q37", "query": "T856", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {}, "group": "negative"}
+{"id": "q38", "query": "现在要不要弄一下这个？", "context": {"project": "a1b2c3d4e5f6"}, "relevant": {}, "group": "negative"}
+{"id": "q39", "query": "明天天气怎么样", "context": {"project": "f6e5d4c3b2a1"}, "relevant": {}, "group": "negative"}
+{"id": "q40", "query": "午饭吃什么", "context": {"project": "c0ffee000001"}, "relevant": {}, "group": "negative"}

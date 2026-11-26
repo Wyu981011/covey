@@ -160,9 +160,10 @@ class SearchLabelTest(Case):
     def test_a_leads_note_is_a_reference_to_check_not_a_long_term_rule(self):
         self.line("负责人总结：网关走 8443", source="lead", kind="fact")
         self.line("主人定的：别动 8443", source="owner", kind="constraint")
-        kinds = {found["text"]: found["kind"] for found in memory_search._project_lines(self.state, PID, False)}
-        self.assertEqual(kinds["负责人总结：网关走 8443"], "待核对参考")
-        self.assertEqual(kinds["主人定的：别动 8443"], "长期约定")
+        found = {hit["text"]: (hit["kind"], hit["said"]) for hit in memory_search.eval_search(
+            self.state, "网关走 8443，别动 8443", {"project": PID, "tau": 0.0}, limit=8)}
+        self.assertEqual(found["负责人总结：网关走 8443"], ("note", "summary"))  # 资料, 别人总结的: not a rule.
+        self.assertEqual(found["主人定的：别动 8443"], ("rule", "owner"))
 
 
 class AnswerCardTest(unittest.TestCase):

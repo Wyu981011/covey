@@ -20,7 +20,7 @@ from covey.app.digest import RECORD, ZONE, Digest, last_of_day, proxy_view
 from covey.app.track_standby import Failed
 from covey.cards.digest import REMEMBER_KIND, digest_card, digest_text
 from covey.cards.weekly_usage import reached_line, usage_card, usage_text
-from covey.core import principles, triage
+from covey.core import memory_review, principles, triage
 from covey.core import proxy as proxy_records
 from covey.core.jobs import upsert_job_record
 from covey.core.state import write_json, write_private_text
@@ -191,17 +191,28 @@ class LoneTopicTests(FindTests.__base__):
 
 
 class RecordTests(State):
-    def test_a_time_is_looked_at_once_and_a_click_decides_once(self):
+    def stored(self, text, workspace="", slot=100.0):
+        """A row of the record as an older release offered it (what still sits there)."""
+        return candidates.add(self.state, [{"text": text, "topics": [], "workspace": workspace}], slot, source=candidates.REPEAT)
+
+    def test_a_time_is_looked_at_once_and_what_it_finds_waits_in_the_review_queue(self):
         self.topic("a" * 16, 1)
         calls = []
 
         def finder():
             calls.append(1)
             return [{"text": "回答先给结论", "topics": ["a" * 16, "b" * 16], "labels": ["T1", "T2"], "workspace": "covey"}]
-        rows = candidates.offer(self.state, CHAT, 100.0, finder)
-        self.assertEqual(candidates.offer(self.state, CHAT, 100.0, finder), rows)
+        self.assertEqual(candidates.offer(self.state, CHAT, 100.0, finder), [])  # No row of this record any more.
+        self.assertEqual(candidates.offer(self.state, CHAT, 100.0, finder), [])
         self.assertEqual(len(calls), 1)
-        self.assertEqual(principles.entries(self.state), [])  # Nothing without a click.
+        self.assertEqual(candidates.load(self.state)["rows"], [])
+        queued = memory_review.items(self.state)
+        self.assertEqual([(i.type, i.text, i.flags, i.suggest["scope"]) for i in queued],
+                         [("candidate", "回答先给结论", ("repeat",), "global")])
+        self.assertEqual(principles.entries(self.state), [])  # Nothing without the owner's word.
+
+    def test_a_click_on_an_older_row_decides_once(self):
+        rows = self.stored("回答先给结论", "covey")
         row = candidates.decide(self.state, rows[0]["id"], "save")
         self.assertEqual(row["state"], candidates.SAVED)
         saved = principles.entries(self.state)
@@ -213,8 +224,7 @@ class RecordTests(State):
     def test_a_full_group_says_so_in_the_owners_words_and_stays_open(self):
         for i in range(principles.GROUP_LIMIT):
             principles.save(self.state, principles.OWNER, f"第 {i} 条")
-        rows = candidates.offer(self.state, CHAT, 100.0, lambda: [{"text": "别用表情", "topics": [], "labels": [],
-                                                                    "workspace": ""}])
+        rows = self.stored("别用表情")
         row = candidates.decide(self.state, rows[0]["id"], "save")
         self.assertEqual((row["state"], row["error"]), (candidates.OPEN, candidates.FULL))
         self.assertNotIn("principle_delete", row["error"])
@@ -226,8 +236,7 @@ class RecordTests(State):
         self.assertEqual(candidates.load(self.state)["rows"], [])
 
     def test_不用_sets_it_aside_for_good(self):
-        rows = candidates.offer(self.state, CHAT, 100.0, lambda: [{"text": "别用表情", "topics": [], "labels": [],
-                                                                    "workspace": ""}])
+        rows = self.stored("别用表情")
         self.assertEqual(candidates.decide(self.state, rows[0]["id"], "drop")["state"], candidates.DECLINED)
         self.assertEqual(candidates.load(self.state)["declined"], [principles.same_key("别用表情")])
         self.assertEqual(principles.entries(self.state), [])
@@ -414,8 +423,7 @@ class ClickTests(UnifiedCase):
         super().setUp()
         self.state = self.ctx.state_dir
         self.app.messenger.patch_card = mock.Mock(return_value=True)
-        self.rows = candidates.offer(self.state, CHAT, 1.0, lambda: [
-            {"text": "回答先给结论", "topics": ["a" * 16], "labels": ["T1"], "workspace": ""}])
+        self.rows = candidates.add(self.state, [{"text": "回答先给结论", "topics": ["a" * 16]}], 1.0, source=candidates.REPEAT)
         view = {"slot": 1.0, "since": 0.0, "waiting": [], "stale": [], "running": [], "done": [],
                 "remember": [digest.remember_row(row) for row in self.rows]}
         write_json(self.state / RECORD, {"sent": {"om_digest": {"slot": 1.0, "view": view}}})

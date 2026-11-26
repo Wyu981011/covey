@@ -18,11 +18,12 @@ from support.world import harness_app
 
 from covey.app import answer_cards, memory_collect, memory_turn
 from covey.app.card_actions import ACTIONS
-from covey.app.prompts import MEMORY_FIX_RULE, MEMORY_HEAD, MEMORY_LAYER_RULES, MEMORY_RULES, memory_block, resume_reminders
+from covey.app.prompts import (MEMORY_FIX_RULE, MEMORY_HEAD, MEMORY_LAYER_RULES, MEMORY_RULES, RULES_HEAD, memory_block,
+                                resume_reminders)
 from covey.backends.claude.bridge import CLAUDE_SPEC
 from covey.backends.claude.sessions import ClaudeSessionStore
 from covey.cards import answer_card as cards
-from covey.core import knowledge, memory, principles, project_memory, projects, topic_memory
+from covey.core import knowledge, memory, memstore, principles, project_memory, projects, topic_memory
 from covey.core.checkpoint import CHECKPOINT_RULES, checkpoint_rules
 from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.core.jobs import find_job_record
@@ -177,60 +178,68 @@ class TurnTest(TurnCase):
         self.assertIsNone(find_job_record(self.state, "om5"))  # Nothing written either.
         self.assertFalse(any("memory" in name for name in os.listdir(self.state)))
 
-    def test_one_block_stands_in_for_the_principles_and_the_entries_in_rules_and_reminder(self):
+    def seed_store(self):
+        memstore.add(self.state, kind="rule", scope="global", text="发版前先跑全量")
+        memstore.add(self.state, kind="note", scope="global", text="文档写中文，术语照名词表")
+
+    def test_the_rules_carry_the_rules_of_the_store_once_in_rules_and_reminder(self):
         self.env(**ON, **{knowledge.ENV: "1"})
-        self.seed()
+        self.seed()  # The older stores: only the migration brings them into the one store.
+        self.seed_store()
         runs = self.app().runs
         job = self.job()
         rules = runs.bridge_rules(self.ctx, job)
-        self.assertEqual(rules.count(MEMORY_HEAD), 1)
-        for text in ("发版前先跑全量", "ws 里别用 rg 扫 NAS", "文档写中文"):
-            self.assertEqual(rules.count(text), 1, text)
+        self.assertEqual(rules.count(RULES_HEAD), 1)
+        self.assertEqual(rules.count("发版前先跑全量"), 1)
+        self.assertNotIn("文档写中文", rules)  # A note is the tail's when the turn's words find it.
         self.assertNotIn("主人的原则", rules)
         self.assertNotIn("主人的知识条目", rules)
-        self.assertRegex(rules, r"- M\d+ · 管全局 · 你说的：决定：文档写中文")
-        self.assertRegex(rules, r"- M\d+ · 管这个工作区 · 你说的：ws 里别用 rg 扫 NAS")
-        self.assertLess(rules.index(MEMORY_HEAD), rules.index(CHECKPOINT_RULES))
+        self.assertNotIn(MEMORY_HEAD, rules)
+        self.assertRegex(rules, r"- R[0-9A-Z]{4,6} 发版前先跑全量")
+        self.assertLess(rules.index(RULES_HEAD), rules.index(CHECKPOINT_RULES))
         resumed = runs._with_rules(self.ctx, job, "MSG", rules, system=False, fresh=False, rules_session=False)
-        self.assertEqual(resumed.count(MEMORY_HEAD), 1)
+        self.assertEqual(resumed.count(RULES_HEAD), 1)
         self.assertEqual(resumed.count("发版前先跑全量"), 1)
         self.assertIn(resume_reminders(), resumed)
 
-    def test_the_numbers_a_turn_carried_are_in_its_record(self):
+    def test_the_codes_a_turn_carried_are_in_its_record(self):
         self.env(**ON)
-        self.seed()
+        self.seed_store()
         write_job(self.state, "om5", job_id=5, topic_id="", chat_id=DM, status="running")
         runs = self.app().runs
         job = self.job()
         runs._with_rules(self.ctx, job, "MSG", runs.bridge_rules(self.ctx, job), system=False, fresh=True, rules_session=False)
-        ids = find_job_record(self.state, "om5")["memory_ids"]
-        self.assertEqual(sorted(row["ref"].split(":")[0] for row in ids), ["principle", "principle"])
-        self.assertTrue(all(row["by"] == "owner" and row["n"].startswith("M") for row in ids))
+        record = find_job_record(self.state, "om5")
+        self.assertEqual([row["ref"].split(":")[0] for row in record["memory_ids"]], ["global"])
+        self.assertTrue(all(row["by"] == "owner" and memstore.CODE_RE.match(row["n"]) for row in record["memory_ids"]))
+        self.assertEqual(record["memory_listed"], [])
 
-    def test_project_lines_are_marked_by_who_wrote_them(self):
+    def test_project_lines_say_who_wrote_them_and_a_decision_is_at_the_tail(self):
         self.env(**ON, **{projects.ENV: "1", projects.MEMORY_ENV: "1"})
         projects.create(self.state, projects.new_record(chat_id=CHAT, name="迁移账单", project_id=PID, now=NOW))
         write_topic(self.state, topic_id=TOPIC, chat_id=CHAT, project=projects.project_field(PID, projects.MEMBER))
         project_memory.add(self.state, PID, "先迁 2024 年", "decision", "owner_answer", origin={"question": "0123456789abcdef"})
-        project_memory.add(self.state, PID, "接口叫 bill_v2", "fact", "lead")
+        project_memory.add(self.state, PID, "接口叫 bill_v2，别改名", "constraint", "owner")
+        project_memory.add(self.state, PID, "账单接口按月分表", "fact", "lead")
         topic_memory.add(self.state, TOPIC, "这个话题只看报错")
         self.ctx.topic_id = TOPIC
-        text = memory_turn.block(self.ctx, self.job(topic=TOPIC), owner_turn=lambda: True)
-        self.assertRegex(text, r"- M\d+ · 管这个专项 · 当前决定 · 你说的：先迁 2024 年")
-        self.assertRegex(text, r"- M\d+ · 管这个专项 · 待核对参考 · 它总结的：接口叫 bill_v2")
-        self.assertRegex(text, r"- M\d+ · 管这个话题 · 你说的：这个话题只看报错")
-        self.assertLess(text.index("先迁 2024 年"), text.index("接口叫 bill_v2"))
+        job = self.job(text="账单接口怎么分表的", topic=TOPIC)
+        text = memory_turn.block(self.ctx, job, owner_turn=lambda: True)
+        self.assertRegex(text, r"本专项「迁移账单」\n- R[0-9A-Z]{4,6} 接口叫 bill_v2，别改名\n")
+        self.assertRegex(text, r"本话题\n- R[0-9A-Z]{4,6} 这个话题只看报错")
+        self.assertNotIn("先迁 2024 年", text)
+        tail = memory_turn.tail(self.ctx, job, lambda: True)
+        self.assertRegex(tail, r"- N[0-9A-Z]{4,6} 账单接口按月分表（负责人记的）")
 
     def test_a_colleague_does_not_read_the_owners_global_lines_and_a_proxy_topic_nothing(self):
         self.env(**ON)
-        self.seed()
+        self.seed_store()
         mine = memory_turn.block(self.ctx, self.job(), owner_turn=lambda: True)
-        theirs = memory_turn.block(self.ctx, self.job(), owner_turn=lambda: False)
+        theirs = memory_turn.block(self.ctx, self.job(job_id=6), owner_turn=lambda: False)
         self.assertIn("发版前先跑全量", mine)
         self.assertNotIn("发版前先跑全量", theirs)
-        self.assertIn("ws 里别用 rg 扫 NAS", theirs)
         with mock.patch.object(memory_turn, "proxy_topic", return_value=True):
-            self.assertEqual(memory_turn.block(self.ctx, self.job(), owner_turn=lambda: True), "")
+            self.assertEqual(memory_turn.block(self.ctx, self.job(job_id=7), owner_turn=lambda: True), "")
 
     def test_the_fix_rule_comes_only_with_the_owners_words(self):
         self.env(**ON)
@@ -308,7 +317,7 @@ class CollectTest(CollectCase):
         live = topic_memory.live(self.state, "t1")
         self.assertEqual([r["text"] for r in live], [self.LINE["text"]])
         self.assertEqual(record["memory_notes"], [{"kind": "remembered", "text": self.LINE["text"], "scope": "管这个话题",
-                                                  "entry_id": live[0]["id"]}])
+                                                  "entry_id": live[0]["id"], "ref": f"topic:t1:{live[0]['id']}"}])
         sent = self.messenger.patch_card.call_args.args[2]
         element = sent["body"]["elements"][-1]
         self.assertEqual(element["element_id"], cards.MEMORY_ID)
@@ -414,7 +423,7 @@ class VoidTest(CollectCase):
     def test_a_line_of_the_leads_the_turn_carried_is_voided_and_the_text_stays(self):
         record = self.collect(self.turn(void=[{"id": "M12", "quote": "别再先问侧重点"}], ids=self.ids))
         self.assertEqual(record["memory_notes"], [{"kind": "voided", "text": "选型前先问侧重点", "scope": "管这个专项",
-                                                  "entry_id": self.lead["id"]}])
+                                                  "entry_id": self.lead["id"], "ref": f"project:{PID}:{self.lead['id']}"}])
         self.assertEqual(self.live(), ["报告写中文"])
         self.assertIn("选型前先问侧重点", [r["text"] for r in project_memory.tombstones(
             self.state, projects.read_record(self.state, PID))])
@@ -469,20 +478,19 @@ class PromoteTest(CollectCase):
         job, record = self.remembered()
         entry = record["memory_notes"][0]["entry_id"]
         self.assertTrue(memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, entry)))
-        [principle] = principles.load(self.state)["owner"]
-        self.assertEqual(principle["text"], self.LINE["text"])
-        self.assertEqual(principle["source"]["from"], "管这个话题")
-        self.assertEqual(topic_memory.live(self.state, "t1"), [])  # Carried once, from 全局.
+        [principle] = memstore.entries(self.state, scope="global")
+        self.assertEqual((principle.text, principle.said, principle.kind), (self.LINE["text"], "owner", "rule"))
+        self.assertEqual(memstore.entries(self.state, scope="topic", owner_key="t1"), [])  # Carried once, from 全局.
         [note] = find_job_record(self.state, job.message_id)["memory_notes"]
-        self.assertEqual((note["kind"], note["scope"], note["entry_id"]), ("remembered", "管全局", principle["id"]))
+        self.assertEqual((note["kind"], note["scope"], note["ref"]), ("remembered", "管全局", principle.ref))
         card = json.dumps(self.messenger.patch_card.call_args.args[2], ensure_ascii=False)
         self.assertIn("记下了：选型类的事不用先问侧重点，直接开工 · 管全局", card)
         self.assertNotIn(cards.MEMORY_PROMOTE_KIND, card)  # Only 不对 is left on it.
         self.assertTrue(memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, entry)))
-        self.assertEqual(len(principles.load(self.state)["owner"]), 1)  # A second click does nothing more.
-        # 不对 now takes the principle back.
-        self.assertTrue(memory_collect.undo(self.host, self.ctx, self.click(cards.MEMORY_WRONG_KIND, record, principle["id"])))
-        self.assertEqual(principles.load(self.state)["owner"], [])
+        self.assertEqual(len(memstore.entries(self.state, scope="global")), 1)  # A second click does nothing more.
+        # 不对 now takes the global entry back.
+        self.assertTrue(memory_collect.undo(self.host, self.ctx, self.click(cards.MEMORY_WRONG_KIND, record, note["entry_id"])))
+        self.assertEqual(memstore.entries(self.state, scope="global"), [])
         self.assertEqual(find_job_record(self.state, job.message_id)["memory_notes"][0]["kind"], "undone")
 
     def test_a_line_from_a_topic_with_redaction_on_stays_there(self):
@@ -493,7 +501,7 @@ class PromoteTest(CollectCase):
         self.assertNotIn(cards.MEMORY_PROMOTE_KIND, json.dumps(cards.memory_element([note], "t1", 5), ensure_ascii=False))
         with self.assertRaisesRegex(ValueError, "脱敏"):
             memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, note["entry_id"]))
-        self.assertEqual(principles.load(self.state)["owner"], [])
+        self.assertEqual(memstore.entries(self.state, scope="global"), [])
         self.assertEqual(len(topic_memory.live(self.state, "t1")), 1)
 
     def test_a_line_deleted_since_is_not_promoted(self):
@@ -502,7 +510,7 @@ class PromoteTest(CollectCase):
         topic_memory.delete(self.state, "t1", entry)
         with self.assertRaisesRegex(ValueError, "不在了"):
             memory_collect.promote(self.host, self.ctx, self.click(cards.MEMORY_PROMOTE_KIND, record, entry))
-        self.assertEqual(principles.load(self.state)["owner"], [])
+        self.assertEqual(memstore.entries(self.state, scope="global"), [])
 
 
 class CardTest(Case):

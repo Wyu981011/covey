@@ -1,0 +1,190 @@
+{
+ "projects": [
+  {
+   "id": "a1b2c3d4e5f6",
+   "name": "网关"
+  },
+  {
+   "id": "f6e5d4c3b2a1",
+   "name": "推理"
+  },
+  {
+   "id": "c0ffee000001",
+   "name": "题包"
+  }
+ ],
+ "entries": [
+  {
+   "id": "g1",
+   "kind": "rule",
+   "scope": "global",
+   "text": "回复主人用中文，会话再长也不换成英文。"
+  },
+  {
+   "id": "g2",
+   "kind": "rule",
+   "scope": "global",
+   "text": "写文档或下结论只写实际有的数据，推算出来、拿不准的数字不写进去。"
+  },
+  {
+   "id": "g3",
+   "kind": "rule",
+   "scope": "global",
+   "text": "需要主人拍板的决定用问题卡发出，不只在回复末尾提问。"
+  },
+  {
+   "id": "g4",
+   "kind": "rule",
+   "scope": "global",
+   "text": "开工前先查看当前状态，确认现况后再动手。"
+  },
+  {
+   "id": "g5",
+   "kind": "rule",
+   "scope": "global",
+   "text": "管家接到排查、调研或改代码的活直接开话题开工，不用先发启动卡等主人点开始。"
+  },
+  {
+   "id": "a1",
+   "kind": "rule",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "text": "同事的机器全程只读，不改任何配置和文件。"
+  },
+  {
+   "id": "a2",
+   "kind": "rule",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "text": "多话题并行改仓库时各用独立 git worktree 建分支，不在共享检出里切分支。"
+  },
+  {
+   "id": "a3",
+   "kind": "rule",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "text": "stable 分支要等现网跑满 12 小时再推到新版本。"
+  },
+  {
+   "id": "a4",
+   "kind": "note",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "text": "网关镜像仓库在内网，拉取镜像要走公司代理。"
+  },
+  {
+   "id": "a5",
+   "kind": "note",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "text": "covey-internal 的 MASO 测试要用隔离解释器跑，不能用系统 Python。",
+   "said": "summary"
+  },
+  {
+   "id": "a6",
+   "kind": "note",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "text": "P0-A 的等主人账本合入 main 之后，再改看板类卡片。",
+   "said": "summary"
+  },
+  {
+   "id": "a7",
+   "kind": "decision",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "question": "额度条剩不到 20% 时用什么颜色？",
+   "answer": "红色"
+  },
+  {
+   "id": "a8",
+   "kind": "decision",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "question": "网页额度看板选哪一版样张？",
+   "answer": "选 F 版"
+  },
+  {
+   "id": "a9",
+   "kind": "decision",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "question": "测试用的网页应用留着还是删掉？",
+   "answer": "留着"
+  },
+  {
+   "id": "a10",
+   "kind": "note",
+   "scope": "project",
+   "project": "a1b2c3d4e5f6",
+   "text": "网页改动由话题自己用无头浏览器截浅色和深色两张图验收。"
+  },
+  {
+   "id": "b1",
+   "kind": "rule",
+   "scope": "project",
+   "project": "f6e5d4c3b2a1",
+   "text": "所有生产变更（建删服务、扩缩容、改网关配置）都要主人明确确认，负责人不代答。"
+  },
+  {
+   "id": "b2",
+   "kind": "note",
+   "scope": "project",
+   "project": "f6e5d4c3b2a1",
+   "text": "kvoff-idx256 版本在 910C 演练时要加 sleep inf 保活容器。"
+  },
+  {
+   "id": "b3",
+   "kind": "note",
+   "scope": "project",
+   "project": "f6e5d4c3b2a1",
+   "text": "长上下文模型只能跑在 Hopper 卡上，昇腾只支持 vLLM-Ascend。"
+  },
+  {
+   "id": "b4",
+   "kind": "decision",
+   "scope": "project",
+   "project": "f6e5d4c3b2a1",
+   "question": "第一台单机 8 卡的推理服务怎么起？",
+   "answer": "整机独占，不分 P 和 D"
+  },
+  {
+   "id": "b5",
+   "kind": "decision",
+   "scope": "project",
+   "project": "f6e5d4c3b2a1",
+   "question": "量化版评估用谁当裁判？",
+   "answer": "用最新的开放权重大模型当裁判，大样本真实流量"
+  },
+  {
+   "id": "c1",
+   "kind": "rule",
+   "scope": "project",
+   "project": "c0ffee000001",
+   "text": "验证口径：随机波动造成的差也算差，新策略要在随机 50 道上稳定胜过基线才算好。"
+  },
+  {
+   "id": "c2",
+   "kind": "note",
+   "scope": "project",
+   "project": "c0ffee000001",
+   "text": "沙箱申请失败时等 30 秒再试，最多重试 3 次。"
+  },
+  {
+   "id": "c3",
+   "kind": "decision",
+   "scope": "project",
+   "project": "c0ffee000001",
+   "question": "Repair 环节可以改题面吗？",
+   "answer": "不可以，只能改验证脚本"
+  },
+  {
+   "id": "c4",
+   "kind": "decision",
+   "scope": "project",
+   "project": "c0ffee000001",
+   "question": "切换到新集群以后 Maven 和 Gradle 还默认换源吗？",
+   "answer": "照旧换源"
+  }
+ ]
+}

@@ -2,13 +2,10 @@
 owner's has ended, the Bridge reads his own words of it and writes down what he wants done from now on, instead of waiting for a
 model to put ``memory`` into its checkpoint (app/memory_collect.py, which almost never happened) or for a trigger word.
 
-``after_turn`` (app/detached.py after_job, in the Bridge: rule 8) does two things.
+``after_turn`` (app/detached.py after_job, in the Bridge: rule 8) reads the owner's words (``learn``, in a thread of its own:
+``start``); which memory lines a turn used is counted by app/memory_observe.py, not here.
 
-- Which memory lines the turn used (``note_usage``): the numbers its checkpoint lists in ``memory_used`` and the ones its reply
-  names, of the items it carried (the record's ``memory_ids``), noted in core/memory_usage.py and, once, as the record's
-  ``memory_used`` (refs). That orders the memory (core/memory.py ``seen``) and lets 整理记忆 age what nobody uses
-  (app/memory_tidy.py).
-- The owner's words (``learn``, in a thread of its own: ``start``): of a turn that ended well, his own (app/access.py
+- The owner's words: of a turn that ended well, his own (app/access.py
   owner_turn), whose words are his: by the turn's source (core/turn_source.py) and, with none, by the message id and the way the
   text begins (app/memory_candidates.py not_owner_reason: never a revisit, a Bridge wake-up or note, a hand-on, a review, a
   协作 turn, a 管家 or lead's hand-on), in an ordinary topic, the butler's or a project's lead's (not a 代答 topic, not one with
@@ -22,17 +19,18 @@ model to put ``memory`` into its checkpoint (app/memory_collect.py, which almost
   ``PER_TURN`` to strike out ({id, quote}). A line is kept only when its quote is a run of his own words
   (app/memory_collect.py from_owner): 你说的, and holds up (``refusal``: not a bug report, a complaint or a plain question, and
   no time or pointer that only the moment explains: 上午, 刚才, 这一轮, 这批, 这类, 上次, 今天; a refusal is logged with its
-  reason, never the words). Its ``scope`` says where it goes: ``topic`` the narrowest place as before (the topic's project, else
-  the topic) at once, with 不对 on the answer card; ``global`` and ``workspace`` reach past the topic, so they wait as a
-  candidate of source LEARN with his quote (app/memory_candidates.py add: the evening digest, 记下 or 不用), never a principle
-  before his click; in a project lead's topic only those two are read (a lead's own topic has no line of its own). A strike-out
-  is app/memory_collect.py's (a carried line of 它总结的 of the project only).
+  reason, never the words). A line goes through the write gate (core/memory_gate.py: refused ones are dropped, flagged ones keep
+  their flags). Its ``scope`` says where it goes: ``topic`` in a topic of no project at once (a rule he said, with 不对 on the
+  answer card); ``global``, and ``topic`` in a project's topic (it is the project's then), reach past the topic, so they wait in
+  the review queue (core/memory_review.py add, type learn, with his quote and where it came from) and take effect with his
+  accept, never before; in a project lead's topic only ``global`` is read (a lead's own topic has no line of its own). A
+  strike-out is app/memory_collect.py's (a carried entry the owner did not say himself).
 - A line he contradicts (``supersede`` {id, quote, text}: his words of this turn say the opposite of a line the turn carried)
   is put out of the way at once: a project's line goes ``superseded`` (core/project_memory.py settle, ``superseded_by`` the new
   line when ``text`` is there), a topic's is deleted, both with 不对 on the answer card (app/memory_collect.py take_back puts it
-  back); a principle of 全局 or the workspace, and a 长期约定 he said himself, is never touched: what he says now waits as a
-  candidate and the card says which line it clashes with. The record gets ``memory_notes`` as app/memory_collect.py writes them
-  (kinds remembered, voided, superseded, pending) and ``memory_learned`` {at, state, written}.
+  back); an entry of 全局, and a 长期约定 he said himself, is never touched: what he says now waits in the review queue and the
+  card says which line it clashes with. The record gets ``memory_notes`` as app/memory_collect.py writes them
+  (kinds remembered, voided, superseded, pending; a pending one's ``entry_id`` is the review item's key) and ``memory_learned`` {at, state, written}.
 
 Never raises; the model is called outside every lock; the owner's words are never in a log line."""
 from __future__ import annotations
@@ -47,7 +45,7 @@ from covey.app import memory_collect, memory_turn, track_judge
 from covey.app import memory_candidates
 from covey.app.memory_candidates import CUES
 from covey.app.track_standby import Failed
-from covey.core import memory, memory_usage, principles, project_memory, projects, topic_memory
+from covey.core import memory, memory_gate, memory_review, memstore, project_memory, projects, topic_memory
 from covey.core.butler_opened import handed_on
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record, upsert_job_record
@@ -60,12 +58,11 @@ PER_TURN = 2  # Lines remembered, and lines struck out, a turn.
 SECONDS = 45
 SAID = 1500  # Characters of the owner's words sent: the start and the end of longer ones.
 REPLY = 300
-KNOWN = 30  # Lines already known sent (the turn's carried ones first, then the principles).
+KNOWN = 30  # Lines already known sent (the turn's carried ones first, then the ones of 全局).
 KNOWN_TEXT = 80
 MAX_PENDING = 8  # Turns waiting for the small model; past it a turn's words are not read.
-NUMBER = re.compile(r"(?<![A-Za-z0-9])M\d{2,3}(?![0-9])")  # An item's number (core/memory.py number) as a reply names it.
-SCOPES = ("global", "workspace")  # What reaches past the topic: a candidate waits for his word (``_propose``).
-PENDING_WORDS = "晚间汇总里点「记下」才生效"
+SCOPES = ("global",)  # What reaches past the topic: it waits for his word (``_propose``).
+PENDING_WORDS = "待审核里点「记下」才生效"
 QUIET = ("not-finished", "no-cue", "handed-on", "learned", "collected")  # Reasons too common to log.
 ASKS = ("记忆", "记住", "记下", "规矩", "以后", "长期")  # A question card that speaks of the memory: its answer is read without a cue.
 ASKED = 3  # Questions of a card sent, each with at most ASKED_OPTIONS options.
@@ -79,11 +76,11 @@ COMPLAINT = ("bug", "报错", "出错", "出问题", "崩了", "挂了", "没生
 SYSTEM = (
     "你帮一位用户记下他要助理以后都照着做的话。输入是一个 JSON：said（他这一轮对助理说的原话）、topic（这件事是什么）、"
     "reply（助理这一轮回复的开头，只用来弄清“这个”“那样”指什么）、known（已经记下的，每条有 id 和 text；voidable 为 true 的"
-    "是助理自己总结的）、workspace（这件事所在的工作区）、asked（有这个字段时，said 是他对一张问题卡的回答：这是那张卡的题面和选项，"
+    "是助理自己总结的）、workspace（这件事所在的工作区，只供你弄清所指）、asked（有这个字段时，said 是他对一张问题卡的回答：这是那张卡的题面和选项，"
     "只用来弄清他的回答指什么，题面不是他说的，quote 不能取自题面）。"
     "从 said 里找出他明确要求以后都照做、或以后都不要再做的事（纠正、偏好、长期的规矩）。每条写成一句以后都适用的话，"
     "不超过 80 个字，把“这个”“那样”写成所指的事，不写这一次的细节；quote 是 said 里能看出这条要求的一段原文，一字不改。"
-    "scope 是它管多宽：global（换了工作区也适用，比如回复的语言和格式、汇报和提问的方式）、workspace（只在这个工作区成立）、"
+    "scope 是它管多宽：global（换了工作区也适用，比如回复的语言和格式、汇报和提问的方式）、"
     "topic（只对这件事成立）；拿不准就写 topic。"
     "这些都不记：他在报 Bug、吐槽、抱怨某个功能不好用或没做对；纯提问、问为什么；这一次的指令、要做的任务、选的选项、转述别人的话、"
     "助理自己说的话；以及写出来还要靠当时的情境才看得懂的话——里面有“上午、下午、今天、刚才、这一轮、这批、这类、上次”这类相对的时间"
@@ -106,22 +103,6 @@ def _checkpoint(record) -> dict:
         return read_checkpoint(Path(path)) if path else {}
     except Exception:  # noqa: BLE001 - a checkpoint that cannot be read says nothing
         return {}
-
-
-def note_usage(state_dir, record, checkpoint) -> int:
-    """The lines the turn of ``record`` used, noted once (the module's docstring); how many."""
-    if "memory_used" in record:
-        return 0
-    carried = {str(row["n"]): str(row["ref"]) for row in record.get("memory_ids") or ()
-               if isinstance(row, dict) and row.get("n") and row.get("ref")}
-    if not carried:
-        return 0
-    listed = checkpoint.get("memory_used") if isinstance(checkpoint.get("memory_used"), list) else []
-    numbers = {str(value).strip() for value in listed if isinstance(value, str)}
-    numbers |= set(NUMBER.findall(str(record.get("final_text") or "")))
-    refs = [carried[number] for number in sorted(numbers) if number in carried]
-    upsert_job_record(state_dir, str(record["key"]), memory_used=refs)
-    return memory_usage.note(state_dir, refs)
 
 
 def _redacted(state_dir, topic_id) -> bool:
@@ -200,9 +181,6 @@ def after_turn(gateway, app, job, ctx) -> None:
         if not record:
             return
         checkpoint = _checkpoint(record)
-        used = note_usage(ctx.state_dir, record, checkpoint)
-        if used:
-            runtime.log(f"memory lines used={used} job=#{record.get('job_id')}")
         reason = reason_to_skip(runtime, ctx, job, record, checkpoint)
         if reason:
             if reason not in QUIET:
@@ -241,7 +219,7 @@ def start(work) -> bool:
 
 def _known(state_dir, record) -> list:
     """What the model is told is known: the turn's carried lines (``voidable`` the project's lines of 它总结的, the ones a
-    strike-out may name) and the owner's principles, at most KNOWN."""
+    strike-out may name) and the entries of 全局, at most KNOWN."""
     found = []
     for row in record.get("memory_ids") or ():
         if not isinstance(row, dict) or not row.get("n"):
@@ -252,9 +230,9 @@ def _known(state_dir, record) -> list:
             found.append({"id": str(row["n"]), "text": cut(text, KNOWN_TEXT),
                           **({"voidable": True} if row.get("by") == memory.LEAD and ref.startswith("project:") else {})})
     taken = {item["text"] for item in found}
-    for row in principles.entries(state_dir):
-        if cut(row["text"], KNOWN_TEXT) not in taken:
-            found.append({"id": "", "text": cut(row["text"], KNOWN_TEXT)})
+    for entry in memstore.entries(state_dir, scope="global"):
+        if cut(entry.text, KNOWN_TEXT) not in taken:
+            found.append({"id": "", "text": cut(entry.text, KNOWN_TEXT)})
     return found[:KNOWN]
 
 
@@ -262,8 +240,9 @@ def _text_of(state_dir, record, ref) -> str:
     """The words of the carried line ``ref`` as its store has them now; '' when it is gone."""
     kind, _, rest = ref.partition(":")
     try:
-        if kind == "principle":
-            return next((row["text"] for row in principles.entries(state_dir) if row["id"] == rest), "")
+        found = memstore.find(state_dir, ref)
+        if found is not None:
+            return found.text if found.status == "active" else ""
         if kind == "project":
             project_id, _, entry_id = rest.partition(":")
             return next((row["text"] for row in project_memory.stored(state_dir, project_id)
@@ -332,33 +311,43 @@ def refusal(text, quote) -> str:
     return ""
 
 
-def _propose(ctx, record, text, quote, scope, why=""):
-    """(the note of one line that reaches past its topic, or None): a candidate of source LEARN (app/memory_candidates.py add),
-    for 全局 or the workspace, that takes effect with his 记下 and not before. ``why``: what it clashes with, for the card."""
-    workspace = str(ctx.workspace_name or "") if scope == "workspace" else ""
-    topics = [str(record.get("topic_id") or "")]
-    added = memory_candidates.add(ctx.state_dir, [{"text": text, "workspace": workspace, "quote": quote, "topics": topics}], 0,
-                                  source=memory_candidates.LEARN)
-    if not added:
+def _origin(ctx, record) -> dict:
+    topic = str(record.get("topic_id") or "")
+    number = record.get("topic_number")
+    return {"topic_key": topic, **({"topic_number": number} if type(number) is int else {})}
+
+
+def _propose(ctx, record, text, quote, scope, why="", project=""):
+    """(the note of one line that reaches past its topic, or None): an item of the review queue (core/memory_review.py add, type
+    learn; ``scope`` global, or the project ``project``'s) that takes effect with his accept and not before. The write gate
+    drops what it refuses and puts its flags on the item. ``why``: what it clashes with, for the card."""
+    text, verdict = memory_gate.accept(text, kind="rule")
+    if not text:
         return None
-    return {"kind": "pending", "text": added[0]["text"] + why, "scope": PENDING_WORDS, "entry_id": added[0]["id"]}
+    suggest = {"kind": "rule", "scope": "project", "project_key": project} if project else {"kind": "rule", "scope": scope}
+    key = memory_review.add(ctx.state_dir, memory_review.ReviewItem(
+        key="", type="learn", title=memstore.auto_title(text, "rule"), text=text, suggest=suggest, created_at=time.time(),
+        quote=quote, origin=_origin(ctx, record), flags=tuple(verdict.flags)))
+    return {"kind": "pending", "text": text + why, "scope": PENDING_WORDS, "entry_id": key} if key else None
 
 
 def _remember(ctx, record, text, quote, scope, *, lead=False):
-    """(the note of one line, or None): for ``scope`` global or workspace a candidate that waits for his word (``_propose``;
-    one that is not the workspace's, as the topic has none, stays in the topic), else the narrowest place
-    app/memory_collect.py writes it in. ``lead``: a project lead's topic, which has no line of its own."""
-    reaches = scope in SCOPES and (scope == "global" or ctx.workspace_name)
-    if reaches:
+    """(the note of one line, or None): for ``scope`` global, or any line of a project's topic, an item that waits for his word
+    (``_propose``), else the narrowest place app/memory_collect.py writes it in (a topic's, at once). ``lead``: a project
+    lead's topic, which has no line of its own."""
+    if scope in SCOPES:
         return _propose(ctx, record, text, quote, scope)
     if lead:
         return None
+    found = projects.topic_project(ctx.state_dir, str(record.get("topic_id") or "")) if projects.memory_enabled() else None
+    if found is not None and found.role == projects.MEMBER:
+        return _propose(ctx, record, text, quote, "project", project=found.id)
     return memory_collect._take(ctx, record, text, False, quote)
 
 
 def _supersede(ctx, record, item, said, log):
     """The notes of one line he contradicts (the module's docstring): the new line, when ``text`` is there, then the old one put
-    out of the way; a principle is never touched, what he says now waits as a candidate and the note says which line."""
+    out of the way; an entry of 全局 is never touched, what he says now waits in the review queue and the note says which line."""
     n = str(item.get("id") or "").strip()
     carried = next((row for row in record.get("memory_ids") or () if isinstance(row, dict) and row.get("n") == n), None)
     quote = str(item.get("quote") or "")
@@ -370,14 +359,13 @@ def _supersede(ctx, record, item, said, log):
     ref = str(carried.get("ref") or "")
     kind, _, rest = ref.partition(":")
     old = _text_of(ctx.state_dir, record, ref)
-    if not old or kind not in ("principle", "project", "topic"):
+    if not old or kind not in ("principle", "global", "project", "topic"):
         return []
     clash = f"（和 {n}：{cut(old, 30)} 矛盾，那条没动）"
-    if kind == "principle":
+    if kind in ("principle", "global"):
         if not new:
             return []
-        scope = "workspace" if carried.get("scope") == memory.WORKSPACE and ctx.workspace_name else "global"
-        return [note for note in [_propose(ctx, record, new, quote, scope, clash)] if note]
+        return [note for note in [_propose(ctx, record, new, quote, "global", clash)] if note]
     made = memory_collect._take(ctx, record, new, False, quote) if new else None
     because = f"{n}：{cut(old, 40)}（因为你这轮说“{cut(quote, 30)}”）"
     if kind == "project":

@@ -21,7 +21,7 @@ from support import make_context
 from covey.app import memory_candidates, memory_tidy
 from covey.app.track_standby import Failed
 from covey.cards.digest import MEMORY_KIND, digest_card, digest_text, memory_elements
-from covey.core import memory, memory_usage, principles, project_memory, projects
+from covey.core import memory, memory_review, memory_usage, memstore, principles, project_memory, projects
 from covey.core.state import write_json
 
 ON = {memory.ENV: "1", memory.LEARN_ENV: "1", projects.ENV: "1", projects.MEMORY_ENV: "1"}
@@ -125,6 +125,15 @@ class RunTest(Case):
         view = memory_tidy.view_of(run)
         self.assertEqual(view["away"], {"idle": 0, "done": 1, "superseded": 1, "foreign": 0})
         self.assertEqual([rule["text"] for rule in view["rules"]], ["发网关镜像都先发预发"])
+        queued = memory_review.items(self.state)  # The new rule waits for the owner's word too.
+        self.assertEqual([(i.type, i.text, i.suggest["project_key"]) for i in queued], [("migrate", "发网关镜像都先发预发", PID)])
+        logged = [row for row in memstore.log_read(self.state) if row["action"] == "archive"]  # And what went away is in 记录.
+        self.assertEqual(len(logged[0]["refs"]), 2)
+        self.assertEqual(len(memstore.undo(self.state, logged[0]["undo_token"], now=NOW + 1)), 2)  # That line's own 撤销.
+        self.assertEqual(self.parts()["主人答：现在部署吗？→部署（推荐）"]["valid"], "active")
+        tidy_click = self.tidy()
+        tidy_click.decide(self.ctx, run["id"], "confirm", project=PID, entry=view["rules"][0]["entry"])
+        self.assertEqual(memory_review.items(self.state), [])
 
     def test_a_line_nobody_used_for_long_goes_without_the_model_and_one_used_stays(self):
         stale = self.line("主人答：旧问题→旧回答", at=NOW - 40 * DAY)
@@ -170,13 +179,38 @@ class RunTest(Case):
         tidy = self.tidy()
         run = tidy.run(self.ctx, CHAT, NOW, now=NOW)
         self.assertEqual(run["expired"], ["c0a1b2c3d"])
-        self.assertEqual(memory_candidates.carried(self.state, "")[0][0]["id"], "c0a1b2c3e")
+        self.assertEqual([row["id"] for row in memory_candidates.open_carried(self.state)], ["c0a1b2c3e"])
         tidy.decide(self.ctx, run["id"], "undo")
-        self.assertEqual(len(memory_candidates.carried(self.state, "")[0]), 2)
+        self.assertEqual(len(memory_candidates.open_carried(self.state)), 2)
 
 
 OTHER = "f6e5d4c3b2a1"
 CARD = "0f0e0d0c0b0a0908"  # The migration card's question record.
+
+
+class WindowTest(Case):
+    def test_window_is_the_newest_first_then_goes_round(self):
+        lines = list(range(150))  # Oldest first.
+        first, cursor = memory_tidy.window(lines, 0)
+        self.assertEqual((first[0], first[-1], cursor), (90, 149, 60))
+        second, cursor = memory_tidy.window(lines, cursor)
+        self.assertEqual((second[0], second[-1], cursor), (30, 89, 120))
+        third, cursor = memory_tidy.window(lines, cursor)
+        self.assertEqual(len(third), 60)
+        self.assertEqual((cursor, third[-1]), (30, 29))
+        self.assertEqual(memory_tidy.window(lines[:40], 25), (lines[:40], 0))
+
+    def test_nights_read_the_next_lines_and_the_cursor_is_kept(self):
+        for i in range(80):
+            self.line(f"主人答：第{i}题选什么？→选项{i}", at=NOW - (80 - i) * 60)
+        tidy = self.tidy()
+        tidy.run(self.ctx, CHAT, NOW, now=NOW)
+        tidy.run(self.ctx, CHAT, NOW + 1, now=NOW + 1)
+        first, second = ({line["text"] for line in ask["lines"]} for ask in self.asked)
+        self.assertEqual((len(first), len(second)), (60, 60))
+        self.assertIn("主人答：第79题选什么？→选项79", first)
+        self.assertIn("主人答：第0题选什么？→选项0", second)  # The oldest were not seen the first night.
+        self.assertEqual(memory_tidy.load(self.state)["cursors"], {PID: 40})
 
 
 class ElsewhereTest(Case):
