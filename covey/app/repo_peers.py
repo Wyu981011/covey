@@ -9,75 +9,25 @@ no repository.
 """
 from __future__ import annotations
 
-import threading
 import time
 from pathlib import Path
 
+from covey.core import topic_repos
 from covey.core.butler import is_butler_topic
 from covey.core.jobs import running_job_records
 from covey.core.state import epoch_seconds
 from covey.core.topics import label_title, proxy_topic
+from covey.core.topic_repos import repo_of
+
+TTL, DEPTH = topic_repos.TTL, topic_repos.DEPTH  # Of repo_of (core/topic_repos.py since the overhaul's A0), as named here before.
+_cache = topic_repos.cache  # The same dict: the tests clear it between cases.
 
 WINDOW = 30 * 60
-TTL = 10 * 60
-DEPTH = 12
 SHOWN = 3
 TITLE = 20
 SIMILAR = 0.3  # Of titles, in the same repository.
 SEEN = 50  # Records looked at per turn.
 RULE = ("推送、合并、部署之前先 git fetch，落后就 rebase 并重测；只提交自己改的文件，推送前看 git diff origin/main...HEAD --stat。")
-
-_cache: dict[str, tuple[float, str]] = {}
-_lock = threading.Lock()
-
-
-def repo_of(workdir, now=None) -> str:
-    """The repository of ``workdir`` as a path ('' for none): its ``.git`` directory's, or for a linked worktree the
-    main one's, which its ``.git`` file names."""
-    key = str(workdir or "")
-    if not key.startswith("/"):
-        return ""
-    now = time.time() if now is None else now
-    with _lock:
-        hit = _cache.get(key)
-        if hit and now - hit[0] < TTL:
-            return hit[1]
-    found = _find(Path(key))
-    with _lock:
-        if len(_cache) > 256:
-            _cache.clear()
-        _cache[key] = (now, found)
-    return found
-
-
-def _find(path: Path) -> str:
-    try:
-        for level, directory in enumerate([path, *path.parents]):
-            if level > DEPTH or str(directory) == "/":
-                return ""
-            git = directory / ".git"
-            if git.is_dir():
-                return str(git.resolve())
-            if git.is_file():
-                return _linked(git)
-    except (OSError, ValueError):
-        return ""
-    return ""
-
-
-def _linked(git: Path) -> str:
-    """The main repository's ``.git`` of a worktree's ``.git`` file ("gitdir: <main>/.git/worktrees/<name>"), else its own path."""
-    try:
-        text = git.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return ""
-    if not text.startswith("gitdir:"):
-        return ""
-    target = Path(text[len("gitdir:"):].strip())
-    if not target.is_absolute():
-        target = git.parent / target
-    parts = target.resolve().parts
-    return str(Path(*parts[:parts.index("worktrees")])) if "worktrees" in parts else str(target.resolve())
 
 
 def others(state_dir, topic_id, workdir, now=None) -> list[tuple[str, str]]:

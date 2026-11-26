@@ -63,6 +63,7 @@
     "test:optrack": "node --import ./scripts/alias.mjs --test scripts/op-track.test.mjs",
     "test:snapmerge": "node --import ./scripts/alias.mjs --test scripts/snapshot-merge.test.mjs",
     "test:upgrade": "node --import ./scripts/alias.mjs --test scripts/upgrade.test.mjs",
+    "test:memv43": "node --import ./scripts/alias.mjs --test scripts/memory-v43.test.mjs",
     "test:quota": "node --import ./scripts/alias.mjs --test scripts/quota.test.mjs",
     "test:progress": "node --import ./scripts/alias.mjs --test scripts/progress.test.mjs",
     "test:brief": "node --import ./scripts/alias.mjs --test scripts/brief.test.mjs",

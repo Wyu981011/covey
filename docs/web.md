@@ -450,6 +450,19 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **刷新**：Bridge 收到后先看 `<状态目录>/quota/refresh.json`：5 分钟内刚开始过一次就回“刚查过（HH:MM）…”，什么都不重读（回执之前仍重新推一次条目）；否则记下开始时刻，在 `quota-refresh` 线程里 `quota_sources.refresh(force=True)`、`probe_accounts(which="all")`、再写 agy 的快照，回执立刻回“开始重新读取…”，读完 `refresh.json` 记结束时刻、条目的 `refresh.busy` 变回 false。读的时候页面按钮锁着。同一个 Covey 只有一份冷却。agy 的 `/usage` 是唯一会去问备用号的，所以只在主人点的时候问。
 - **飞书提醒**（`app/quota_notice.py`，`quota_watch` 线程每分钟看一次）：一个来源一个能用的号都没有了（带最早恢复时刻）、有号要重新登录，两种，各说一次，一两句加「去网页看」的链接（`page_url` 加 `/settings/quota`）。说过的记在 `<状态目录>/quota/notices.json`，那件事不成立了就忘掉，再出现算新的；一个状态目录的第一次只记下现状、不说；夜里按 `COVEY_QUIET_HOURS` 不发也不记，早上把还成立的合成一条发。
 
+### 数据约定 v43：记忆中心与仓库
+
+契约冻结稿在改造计划的 `web-contract-v43.md`。v42 已被「账号与额度」占用，所以记忆中心与仓库记作 v43。A0 只加类型和服务端校验，不改现有行为：旧 Covey 不推新键，网页和服务端与 v42 完全相同。类型和常量在 `web/shared/api.interface.ts`，校验在 `web/server/modules/workbench/workbench.memory-edit.ts`，样例在 `tests/golden/web_memory_v43.json`（合成数据，Bridge 侧推送要能逐键对上它的形状），单测 `npm run test:memv43`。
+
+- **设置键**：`SETTINGS_KEYS` 仍是原来 7 个（含 `quota`），不动。新增 `MEMORY_KEY_RE`，`isSettingsKey` 在 7 个键之外也认它。键共 6 种：`memory:index`（小键，侧栏角标只轮询它：总数、待审核数、各范围摘要与每键 rev、体检非 0 项、导入摘要、⌘K 用的标题表）、`memory:global`（全局条目、待审核列表、最近 100 条变更记录）、`memory:topics`（近 30 天有记忆的话题的话题范围条目）、`memory:p:<专项 id>`（专项 id 是 `[0-9a-z]{6,32}`）、`memory:import:<页>`（导入候选，每页 ≤200 条，页号 0~999）、`memory:previews`（下一轮预览：最近 20 个话题加“新的普通话题”）。旧键 `memory`（v37 形状）继续推给旧网页。
+- **大小和推送**：最长键 41 字符，`sync_state.name` 是 `varchar(64)`，放得下；每键的值 ≤256 KB，带 `rev`（内容哈希），Bridge 侧 rev 没变不推；用量数字不进条目，只进 `memory:index` 的汇总。专项归档、导入页缩减时，Bridge 对不再存在的键发 `SyncDeleted{type:'settings', key}`，服务端只用 `isSettingsKey` 放行。Bridge 任何记忆写入 touch 一个哨兵 `<状态目录>/memory/.rev`，`web_memory.stamps()` 只 stat 它。
+- **类型**：`MemoryEntry`（`code` 短码 R/D/N 加 4~6 位 base32；`kind` rule|decision|note；`scope` global|project|topic；`status` active|pending|done|archived|void；`by` 来源；`rev` 是 `memory_edit` 的乐观锁 base）、`MemoryReviewItem`（`type` 8 种：learn、candidate、lead、import、conflict、tidy、class3、migrate）、`MemoryHealth`（只放非 0 项，全 0 是 `{}`）、`MemoryLogItem`（带 `undo_token`）、`MemoryIndex`、`MemoryGlobalData`、`MemoryProjectData`、`MemoryTopicsData`、`MemoryImportPage`、`MemoryPreviewsData`。页签 `MEMORY_TABS` 是 review、rules、decisions、notes、log；「导入」是顶栏入口，不是页签。
+- **操作**：仍用同一个 outbox kind `memory_edit`，不新增 kind。`payload.v === 43` 走新校验，`MemoryEditPayloadV43`：`action` 17 种（add、edit、move、archive、restore、void、accept、reject、accept_all、reject_all、keep_left、keep_right、keep_both、promote、import、ignore、undo）；`keys` ≤200 个、每个 ≤200 字，`add`、`accept_all`、`reject_all`、`undo` 可为空；`title` ≤40；`text` 按 `kind` 限 200（decision 600）；`why` ≤200；`undo` 要 `undo_token`（≤64）；`add` 要 title、text、kind、scope；`repos` ≤10 个、每个 ≤64。没有 `v` 的按 v37 旧校验，旧的 `memory_fix`、`memory_undo` 照收。
+- **设置操作**：`SETTINGS_WHATS` 追加 `repos_set`（name、note、status active|readonly|frozen、write_mode worktree|inplace）、`repos_add`（path ≤500、name、note）、`repos_remove`（name）、`worktrees_prune`（paths ≤50 个、每个 ≤500，主人点了才删）。旧 `workspace_add/remove/prune` 照收，Bridge 转成 `repos_*`。
+- **启动与换配置**：`launch`、`switch` 的 `workspace`、`run_mode` 改可选，带了照旧校验，不带不报错；新增可选 `repos`（≤10 项，`{name ≤64, mode: read|write}`）。`LaunchData.workspaces`、`run_modes`、`LaunchPreselect.workspace/run_mode` 改可选（新 Covey 不推），新增可选 `devices`（name、dot、harnesses）。
+- **话题、一轮、设置页**：话题条目可选 `repos`（`TopicRepo`）和 `home_start`，`workspace` 保留只读给旧话题显示；一轮可选 `memory`（`count`、`used`、`codes`）；`SettingsData.repos`（`SettingsReposPage`：主目录、仓库表、可清理的 worktree）与旧 `workspace` 页并存。
+- **兼容规则**：所有新字段都可选；新网页遇到没有新键、没有 `repos` 的旧 Covey，照 v37、v42 的路径画。消费方（`progressData.ts`、`ProjectRail.tsx`、`TopicOverview.tsx`、`ProjectBrief.tsx`、`ProjectProgress.tsx`）在 v43 下改读 `memory:p:*` 里 `kind==='decision'` 的条目，由 WEB 包改，A0 不动；⌘K 搜记忆用 `memory:index.titles`，服务端 `/api/search` 不改。
+
 ### 更快的取数（可选参数）
 
 数据约定 v38。下面都是请求里可选的参数和响应里可选的字段：不带参数的旧调用、认不得新字段的旧页面，行为和以前完全一样；新网页遇到不认参数的旧服务端，退回整份、马上返回的老办法。
@@ -549,3 +562,4 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v40 | 专项条目的 `checklist`、`milestones`、`decisions`（专项页的「进度」标签），都可选 |
 | v41 | 专项条目的 `background`、`actions`、`gaps`，`checklist` 条目的 `title`、`waiting_on`、`done_at`、`topics`；话题 `progress` 的 `next_step`、`waiting`（专项页的「简报」标签），都可选 |
 | v42 | `settings` 的 `quota` 条目（[账号与额度](#账号与额度)：每个来源一份、agy 一个号一行只列近 7 天用过的模型池、号的 `login`）和 `quota_refresh` 操作；`ops` 里有 `quota_refresh` 才画这一页 |
+| v43 | 记忆中心与仓库（[数据约定 v43](#数据约定-v43记忆中心与仓库)）：`settings` 的 `memory:*` 键（index、global、topics、p:<专项 id>、import:<页>、previews），`memory_edit` 的 `v: 43` payload（17 种 action），`repos_set`、`repos_add`、`repos_remove`、`worktrees_prune` 设置操作，`launch`、`switch` 的 `repos`（`workspace`、`run_mode` 改可选），话题 `repos`、一轮 `memory`、设置页 `repos`，都可选 |

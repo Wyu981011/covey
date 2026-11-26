@@ -146,7 +146,7 @@ def record(scratch: Path) -> dict:
 
     # Names: every release looks for exactly these.
     out["names"] = {name: getattr(rd, name) for name in ("RUNS", "QUEUED", "HANDOFF", "RUNNER", "WAKE", "DONE", "EXIT",
-                                                         "LOG", "INBOX", "ACKS", "REQUESTS", "REPLIES", "RUN_LOCK")}
+                                                         "LOG", "INBOX", "ACKS", "REQUESTS", "REPLIES", "RUN_LOCK", "REPOS")}
     out["names"]["OP"] = rd.OP.pattern
     out["names"]["WAKE_SIGNAL"] = runner_ipc.WAKE_SIGNAL.name
 

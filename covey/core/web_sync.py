@@ -15,6 +15,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import re
 import threading
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -42,6 +43,9 @@ ASKS_KEY = "asks"  # The ``settings`` item of 要你处理 as every card counts 
 MEMORY_KEY = "memory"  # The ``settings`` item of the owner's main memory, the page's 记忆 tab (app/web_memory.py view, data contract v37).
 UPGRADE_KEY = "upgrade"  # The ``settings`` item of 版本与更新, with an upgrader set up only (app/self_upgrade.py view, data contract v39).
 QUOTA_KEY = "quota"  # The ``settings`` item of 账号与额度, with a quota source only (app/web_quota.py view, data contract v42).
+SETTINGS_KEYS = (SETTINGS_KEY, USAGE_KEY, TIDY_KEY, ASKS_KEY, MEMORY_KEY, UPGRADE_KEY, QUOTA_KEY)  # web/shared/api.interface.ts SETTINGS_KEYS.
+# Data contract v43: the memory center's keys (web/shared/api.interface.ts MEMORY_KEY_RE, tests/golden/web_memory_v43.json); none pushed yet.
+MEMORY_KEY_RE = re.compile(r"^memory:(index|global|previews|topics|p:[0-9a-z]{6,32}|import:\d{1,3})$")
 PREFIX = "web-"  # The message id of the owner's words from the page: ``web-<op_id>``. Feishu has no such message.
 
 

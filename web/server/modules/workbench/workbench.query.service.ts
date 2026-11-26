@@ -61,6 +61,7 @@ import {
   revisitCancelShape, revisitOf,
 } from './workbench.v4';
 import { upgradeOf, upgradeShape } from './workbench.upgrade';
+import { checkMemoryEdit, launchReposError, reposSettingsError } from './workbench.memory-edit';
 import { quotaOf, quotaRefreshShape } from './workbench.quota';
 
 interface TopicRow {
@@ -1179,6 +1180,10 @@ export class WorkbenchQueryService {
       if (!str(payload.workspace) || str(payload.workspace).length > 200) throw new BadRequestException('workspace_remove 要 workspace');
     } else if (what === 'workspace_prune' || what === 'refresh') {
       return;
+    } else if (what === 'repos_set' || what === 'repos_add' || what === 'repos_remove' || what === 'worktrees_prune') {
+      // v43：仓库页的操作（形状校验放在 workbench.memory-edit.ts，纯函数）
+      const err: string | null = reposSettingsError(what, payload);
+      if (err) throw new BadRequestException(err);
     } else if (what === 'node_add') {
       if (!/^[a-z][a-z0-9-]{0,23}$/u.test(str(payload.name))) throw new BadRequestException('名字要小写字母开头，只用小写字母、数字和 -，最多 24 个');
       if (payload.title !== undefined && (typeof payload.title !== 'string' || Array.from(payload.title).length > 40)) throw new BadRequestException('显示名最多 40 字');
@@ -1233,11 +1238,18 @@ export class WorkbenchQueryService {
       const text: string = str(payload.text);
       if (!text.trim()) throw new BadRequestException('话不能为空');
       if (Array.from(text).length > 20000) throw new BadRequestException('话太长（最多 20000 字）');
-      for (const k of ['model', 'effort', 'workspace'] as const) {
+      for (const k of ['model', 'effort'] as const) {
         const v: unknown = payload[k];
         if (typeof v !== 'string' || !v || Array.from(v).length > 200) throw new BadRequestException(`launch 的 ${k} 要是 1–200 字的文字`);
       }
-      if (!(LAUNCH_RUN_MODES as readonly string[]).includes(str(payload.run_mode))) throw new BadRequestException('launch 的 run_mode 要是 direct 或 worktree');
+      // v43：workspace、run_mode 可选（新 Covey 用 repos）；带了照旧校验
+      if (payload.workspace !== undefined) {
+        const v: unknown = payload.workspace;
+        if (typeof v !== 'string' || !v || Array.from(v).length > 200) throw new BadRequestException('launch 的 workspace 要是 1–200 字的文字');
+      }
+      if (payload.run_mode !== undefined && !(LAUNCH_RUN_MODES as readonly string[]).includes(str(payload.run_mode))) throw new BadRequestException('launch 的 run_mode 要是 direct 或 worktree');
+      const repoErr: string | null = launchReposError(payload.repos);
+      if (repoErr) throw new BadRequestException(repoErr);
       if (payload.redaction !== 'on' && payload.redaction !== 'off') throw new BadRequestException('launch 的 redaction 要是 on 或 off');
       if (typeof payload.work_mode !== 'string' || Array.from(payload.work_mode).length > 200) throw new BadRequestException('launch 的 work_mode 要是文字（可为空）');
       return;
@@ -1245,15 +1257,22 @@ export class WorkbenchQueryService {
     if (kind === 'switch') {
       // v20：话题页换配置，同飞书 🔁 换配置的“确认更换”；校验交给 Covey，这里只挡形状不对的
       if (!str(req.topic_key) || str(req.project_key)) throw new BadRequestException('switch 要 topic_key、不带 project_key');
-      for (const k of ['model', 'workspace'] as const) {
-        const v: unknown = payload[k];
-        if (typeof v !== 'string' || !v || Array.from(v).length > 200) throw new BadRequestException(`switch 的 ${k} 要是 1–200 字的文字`);
+      {
+        const v: unknown = payload.model;
+        if (typeof v !== 'string' || !v || Array.from(v).length > 200) throw new BadRequestException('switch 的 model 要是 1–200 字的文字');
       }
+      // v43：workspace、run_mode 可选；带了照旧校验
+      if (payload.workspace !== undefined) {
+        const v: unknown = payload.workspace;
+        if (typeof v !== 'string' || !v || Array.from(v).length > 200) throw new BadRequestException('switch 的 workspace 要是 1–200 字的文字');
+      }
+      const repoErr: string | null = launchReposError(payload.repos);
+      if (repoErr) throw new BadRequestException(repoErr);
       for (const k of ['effort', 'work_mode'] as const) {
         const v: unknown = payload[k];
         if (typeof v !== 'string' || Array.from(v).length > 200) throw new BadRequestException(`switch 的 ${k} 要是文字（可为空）`);
       }
-      if (!(LAUNCH_RUN_MODES as readonly string[]).includes(str(payload.run_mode))) throw new BadRequestException('switch 的 run_mode 要是 direct 或 worktree');
+      if (payload.run_mode !== undefined && !(LAUNCH_RUN_MODES as readonly string[]).includes(str(payload.run_mode))) throw new BadRequestException('switch 的 run_mode 要是 direct 或 worktree');
       if (payload.redaction !== 'on' && payload.redaction !== 'off') throw new BadRequestException('switch 的 redaction 要是 on 或 off');
       return;
     }
@@ -1358,28 +1377,4 @@ export class WorkbenchQueryService {
   }
 }
 
-/* v37：memory_edit 的 payload（改主记忆，Covey 的 app/web_memory.py edit）。不带 topic_key、project_key；正文最多 200 字（和 Covey 一样，
-   这里先拦下明显不对的，具体能不能记、有没有重复由 Covey 回执说） */
-const MEMORY_ACTIONS: readonly string[] = ['add', 'edit', 'pin', 'unpin', 'delete', 'keep', 'drop'];
-const MEMORY_KEY = /^(principle:p[0-9a-f]{6}|knowledge:k[0-9a-f]{6}|candidate:c[0-9a-f]{8})$/u;
-const MEMORY_FIELDS: readonly string[] = ['action', 'key', 'what', 'scope', 'workspace', 'text', 'base', 'knowledge_kind', 'why'];
-const MEMORY_TEXT = 200;
-
-export function checkMemoryEdit(payload: Record<string, unknown>, req: OutboxRequest): void {
-  if (str(req.topic_key) || str(req.project_key)) throw new BadRequestException('memory_edit 不带 topic_key、project_key');
-  if (Object.keys(payload).some((k: string) => !MEMORY_FIELDS.includes(k))) throw new BadRequestException('memory_edit 有不认识的字段');
-  const action: string = str(payload.action);
-  if (!MEMORY_ACTIONS.includes(action)) throw new BadRequestException('memory_edit 的 action 不认识');
-  const long = (k: string): boolean => payload[k] !== undefined && Array.from(str(payload[k])).length > MEMORY_TEXT;
-  if (['text', 'base', 'why'].some(long)) throw new BadRequestException(`一条记忆最多 ${MEMORY_TEXT} 字`);
-  if (str(payload.workspace).length > 200 || str(payload.knowledge_kind).length > 20) throw new BadRequestException('memory_edit 的字段太长');
-  if (action === 'add') {
-    if (payload.what !== 'principle' && payload.what !== 'knowledge') throw new BadRequestException('要选记成原则还是知识条目');
-    if (payload.scope !== 'global' && payload.scope !== 'workspace') throw new BadRequestException('要选记在全局还是某个工作区');
-    if (payload.scope === 'workspace' && !str(payload.workspace).trim()) throw new BadRequestException('要选记在哪个工作区');
-    if (!str(payload.text).trim()) throw new BadRequestException('记忆的正文是空的');
-    return;
-  }
-  if (!MEMORY_KEY.test(str(payload.key))) throw new BadRequestException('memory_edit 的 key 不合法');
-  if (action === 'edit' && !str(payload.text).trim()) throw new BadRequestException('记忆的正文是空的');
-}
+export { checkMemoryEdit } from './workbench.memory-edit';

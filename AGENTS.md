@@ -148,6 +148,7 @@
 | `app/harnesses.py` | The Harnesses of one Bridge, one object each |
 | `app/health.py` | Read-only, bounded local health snapshots |
 | `app/held_notes.py` | A message sent while several questions wait for answers is kept, not refused |
+| `app/home_turn.py` | The home's part of a turn (FINAL-SPEC 修订 9) |
 | `app/idle_compaction.py` | The butler's compaction while it is idle: the owner no longer waits for it |
 | `app/interaction.py` | Backend event dispatch and task-card callbacks |
 | `app/job_dispatch.py` | Running a dequeued job (process_reply_job |
@@ -165,6 +166,7 @@
 | `app/memory_collect.py` | What the owner said in a topic's turn that holds from now on becomes memory, and a click takes it back |
 | `app/memory_harvest.py` | What Codex and Claude Code learned of the owner on their own, offered to Covey's memory once a day |
 | `app/memory_learn.py` | 记忆自己长, one turn at a time |
+| `app/memory_observe.py` | What the Bridge sees of a turn's use of the memory (FINAL-SPEC 修订 8) |
 | `app/memory_panel.py` | The 设置 card's 记忆 tab, shown when COVEY_MEMORY=1 |
 | `app/memory_tidy.py` | 整理记忆, once a day: at the evening digest what the memory holds is put in order, so a project's 当前决定 are not a … |
 | `app/memory_turn.py` | What a turn reads of the owner's memory, for app/runs.py |
@@ -206,6 +208,7 @@
 | `app/proxy_resend.py` | The 重新发送 card: a 代答 reply that never went out, offered to the owner to send again |
 | `app/proxy_send.py` | Proxy replies (代答): Feishu as the owner sees it |
 | `app/proxy_topics.py` | Proxy replies (代答): each contact's topic in the proxy group |
+| `app/question_dedup.py` | Before a question reaches the owner, look for the same question answered before (FINAL-SPEC 修订 6) |
 | `app/question_display.py` | Where a question is shown |
 | `app/questions.py` | Durable questions: the Questions component, answers and delivery recovery |
 | `app/quiet_delivery.py` | The quiet butler turn's side of delivering a result |
@@ -221,6 +224,7 @@
 | `app/relay_stops.py` | 停住了 at the private chat's top level (app/butler_relay.py relays a topic turn the butler started or handed on … |
 | `app/relay_targets.py` | Where a topic turn's outcome goes back to at the butler's top level |
 | `app/repo_peers.py` | A topic hears that another topic works in the same git repository |
+| `app/repos_turn.py` | The repositories' part of a turn (FINAL-SPEC 修订 9) |
 | `app/review.py` | 独立复核: a read-only topic that reviews one finished turn's changes, opened only when the owner clicks the … |
 | `app/revisit_hint.py` | A line under an ordinary topic's answer that says nothing will come back to what the reply put off (display … |
 | `app/revisits.py` | 到点回来看 at the Bridge: a topic that waits on something outside (a training, CI, a deploy) ends its turn with … |
@@ -401,8 +405,10 @@
 | `core/gateways.py` | 模型网关的配置：一个网关是“OpenAI Responses / Anthropic Messages 兼容”的上游，由数据描述，可以有多个。 |
 | `core/groups.py` | The group records: one per group, `<state>/groups/<sha256(chat_id)>.json`, with `chat_id`, `active` … |
 | `core/harness.py` | Harness adapter contracts for the Feishu bridge |
+| `core/harness_memory.py` | What the Harnesses remember on their own (Claude Code, Codex, Antigravity), offered for import into the … |
 | `core/harness_probe.py` | Harness 能不能真的调通：跑一次最便宜的真实调用（claude -p、codex exec、agy -p），把失败分成几类。 |
 | `core/history_storage.py` | A topic's history: appending a turn's rows (append_history), reading the latest ones and rounds … |
+| `core/home.py` | The deployment's home (主目录): where every topic starts, and where its outputs go |
 | `core/http_upstream.py` | Requests a local relay or gateway sends on to its upstream, and the answer it passes back |
 | `core/ignored_env.py` | Backend parameters the environment no longer sets, and the two whose old values a service must not keep |
 | `core/inbound_ledger.py` | 主人消息的去向: where each message the owner sent went, as one read |
@@ -419,8 +425,12 @@
 | `core/maintenance_report.py` | How maintenance's --dry-run words what it would do |
 | `core/maintenance_rules.py` | The rules of daily maintenance |
 | `core/memory.py` | The one read port of the owner's memory |
+| `core/memory_gate.py` | The write gate of a memory entry (FINAL-SPEC 修订 8): what is refused or rewritten, what is only flagged |
+| `core/memory_rank.py` | How relevant and how useful a memory entry is (FINAL-SPEC 修订 2 and 8) |
+| `core/memory_review.py` | The one review queue of the memory: what someone other than the owner proposes waits here |
 | `core/memory_search.py` | 按需查记忆: what a turn's memory block could not carry, looked up by its words from the turn itself |
 | `core/memory_usage.py` | Which memory lines the turns used, so what is never of use goes first and in time out of the way |
+| `core/memstore.py` | The one memory store of the overhaul (FINAL-SPEC 修订 3) |
 | `core/menu_choice.py` | A model menu's entries and the choices on them |
 | `core/metrics.py` | Content-free job timings |
 | `core/migrate.py` | One-time migrations of old records, so the code that reads records needs no compat branch for them |
@@ -464,6 +474,7 @@
 | `core/redaction_views.py` | What the 设置 card's 脱敏 tab shows of the relays' records |
 | `core/redactor.py` | Matching for sensitive-term redaction: terms to stand-ins in requests, stand-ins back in replies |
 | `core/reply_state.py` | The verified reply and the outcome of one turn of Codex or dsh |
+| `core/repomap.py` | The repo map: the git repositories this deployment works in, and the `covey repo` command |
 | `core/result.py` | Validated root reply identity, separate from execution and continuation rights |
 | `core/revisits.py` | 到点回来看: a topic ends its turn with `revisit` in its checkpoint (when, and what to look at) and the Bridge … |
 | `core/roster.py` | The Harness backends the unified bot routes, in one table |
@@ -491,6 +502,7 @@
 | `core/toml_compat.py` | A TOML reader for Python 3.10, which has no tomllib |
 | `core/topic_gist.py` | 话题要点: a few lines each topic keeps of what it is about at heart, written by the topic's own model at the end … |
 | `core/topic_memory.py` | The memory of one topic |
+| `core/topic_repos.py` | The repositories a topic uses (`topic.json` `repos`), the repository of a path, and a task's requests to use … |
 | `core/topic_seen.py` | When the owner last saw each topic |
 | `core/topics.py` | Durable, chat-scoped Feishu topic -> Harness session bindings, and the readers and writers of a topic's … |
 | `core/trace.py` | A turn's execution trace as data (ToolTrace) |
@@ -632,7 +644,7 @@
 
 ### bin
 
-入口壳，只解析参数后调 `covey` 里的函数：`agy_as.py`、`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_inbound.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
+入口壳，只解析参数后调 `covey` 里的函数：`agy_as.py`、`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_inbound.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_repo.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
 
 改名前的入口名留作转发壳，服务清单、开机钩子和各部署的脚本还在用：`bridge_app_setup.py`、`bridge_doctor.py`、`bridge_main_mcp.py`、`bridge_memguard.py`、`bridge_pairing.py`、`bridge_service.py`、`bridge_service_install.py`、`covey_main_mcp.py`、`lark_app_console.py`、`lark_bridge_maintenance.py`、`lark_bridge_paths.py`、`lark_bridge_workspaces.py`、`lark_feishu_web.py`、`lark_harness_bridge.py`、`lark_install_browser.py`、`lark_task_runner.py`、`lark_workspace_reader.py`。
 <!-- code-map:end -->

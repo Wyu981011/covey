@@ -72,14 +72,14 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
         '工作区',
         <Pick
           label="工作区"
-          options={data.workspaces.map((w) => ({ value: w.name, text: w.device ? `${w.name}（${w.device}）` : w.name }))}
+          options={(data.workspaces ?? []).map((w) => ({ value: w.name, text: w.device ? `${w.name}（${w.device}）` : w.name }))}
           value={sel.workspace}
           onPick={(v: string) => box.edit((d, s) => pickWorkspace(d, s, v))}
         />,
       ) : null}
       {place ? row(
         '运行方式',
-        <Pick label="运行方式" options={data.run_modes} value={device ? 'direct' : sel.run_mode} onPick={(v: string) => box.edit((_d, s) => ({ ...s, run_mode: v }))} disabled={(v: string) => (device && v === 'worktree' ? '设备上只能原目录' : '')} />,
+        <Pick label="运行方式" options={data.run_modes ?? []} value={device ? 'direct' : sel.run_mode} onPick={(v: string) => box.edit((_d, s) => ({ ...s, run_mode: v }))} disabled={(v: string) => (device && v === 'worktree' ? '设备上只能原目录' : '')} />,
         device ? '设备上只能原目录' : undefined,
       ) : null}
       {m?.redaction

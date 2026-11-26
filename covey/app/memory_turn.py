@@ -114,6 +114,13 @@ def record(ctx, job, owner_turn, log=None) -> None:
             log(f"memory ids not recorded: {type(exc).__name__}")
 
 
+def tail(ctx, job, owner_turn) -> str:
+    """The memory's dynamic block of ``job``'s turn, at the prompt's tail after the checkpoint note (FINAL-SPEC 修订 4): the
+    decisions in progress, this turn's relevant notes and the titles of the related ones not carried. Never in the
+    rules, which stay one cacheable prefix. A0: none (package M2)."""
+    return ""
+
+
 def triggered(text, *, knowledge_takes=False) -> bool:
     """Whether the owner's words of the turn hold one of ``WORDS``; ``knowledge_takes``: COVEY_KNOWLEDGE's 记住 and the like
     are its own (the entry goes there, once)."""

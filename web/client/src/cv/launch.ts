@@ -11,7 +11,7 @@ import { sendOp, type OpResult } from './sendOp';
 export type Sel = Omit<LaunchPayload, 'text'>;
 
 const modelOf = (d: LaunchData, key: string): LaunchModel | undefined => d.models.find((m: LaunchModel) => m.key === key);
-const workspaceOf = (d: LaunchData, name: string): LaunchWorkspace | undefined => d.workspaces.find((w: LaunchWorkspace) => w.name === name);
+const workspaceOf = (d: LaunchData, name: string): LaunchWorkspace | undefined => (d.workspaces ?? []).find((w: LaunchWorkspace) => w.name === name);
 
 /** 一项选择画成什么（设置页「配置」和启动、换配置面板共用）：只有一个选项是只读文字，其余一律下拉（含关/开、原目录/独立 worktree） */
 export function pickKind(options: SettingsOption[]): 'one' | 'sel' {
@@ -80,7 +80,7 @@ export function summaryTags(d: LaunchData, sel: Sel): string[] {
   out.push(`思考 ${m?.budgets.find((b: SettingsOption) => b.value === sel.effort)?.text ?? sel.effort}`);
   // 卡上的叫法去掉括号里的说明（“自适应（按任务自己定）”→“自适应”）
   if (sel.work_mode) out.push((m?.work_mode_texts?.[sel.work_mode] ?? sel.work_mode).split('（')[0]);
-  out.push(sel.workspace, d.run_modes.find((r: SettingsOption) => r.value === sel.run_mode)?.text ?? sel.run_mode);
+  out.push(sel.workspace, (d.run_modes ?? []).find((r: SettingsOption) => r.value === sel.run_mode)?.text ?? sel.run_mode);
   out.push(m?.redaction && sel.redaction === 'on' ? '脱敏' : '不脱敏');
   return out;
 }

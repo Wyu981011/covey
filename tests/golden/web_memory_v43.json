@@ -1,0 +1,663 @@
+{
+  "version": 43,
+  "keys": {
+    "memory:index": {
+      "on": true,
+      "version": 43,
+      "counts": {
+        "rule": 1,
+        "decision": 1,
+        "note": 2,
+        "pending": 3
+      },
+      "scopes": [
+        {
+          "key": "global",
+          "title": "全局",
+          "counts": {
+            "rule": 1,
+            "decision": 0,
+            "note": 1,
+            "pending": 3
+          },
+          "rules": {
+            "items": 1,
+            "chars": 20,
+            "item_limit": 30,
+            "char_limit": 3000
+          },
+          "rev": "gv1"
+        },
+        {
+          "key": "topics",
+          "title": "话题",
+          "counts": {
+            "rule": 1,
+            "decision": 0,
+            "note": 1,
+            "pending": 0
+          },
+          "rules": {
+            "items": 1,
+            "chars": 18,
+            "item_limit": 30,
+            "char_limit": 3000
+          },
+          "rev": "tv1"
+        },
+        {
+          "key": "p:demo01",
+          "title": "演示专项",
+          "counts": {
+            "rule": 0,
+            "decision": 1,
+            "note": 0,
+            "pending": 0
+          },
+          "rules": {
+            "items": 0,
+            "chars": 0,
+            "item_limit": 30,
+            "char_limit": 3000
+          },
+          "rev": "pv1"
+        }
+      ],
+      "revs": {
+        "memory:global": "gv1",
+        "memory:topics": "tv1",
+        "memory:p:demo01": "pv1",
+        "memory:import:0": "iv1",
+        "memory:previews": "rv1",
+        "memory:index": "xv1"
+      },
+      "health": {
+        "dup": [
+          "global:g1a2b3",
+          "global:g9z9z9"
+        ],
+        "conflict": [
+          [
+            "global:g4d5e6",
+            "review:conflict:b2"
+          ]
+        ],
+        "stale": [
+          "global:g4d5e6"
+        ]
+      },
+      "imports": {
+        "total": 3,
+        "new": 2,
+        "pages": 1
+      },
+      "limits": {
+        "title": 40,
+        "text": 200,
+        "decision_text": 600
+      },
+      "titles": [
+        [
+          "RK7M2Q",
+          "提交前先跑测试",
+          "global:g1a2b3"
+        ],
+        [
+          "NQ3X9A",
+          "部署机用的端口",
+          "global:g4d5e6"
+        ],
+        [
+          "DB2H5W",
+          "记忆中心先上线只读页",
+          "decision:demo01:d7f8a9"
+        ],
+        [
+          "RT4P8D",
+          "这个话题只读 demo-repo",
+          "topic:t001:r1b2c3"
+        ],
+        [
+          "NT6B3Y",
+          "排查结论",
+          "topic:t001:n4e5f6"
+        ]
+      ]
+    },
+    "memory:global": {
+      "key": "global",
+      "entries": [
+        {
+          "key": "global:g1a2b3",
+          "code": "RK7M2Q",
+          "kind": "rule",
+          "scope": "global",
+          "title": "提交前先跑测试",
+          "text": "提交代码之前先跑相关测试，失败就不提交。",
+          "status": "active",
+          "said": "owner",
+          "by": "owner",
+          "origin": {
+            "at": 1795000000,
+            "topic_number": 12,
+            "quote": "提交代码之前先跑相关测试，失败就不提交。"
+          },
+          "carried_next": true,
+          "rev": "rrk7m2q",
+          "why": "曾经把没跑过的改动合进了主干"
+        },
+        {
+          "key": "global:g4d5e6",
+          "code": "NQ3X9A",
+          "kind": "note",
+          "scope": "global",
+          "title": "部署机用的端口",
+          "text": "演示环境的网页服务监听在 8080 端口。",
+          "status": "active",
+          "said": "summary",
+          "by": "learn",
+          "origin": {
+            "at": 1795000000,
+            "topic_number": 12,
+            "quote": "演示环境的网页服务监听在 8080 端口"
+          },
+          "carried_next": true,
+          "rev": "rnq3x9a",
+          "verified_at": 1795000000
+        }
+      ],
+      "review": [
+        {
+          "key": "review:learn:a1",
+          "type": "learn",
+          "title": "回复先说结论",
+          "text": "回复时先给结论，再展开原因。",
+          "quote": "你先说结论吧",
+          "from": {
+            "topic_key": "t001",
+            "topic_number": 12
+          },
+          "suggest": {
+            "kind": "rule",
+            "scope": "global"
+          },
+          "flags": [
+            "repeat"
+          ],
+          "created_at": 1794999700
+        },
+        {
+          "key": "review:conflict:b2",
+          "type": "conflict",
+          "title": "部署端口改为 9090",
+          "text": "演示环境的网页服务改到 9090 端口。",
+          "from": {
+            "topic_key": "t002",
+            "topic_number": 15
+          },
+          "suggest": {
+            "kind": "note",
+            "scope": "global"
+          },
+          "conflict_with": "global:g4d5e6",
+          "flags": [
+            "dynamic"
+          ],
+          "created_at": 1794999800
+        },
+        {
+          "key": "review:tidy:c3",
+          "type": "tidy",
+          "title": "两条相近的规矩",
+          "text": "这两条意思重复，可以合并。",
+          "suggest": {
+            "kind": "rule",
+            "scope": "global"
+          },
+          "items": [
+            {
+              "key": "global:g1a2b3",
+              "code": "RK7M2Q",
+              "kind": "rule",
+              "scope": "global",
+              "title": "提交前先跑测试",
+              "text": "提交代码之前先跑相关测试，失败就不提交。",
+              "status": "active",
+              "said": "owner",
+              "by": "owner",
+              "origin": {
+                "at": 1795000000,
+                "topic_number": 12,
+                "quote": "提交代码之前先跑相关测试，失败就不提交。"
+              },
+              "carried_next": true,
+              "rev": "rrk7m2q",
+              "why": "曾经把没跑过的改动合进了主干"
+            },
+            {
+              "key": "global:g9z9z9",
+              "code": "RZ9Z9Z",
+              "kind": "rule",
+              "scope": "global",
+              "title": "提交前先跑测试",
+              "text": "提交代码之前先跑相关测试，失败就不提交。",
+              "status": "active",
+              "said": "owner",
+              "by": "owner",
+              "origin": {
+                "at": 1795000000,
+                "topic_number": 12,
+                "quote": "提交代码之前先跑相关测试，失败就不提交。"
+              },
+              "carried_next": true,
+              "rev": "rz9",
+              "why": "曾经把没跑过的改动合进了主干"
+            }
+          ],
+          "created_at": 1794999900
+        }
+      ],
+      "log": [
+        {
+          "at": 1794999950,
+          "who": "owner",
+          "action": "accept",
+          "refs": [
+            "global:g1a2b3"
+          ],
+          "title": "提交前先跑测试",
+          "because": {
+            "topic_number": 12,
+            "quote": "提交之前先跑测试"
+          },
+          "undo_token": "u-0001"
+        },
+        {
+          "at": 1794999980,
+          "who": "learn",
+          "action": "add",
+          "refs": [
+            "review:learn:a1"
+          ],
+          "title": "回复先说结论"
+        }
+      ]
+    },
+    "memory:topics": {
+      "topics": [
+        {
+          "topic_key": "t001",
+          "topic_number": 12,
+          "title": "演示话题",
+          "project_key": "demo01",
+          "entries": [
+            {
+              "key": "topic:t001:r1b2c3",
+              "code": "RT4P8D",
+              "kind": "rule",
+              "scope": "topic",
+              "title": "这个话题只读 demo-repo",
+              "text": "这个话题里不要修改 demo-repo，只读它的代码。",
+              "status": "active",
+              "said": "owner",
+              "by": "owner",
+              "origin": {
+                "at": 1795000000,
+                "topic_number": 12,
+                "quote": "这个话题里不要修改 demo-repo，"
+              },
+              "carried_next": true,
+              "rev": "rrt4p8d",
+              "topic_key": "t001",
+              "topic_number": 12,
+              "repos": [
+                "demo-repo"
+              ],
+              "edited": true
+            },
+            {
+              "key": "topic:t001:n4e5f6",
+              "code": "NT6B3Y",
+              "kind": "note",
+              "scope": "topic",
+              "title": "排查结论",
+              "text": "日志里的超时来自上游接口，和本地代码无关。",
+              "status": "active",
+              "said": "owner",
+              "by": "owner",
+              "origin": {
+                "at": 1795000000,
+                "topic_number": 12,
+                "quote": "日志里的超时来自上游接口，和本地代码无关"
+              },
+              "carried_next": false,
+              "rev": "rnt6b3y",
+              "topic_key": "t001",
+              "topic_number": 12,
+              "over_cap": true
+            }
+          ]
+        }
+      ]
+    },
+    "memory:p:demo01": {
+      "key": "p:demo01",
+      "title": "演示专项",
+      "entries": [
+        {
+          "key": "decision:demo01:d7f8a9",
+          "code": "DB2H5W",
+          "kind": "decision",
+          "scope": "project",
+          "title": "记忆中心先上线只读页",
+          "text": "记忆中心第一版先只做查看和审核，编辑放到第二版；理由是先让主人看清楚存了什么，再决定怎么改。",
+          "status": "active",
+          "said": "summary",
+          "by": "lead",
+          "origin": {
+            "at": 1795000000,
+            "topic_number": 12,
+            "quote": "记忆中心第一版先只做查看和审核，编辑放到"
+          },
+          "carried_next": true,
+          "rev": "rdb2h5w",
+          "project_key": "demo01",
+          "in_progress": true
+        }
+      ]
+    },
+    "memory:import:0": {
+      "page": 0,
+      "items": [
+        {
+          "fingerprint": "fp-0001",
+          "harness": "claude_code",
+          "bucket": "demo-bucket",
+          "repo": "demo-repo",
+          "file_tail": "memory/notes.md",
+          "title": "测试要用真实数据库",
+          "text": "测试要用真实数据库。",
+          "type": "feedback",
+          "suggest": {
+            "kind": "rule",
+            "scope": "global"
+          },
+          "state": "new"
+        },
+        {
+          "fingerprint": "fp-0002",
+          "harness": "codex",
+          "bucket": "demo-bucket",
+          "repo": "demo-repo",
+          "file_tail": "memory/notes.md",
+          "title": "提交信息写中文",
+          "text": "提交信息写中文。",
+          "type": "feedback",
+          "suggest": {
+            "kind": "rule",
+            "scope": "global"
+          },
+          "state": "imported",
+          "dup_of": "global:g1a2b3"
+        },
+        {
+          "fingerprint": "fp-0003",
+          "harness": "antigravity",
+          "bucket": "demo-bucket",
+          "repo": "demo-repo",
+          "file_tail": "memory/notes.md",
+          "title": "旧仓库的构建命令",
+          "text": "旧仓库的构建命令。",
+          "type": "feedback",
+          "suggest": {
+            "kind": "rule",
+            "scope": "global"
+          },
+          "state": "ignored",
+          "old_repo": true
+        }
+      ]
+    },
+    "memory:previews": {
+      "previews": [
+        {
+          "topic_key": "t001",
+          "title": "演示话题",
+          "chars": 420,
+          "rules": [
+            "RK7M2Q"
+          ],
+          "decisions": [
+            "DB2H5W"
+          ],
+          "notes": [
+            {
+              "code": "NQ3X9A",
+              "sim": 0.82
+            }
+          ],
+          "listed": [
+            "NT6B3Y"
+          ]
+        },
+        {
+          "topic_key": "new",
+          "title": "新的普通话题",
+          "chars": 180,
+          "rules": [
+            "RK7M2Q"
+          ],
+          "decisions": [],
+          "notes": [],
+          "listed": []
+        }
+      ]
+    }
+  },
+  "edits": [
+    {
+      "v": 43,
+      "action": "add",
+      "keys": [],
+      "title": "提交前先跑测试",
+      "text": "提交代码之前先跑相关测试。",
+      "why": "避免回归",
+      "kind": "rule",
+      "scope": "global"
+    },
+    {
+      "v": 43,
+      "action": "add",
+      "keys": [],
+      "title": "先只读后编辑",
+      "text": "第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。第一版先做只读页，编辑放第二版。",
+      "kind": "decision",
+      "scope": "project",
+      "project_key": "demo01"
+    },
+    {
+      "v": 43,
+      "action": "edit",
+      "keys": [
+        "global:g1a2b3"
+      ],
+      "title": "提交前先跑测试",
+      "text": "提交代码之前先跑相关测试，失败就不提交。",
+      "base": "rrk7m2q"
+    },
+    {
+      "v": 43,
+      "action": "move",
+      "keys": [
+        "topic:t001:r1b2c3"
+      ],
+      "scope": "project",
+      "project_key": "demo01",
+      "base": "rrt4p8d"
+    },
+    {
+      "v": 43,
+      "action": "archive",
+      "keys": [
+        "global:g4d5e6"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "restore",
+      "keys": [
+        "global:g4d5e6"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "void",
+      "keys": [
+        "decision:demo01:d7f8a9"
+      ],
+      "why": "决定已作废"
+    },
+    {
+      "v": 43,
+      "action": "accept",
+      "keys": [
+        "review:learn:a1"
+      ],
+      "kind": "rule",
+      "scope": "global"
+    },
+    {
+      "v": 43,
+      "action": "reject",
+      "keys": [
+        "review:learn:a1"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "accept_all",
+      "keys": []
+    },
+    {
+      "v": 43,
+      "action": "reject_all",
+      "keys": [
+        "review:learn:a1",
+        "review:conflict:b2"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "keep_left",
+      "keys": [
+        "global:g4d5e6",
+        "review:conflict:b2"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "keep_right",
+      "keys": [
+        "global:g4d5e6",
+        "review:conflict:b2"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "keep_both",
+      "keys": [
+        "global:g4d5e6",
+        "review:conflict:b2"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "promote",
+      "keys": [
+        "topic:t001:n4e5f6"
+      ],
+      "scope": "project",
+      "project_key": "demo01",
+      "repos": [
+        "demo-repo"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "import",
+      "keys": [
+        "fp-0001",
+        "fp-0002"
+      ],
+      "kind": "rule",
+      "scope": "global"
+    },
+    {
+      "v": 43,
+      "action": "ignore",
+      "keys": [
+        "fp-0003"
+      ]
+    },
+    {
+      "v": 43,
+      "action": "undo",
+      "keys": [],
+      "undo_token": "u-0001"
+    }
+  ],
+  "settings": {
+    "repos_set": {
+      "what": "repos_set",
+      "name": "demo-repo",
+      "note": "演示仓库",
+      "status": "active",
+      "write_mode": "worktree"
+    },
+    "repos_add": {
+      "what": "repos_add",
+      "path": "/absolute/path/to/demo-repo",
+      "name": "demo-repo",
+      "note": "演示仓库"
+    },
+    "repos_remove": {
+      "what": "repos_remove",
+      "name": "demo-repo"
+    },
+    "worktrees_prune": {
+      "what": "worktrees_prune",
+      "paths": [
+        "/absolute/path/to/worktrees/demo-repo-t12"
+      ]
+    },
+    "launch": {
+      "text": "帮我看一下演示仓库的测试为什么失败",
+      "model": "demo-model",
+      "effort": "high",
+      "work_mode": "",
+      "redaction": "off",
+      "repos": [
+        {
+          "name": "demo-repo",
+          "mode": "write"
+        },
+        {
+          "name": "docs-repo",
+          "mode": "read"
+        }
+      ]
+    },
+    "switch": {
+      "model": "demo-model",
+      "effort": "medium",
+      "work_mode": "",
+      "redaction": "on",
+      "repos": [
+        {
+          "name": "demo-repo",
+          "mode": "read"
+        }
+      ]
+    }
+  }
+}

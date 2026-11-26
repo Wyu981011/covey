@@ -405,23 +405,42 @@ def bridge_rules(
     proxy: bool = False,
     gists: str = "",
     checkpoint: str | None = None,
+    home: str = "",
 ) -> str:
     """``proxy`` (a 代答 topic's): its own constraints and the workspace, nothing else (proxy_constraints). Otherwise
     identity and constraints, the workspace, the owner's principles (``principles``, principles_block; none: no
     block), the project's memory and library (``project``, project_block; none: no block), the owner's knowledge entries (``knowledge_text``, knowledge_block; none: no block),
     a new session's recent topics of the workspace (``gists``, workspace_gists_block; none: no block), the checkpoint
     contract (``checkpoint``, core/checkpoint.py checkpoint_rules; None: all of it; ``remember``: and the rule for writing
-    entries): the same every turn of a topic."""
+    entries): the same every turn of a topic. Static only (FINAL-SPEC 修订 4): what changes turn by turn goes to the prompt's
+    tail (``turn_tail``). ``home``: the home block (app/home_turn.py static_block) in place of the workspace block."""
+    where = home_section(workspace_name, workdir, device, remote_workdir, home=home)
     if proxy:
-        return "\n\n".join((proxy_constraints(backend_name, runtime_note, notes),
-                            workspace_block(workspace_name, workdir, device, remote_workdir)))
-    return "\n\n".join((constraints(backend_name, runtime_note, notes),
-                        workspace_block(workspace_name, workdir, device, remote_workdir), *((memory_text,) if memory_text else ()),
-                        *((principles,) if principles else ()),
-                        *((project,) if project else ()),
-                        *((knowledge_text,) if knowledge_text else ()), *((gists,) if gists else ()),
+        return "\n\n".join((proxy_constraints(backend_name, runtime_note, notes), where))
+    return "\n\n".join((constraints(backend_name, runtime_note, notes), where,
+                        *memory_sections(memory_text=memory_text, principles=principles, project=project,
+                                         knowledge_text=knowledge_text),
+                        *((gists,) if gists else ()),
                         checkpoint_rules() if checkpoint is None else checkpoint,
                         *((REMEMBER_RULE,) if remember else ()), *((MEMORY_FIX_RULE,) if memory_fix else ())))
+
+
+def home_section(workspace_name: str, workdir: Path, device: str = "", remote_workdir: str = "", *, home: str = "") -> str:
+    """主目录段 of the rules: ``home`` (app/home_turn.py static_block) when given, else the workspace block as before."""
+    return home or workspace_block(workspace_name, workdir, device, remote_workdir)
+
+
+def memory_sections(*, memory_text: str = "", principles: str = "", project: str = "", knowledge_text: str = "") -> tuple[str, ...]:
+    """记忆段 of the rules, in their order (the one memory block, the principles, the project's memory and library, the
+    knowledge entries), the empty ones left out. Package M2 fills it from the new store; its place in the rules stays."""
+    return tuple(part for part in (memory_text, principles, project, knowledge_text) if part)
+
+
+def turn_tail(*parts: str) -> str:
+    """每轮动态块 (FINAL-SPEC 修订 4): the parts of a turn that change turn by turn (decisions in progress, this turn's
+    notes, the titles not carried: app/memory_turn.py tail; the repositories: app/repos_turn.py tail), at the prompt's
+    tail beside the checkpoint note, never in the rules; '' when every part is."""
+    return "".join("\n\n" + part for part in parts if part)
 
 
 def earlier_history(rows: list[dict[str, Any]], message_id: str, user_text: str) -> list[dict[str, Any]]:

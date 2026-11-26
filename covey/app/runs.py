@@ -16,13 +16,15 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from covey.app import (collab_channel, device_files, knowledge_turn, memory_turn, owner_send, project_context,
-                       quota_failure, repo_peers, subagent_recovery, tool_limits, workspace_gists)
+from covey.app import (collab_channel, device_files, home_turn, knowledge_turn, memory_turn, owner_send,
+                       project_context, quota_failure, repo_peers, repos_turn, subagent_recovery, tool_limits,
+                       workspace_gists)
 from covey.core.statuses import ENDED
 from covey.app.leftovers import stop_task_leftovers
 from covey.app.butler import butler_turn
 from covey.app.prompts import (MEMORY_FIX_RULE, REMEMBER_RULE, bridge_rules, earlier_history, first_turn_message,
-                                        principles_block, context_high, resume_message, resume_reminders, workspace_block)
+                                        principles_block, context_high, resume_message, resume_reminders, turn_tail,
+                                        workspace_block)
 from covey.app.sessions import mark_system_rules, started_with_system_rules
 from covey.app.recovery_cards import paint_answered
 from covey.app.switch_handoff import capped
@@ -146,7 +148,8 @@ class Runs:
 
     def bridge_rules(self, ctx: BridgeContext, job: ReplyJob | None = None, *, fresh: bool = False) -> str:
         """The rules of ``job``'s turn; ``fresh``: a new session's, which alone carry the workspace's recent topics
-        (app/workspace_gists.py, COVEY_WORKSPACE_GISTS)."""
+        (app/workspace_gists.py, COVEY_WORKSPACE_GISTS). Static within a topic (FINAL-SPEC 修订 4): what changes turn by
+        turn is ``_turn_tail``'s."""
         return bridge_rules(
             backend_name=self.harness.spec.prompt_agent_name,
             workspace_name=ctx.workspace_name,
@@ -162,6 +165,7 @@ class Runs:
             proxy=proxy_topic(ctx),
             gists=workspace_gists.block(ctx, job, owner_turn=lambda: self.owner_turn(ctx, job)) if fresh else "",
             checkpoint=self.checkpoint_rules(ctx, job),
+            home=home_turn.static_block(ctx),
         )
 
     @staticmethod
@@ -328,7 +332,8 @@ class Runs:
             # A 协作 ask: no checkpoint file, no context or repository note; its limit's words last.
             prompt += ("\n\n" + collab_channel.RECORD_NOTE if ctx.options.get(collab_channel.RECORD_ONLY) else "") + tool_limits.note(ctx)
         else:
-            prompt += self._checkpoint_note(ctx, job) + self._context_note(ctx, job, session_id) + self._repo_note(ctx, job) + tool_limits.note(ctx)
+            prompt += (self._checkpoint_note(ctx, job) + self._turn_tail(ctx, job) + self._context_note(ctx, job, session_id)
+                       + self._repo_note(ctx, job) + tool_limits.note(ctx))
         attachments = self._image_attachments(ctx, prompt)
         if ctx.device:
             prompt, attachments, live.ctx = self._stage_attachments(ctx, job, prompt, attachments)
@@ -492,8 +497,10 @@ class Runs:
 
     def _with_rules(self, ctx: BridgeContext, job: ReplyJob, prompt: str, rules: str, *,
                     system: bool, fresh: bool, rules_session: bool) -> str:
-        if fresh or not rules_session:
-            memory_turn.record(ctx, job, lambda: self.owner_turn(ctx, job), self.runtime.log)  # COVEY_MEMORY=1: the numbers carried.
+        if fresh or not rules_session or not (proxy_topic(ctx) or ctx.options.get(TOOL_LIMIT) == CONSULT):
+            # COVEY_MEMORY=1: the numbers carried, every turn of a topic (FINAL-SPEC 修订 4: a resumed session with the rules at
+            # system level carries them too), not a 代答 topic's or a 协作 ask's resumed one.
+            memory_turn.record(ctx, job, lambda: self.owner_turn(ctx, job), self.runtime.log)
         if not system and fresh:
             prompt = rules + "\n\n" + prompt
         elif not rules_session and not proxy_topic(ctx):
@@ -547,6 +554,13 @@ class Runs:
         return ("\n\n" + checkpoint_note(Path(job.checkpoint_path), prior, shown=shown) + self._gist_note(ctx, job)
                 + self._revisit_note(ctx, job) + self._ask_note(ctx, job) + self._collab_note(ctx, job)
                 + self._criteria_note(ctx, job) + self._images_note(ctx, job))
+
+    def _turn_tail(self, ctx: BridgeContext, job: ReplyJob) -> str:
+        """The turn's dynamic block (app/prompts.py turn_tail): the memory's (app/memory_turn.py tail) and the repositories'
+        (app/repos_turn.py tail); none in a 代答 topic. '' while both are empty, as before the overhaul."""
+        if proxy_topic(ctx):
+            return ""
+        return turn_tail(memory_turn.tail(ctx, job, lambda: self.owner_turn(ctx, job)), repos_turn.tail(ctx, job))
 
     def _dead_subagents(self, ctx: BridgeContext, job: ReplyJob) -> dict | None:
         """What the subagents of the topic's last ended task delivered (app/subagent_recovery.py), when that task failed

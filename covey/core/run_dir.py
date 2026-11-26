@@ -37,6 +37,7 @@ INBOX = "inbox"
 ACKS = "acks"
 REQUESTS = "requests"
 REPLIES = "replies"
+REPOS = "repos.json"  # A task's ``covey repo use`` requests (core/topic_repos.py); a Bridge that does not know it leaves it.
 OP = re.compile(r"[0-9]+-[0-9a-f]+")
 # A read of a run directory's file that fails (OSError, or JSON cut short: ValueError) while the directory is there is
 # made again after each of these pauses (read_steady): on ByteFuse a read of runner.json that met another process

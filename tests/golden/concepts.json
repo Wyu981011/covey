@@ -621,6 +621,102 @@
    "name": "project_memory_revise",
    "by": "主人 11-27 批准记忆改造不受收敛期限制（T852）",
    "why": "负责人改、以新代旧、收进历史专项记忆里已有的一条，不再只能追加“作废”"
+  },
+  {
+   "kind": "settings",
+   "name": "COVEY_HOME",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "Bridge 导出给 Harness 的主目录，covey repo 据此找上下文（去工作区、主目录启动）"
+  },
+  {
+   "kind": "settings",
+   "name": "COVEY_TOPIC",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "Bridge 导出给 Harness 的话题 id，covey repo use 据此记本话题用到的仓库"
+  },
+  {
+   "kind": "settings",
+   "name": "COVEY_STATE",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "Bridge 导出给 Harness 的状态目录，covey repo / covey memory 只读用"
+  },
+  {
+   "kind": "settings",
+   "name": "--write",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "covey repo use 的参数：要改这个仓库，建或复用本话题的 worktree"
+  },
+  {
+   "kind": "settings",
+   "name": "--legacy",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "covey repo prune-plan 的参数：只读列出某目录下可清理的旧 worktree"
+  },
+  {
+   "kind": "terms",
+   "name": "主目录",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "去工作区后话题一律从这里启动（服务的 --workdir）"
+  },
+  {
+   "kind": "terms",
+   "name": "仓库地图",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "部署在哪些 git 仓库里干活（repos.json），取代工作区列表"
+  },
+  {
+   "kind": "terms",
+   "name": "用到的仓库",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "话题实际读过或改过的仓库（topic.json repos），多仓感知的单位"
+  },
+  {
+   "kind": "terms",
+   "name": "话题产物目录",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "Covey 按 home.json 模板给话题设好的产物目录"
+  },
+  {
+   "kind": "terms",
+   "name": "规矩",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "记忆三类之一：每轮全文带"
+  },
+  {
+   "kind": "terms",
+   "name": "决定记录",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "记忆三类之一：问题卡回答，只给在办的话题带"
+  },
+  {
+   "kind": "terms",
+   "name": "资料",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "记忆三类之一：相关才带的参考"
+  },
+  {
+   "kind": "terms",
+   "name": "待审核",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "别人提的记忆统一等主人点了才算数"
+  },
+  {
+   "kind": "terms",
+   "name": "记忆中心",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "网页一级页 /memory，看和改全部记忆"
+  },
+  {
+   "kind": "terms",
+   "name": "体检",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "记忆中心的问题项（重复、冲突、含糊、过期）"
+  },
+  {
+   "kind": "terms",
+   "name": "执行设备",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "多设备时话题实际在哪台机器跑"
   }
  ]
 }

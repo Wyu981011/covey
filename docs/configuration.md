@@ -365,6 +365,15 @@
 
 `COVEY_GROUP_MEMBERS=read`：没在群聊卡上选过的群也按只读（启用确认卡照这个写）；不设或别的值是 `full`，和以前一样。卡上选过的以卡上为准。日志：`group chat=… member_mode=…`、每轮 `turn limit job=#N limit=read`。
 
+### 主目录与仓库地图（开发中）
+
+全量改造（工作区下线、一律从主目录启动）的配置先在这里占位，落地前这些都不改变现有行为：
+
+- 主目录就是服务的 `--workdir`，参数名不变。话题一律从主目录启动；`<状态目录>/home.json`（`core/home.py`）放话题产物目录和会话目录的模板、要不要把缓存变量指到产物目录，不写时用默认值。
+- 仓库地图 `<状态目录>/repos.json`（`core/repomap.py`）：每个仓库的名字、路径、用途、状态（`active`、`readonly`、`frozen`）和写入方式（`worktree` 建本话题的 worktree，`inplace` 原地改；新装默认 `inplace`）。`<状态目录>/repos.md` 由它渲染，只读。
+- Bridge 将给 Harness 进程设 `COVEY_HOME`（主目录）、`COVEY_TOPIC`（话题 id）、`COVEY_STATE`（状态目录），`PATH` 前面加 `<数据根>/bin`，让 `covey repo`（`bin/covey_repo.py`）找到上下文；任务目录沿用已有的 `COVEY_TASK_DIR`。`covey repo use --write` 只写本任务的 `runs/<任务键>/repos.json`（`core/run_dir.py` 的 `REPOS`）。
+- 记忆的同义词表 `<状态目录>/memory/synonyms.json` 可选，和核心自带的通用表合并。
+
 ### 多设备（开发中，默认关）
 
 让话题在另一台机器（Linux，经 ssh）上工作，而不是在 Bridge 所在的机器上。设备上能跑 Claude Code、Codex 和 Antigravity 的话题；默认关，真机验收在进行。结构、连接、离线恢复和文件进出见[架构 · 设备](architecture.md#设备多设备默认关)，Harness 在设备上的差别见[Harness 说明](harnesses.md#在设备上运行)。
@@ -570,6 +579,9 @@
 | `COVEY_REQUIRED_MOUNT` | `service/manager.py` | 开机守护设置，不要手设 | 否 |
 | `COVEY_RUNNER_PYTHONPATH` | `app/runner.py` | Bridge 交给任务进程，不要手设 | 否 |
 | `COVEY_TASK_DIR` | `app/leftovers.py`、`core/device_link.py` | 任务进程给本轮命令设置，不要手设 | 否 |
+| `COVEY_STATE` | `core/repomap.py`（`bin/covey_repo.py` 找仓库地图） | 空：`covey repo list` 说地图是空的。开发中：Bridge 还不给 Harness 设它，见[主目录与仓库地图](#主目录与仓库地图开发中) | 否 |
+| `COVEY_HOME` | `core/repomap.py`（`bin/covey_repo.py`） | 空。开发中：将由 Bridge 给 Harness 设成主目录（服务的 `--workdir`），见[主目录与仓库地图](#主目录与仓库地图开发中) | 否 |
+| `COVEY_TOPIC` | `core/repomap.py`（`bin/covey_repo.py`） | 空。开发中：将由 Bridge 给 Harness 设成这一轮的话题 id，`covey repo` 据此记“本话题用到” | 否 |
 | `CODEX_HOME` | `core/paths.py`（`codex_home`，Codex 的会话目录从它取）、`core/model_settings.py`、`backends/codex/consult.py`（协作咨询轮的私有 home 从它链接）、`app/memory_harvest.py`（记忆自己长读 Codex 的记忆摘要）、`core/same_account.py`（读它的 config.toml / settings.json，看自己的登录和哪个模型网关是同一账号） | `~/.codex` | 否 |
 | `COVEY_CLAUDE_HOOKS` | `backends/claude/hooks.py`（`enabled`：`TurnHooks.registration` 据此在每轮 Claude Code 的 initialize 里注册 SDK hook） | 开：子 Agent（Explore 除外）开工时收到守则（`SubagentStart`），子 Agent 调 `mcp__bridge__*` 被拒（`PreToolUse`），管家这一轮自己调满 6 次非 Bridge 工具时提醒一次交给话题（`PostToolUse`，主人说了“你直接做”的那一轮没有）；`0` 关：不注册，每轮和原来一样 | 否 |
 | `CLAUDE_CONFIG_DIR` | `backends/claude/sessions.py`、`backends/claude/redaction.py`、`core/maintenance_rules.py`、`core/claude_retention.py`（只读它的 `settings.json`，诊断页和 `./install` 提示会话保留几天）、`core/same_account.py`（读它的 config.toml / settings.json，看自己的登录和哪个模型网关是同一账号） | `~/.claude` | 否 |
@@ -613,6 +625,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--state-dir` | `core/workspaces.py` | 见 `--help` | 否 |
 | `--json` | `service/plugins.py`（`bin/covey_plugins.py`） | `list` 的 JSON 输出；子命令 `list`、`enable`、`disable`、`doctor` 见[扩展](architecture.md#扩展)的「装和卸」 | 否 |
 | `--state`、`--topic`、`--workspace`、`--owner`、`--redacted`、`--limit`、`--json` | `core/memory_search.py`（`bin/covey_memory.py search`，记忆自己长的查记忆） | 状态目录（必填）、这一轮的话题、按哪个工作区查（默认话题自己的）、带上全局的、带上来自脱敏话题的、最多几条（8）、JSON 输出 | 否 |
+| `--json`、`--write`、`--legacy` | `core/repomap.py`（`bin/covey_repo.py`：子命令 `list`、`use <仓库>`、`status`、`prune-plan`） | `--json` JSON 输出；`--write` 是 `use` 的：要改这个仓库；`--legacy` 是 `prune-plan` 的：另看一个目录下的旧 worktree。开发中：这一版只有 `list` 可用，其余说还没启用，见[主目录与仓库地图](#主目录与仓库地图开发中) | 否 |
 | `--state-dir`、`--json` | `app/owner_ledger.py`（`bin/covey_ledger.py`：等主人的账，只读） | 状态目录（必填）；`--json` JSON 输出。见[架构 · 等主人的账](architecture.md#等主人的账) | 否 |
 | `--state`、`--limit`、`--json` | `core/inbound_ledger.py`（`bin/covey_inbound.py`，查主人消息的去向） | 状态目录（必填）、`recent` 最多列几条（10）、JSON 输出；子命令 `where <消息 id>`、`recent` | 否 |
 | `--state-dir`、`--no-probe`、`--json` | `service/device_check.py`（`bin/covey_devices.py`） | 见 `--help`；见[多设备](#多设备开发中默认关)的「自检」 | 否 |
