@@ -148,7 +148,7 @@ class BlockTest(unittest.TestCase):
 
     def test_the_butler_is_told_when_to_save_and_delete(self):
         for rules in (BUTLER_RULES_TEXT, butler_rules()):
-            for words in ("principle_save", "“以后……”", "已记下：……", "不记", "principle_delete", "principles_list"):
+            for words in ("memory_save", "“以后……”", "已记下：……", "不记", "memory_revise", "memory_search"):
                 self.assertIn(words, rules)
 
 

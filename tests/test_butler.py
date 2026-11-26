@@ -1022,7 +1022,7 @@ class TurnTest(ButlerUnifiedCase):
         rules = app.runs.bridge_rules(target, job)
         self.assertIn(f'通用：\n- 通用的原则\n工作区 {target.workspace_name}：\n- 管家工作区的原则', rules)
         self.assertNotIn('别处的原则', rules)
-        self.assertIn('principle_save', self.turn(job)[1])
+        self.assertIn('memory_save', self.turn(job)[1])  # The memory tool the butler is listed (T870).
 
     def test_the_next_turn_says_only_what_changed(self):
         self.other_topic('a' * 32, 'running')
