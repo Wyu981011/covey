@@ -6,7 +6,9 @@ A rate-limited turn is retried up to six times (60 s to an hour apart, about 2-3
 server fault (SERVER_FAULT: 529, 5xx, a dropped connection) three times (30 s to 5 minutes), an incomplete or
 interrupted one once, ``delays`` seconds after each failure plus 0-30 s of jitter (so topics stopped together do not
 retry together). When Claude Code said when a limit resets (core/limit_reset.py, within MAX_RESET_WAIT) the retry is
-at the reset plus a minute instead. Each kind counts its own retries along a chain (the job's ``auto_retry``,
+at the reset plus a minute instead. A spent quota (QUOTA: a gateway's accounts all spent, every agy account of the
+model's group spent) is retried only at its known reset, within MAX_RESET_WAIT, a minute after it (T831); one further
+off, or with none known, is not retried: its card says when it is back. Each kind counts its own retries along a chain (the job's ``auto_retry``,
 ``auto_fault``, ``auto_continue`` and ``auto_resume``; a retry's job carries them on), so they add up and never
 multiply. A retry turn that made progress (``made_progress``) starts the chain's counts again, so a long round is not
 cut off by an old count; MAX_IDLE retries in a row at a reset with no progress stop the chain (the failure card
@@ -45,6 +47,7 @@ from covey.core.topics import context_for_topic, read_topic, topic_label
 
 CANCEL_KIND = "bridge_job_retry_cancel"
 RATE_LIMITED, INCOMPLETE, RESTARTED, SERVER_FAULT = "rate_limited", "incomplete", "restarted", "server_fault"
+QUOTA = "quota_exhausted"
 SWITCH = "COVEY_AUTO_RETRY_LONG"
 JITTER = 30  # Seconds at most added to every scheduled retry.
 RESET_AFTER = 60  # A retry at a limit's reset goes this long after it (and the jitter).
@@ -52,6 +55,8 @@ MAX_RESET_WAIT = 6 * 3600  # A reset further off than this is not waited for on 
 MAX_IDLE = 3  # Retries at a reset in a row that made no progress, after which the chain stops.
 PROGRESS_STEPS, PROGRESS_SECONDS = 3, 60  # What a retry turn did to have made progress: tool steps, and that it ran.
 LONG_KINDS = (RATE_LIMITED, SERVER_FAULT)  # The kinds a retry that made progress starts over.
+NOTICED = (*LONG_KINDS, QUOTA)  # The kinds app/limit_notice.py tells of together.
+AT_RESET = (RATE_LIMITED, QUOTA)  # The kinds a known reset times; QUOTA is retried only at one.
 IDLE = "auto_idle"  # The job field counting the retries in a row that made no progress.
 
 
@@ -77,6 +82,9 @@ KINDS = {
     # A 529, a 5xx or a dropped connection the Harness's own retries gave up on: gone in minutes, if at all.
     SERVER_FAULT: Kind(("failed", "server_fault"), "fault_retry", "auto_fault", (30, 120, 300), "模型服务临时故障",
                        "自动重试", STATUS_MESSAGES["server_fault"], "临时故障后自动重试"),
+    # A spent quota with a known reset within MAX_RESET_WAIT: at the reset, at most three times a chain (T831).
+    QUOTA: Kind(("failed", "quota_exhausted"), "", "auto_quota", (0, 0, 0), "模型额度用完", "自动接着做",
+                STATUS_MESSAGES["quota_exhausted"], "额度恢复后自动接着做", False),
     # Claude's main task ended while subtasks or later work had not: 10 of 31 failures in 9 days (2026-10).
     INCOMPLETE: Kind(("timed_out", "settle_timeout"), "incomplete_retry", "auto_continue", (60,), "本轮未全部完成",
                      "自动检查并继续", INCOMPLETE_STATUS, "未全部完成后自动检查并继续"),
@@ -161,7 +169,7 @@ def kind_of(record):
 
 def applies(app, ctx, kind):
     """Whether ``kind`` retries the tasks of ``app``'s Harness (in ``ctx``)."""
-    if kind == SERVER_FAULT and not long_ladder():
+    if kind in (SERVER_FAULT, QUOTA) and not long_ladder():
         return False
     flag = KINDS[kind].capability
     return not flag or bool(getattr(backend_capabilities(app.backend, ctx), flag))
@@ -215,7 +223,9 @@ def plan(harness, ctx, job, turn, now=None):
     if (has_saved_reply(ctx, record) or record.get("result_retry_policy") == "native_answer_once"
             or record.get("paused_question_delivery") is not None):
         return None  # 检查并继续 would redeliver or refuse it, not queue it again.
-    reset = limit_reset(turn, now) if kind == RATE_LIMITED and long_ladder() else 0.0
+    reset = limit_reset(turn, now) if kind in AT_RESET and long_ladder() else 0.0
+    if kind == QUOTA and not reset:
+        return None  # A spent quota with no reset known, or one further off than MAX_RESET_WAIT: its card says when.
     if reset and idle >= MAX_IDLE:
         return None  # MAX_IDLE retries at a reset that went nowhere: the failure card stays.
     due = (max(reset, now) + RESET_AFTER if reset else now + ladder[done]) + jitter()
@@ -353,7 +363,7 @@ def result_note_text(label, follow, pending_kind=""):
     lines = [note, *(line for name in follow
                      for line in (FOLLOW_UP_NOTES[name], *((REPORT_NOTE,) if name == "diagnose" else ())))]
     if pending_kind:
-        how = "，做法同“检查并继续”" if pending_kind in LONG_KINDS else ""
+        how = "，做法同“检查并继续”" if pending_kind in NOTICED else ""
         lines.insert(0, f"到点自动重试{how}。现在点“{label}”会立即重试；点“停止自动重试”、在本话题发消息或换配置会取消"
                         "这次自动重试。")
     return "\n".join(line for line in lines if line)

@@ -5,7 +5,7 @@ One account's limit (or one server's fault) usually stops several topics at once
 when its retry goes on; this adds the one line at the top level that says it for all of them: "N 个话题同样停在
 模型服务限流" with each topic and the time it goes on, the limit's reset when it is known.
 
-- Which: pending automatic retries of kinds in auto_retry.LONG_KINDS (a rate limit, a server fault) of a topic's first
+- Which: pending automatic retries of kinds in auto_retry.NOTICED (a rate limit, a server fault, a spent quota) of a topic's first
   stop in a chain (a retry that failed again is no new stop: its topic is told already), in the owner's private chat,
   the same Harness and the same kind. Within WINDOW seconds of the first stop of such a group, two topics or more make
   one notice, sent once SETTLE seconds have passed since the last of them, so a burst is one message. A later stop of
@@ -38,7 +38,7 @@ WINDOW = 600  # Seconds from the first stop of a group: the stops of that window
 SETTLE = 45  # Seconds after the last stop of a burst before its notice goes.
 TICK = 20  # The Bridge's outbox loop runs ``tick`` every few seconds; the records are looked at this often.
 MAX_LISTED = 8
-CAUSES = {"rate_limited": "模型服务限流", "server_fault": "模型服务临时故障"}
+CAUSES = {"rate_limited": "模型服务限流", "server_fault": "模型服务临时故障", "quota_exhausted": "模型额度用完"}
 _last = {}  # state dir -> when ``tick`` last looked.
 
 
@@ -55,7 +55,7 @@ def stops(state_dir, chat_id):
     """The pending automatic retries of the owner's chat that a notice may tell of, newest stop last."""
     found = select_job_records(Path(state_dir), lambda r: (
         r.get("auto_retry_state") == "pending" and r.get("chat_id") == chat_id and r.get("topic_id")
-        and auto_retry.kind_of(r) in auto_retry.LONG_KINDS and first_stop(r)))
+        and auto_retry.kind_of(r) in auto_retry.NOTICED and first_stop(r)))
     return sorted(found, key=ended_at)
 
 

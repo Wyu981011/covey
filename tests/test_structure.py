@@ -205,6 +205,7 @@ ENTRIES = {
     "covey_app_console.py": "covey.feishu.app_console",
     "covey_workspaces.py": "covey.core.workspaces",
     "covey_memory.py": "covey.core.memory_search",
+    "agy_as.py": "covey.backends.agy.account_homes",
     "covey_ledger.py": "covey.app.owner_ledger",
     "covey_inbound.py": "covey.core.inbound_ledger",
     "covey_devices.py": "covey.service.device_check",

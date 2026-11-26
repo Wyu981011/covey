@@ -591,6 +591,30 @@
    "name": "动作",
    "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
    "why": "W4：项目简报里把目标拆成的一件事（core/project_actions.py），状态由 Bridge 和网页按条目和话题现算"
+  },
+  {
+   "kind": "settings",
+   "name": "COVEY_QUOTA",
+   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
+   "why": "W1a（账号与额度的总开关，默认开，0/off 关）"
+  },
+  {
+   "kind": "settings",
+   "name": "COVEY_AGY_ACCOUNTS",
+   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
+   "why": "W1a（agy 多账号从公司扩展搬进核心，配置文件在哪）"
+  },
+  {
+   "kind": "settings",
+   "name": "AGY_ACCOUNTS_DIR",
+   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
+   "why": "W1a（agy 多账号搬进核心：agy-as 的账号目录）"
+  },
+  {
+   "kind": "settings",
+   "name": "AGY_CMD",
+   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
+   "why": "W1a（agy 多账号搬进核心：agy-as 运行哪个 agy）"
   }
  ]
 }

@@ -82,7 +82,19 @@ def check(packages, environ=None, root: Path = extensions.ROOT) -> str:
                 kinds[kind] = extension.package
     except extensions.ExtensionError as error:
         return str(error)
-    return ""
+    return agy_switching(loaded, environ)
+
+
+def agy_switching(loaded, environ=None) -> str:
+    """Why the core's agy accounts (backends/agy/accounts.py) and an extension's agy_turn hook may not both switch agy
+    accounts, '' when they do not: only one may hold a turn's account."""
+    from covey.backends.agy import accounts
+
+    packages = [extension.package for extension in loaded if "agy_turn" in extension.hooks]
+    if not packages or not accounts.configured(environ):
+        return ""
+    return (f"{packages[0]} 的 agy_turn 钩子也给 agy 换号，和核心自带的 agy 多账号（{accounts.CONFIG_FILE}）不能同时开："
+            f"停用这个扩展，或在 {accounts.CONFIG_FILE} 里写 \"enabled\": false")
 
 
 def listing(environ=None, root: Path = extensions.ROOT) -> dict:
@@ -153,12 +165,17 @@ def deploy_check(harness_config: Path | None = None, environ=None, root: Path = 
     """{'ok', 'problems', 'notes', 'packages'} of the enabled packages, each line led by its package: first whether each
     imports (every hook module and the features module: extensions.import_problems), then its ``deploy_check`` hook; a
     hook that fails or answers in another shape is a problem. ``packages`` names the packages with a problem, so the
-    deploy can say which one stopped it and how to turn it off (``disable``)."""
+    deploy can say which one stopped it and how to turn it off (``disable``). Two that would switch agy accounts
+    (``agy_switching``) are one too."""
     problems, notes, failed = [], [], []
     try:
         loaded = extensions.load(environ, root)
     except extensions.ExtensionError as error:  # A manifest that does not load: nothing else of it can be asked.
         return {"ok": False, "problems": [str(error)], "notes": [], "packages": [error.package]}
+    switching = agy_switching(loaded, environ)
+    if switching:
+        problems.append(switching)
+        failed += [extension.package for extension in loaded if "agy_turn" in extension.hooks][:1]
     for extension in loaded:
         package = extension.package
         got = {"problems": extensions.import_problems(extension), "notes": []}

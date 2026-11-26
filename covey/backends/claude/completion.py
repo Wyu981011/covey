@@ -8,7 +8,8 @@ import time
 import uuid
 
 from covey.core.harness import RunResult, UUID_RE
-from covey.core.limit_reset import account_fault, evidence, fault_in, row_reset, row_text, text_reset
+from covey.core.limit_reset import (account_fault, evidence, fault_in, quota_spent, relative_reset, row_reset,
+                                     row_text, text_reset)
 from covey.core.result import ExecutionOutcome, MAX_REPLY_BYTES, VerifiedRootReply
 from covey.core.state import write_private_text
 from covey.backends.claude.policy import policy_signal
@@ -39,10 +40,10 @@ def result_failure(row):
         return "failed", "quota_exhausted"
     if row.get("api_error_status") == 451:  # An upstream's block of the account after repeated refusals.
         return "failed", "model_blocked"
-    if row.get("api_error_status") == 429 or (
-            row.get("is_error") is True and "rate_limit_error" in str(row.get("errors") or "") + str(row.get("result") or "")):
-        return "failed", "rate_limited"
     words = str(row.get("errors") or "") + str(row.get("result") or "")
+    if row.get("api_error_status") == 429 or (row.get("is_error") is True and "rate_limit_error" in words):
+        # A gateway's accounts all spent says so on its 429: no retry helps before one is back (T831).
+        return "failed", "quota_exhausted" if quota_spent(words) else "rate_limited"
     if row.get("is_error") is True and fault_in(row.get("api_error_status"), words):
         # A 5xx whose words are the account's (a gateway's lost sign-in, a spent quota) is not a passing fault (T784).
         return "failed", account_fault(words) or "server_fault"
@@ -215,8 +216,14 @@ class ClaudeReplyState:
             if self.result is not None:
                 self.invalidate()
             if kind == "assistant" and row.get("error") == "rate_limit":
-                self.rate_limited = True
-                self.note_limit(row, row_reset(row) or text_reset(row_text(row), time.time()))
+                words, now = row_text(row), time.time()
+                if quota_spent(words):
+                    # A gateway's accounts all spent (its 429 says when one is back, T831): no passing limit.
+                    self.account_error = "quota_exhausted"
+                    self.note_limit(row, row_reset(row) or text_reset(words, now) or relative_reset(words, now))
+                else:
+                    self.rate_limited = True
+                    self.note_limit(row, row_reset(row) or text_reset(words, now))
             elif kind == "assistant" and (row.get("error") == "server_error" or (
                     row.get("isApiErrorMessage") is True and fault_in(None, row_text(row)))):
                 account = account_fault(row_text(row))

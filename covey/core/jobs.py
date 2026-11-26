@@ -89,6 +89,7 @@ class BridgeReplyJob:
     # that made no progress (auto_retry.MAX_IDLE). Declared state: an older release's job files and runners leave them alone.
     auto_fault: int = _state(0)
     auto_idle: int = _state(0)
+    auto_quota: int = _state(0)  # The same after a spent quota retried at its reset (auto_retry.QUOTA).
     backend_process: Any = field(default=None, repr=False)
     execution_lock: Any = field(default_factory=threading.Lock, repr=False)
     execution_started: bool = False

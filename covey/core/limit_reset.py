@@ -14,6 +14,9 @@
 - ``account_fault``: what such an error is when its words are about the account, not the server: a gateway in front of
   the model can answer a lost sign-in or a spent quota with a 5xx, which Claude Code calls "a server-side issue, usually
   temporary"; no retry helps until someone signs in again or the quota is back.
+- ``quota_spent``: whether a 429's words say a spent quota, not a passing limit: a gateway in front of the model whose
+  accounts are all spent says so on a 429 ("upstream account quota usage limit has been reached; an account becomes
+  available again at 17:02 UTC (in 9h50m)", T831); ``relative_reset`` reads such a "(in 9h50m)" off it.
 """
 from __future__ import annotations
 
@@ -30,6 +33,12 @@ SIGN_IN_WORDS = re.compile(r"could not authenticate|sign in again|log ?in again|
                            r"|invalid (?:x-)?api[ _-]?key|unauthori[sz]ed", re.I)
 SPENT_WORDS = re.compile(r"insufficient_quota|quota (?:exceeded|exhausted|used up)|exceeded your (?:current )?quota"
                          r"|credit balance is too low|out of credits|额度(?:已)?用(?:完|尽)|余额不足", re.I)
+# A 429 that is a spent quota (``quota_spent``): a gateway's own words for its accounts all spent, and the generic ones.
+QUOTA_SPENT_WORDS = re.compile(r"\bquota_exhausted\b|quota usage limit (?:has been |was )?reached|wait for (?:the )?quota"
+                               r" to reset|account with available quota|becomes available again", re.I)
+# "(in 9h50m)", "in 2d 3h": how long until the quota is back, after the words that say when.
+RELATIVE_WORDS = re.compile(r"(?:available again|reset\w*|back)\b[^()\n]{0,60}?\(?\bin\s+((?:\d+\s*[dhms]\s*){1,4})\)?",
+                            re.I)
 EVIDENCE_KEYS = ("type", "subtype", "error", "isApiErrorMessage", "quotaLimits", "rate_limit_info", "api_error_status",
                  "terminal_reason", "is_error")
 EVIDENCE_CHARS = 2000
@@ -142,3 +151,19 @@ def account_fault(text):
     if SPENT_WORDS.search(text):
         return "quota_exhausted"
     return ""
+
+
+def quota_spent(text) -> bool:
+    """Whether a rate limit's words say a spent quota (QUOTA_SPENT_WORDS, SPENT_WORDS), not a passing limit."""
+    text = str(text or "")
+    return bool(QUOTA_SPENT_WORDS.search(text) or SPENT_WORDS.search(text))
+
+
+def relative_reset(text, now):
+    """``now`` plus the "(in 9h50m)" ``text`` says the quota is back in, in epoch seconds; None when it says none."""
+    found = RELATIVE_WORDS.search(str(text or ""))
+    if found is None:
+        return None
+    units = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+    seconds = sum(int(n) * units[u.lower()] for n, u in re.findall(r"(\d+)\s*([dhms])", found.group(1), re.I))
+    return float(now) + seconds if seconds > 0 else None

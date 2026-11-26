@@ -142,6 +142,21 @@ def ledger_row(state_dir):
     return owner_ledger.summary(record) if record else None
 
 
+def agy_row(manifest):
+    """agy 多账号 (backends/agy/accounts.py): how many accounts are on, or why the file cannot be used; None when it is not
+    set up, so the report is the same as before. Never makes the service degraded. (An agy-as to install again is in
+    ``todo_row``.)"""
+    from covey.backends.agy import accounts
+    environment = {**os.environ, **(manifest.get('environment') or {})}
+    try:
+        found, error = accounts.load(environment), ''
+    except ValueError as exc:
+        found, error = [], str(exc)
+    if not (found or error):
+        return None
+    return {'accounts': len(found), 'error': error[:200]}
+
+
 def web_selfhost_row(manifest):
     """The self-hosted page's check (service/web_selfhost.py ``check``) for a running service whose manifest has COVEY_WEB_SELFHOST=1;
     None otherwise, so nothing is asked and the report is the same as before. Never makes the service degraded."""
@@ -232,7 +247,7 @@ def app_setup_todo(state_dir, environment):
 
 def todo_row(manifest, health):
     """Lines of what the person still has to add (the report's ``todo``, said under 要你补的): the event channel still a lark-cli
-    consumer, 飞书应用待补. Only said: never touches a status or the exit code. (What the web's own deploy tool needs it checks
+    consumer, 飞书应用待补, an agy-as to install again. Only said: never touches a status or the exit code. (What the web's own deploy tool needs it checks
     itself before it writes anything: web/deploy/.)"""
     environment = manifest.get('environment') or {}
     todo = []
@@ -243,6 +258,11 @@ def todo_row(manifest, health):
         todo += app_setup_todo(manifest['state_dir'], environment)
     except (OSError, ValueError, TypeError, AttributeError, KeyError):
         pass  # a hint that cannot be worked out is left out
+    from covey.backends.agy import account_homes, accounts
+    # agy-as left behind by agy 多账号's move out of an extension (docs/quota.md); it matters only with the accounts on.
+    problem = account_homes.link_problem() if accounts.configured({**os.environ, **environment}) else ''
+    if problem:
+        todo.append(f'agy-as 要重装（{problem}）：python3 -B bin/agy_as.py --install')
     return todo
 
 
@@ -286,6 +306,8 @@ def diagnose(root, *, check_events=True, probe=False):
             row['web_selfhost'] = found  # Like devices: said, never makes the service degraded.
         if (found := ledger_row(manifest['state_dir'])) is not None:
             row['owner_ledger'] = found  # 等主人的账 and its 补发: said, never makes the service degraded.
+        if (found := agy_row(manifest)) is not None:
+            row['agy_accounts'] = found  # agy 多账号: said, never makes the service degraded.
         if check_events and (health or {}).get('event_transport') == 'sdk':
             # COVEY_EVENT_TRANSPORT=sdk: there is no lark-cli bus; the Bridge's own consumers say whether they are up.
             consumers = (health or {}).get('consumers') or {}

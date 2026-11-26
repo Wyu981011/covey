@@ -19,12 +19,14 @@ The butler's turn (``options["mcp_config"]``, its Bridge tools) runs with a home
 (backends/agy/home.py): agy reads MCP servers from one file in the home and from nowhere a turn could name. agy may
 still leave some out of what its model gets (its budget for skills and MCP tools); the log says which (``left_out``).
 
-An extension's ``agy_turn`` hook (core/extensions.py) may give a turn on this machine the environment its first process
+Several Google accounts on this machine (backends/agy/accounts.py, on with two or more in agy-accounts.json), else an
+extension's ``agy_turn`` hook (core/extensions.py), may give a turn on this machine the environment its first process
 runs with and, when a process ends failed on a spent quota, a limit or a sign-in (SWITCHED), another one to go on in
 (``switch``): the same conversation goes on there in a new process, at most MAX_SWITCHES times a turn, with SWITCH_RESUMED
-when agy had taken the words in (its ``user_input`` step), else with the same words again, and the hook's line in 执行过程.
-Which environments there are and when one is better is the extension's (several Google accounts, each a HOME of its own;
-agy keeps a conversation in local files, so another account goes on with it); without one a turn runs as before.
+when agy had taken the words in (its ``user_input`` step), else with the same words again, and the switch's line in
+执行过程 (each account a HOME of its own; agy keeps a conversation in local files, so another account goes on with it).
+A turn that found no account left ends as the accounts say (``settle``: 额度用完, and when the first is back); without
+either a turn runs as before.
 
 On a device (``ctx.device``, docs/configuration.md 多设备) the process is the device's (core/process.py
 stream_subprocess_lines with the turn's context): the device's own agy and Google sign-in, an environment from its profile,
@@ -48,6 +50,7 @@ import subprocess
 import threading
 import time
 
+from covey.backends.agy import accounts
 from covey.backends.agy import compaction as agy_compaction
 from covey.backends.agy.home import EAGER_ENV, PrivateHome
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
@@ -520,7 +523,8 @@ class AntigravityBackend(BackendRuntime):
                 result = run_stream(request, argv, stdin, homes.env(env),
                                     switch=None if switch is None else lambda failure: homes.switched(switch(failure)))
                 homes.check(result.session_id)
-                return result
+                settle = getattr(switch, "settle", None)
+                return settle(result) if callable(settle) else result
         finally:
             homes.close()
 
@@ -537,9 +541,17 @@ class AntigravityBackend(BackendRuntime):
 
 @contextlib.contextmanager
 def extension_turn(ctx, env, *, run_id=""):
-    """``(env, switch)`` of a turn: the agy_turn hook's (core/extensions.py) on this machine, else ``(env, None)``. A
-    device's turn runs with the device's own agy and sign-in, so it has none."""
-    hook = None if device_of(ctx) else extensions.hook("agy_turn")
+    """``(env, switch)`` of a turn on this machine: the accounts' (backends/agy/accounts.py) when two or more are set up,
+    else the agy_turn hook's (core/extensions.py), else ``(env, None)``. A device's turn runs with the device's own agy
+    and sign-in, so it has none. The accounts' switch has a ``settle`` for the turn's result."""
+    if device_of(ctx):
+        yield env, None
+        return
+    if accounts.configured():
+        with accounts.turn(ctx, env, run_id=run_id) as found:
+            yield found
+        return
+    hook = extensions.hook("agy_turn")
     if hook is None:
         yield env, None
         return

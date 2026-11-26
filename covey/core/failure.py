@@ -113,7 +113,7 @@ def failure_code(record):
         return ""
     if record.get("auto_retry_state"):  # app/auto_retry.py KINDS: a retried failure says its kind.
         kind = record.get("auto_retry_kind") or "rate_limited"
-        if kind in ("rate_limited", "incomplete", "server_fault"):
+        if kind in ("rate_limited", "incomplete", "server_fault", "quota_exhausted"):
             return {"incomplete": "settle_timeout"}.get(kind, kind)
     line = str(record.get("status_message") or "")
     found = next((name for name, words in STATUS_MESSAGES.items() if words and line.startswith(words)), "")
@@ -129,9 +129,9 @@ def _pending(record):
     return record.get("auto_retry_at"), record.get("auto_retry_attempt")
 
 
-def _later(record, now, doing, total):
+def _later(record, now, doing, total, cause="限流"):
     """"约 3 分钟后（14:05）会自动重试（第 1/2 次）" for a pending automatic retry, else ""; a limit's known reset is said
-    before it (限流预计 16:20 恢复，约 3 分钟后（16:21）会自动重试)."""
+    before it (限流预计 16:20 恢复，约 3 分钟后（16:21）会自动重试; ``cause`` 额度 for a spent quota's)."""
     pending = _pending(record)
     if pending is None:
         return ""
@@ -143,7 +143,7 @@ def _later(record, now, doing, total):
     when = f"{minutes}（{when}）" if minutes and when else minutes or (when + " " if when else "") or "稍后"
     count = f"（第 {attempt}/{total} 次）" if isinstance(attempt, int) and total else ""
     reset = clock(record.get("auto_retry_reset_at")) if record.get("auto_retry_reset_at") else ""
-    return f"{'限流预计 ' + reset + ' 恢复，' if reset else ''}{when}会{doing}{count}"
+    return f"{cause + '预计 ' + reset + ' 恢复，' if reset else ''}{when}会{doing}{count}"
 
 
 def _policy_title(record):
@@ -197,7 +197,12 @@ def failure_view(record, now=None):
         title, actions = OWN[code]
         said = str(record.get("failure_detail") or "").strip()
         if code == "quota_exhausted" and said:
-            title = said.rstrip("。")  # A gateway's quota in its own words: when it is back, where to go (core/quota_hold.py).
+            # In the route's words: a gateway's quota (core/quota_hold.py), the accounts' (backends/agy/accounts.py,
+            # app/quota_failure.py): when it is back, where to go.
+            title = said.rstrip("。")
+        if code == "quota_exhausted":
+            later = _later(record, now, "自动接着做", 0, "额度")
+            title += f"；{later}" if later else "" if "换" in title else "；可以换个模型接着做"
         if code in ("rate_limited", "server_fault"):
             later = _later(record, now, "自动重试", total)
             title += f"；{later}" if later else "；可以稍后重试，着急可以换个模型"

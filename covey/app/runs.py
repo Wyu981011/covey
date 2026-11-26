@@ -16,8 +16,8 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from covey.app import (collab_channel, device_files, knowledge_turn, memory_turn, owner_send, project_context, repo_peers, subagent_recovery,
-                       tool_limits, workspace_gists)
+from covey.app import (collab_channel, device_files, knowledge_turn, memory_turn, owner_send, project_context,
+                       quota_failure, repo_peers, subagent_recovery, tool_limits, workspace_gists)
 from covey.core.statuses import ENDED
 from covey.app.leftovers import stop_task_leftovers
 from covey.app.butler import butler_turn
@@ -417,7 +417,7 @@ class Runs:
             # The backend has closed its Harness: what the turn's commands left running (app/leftovers.py).
             stop_task_leftovers(self.runtime, self.interaction, ctx, job)
         self._leave_checkpoint_question(ctx, job, result)
-        return self._quota_words(ctx, result)
+        return quota_failure.refine(self.harness.spec.name, ctx, self._quota_words(ctx, result))
 
     def _quota_words(self, ctx: BridgeContext, result: RunResult) -> RunResult:
         """A turn that failed on a gateway's spent quota, in core/quota_hold.py's words: when it is back (the hold

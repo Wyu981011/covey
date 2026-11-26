@@ -146,7 +146,18 @@ def service_rows(row, state, root_arg) -> list:
             rows.append((NOTE, "设备读不出来", "看 docs/operations.md「多设备」"))
     rows += web_rows(_dict(row.get("web_selfhost")))
     rows += ledger_rows(_dict(row.get("owner_ledger")), state_arg)
+    rows += agy_rows(_dict(row.get("agy_accounts")))
     return rows
+
+
+def agy_rows(agy) -> list:
+    """agy 多账号's rows (service/doctor.py agy_row): on with how many accounts, or a file that cannot be used; [] when it is
+    not set up."""
+    if not agy:
+        return []
+    if agy.get("error"):
+        return [(NOTE, f"agy 多账号的配置用不了：{agy['error']}", "看 docs/quota.md「agy 多账号」")]
+    return [(OK, f"agy 多账号已开（{int(agy['accounts'])} 个号）", "")] if agy.get("accounts") else []
 
 
 LEDGER_WORDS = (("waiting", "等你"), ("stopped", "停住了"), ("stuck", "可能卡住"), ("result", "有结果"))

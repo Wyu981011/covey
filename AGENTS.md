@@ -56,6 +56,7 @@
 | 回退一步（Claude） | `app/rewind.py`、`backends/claude/rewind.py` | [回退一步](docs/architecture.md#回退一步) |
 | 结果、投递与重投 | `app/turn_settle.py`、`app/worker.py`、`app/turn_delivery.py`、`app/redelivery.py`、`app/outbox.py` | [结果授权与投递](docs/architecture.md#结果授权与投递) |
 | 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；管家一轮的请求挂住时停下它、让后来的话先跑 `app/unstick.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
+| 账号与额度（`COVEY_QUOTA`，默认开）：额度快照、来源（Claude Code 登录的网关自动发现、`quota-sources.json` 的命令和网址）、agy 多账号（配了两个号才开）、按快照写的失败说明和到点接着做 | `core/quota.py`（格式、`Store`）、`core/quota_sources.py`、`app/quota_watch.py`（线程）、`app/quota_failure.py`、`backends/agy/accounts.py`、`backends/agy/account_homes.py`（`bin/agy_as.py`）、`app/auto_retry.py` 的 `QUOTA` | [quota.md](docs/quota.md) |
 | 设置卡与机器人菜单 | `app/bot_menu.py`、`app/menu_panel.py`、`app/settings_hub.py`（标签「记忆」`app/memory_panel.py`、「能做什么」`app/about_panel.py`、「诊断」`app/doctor_panel.py`）、`feishu/events.py` | [机器人菜单](docs/usage.md#机器人菜单) |
 | 欢迎卡（新部署只发一次，`COVEY_WELCOME`）和 `./install` 等第一句回答 | `app/welcome.py`、`cards/welcome.py`、`core/welcome.py`（记录、`first_answer`）、`service/installer.py` 的 `wait_answer` | [第一次使用](docs/usage.md#第一次使用)、[第一个回答](docs/install.md#第一个回答) |
 | 代答 | `app/proxy.py`（批次）、`app/proxy_intake.py`（收消息）、`app/proxy_topics.py`（联系人话题）、`app/proxy_commands.py`（查找、群成员）、`app/proxy_send.py`（读回和发送器接口；发送器 `extensions/covey_internal/proxy_sender.py`、`extensions/covey_internal/proxy_login.py`）、`core/proxy.py` | [proxy.md](docs/proxy.md)、[代答](docs/architecture.md#代答) |
@@ -208,6 +209,8 @@
 | `app/question_display.py` | Where a question is shown |
 | `app/questions.py` | Durable questions: the Questions component, answers and delivery recovery |
 | `app/quiet_delivery.py` | The quiet butler turn's side of delivering a result |
+| `app/quota_failure.py` | A Claude turn that failed on its model's limit, put right by the gateway's quota snapshot |
+| `app/quota_watch.py` | 账号与额度 at the Bridge: one thread that keeps the quota snapshots current, unless COVEY_QUOTA=0 |
 | `app/record_cards.py` | Writes to a job's card from its record once its own writer has ended (finished, or the job is in another … |
 | `app/recovery_cards.py` | The card of a task that did not end as it should (interrupted, failed, or its result not delivered) and the … |
 | `app/redaction_panel.py` | The 设置 card's 脱敏 tab |
@@ -450,7 +453,9 @@
 | `core/qr.py` | 二维码：把一段文字（链接）编成 QR，给 ./install 在终端里画、存 PNG（service/installer.py）。 编码用的是 Project Nayuki 的 QR Code generator … |
 | `core/qrcodegen.py` |  |
 | `core/quiet_hours.py` | The quiet hours at night, when a card that can wait is held until they are over |
+| `core/quota.py` | 额度快照: every quota source (agy's accounts, the gateway Claude Code signs in to, a command or an address the … |
 | `core/quota_hold.py` | A model gateway's spent daily quota, held until it resets so that new requests on it fail here at once |
+| `core/quota_sources.py` | 额度来源: who gives the snapshots core/quota.py keeps, and reading one |
 | `core/recovery.py` | What a failed, interrupted or stopped task's record allows next, decided in one place |
 | `core/redaction.py` | Sensitive-term redaction: the owner's term list, which topics use it and what each turn replaced |
 | `core/redaction_views.py` | What the 设置 card's 脱敏 tab shows of the relays' records |
@@ -558,6 +563,8 @@
 
 | 文件 | 管什么 |
 | --- | --- |
+| `backends/agy/account_homes.py` | A HOME for one more Google account of Antigravity (`agy`) on this machine, and the terminal command `agy-as` … |
+| `backends/agy/accounts.py` | Several Google accounts for Antigravity on this machine |
 | `backends/agy/bridge.py` | Antigravity (Google's `agy` CLI): Gemini and the other models of the owner's Google account, headless |
 | `backends/agy/compaction.py` | Compacting an agy conversation between turns: `/compact` in an agy process of its own |
 | `backends/agy/home.py` | agy's private home for one turn that takes the Bridge's tools (`options["mcp_config"]`, the butler's) |
@@ -622,7 +629,7 @@
 
 ### bin
 
-入口壳，只解析参数后调 `covey` 里的函数：`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_inbound.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
+入口壳，只解析参数后调 `covey` 里的函数：`agy_as.py`、`covey_app_console.py`、`covey_app_setup.py`、`covey_bridge.py`、`covey_butler_mcp.py`、`covey_devices.py`、`covey_doctor.py`、`covey_feishu_web.py`、`covey_inbound.py`、`covey_install.py`、`covey_install_browser.py`、`covey_ledger.py`、`covey_maintenance.py`、`covey_memguard.py`、`covey_memory.py`、`covey_pairing.py`、`covey_paths.py`、`covey_plugins.py`、`covey_runner.py`、`covey_service.py`、`covey_service_install.py`、`covey_tool_guard.py`、`covey_workspace_reader.py`、`covey_workspaces.py`。
 
 改名前的入口名留作转发壳，服务清单、开机钩子和各部署的脚本还在用：`bridge_app_setup.py`、`bridge_doctor.py`、`bridge_main_mcp.py`、`bridge_memguard.py`、`bridge_pairing.py`、`bridge_service.py`、`bridge_service_install.py`、`covey_main_mcp.py`、`lark_app_console.py`、`lark_bridge_maintenance.py`、`lark_bridge_paths.py`、`lark_bridge_workspaces.py`、`lark_feishu_web.py`、`lark_harness_bridge.py`、`lark_install_browser.py`、`lark_task_runner.py`、`lark_workspace_reader.py`。
 <!-- code-map:end -->
