@@ -447,7 +447,7 @@
 | `COVEY_MESSAGE_FORMAT`、`LARK_CLAUDE_BRIDGE_MESSAGE_FORMAT`、`LARK_DSH_BRIDGE_MESSAGE_FORMAT`、`COVEY_AGY_MESSAGE_FORMAT` | `feishu/messenger.py`（各 Harness 发消息时读） | `markdown` | 否 |
 | `COVEY_MESSAGE_CHUNK_LIMIT`、`LARK_CLAUDE_BRIDGE_MESSAGE_CHUNK_LIMIT`、`LARK_DSH_BRIDGE_MESSAGE_CHUNK_LIMIT`、`COVEY_AGY_MESSAGE_CHUNK_LIMIT` | `feishu/messenger.py` | 12000 | 否 |
 | `COVEY_CARD_TRANSPORT` | `feishu/sdk.py`（`enabled()`） | 空：lark-cli；`sdk` 走 SDK（`./install` 新装写 `sdk`） | 否 |
-| `COVEY_EVENT_TRANSPORT` | `feishu/ws_intake.py`（`enabled()`） | 空：lark-cli 的事件消费者；`sdk` 走 SDK 长连接（`./install` 新装写 `sdk`） | 否 |
+| `COVEY_EVENT_TRANSPORT` | `feishu/ws_intake.py`（`enabled()`）、`service/doctor.py`（诊断「要你补的」：还是 lark-cli 消费进程时提示） | 空：lark-cli 的事件消费者；`sdk` 走 SDK 长连接（`./install` 新装写 `sdk`） | 否 |
 | `COVEY_AUTO_UPGRADE` | `app/auto_upgrade.py`（`at()`） | 空：不自动升级；`HH:MM`：每天这个时间（Asia/Shanghai）照 `upgrade.json` 安全升级一次，见 [deploy.md 定时自动升级](deploy.md#定时自动升级) | 否 |
 | `COVEY_FEISHU_DIRECT` | `feishu/sdk.py` | 开：直连飞书，`0` 走代理 | 否 |
 | `LARKSUITE_CLI_DATA_DIR` | `feishu/sdk.py`（找 lark-cli 的凭据） | `~/.local/share` | 否 |

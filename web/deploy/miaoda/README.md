@@ -9,7 +9,7 @@
    - 妙搭的初始化（`lark-cli apps +init` 里用 npx 拉模板）还不认 npm 12 起的 `npm pack --json` 输出，会报“npm pack 未返回 filename”。
    - 脚本发现是 npm 12 会先停下：`npm i -g npm@11` 或把 npm 11 放到 PATH 前面后重跑即可。
    - 妙搭在云上构建，本机不用装网页的 Node 依赖。
-   - **lark-cli 要认发布命令的 `--apply-reason`**（第 7 步 `apps +release-create` 会带它）。脚本不比版本号，开头先跑 `lark-cli apps +release-create --help` 看有没有这个参数，`--dry-run` 也会查。旧版没有：脚本在任何写操作之前就停下，退出码 2，提示本机 lark-cli 的版本，什么都不会建、不会推；运行 `lark-cli update`（或 `npm i -g @larksuite/cli@latest`）后重跑同一条命令。要是没有这一步，旧版会在第 3 步把代码推上去、到第 7 步才报 `unknown flag: --apply-reason`，留下“代码推了、没发布”的半截状态。脚本不会替你升级 lark-cli，也不会在旧版上去掉这个参数硬发。`--only-chat-tab` 不发布，不查。`covey_doctor.py` 在配了妙搭网页而 lark-cli 不认这个参数时，也会在「要你补的」里提醒。
+   - **lark-cli 要认发布命令的 `--apply-reason`**（第 7 步 `apps +release-create` 会带它）。脚本不比版本号，开头先跑 `lark-cli apps +release-create --help` 看有没有这个参数，`--dry-run` 也会查。旧版没有：脚本在任何写操作之前就停下，退出码 2，提示本机 lark-cli 的版本，什么都不会建、不会推；运行 `lark-cli update`（或 `npm i -g @larksuite/cli@latest`）后重跑同一条命令。要是没有这一步，旧版会在第 3 步把代码推上去、到第 7 步才报 `unknown flag: --apply-reason`，留下“代码推了、没发布”的半截状态。脚本不会替你升级 lark-cli，也不会在旧版上去掉这个参数硬发。`--only-chat-tab` 不发布，不查。
 3. **lark-cli 用你自己（Covey 的主人）的飞书账号登录过，且有妙搭权限**：
 
    ```bash

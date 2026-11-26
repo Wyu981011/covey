@@ -205,6 +205,47 @@ def retention_row(manifest):
     return row
 
 
+NEED_KINDS = {'scope': '权限', 'event': '事件', 'callback': '回调'}
+
+
+def app_setup_todo(state_dir, environment):
+    """The 飞书应用待补 the Bridge last found (app/app_setup.py writes <state>/app-setup/state.json ``lacking``: need ids
+    ``kind:name``), one line naming each missing thing and the feature that needs it (core/app_manifest.py ``required``);
+    [] when nothing is missing or the check has not run. Read from the record only: nothing is asked of Feishu."""
+    from covey.core import app_manifest
+    record = read_json(Path(state_dir) / 'app-setup' / 'state.json', {})
+    lacking = [str(one) for one in record.get('lacking') or ()] if isinstance(record, dict) else []
+    if not lacking:
+        return []
+    words = {need.id: need.words for need in app_manifest.required({**os.environ, **environment}, bottom_menu=True)}
+    words[f'event:{app_manifest.MENU_EVENT}'] = '机器人菜单的点击'
+    parts = []
+    for one in lacking:
+        kind, _, name = one.partition(':')
+        if kind in NEED_KINDS:
+            parts.append(f"{NEED_KINDS[kind]} {name}" + (f"（{words[one]}）" if one in words else ''))
+        else:
+            parts.append(words.get(one) or one)
+    return [f"飞书应用还缺 {len(lacking)} 项：" + '、'.join(parts)
+            + '；私聊里的「飞书应用待补」卡点「扫码自动补齐」，或照 docs/feishu-app.md 补']
+
+
+def todo_row(manifest, health):
+    """Lines of what the person still has to add (the report's ``todo``, said under 要你补的): the event channel still a lark-cli
+    consumer, 飞书应用待补. Only said: never touches a status or the exit code. (What the web's own deploy tool needs it checks
+    itself before it writes anything: web/deploy/.)"""
+    environment = manifest.get('environment') or {}
+    todo = []
+    sdk = (health or {}).get('event_transport') == 'sdk' or str(cenv.get('COVEY_EVENT_TRANSPORT', '', environment)).strip().lower() == 'sdk'
+    if not sdk:
+        todo.append('事件通道是 lark-cli 消费进程；新装默认是飞书 SDK，切换办法见 docs/configuration.md「飞书 SDK 与直连」')
+    try:
+        todo += app_setup_todo(manifest['state_dir'], environment)
+    except (OSError, ValueError, TypeError, AttributeError, KeyError):
+        pass  # a hint that cannot be worked out is left out
+    return todo
+
+
 def diagnose(root, *, check_events=True, probe=False):
     manager = manager_health(str(root))
     manager_ok = bool(manager and is_owned(manager.get('process')) and manager.get('lag', 999) < 120)
@@ -227,6 +268,7 @@ def diagnose(root, *, check_events=True, probe=False):
             row['dropped_config'] = dropped  # Set up and no longer used (an upgrade retired it): said, never degraded.
         if manifest['desired_state'] != 'running':
             row['status'] = 'stopped'
+            row['todo'] = todo_row(manifest, None)
             services.append(row)
             continue
         status = read_json(root / 'status' / path.name, {})
@@ -265,6 +307,7 @@ def diagnose(root, *, check_events=True, probe=False):
                 row['status'] = 'degraded'
         if loose:
             row['status'] = 'degraded'
+        row['todo'] = todo_row(manifest, health)  # Said under 要你补的; never changes a status.
         services.append(row)
     runtime_ok = manager_ok and bool(services) and all(s['status'] in {'ready', 'stopped'} for s in services)
     stopped_loose = any(s['status'] == 'stopped' and s.get('permission_env') for s in services)

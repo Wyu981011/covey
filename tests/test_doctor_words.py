@@ -46,6 +46,17 @@ class SummaryTest(unittest.TestCase):
             self.assertIn(words, text)
         self.assertNotIn("下一步", text.split("· 上面是上次测的结果")[0])
 
+    def test_the_todo_lines_are_listed_under_one_heading_and_only_when_there_are_some(self):
+        none = said(report(todo=[]))
+        self.assertNotIn("要你补的", none)
+        self.assertEqual(said(report()), none)
+        found = said(report(todo=["事件通道是 lark-cli 消费进程；新装默认是飞书 SDK，切换办法见 docs/configuration.md「飞书 SDK 与直连」",
+                                  "飞书应用还缺 1 项：权限 im:message（撤回消息）"]))
+        self.assertIn("结论：都正常", found)  # only said: no fault, no count
+        self.assertIn("要你补的：\n  - 事件通道是 lark-cli 消费进程", found)
+        self.assertIn("  - 飞书应用还缺 1 项：权限 im:message（撤回消息）", found)
+        self.assertLess(found.index("要你补的"), found.index("完整报告（JSON）"))
+
     def test_each_fault_says_what_is_wrong_and_the_next_step_with_the_real_state_directory(self):
         found = report(status="degraded", alive=False, bridge=None)
         found.update(status="degraded", runtime_status="degraded")

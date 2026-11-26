@@ -3,7 +3,8 @@
 ``covey_doctor.py`` prints these lines instead of its JSON when its output is a terminal (or with ``--summary``); a pipe, a
 script and ``--json`` get the JSON as before. ``lines(report, ...)``: a title, the conclusion (都正常, or how many parts need a
 look), one row a part (the Manager, each service of the root, its switches, how long Claude Code keeps sessions, what it
-set up that this release no longer uses, its devices, the self-hosted page, 等主人的账 and its 补发, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, and
+set up that this release no longer uses, its devices, the self-hosted page, 等主人的账 and its 补发, start at boot, each Harness's last probe), each fault or warning followed by ``下一步：`` and a command to run, the services' ``todo`` lines under ``要你补的：`` (only said, no mark and
+no count), and
 where the full report is. A row's mark: ``✓`` fine, ``✗`` a fault, ``!`` to know, ``·`` only said.
 
 Only the report's fields are read: nothing is asked of a process, a model or Feishu here, and no value of an environment
@@ -269,6 +270,7 @@ def lines(report, *, root="", states=None, root_arg="") -> list:
     rows += harness_rows(report.get("harness_probe"), report.get("model_access") == "probed")
     if report.get("events_checked") is False:
         rows.append((INFO, "这次没查事件连接（--skip-events）", ""))
+    todo = list(dict.fromkeys(str(line) for row in services for line in row.get("todo") or ()))
     faults = sum(1 for mark, _, _ in rows if mark == FAULT)
     notes = sum(1 for mark, _, _ in rows if mark == NOTE)
     if not faults:
@@ -282,6 +284,8 @@ def lines(report, *, root="", states=None, root_arg="") -> list:
         out.append(f"{mark} {what}")
         if next_step:
             out.append(f"    下一步：{next_step}")
+    if todo:
+        out += ["", "要你补的："] + [f"  - {line}" for line in todo]
     out += ["", f"完整报告（JSON）：{ENTRY}{root_arg} --json"]
     return out
 

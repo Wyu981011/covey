@@ -180,8 +180,7 @@ def lark_cli_output(*argv: str, timeout: int = 10) -> str | None:
 
 def require_release_reason() -> None:
     """发布命令（apps +release-create）不认 --apply-reason 的旧 lark-cli，在任何写操作之前停下（退出码 2）。
-    看 --help 里有没有这个参数，不比版本号。核心的 covey/feishu/transport.py release_reason_support 有同样的探测
-    （诊断用，这个脚本要能脱离 covey 包单独跑，所以各留一份）：改一处要改两处。"""
+    看 --help 里有没有这个参数，不比版本号。"""
     shown = lark_cli_output("apps", "+release-create", "--help", timeout=30)
     if shown is None:  # Not an old lark-cli: one that did not answer (a busy machine), so say that, not "too old".
         raise StepFailed("lark-cli 30 秒内没回答 `lark-cli apps +release-create --help`，没法确认它的发布命令认不认 --apply-reason，"

@@ -212,6 +212,36 @@ class HealthTests(unittest.TestCase):
                     self.assertIn('unset it and put --', err.getvalue())
                 self.assertEqual(bool(err.getvalue()), bool(flagged))
 
+    def test_the_report_lists_what_the_person_still_has_to_add_and_it_changes_no_status(self):
+        # 'todo' of each service row: the event channel still a lark-cli consumer, 飞书应用待补 from app-setup/state.json
+        # (no network). Only said.
+        from covey.service import doctor
+        from covey.service.manager import process_identity, register, save
+
+        identity = process_identity(os.getpid())
+        cases = (
+            ('sdk and nothing to add', {'COVEY_EVENT_TRANSPORT': 'sdk'}, None, []),
+            ('lark-cli event consumers', {}, None,
+             ['事件通道是 lark-cli 消费进程；新装默认是飞书 SDK，切换办法见 docs/configuration.md「飞书 SDK 与直连」']),
+            ('app still lacks things', {'COVEY_EVENT_TRANSPORT': 'sdk'}, ['scope:im:message', 'event:im.message.receive_v1'],
+             ['飞书应用还缺 2 项：权限 im:message（撤回消息）、事件 im.message.receive_v1（收消息）；'
+              '私聊里的「飞书应用待补」卡点「扫码自动补齐」，或照 docs/feishu-app.md 补']))
+        for name, environment, lacking, expected in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                state = root / 'state'
+                manifest = register(root, state, [sys.executable, '-c', 'pass'], workdir=root, environment=environment)
+                save(root / 'status' / (service_key(state) + '.json'), {'process': identity, 'generation': manifest['generation']})
+                if lacking is not None:
+                    (state / 'app-setup').mkdir(parents=True)
+                    (state / 'app-setup' / 'state.json').write_text(json.dumps({'lacking': lacking}))
+                with mock.patch.object(doctor, 'manager_health', return_value={'process': identity, 'lag': 0}), \
+                        mock.patch.object(doctor, 'query', return_value={'process': identity, 'status': 'ready'}):
+                    report = doctor.diagnose(root, check_events=False)
+                row = report['services'][0]
+                self.assertEqual(row['todo'], expected)
+                self.assertEqual((row['status'], report['runtime_status']), ('ready', 'ready'))
+
     def test_a_stopped_service_s_permission_variable_fails_the_full_report_only(self):
         # r4 review C1: --runtime-only (the deploy's post-check) counts only running services' permission variables,
         # as the deploy's pre-check does; a stopped service's is said on stderr and fails the full report.
