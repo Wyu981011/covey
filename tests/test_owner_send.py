@@ -54,6 +54,22 @@ class DraftParseTests(unittest.TestCase):
     def test_transitions(self):
         self.assertEqual(records.TRANSITIONS["uncertain"], ())
         self.assertNotIn("sending", records.TRANSITIONS["sent"])
+        # A draft certainly not sent gives way to a newer one like a draft never tried (T825).
+        self.assertIn("superseded", records.TRANSITIONS["unsent"])
+
+    def test_a_withdrawal_is_no_draft_and_takes_no_room_of_the_drafts(self):
+        checkpoint = {records.FIELD: [{"id": "old", "withdraw": True}, {"id": "old", "withdraw": True},
+                                      {"id": "x", "withdraw": "yes", "to": "ou_x", "text": "不是撤回"},
+                                      {"withdraw": True}, *({"id": str(n), "to": "ou_x", "text": "hi"} for n in range(3))]}
+        self.assertEqual(records.withdrawals(checkpoint), ["old"])
+        self.assertEqual([d["ref"] for d in records.drafts(checkpoint)], ["x", "0", "1"])
+        self.assertEqual(records.withdrawals({records.FIELD: "x"}), [])
+
+    def test_who_a_draft_goes_to(self):
+        drafted = {"to": {"email": "ZhangSan@example.com"}, "recipient": {"open_id": "ou_zs", "chat_id": "oc_zs", "name": "张三"}}
+        self.assertEqual(records.recipient_keys(drafted), {"email:zhangsan@example.com", "open_id:ou_zs", "chat_id:oc_zs"})
+        self.assertEqual(records.recipient_keys({"to": {"name": "张三"}}), {"name:张三"})
+        self.assertEqual(records.recipient_keys({}), set())
 
 
 class OwnerSendCase(ProxyCase):
@@ -205,6 +221,9 @@ class ClickTests(OwnerSendCase):
         record = records.read(self.state, record["id"])
         self.assertEqual((record["status"], record["reason"]), ("unsent", "登录已失效"))
         self.assertEqual(record["view"]["state"], "unsent")
+        # The sender's reason as it is, and the way on, whatever the cause (T825: not only the text can be at fault).
+        self.assertEqual(self.app.messenger.send_message.call_args.args[2],
+                         "⚠️ 代发给张三的消息没发出：登录已失效。处理好后在卡上点“重新发送”（要改正文就先在框里改）。")
         web_send.return_value = {"ok": True, "submitted": True, "message_id": "om_y"}
         self.assertEqual(self.click(record, SEND, box="AK 开好了", text=records.digest("AK 开好了")), "owner_send")
         self.assertEqual(records.read(self.state, record["id"])["status"], "sent")
@@ -293,6 +312,107 @@ class TurnNoteTests(OwnerSendCase):
         records.write(self.state, {"id": "a" * 32, "ref": "old", "topic_id": TOPIC, "status": "sent", "created_at": 1,
                                    "ended_at": time.time() - 2 * 24 * 3600, "to_label": "张三", "history": []})
         self.assertEqual(records.turn_lines(self.state, TOPIC), [])
+
+    def test_the_drafts_still_waiting_are_told_whatever_their_age(self):
+        # T807 (T825): a turn said it had taken two drafts back while their cards still waited; it was never told of them.
+        old = time.time() - 3 * 24 * 3600
+        for n, (status, reason) in enumerate((("drafted", ""), ("unsent", "发送工具调用 lark-cli 失败"), ("sending", ""),
+                                              ("declined", "主人点了不发"), ("superseded", ""))):
+            records.write(self.state, {"id": str(n) * 32, "ref": f"d{n}", "topic_id": TOPIC, "status": status,
+                                       "reason": reason, "created_at": old + n, "to_label": "张三", "history": []})
+        waiting = records.open_lines(self.state, TOPIC)
+        self.assertEqual([line.split("（")[0] for line in waiting], ["- 草稿 d2", "- 草稿 d1", "- 草稿 d0"])
+        self.assertIn("上次没发出（发送工具调用 lark-cli 失败），卡上可以重新发送", waiting[1])
+        self.assertIn("卡还开着，等主人确认", waiting[2])
+        note = module.turn_note(self.jctx, self.job)
+        self.assertIn("还开着、等主人在卡上确认的代发草稿：\n" + "\n".join(waiting), note)
+        self.assertIn('"withdraw":true', note)
+
+    def test_the_earlier_checkpoint_shown_leaves_out_the_drafts_taken_in(self):
+        records.write(self.state, {"id": "a" * 32, "ref": "taken", "topic_id": TOPIC, "status": "drafted", "created_at": 1,
+                                   "history": []})
+        entries = [{"id": "taken", "to": "ou_x", "text": "收下了"}, {"id": "lost", "to": "ou_x", "text": "那一轮失败了"}]
+        prior = {"phase": "等主人", records.FIELD: entries}
+        self.assertEqual(module.untaken(self.jctx, self.job, prior), {"phase": "等主人", records.FIELD: entries[1:]})
+        nested = {"status": "failed", "checkpoint": {"phase": "x", records.FIELD: entries[:1]}}
+        self.assertEqual(module.untaken(self.jctx, self.job, nested), {"status": "failed", "checkpoint": {"phase": "x"}})
+        for same in (None, {"subagents": {}}, {"phase": "x"}, {records.FIELD: entries[1:]}):
+            self.assertIs(module.untaken(self.jctx, self.job, same), same)
+
+
+class PileUpTests(OwnerSendCase):
+    """T825: a topic the owner goes on asking does not pile up 代发 cards (T807 had five, two to each of two people,
+    after the turn in between said it had taken two back)."""
+
+    LISI = user("ou_ls", "李四", email="lisi@example.com", department="运营")
+    WANGWU = user("ou_ww", "王五", email="wangwu@example.com", department="平台")
+    ZHAOLIU = user("ou_zl", "赵六", email="zhaoliu@example.com", department="容量")
+
+    def turn(self, key, drafts):
+        self.finished(drafts, key=key)
+        people = {p["email"]: [p] for p in (self.LISI, self.WANGWU, self.ZHAOLIU)}
+        with mock.patch("covey.app.proxy_commands.user_cli", lark(people)):
+            self.owner.collect(SimpleNamespace(message_id=key, job_id=9, topic_id=TOPIC, chat_id="oc_owner"), self.ctx)
+
+    def waiting(self):
+        return sorted(r["ref"] for r in records.topic_records(self.state, TOPIC) if r["status"] in ("drafted", "unsent"))
+
+    def test_the_turns_of_t807_leave_the_owner_two_cards_not_five(self):
+        self.turn("om_7278", [{"id": "p0-lisi", "to": {"email": "lisi@example.com"}, "text": "P0 合约"},
+                              {"id": "uce-zhaoliu", "to": {"email": "zhaoliu@example.com"}, "text": "UCE 配额"}])
+        self.turn("om_7292", [{"id": "950pr-wangwu", "to": {"email": "wangwu@example.com"}, "text": "950PR 适配"},
+                              {"id": "950pr-lisi", "to": {"email": "lisi@example.com"}, "text": "950PR 运营"}])
+        # A newer draft to 李四 took the place of the older one still on its card, its card redrawn as replaced.
+        self.assertEqual(self.waiting(), ["950pr-lisi", "950pr-wangwu", "uce-zhaoliu"])
+        older = records.read(self.state, records.record_id("om_7278", "p0-lisi"))
+        self.assertEqual((older["status"], older["view"]["state"]), ("superseded", "superseded"))
+        self.assertEqual(older["superseded_by"], records.record_id("om_7292", "950pr-lisi"))
+        self.turn("om_7328", [{"id": "950pr-wangwu", "withdraw": True}, {"id": "950pr-lisi", "withdraw": True}])
+        self.assertEqual(self.waiting(), ["uce-zhaoliu"])
+        taken = records.read(self.state, records.record_id("om_7292", "950pr-wangwu"))
+        self.assertEqual((taken["status"], taken["reason"], taken["view"]["notice"]),
+                         ("declined", module.WITHDRAWN, module.WITHDRAWN_NOTICE))
+        self.assertIn("没发（话题撤回了这条草稿）", "\n".join(records.turn_lines(self.state, TOPIC)))
+        self.turn("om_7332", [{"id": "950pr-wangwu-short", "to": {"email": "wangwu@example.com"}, "text": "短的"}])
+        self.assertEqual(self.waiting(), ["950pr-wangwu-short", "uce-zhaoliu"])
+
+    def test_a_turn_that_writes_two_to_one_person_or_one_again_keeps_them(self):
+        self.turn("om_a", [{"id": "one", "to": {"email": "wangwu@example.com"}, "text": "第一件事"}])
+        self.turn("om_b", [{"id": "one", "to": {"email": "wangwu@example.com"}, "text": "第一件事"},
+                           {"id": "two", "to": {"email": "wangwu@example.com"}, "text": "第二件事"},
+                           {"id": "three", "to": {"email": "wangwu@example.com"}, "text": "第三件事"}])
+        # ``one`` copied as it was: its card stays, no second; two and three, of the same turn, both stay.
+        self.assertEqual(self.waiting(), ["one", "three", "two"])
+        self.assertEqual(records.read(self.state, records.record_id("om_b", "one")), {})
+        self.assertEqual(self.lark.send.call_count, 3)
+
+    def test_a_copy_of_a_sent_draft_is_not_offered_again_and_one_the_owner_dropped_is(self):
+        self.turn("om_a", [{"id": "note", "to": {"email": "wangwu@example.com"}, "text": "通知"},
+                           {"id": "ask", "to": {"email": "lisi@example.com"}, "text": "问一下"}])
+        first = records.read(self.state, records.record_id("om_a", "note"))
+        records.move(self.state, records.move(self.state, first, "sending"), "sent")
+        dropped = records.read(self.state, records.record_id("om_a", "ask"))
+        records.move(self.state, dropped, "declined", reason="主人点了不发")
+        self.turn("om_b", [{"id": "note", "to": {"email": "wangwu@example.com"}, "text": "通知"},
+                           {"id": "ask", "to": {"email": "lisi@example.com"}, "text": "问一下"}])
+        self.assertEqual(records.read(self.state, records.record_id("om_b", "note")), {})
+        self.assertEqual(records.read(self.state, records.record_id("om_b", "ask"))["status"], "drafted")
+        self.assertTrue(any("owner send repeated" in line and "status=sent" in line for line in self.logs))
+
+    def test_a_draft_not_sent_gives_way_and_a_withdrawal_of_nothing_waiting_does_nothing(self):
+        self.turn("om_a", [{"id": "note", "to": {"email": "wangwu@example.com"}, "text": "通知"}])
+        record = records.read(self.state, records.record_id("om_a", "note"))
+        records.move(self.state, records.move(self.state, record, "sending"), "unsent", reason="发送失败")
+        self.turn("om_b", [{"id": "note", "to": {"email": "wangwu@example.com"}, "text": "通知，改过"}])
+        self.assertEqual(records.read(self.state, record["id"])["status"], "superseded")
+        sent_cards = self.lark.send.call_count
+        self.turn("om_c", [{"id": "gone", "withdraw": True}])
+        self.assertEqual((self.waiting(), self.lark.send.call_count), (["note"], sent_cards))
+        # No recipient found for the newer one: the older to the same e-mail stays.
+        self.finished([{"id": "nobody", "to": {"email": "wangwu@example.com"}, "text": "再说一次"}], key="om_d")
+        with mock.patch("covey.app.proxy_commands.user_cli", lark([])):
+            self.owner.collect(SimpleNamespace(message_id="om_d", job_id=9, topic_id=TOPIC, chat_id="oc_owner"), self.ctx)
+        self.assertEqual(self.waiting(), ["note"])
 
 
 if __name__ == "__main__":

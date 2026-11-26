@@ -3,12 +3,14 @@ its card (app/owner_send.py; docs/proxy.md 代发). Only the Bridge writes them;
 turn's note (``turn_lines``). Standard library and core only, no Feishu.
 
 A topic puts ``send_as_owner`` into its checkpoint (``drafts``): [{"id", "to": {"email" | "name" | "open_id" | "chat_id"},
-"text" or "text_file", "why"}], at most MOST. One record a draft: <state>/owner-send/<id>.json, its id from the job and
-the draft's own id (``record_id``), so a turn read twice drafts once. Its status only moves by TRANSITIONS (rule 4):
+"text" or "text_file", "why"}], at most MOST; an entry {"id", "withdraw": true} takes back the topic's draft of that
+id still waiting for the owner (``withdrawals``, T825). One record a draft: <state>/owner-send/<id>.json, its id from
+the job and the draft's own id (``record_id``), so a turn read twice drafts once. Its status only moves by TRANSITIONS
+(rule 4):
 
   drafted → sending | declined | superseded
   sending → sent | uncertain | unsent
-  unsent  → sending | declined
+  unsent  → sending | declined | superseded
   sent, uncertain, declined, superseded: final (uncertain may have gone out and is never sent again, rules 1 and 6)
 """
 from __future__ import annotations
@@ -29,14 +31,18 @@ WHY_CHARS = 200
 REF_CHARS = 40
 NOTE_HOURS = 24  # A turn's note lists the topic's drafts that ended within this many hours (``turn_lines``).
 NOTE_MOST = 3
+OPEN_MOST = 5  # Drafts still waiting for the owner a turn's note lists (``open_lines``).
+WITHDRAW = "withdraw"
+WITHDRAW_MOST = 10  # Withdrawals taken from one checkpoint.
 
 TRANSITIONS = {
     "drafted": ("sending", "declined", "superseded"),
     "sending": ("sent", "uncertain", "unsent"),
-    "unsent": ("sending", "declined"),
+    "unsent": ("sending", "declined", "superseded"),
     "sent": (), "uncertain": (), "declined": (), "superseded": (),
 }
 ENDED = ("sent", "uncertain", "unsent", "declined")
+OPEN = ("drafted", "unsent")  # Waiting for the owner on its card: what a newer draft supersedes and a withdrawal takes back.
 TARGETS = ("email", "open_id", "chat_id", "name")
 
 # Told to a topic's every turn while 代发 is on (app/owner_send.py turn_note), after the checkpoint rules.
@@ -47,6 +53,9 @@ RULE = (
     "不要把密钥写进检查点。收件人优先写邮箱：@ 消息里的 open_id 是机器人应用的，主人身份查不到。"
     "本轮结束后话题里会出一张代发草稿卡，主人确认（可改正文）后才以主人身份发出，结果会在话题里说，并在之后的轮次告诉你；"
     "在回复里说明草稿已备好、等主人在卡上确认，不要说已经发出。正文里不要留【…】、{{…}}、TODO、xx月 这类没填的占位符，卡上会拒绝发送。"
+    "改一条还没发的草稿，用它原来的 id 重写；给同一个人的新草稿会替换之前轮次给他、还没发的旧卡。"
+    '不再要发的草稿（主人说不用找他了、计划变了），写 {"id":"原来的 id","withdraw":true} 撤回，主人那张卡会收起；'
+    "只从检查点里删掉不算撤回，没写 withdraw 就不要说撤回了。下面列出的还开着的草稿，不要再起一张一样的。"
 )
 
 
@@ -144,15 +153,35 @@ def _target(entry) -> dict:
             if isinstance(to.get(kind), str) and to[kind].strip()}
 
 
+def _ref(entry, index) -> str:
+    return " ".join(str(entry.get("id") or index).split())[:REF_CHARS] or str(index)
+
+
+def _withdraws(entry) -> bool:
+    return isinstance(entry, dict) and entry.get(WITHDRAW) is True
+
+
+def withdrawals(checkpoint) -> list[str]:
+    """The ids of the checkpoint's ``send_as_owner`` entries that take a draft back ({"id", "withdraw": true}), at most
+    WITHDRAW_MOST, each once. Never raises."""
+    entries = checkpoint.get(FIELD) if isinstance(checkpoint, dict) else None
+    found: list[str] = []
+    for entry in entries if isinstance(entries, list) else []:
+        if _withdraws(entry) and entry.get("id") and _ref(entry, "") not in found:
+            found.append(_ref(entry, ""))
+    return found[:WITHDRAW_MOST]
+
+
 def drafts(checkpoint) -> list[dict]:
     """The checkpoint's ``send_as_owner`` as [{ref, to, text, why, problem}], at most MOST; an entry that is not an
-    object is left out, one without a recipient or a text keeps why (``problem``). Never raises."""
+    object, or that withdraws a draft (``withdrawals``), is left out, one without a recipient or a text keeps why
+    (``problem``). Never raises."""
     entries = checkpoint.get(FIELD) if isinstance(checkpoint, dict) else None
     found = []
     for index, entry in enumerate(entries if isinstance(entries, list) else []):
-        if not isinstance(entry, dict):
+        if not isinstance(entry, dict) or _withdraws(entry):
             continue
-        ref = " ".join(str(entry.get("id") or index).split())[:REF_CHARS] or str(index)
+        ref = _ref(entry, index)
         text, problem = _text(entry)
         to = _target(entry)
         if not to:
@@ -172,6 +201,43 @@ def topic_records(state_dir, topic_id: str) -> list[dict]:
         if record.get("topic_id") == topic_id:
             found.append(record)
     return sorted(found, key=lambda r: r.get("created_at") or 0, reverse=True)
+
+
+def recipient_keys(record) -> set[str]:
+    """Who ``record`` (or a draft) goes to, as keys two drafts to the same person or chat share: the e-mail, open_id
+    and chat id it was given and the recipient they were resolved to; a name only when it has nothing else."""
+    keys = set()
+    for who in (record.get("to") or {}, record.get("recipient") or {}):
+        for kind in ("email", "open_id", "chat_id"):
+            value = str(who.get(kind) or "").strip()
+            if value:
+                keys.add(f"{kind}:{value.lower() if kind == 'email' else value}")
+    name = str((record.get("to") or {}).get("name") or "").strip()
+    return keys or ({f"name:{name}"} if name else set())
+
+
+OPEN_WORDS = {
+    "drafted": "卡还开着，等主人确认",
+    "unsent": "上次没发出{reason}，卡上可以重新发送",
+    "sending": "正在发送",
+}
+
+
+def open_lines(state_dir, topic_id: str) -> list[str]:
+    """One line a draft of the topic still on its card (OPEN, or being sent), newest first, at most OPEN_MOST: its id,
+    recipient, where it stands and since when."""
+    lines = []
+    for record in topic_records(state_dir, topic_id):
+        status = record.get("status")
+        if status not in (*OPEN, "sending"):
+            continue
+        at = time.strftime("%m-%d %H:%M", time.localtime(float(record.get("created_at") or 0)))
+        reason = f"（{record['reason']}）" if status == "unsent" and record.get("reason") else ""
+        lines.append(f"- 草稿 {record.get('ref')}（给 {record.get('to_label') or '对方'}）："
+                     f"{OPEN_WORDS[status].format(reason=reason)}，{at} 出的卡")
+        if len(lines) >= OPEN_MOST:
+            break
+    return lines
 
 
 OUTCOME = {

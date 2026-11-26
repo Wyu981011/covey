@@ -166,16 +166,22 @@ IM 事件只有机器人身份，看不到主人的会话，所以 `ProxyIntake.
 话题要以主人身份给别人发飞书消息时（通知同事、把结果交给某人），不经 lark-cli（主人的 `im:message.send_as_user` 可能被组织策略禁止，机器人也未必对对方可见），而是出一张代发草稿卡，主人确认后经同一个[发送器](#发送器)发出。`app/owner_send.py`（`Proxy.owner_send`），记录 `core/owner_send.py`，卡 `cards/owner_send.py`。
 
 - **开关**：有发送器（`proxy_send.available()`）且 `COVEY_OWNER_SEND` 不是 `0` 时开（`enabled`）。关着时每轮不附规则；检查点里写了草稿也只在话题里回一行“这个部署不能以你的身份发”。和代答的开关无关：代答关着也能代发，不加白名单、不占代答的每小时限额。
-- **话题怎么发起**：开着时每一轮的消息后附 `core/owner_send.py` 的 `RULE`（`turn_note`，代答话题和管家的私聊不附）：检查点写 `send_as_owner`：`[{"id","to":{"email"|"name"|"open_id"|"chat_id"},"text" 或 "text_file","why"}]`，至多 `MOST`（3）条；正文有密钥时写 `text_file`（绝对路径，至多 64 KB），不进检查点。
-- **什么时候出卡**（`collect`，在 `app/detached.py`、`app/job_dispatch.py` 任务结束后调）：这一轮 `done` 或 `waiting_user`、回复已授权（`verified_reply_authorized`，规则 5）。一条草稿一个记录 `<state>/owner-send/<id>.json`（0600，目录 0700），id 由任务键和草稿 id 算出，同一轮读两次只出一次卡；同一话题同一草稿 id 还没发的旧稿转 `superseded`。
+- **话题怎么发起**：开着时每一轮的消息后附 `core/owner_send.py` 的 `RULE`（`turn_note`，代答话题和管家的私聊不附）：检查点写 `send_as_owner`：`[{"id","to":{"email"|"name"|"open_id"|"chat_id"},"text" 或 "text_file","why"}]`，至多 `MOST`（3）条；正文有密钥时写 `text_file`（绝对路径，至多 64 KB），不进检查点。不再要发的草稿写 `{"id":"原来的 id","withdraw":true}` 撤回（`withdrawals`，至多 10 条，不占 `MOST`）。
+- **什么时候出卡**（`collect`，在 `app/detached.py`、`app/job_dispatch.py` 任务结束后调）：这一轮 `done` 或 `waiting_user`、回复已授权（`verified_reply_authorized`，规则 5）。一条草稿一个记录 `<state>/owner-send/<id>.json`（0600，目录 0700），id 由任务键和草稿 id 算出，同一轮读两次只出一次卡。
+- **不攒卡**（主人不点卡、接着在话题里追问时，旧卡不能越积越多）：
+  - 同一话题同一草稿 id 还在等主人的旧稿（`drafted`、`unsent`）转 `superseded`；
+  - 新卡发出后，话题里其他轮次发给同一个人或同一个会话（`recipient_keys`：给的和查到的邮箱、open_id、chat_id，只有姓名时才比姓名）、还在等主人的旧稿也转 `superseded`，卡上写“已被新的草稿替换”；这一轮自己写的几条、这一轮又写了一遍的 id 不动；新草稿没找到收件人时不动旧稿；
+  - 撤回：话题里这个 id 还在等主人的草稿转 `declined`（原因“话题撤回了这条草稿”），卡收起成“这条不发了”；
+  - 后来的轮次把同一 id、同一正文原样再写一遍（`repeated`：旧稿在等主人、在发、已发出或可能已发出），不再出第二张卡，日志 `owner send repeated`；主人点过“不发送”的，同样一条再写会重新出卡；
+  - 每一轮的说明在规则后列出还开着的草稿（`open_lines`，不论多久，至多 5 条：id、发给谁、等确认 / 上次没发出的原因 / 正在发送、几点出的卡），话题据此改、撤回或提醒，不再起一样的卡；给模型看的上一轮检查点里去掉 Bridge 已经收下的 `send_as_owner` 条目（`untaken`，那一轮失败没收下的留着）。
 - **收件人**（`resolve`，用 `COVEY_PROXY_PROFILE` 的主人身份）：`chat_id` 查会话名；邮箱精确匹配；`open_id` 只认主人应用的（@ 消息里的 open_id 是机器人应用的，查不到时退到姓名）；姓名一人直接用，多人时卡上列至多 5 个候选点选，没人时草稿转 `declined`，卡上写原因。
 - **卡**：在本轮所在话题的回复串里，另在聊天顶层发一张小卡（`top_card`：“T12 代发草稿”卡头带橙色“要你确认”标签，副标题写发给谁，一行“到话题里看 ›”；发不出卡时回原来的一行文字）。话题里的卡头写“代发草稿”和当前状态的标签（要你确认橙、已发出绿、没发出红…）。卡上是收件人（姓名 · 部门 · 邮箱）、为什么发、可编辑的正文框、一行“先问一句”的输入框和「发送」「不发送」「先问一句」。kind `bridge_owner_send`、`bridge_owner_send_drop`、`bridge_owner_send_pick`、`bridge_owner_send_ask` 在 `ACTIONS`，经 `PANELS` 的 `proxy.owner_send` 认领；整卡替换（`replace_form_card`）。
 - **点击**（`click`、`decide`）：非主人写在卡上；记录锁（`resource_lock("owner-send", …)`）内只读写记录：按钮值里的正文摘要和记录的不同时拒绝（卡已换过），框里是空的或超过 `TEXT_LIMIT` 拒绝，框里（或不可改时话题写的原文）还有没填的占位符（`core/owner_send.py` 的 `placeholders`：【…】、{{…}}、${…}、TODO、待填、xx月 这类，是代答发前检查占位符一项的本地副本，两处一起改）也拒绝，卡上说是哪几个，卡片同时在框上方先警告，否则存下框里的正文（`edited` 记是否改过）转 `sending`，回执后（`after_ack`）发送。
 - **先问一句**（`ask`）：草稿还是 `drafted`、`unsent` 且不在选人时，锁内只读记录、不改它，卡不重画（框里改过的正文留在客户端）；回执后用 `Proxy.topics.target` 找到写草稿的话题，把那一行交给它的 `Questions.queue_ask`：写进话题历史，像话题里的消息一样排队（`enqueue_chat_job(steer=True)`：在跑的任务收补充就补充给它，否则是下一轮），接着写草稿那一轮的检查点；模型读到的是 `ask_message`：这是先问一句、草稿还没发、要改就用同一个 id 重写，草稿的 id 和收件人，不带正文（可能有密钥）。消息 id 以 `ask-` 开头（`app/answers.py` 的 `ASK_PREFIX`），这一轮不把在等回答的任务记成已续接（`TaskControls.acknowledge_waiting_answer`）。那一行空着、话题找不到（换了 Harness 或已关闭）时，话题串里回一句，什么都不排。
 - **发送**（`send`）：等 `Proxy.web_lock` 至多 `WEB_WAIT`（120 秒，和代答的发送、扫码登录互斥），拿不到算没发出。草稿充当联系人和批次交给 `ProxySend.web_send`，幂等键同代答（批次 id 加正文摘要：同一正文重试同一个键）。有回执是 `sent`；确定没发出（`validation`、`unsupported`、`auth`、`failed`、`launch`、拿不到锁）是 `unsent`，卡上出「重新发送」，`auth` 时告诉主人登录失效（`login_gone`）；其余可能已发出的先按会话读回，读不到是 `uncertain`，终态，不再发（规则 1、6）。结果画在卡上，话题里一行。
-- **结果回话题**：话题之后的轮次在 `RULE` 后附最近 24 小时结束的代发结果（`turn_lines`，至多 3 条）。任务进程只读这些记录。
-- **状态**只按 `TRANSITIONS` 前进（规则 4）：`drafted → sending | declined | superseded`，`sending → sent | uncertain | unsent`，`unsent → sending | declined`。
-- 日志：`owner send drafted draft=… state=…`、`owner send confirmed draft=…`、`owner send draft=… status=… type=…`，发送器自己的 `proxy send batch=…` 一行。
+- **结果回话题**：话题之后的轮次在 `RULE` 后附还开着的草稿（`open_lines`）和最近 24 小时结束的代发结果（`turn_lines`，至多 3 条）。任务进程只读这些记录。没发出时话题里一行写发送器给的原因，再说处理好后在卡上点“重新发送”；发送器能查到真实原因时原因里带下一步（扩展的发送器见它的 README「发送工具」）。
+- **状态**只按 `TRANSITIONS` 前进（规则 4）：`drafted → sending | declined | superseded`，`sending → sent | uncertain | unsent`，`unsent → sending | declined | superseded`。
+- 日志：`owner send drafted draft=… state=…`、`owner send superseded draft=… by=…`、`owner send withdrawn draft=…`、`owner send repeated draft=… as=…`、`owner send confirmed draft=…`、`owner send draft=… status=… type=…`，发送器自己的 `proxy send batch=…` 一行。
 
 ## 网页端与浏览器服务
 

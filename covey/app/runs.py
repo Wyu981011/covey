@@ -543,6 +543,7 @@ class Runs:
         elif dead:
             prior = {"subagents": dead}  # No checkpoint to verify: only the block of what they delivered.
         shown = devices.device_checkpoint_path(ctx, job.checkpoint_path) if ctx.device else ""
+        prior = owner_send.untaken(ctx, job, prior)  # The 代发 drafts the Bridge took in are in the turn's 代发 note (T825).
         return ("\n\n" + checkpoint_note(Path(job.checkpoint_path), prior, shown=shown) + self._gist_note(ctx, job)
                 + self._revisit_note(ctx, job) + self._ask_note(ctx, job) + self._collab_note(ctx, job)
                 + self._criteria_note(ctx, job) + self._images_note(ctx, job))

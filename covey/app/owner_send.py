@@ -15,7 +15,14 @@ under Proxy.web_lock (one run of the send tool at a time, with 代答's sends an
 the ``proxy_sender`` hook (ProxySend.web_send) with the draft standing in for a 代答 contact and batch, so its key is
 the same for the same text (a send tried again is the tool's record answering). Certainly not sent: the card says why
 and offers 重新发送; may have been sent: read back as the owner, else ``uncertain``, never sent again (rules 1 and 6).
-Each outcome is drawn on the card and said in a line in the topic; the topic's later turns read it (``turn_note``).
+Each outcome is drawn on the card and said in a line in the topic; the topic's later turns read it (``turn_note``), with
+the drafts still waiting on their cards.
+
+A topic does not pile up cards the owner has to clear (T825): a draft of an id the topic drafted before supersedes the
+older one still waiting; once its card is out, a draft to the same person or chat supersedes the topic's older ones
+waiting from other turns (not the ones this turn wrote again); an entry {"id", "withdraw": true} takes one back
+(``withdraw``: declined, its card says the topic took it back); and a draft a later turn copied as it was (same id, same
+text) while that one waits, is being or was sent, gets no second card.
 
 Off without a sender (``enabled``: proxy_send.available) or with COVEY_OWNER_SEND=0: no rule in the turns, a draft in
 a checkpoint gets one line in the topic saying it cannot be sent here. Not in a 代答 topic, nor the butler's private
@@ -62,6 +69,9 @@ ASK_START = ("用户看了你起草的代发消息，先问一句。还没发出
              "他要你改，就在检查点里用同一个 id 重写这条草稿。")
 ASK_EMPTY = f"⚠️ 先问一句没有问：先在代发草稿卡上“{ASK_LABEL}”那一行写上你想问的，再点“{ASK_LABEL}”。"
 ASK_GONE = "⚠️ 先问一句没有问：写这条草稿的话题找不到了（换了 Harness 或已关闭），可以直接在话题里说。"
+WITHDRAWN = "话题撤回了这条草稿"
+WITHDRAWN_NOTICE = "话题撤回了这条草稿，不发了。"
+REPEATS = ("drafted", "unsent", "sending", "sent", "uncertain")  # An older draft of the same id and text: no second card.
 
 
 def enabled() -> bool:
@@ -77,10 +87,35 @@ def turn_note(ctx, job) -> str:
         topic = str(getattr(job, "topic_id", "") or getattr(ctx, "topic_id", "") or "")
         if not enabled() or not topic or proxy_topic(ctx) or is_butler_topic(topic, str(getattr(job, "chat_id", "") or "")):
             return ""
+        waiting = records.open_lines(ctx.state_dir, topic)
         lines = records.turn_lines(ctx.state_dir, topic)
-        return "\n\n" + records.RULE + ("\n之前的代发草稿：\n" + "\n".join(lines) if lines else "")
+        return ("\n\n" + records.RULE + ("\n还开着、等主人在卡上确认的代发草稿：\n" + "\n".join(waiting) if waiting else "")
+                + ("\n之前的代发草稿：\n" + "\n".join(lines) if lines else ""))
     except Exception:  # noqa: BLE001 - a turn never fails for its note
         return ""
+
+
+def untaken(ctx, job, prior):
+    """``prior``, the earlier checkpoint a turn is shown (app/runs.py _checkpoint_note), without the ``send_as_owner``
+    entries the Bridge took in already (a record of that id in the topic): where they stand is in ``turn_note``, and a
+    turn that copies them back as they were only makes a card it never meant (T825). Those never taken in (their turn
+    failed) stay. ``prior`` itself when there is nothing to leave out; never raises. Read only: a task runner calls it."""
+    try:
+        topic = str(getattr(job, "topic_id", "") or getattr(ctx, "topic_id", "") or "")
+        nested = isinstance(prior, dict) and isinstance(prior.get("checkpoint"), dict)
+        checkpoint = prior.get("checkpoint") if nested else prior
+        entries = checkpoint.get(records.FIELD) if isinstance(checkpoint, dict) else None
+        if not topic or not isinstance(entries, list) or not entries:
+            return prior
+        taken = {record.get("ref") for record in records.topic_records(ctx.state_dir, topic)}
+        left = [entry for entry in entries if not (isinstance(entry, dict) and str(entry.get("id") or "").strip()
+                                                   and " ".join(str(entry["id"]).split())[:records.REF_CHARS] in taken)]
+        if len(left) == len(entries):
+            return prior
+        checkpoint = {k: v for k, v in checkpoint.items() if k != records.FIELD} | ({records.FIELD: left} if left else {})
+        return {**prior, "checkpoint": checkpoint} if nested else checkpoint
+    except Exception:  # noqa: BLE001 - the note goes on as it was
+        return prior
 
 
 def ask_message(record, words) -> str:
@@ -150,8 +185,9 @@ class OwnerSend:
         try:
             record = find_job_record(ctx.state_dir, str(getattr(job, "message_id", "") or ""))
             path = str((record or {}).get("checkpoint_path") or "")
-            drafts = records.drafts(read_checkpoint(Path(path))) if path else []
-            if not drafts:
+            checkpoint = read_checkpoint(Path(path)) if path else {}
+            drafts, withdrawn = records.drafts(checkpoint), records.withdrawals(checkpoint)
+            if not drafts and not withdrawn:
                 return
             jctx = context_for_job(ctx, job)
             reason = ("not-finished" if record.get("status") not in ENDED_WELL
@@ -167,17 +203,64 @@ class OwnerSend:
                                                   self.proxy.voice.key("owner-send-off", record.get("key") or ""),
                                                   voice=self.proxy.voice, reply_to_message_id=jctx.reply_to_message_id)
                 return
+            for ref in withdrawn:
+                self.withdraw(jctx, record, ref)
+            kept = {draft["ref"] for draft in drafts}
             for draft in drafts:
-                self.open(jctx, record, draft)
+                self.open(jctx, record, draft, kept)
         except Exception as exc:  # noqa: BLE001 - the turn's ending goes on; the checkpoint keeps the drafts
             self.proxy.runtime.log(f"owner send collect failed job=#{getattr(job, 'job_id', '?')}: {type(exc).__name__}: {str(exc)[:200]}")
 
-    def open(self, ctx, job_record, draft) -> None:
-        """One draft: its record (once: a turn read twice drafts once), the topic's older open draft of the same id
-        superseded, the recipient looked up, the card sent in the topic's thread and a line at the top level."""
+    def withdraw(self, ctx, job_record, ref) -> None:
+        """The topic's drafts of id ``ref`` still waiting for the owner (records.OPEN), taken back: declined, the card
+        redrawn saying the topic took it back. Not this turn's own (it cannot draft and take back one id at once)."""
+        topic = str(job_record.get("topic_id") or "")
+        for older in records.topic_records(ctx.state_dir, topic):
+            if older.get("ref") != ref or older.get("status") not in records.OPEN or older.get("job_key") == job_record.get("key"):
+                continue
+            with self.lock(ctx, older["id"]):
+                moved = records.move(ctx.state_dir, older, "declined", reason=WITHDRAWN)
+                if moved and moved.get("message_id"):
+                    self.publish(ctx, moved, {"state": "declined", "notice": WITHDRAWN_NOTICE,
+                                              **({"hide": True} if (moved.get("view") or {}).get("hide") else {})})
+            self.proxy.runtime.log(f"owner send withdrawn draft={older['id'][:8]} job=#{job_record.get('job_id')} "
+                                   f"{'ok' if moved else 'stale'}")
+
+    def supersede(self, ctx, record, older, reason) -> None:
+        """``older``, still waiting for the owner, superseded by ``record``: its card redrawn."""
+        with self.lock(ctx, older["id"]):
+            moved = records.move(ctx.state_dir, older, "superseded", reason=reason, superseded_by=record["id"])
+            if moved and moved.get("message_id"):
+                self.publish(ctx, moved, {"state": "superseded",
+                                          **({"hide": True} if (moved.get("view") or {}).get("hide") else {})})
+        if moved:
+            self.proxy.runtime.log(f"owner send superseded draft={older['id'][:8]} by={record['id'][:8]}")
+
+    @staticmethod
+    def repeated(state_dir, topic, job_key, draft) -> dict:
+        """The topic's older draft (another turn's) that ``draft`` repeats as it was, same id and same text, while it waits,
+        is being or was sent (REPEATS): a later turn that copied it gets no second card. {} for none."""
+        text = records.digest(draft["text"])
+        return next((older for older in records.topic_records(state_dir, topic)
+                     if older.get("ref") == draft["ref"] and older.get("job_key") != job_key and not draft["problem"]
+                     and older.get("status") in REPEATS and records.digest(older.get("text")) == text), {})
+
+    def open(self, ctx, job_record, draft, kept=frozenset()) -> None:
+        """One draft: its record (once: a turn read twice drafts once; none when it repeats a waiting or sent one,
+        ``repeated``), the topic's older open draft of the same id superseded, the recipient looked up, the card sent in
+        the topic's thread and a line at the top level; then the topic's older drafts to the same recipient from other
+        turns superseded, but those of an id this turn wrote again (``kept``)."""
         state_dir = ctx.state_dir
         draft_id = records.record_id(str(job_record.get("key") or ""), draft["ref"])
         topic = str(job_record.get("topic_id") or "")
+        with self.lock(ctx, draft_id):
+            if records.read(state_dir, draft_id):
+                return
+        same = self.repeated(state_dir, topic, job_record.get("key"), draft)
+        if same:
+            self.proxy.runtime.log(f"owner send repeated draft={draft_id[:8]} as={same['id'][:8]} status={same.get('status')} "
+                                   f"job=#{job_record.get('job_id')}: no second card")
+            return
         with self.lock(ctx, draft_id):
             if records.read(state_dir, draft_id):
                 return
@@ -188,12 +271,10 @@ class OwnerSend:
                       "topic_label": topic_label(Path(state_dir), topic) if topic else "", "created_at": now,
                       "updated_at": now, "history": [["drafted", now, ""]]}
             records.write(state_dir, record)
+        record = records.read(state_dir, draft_id)
         for older in records.topic_records(state_dir, topic):
-            if older["id"] != draft_id and older.get("ref") == draft["ref"] and older.get("status") in ("drafted", "unsent"):
-                with self.lock(ctx, older["id"]):
-                    moved = records.move(state_dir, older, "superseded", reason="话题出了同一 id 的新草稿")
-                    if moved and moved.get("message_id"):
-                        self.publish(ctx, moved, {"state": "superseded"})
+            if older["id"] != draft_id and older.get("ref") == draft["ref"] and older.get("status") in records.OPEN:
+                self.supersede(ctx, record, older, "话题出了同一 id 的新草稿")
         if draft["problem"]:
             recipient, candidates, reason = {}, [], draft["problem"]
         else:
@@ -225,6 +306,12 @@ class OwnerSend:
                 records.write(state_dir, {**record, "message_id": message_id})
         self.proxy.runtime.log(f"owner send drafted draft={draft_id[:8]} job=#{job_record.get('job_id')} state={state} "
                                f"card={'sent' if message_id else 'failed'}")
+        if message_id and state == "drafted":
+            mine = records.recipient_keys(record)
+            for older in records.topic_records(state_dir, topic):
+                if (older.get("status") in records.OPEN and older.get("job_key") != record.get("job_key")
+                        and older.get("ref") not in kept and mine & records.recipient_keys(older)):
+                    self.supersede(ctx, record, older, f"话题给{record.get('to_label') or '对方'}写了新的草稿")
         if message_id and state != "unresolved":
             self.top_line(ctx, record)
 
@@ -406,7 +493,7 @@ class OwnerSend:
         who = record.get("to_label") or "对方"
         words = {
             "sent": f"✅ 已以你的身份发给{who}（{record.get('sent_at_text', '')}）。",
-            "unsent": f"⚠️ 代发给{who}的消息没发出：{record.get('reason') or '发送失败'}。卡上可以改正文后重新发送。",
+            "unsent": f"⚠️ 代发给{who}的消息没发出：{record.get('reason') or '发送失败'}。处理好后在卡上点“重新发送”（要改正文就先在框里改）。",
             "uncertain": f"⚠️ 代发给{who}的消息可能已发出但没能确认，不会自动重发，请到会话里看一眼。",
         }[record["status"]]
         try:
