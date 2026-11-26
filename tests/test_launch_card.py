@@ -55,26 +55,43 @@ class LaunchCardTests(LaunchCardCase):
         record=self.record()
         self.assertEqual((record['status'],record['card_id'],record['message_id'],record['compact']),('ready','cid','mid',True))
         self.assertEqual(self.card['header']['icon']['token'],'start_outlined')  # The menu panels' title bar.
-        # The summary, the settings list folded under 调整模型、预算和工作区, then the buttons (2026-11-03 22:59).
+        # The summary, the settings list folded under 调整模型和预算 (no 工作区 or 运行方式: a topic starts in the home), then
+        # the one button (no 其他目录… either).
         summary,adjust,form=self.card['body']['elements']
         self.assertIn('思考预算',json.dumps(summary,ensure_ascii=False))
         self.assertEqual((adjust['tag'],adjust['expanded'],adjust['header']['title']['content']),
-                         ('collapsible_panel',False,"<font color='grey'>调整模型、预算和工作区</font>"))
+                         ('collapsible_panel',False,"<font color='grey'>调整模型和预算</font>"))
         # A fold each, its options under it, all closed (no select: iOS's picker, 2026-11-04).
         self.assertEqual({(e['tag'],e['expanded']) for e in adjust['elements']},{('collapsible_panel',False)})
         rows=settings_rows(self.card)
-        self.assertEqual(list(rows),['harness','provider','model','effort','redaction','workspace','run_mode'])
-        self.assertEqual({tap['kind'] for tap in rows['run_mode']['taps'].values()},{'bridge_launch_mode'})
+        self.assertEqual(list(rows),['harness','provider','model','effort','redaction'])
         self.assertEqual({tap['token'] for row in rows.values() for tap in row['taps'].values()},{self.path.stem})
-        self.assertEqual(rows['run_mode']['current'],'direct')
+        self.assertNotIn('工作区',json.dumps(self.card,ensure_ascii=False))
+        self.assertNotIn('运行方式',json.dumps(self.card,ensure_ascii=False))
+        self.assertEqual(self.record()['form_defaults'],{'device':''})  # No workspace, no run mode: the home.
         self.assertNotIn('select_static',json.dumps(self.card))
         self.assertEqual(set(form_fields(self.card)),set())  # No path input: 其他目录… takes a pasted path.
         self.assertEqual(form['tag'],'form')
         self.assertEqual(self.card['header']['subtitle']['content'][:4],'话题 T')
-        # 其他目录… and 开始任务 share one row at the end of the form.
         buttons=[e for e in walk(self.card['body']['elements']) if e.get('tag')=='button']
-        self.assertEqual([(b['name'],b['text']['content']) for b in buttons],
-                         [(PICKER_PREFIX+self.path.stem,'其他目录…'),(SUBMIT_PREFIX+self.path.stem,'开始任务')])
+        self.assertEqual([(b['name'],b['text']['content']) for b in buttons],[(SUBMIT_PREFIX+self.path.stem,'开始任务')])
+
+    def test_a_card_that_names_a_workspace_is_an_older_cards_and_keeps_its_rows(self):
+        # What a butler's worktree launch and a card sent before the home start still are: the 工作区 and 运行方式 rows, 其他目录….
+        self.prepare_card()
+        other=self.root/'other'
+        other.mkdir()
+        name,_=resolve_selection(self.ctx.state_dir,self.work,str(other))
+        self.choose('bridge_launch_workspace',name)
+        token=current_token(self.ctx.state_dir,self.path.stem)
+        card=self.tap({'kind':PAGE_ACTION,'token':token,'page':'run_mode','current':'direct'})
+        rows=settings_rows(card)
+        self.assertEqual(list(rows),['harness','provider','model','effort','redaction','workspace','run_mode'])
+        self.assertEqual(rows['workspace']['current'],name)
+        self.assertEqual(rows['run_mode']['current'],'direct')
+        self.assertEqual({tap['kind'] for tap in rows['run_mode']['taps'].values()},{'bridge_launch_mode'})
+        buttons=[e for e in walk(card['body']['elements']) if e.get('tag')=='button']
+        self.assertEqual([b['text']['content'] for b in buttons],['其他目录…','开始任务'])
 
     def test_each_choice_is_recorded_and_redraws_the_card_unfolded_with_its_summary(self):
         self.prepare_card()
@@ -139,14 +156,13 @@ class LaunchCardTests(LaunchCardCase):
         self.assertEqual(settings_rows(card)['effort']['current'], '1:max')
         self.assertIn('思考预算 max', json.dumps(summary, ensure_ascii=False))
         # The option already ticked changes nothing and draws nothing.
-        workspace = self.record(token)['form_defaults']['workspace']
-        self.assertIsNone(self.tap(settings_rows(card)['workspace']['taps'][workspace]))
+        self.assertIsNone(self.tap(settings_rows(card)['effort']['taps']['1:max']))
         # A row's tap from a card sent with options pages redraws this card with that row open; its ‹ 返回 closes it,
         # and a choice there, the current one too, closes it.
-        card = self.tap({'kind': PAGE_ACTION, 'token': token, 'page': 'run_mode', 'current': 'direct'})
+        card = self.tap({'kind': PAGE_ACTION, 'token': token, 'page': 'effort', 'current': '1:max'})
         token = current_token(self.ctx.state_dir, token)
-        self.assertEqual([key for key, row in settings_rows(card).items() if row['open']], ['run_mode'])
-        card = self.tap(settings_rows(card)['run_mode']['taps']['direct'])
+        self.assertEqual([key for key, row in settings_rows(card).items() if row['open']], ['effort'])
+        card = self.tap(settings_rows(card)['effort']['taps']['1:max'])
         token = current_token(self.ctx.state_dir, token)
         self.assertFalse(any(row['open'] for row in settings_rows(card).values()))
         self.tap({'kind': PAGE_ACTION, 'token': token, 'page': 'harness', 'current': ''})
@@ -195,7 +211,7 @@ class LaunchCardTests(LaunchCardCase):
         self.assertTrue(self.record(token)['receipt_published'])
 
     @requires_extension()
-    def test_directory_return_keeps_the_chosen_model_budget_and_run_mode(self):
+    def test_directory_return_keeps_the_chosen_model_and_budget(self):
         self.prepare_card()
         _,token=self.change_model()
         token=self.choose('bridge_launch_budget','1:high',token)
@@ -208,7 +224,7 @@ class LaunchCardTests(LaunchCardCase):
         card=lark.last.card
         options=selects(card)
         self.assertEqual(options['model']['initial_option'],'maso:maso-model')
-        self.assertEqual(options['run_mode']['initial_option'],'worktree')
+        self.assertNotIn('run_mode',options)  # A new card has no 运行方式 row (a topic starts in the home).
         self.assertTrue(options['effort']['initial_option'].endswith(':high'))
         self.assertIn('开始任务',json.dumps(card,ensure_ascii=False))
 

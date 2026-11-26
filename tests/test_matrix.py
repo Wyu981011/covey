@@ -282,6 +282,17 @@ class WebRowTest(HarnessCellsCase):
                 self.assertIn(name, offered)
                 self.assertTrue(all(model["bridge_tools"] for model in models if model["harness"] == name))
 
+    def test_the_web_page_opens_a_topic_in_the_home_on_every_harness_without_a_workspace(self):
+        # Data contract v43: ``workspace`` and ``run_mode`` are optional; none, and the topic starts in the home.
+        env = SimpleNamespace(topics=self.app.topics, runtime=self.app.runtime, state_dir=self.ctx.state_dir, profile=self.ctx.profile)
+        models = web_launch.catalog(env, self.ctx, self.chat)["models"]
+        for name in CORE_HARNESSES:
+            with self.subTest(harness=name):
+                model = next(model for model in models if model["harness"] == name)
+                plan = web_launch.plan_of(env, self.ctx, self.chat, {"model": model["key"], "effort": model["start_budget"]})
+                self.assertEqual((plan["harness"], plan["run_mode"], plan["start"], plan["home_start"]), (name, "direct", True, True))
+                self.assertEqual(plan["workdir"], str(self.ctx.default_workdir.resolve()))
+
     def test_a_topic_opened_on_the_web_page_relays_to_the_private_chat_on_every_harness(self):
         for name in CORE_HARNESSES:
             with self.subTest(harness=name):
@@ -317,12 +328,12 @@ class WebSurfaceTest(WebCase):
         butler_id = butler_topic_id(self.chat)
         lead_id = projects.lead_topic_id(self.chat, self.pid)
         write_topic(self.state, topic_id=butler_id, chat_id=self.chat, harness_id=name, main_thread=True,
-                    workspace_name="ws1", workdir=str(self.state))
+                    workdir=str(self.state))
         write_topic(self.state, topic_id=lead_id, chat_id=self.chat, harness_id=name,
                     project=projects.project_field(self.pid, projects.LEAD))
         write_topic(self.state, topic_id="t-topic", chat_id=self.chat, harness_id=name, topic_number=7,
-                    origin={"title": "普通话题"}, workspace_name="ws1")
-        write_topic(self.state, topic_id="t-web", chat_id=self.chat, harness_id=name, topic_number=8, workspace_name="ws1",
+                    origin={"title": "普通话题"})
+        write_topic(self.state, topic_id="t-web", chat_id=self.chat, harness_id=name, topic_number=8,
                     root_id="om_web_root", origin={"kind": "web", "request": "web-op-1", "title": "网页开的"})
         found = {butler_id: "butler", lead_id: "lead", "t-topic": "topic", "t-web": "topic"}
         for number, topic in enumerate(found, 1):
@@ -360,6 +371,33 @@ class KnownGapsTest(HarnessCellsCase):
         """The cells GAPS lists are asked above (test_a_group_members_read_only_turn, test_redaction): one that holds now
         fails there; this one keeps GAPS to cells those tests ask."""
         self.assertLessEqual({cell for cell, _ in GAPS}, {"话题 · 群成员只读", "话题 · 敏感词脱敏"})
+
+
+class AgyBudgetTest(unittest.TestCase):
+    """管家、负责人 × Antigravity: agy loads a turn's tools up front within EAGER_BYTES and drops the largest whole past it
+    (T750). Every tool but SECONDARY, of the butler and of a lead under every switch, fits strictly within the room, so
+    each of them is loaded up front; the memory tools and repos_list are SECONDARY, and the old names are not listed."""
+
+    SWITCHES = {"COVEY_PROJECT_LEAD": ("", "p1"), "COVEY_KNOWLEDGE": ("0", "1"), "COVEY_HISTORY_CMD": ("", "/bin/true"),
+                "COVEY_BUTLER_RULES": ("0", "1"), "COVEY_PROJECTS": ("0", "1"), "COVEY_PROJECT_TIDY": ("off", "suggest"),
+                "COVEY_PROJECT_TRIAGE": ("0", "1"), "COVEY_COLLAB": ("0", "1"), "COVEY_PROJECT_AUTOWAKE": ("0", "1")}
+    OLD = {"workspaces_list", "principle_save", "principle_delete", "principles_list", "knowledge_save", "knowledge_update",
+           "knowledge_drop", "knowledge_search"}
+
+    def test_every_tool_but_the_secondary_ones_is_loaded_up_front_on_agy(self):
+        import itertools
+        from covey.core.butler_tool_specs import MEMORY_TOOLS, SECONDARY
+        self.assertLessEqual({tool["name"] for tool in MEMORY_TOOLS} | {"repos_list"}, SECONDARY)
+        for values in itertools.product(*self.SWITCHES.values()):
+            environ = dict(zip(self.SWITCHES, values))
+            tools = butler_mcp.tool_list(environ)
+            listed = names(tools)
+            first = [tool for tool in tools if tool["name"] not in SECONDARY]
+            used = sum(map(agy_home.tool_size, first))
+            with self.subTest(**{key: value for key, value in environ.items() if value}):
+                self.assertFalse(listed & self.OLD)
+                self.assertLess(used, agy_home.EAGER_BYTES, "the tools agy loads first outgrew its room: shorten them")
+                self.assertLessEqual(names(first), set(agy_home.eager_names(tools, agy_home.EAGER_BYTES)))
 
 
 if __name__ == "__main__":

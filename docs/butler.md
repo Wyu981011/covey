@@ -174,25 +174,23 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `topics_list` | group、query、limit | 按等你 → 有结果没看 → 在做 → 最近列话题 |
 | `topics_search` | clues*、limit | 按线索找是哪个话题哪一轮做的 |
 | `topic_read` | topic*、job、turns | 读话题最近几轮：问题、结论、检查点、没答的问题 |
-| `workspaces_list` | 无 | 列工作区：名字、路径、用途、最近的话题 |
-| `topic_start` | title*、prompt*、workspace*、readonly*、user_requested*、why*、attachments、criteria、harness、model、effort、basis、redaction | 为新的事开话题；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)）；填了 harness、model、effort 要写 basis（见下面[点名配置的依据](#点名配置的依据)） |
+| `repos_list` | 无 | 列仓库地图：名字、状态（可写、只读、冻结）、用途、路径；还没建地图时列登记的工作区 |
+| `topic_start` | title*、prompt*、readonly*、user_requested*、why*、repos、workspace、attachments、criteria、harness、model、effort、basis、redaction | 为新的事开话题，从主目录直接开工；`repos` 是要用的仓库（`[{name, mode: read|write}]`，最多 10 项，冻结或只读的仓库不能写）；旧参数 `workspace` 当作一项只读仓库；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)）；填了 harness、model、effort 要写 basis（见下面[点名配置的依据](#点名配置的依据)） |
 | `topic_send` | topic*、text*、note、title、criteria、attachments | 把主人的话追加给已有话题 |
 | `topic_fork` | topic*、title*、prompt*、attachments | 从已有话题分叉 |
 | `question_answer` | topic*、answers* | 替主人答选择题 |
 | `topic_priority` | topic*、remove | 看板本组内提前，或撤下 |
-| `principle_save` | scope*、workspace、text* | 记下主人的原则 |
-| `principle_delete` | id* | 删一条原则 |
-| `principles_list` | 无 | 列出原则 |
+| `memory_save` | text*、kind*、scope*、title、why、repos | 记一条记忆：`kind` 是 rule 规矩、note 资料、decision 决定，`scope` 是 global、project、topic |
+| `memory_revise` | key*、action*、text、title | 改一条记忆：update、supersede、retire |
+| `memory_search` | query*、limit | 查记忆 |
 | `settings_panel` | 无 | 在私聊发设置卡（`app/butler_panel.py`） |
 | `topics_switch` | topics*、basis*、harness、model、effort | 在私聊发批量换配置卡，主人点「确认更换」后才逐个换（[批量换配置](usage.md#批量换配置)） |
-| `knowledge_save` | scope*、kind*、text*、workspace、why、source_topic | 记一条知识条目（知识条目没关才列） |
-| `knowledge_update` | id*、text*、reason*、kind、why | 改写：新 id 取代旧 id（同上） |
-| `knowledge_drop` | id*、reason* | 作废一条（同上） |
-| `knowledge_search` | query*、workspace、history | 搜当前条目；`history` 时也搜已取代、已作废的（同上） |
 | `history_search` | query*、workspace、since | 搜 Claude、Codex、Bridge 的历史轮次（只有 `COVEY_HISTORY_CMD` 是绝对路径才列） |
 | `projects_list` | 无 | 列专项：id、名字、状态、专项的话题的 T 号、负责人最近一句（专项没关才列） |
 | `project_send` | pid*、text*、topics | 把主人的话交给专项的负责人，按主人触发的一轮处理（同上）；`topics` 里的已有话题先直接收进这个专项 |
 | `projects_tidy` | scope | 整理一遍专项（只在开了[整理专项](projects.md#整理专项)时列） |
+
+旧会话里的工具名照样能调：`workspaces_list` 当 `repos_list`，`principle_save`、`knowledge_save` 当 `memory_save`，`principle_delete`、`knowledge_update`、`knowledge_drop` 当 `memory_revise`，`principles_list`、`knowledge_search` 当 `memory_search`，参数按旧的写法收（`core/butler_tool_specs.py` 的 `RENAMED_TOOLS`）。这几个旧名不再列给模型。记忆工具在 `app/butler_knowledge.py` 有了自己的处理之前，规矩记成原则、资料和决定记成知识条目（`app/butler_tools.py`）。
 
 `topic_start` 开出的话题和同一个仓库里 30 分钟内还在做的话题标题相近时，回复末尾加“可能重复：T12《…》 也在同一个仓库做相近的事”，只提示，照常开（`app/repo_peers.py` 的 `duplicates`）。
 

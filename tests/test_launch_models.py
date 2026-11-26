@@ -37,6 +37,7 @@ from covey.core.model_settings import settings
 from covey.core.roster import NAMES
 from covey.core.state import write_private_text
 from covey.core.topics import read_topic
+from covey.core.workspaces import load_config
 
 setUpModule, tearDownModule = leftover_check()
 
@@ -515,10 +516,13 @@ class RedactionLaunchTests(InChat, UnifiedCase):
         self.assertEqual(selects(card)['redaction']['initial_option'], 'on')
         self.assertEqual(self.launch_form(token)['selected_redaction'], 'on')
 
-    def test_the_run_mode_starts_from_the_new_topic_page(self):
-        self.assertEqual(self.launch_form(self.card('direct')[1])['form_defaults'].get('run_mode', 'direct'), 'direct')
+    def test_the_new_topic_pages_run_mode_no_longer_reaches_the_card(self):
+        # The home start (docs/configuration.md): no 工作区 or 运行方式 row, whatever the 新话题 page keeps; the topic starts in the home.
         butler_settings.update(self.ctx.state_dir, topic_defaults=butler_settings.TopicDefaults(run_mode='worktree'))
-        self.assertEqual(settings_rows(self.card('worktree')[0])['run_mode']['current'], 'worktree')
+        card, token, _ = self.card('worktree')
+        self.assertNotIn('run_mode', settings_rows(card))
+        self.assertNotIn('workspace', settings_rows(card))
+        self.assertNotIn('run_mode', self.launch_form(token)['form_defaults'])
 
     def test_the_choice_survives_a_model_change_and_starts_the_topic_redacted(self):
         card, token, _ = self.card('task')
@@ -615,6 +619,8 @@ class RedactionLaunchTests(InChat, UnifiedCase):
         commit_all(self.work, 'init')
         _, token, path = self.card('tree')
         self.click(token, REDACTION_ACTION, 'on')
+        # A card that names a workspace is an older card's (a butler's worktree launch): only it can ask for a worktree.
+        self.click(token, 'bridge_launch_workspace', load_config(self.ctx.state_dir, self.work)['default'])
         self.click(token, 'bridge_launch_mode', 'worktree')
         with FakeCardKit(), mock.patch('covey.app.launch_submit.run_in_background'):
             submit_launch_form(self.child, self.target, {'chat_id': self.chat, 'message_id': 'mid',

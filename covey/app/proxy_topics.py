@@ -92,15 +92,19 @@ class ProxyTopics:
                                                                  self.proxy.voice.key("proxy-root", key), voice=self.proxy.voice)
             if not root:
                 raise RuntimeError("代答话题的起始消息发送失败")
-            base = dataclasses.replace(app.harness.context, workspace_name=settings["workspace"],
-                                       workdir=Path(settings["workdir"]))
+            name, workdir = settings.get("workspace") or "", str(settings.get("workdir") or "")
+            if not workdir:  # No workspace in the 代答 settings: the home, where every topic starts.
+                from covey.app.launch_submit import home_binding
+                name, home = home_binding(app.harness.context)
+                workdir = str(home.workdir)
+            base = dataclasses.replace(app.harness.context, workspace_name=name, workdir=Path(workdir))
             target = context_for_topic(base, {"chat_id": group, "message_id": root, "root_id": root},
                                        app.harness.store.sessions_dir)
             with LOCK:
                 data = read_topic(target)
                 data.update(harness_id=app.harness.spec.name, model=settings.get("model", ""),
                             effort=settings.get("effort", ""), model_settings_snapshot=True,
-                            workspace_name=settings["workspace"], workdir=settings["workdir"], binding_revision=1,
+                            workspace_name=name, workdir=workdir, binding_revision=1,
                             workspace_locked=True, harness_locked=True,
                             proxy={"contact": contact["key"], "chat_id": group, "root_id": root})
                 write_json(target.history_path.parent / "topic.json", data, ensure_ascii=False, indent=2)

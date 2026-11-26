@@ -104,6 +104,16 @@ class HarnessSwitchTests(UnifiedCase):
         forms = sorted((self.ctx.state_dir / 'switch-forms').glob('*.json'), key=lambda p: p.stat().st_mtime)
         return (json.loads(forms[-1].read_text()), forms[-1], send) if forms else (None, None, send)
 
+    def open_legacy(self, **raw):
+        """A card as one sent before the home start drew it (rule 10: a card already sent keeps working): its record has the
+        workspace and run mode rows' fields, not ``no_place``."""
+        form, path, send = self.open(**raw)
+        form.pop('no_place')
+        form.update(workspaces=sorted(load_config(self.ctx.state_dir, self.ctx.default_workdir)['workspaces']),
+                    selected_workspace=form['workspace'], selected_run_mode=form['current']['run_mode'])
+        path.write_text(json.dumps(form))
+        return form, path, send
+
     def click(self, form, kind, option=None, tag=''):
         event = {'chat_id': 'chat', 'event_id': 'ev-' + kind + str(option) + tag, 'message_id': form['message_id'],
                  'action_value': {'kind': kind, 'token': form['token']}, 'option': option}
@@ -249,13 +259,13 @@ class HarnessSwitchTests(UnifiedCase):
         self.assertTrue(all(len(i) <= 20 for i in ids(card)))
         # A row's tap from a card sent with options pages draws that row open; a choice there, the current one too,
         # closes it.
-        card = self.tap({'kind': switch_form.PAGE, 'token': form['token'], 'page': 'run_mode', 'current': 'direct'},
+        card = self.tap({'kind': switch_form.PAGE, 'token': form['token'], 'page': 'effort', 'current': ''},
                         form['message_id'])
-        self.assertEqual([key for key, row in settings_rows(card).items() if row['open']], ['run_mode'])
-        current = settings_rows(card)['run_mode']['current']
-        card = self.tap(settings_rows(card)['run_mode']['taps'][current], form['message_id'])
+        self.assertEqual([key for key, row in settings_rows(card).items() if row['open']], ['effort'])
+        current = settings_rows(card)['effort']['current']
+        card = self.tap(settings_rows(card)['effort']['taps'][current], form['message_id'])
         record = json.loads(path.read_text())
-        self.assertEqual((record['page'], record.get('selected_run_mode') or 'direct'), ('', current))
+        self.assertEqual((record['page'], record['selected_effort']), ('', current.split(':', 1)[1]))
         self.assertFalse(any(row['open'] for row in settings_rows(card).values()))
         self.assertIn('确认更换', json.dumps(card, ensure_ascii=False))
 
@@ -292,10 +302,15 @@ class HarnessSwitchTests(UnifiedCase):
         card = json.dumps(switch_form.build_switch_card(form), ensure_ascii=False)
         harnesses = page_options(switch_form.build_switch_card({**form, 'page': 'harness'}))
         self.assertIn(('claude', 'Claude Code'), harnesses)  # Every Harness, on the Harness row's page.
-        for text in ('确认更换', '取消', 'Codex', 'Codex 自带', 'Codex Model', 'project', '原目录', '敏感词脱敏关',
+        for text in ('确认更换', '取消', 'Codex', 'Codex 自带', 'Codex Model', '敏感词脱敏关',
                      "<font color='grey'>Harness</font>", "<font color='grey'>供应商</font>", "<font color='grey'>模型</font>",
-                     "<font color='grey'>工作区</font>", "<font color='grey'>运行方式</font>", switch_form.SWITCH_NOTE):
+                     switch_form.SWITCH_NOTE):
             self.assertIn(text, card)
+        # No 工作区 or 运行方式 (a topic stays where it starts): not a row, not the current line, not a field of the record.
+        for text in ('工作区', '运行方式', 'project', '原目录'):
+            self.assertNotIn(text, card)
+        self.assertTrue(form['no_place'])
+        self.assertNotIn('selected_workspace', form)
         self.assertNotIn(f'最近 {switch_handoff.HANDOFF_ROUNDS} 轮', card)  # The handoff's details are the model's.
         # What a switch does: one grey line under the buttons that opens on it, not four lines between the choices and
         # the buttons (T666).
@@ -576,11 +591,33 @@ class HarnessSwitchTests(UnifiedCase):
         self.assertIn('敏感词脱敏：关 → 开', text)
         self.assertIn('会话不变', text)
 
-    def test_another_workspace_rebinds_the_topic_there_with_a_fresh_session(self):
+    def test_a_card_drawn_since_the_home_start_cannot_change_the_directory(self):
         other = self.root / 'other'
         other.mkdir()
         resolve_selection(self.ctx.state_dir, self.ctx.default_workdir, str(other))
         form, path, _ = self.open()
+        self.click(form, hs.WORKSPACE, 'other')  # No row to tap: a stale click is dropped.
+        self.click(form, hs.RUN_MODE, 'worktree')
+        record = json.loads(path.read_text())
+        self.assertEqual((record['status'], record.get('selected_workspace'), record.get('selected_run_mode')), ('ready', None, None))
+        before = self.topic()
+        self.click(record, hs.CONFIRM)
+        self.assertEqual(json.loads(path.read_text())['status'], 'ready')  # Nothing chosen differs.
+        self.assertEqual((self.topic()['workdir'], self.topic().get('binding_revision', 1)),
+                         (before['workdir'], before.get('binding_revision', 1)))
+        # A tapped model alone switches, the topic staying where it is.
+        self.click(record, hs.MODEL, 'claude:claude-model')
+        self.click(json.loads(path.read_text()), hs.CONFIRM)
+        self.assertEqual(json.loads(path.read_text())['status'], 'done')
+        topic = self.topic()
+        self.assertEqual((topic['harness_id'], topic['workdir']), ('claude', before['workdir']))
+        self.assertNotIn('工作区', json.dumps(switch_form.current_line(json.loads(path.read_text())), ensure_ascii=False))
+
+    def test_another_workspace_rebinds_the_topic_there_with_a_fresh_session(self):
+        other = self.root / 'other'
+        other.mkdir()
+        resolve_selection(self.ctx.state_dir, self.ctx.default_workdir, str(other))
+        form, path, _ = self.open_legacy()
         self.assertEqual((form['selected_workspace'], form['selected_run_mode']), ('project', 'direct'))
         self.assertIn('other', form['workspaces'])
         self.click(form, hs.WORKSPACE, 'nowhere')  # Not offered: dropped.
@@ -616,7 +653,7 @@ class HarnessSwitchTests(UnifiedCase):
         value = "gpu1:%s" % device.home
         resolve_selection(self.ctx.state_dir, self.ctx.default_workdir, value)
         name = next(n for n, v in load_config(self.ctx.state_dir, self.ctx.default_workdir)["workspaces"].items() if v == value)
-        form, path, _ = self.open()
+        form, path, _ = self.open_legacy()
         self.click(form, hs.WORKSPACE, name)
         before = self.topic()
         self.click(json.loads(path.read_text()), hs.CONFIRM)  # The topic's Codex on a device that declares Claude only.
@@ -638,7 +675,7 @@ class HarnessSwitchTests(UnifiedCase):
         init_git_repo(self.work)
         (self.work / 'README.md').write_text('repo\n')
         commit_all(self.work, 'init')
-        form, path, _ = self.open()
+        form, path, _ = self.open_legacy()
         self.click(form, hs.RUN_MODE, 'worktree')
         upsert_job_record(self.ctx.state_dir, 'job-2', topic_id=self.source.topic_id, chat_id='chat', job_id=2,
                           status='running', backend='codex', kind='chat')

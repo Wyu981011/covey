@@ -24,8 +24,7 @@ class LaunchSelection(NamedTuple):
     model: str  # Its menu entry ('unavailable' on an empty menu).
     effort: str  # Its budget option.
     work_mode: str
-    workspace: str
-    names: list  # The workspace select's options, most recently used first.
+    device: str  # The 执行设备 row's choice: a devices.json alias, '' for 本机.
     notice: str
 
 
@@ -66,21 +65,20 @@ def harness_model(choices, harness, model, current):
     return (key, '') if key else None
 
 
-def launch_selection(choices, usage, config, *, model, workspace, work_mode, fresh, saved=None, draft=None,
-                     notice='', topic_budget=('', ''), device_harnesses=None, topic_model=('', ''), topic_workspace=''):
-    """The launch card's preselection. ``choices`` available_models' menu, ``usage`` the chat's selections
-    (model_usage.recent), ``config`` the workspace config; ``model`` (harness:model), ``workspace`` and
+def launch_selection(choices, usage, *, model, work_mode, fresh, saved=None, draft=None, notice='',
+                     topic_budget=('', ''), device_harnesses=None, topic_model=('', '')):
+    """The launch card's preselection (no workspace or run mode to choose: a topic starts in the home). ``choices``
+    available_models' menu, ``usage`` the chat's selections (model_usage.recent); ``model`` (harness:model) and
     ``work_mode`` the topic's binding; ``fresh`` whether it is the topic's first binding, the only one
     preferences prefill, with ``saved`` the chat's last launch (launch_defaults; anything but a dict is
-    none); ``draft`` a rebuilt card's own choices. ``topic_budget`` (Harness, budget): the 设置卡's 新话题默认
-    budget (core/butler_settings.py TopicDefaults; its Harness '' for any), ('', '') without one. ``topic_model``
-    (Harness, model) and ``topic_workspace``: what that page names, '' for 跟上次一样 (the
-    page preselects every new topic): a fresh card starts from its model (with a Harness alone, the last launch's
-    model where it is that Harness's, else the Harness's default one, ``harness_model``) and its workspace.
-    ``device_harnesses`` (workspace name → the Harnesses its device declares, device workspaces only): a card that
-    nobody has chosen a model on (no ``draft`` model) whose workspace is such a one does not start from a Harness the
-    device lacks but from its first declared one, with that model's own budget (``device_fit``); a model the owner
-    chose stays and is refused at 开始任务."""
+    none); ``draft`` a rebuilt card's own choices (its ``device``: the 执行设备 row's alias). ``topic_budget`` (Harness, budget):
+    the 设置卡's 新话题默认 budget (core/butler_settings.py TopicDefaults; its Harness '' for any), ('', '') without one.
+    ``topic_model`` (Harness, model): what that page names, '' for 跟上次一样 (the page preselects every new topic): a fresh
+    card starts from its model (with a Harness alone, the last launch's model where it is that Harness's, else the
+    Harness's default one, ``harness_model``). ``device_harnesses`` (device alias → the Harnesses it declares, devices on
+    only): a card that nobody has chosen a model on (no ``draft`` model) whose chosen device is such a one does not start
+    from a Harness the device lacks but from its first declared one, with that model's own budget (``device_fit``); a
+    model the owner chose stays and is refused at 开始任务."""
     # A budget comes with the model only from a budget preset key, saved or sent before one entry per model.
     model, budget = find_choice(choices, model) or (model, '')
     mode, first, last = work_mode, None, ('', '')
@@ -94,20 +92,14 @@ def launch_selection(choices, usage, config, *, model, workspace, work_mode, fre
                 (model, budget), first = found, found[0]
                 last = (model, saved['effort'] if isinstance(saved.get('effort'), str) else '')
                 mode = saved.get('work_mode') if isinstance(saved.get('work_mode'), str) else ''
-            workspace = next((name for name, path in config['workspaces'].items()
-                              if path == saved.get('workdir')), workspace)
         latest = None if first else model_usage.last_selection(choices, usage)
         if latest:  # No saved launch: the latest selection.
             (model, budget, mode), first = latest, latest[0]
         named = harness_model(choices, *topic_model, model)
         if named and named[0] != model:  # The 新话题 page's model over the last one.
             (model, budget), first, mode = named, named[0], ''
-        if topic_workspace in config['workspaces']:
-            workspace = topic_workspace
     # The preselected model first, then the ones the chat chose most lately; a rebuilt card keeps this order.
     choices = model_usage.ranked(choices, usage, first)
-    if workspace not in config['workspaces']:
-        workspace = config['default']
     draft = draft or {}
     found = find_choice(choices, draft.get('model'))
     if found:
@@ -117,16 +109,9 @@ def launch_selection(choices, usage, config, *, model, workspace, work_mode, fre
     mode = draft.get('work_mode') or mode
     if model not in choices:
         model = next(iter(choices), 'unavailable')
-    names = sorted(config['workspaces'], key=lambda name: -config.get('recent', {}).get(name, 0))
-    if draft.get('workspace') in config['workspaces']:
-        workspace = draft['workspace']
-    elif isinstance(draft.get('workspace'), str) and draft['workspace']:
-        # Chosen on a card sent before its removal: it stays chosen, so 开始任务 reports it instead of
-        # starting elsewhere, and the card, redrawn with it, says so.
-        workspace, names = draft['workspace'], [*names, draft['workspace']]
-        notice = '\n'.join(filter(None, [notice, f'⚠️ 工作区「{workspace}」已从列表移除，请换一个工作区。']))
+    device = draft.get('device') if isinstance(draft.get('device'), str) and draft['device'] in (device_harnesses or {}) else ''
     if not draft.get('model'):
-        fitted = device_fit(choices, model, (device_harnesses or {}).get(workspace))
+        fitted = device_fit(choices, model, (device_harnesses or {}).get(device))
         if fitted != model:
             model, budget = fitted, ''
             choices = model_usage.ranked(choices, usage, model)
@@ -154,7 +139,7 @@ def launch_selection(choices, usage, config, *, model, workspace, work_mode, fre
     if not (effort == draft.get('effort') and effort in dict(options)):
         effort = named_budget(choices.get(model, {}), effort)
     mode = work_modes(choices.get(model, {}), mode, known=False)[1]
-    return LaunchSelection(choices, model, effort, mode, workspace, names, notice)
+    return LaunchSelection(choices, model, effort, mode, device, notice)
 
 
 class SwitchSelection(NamedTuple):

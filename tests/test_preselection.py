@@ -16,10 +16,8 @@ CHOICES = {
                        'presets': SOL, 'work_modes': ['focus', 'adaptive']},
     'dsh:flash': {'harness': 'dsh', 'model': 'flash'},
 }
-CONFIG = {'default': 'project', 'workspaces': {'project': '/absolute/project', 'other': '/absolute/other'},
-          'recent': {'other': 5}}
-NAMES = ['other', 'project']
-WARNING = '⚠️ 工作区「gone」已从列表移除，请换一个工作区。'
+
+NAMES = ['other', 'project']  # switch_selection's workspace list (an older card's rows).
 
 
 def used(*selections, chat='chat'):
@@ -32,9 +30,9 @@ class LaunchSelectionTests(unittest.TestCase):
     def check(self, cases):
         for name, kwargs, expected in cases:
             with self.subTest(name):
-                args = {'model': 'codex:gpt', 'workspace': 'project', 'work_mode': '', 'fresh': False, **kwargs}
+                args = {'model': 'codex:gpt', 'work_mode': '', 'fresh': False, **kwargs}
                 choices, usage = args.pop('choices', CHOICES), args.pop('usage', [])
-                got = launch_selection(choices, usage, CONFIG, **args)
+                got = launch_selection(choices, usage, **args)
                 self.assertEqual({k: getattr(got, k) for k in expected if k != 'first'},
                                  {k: v for k, v in expected.items() if k != 'first'})
                 if 'first' in expected:
@@ -45,25 +43,24 @@ class LaunchSelectionTests(unittest.TestCase):
         last = {'model_choice': 'maso:gpt56_sol', 'effort': 'max', 'work_mode': 'adaptive', 'workdir': '/absolute/other'}
         self.check([
             ('the binding alone', {},
-             {'model': 'codex:gpt', 'effort': 'high', 'work_mode': '', 'workspace': 'project', 'names': NAMES,
-              'notice': '', 'first': 'claude:opus'}),
+             {'model': 'codex:gpt', 'effort': 'high', 'work_mode': '', 'device': '', 'notice': '', 'first': 'claude:opus'}),
             ('a MASO preset binding is its model with that budget', {'model': 'maso:gpt56_sol_reasoning_max'},
              {'model': 'maso:gpt56_sol', 'effort': 'max', 'work_mode': 'focus'}),
             ('the last launch prefills a first binding', {'fresh': True, 'saved': last},
-             {'model': 'maso:gpt56_sol', 'effort': 'max', 'work_mode': 'adaptive', 'workspace': 'other',
+             {'model': 'maso:gpt56_sol', 'effort': 'max', 'work_mode': 'adaptive',
               'first': 'maso:gpt56_sol'}),
             ('a later binding keeps its own', {'saved': last, 'usage': used(('claude:opus', 'max', ''))},
-             {'model': 'codex:gpt', 'effort': 'high', 'workspace': 'project', 'first': 'claude:opus'}),
+             {'model': 'codex:gpt', 'effort': 'high', 'first': 'claude:opus'}),
             ('a saved preset key brings its budget', {'fresh': True, 'saved': {'model_choice': 'maso:gpt56_sol_reasoning_high'}},
              {'model': 'maso:gpt56_sol', 'effort': 'high', 'work_mode': 'focus'}),
             ('a saved launch that is no dict is none', {'fresh': True, 'saved': ['maso:gpt56_sol']},
-             {'model': 'codex:gpt', 'effort': 'high', 'workspace': 'project', 'first': 'claude:opus'}),
+             {'model': 'codex:gpt', 'effort': 'high', 'first': 'claude:opus'}),
             ('without a saved launch the latest selection', {'fresh': True, 'usage': used(
                 ('codex:gpt', 'low', ''), ('maso:gpt56_sol_reasoning_high', 'high', 'adaptive'))},
              {'model': 'maso:gpt56_sol', 'effort': 'high', 'work_mode': 'adaptive', 'first': 'maso:gpt56_sol'}),
-            ('a saved model off the menu still gives its workspace', {'fresh': True, 'usage': used(('claude:opus', 'max', '')),
+            ('a saved model off the menu falls to the latest selection', {'fresh': True, 'usage': used(('claude:opus', 'max', '')),
                                                                        'saved': {'model_choice': 'codex:gone', 'workdir': '/absolute/other'}},
-             {'model': 'claude:opus', 'effort': 'max', 'workspace': 'other', 'first': 'claude:opus'}),
+             {'model': 'claude:opus', 'effort': 'max', 'first': 'claude:opus'}),
             ('the usual budget before the last launch', {'fresh': True, 'saved': {**last, 'model_choice': 'codex:gpt'},
                                                          'usage': used(('codex:gpt', 'low', ''))},
              {'model': 'codex:gpt', 'effort': 'low', 'work_mode': ''}),
@@ -86,10 +83,11 @@ class LaunchSelectionTests(unittest.TestCase):
              {'model': 'maso:gpt56_sol', 'work_mode': 'adaptive', 'effort': ''}),
             ('a work mode the model lacks is its first', {'model': 'maso:gpt56_sol', 'work_mode': 'turbo'},
              {'work_mode': 'focus'}),
-            ('the draft workspace', {'draft': {'workspace': 'other'}}, {'workspace': 'other', 'names': NAMES, 'notice': ''}),
-            ('a removed workspace stays chosen and is told', {'draft': {'workspace': 'gone'}, 'notice': '已更新'},
-             {'workspace': 'gone', 'names': [*NAMES, 'gone'], 'notice': '已更新\n' + WARNING}),
-            ('a binding workspace off the list is the default', {'workspace': 'gone'}, {'workspace': 'project', 'notice': ''}),
+            ('the draft device', {'device_harnesses': {'gpu1': ('claude',)}, 'draft': {'device': 'gpu1'}},
+             {'device': 'gpu1', 'notice': ''}),
+            ('a device devices.json no longer names is local', {'draft': {'device': 'gone'}, 'notice': '已更新'},
+             {'device': '', 'notice': '已更新'}),
+            ('an older card draft\'s workspace names no choice', {'draft': {'workspace': 'other'}}, {'device': ''}),
         ])
 
     def test_what_the_menu_still_offers(self):
@@ -101,32 +99,29 @@ class LaunchSelectionTests(unittest.TestCase):
             ('an empty menu', {'choices': {}}, {'model': 'unavailable', 'effort': 'default', 'work_mode': '', 'first': None}),
         ])
 
-    def test_a_device_workspace_starts_from_a_harness_the_device_declares(self):
-        # A-10: testbox declared only Codex, yet the card started from the hub's default Claude Code.
-        device = {'device_harnesses': {'project': ('codex',), 'other': ('dsh', 'codex')}}
+    def test_a_device_starts_from_a_harness_the_device_declares(self):
+        # A-10: testbox declared only Codex, yet the card started from the hub's default Claude Code. The 执行设备 row's choice
+        # (the draft's ``device``) is what counts; local, or no device chosen, limits nothing.
+        gpu1 = {'device_harnesses': {'gpu1': ('codex',), 'gpu2': ('dsh', 'codex')}, 'draft': {'device': 'gpu1'}}
         usual = used(('codex:gpt', 'low', ''), ('codex:gpt', 'low', ''))
         self.check([
-            ('a Harness the device lacks gives way to its first declared one', {**device, 'model': 'claude:opus'},
-             {'model': 'codex:gpt', 'effort': 'high', 'workspace': 'project', 'first': 'codex:gpt'}),
-            ('with that models usual budget', {**device, 'model': 'claude:opus', 'usage': usual},
+            ('a Harness the device lacks gives way to its first declared one', {**gpu1, 'model': 'claude:opus'},
+             {'model': 'codex:gpt', 'effort': 'high', 'device': 'gpu1', 'first': 'codex:gpt'}),
+            ('with that models usual budget', {**gpu1, 'model': 'claude:opus', 'usage': usual},
              {'model': 'codex:gpt', 'effort': 'low', 'first': 'codex:gpt'}),
-            ('a declared Harness stays', {**device, 'model': 'codex:gpt'}, {'model': 'codex:gpt', 'first': 'claude:opus'}),
-            ('the first declared one the hub offers', {'device_harnesses': {'project': ('maso', 'dsh', 'codex')},
-                                                       'model': 'claude:opus'},
+            ('a declared Harness stays', {**gpu1, 'model': 'codex:gpt'}, {'model': 'codex:gpt', 'first': 'claude:opus'}),
+            ('the first declared one the hub offers', {'device_harnesses': {'gpu1': ('maso', 'dsh', 'codex')},
+                                                       'draft': {'device': 'gpu1'}, 'model': 'claude:opus'},
              {'model': 'maso:gpt56_sol', 'effort': '', 'work_mode': 'focus'}),
-            ('none of them offered: the model stays and 开始任务 refuses it', {'device_harnesses': {'project': ('agy',)},
-                                                                              'model': 'claude:opus'},
+            ('none of them offered: the model stays and 开始任务 refuses it', {'device_harnesses': {'gpu1': ('agy',)},
+                                                                              'draft': {'device': 'gpu1'}, 'model': 'claude:opus'},
              {'model': 'claude:opus'}),
-            ('a workspace that is not on a device', {'device_harnesses': {'project': ('codex',)}, 'model': 'claude:opus',
-                                                     'workspace': 'other', 'draft': {'workspace': 'other'}},
-             {'model': 'claude:opus', 'workspace': 'other'}),
-            ('no device workspaces at all', {'model': 'claude:opus'}, {'model': 'claude:opus'}),
-            ('the draft workspace is the one that counts', {'device_harnesses': {'other': ('codex',)}, 'model': 'claude:opus',
-                                                            'draft': {'workspace': 'other'}},
-             {'model': 'codex:gpt', 'workspace': 'other'}),
-            ('a model the owner chose stays', {**device, 'model': 'claude:opus', 'draft': {'model': 'claude:opus'}},
+            ('local: nothing limits the model', {'device_harnesses': {'gpu1': ('codex',)}, 'model': 'claude:opus'},
+             {'model': 'claude:opus', 'device': ''}),
+            ('no devices at all', {'model': 'claude:opus'}, {'model': 'claude:opus'}),
+            ('a model the owner chose stays', {**gpu1, 'model': 'claude:opus', 'draft': {'model': 'claude:opus', 'device': 'gpu1'}},
              {'model': 'claude:opus'}),
-            ('the last launch is fitted too', {**device, 'model': 'claude:opus', 'fresh': True,
+            ('the last launch is fitted too', {**gpu1, 'model': 'claude:opus', 'fresh': True,
                                                'saved': {'model_choice': 'claude:opus', 'effort': 'max'}},
              {'model': 'codex:gpt', 'effort': 'high'}),
         ])
@@ -151,14 +146,14 @@ class LaunchSelectionTests(unittest.TestCase):
         ])
 
 
-    def test_the_new_topic_page_names_a_model_and_a_workspace(self):
+    def test_the_new_topic_page_names_a_model(self):
         # T546 (the owner, 2026-11-19): the 设置 card's 新话题 page preselects every new topic, the launch card's too;
         # an empty row (跟上次一样) keeps the last launch's. Only a first binding is prefilled; a card's own draft wins.
         last = {'model_choice': 'codex:gpt', 'effort': 'low', 'workdir': '/absolute/other'}
         fresh = {'fresh': True, 'saved': last}
         self.check([
             ('its model over the last launch', {**fresh, 'topic_model': ('claude', 'opus')},
-             {'model': 'claude:opus', 'effort': 'xhigh', 'workspace': 'other', 'first': 'claude:opus'}),
+             {'model': 'claude:opus', 'effort': 'xhigh', 'first': 'claude:opus'}),
             ('with its budget', {**fresh, 'topic_model': ('claude', 'opus'), 'topic_budget': ('claude', 'max')},
              {'model': 'claude:opus', 'effort': 'max'}),
             ('a Harness alone keeps the last model where it is that Harness', {**fresh, 'topic_model': ('codex', '')},
@@ -168,13 +163,10 @@ class LaunchSelectionTests(unittest.TestCase):
             ('a model gone from the menu: its Harness', {**fresh, 'topic_model': ('claude', 'gone')},
              {'model': 'claude:opus'}),
             ('a Harness off the menu: the last launch', {**fresh, 'topic_model': ('agy', '')}, {'model': 'codex:gpt'}),
-            ('its workspace over the last launch', {**fresh, 'topic_workspace': 'project'}, {'workspace': 'project'}),
-            ('a workspace off the list: the last launch', {**fresh, 'topic_workspace': 'gone'}, {'workspace': 'other'}),
-            ('a later binding keeps its own', {'saved': last, 'topic_model': ('claude', 'opus'), 'topic_workspace': 'other'},
-             {'model': 'codex:gpt', 'workspace': 'project'}),
-            ('the card keeps its own', {**fresh, 'topic_model': ('claude', 'opus'),
-                                        'draft': {'model': 'codex:gpt', 'workspace': 'other'}},
-             {'model': 'codex:gpt', 'workspace': 'other'}),
+            ('a later binding keeps its own', {'saved': last, 'topic_model': ('claude', 'opus')},
+             {'model': 'codex:gpt'}),
+            ('the card keeps its own', {**fresh, 'topic_model': ('claude', 'opus'), 'draft': {'model': 'codex:gpt'}},
+             {'model': 'codex:gpt'}),
         ])
 
     def test_a_harness_alone_never_preselects_a_model_that_names_none(self):

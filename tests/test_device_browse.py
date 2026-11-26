@@ -22,7 +22,6 @@ from support.device_guard import DeviceGuard
 from support.fake_device import FakeDevice
 from support.world import LaunchCardCase, PickerCase
 
-import test_workspaces as tw
 from covey.app import availability
 from covey.app.directory_picker import DirectoryCache, device_hop, listed_paths, step
 from covey.backends.codex.bridge import CodexBackend
@@ -341,76 +340,30 @@ class LaunchCardLabelTest(DeviceEnv, LaunchCardCase):
         super().setUp()
         self.start_devices(self.root)
 
-    def test_the_launch_card_names_the_device_of_the_chosen_workspace(self):
+    def test_the_launch_card_offers_the_devices_and_an_older_cards_workspace_names_its_device(self):
+        """主目录启动 (docs/configuration.md 主目录与仓库地图): a new card has no 工作区 row, a 执行设备 row instead (本机 and each
+        device the chat may use); a card rebuilt from an older card's workspace on a device names that device as before."""
         from covey.app.launch import build_launch_card
         config = load_config(self.ctx.state_dir, self.work)
         config["workspaces"]["gpu1-proj"] = "gpu1:/home/me/proj"
         (self.ctx.state_dir / "workspace-config.json").write_text(json.dumps(config))
         self.app.runtime.access.remember_owner_chat("chat")
         self.prepare_card()
-        self.assertIn("gpu1-proj · GPU 1", json.dumps(self.card, ensure_ascii=False))  # The row's option.
-        self.assertNotIn("设备 GPU 1", json.dumps(self.card, ensure_ascii=False))  # Not chosen: no label in the summary.
+        text = json.dumps(self.card, ensure_ascii=False)
+        self.assertIn("执行设备", text)
+        self.assertIn("GPU 1", text)  # The row's option.
+        self.assertNotIn("gpu1-proj", text)  # No 工作区 row.
+        self.assertNotIn("设备 GPU 1", text)  # 本机 chosen: no label in the summary.
         draft = {"workspace": "gpu1-proj", "model": self.record()["selected_model"]}
         chosen = build_launch_card(self.child.topics, self.target, draft=draft)
         self.assertIn("工作区 gpu1-proj · 设备 GPU 1", json.dumps(chosen, ensure_ascii=False))
         self.assertIn("gpu1-proj · GPU 1", json.dumps(chosen, ensure_ascii=False))
 
-    def test_a_local_workspace_gets_no_label(self):
+    def test_the_home_on_this_machine_gets_no_device_label(self):
         self.prepare_card()
-        self.assertNotIn("设备", json.dumps(self.card, ensure_ascii=False))
-
-
-class ManagerDeviceTest(DeviceEnv, LaunchCardCase):
-    """The workspace card: a status line per device, the device tag of its rows, the browser on a device."""
-
-    prepare = tw.WorkspaceManagerTests.prepare
-    workspaces = tw.WorkspaceManagerTests.workspaces
-    menu = tw.WorkspaceManagerTests.menu
-    standalone = tw.WorkspaceManagerTests.standalone
-    config_of = tw.WorkspaceManagerTests.config
-    updates = tw.WorkspaceManagerTests.updates
-    shown = tw.WorkspaceManagerTests.shown
-    text = tw.WorkspaceManagerTests.text
-    click = tw.WorkspaceManagerTests.click
-    record = tw.WorkspaceManagerTests.record
-
-    def setUp(self):
-        super().setUp()
-        self.start_devices(self.root)
-        self.make_tree()
-
-    def test_the_card_has_a_line_for_each_device_it_may_use_from_the_last_check(self):
-        self.prepare()
-        self.standalone()
-        self.click("refresh")
-        text = self.text()
-        self.assertIn(literal("设备 GPU 1（gpu1）：还没自检：在 Bridge 所在机器上运行 covey_devices.py check gpu1"), text)
-        self.assertNotIn("gpu2", text)  # Its spaces are team: not for the owner's private chat.
-        devices.write_json(devices.device_dir(self.ctx.state_dir, "gpu1") / "profile.json", {
-            "tools": {"claude": {"found": True, "version": "2.1.310 (Claude Code)"}},
-            "check": {"at": __import__("time").time() - 300, "ok": True, "failed": "", "text": ""}})
-        self.click("refresh")
-        self.assertIn(literal("设备 GPU 1（gpu1）：自检通过（5 分钟前） · claude 2.1.310"), self.text())
-
-    def test_adding_a_workspace_browses_the_device_and_adds_alias_and_path(self):
-        self.prepare()
-        self.standalone()
-        self.click("browse")
-        self.assertIn(DEVICE_PLACEHOLDER, self.text())
-        with DeviceGuard(self.root / "state" / "devices" / "gpu1" / "standin", device_root=self.device.home) as guard:
-            self.click("dir-search", query="gpu1:~/proj")
-            browse = self.record()["manager"]["browse"]
-            self.assertEqual((browse["device"], browse["path"]), ("gpu1", str(self.device.home / "proj")))
-            self.assertIn("设备 GPU 1（gpu1）", self.text())
-            self.click("dir-use")
-        guard.assert_untouched(self)
-        self.assertEqual(self.config_of()["workspaces"]["gpu1-proj"], f"gpu1:{self.device.home}/proj")
-        self.assertIn("✓ 已添加 gpu1&#45;proj", self.text())
-        self.assertIn("此目录已在列表", self.text())  # Marked as listed: by its path on the device.
-        self.click("dir-back")
-        self.assertIn("设备 gpu1", self.text())  # The row's tag.
-        self.assertIn(literal(f"gpu1:{self.device.home}/proj"), self.text())
-
+        text = json.dumps(self.card, ensure_ascii=False)
+        self.assertNotIn("设备 GPU 1", text)
+        self.assertNotIn("工作区", text)
 
 class AvailabilityTest(DeviceEnv, unittest.TestCase):
     def setUp(self):

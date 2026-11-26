@@ -1,4 +1,9 @@
-"""The 工作区 card (app/workspace_manager.py), the bot menu's 工作区 panel and the launch card's
+"""The 设置 card's 仓库 tab (``repos_card``, app/workspace_manager.py), read only: the home, how many repositories the map has,
+and the web page's link, or without the page the repositories' names, states and 用途. Below it the retired 工作区 card, which no
+entry sends any more (an older card's buttons say 已下线, app/workspace_manager.py): its builders stay for the cards already sent,
+the samples and the web page's old 工作区 page (``list_entries``, ``tag_words``, ``tail``).
+
+The 工作区 card (app/workspace_manager.py), the bot menu's 工作区 panel and the launch card's
 ⚙️ 添加或管理工作区…: the saved list PAGE_SIZE a page (a search box and a filter above it once there are more than a page), a row
 each with its state as coloured tags and a 移除 text button; ＋ 添加工作区… shows the directory browser of
 cards/directory.py under BROWSE_HOST. One form: every button submits the search with it. 设为默认 is gone (the 设置
@@ -18,12 +23,19 @@ from covey.cards.directory import Host, label
 from covey.core import devices
 from covey.cards import ui
 from covey.core.text import literal
-from covey.cards.butler_panel import NOTE_LENGTH, NOTES_HINT
+from covey.cards.butler_panel import NOTE_LENGTH
 from covey.cards.elements import (CARD_BYTES, CARD_NODES, fits, folded_panel, form_button, item, markdown_panel,
                                             md, menu_item, note, notice_card, panel_header, plain, row, styled_panel, tag, text_submit)
 from covey.core.workspaces import missing_workspaces
 
 MANAGER_PREFIX = 'bridge_wsm_'
+NOTES_HINT = '一句话说明这个工作区做什么'  # A 用途 input's placeholder (the retired card's).
+REPOS_TITLE = '仓库'
+STATUS_WORDS = {'active': ('可写', 'green'), 'readonly': ('只读', 'neutral'), 'frozen': ('已冻结', 'red')}  # core/repomap.py STATUSES.
+REPOS_LIMIT = 30  # The most repositories the tab names.
+REPOS_NOTE = '这一页只读。仓库的用途、状态和清理 worktree 在网页设置的「仓库」页里管。'
+REPOS_NO_WEB = '这个部署没开网页，状态和用途这里只能看；要改，打开网页（COVEY_WEB=1）后在设置的「仓库」页里改。'
+REPOS_EMPTY = '还没有登记仓库：新话题都从主目录开始。'
 TITLE = '工作区'
 PAGE_SIZE = 8  # A row is 10 card nodes (its lines, two buttons): a page is ~140 with the rest.
 NODE_LIMIT, SIZE_LIMIT = CARD_NODES - 10, CARD_BYTES - 2000  # The header is outside.
@@ -245,3 +257,29 @@ def closed_card(text):
 def folded_card():
     """The menu's card folded in place (app/workspace_manager.py, a second menu click)."""
     return folded_panel('workspaces', TITLE, menu_item('工作区'))
+
+
+def repos_card(token, view, *, home, items, link='', top=()):
+    """The 仓库 tab: ``home`` the home's tail, ``items`` the map's repositories ({name, status, note, tail}), ``link`` the web page's
+    仓库 page (core/web_sync.py page_url; '' without the page). With the link: the home, the count and the link; without it the
+    names, states and 用途 as well, REPOS_LIMIT of them. No button (a tap on the tab row draws it again): ``token`` is the card's
+    only for the tab row (``top``)."""
+    del token
+    elements = list(top)
+    if view.get('notice'):
+        elements.append(ui.receipt(view['notice']))
+    elements.append(md(f"**主目录**　{literal(home)}" if home else '**主目录**　（没有）'))
+    elements.append(md(f"**仓库**　{len(items)} 个"))
+    if link:
+        elements += [md(f"[在网页的「仓库」页看和改]({link})"), note(REPOS_NOTE)]
+    else:
+        for each in items[:REPOS_LIMIT]:
+            word, colour = STATUS_WORDS.get(each.get('status'), ('可写', 'green'))
+            extra = f" · {literal(each['note'])}" if each.get('note') else ''
+            elements.append(md(f"**{literal(each['name'])}** {tag(word, colour)}{extra}"))
+        if len(items) > REPOS_LIMIT:
+            elements.append(note(f'……其余 {len(items) - REPOS_LIMIT} 个未列出'))
+        if not items:
+            elements.append(note(REPOS_EMPTY))
+        elements.append(note(REPOS_NO_WEB))
+    return styled_panel(panel_header('workspaces', REPOS_TITLE, f'{len(items)} 个仓库'), elements, REPOS_TITLE)

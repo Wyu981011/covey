@@ -13,6 +13,8 @@ the checkpoint's plan, the token figures, the time it took and the notes of the 
   ``usage_figures``, core/metrics.py ``run_seconds``). While the turn runs ``seconds`` moves in steps of ``RUNNING_STEP`` and ``speed`` is a
   whole number, so a quiet minute does not change the item's ``rev`` every second.
 - ``notes``: the record's ``memory_notes`` as written by the memory feature ({kind, text, scope, entry_id}); none without the field.
+- ``memory`` (data contract v43): how many memory entries the turn carried, the titles of those it used and their short codes
+  (``memory_of``); a topic item's ``repos`` and ``home_start`` are ``topic_fields``.
 - ``ran_with`` (data contract v27): the Harness, provider, model, budget, workspace and 敏感词脱敏 the turn ran with (``ran_with``).
 - ``artifacts`` (data contract v32): the turn's 产物 as its answer card lists them, each by its file name only, with its cloud-space link
   and size once uploaded, why it could not be, or that it is going up (``artifacts_of``).
@@ -302,6 +304,54 @@ def notes_of(record) -> list:
     return out[-NOTES_KEPT:]
 
 
+# 主目录启动 and the memory a turn carried (data contract v43, docs/web.md): optional, left out when nothing is known.
+REPOS_KEPT = 10
+MEMORY_KEPT = 40
+
+
+def topic_fields(topic) -> dict:
+    """What a topic item adds of its ``topic.json`` (``topic``): ``repos`` [{name, mode, worktree_tail?, branch?, rules_read}]
+    (core/topic_repos.py TopicRepo, the worktree by its last part only) and ``home_start`` true for a topic that started
+    in the home. {} for an older topic."""
+    topic = topic if isinstance(topic, dict) else {}
+    out, repos = {}, []
+    for repo in topic.get("repos") if isinstance(topic.get("repos"), list) else ():
+        if not isinstance(repo, dict) or not str(repo.get("name") or "").strip():
+            continue
+        row = {"name": str(repo["name"])[:64], "mode": "write" if repo.get("mode") == "write" else "read",
+               "rules_read": bool(repo.get("rules_read_at"))}
+        if str(repo.get("worktree") or "").strip():
+            row["worktree_tail"] = Path(str(repo["worktree"])).name
+        if str(repo.get("branch") or "").strip():
+            row["branch"] = str(repo["branch"])[:120]
+        repos.append(row)
+    if repos:
+        out["repos"] = repos[:REPOS_KEPT]
+    if topic.get("home_start") is True:
+        out["home_start"] = True
+    return out
+
+
+def memory_of(state, record) -> dict | None:
+    """The turn's ``memory`` {count, used, codes}: how many entries it carried (the record's ``memory_ids``), the titles of
+    those it said it used (``memory_used``, by core/memstore.py find; the code itself while that cannot tell) and the
+    short codes it carried. None for a turn that carried none."""
+    from covey.core import memstore
+    ids = [str(item) for item in (record or {}).get("memory_ids") or () if str(item).strip()]
+    used = [str(item) for item in (record or {}).get("memory_used") or () if str(item).strip()]
+    if not ids and not used:
+        return None
+
+    def title(key):
+        try:
+            entry = memstore.find(state, key)
+        except (NotImplementedError, OSError, ValueError, KeyError, TypeError):
+            entry = None
+        return str(getattr(entry, "title", "") or key)[:memstore.TITLE_CHARS]
+    return {"count": len(ids), "used": [title(key) for key in used[:MEMORY_KEPT]],
+            "codes": [key for key in ids if memstore.is_code(key)][:MEMORY_KEPT]}
+
+
 def extras(state, record, running, now=None, snapshot=None) -> dict:
     """The optional fields of the turn the job ``record`` made (its trace read from disk, unless the caller has ``snapshot``)."""
     now = time.time() if now is None else now
@@ -323,6 +373,9 @@ def extras(state, record, running, now=None, snapshot=None) -> dict:
         notes = notes_of(record)
         if notes:
             out["notes"] = notes
+        memory = memory_of(state, record)
+        if memory:
+            out["memory"] = memory
         if not running and record.get("status") not in WAITS:
             out.update(checked(state, record))
     except (OSError, ValueError, KeyError, TypeError):

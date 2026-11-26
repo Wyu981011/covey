@@ -1020,8 +1020,7 @@ class ToolListInterplayTest(unittest.TestCase):
         self.assertFalse({"direction", "direction_by_owner"} & set(start))  # COVEY_DIRECTIONS is not read any more.
         lead = {tool["name"]: tool for tool in butler_tool_specs.listed({**self.BUTLER, butler_tool_specs.LEAD_ENV: PID, triage.ENV: "1"})}
         self.assertTrue({"project_answer", "project_escalate", "project_remember", "project_topic_start"} <= set(lead))
-        self.assertEqual(lead["project_remember"]["input_schema"]["properties"]["kind"]["enum"],
-                         ["decision", "constraint", "contact", "fact"])
+        self.assertEqual(lead["project_remember"]["input_schema"]["properties"]["kind"]["enum"], ["rule", "note"])
         self.assertIn("harness", lead["project_topic_start"]["input_schema"]["properties"])
 
 

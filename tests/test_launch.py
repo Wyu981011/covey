@@ -22,7 +22,7 @@ import time
 from unittest import mock
 
 from support.fake_lark import FakeCardKit
-from support.cards import (card_selects, current_token, page_options, selects)
+from support.cards import (card_selects, current_token, page_options, selects, settings_rows)
 from support.git import commit_all, init_git_repo, run_git
 from support.processes import leftover_check
 from support.sessions import write_session_id
@@ -58,20 +58,17 @@ class LaunchTests(LaunchCase):
         card, event = self.form('form')
         selections = card_selects(card)
         # A Claude model first: it offers 敏感词脱敏 too. Harness and provider above the model (2026-11-03).
-        self.assertEqual([e['name'] for e in selections],
-                         ['harness', 'provider', 'model', 'effort', 'redaction', 'workspace', 'run_mode'])
-        self.assertEqual(selections[6]['initial_option'], 'direct')
+        # No 工作区 or 运行方式: a topic starts in the home (no device on, so no 执行设备 row either).
+        self.assertEqual([e['name'] for e in selections], ['harness', 'provider', 'model', 'effort', 'redaction'])
         # Each row's options open under it (no select since 2026-11-04); a Harness each.
         self.assertEqual(len(page_options(card, 'harness')), len(self.app.apps))
-        # Ten workspaces, then the entry that opens the workspace manager.
-        workspaces = page_options(card, 'workspace')
-        self.assertEqual(len(workspaces), 11)
-        self.assertEqual(workspaces[-1][0], '__bridge_manage_workspaces__')
+        self.assertNotIn('工作区', json.dumps(card, ensure_ascii=False))
+        self.assertNotIn('运行方式', json.dumps(card, ensure_ascii=False))
         # The form holds only the buttons (no path input since 2026-11-03).
         form = next(e for e in card['body']['elements'] if e['tag'] == 'form')
         self.assertEqual([e['tag'] for e in form['elements']], ['column_set'])
         buttons = [c['elements'][0] for c in form['elements'][0]['columns']]
-        self.assertEqual([b['form_action_type'] for b in buttons], ['submit', 'submit'])
+        self.assertEqual([b['form_action_type'] for b in buttons], ['submit'])  # 开始任务 alone: no 其他目录….
         self.assertTrue(event['action_name'].startswith(SUBMIT_PREFIX))
 
     def test_single_submit_routes_four_harnesses_without_replacement_selection(self):
@@ -142,7 +139,7 @@ class LaunchTests(LaunchCase):
         path = ctx.state_dir / 'launch-forms' / (event['action_name'][len(SUBMIT_PREFIX):] + '.json')
         self.app.handle_card_action_event({**event, 'action_name': '', 'event_id': 'mode',
             'action_value': {'kind': 'bridge_launch_mode', 'token': path.stem}, 'option': 'copy'}, self.ctx)
-        self.assertEqual(json.loads(path.read_text())['form_defaults']['run_mode'], 'direct')
+        self.assertEqual(json.loads(path.read_text())['form_defaults'].get('run_mode', 'direct'), 'direct')
         for index, mode in enumerate(('copy', ['direct'])):
             # Only a forged form could carry it; it is refused, never defaulted.
             self.app.handle_card_action_event({**event, 'event_id': f'click-{index}',
@@ -162,6 +159,63 @@ class LaunchTests(LaunchCase):
         self.assertEqual(record['selection']['run_mode'], 'direct')
         self.assertEqual(record['selection']['branch'], '')
         self.assertNotIn('worktrees', str(job.workdir))
+
+    def test_a_card_of_the_home_start_starts_in_the_services_workdir_with_no_workspace_picked(self):
+        self.receive('task', 'hello')
+        _, event = self.form('task')
+        self.assertEqual(set(event['form_value']), {'model', 'effort', 'path'})  # Nothing of a workspace or run mode.
+        self.submit(event)
+        job = self.app.runtime.jobs.queue.get_nowait()
+        self.assertEqual(job.workdir, self.work.resolve())
+        record = next(r for r in (json.loads(f.read_text()) for f in (self.ctx.state_dir / 'launch-forms').glob('*.json'))
+                      if r.get('status') == 'done')
+        self.assertEqual((record['selection']['run_mode'], record['selection']['branch']), ('direct', ''))
+        self.assertEqual(record['selection']['workdir'], str(self.work.resolve()))
+        topic = read_topic(self.route('task')[1])
+        self.assertEqual(topic['workdir'], str(self.work.resolve()))
+
+    def test_a_card_sent_before_the_home_start_still_starts_where_its_record_says(self):
+        # Rule 10: a launch card already sent (a message waiting_workspace for it) names a workspace in its record.
+        other = self.root / 'other'
+        other.mkdir()
+        name, _ = resolve_selection(self.ctx.state_dir, self.work, str(other))
+        self.receive('task', 'hello')
+        card, event = self.form('task')
+        token = card_token(card)
+        path = self.ctx.state_dir / 'launch-forms' / (token + '.json')
+        record = json.loads(path.read_text())
+        record['form_defaults'] = {'workspace': name, 'path': '', 'run_mode': 'direct'}
+        path.write_text(json.dumps(record))
+        self.assertEqual(find_job_record(self.ctx.state_dir, 'task')['status'], 'waiting_workspace')
+        self.app.handle_card_action_event({**event, 'form_value': {'path': ''}}, self.ctx)  # Nothing posted: the record's.
+        job = self.app.runtime.jobs.queue.get_nowait()
+        self.assertEqual(job.workdir, other.resolve())
+        self.assertEqual(self.launch_form(token)['selection']['workspace'], name)
+
+    def test_a_card_that_names_a_workspace_still_asks_for_a_worktree(self):
+        repo = self.make_repo()
+        self.receive('task', 'hello')
+        _, event = self.form('task')
+        event['form_value'].update(run_mode='worktree', path=str(repo / 'pkg'))
+        background = []
+        with self.worktree_patches(background):
+            self.app.handle_card_action_event(self.choose_model(event), self.ctx)
+        self.assertEqual(len(background), 1)  # The checkout is made off the click, as before.
+        self.assertTrue(self.app.runtime.jobs.queue.empty())
+
+    def test_a_typed_path_is_the_owners_alone(self):
+        from covey.app.launch_submit import OWNER_ONLY_PATH
+        self.receive('task', 'hello')
+        _, event = self.form('task')
+        app, ctx = self.route('task')
+        app.runtime.access.is_owner = lambda operator: operator == 'owner'
+        typed = self.root / 'typed'
+        typed.mkdir()
+        before = read_topic(ctx)
+        with self.assertRaisesRegex(ValueError, OWNER_ONLY_PATH):
+            submit_launch_form(app, ctx, {**event, 'operator_id': 'member', 'form_value': {'path': str(typed)}})
+        self.assertEqual(read_topic(ctx), before)
+        self.assertTrue(self.app.runtime.jobs.queue.empty())
 
     def make_repo(self):
         repo = self.root / 'repo'
@@ -373,8 +427,8 @@ class LaunchTests(LaunchCase):
         before = read_topic(ctx)
         card, _ = self.form('fresh')
         selects = [e for e in card_selects(card) if e['name'] not in ('run_mode', 'harness', 'provider', 'model', 'work_mode')]
-        # The last launch's model with its budget (S28: no longer always 推荐), and its workspace.
-        self.assertEqual([e['initial_option'] for e in selects], ['1:high', 'renamed'])
+        # The last launch's model with its budget (S28: no longer always 推荐); no 工作区 row on a new card (主目录启动).
+        self.assertEqual([e['initial_option'] for e in selects], ['1:high'])
         self.assertEqual(read_topic(ctx), before)
 
     def test_whitespace_path_uses_saved_workspace(self):
@@ -445,12 +499,11 @@ class ChatLaunchCase(InChat, LaunchCase):
         self.assertEqual(self.app.runtime.jobs.queue.get_nowait().workdir, directory.resolve())
 
     def preselected(self, chat, mid):
-        """(model, budget, workspace directory) a new topic's card in ``chat`` preselects."""
+        """(model, budget) a new topic's card in ``chat`` preselects."""
         self.chat = chat
         chosen = selects(self.form(mid)[0])
-        workspaces = load_config(self.ctx.state_dir, self.work)['workspaces']
-        return (chosen['model']['initial_option'], chosen['effort']['initial_option'],
-                workspaces[chosen['workspace']['initial_option']])
+        self.assertNotIn('workspace', chosen)
+        return chosen['model']['initial_option'], chosen['effort']['initial_option']
 
 
 class ChatLaunchDefaultsTests(ChatLaunchCase):
@@ -462,8 +515,8 @@ class ChatLaunchDefaultsTests(ChatLaunchCase):
         direct, group = (self.root / name for name in ('direct', 'group'))
         self.launch('chat', 'direct-1', 'maso:maso-model', 'high', direct)
         self.launch('oc_group', 'group-1', 'codex:codex-model', 'low', group)
-        self.assertEqual(self.preselected('chat', 'direct-2'), ('maso:maso-model', '1:high', str(direct.resolve())))
-        self.assertEqual(self.preselected('oc_group', 'group-2'), ('codex:codex-model', '1:low', str(group.resolve())))
+        self.assertEqual(self.preselected('chat', 'direct-2'), ('maso:maso-model', '1:high'))
+        self.assertEqual(self.preselected('oc_group', 'group-2'), ('codex:codex-model', '1:low'))
         # Each record names its chat; launch-defaults.json keeps the most recent launch anywhere.
         self.assertEqual(json.loads(chat_defaults_path(self.ctx.state_dir, 'oc_group').read_text())['chat_id'], 'oc_group')
         self.assertEqual(json.loads((self.ctx.state_dir / 'launch-defaults.json').read_text()),
@@ -473,14 +526,14 @@ class ChatLaunchDefaultsTests(ChatLaunchCase):
         direct, group, new = (self.root / name for name in ('direct', 'group', 'new'))
         self.launch('chat', 'direct-1', 'maso:maso-model', 'high', direct)
         self.launch('oc_group', 'group-1', 'codex:codex-model', 'low', group)
-        self.assertEqual(self.preselected('oc_new', 'new-1'), ('codex:codex-model', '1:low', str(group.resolve())))
+        self.assertEqual(self.preselected('oc_new', 'new-1'), ('codex:codex-model', '1:low'))
         # It follows the latest launch until it has launched itself; chats that launched keep their own.
         self.launch('chat', 'direct-2', 'claude:claude-model', 'max', direct)
         self.assertEqual(self.preselected('oc_new', 'new-2')[0], 'claude:claude-model')
         self.assertEqual(self.preselected('oc_group', 'group-2')[0], 'codex:codex-model')
         self.launch('oc_new', 'new-3', 'dsh:dsh-model', 'xhigh', new)
         self.launch('chat', 'direct-3', 'maso:maso-model', 'high', direct)
-        self.assertEqual(self.preselected('oc_new', 'new-4'), ('dsh:dsh-model', '1:xhigh', str(new.resolve())))
+        self.assertEqual(self.preselected('oc_new', 'new-4'), ('dsh:dsh-model', '1:xhigh'))
 
     @requires_extension()
     def test_launch_defaults_json_from_an_older_release_still_preselects(self):
@@ -489,7 +542,7 @@ class ChatLaunchDefaultsTests(ChatLaunchCase):
         resolve_selection(self.ctx.state_dir, self.work, str(older))
         save_record(self.ctx.state_dir / 'launch-defaults.json',
               {'model_choice': 'codex:codex-model', 'effort': 'low', 'workdir': str(older.resolve())})
-        self.assertEqual(self.preselected('chat', 'first'), ('codex:codex-model', '1:low', str(older.resolve())))
+        self.assertEqual(self.preselected('chat', 'first'), ('codex:codex-model', '1:low'))
         self.assertFalse((self.ctx.state_dir / 'launch-defaults').exists())
         # A chat record that cannot be read, or that names another chat, counts as none.
         path = chat_defaults_path(self.ctx.state_dir, 'chat')
@@ -636,8 +689,7 @@ class TopicOnlyTests(LaunchCase):
         self.assertEqual(len(choices), len(self.app.apps))
         # Option lines record their choice; only the form's buttons submit.
         self.assertEqual(set(actions(card)), {'bridge_launch_harness', 'bridge_launch_provider', 'bridge_launch_model',
-                                              'bridge_launch_budget', 'bridge_launch_redaction',
-                                              'bridge_launch_workspace', 'bridge_launch_mode'})
+                                              'bridge_launch_budget', 'bridge_launch_redaction'})
         job = self.start('started')
         running = build_stream_card('progress', 'task', self.app.apps['codex'].cards.stream, job=job, include_stop_action=True)
         self.assertLessEqual(set(actions(running)), {'bridge_job_stop', 'bridge_steer', 'bridge_fork', 'bridge_switch_open'})
@@ -912,10 +964,54 @@ class DeviceHarnessLaunchTests(LaunchCase):
     def selected(self, event):
         return self.launch_form(event['action_name'][len(SUBMIT_PREFIX):])
 
-    def test_a_card_for_a_device_workspace_starts_from_the_devices_harness(self):
-        self.use_device_workspace(default=True)
+    def test_a_card_has_an_execution_device_row_only_with_devices_on(self):
         self.receive('task', 'hello')
         card, event = self.form('task')
+        rows = settings_rows(card)
+        self.assertEqual([value for value, _ in rows['device']['options']], ['', 'gpu1'])
+        self.assertEqual(rows['device']['current'], '')
+        self.assertNotIn('workspace', rows)
+        self.assertNotIn('run_mode', rows)
+        self.assertEqual(self.launch_form(card_token(card))['form_defaults'], {'device': ''})
+        with mock.patch.dict('os.environ', {'COVEY_DEVICES': ''}):
+            self.receive('task2', 'hello')
+            self.assertNotIn('device', settings_rows(self.form('task2')[0]))
+
+    def test_choosing_the_device_moves_the_selection_and_the_topic_starts_on_it(self):
+        self.use_device_workspace()  # The device's saved workspace: where its topics start.
+        self.receive('task', 'hello')
+        card, event = self.form('task')
+        event = self.pick(event, 'bridge_launch_model', 'claude:claude-model')
+        event = self.pick(event, 'bridge_launch_device', 'gpu1')
+        record = self.selected(event)
+        self.assertEqual((record['selected_model'], record['form_defaults']['device']), ('codex:codex-model', 'gpu1'))
+        self.pick(event, 'bridge_launch_device', 'nowhere')  # Not a device: dropped.
+        self.app.handle_card_action_event(event, self.ctx)
+        job = self.app.runtime.jobs.queue.get_nowait()
+        self.assertEqual((job.harness_id, read_topic(self.route('task')[1])['workspace_name']), ('codex', 'gpu1-proj'))
+        # Back to 本机 on another topic: the model stays where it is.
+        self.receive('task-2', 'hello')
+        card, event = self.form('task-2')
+        event = self.pick(event, 'bridge_launch_device', 'gpu1')
+        event = self.pick(event, 'bridge_launch_device', '')
+        self.assertEqual(self.selected(event)['form_defaults']['device'], '')
+
+    def test_a_device_that_declares_no_harness_the_card_uses_is_refused_on_start(self):
+        self.use_device_workspace()
+        self.receive('task', 'hello')
+        card, event = self.form('task')
+        event = self.pick(event, 'bridge_launch_device', 'gpu1')
+        event = self.pick(event, 'bridge_launch_model', 'claude:claude-model')
+        before = read_topic(self.route('task')[1])
+        self.app.handle_card_action_event(event, self.ctx)
+        self.assertIn('设备 gpu1 只声明了 codex（devices.json 的 harnesses）', '\n'.join(self.said()))
+        self.assertTrue(self.app.runtime.jobs.queue.empty())
+        self.assertEqual(read_topic(self.route('task')[1]), before)
+
+    def test_a_card_for_a_device_workspace_of_an_older_card_starts_from_the_devices_harness(self):
+        self.use_device_workspace(default=True)
+        self.receive('task', 'hello')
+        card, event = self.form('task', draft={'workspace': 'gpu1-proj'})
         record = self.launch_form(card_token(card))
         self.assertEqual(record['models'][record['selected_model']]['harness'], 'codex')
         self.assertEqual(next(iter(record['models'])), record['selected_model'])
@@ -958,3 +1054,101 @@ class DeviceHarnessLaunchTests(LaunchCase):
         self.app.handle_card_action_event(event, self.ctx)
         job = self.app.runtime.jobs.queue.get_nowait()
         self.assertEqual((job.harness_id, job.user_text), ('codex', 'hello'))
+
+
+class WebLaunchTests(LaunchCase):
+    """The page's launch (app/web_launch.py, data contract v43): no workspace or run mode to pick, a topic starts in the home, on a
+    device if the chat has devices on; an older page's payload that names them is checked as before."""
+
+    def setUp(self):
+        super().setUp()
+        from types import SimpleNamespace
+        self.env = SimpleNamespace(topics=self.app.topics, runtime=self.app.runtime, state_dir=self.ctx.state_dir,
+                                   profile=self.ctx.profile)
+        self.web_ctx = SimpleNamespace(state_dir=self.ctx.state_dir, profile=self.ctx.profile, default_workdir=self.work)
+        self.app.runtime.access.allows_device = lambda chat, alias: True
+
+    def catalog(self):
+        from covey.app import web_launch
+        return web_launch.catalog(self.env, self.web_ctx, 'chat')
+
+    def plan(self, **payload):
+        from covey.app import web_launch
+        model = self.catalog()['models'][0]
+        return web_launch.plan_of(self.env, self.web_ctx, 'chat', {'model': model['key'], 'effort': model['start_budget'], **payload})
+
+    def with_devices(self):
+        from support.fake_device import FakeDevice
+        from covey.core import devices
+        document = {'schema': 1, 'control_dir': '/dev/shm/covey-ssh-weblaunch',
+                    'devices': {'gpu1': {'ssh': {'host': 'gpu1.example'}, 'harnesses': ['codex'], 'spaces': ['owner_private', 'team']}}}
+        (self.root / 'devices.json').write_text(json.dumps(document))
+        patch = mock.patch.dict('os.environ', {'COVEY_DEVICES': '1', 'COVEY_DEVICES_FILE': str(self.root / 'devices.json')})
+        patch.start()
+        self.addCleanup(patch.stop)
+        device = FakeDevice()
+        self.addCleanup(lambda: self.assertEqual(device.cleanup(), []))
+        opened = mock.patch.object(devices, 'open_transport', side_effect=lambda *a, **k: device.transport)
+        opened.start()
+        self.addCleanup(opened.stop)
+        value = 'gpu1:%s' % device.home
+        resolve_selection(self.ctx.state_dir, self.work, value)  # The device's saved workspace: where its topics start.
+        return value
+
+    def test_the_catalog_has_no_workspaces_or_run_modes_and_no_devices_without_them(self):
+        data = self.catalog()
+        for key in ('workspaces', 'run_modes', 'devices'):
+            self.assertNotIn(key, data)
+        self.assertNotIn('workspace', data['preselect'])
+        self.assertNotIn('run_mode', data['preselect'])
+        self.assertTrue(data['models'])
+
+    def test_the_catalog_lists_the_devices_only_with_devices_on(self):
+        self.with_devices()
+        devices = self.catalog()['devices']
+        self.assertEqual([(d['name'], d['harnesses']) for d in devices], [('gpu1', ['codex'])])
+        self.assertTrue(devices[0]['dot'])  # The node panel's word, "gray" where there is none.
+        self.app.runtime.access.allows_device = lambda chat, alias: False
+        self.assertNotIn('devices', self.catalog())
+
+    def test_a_payload_without_workspace_or_run_mode_starts_in_the_home(self):
+        plan = self.plan()
+        self.assertEqual((plan['workdir'], plan['run_mode'], plan['start'], plan['home_start']),
+                         (str(self.work.resolve()), 'direct', True, True))
+        self.assertNotIn('repos', plan)
+
+    def test_a_payload_naming_a_device_starts_there(self):
+        value = self.with_devices()
+        models = self.catalog()['models']
+        codex, other = (next(m for m in models if (m['harness'] == 'codex') == want) for want in (True, False))
+        plan = self.plan(device='gpu1', model=codex['key'], effort=codex['start_budget'])
+        self.assertEqual((plan['workdir'], plan['run_mode'], plan['start'], plan['home_start']), (value, 'direct', True, True))
+        with self.assertRaisesRegex(ValueError, '没有设备 nowhere'):
+            self.plan(device='nowhere', model=codex['key'], effort=codex['start_budget'])
+        with self.assertRaisesRegex(ValueError, '只声明了 codex'):
+            self.plan(device='gpu1', model=other['key'], effort=other['start_budget'])
+
+    def test_a_payload_that_names_a_workspace_or_run_mode_is_checked_as_before(self):
+        name = load_config(self.ctx.state_dir, self.work)['default']
+        plan = self.plan(workspace=name, run_mode='direct')
+        self.assertEqual((plan['workspace'], plan['start'], 'home_start' in plan), (name, True, False))
+        plan = self.plan(workspace=name, run_mode='worktree')  # Only the launch card makes one: the topic waits for it.
+        self.assertEqual((plan['run_mode'], plan['start']), ('worktree', False))
+        with self.assertRaisesRegex(ValueError, '没有登记工作区「elsewhere」'):
+            self.plan(workspace='elsewhere')
+        with self.assertRaisesRegex(ValueError, '运行方式只能是'):
+            self.plan(run_mode='copy')
+        self.assertEqual(self.plan(run_mode='worktree')['workspace'], name)  # A run mode alone: in the home.
+
+    def test_the_declared_repos_go_into_the_plan_checked(self):
+        from covey.app import butler_topics
+        seen = []
+        with mock.patch.object(butler_topics, 'declared_repos', create=True,
+                               side_effect=lambda state, value: seen.append(value) or [{'name': 'covey', 'mode': 'read', 'path': '/x'}]):
+            plan = self.plan(repos=[{'name': 'covey', 'mode': 'read'}])
+        self.assertEqual((plan['repos'], seen), ([{'name': 'covey', 'mode': 'read', 'path': '/x'}], [[{'name': 'covey', 'mode': 'read'}]]))
+        with self.assertRaisesRegex(ValueError, '最多 10 个'):
+            self.plan(repos=[{'name': f'r{n}', 'mode': 'read'} for n in range(11)])
+        with mock.patch.object(butler_topics, 'declared_repos', create=True, side_effect=ValueError('没有这个仓库')):
+            with self.assertRaisesRegex(ValueError, '没有这个仓库'):
+                self.plan(repos=[{'name': 'nope', 'mode': 'write'}])

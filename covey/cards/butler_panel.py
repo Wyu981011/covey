@@ -2,14 +2,14 @@
  settings (core/butler_settings.py) on it, on one page, the 设置 card's tab 配置 (cards/settings_hub.py CONFIG; the pages
 管家, 新话题 and 模型 it took the place of are retired into it), a section a use (``config_page``): 新话题 (what every
 new topic is preselected with, the launch card's and the topics the butler opens alike: line one Harness, 供应商, 模型,
-思考预算, line two 工作区, 运行方式, 脱敏), 管家 (line one the same four, line two 工作区, 脱敏, when to compact; then the
+思考预算, line two 脱敏), 管家 (line one the same four, line two 脱敏, when to compact; then the
 private chat mode on a line of its own, MODE_CHOICES: 每条直接开一个话题 asks once more, ``mode_confirm``, before it is saved), 独立复核
 (``review_setting_list``, with COVEY_REVIEW=1), 专项负责人 (``lead_setting_list``, with COVEY_PROJECTS=1: what a new project's
 lead runs on) and under 更多 子 Agent, which every Claude Code turn the Bridge starts
 follows, the butler's too (backends/claude/subagents.py). The Harness, 供应商, 模型 and 思考预算 rows offer what the launch card's do
-(core/menu_choice.py tiers, budget_options). Each workspace's 用途 is on the 设置 card's 工作区 tab (cards/workspace_manager.py, drawn by
-app/workspace_manager.py); the page 其他 that held it is retired. A card of its own (from before the 设置 card, gen 286) shows the pages one under the other,
-then 工作区用途 (``other_page``).
+(core/menu_choice.py tiers, budget_options). There is no 工作区 row, 运行方式 row or 用途 input any more (a new topic starts in the home;
+the repositories are the 设置 card's 仓库 tab and the web page's): the old buttons are OFFLINE_KINDS, a click on one says so. A card of its own
+(from before the 设置 card, gen 286) shows the pages one under the other.
 
 No select: a choice is a settings-list row (cards/launch_config.py setting_row) whose options open under it in
 the client, two tiles to a line (``tile_lines``, setting_line); a tap records the option and redraws the whole card. Every value says the state it sets, so a click
@@ -19,13 +19,13 @@ from __future__ import annotations
 
 from covey.cards import ui
 from covey.core.text import literal
-from covey.cards.elements import (CARD_BYTES, CARD_NODES, fits, grey, item, md, note, panel_header, plain,
-                                            row, section, shown_width, styled_panel, tag, text_button)
-from covey.cards.launch_config import (DEFAULT, Setting, tap, harness_setting, known, listed,
-                                                redaction_setting, run_mode_setting, setting_line, setting_row, settings_block,
-                                                tier_rows, workspace_setting)
+from covey.cards.elements import (CARD_BYTES, CARD_NODES, fits, grey, item, md, note, panel_header,
+                                            section, shown_width, styled_panel, tag, text_button)
+from covey.cards.launch_config import (DEFAULT, Setting, tap, harness_setting, known,
+                                                redaction_setting, setting_line, setting_row, settings_block,
+                                                tier_rows)
 from covey.core.menu_choice import butler_harnesses, default_entry, entry_of, models_of, redacts, tiers
-from covey.cards.settings_hub import BUTLER, CONFIG, ICONS, TITLES, WORKSPACE, successor
+from covey.cards.settings_hub import BUTLER, CONFIG, ICONS, TITLES, successor
 from covey.core.butler_settings import COMPACT_TOKENS, SUBAGENTS as SUBAGENT_MODES
 from covey.core.workspaces import RUN_MODES
 
@@ -36,21 +36,21 @@ PROVIDER = 'bridge_main_provider'
 REDACTION = 'bridge_main_redaction'
 COMPACT = 'bridge_main_compact'
 HARNESS = 'bridge_main_harness'  # The butler's own Harness (core/butler_settings.py Settings.harness).
-SPACE = 'bridge_main_workspace'  # The butler's own workspace (Settings.workspace).
+SPACE = 'bridge_main_workspace'  # Offline (OFFLINE_KINDS): the butler's own workspace (Settings.workspace, kept, no row).
 TOPIC_HARNESS = 'bridge_main_topic_harness'
 TOPIC_PROVIDER = 'bridge_main_topic_provider'
 TOPIC_MODEL = 'bridge_main_topic_model'
 TOPIC_EFFORT = 'bridge_main_topic_effort'
-TOPIC_RUN_MODE = 'bridge_main_topic_run_mode'
+TOPIC_RUN_MODE = 'bridge_main_topic_run_mode'  # Offline (OFFLINE_KINDS).
 TOPIC_REDACTION = 'bridge_main_topic_redaction'
-TOPIC_WORKSPACE = 'bridge_main_topic_workspace'
+TOPIC_WORKSPACE = 'bridge_main_topic_workspace'  # Offline (OFFLINE_KINDS).
 SUBAGENTS = 'bridge_main_subagents'
 # Retired (docs/legacy.md 直接开工): a click on an older card's button says so (RETIRED_NOTICE) and changes nothing.
 START = 'bridge_main_start'
 UNTRUST = 'bridge_main_untrust'
 START_ROW = 'bridge_main_start_row'
 RETIRED_KINDS = frozenset({START, START_ROW, UNTRUST})
-NOTES = 'bridge_main_notes'
+NOTES = 'bridge_main_notes'  # Offline (OFFLINE_KINDS): 保存用途 of the retired 工作区 tab.
 MODE = 'bridge_main_mode'  # The private chat mode's row (MODE_CHOICES); ENABLE is its 确定改 (and an older card's button).
 SECTION = 'bridge_main_section'  # 配置's 展开 of a closed section (SECTIONS): the view's ``open``, no setting.
 # 独立复核's model (core/butler_settings.py ReviewModel), on 模型.
@@ -63,11 +63,14 @@ LEAD_HARNESS = 'bridge_main_lead_harness'
 LEAD_PROVIDER = 'bridge_main_lead_provider'
 LEAD_MODEL = 'bridge_main_lead_model'
 LEAD_EFFORT = 'bridge_main_lead_effort'
-ROWS = frozenset({HARNESS, MODEL, EFFORT, PROVIDER, REDACTION, SPACE, COMPACT, TOPIC_HARNESS, TOPIC_PROVIDER, TOPIC_MODEL, TOPIC_EFFORT, TOPIC_RUN_MODE,
-                  TOPIC_REDACTION, TOPIC_WORKSPACE, SUBAGENTS, MODE, REVIEW_HARNESS, REVIEW_PROVIDER,
+ROWS = frozenset({HARNESS, MODEL, EFFORT, PROVIDER, REDACTION, COMPACT, TOPIC_HARNESS, TOPIC_PROVIDER, TOPIC_MODEL, TOPIC_EFFORT,
+                  TOPIC_REDACTION, SUBAGENTS, MODE, REVIEW_HARNESS, REVIEW_PROVIDER,
                   REVIEW_MODEL, REVIEW_EFFORT, LEAD_HARNESS, LEAD_PROVIDER, LEAD_MODEL,
                   LEAD_EFFORT})  # Settings-list rows: the value's ``option`` is the choice.
-KINDS = ROWS | RETIRED_KINDS | {ENABLE, NOTES, SECTION}
+# The rows and the 用途 button the 工作区 rows' removal took off the cards: a click on an older card's says OFFLINE_NOTICE and changes nothing
+# (the kinds stay: an older card is still answered, app/card_actions.py RETIRED_TEXT says the same for a click no panel took).
+OFFLINE_KINDS = frozenset({SPACE, TOPIC_WORKSPACE, TOPIC_RUN_MODE, NOTES})
+KINDS = ROWS | RETIRED_KINDS | OFFLINE_KINDS | {ENABLE, SECTION}
 # 配置's sections that open one at a time (the card has room for one's options, CardKit's element budget): the view's
 # ``open`` names it, OPEN_FIRST when it names none. A closed one is its heading, 展开 and one grey line of what it holds.
 TOPIC_PART, BUTLER_PART, REVIEW_PART, LEAD_PART = 'topic', 'butler', 'review', 'lead'
@@ -80,16 +83,14 @@ PART_OF = {**dict.fromkeys((TOPIC_HARNESS, TOPIC_PROVIDER, TOPIC_MODEL, TOPIC_EF
            **dict.fromkeys((REVIEW_HARNESS, REVIEW_PROVIDER, REVIEW_MODEL, REVIEW_EFFORT), REVIEW_PART),
            **dict.fromkeys((LEAD_HARNESS, LEAD_PROVIDER, LEAD_MODEL, LEAD_EFFORT), LEAD_PART)}
 # The page each button is on: a click on a card drawn before the pages, on one of the retired pages 管家, 新话题 and 模型
-# or on the retired 其他 redraws the page of its row now (配置; 用途 on 工作区).
-PAGE_OF = {**dict.fromkeys(KINDS - {NOTES}, CONFIG), NOTES: WORKSPACE}
+# or on the retired 其他 or 工作区 redraws the page of its row now (配置).
+PAGE_OF = dict.fromkeys(KINDS, CONFIG)
 
 TITLE = '管家'  # A card of its own; on the 设置 card each page's title and icon (cards/settings_hub.py TITLES, ICONS).
 ICON = 'robot_outlined'
 CLAUDE = 'claude'  # The butler's Harness when its settings name none and Claude Code is enabled (core/butler.py HARNESS).
 COMPACT_CHOICES = (0, 100_000, 200_000, 300_000)
 SUBAGENT_LABELS = {'light': '轻量（Sonnet，搜索用 Haiku）', 'same': '跟主模型'}  # core/butler_settings.py SUBAGENTS.
-# The 工作区 row's empty choice: the launch card follows the last launch, the butler picks by 用途.
-PICK, LAST = '跟上次一样（管家按用途挑）', '跟上次一样'
 FOLLOW = {'last': '跟上次一样', 'bridge': '系统默认'}  # app/butler_topics.py LAST, BRIDGE.
 # The 模型 row's: no 默认 beside the catalog's own "Default (recommended)" (ACCEPT-325 问题 2).
 MODEL_FOLLOW = FOLLOW
@@ -99,15 +100,14 @@ MODE_CONFIRM = '改了以后，管家不再接私聊顶层的消息，话题的�
 MODE_OFF = '现在私聊顶层每条消息直接开一个话题。改回交给管家，管家的设置才用得上。'
 NOTE_LENGTH = 100  # Characters of a workspace's line.
 OPTIONS = 12  # The most options a row lists at first; fewer when the card would not fit.
-SHORT = 6  # Rows are cut to this many options before the workspaces' lines are.
+SHORT = 6  # Rows are cut to this many options.
 # The 新话题默认 模型 row lists up to this many, the whole list of most catalogs (13 models in one catalog), and is
 # cut last: the owner checks it against the launch card's.
 MODEL_ROWS = 24
 NODES, BYTES = CARD_NODES - 10, CARD_BYTES - 2000  # The header is outside.
 NOTE = '只有你能改这张卡；管家按这些设置开话题，自己改不了。'  # A card of its own (gen 286).
-# The 工作区 tab's (cards/workspace_manager.py) last line.
+# The web page's old 工作区 page's last line (app/web_settings.py, for a page that still draws it).
 WORKSPACE_NOTE = '管家按用途挑工作区。'
-NOTES_HINT = '一句话说明这个工作区做什么'  # A 用途 input's placeholder.
 # 新话题's first line: the page preselects every new topic (app/preselection.py, app/butler_topics.py).
 TOPIC_NOTE = '你自己开的、管家开的话题都照这些预选；启动卡上还能改。'
 # 独立复核's Harness row's empty choice, and the line under its rows (app/review.py pick, configured).
@@ -120,13 +120,11 @@ LEAD_FOLLOW = '跟管家一样'
 LEAD_NOTE = ('新建的专项，负责人用这里选的；没选就跟管家一样。已有的专项在专项卡上点「换配置」。'
              '只列能接 Bridge 工具的 Harness（负责人用它们派话题，在哪个上都只读）；管家开着脱敏时只列能脱敏的。')
 RETIRED_NOTICE = '直接开工已下线：管家开的话题一律直接开工，这一项不用再设。'
+OFFLINE_NOTICE = '这个选项已下线：新话题一律从主目录开始，仓库在网页设置的「仓库」页管。'
 # 管家's line under its rows while 脱敏 keeps a Harness that cannot redact off its Harness row.
 REDACT_FIRST = '开着脱敏时，Harness 只能选能脱敏的；要换别的，先把脱敏关掉。'
-# 管家's 工作区 row's empty choice.
-BUTLER_SPACE = '默认工作区'
 # The pages' last line where the butler cannot change them (ACCEPT-325 问题 3), once a page.
 LOCKED = '这些只有你能改，管家自己改不了。'
-NOTES_EMPTY = '还没有工作区。'
 # The private chat modes (docs/butler.md 私聊模式): the first row and the subtitle. True is 管家.
 MODES = {True: ('管家', 'green', '聊天区的消息交给管家', '改成纯话题'),
          False: ('纯话题', 'neutral', '私聊顶层一条消息开一个话题', '改成管家')}
@@ -152,8 +150,8 @@ def butler_setting_list(settings, choices, limit, workspaces=()):
     """The butler's own rows: its Harness (those that can run it, butler_harnesses: with 脱敏 on, only those that can
     redact; the current one kept), then 供应商, 模型 and 思考预算 as a new topic's of that Harness (tier_rows without
     empty choices: each names what it runs; a model saved before, '', is drawn 未选 and its budgets are
-    default_entry's), 脱敏 where it can redact, 工作区 (``workspaces``, the saved
-    names; '' the default) and 压缩阈值 where the Bridge compacts it."""
+    default_entry's), 脱敏 where it can redact and 压缩阈值 where the Bridge compacts it. ``workspaces``
+    is no row's any more (the 工作区 row is gone; the butler starts in the home); the argument stays for the callers."""
     harness, model = settings.butler_harness, settings.model
     offered = butler_harnesses(choices, redacting=settings.redaction)
     rows = [Setting('harness', 'Harness', HARNESS, harness,
@@ -161,9 +159,6 @@ def butler_setting_list(settings, choices, limit, workspaces=()):
     entry = entry_of(choices, harness, model) if model else default_entry(choices, harness)
     rows += tier_rows(choices, harness, model, settings.effort, entry, keys=('provider', 'model', 'effort'),
                       kinds=(PROVIDER, MODEL, EFFORT), limit=limit, empty=False)
-    space = workspace_setting('space', SPACE, settings.workspace, workspaces, first=[('', BUTLER_SPACE)])
-    rows.append(space._replace(options=listed(known(space.options, settings.workspace, settings.workspace),
-                                              settings.workspace, limit)))
     if settings.redaction or redacts(choices, harness):
         rows.append(redaction_setting('redact', REDACTION, 'on' if settings.redaction else 'off'))
     compact = settings.compact_tokens
@@ -202,8 +197,8 @@ def harness_line(settings, choices):
 def topic_settings(defaults, choices, workspaces, limit, follows=None, models=None, fallback=None, butler=True):
     """``follows``: {row key: text} of what an empty row resolves to now (follow_text); 默认 without. ``models``: the
     模型 row's own limit (``limit`` without). ``fallback``: the menu entry an empty 模型 row runs now, whose budgets
-    the 思考预算 row offers (none without, as with no Harness). ``butler``: whether the butler is on (the 工作区 row's
-    empty choice says it picks). The Harness row, then, with one chosen, tier_rows."""
+    the 思考预算 row offers (none without, as with no Harness). ``workspaces`` and ``butler`` are no row's any more (no 工作区 or
+    运行方式 row). The Harness row, then, with one chosen, tier_rows, then 脱敏."""
     follows = follows or {}
     harness, model = defaults.harness, defaults.model
     rows = [harness_setting('t_harness', TOPIC_HARNESS, harness, choices,
@@ -212,11 +207,6 @@ def topic_settings(defaults, choices, workspaces, limit, follows=None, models=No
         rows += tier_rows(choices, harness, model, defaults.effort, entry_of(choices, harness, model) if model else fallback,
                           keys=('t_provider', 't_model', 't_effort'), kinds=(TOPIC_PROVIDER, TOPIC_MODEL, TOPIC_EFFORT),
                           limit=models or limit, follows=follows)
-    space = workspace_setting('t_space', TOPIC_WORKSPACE, defaults.workspace, workspaces,
-                              first=[('', PICK if butler else LAST)])
-    rows.append(space._replace(options=listed(known(space.options, defaults.workspace, defaults.workspace),
-                                              defaults.workspace, limit)))
-    rows.append(run_mode_setting('t_run_mode', TOPIC_RUN_MODE, defaults.run_mode))
     # 脱敏 as on the launch card: only where the Harness can redact (no Harness chosen: the Bridge's may).
     if not harness or defaults.redaction or redacts(choices, harness):
         rows.append(redaction_setting('t_redact', TOPIC_REDACTION, 'on' if defaults.redaction else 'off'))
@@ -262,7 +252,7 @@ def lead_setting_list(settings, choices, limit):
 
 
 # The rows of a section in the order the owner set, two tiles to a line (``tile_lines``): Harness, 供应商 / 模型, 思考预算 / then
-# the rest (新话题: 工作区, 运行方式, 脱敏; 管家: 工作区, 脱敏, 压缩阈值, 私聊顶层的消息). A choice whose words are long
+# the rest (新话题: 脱敏; 管家: 脱敏, 压缩阈值, 私聊顶层的消息). A choice whose words are long
 # (``wide``) takes a line of its own, as wide as the card.
 MODEL_KEYS = frozenset({'harness', 'provider', 'model', 'effort', 't_harness', 't_provider', 't_model', 't_effort',
                         'r_harness', 'r_provider', 'r_model', 'r_effort', 'l_harness', 'l_provider', 'l_model', 'l_effort'})
@@ -307,14 +297,14 @@ def tile_lines(settings_):
 
 
 # What a closed section's line leaves out: the choices that are the usual ones (the open section shows them).
-USUAL = {'space': '', 't_space': '', 'redact': 'off', 't_redact': 'off', 't_run_mode': 'direct', 'mode': 'agent',
+USUAL = {'redact': 'off', 't_redact': 'off', 'mode': 'agent',
          'compact': str(COMPACT_TOKENS)}
 
 
 def summary(settings_):
     """A closed section's grey line, short: the chosen values in order, '·' between, no labels (the values say what they
     are: the Harness, the model, 思考预算 as 'xhigh'); no 供应商 (the model says it); a choice that is the usual one
-    (USUAL: the default 工作区, 运行方式 原目录, 脱敏 关, compaction at its default, the mode 交给管家) left out, one that
+    (USUAL: 脱敏 关, compaction at its default, the mode 交给管家) left out, one that
     is not named by its label where the value alone would not say it (压缩, 脱敏): 'Antigravity · Gemini 4 Neon · xhigh'."""
     parts = []
     for s in settings_:
@@ -346,7 +336,7 @@ def config_page(settings, choices, workspaces, limit, follows, models, fallback,
     ``open_`` (SECTIONS) shows its rows; each other is its heading with 展开 (SECTION) and a grey line of what it holds
     (``summary``)."""
     parts = {TOPIC_PART: topic_settings(settings.topic_defaults, choices, workspaces, limit, follows, models, fallback,
-                                        butler=butler_on) }
+                                        butler=butler_on)}
     if butler_allowed:
         parts[BUTLER_PART] = ([mode_setting(settings)] if not settings.enabled
                               else butler_setting_list(settings, choices, limit, workspaces) + [mode_setting(settings)])
@@ -402,7 +392,7 @@ def butler_panel_card(token, view, settings, choices, workspaces, top=(), follow
     def rows(settings_):
         return [setting_line(line, token=token, stamp=stamp, full=full) for line, full in tile_lines(settings_)]
 
-    def draw(limit, shown, models):
+    def draw(limit, models):
         elements = list(top) + ([ui.receipt(view['notice'])] if view.get('notice') else [])
         if page is None:  # A card of its own (gen 286): as it was, the mode a button.
             on = settings.enabled
@@ -416,26 +406,20 @@ def butler_panel_card(token, view, settings, choices, workspaces, top=(), follow
                 if s.key not in ('harness', 'space')])]
             elements += [section('新话题默认'), settings_block(rows(topic_settings(settings.topic_defaults, choices, workspaces, limit,
                                                                     follows, models, fallback)))]
-            elements += other_page(settings, workspaces[:shown], len(workspaces), value)
             elements.append(note(NOTE))
             return elements
         return elements + config_page(settings, choices, workspaces, limit, follows, models, fallback, rows, value,
                                       view.get('confirm'), butler_allowed=butler_allowed, butler_on=butler_on,
                                       review_on=review_on, open_=view.get('open') or OPEN_FIRST, lead_on=lead_on)
 
-    # Too much for one card: fewer options a row down to SHORT; then fewer workspaces' lines, where that keeps the new
-    # topic's whole model list; else that list down to SHORT, then fewer workspaces' lines, then fewer options.
-    every = len(workspaces)
-
+    # Too much for one card: fewer options a row down to SHORT; then the new topic's model list down to SHORT, then fewer options.
     def tries():
-        yield from ((limit, every, MODEL_ROWS) for limit in range(OPTIONS, SHORT - 1, -1))
-        yield from ((SHORT, shown, MODEL_ROWS) for shown in range(every - 1, 0, -1))
-        yield from ((SHORT, every, models) for models in range(MODEL_ROWS - 1, SHORT - 1, -1))
-        yield from ((SHORT, shown, SHORT) for shown in range(every - 1, 0, -1))
-        yield from ((limit, 1, limit) for limit in range(SHORT - 1, 0, -1))
+        yield from ((limit, MODEL_ROWS) for limit in range(OPTIONS, SHORT - 1, -1))
+        yield from ((SHORT, models) for models in range(MODEL_ROWS - 1, SHORT - 1, -1))
+        yield from ((limit, limit) for limit in range(SHORT - 1, 0, -1))
 
-    for limit, shown, models in tries():
-        elements = draw(limit, shown, models)
+    for limit, models in tries():
+        elements = draw(limit, models)
         if fits(elements, NODES, BYTES):
             break
     title = TITLE if page is None else TITLES[page]
@@ -450,29 +434,6 @@ def mode_confirm(value):
     and 确定改 (ENABLE off)."""
     return [md(MODE_CONFIRM), item(md(''), text_button('取消', value(MODE, option='agent')),
                                    text_button('确定改', value(ENABLE, on=False), tone='danger'))]
-
-
-def notes_button(value, named):
-    """保存用途: submits the form the 用途 inputs (note_<i>, ``named``'s order) are in."""
-    return {**text_button('保存用途', value(NOTES, workspaces=named), tone='primary'), 'name': 'main_notes',
-            'form_action_type': 'submit'}
-
-
-def other_page(settings, named, every, value):
-    """A card of its own's last part: 记住的工作区 and 工作区用途 (``named``: the workspaces listed, of ``every``)."""
-    elements = [section('工作区用途')]
-    if named:
-        inputs = [row((md(f'**{literal(name)}**'), 1),
-                      ({'tag': 'input', 'name': f'note_{i}', 'width': 'fill', 'max_length': NOTE_LENGTH,
-                        'default_value': settings.note(name), 'placeholder': plain(NOTES_HINT)}, 3),
-                      flex='none', align='center') for i, name in enumerate(named)]
-        save = notes_button(value, named)
-        more = [note(f'只列出前 {len(named)} 个工作区。')] if len(named) < every else []
-        elements.append({'tag': 'form', 'name': 'main_notes_form', 'vertical_spacing': '6px',
-                         'elements': inputs + more + [save]})
-    else:
-        elements.append(note(NOTES_EMPTY))
-    return elements
 
 
 def config_subtitle(settings, choices, butler_on, review_on, butler_allowed=True, lead_on=False):

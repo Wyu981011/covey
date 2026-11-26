@@ -106,6 +106,7 @@
 | `app/butler_handoff.py` | What a topic gets when the butler hands it work |
 | `app/butler_harness.py` | Which Harness the butler runs on, and with it a project's lead: the one the settings name when they name one |
 | `app/butler_knowledge.py` | The butler's knowledge-entry tools and history_search, the one that asks the history command … |
+| `app/butler_memory.py` | The memory tools as the Bridge runs them |
 | `app/butler_model_choice.py` | What Harness, model and thinking budget a topic the butler opens runs with |
 | `app/butler_panel.py` | The 管家 settings card: the owner changes the butler's settings in the private chat |
 | `app/butler_projects.py` | 管家的专项工具: `projects_list`, `project_send` and `projects_tidy`, handlers as app/butler_env.py describes them |
@@ -157,7 +158,7 @@
 | `app/launch.py` | The launch card of unified topics: its form, defaults and rebuilds, and closing or retiring a launch form |
 | `app/launch_models.py` | Local launch choices |
 | `app/launch_receipt.py` | Replace a submitted launch form with its immutable topic configuration |
-| `app/launch_submit.py` | A launch form's submission |
+| `app/launch_submit.py` | A launch form's submission: `submit_launch_form` checks the 开始任务 click (model, effort, device |
 | `app/lead_harness.py` | What Harness, model and budget a project's lead runs with, COVEY_PROJECTS=1 |
 | `app/leftovers.py` | After a turn's backend has closed, the processes its commands left running |
 | `app/limit_notice.py` | One notice in the owner's private chat when several topics stopped on the same cause with an automatic retry … |
@@ -237,7 +238,7 @@
 | `app/saved_send.py` | A turn's saved reply, paused question or canonical text sent the same way on its first send and on each … |
 | `app/self_upgrade.py` | 网页上点一下就升级: whether this deployment has a newer version, and its upgrade started from the page and carried on … |
 | `app/sessions.py` | Sessions: one Harness's native-session pointer of a topic |
-| `app/settings_hub.py` | The 设置 card: the bot menu's 设置 (event key MENU_KEY) puts the butler's settings on one page, 配置, the workspace … |
+| `app/settings_hub.py` | The 设置 card: the bot menu's 设置 (event key MENU_KEY) puts the butler's settings on one page, 配置, the home and … |
 | `app/source_watch.py` | The owner recalled or edited a message the Bridge acts on |
 | `app/stale.py` | Close the records daily maintenance found waiting too long (core.stale.stale_records) |
 | `app/status_cards.py` | Topic status cards: what the pinned board pins for a topic with a thread in the owner's private chat, in … |
@@ -298,7 +299,7 @@
 | `app/welcome.py` | The welcome card: sent once per new deployment to the owner's private chat, its examples taken as his messages |
 | `app/worker.py` | Ordinary topic-job execution and local records |
 | `app/workspace_gists.py` | What a new topic reads of the workspace's recent topics (COVEY_WORKSPACE_GISTS=N, off unset) |
-| `app/workspace_manager.py` | Manage the saved workspace list |
+| `app/workspace_manager.py` | The 设置 card's 仓库 tab, and the retired 工作区 manager card |
 
 ### cards
 
@@ -359,7 +360,7 @@
 | `cards/web_login.py` | The 网页登录确认 card: a browser asks to sign in to the 网页工作台 and the owner says 允许 or 不是我 in the private chat |
 | `cards/weekly_usage.py` | The 本周用量 card, the bot menu's 用量 panel, in the 夜航 look: the window in its title bar |
 | `cards/welcome.py` | The welcome card in the 夜航 look: what this machine has, how a message is answered, three examples |
-| `cards/workspace_manager.py` | The 工作区 card, the bot menu's 工作区 panel and the launch card's ⚙️ 添加或管理工作区… |
+| `cards/workspace_manager.py` | The 设置 card's 仓库 tab, read only |
 
 ### core
 

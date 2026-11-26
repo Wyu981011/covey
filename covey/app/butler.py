@@ -266,12 +266,18 @@ class Butler:
 
     def keep_topic(self, ctx, app, chat) -> str:
         """The topic.json as the settings say: created on the first message. A new model, budget or 脱敏 applies to
-        the next turn. Another workspace or Harness (``app``, the settings') applies once nothing runs, on a new
-        session (Claude Code finds a session by its directory; another Harness has a session of its own; the topic's
-        history goes with the new session's first message). The Harness the topic is bound to now."""
+        the next turn. Another Harness (``app``, the settings') applies once nothing runs, on a new session (Claude
+        Code finds a session by its directory; another Harness has a session of its own; the topic's history goes with
+        the new session's first message). Where it runs is set once: a new butler starts in the home
+        (app/butler_harness.py workspace_of), and one that runs already keeps its directory and its session (no card
+        sets the butler's workspace any more, docs/configuration.md 主目录与仓库地图). The Harness it is bound to now."""
         settings = butler_settings.load(ctx.state_dir)
         topic_id = butler_topic_id(chat)
-        name, workdir = butler_harness.workspace_of(ctx.state_dir, ctx.default_workdir, settings)
+        saved = read_object(topic_file(ctx.state_dir, topic_id))
+        if str(saved.get("workdir") or ""):
+            name, workdir = str(saved.get("workspace_name") or ""), str(saved["workdir"])
+        else:
+            name, workdir = butler_harness.workspace_of(ctx.state_dir, ctx.default_workdir, settings)
         model, effort = butler_harness.model_of(settings, app.spec.name)  # A fallback Harness's own default.
 
         def build(saved):

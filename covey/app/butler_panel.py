@@ -5,10 +5,10 @@ It is the bot menu's 设置 card's tab 配置 (app/settings_hub.py, cards/settin
 (every new topic's preselection), 管家 (the butler's own, and the private chat mode: 每条直接开一个话题
 is saved only after 确定改, the record's view keeping ``confirm`` meanwhile), 独立复核 (app/review.py), 专项负责人 (what a new
 project's lead runs on, with COVEY_PROJECTS=1: app/lead_harness.py) and 子 Agent; the
-pages 管家, 新话题 and 模型 it took the place of are retired into it; its 保存用途
-button is on the 工作区 tab, which app/workspace_manager.py draws (``pages``: this panel redraws that tab through it
-after its click). A card on a retired page (其他, 管家, 新话题, 模型) still acts: its rows land on 配置, its 用途 on 工作区
-(PAGE_OF). The tool and, unless COVEY_BUTLER=0, the menu key MENU_KEY send that card on 配置; the chat keeps one 设置
+pages 管家, 新话题 and 模型 it took the place of are retired into it. Its 工作区 and 运行方式 rows and the 工作区 tab's 保存用途 are gone
+(cards/butler_panel.py OFFLINE_KINDS): an older card's click on one says OFFLINE_NOTICE and changes nothing; the repositories are the 设置 card's
+仓库 tab (app/workspace_manager.py; ``pages``: this panel redraws that tab through it for a record still on it) and the web page's.
+A card on a retired page (其他, 管家, 新话题, 模型, 工作区) still acts: its rows land on 配置 (PAGE_OF). The tool and, unless COVEY_BUTLER=0, the menu key MENU_KEY send that card on 配置; the chat keeps one 设置
 card, a new one recalling the one before (app/bot_menu.py Panels). A click redraws the page of its button (PAGE_OF; the
 record's ``tab`` follows). No topic, no job. The 设置 card's record holds the tab's view (revision, notice); a card
 sent before there was a 设置 card (gen 286) has its own record, <state>/main-thread-panels/<token>.json, and still
@@ -24,29 +24,28 @@ from types import SimpleNamespace
 from typing import Callable, NamedTuple
 
 from covey.app import butler_harness
-from covey.app.card_actions import form_fields
 from covey.app.launch_models import available_models
 from covey.core.menu_choice import (budget_effort, butler_harnesses, default_entry, entry_of, explicit,
                                     model_provider, models_of, plain_budget, redacts, tiers)
 from covey.app.butler_env import reply
 from covey.app.butler_model_choice import resolve
 from covey.app.menu_panel import MenuPanel, hub_top
-from covey.cards.butler_panel import (COMPACT, EFFORT, ENABLE, HARNESS, KINDS, SPACE, MODE, MODE_CHOICES, MODEL, MODEL_FOLLOW,
-                                                    NOTE_LENGTH, NOTES, PAGE_OF, PROVIDER, REDACTION, RETIRED_KINDS,
-                                                    RETIRED_NOTICE, SUBAGENTS,
+from covey.cards.butler_panel import (COMPACT, EFFORT, ENABLE, HARNESS, KINDS, MODE, MODE_CHOICES, MODEL, MODEL_FOLLOW,
+                                                    NOTE_LENGTH, OFFLINE_KINDS, OFFLINE_NOTICE, PAGE_OF, PROVIDER, REDACTION,
+                                                    RETIRED_KINDS, RETIRED_NOTICE, SUBAGENTS,
                                                     TOPIC_EFFORT, TOPIC_HARNESS, TOPIC_MODEL, TOPIC_PROVIDER, TOPIC_REDACTION,
-                                                    TOPIC_RUN_MODE, TOPIC_WORKSPACE, CLAUDE, follow_text,
+                                                    CLAUDE, follow_text,
                                                     REVIEW_EFFORT, REVIEW_HARNESS, REVIEW_MODEL, REVIEW_PROVIDER,
                                                     LEAD_EFFORT, LEAD_HARNESS, LEAD_MODEL, LEAD_PROVIDER,
                                                     PART_OF, SECTION, SECTIONS,
                                                     butler_panel_card)
 from covey.cards.launch_config import effort_choices
-from covey.cards.settings_hub import BUTLER, BUTLER_PAGES, CONFIG, OTHER, RETIRED, TOPIC, WORKSPACE
+from covey.cards.settings_hub import BUTLER, BUTLER_PAGES, CONFIG, OTHER, REPOS, RETIRED, TOPIC, WORKSPACE
 from covey.core import butler, butler_settings, projects
 from covey.core.jobs import job_file, read_job_record
 from covey.core.butler_settings import SUBAGENTS as SUBAGENT_MODES
 from covey.core.state import read_object
-from covey.core.workspaces import RUN_MODES, config_path
+from covey.core.workspaces import config_path
 
 FOLDER = 'main-thread-panels'
 LOCK = 'main-thread-panel'
@@ -65,7 +64,7 @@ SAVED = {BUTLER: '已保存：管家下一轮起照这个来。', TOPIC: '已保
          LEAD: '已保存：之后新建的专项，负责人照这个来；已有的专项在专项卡上点「换配置」。'}
 # A row whose change waits for the butler to be idle and starts a new session (app/butler.py write_topic).
 SAVED_NEW_SESSION = '已保存：管家手上这一轮做完后换过去，开一个新会话，最近的对话会带上。'
-SAVED_OF = {HARNESS: SAVED_NEW_SESSION, SPACE: SAVED_NEW_SESSION}
+SAVED_OF = {HARNESS: SAVED_NEW_SESSION}
 
 
 def workspace_names(state_dir):
@@ -209,27 +208,18 @@ def saved_notice(kind):
     return SAVED_OF.get(kind) or SAVED.get(scope) or SAVED.get(PAGE_OF.get(kind), '已保存。')
 
 
-def pick_butler_workspace(rows, choices, option, state_dir):
-    """The butler's workspace: '' the default one, else a saved one."""
-    return {'workspace': option} if not option or option in workspace_names(state_dir) else None
-
-
 # A settings row's kind -> (its scope, BUTLER the butler's own, TOPIC a new topic's or bot-wide, REVIEW 独立复核's; what a
 # choice on it changes: rows, choices, option, state_dir -> the settings fields, {} for none, None when the choice is
 # no longer offered). The three scopes share the 供应商, 模型 and 思考预算 rows'.
 ROW_CHANGES = {
-    HARNESS: (BUTLER, pick_butler_harness), SPACE: (BUTLER, pick_butler_workspace),
+    HARNESS: (BUTLER, pick_butler_harness),
     PROVIDER: (BUTLER, pick_provider), MODEL: (BUTLER, pick_model), EFFORT: (BUTLER, pick_effort),
     REDACTION: (BUTLER, pick_redaction),
     COMPACT: (BUTLER, lambda rows, choices, option, state_dir: {'compact_tokens': int(option)} if option.isdigit() else None),
     TOPIC_HARNESS: (TOPIC, pick_harness), TOPIC_PROVIDER: (TOPIC, pick_provider), TOPIC_MODEL: (TOPIC, pick_model),
     TOPIC_EFFORT: (TOPIC, pick_effort),
-    TOPIC_RUN_MODE: (TOPIC, lambda rows, choices, option, state_dir: (
-        rows.save(run_mode=option) if option in RUN_MODES else None)),
     TOPIC_REDACTION: (TOPIC, lambda rows, choices, option, state_dir: (
         rows.save(redaction=option == 'on') if option in ('on', 'off') else None)),
-    TOPIC_WORKSPACE: (TOPIC, lambda rows, choices, option, state_dir: (
-        rows.save(workspace=option) if not option or option in workspace_names(state_dir) else None)),
     # 子 Agent: bot-wide (backends/claude/subagents.py), not a new topic's default, though on that page.
     SUBAGENTS: (TOPIC, lambda rows, choices, option, state_dir: (
         {'subagents': option} if option in SUBAGENT_MODES else None)),
@@ -244,8 +234,8 @@ class ButlerPanel:
     def __init__(self, topics):
         """``topics`` (app/topics.py Topics) gives the model catalog's apps and the messenger and voice."""
         self.topics = topics
-        # Its buttons act on its pages, the 工作区 tab (记住的工作区, 用途) and the retired 其他.
-        self.menu = MenuPanel(topics, 'main-thread-panel', FOLDER, LOCK, tab=(*BUTLER_PAGES, WORKSPACE, OTHER))
+        # Its buttons act on its pages and, for an older card, on the retired 工作区 and 其他 (and the 仓库 they land on).
+        self.menu = MenuPanel(topics, 'main-thread-panel', FOLDER, LOCK, tab=(*BUTLER_PAGES, REPOS, WORKSPACE, OTHER))
         # Another panel's tab its buttons are on -> tab_card(ctx, token, record) of that panel (app/settings_hub.py).
         self.pages = {}
 
@@ -365,6 +355,8 @@ class ButlerPanel:
                 notice = MODE_NOTICES.get(changes.get('enabled')) or saved_notice(value['kind'])
             elif value['kind'] in RETIRED_KINDS:
                 notice = RETIRED_NOTICE
+            elif value['kind'] in OFFLINE_KINDS:
+                notice = OFFLINE_NOTICE
         with self.menu.lock(path):
             record = self.menu.clicked(path, event)  # Read again: another click may have drawn it since.
             if record is None:
@@ -378,8 +370,6 @@ class ButlerPanel:
             part = value.get('open') if value['kind'] == SECTION else PART_OF.get(value['kind'])
             if outcome == 'main_panel' and part in SECTIONS:
                 view['open'] = part
-            if value['kind'] == NOTES:
-                view.pop('notes_edit', None)  # 保存用途 ends the 工作区 tab's editing (app/workspace_manager.py).
             tab = record.get('tab', CONFIG)
             if view.get('hub') and outcome == 'main_panel':
                 tab = PAGE_OF.get(value['kind'], tab)  # The page of the row it changed (a card from before the pages).
@@ -400,10 +390,8 @@ class ButlerPanel:
         if kind == MODE:  # 交给管家 (每条直接开一个话题 waits for 确定改: click); the mode it is already: nothing.
             on = MODE_CHOICES.get(option, (None,))[0]
             return None if on is None else {} if on == settings.enabled else {'enabled': on}
-        if kind in RETIRED_KINDS:  # 直接开工 and 记住的工作区 are retired (docs/legacy.md): an older card's click changes nothing.
+        if kind in RETIRED_KINDS or kind in OFFLINE_KINDS:  # 直接开工, 记住的工作区 and the 工作区 rows are gone: an older card's click changes nothing.
             return {}
-        if kind == NOTES:
-            return self.notes(settings, value, form_fields(event))
         if not isinstance(option, str):
             return None
         choices = available_models(self.topics, ctx)
@@ -451,7 +439,8 @@ class ButlerPanel:
 
     @staticmethod
     def notes(settings, value, fields):
-        """保存用途: each listed workspace's line from its input (note_<i>), empty removes it."""
+        """A workspace's 用途 line from its input (note_<i>), empty removes it: what the web page's old 工作区 page's 用途 saves
+        (app/web_settings.py change_note); the card has no 保存用途 button any more."""
         named = value.get('workspaces')
         if not isinstance(named, list) or not isinstance(fields, dict):
             return None

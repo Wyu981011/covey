@@ -236,7 +236,7 @@ class RetiredWordsTest(unittest.TestCase):
         for extra in ({}, ALL_ON):
             listed = butler_tool_specs.listed(dict(extra))
             self.assertClean(tool_texts(listed), f"butler tools {sorted(extra)}")
-        everything = (*butler_tool_specs.TOOLS, *butler_tool_specs.KNOWLEDGE_TOOLS, *butler_tool_specs.HISTORY_TOOLS,
+        everything = (*butler_tool_specs.TOOLS, *butler_tool_specs.HISTORY_TOOLS,
                       *butler_tool_specs.PROJECT_TOOLS, *butler_tool_specs.TRIAGE_TOOLS, *butler_tool_specs.BUTLER_PROJECT_TOOLS)
         self.assertClean(tool_texts(everything), "all tools")
         self.assertClean(tool_texts(butler_tool_specs.lead_tools()), "lead tools")
@@ -256,7 +256,7 @@ class RetiredWordsTest(unittest.TestCase):
         self.assertEqual(butler_tools.STEP_STATES["done"], look.word("done"))
         retired = ("等你回答", "需要你回答", "有结果未看", "做完没看", "进行中", "已完成", "执行失败", "已中断")
         self.environment(**ALL_ON)
-        everything = (*butler_tool_specs.TOOLS, *butler_tool_specs.KNOWLEDGE_TOOLS, *butler_tool_specs.HISTORY_TOOLS,
+        everything = (*butler_tool_specs.TOOLS, *butler_tool_specs.HISTORY_TOOLS,
                       *butler_tool_specs.PROJECT_TOOLS, *butler_tool_specs.TRIAGE_TOOLS, *butler_tool_specs.BUTLER_PROJECT_TOOLS)
         texts = [*tool_texts(everything), prompts.butler_rules(), project_lead.lead_rules(),
                  *turn_words.GROUP_NAMES.values(), *turn_words.RESULTS.values()]

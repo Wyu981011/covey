@@ -21,7 +21,7 @@ from covey.core import spaces
 from covey.core.groups import group_path, save_group
 from covey.core.proxy import write_contact, write_settings
 from covey.core.state import write_json
-from covey.cards.launch_config import MANAGE_OPTION, PICKER_PREFIX, WORKSPACE_ACTION
+from covey.cards.launch_config import PICKER_PREFIX
 from covey.core.jobs import BridgeReplyJob, find_job_record, upsert_job_record
 from covey.core.topics import read_topic, remember_topic_message
 from covey.core.workspaces import load_config
@@ -417,15 +417,6 @@ class GroupLaunchCardTests(GroupFixture, LaunchCardCase):
             handler(*args)
         return [call.card for call in lark.calls if call.method == 'PUT']
 
-    def test_a_member_cannot_open_the_workspace_manager_and_the_card_says_so(self):
-        click = {**self.callback, 'operator_id': MEMBER, 'event_id': 'manage',
-                 'action_value': {'kind': WORKSPACE_ACTION, 'token': self.path.stem}, 'option': MANAGE_OPTION}
-        self.app.handle_card_action_event(click, self.ctx)
-        [card] = self.run_queued(self.app.workspace_manager)
-        self.assertIn('仅机器人主人可以管理工作区列表', json.dumps(card, ensure_ascii=False))
-        self.assertIn('开始任务', json.dumps(card, ensure_ascii=False))  # Still the launch card.
-        self.assertEqual((self.record()['status'], self.outcomes()), ('replaced', ['owner_only']))
-
     def test_a_member_cannot_open_the_directory_picker_and_the_card_says_so(self):
         from support.cards import fill
         click = {'operator_id': MEMBER, 'chat_id': 'chat', 'message_id': 'mid', 'event_id': 'pick',
@@ -436,38 +427,6 @@ class GroupLaunchCardTests(GroupFixture, LaunchCardCase):
         self.assertNotIn('picker', self.record())
         self.assertEqual(self.outcomes(), ['owner_only'])
 
-    def test_a_member_click_on_an_open_workspace_manager_is_refused_on_it(self):
-        owner = {**self.callback, 'event_id': 'manage',
-                 'action_value': {'kind': WORKSPACE_ACTION, 'token': self.path.stem}, 'option': MANAGE_OPTION}
-        self.app.handle_card_action_event(owner, self.ctx)
-        self.run_queued(self.app.workspace_manager)
-        revision = self.record()['manager']['revision']
-        name = f'bridge_wsm_{self.path.stem}:{revision}:prune'
-        self.app.handle_card_action_event({**self.callback, 'operator_id': MEMBER, 'action_name': name,
-                                           'action_value': {}, 'form_value': {}}, self.ctx)
-        [card] = self.run_queued(self.app.workspace_manager)
-        self.assertIn('仅机器人主人可以管理工作区列表', json.dumps(card, ensure_ascii=False))
-        self.assertEqual(self.record()['manager']['revision'], revision + 1)
-
-    def test_a_member_click_on_the_owners_directory_browsers_changes_nothing(self):
-        (self.root / 'fresh').mkdir()
-        before = json.loads((self.ctx.state_dir / 'workspace-config.json').read_text())
-        owner = {**self.callback, 'event_id': 'manage',
-                 'action_value': {'kind': WORKSPACE_ACTION, 'token': self.path.stem}, 'option': MANAGE_OPTION}
-        self.app.handle_card_action_event(owner, self.ctx)
-        self.run_queued(self.app.workspace_manager)
-        name = f"bridge_wsm_{self.path.stem}:{self.record()['manager']['revision']}:browse"
-        self.app.handle_card_action_event({**self.callback, 'action_name': name, 'action_value': {}, 'form_value': {}},
-                                          self.ctx)
-        self.run_queued(self.app.workspace_manager)
-        revision = self.record()['manager']['revision']
-        self.app.handle_card_action_event({**self.callback, 'operator_id': MEMBER, 'action_value': {}, 'form_value': {},
-                                           'action_name': f'bridge_wsm_{self.path.stem}:{revision}:dir-use'}, self.ctx)
-        [card] = self.run_queued(self.app.workspace_manager)
-        text = json.dumps(card, ensure_ascii=False)
-        self.assertIn('仅机器人主人可以管理工作区列表', text)
-        self.assertIn('添加此目录', text)  # Still the browser.
-        self.assertEqual(json.loads((self.ctx.state_dir / 'workspace-config.json').read_text()), before)
 
 
 class StrayNoticeTests(LaunchCardCase):
@@ -498,16 +457,6 @@ class StrayNoticeTests(LaunchCardCase):
         self.assertIn('配置没有更新', self.said()[-1])
         self.assertEqual(self.replied_to(), 'task')
 
-    def test_a_workspace_manager_that_did_not_open_is_said_in_the_topic(self):
-        manager = self.app.workspace_manager
-        manager.started = True
-        self.app.handle_card_action_event({**self.callback, 'action_value': {'kind': WORKSPACE_ACTION,
-                                           'token': self.path.stem}, 'option': MANAGE_OPTION}, self.ctx)
-        handler, *args = manager.queue.get_nowait()
-        with FakeCardKit(None):
-            handler(*args)
-        self.assertIn('工作区管理未能打开', self.said()[-1])
-        self.assertEqual(self.replied_to(), 'task')
 
 
 class GroupLaunchTests(GroupFixture, LaunchCase):

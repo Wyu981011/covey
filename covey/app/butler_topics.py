@@ -2,12 +2,12 @@
 topic_fork, handlers as app/butler_env.py describes them. Only in the owner's private chat.
 
 - ``topic_start`` sends the topic card (cards/topic_card.py) at the chat's top level, opens the topic on it as
-  app/forks.py opens a fork on its root, and replaces the card once with the topic's number. A topic that
-  starts at once (always, but in a worktree) is bound as a fork is and its first turn is
-  submitted; any other waits on its launch card, prefilled from ``origin.launch`` in its topic.json
-  (app/launch.py build_launch_card), with the prompt as the waiting turn. A workspace on a device (COVEY_DEVICES=1) is
-  checked as 开始任务 checks it before anything is opened (``device_binding``) and runs in 原目录 (with 独立 worktree in the
-  settings, its launch card waits for the owner's click).
+  app/forks.py opens a fork on its root, and replaces the card once with the topic's number. Every new topic starts at
+  once in the home with the repositories it names (``plan_start``, ``declared_repos``; docs/configuration.md 主目录与仓库地图),
+  is bound as a fork is and its first turn is submitted; one an older release saved to wait (独立 worktree) waits on its
+  launch card, prefilled from ``origin.launch`` in its topic.json (app/launch.py build_launch_card), with the prompt as
+  the waiting turn. An older call's workspace on a device (COVEY_DEVICES=1) is checked as 开始任务 checks it before
+  anything is opened (``device_binding``) and runs there in 原目录.
 - ``topic_send`` gives the owner's words to a topic: a supplement to its turn while one runs (app/steering.py
   deliver_steer), else its next turn, headed by the topic's title. A line in the topic's thread says the butler
    passed the owner's words on.
@@ -58,7 +58,7 @@ from covey.core.history_storage import append_history
 from covey.core.steer import SteerRefused, SteerUncertain
 from covey.core.topics import (claim_area_root, load_topic, message_topic, read_topic, topic_label,
                                        retired_topic, topic_title, workspace_locked)
-from covey.core.workspaces import RUN_MODES, load_config, topic_context, touch_workspace
+from covey.core.workspaces import RUN_MODES, config_path, load_config, topic_context, touch_workspace
 
 NO_CHAT = "还不知道主人和机器人的私聊（主人还没在私聊里发过消息），没有执行。"
 
@@ -231,66 +231,130 @@ def device_binding(env, workspace, value, harness, title):
     return binding, device
 
 
-def plan_start(env, args, settings, *, ask=False):
-    """What topic_start opens: the Harness, model and budget as ``resolve`` finds them; the settings' workspace
-    (a workspace there is always the one), else the call's; the settings' run mode and redaction, the call's
-    ``redaction`` (true or false) in place of the latter. A str saying why not. ``ask`` (topic_start's): a topic that
-    would redact on a Harness that cannot is refused (``redaction_refusal``) instead of opened without; a call that says
-    redaction=false, after the owner agreed, opens it so.
+REPOS_MAX = 10
+REPO_NAME_CHARS = 64
+REPO_MODES = ("read", "write")
+NO_WRITE = {"frozen": "已冻结", "readonly": "只读"}  # core/repomap.py STATUSES a topic may not write to.
 
-    A workspace on a device (``device_binding``) gives the plan its stored value as ``workdir`` (``gpu1:/home/me/proj``,
-    never a path resolved here), ``device`` and ``device_title``; it runs in 原目录, the only run mode a device has, and a
-    run mode of 独立 worktree in the settings is kept as ``worktree_wanted`` (topic_start leaves the start to the owner's
-    click on the launch card then). It never redacts: a topic that would is refused as above, in a device's words. With
-    多设备 off, a workspace written ``alias:path`` is refused (DEVICE_SWITCH_OFF), never resolved as a path here."""
+
+def declared_repos(state_dir, value, *, workspace="", now=None) -> list:
+    """The repositories a new topic says it uses (topic_start's and project_topic_start's ``repos``, the web page's launch,
+    docs/configuration.md 主目录与仓库地图) as ``topic.json`` keeps them (core/topic_repos.py TopicRepo's keys): each
+    ``{name, path, mode, source: "declared", first_at}``, by the repo map's names (core/repomap.py), or a saved
+    workspace's while the map has none of that name. ``workspace``: an older call's argument, one more read. A name
+    twice is one, its write kept. ValueError says what is wrong: not a list of at most REPOS_MAX ``{name, mode}``, a
+    name neither has (with the names to choose from), a write to a repository the map holds frozen or read-only."""
+    if value in (None, "", []) and not workspace:
+        return []
+    if value in (None, ""):
+        value = []
+    if not isinstance(value, list) or len(value) > REPOS_MAX:
+        raise ValueError(f"repos 要是最多 {REPOS_MAX} 项的列表，每项 {{name, mode: read|write}}")
+    asked = [{"name": workspace, "mode": "read"}] if workspace else []
+    for item in value:
+        name = str(item.get("name") or "").strip() if isinstance(item, dict) else ""
+        mode = item.get("mode", "read") if isinstance(item, dict) else ""
+        if not name or len(name) > REPO_NAME_CHARS or mode not in REPO_MODES:
+            raise ValueError(f"repos 的每一项要有 name（{REPO_NAME_CHARS} 字内）和 mode（read 或 write）")
+        asked.append({"name": name, "mode": mode})
+    from covey.core import repomap
+    repos = repomap.read(state_dir)
+    spaces = read_object(config_path(Path(state_dir))).get("workspaces")  # Read only: a missing list is made by no one here.
+    spaces = spaces if isinstance(spaces, dict) else {}
+    now = time.time() if now is None else now
+    found = {}
+    for item in asked:
+        name, mode = item["name"], item["mode"]
+        repo = repomap.find(repos, name)
+        if repo is not None:
+            if mode == "write" and repo.status in NO_WRITE:
+                raise ValueError(f"仓库「{repo.name}」{NO_WRITE[repo.status]}，不能改；只读就把 mode 写成 read")
+            name, path = repo.name, repo.path
+        elif name in spaces and not devices.is_device_value(spaces[name]):
+            path = str(Path(spaces[name]).expanduser())
+        else:
+            known = [repo.name for repo in repos] or [space for space, where in spaces.items() if not devices.is_device_value(where)]
+            raise ValueError(f"仓库地图里没有「{name[:40]}」，可选：{'、'.join(known[:20]) or '（没有）'}；用 repos_list 看")
+        kept = found.get(name)
+        if kept is None or mode == "write":
+            found[name] = {"name": name, "path": path, "mode": mode if kept is None else "write", "source": "declared",
+                           "first_at": now}
+    return list(found.values())
+
+
+def plan_start(env, args, settings, *, ask=False):
+    """What topic_start opens: the Harness, model and budget as ``resolve`` finds them; the home, where every new topic
+    starts (docs/configuration.md 主目录与仓库地图, app/launch_submit.py home_binding: its ``workspace`` and ``workdir`` as
+    before, so an older release reads them), ``home_start`` and the ``repos`` it uses (``declared_repos``); the
+    settings' redaction, the call's ``redaction`` (true or false) in place of it. Every new topic starts at once in 原目录:
+    the run mode 独立 worktree is gone (a repository to change gets its worktree from ``covey repo use --write``). A str
+    saying why not. ``ask`` (topic_start's): a topic that would redact on a Harness that cannot is refused
+    (``redaction_refusal``) instead of opened without; a call that says redaction=false, after the owner agreed, opens it so.
+
+    An older call's ``workspace`` (or the settings' new-topic workspace, which no card sets any more) that is on a device
+    (``device_binding``) still opens the topic there, in the device's directory, with ``device`` and ``device_title``; it
+    never redacts: a topic that would is refused as above, in a device's words. With 多设备 off, a workspace written
+    ``alias:path`` is refused (DEVICE_SWITCH_OFF). Any other ``workspace`` is one more repository read."""
     defaults = settings.topic_defaults
     found = resolve(env.topics, env.state_dir, env.chat(), defaults, args)
     if isinstance(found, str):
         return found
     app, base = found["app"], found["base"]
+    named = arg_text(args.get("workspace"))
+    legacy = named or defaults.workspace
     config = load_config(Path(env.state_dir), base.default_workdir)
-    workspace = defaults.workspace or arg_text(args.get("workspace"))
-    if workspace not in config["workspaces"]:
-        return f"没有登记工作区「{workspace}」，可选：{'、'.join(config['workspaces'])}。"
-    value, binding, device = config["workspaces"][workspace], None, None
+    value, binding, device = config["workspaces"].get(legacy, ""), None, None
     if devices.is_device_value(value):
-        checked = device_binding(env, workspace, value, found["harness"], app.spec.title)
+        checked = device_binding(env, legacy, value, found["harness"], app.spec.title)
         if isinstance(checked, str):
             return checked
         binding, device = checked
     elif devices.device_shaped(value):
-        return DEVICE_SWITCH_OFF.format(workspace=workspace, alias=str(value).split(":", 1)[0], value=value)
+        return DEVICE_SWITCH_OFF.format(workspace=legacy, alias=str(value).split(":", 1)[0], value=value)
+    try:
+        repos = declared_repos(env.state_dir, args.get("repos"), workspace=named if binding is None else "")
+    except ValueError as exc:
+        return f"没有开话题：{exc}"
     asked = args.get("redaction") if isinstance(args.get("redaction"), bool) else None
     wanted = defaults.redaction if asked is None else asked
     redacts = backend_capabilities(app.backend, devices.with_binding(base, binding) if binding else base).redaction
     if ask and wanted and not redacts:
         if binding is not None:
             words = DEVICE_REDACTION_CANNOT if asked is True else DEVICE_REDACTION
-            return words.format(workspace=workspace, alias=binding.device)
+            return words.format(workspace=legacy, alias=binding.device)
         return redaction_refusal(env, found["harness"], app.spec.title, asked is True)
-    run_mode = defaults.run_mode if defaults.run_mode in RUN_MODES else "direct"
+    if binding is None:
+        from covey.app.launch_submit import home_binding
+        workspace, home = home_binding(base)
+        workdir = str(home.workdir)
+    else:
+        workspace, workdir = legacy, binding.value
     plan = {"harness": found["harness"], "model": found["model"], "model_key": found["model_key"],
             "effort": found["effort"], "work_mode": getattr(base, "work_mode", "") or "", "workspace": workspace,
-            "workdir": binding.value if binding else str(Path(value).expanduser().resolve()),
-            "run_mode": "direct" if binding else run_mode, "redaction": bool(wanted and redacts)}
-    if binding is not None:
+            "workdir": workdir, "run_mode": "direct", "redaction": bool(wanted and redacts), "repos": repos}
+    if binding is None:
+        plan["home_start"] = True
+    else:
         plan.update(device=binding.device, device_title=device.title)
-        if run_mode == "worktree":
-            plan["worktree_wanted"] = True
     return plan
 
 
 def config_line(env, plan):
-    """The topic card's configuration: Harness · 模型 · 思考预算 · 工作区 (· 设备) · 运行方式 (· 脱敏) (· 按「…」); 设备 the
-    title of the device a workspace there is on, as the launch card names it; 按「…」 what the call named its Harness, model or
+    """The topic card's configuration: Harness · 模型 · 思考预算 · 主目录 (· 仓库 …) (· 脱敏) (· 按「…」), or for a topic on a
+    device (or an older plan) 工作区 (· 设备) · 运行方式 in place of 主目录 and its repositories; 设备 the title of the
+    device a workspace there is on, as the launch card names it; 按「…」 what the call named its Harness, model or
     budget on (app/config_basis.py), when it named one."""
     app = env.topics.apps[plan["harness"]]
     model = app.cards.model_label(app.harness.context, plan["model"]) if plan["model"] else ""
     model = model.split(" · ", 1)[-1] if model else (plan["model"] or "默认模型")
+    if plan.get("home_start"):
+        names = [f"{repo['name']}{'（改）' if repo.get('mode') == 'write' else ''}" for repo in plan.get("repos") or ()]
+        where = ["主目录", *(["仓库 " + "、".join(names)] if names else [])]
+    else:
+        where = ["工作区 " + plan["workspace"], *(["设备 " + plan["device_title"]] if plan.get("device_title") else []),
+                 RUN_MODES[plan["run_mode"]]]
     return (app.spec.title, model, "思考预算 " + (plan["effort"] or unnamed_budget(env, app, plan)),
-            "工作区 " + plan["workspace"],
-            *(["设备 " + plan["device_title"]] if plan.get("device_title") else []),
-            RUN_MODES[plan["run_mode"]], *(["脱敏"] if plan["redaction"] else []),
+            *where, *(["脱敏"] if plan["redaction"] else []),
             *([config_basis.line(plan["basis"])] if plan.get("basis") else []))
 
 
@@ -336,8 +400,7 @@ def topic_start(env, request):
             return reply(False, plan)
         if shown:
             plan["basis"] = shown
-        # A worktree takes minutes to check out; the launch card creates it and survives a restart. A device's workspace
-        # runs in 原目录 only: with 独立 worktree in the settings the owner's click on the launch card starts it there.
+        # Every new topic starts at once (a plan saved by an older release before a restart keeps its own ``start``).
         plan["start"] = plan["run_mode"] == "direct" and not plan.get("worktree_wanted")
         # Judged read-only and started without the owner's click: its first turn says so and is held to it
         # (app/tool_limits.py LOOK). A plan saved before it has none: as before.
@@ -438,6 +501,10 @@ def bind_topic(env, app, request, path, record, args, event, config, kind="main"
                 data[criteria.KEY] = items
             if lead is not None:  # Written with the binding: the thread's first turn is queued only after it.
                 data["project"] = projects.project_field(lead[0], projects.MEMBER)
+            if plan.get("home_start"):  # 主目录启动 (core/topic_repos.py): where it started and what it said it uses.
+                data["home_start"] = True
+            if plan.get("repos"):
+                data["repos"] = [dict(repo) for repo in plan["repos"]]
             if plan["start"]:
                 data.update(model=plan["model"], effort=plan["effort"], model_settings_snapshot=True,
                             workspace_name=plan["workspace"], workdir=plan["workdir"],

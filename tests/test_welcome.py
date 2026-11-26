@@ -166,9 +166,10 @@ class CardTest(unittest.TestCase):
         card = cards.welcome_card({**VIEW, "down": [["Antigravity", "没登录"]]})
         words = texts(card)
         for part in ("欢迎使用 Covey", "装在 devbox", "有事直接在这里说", "管家先接住每句话", "出现表情，就是收到了",
-                     "Harness：Codex、Claude Code", "现在用不了：Antigravity（没登录）", "默认工作区：work", "/absolute/work"):
+                     "Harness：Codex、Claude Code", "现在用不了：Antigravity（没登录）", "主目录：/absolute/work"):
             self.assertIn(part, words)
         self.assertNotIn("启动卡", words)
+        self.assertNotIn("默认工作区：", words)  # The machine's line names the home, not a workspace.
         self.assertEqual(buttons(card), [(cards.TRY, {"kind": cards.KIND, "example": n}, False) for n in range(3)])
         self.assertEqual(card["config"]["summary"]["content"], "欢迎使用 Covey · 有事直接在这里说")
 
@@ -182,11 +183,12 @@ class CardTest(unittest.TestCase):
                 self.assertNotIn("表情", words)
         self.assertIn("装好并登录 Claude Code", texts(cards.welcome_card({**VIEW, "butler": cards.NO_CLAUDE})))
 
-    def test_a_default_workspace_with_no_project_yet_says_how_to_add_one(self):
+    def test_a_home_with_no_project_yet_says_how_to_add_one(self):
         words = texts(cards.welcome_card({**VIEW, "bare_workspace": True}))
         self.assertIn(cards.BARE_WORKSPACE, words)
         self.assertLess(words.index("/absolute/work"), words.index(cards.BARE_WORKSPACE))
-        self.assertIn("「设置」→「工作区」→「＋ 添加工作区…」", cards.BARE_WORKSPACE)
+        self.assertIn("「仓库」", cards.BARE_WORKSPACE)
+        self.assertNotIn("工作区", cards.BARE_WORKSPACE)
         self.assertNotIn(cards.BARE_WORKSPACE, texts(cards.welcome_card(VIEW)))
 
     def test_an_example_tried_is_off_and_one_that_failed_is_offered_again(self):

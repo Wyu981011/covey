@@ -684,6 +684,7 @@ class Collector:
             "kind": "butler" if butler else "lead" if project else "topic", "round": len(ran)}
         if ran:
             body["started_at"] = board_read.started_at(ran[0])
+        body.update(web_turns.topic_fields(data))  # v43: the repositories it uses and whether it started in the home.
         context = next((turn["context"] for turn in reversed(turns) if turn.get("context")), None)
         if context:
             body["context"] = context

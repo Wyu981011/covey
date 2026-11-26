@@ -423,6 +423,91 @@ class HandlerTest(unittest.TestCase):
         self.assertIn("等你 → 在做 → 有结果", note)
 
 
+class ReposAndMemoryToolsTest(unittest.TestCase):
+    """repos_list and the memory tools (docs/butler.md 记忆), each run as the older tools were until their own handlers
+    are there (app/repos_turn.py repos_list, app/butler_knowledge.py memory_*), and the older names an earlier session
+    still calls (core/butler_tool_specs.py RENAMED_TOOLS) taken with their arguments as they were."""
+
+    setUp = HandlerTest.setUp
+
+    def call(self, name, **args):
+        from covey.app import butler_memory
+        handlers = {**butler_tools.TOOLS, **butler_memory.TOOLS}  # As app/unified.py puts them together.
+        return handlers[name](self.env, butler_requests.Request("r1", name, args, "main-1", NOW))
+
+    def test_repos_list_reads_the_repo_map_and_without_one_the_saved_workspaces(self):
+        (self.state / "workspace-config.json").write_text(json.dumps({"default": "bridge", "workspaces": {"bridge": "/w/bridge"}}))
+        answer = self.call("repos_list")
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual(answer["text"].splitlines(), ["仓库地图还没有建，下面是登记的工作区（名字可以写进 repos）：", "bridge（默认） · /w/bridge"])
+        (self.state / "repos.json").write_text(json.dumps({"version": 1, "repos": [
+            {"name": "covey", "path": "/w/covey", "note": "核心", "status": "active"},
+            {"name": "old", "path": "/w/old", "status": "frozen"}]}, ensure_ascii=False), encoding="utf-8")
+        self.assertEqual(self.call("repos_list")["text"].splitlines(), ["covey · 可写 · 用途：核心 · /w/covey", "old · 已冻结 · /w/old"])
+        with mock.patch("covey.app.repos_turn.repos_list", create=True, return_value={"ok": True, "text": "W1 的", "data": {"n": 1}}):
+            self.assertEqual(self.call("repos_list"), {"ok": True, "text": "W1 的", "data": {"n": 1}})
+
+    def test_the_older_names_run_as_the_new_tools(self):
+        from covey.core.butler_tool_specs import current_name
+        self.assertEqual([current_name(name) for name in ("workspaces_list", "principle_save", "knowledge_save", "principle_delete",
+                                                          "knowledge_update", "knowledge_drop", "principles_list", "knowledge_search")],
+                         ["repos_list", "memory_save", "memory_save", "memory_revise", "memory_revise", "memory_revise",
+                          "memory_search", "memory_search"])
+
+    def test_memory_save_keeps_a_rule_as_a_principle_and_an_older_calls_arguments_as_they_were(self):
+        saved = self.call("memory_save", text="回复先给结论", kind="rule", scope="global")
+        self.assertTrue(saved["ok"], saved)
+        self.assertIn("已记下通用的原则", saved["text"])
+        old = self.call("memory_save", scope="owner", text="不在根目录递归搜索")  # principle_save's arguments.
+        self.assertTrue(old["ok"], old)
+        found = self.call("memory_search", query="结论")
+        self.assertIn("回复先给结论", found["text"])
+        self.assertNotIn("不在根目录递归搜索", found["text"])
+        self.assertIn("不在根目录递归搜索", self.call("memory_search")["text"])  # principles_list's: no query.
+        self.assertIn("这一版还记不到专项或话题", self.call("memory_save", text="x", kind="rule", scope="project")["text"])
+        with self.assertRaises(ValueError):
+            self.call("memory_save", text="x", kind="practice", scope="global")
+
+    def test_memory_revise_retires_or_replaces_a_principle(self):
+        first = self.call("memory_save", text="用 Codex 跑长任务", kind="rule", scope="global")["data"]["id"]
+        changed = self.call("memory_revise", key=first, action="update", text="长任务用 Codex")
+        self.assertTrue(changed["ok"], changed)
+        self.assertIn(f"取代 {first}", changed["text"])
+        texts = self.call("memory_search")["text"]
+        self.assertIn("长任务用 Codex", texts)
+        self.assertNotIn("用 Codex 跑长任务", texts)
+        newer = changed["data"]["id"]
+        self.assertTrue(self.call("memory_revise", id=newer)["ok"])  # principle_delete's arguments.
+        self.assertIn("还没有记下的原则", self.call("memory_search")["text"])
+        self.assertFalse(self.call("memory_revise", key="R7K2", action="retire")["ok"])
+
+    def test_the_memory_tools_hand_on_to_their_own_handlers_once_they_are_there(self):
+        calls = []
+
+        def made(env, args):
+            calls.append(args)
+            return {"ok": True, "text": "记下了 R7K2", "data": {"code": "R7K2"}}
+        with mock.patch("covey.app.butler_knowledge.memory_save", create=True, side_effect=made):
+            self.assertEqual(self.call("memory_save", text="t", kind="note", scope="global")["text"], "记下了 R7K2")
+            self.call("memory_save", scope="workspace", workspace="covey", kind="pitfall", text="坑")  # knowledge_save's.
+        self.assertEqual(calls, [{"text": "t", "kind": "note", "scope": "global"},
+                                 {"text": "坑", "kind": "note", "scope": "global", "repos": ["covey"]}])
+        with mock.patch("covey.app.butler_knowledge.memory_revise", create=True, side_effect=made):
+            self.call("memory_revise", id="k1a2b3c", reason="作废")  # knowledge_drop's.
+        self.assertEqual(calls[-1], {"key": "k1a2b3c", "action": "retire", "why": "作废"})
+
+    def test_the_leads_project_remember_takes_rule_and_note_before_its_handler_does(self):
+        seen = []
+        from covey.app import butler_memory
+        with mock.patch.dict(butler_tools.project_tools.TOOLS, {"project_remember": lambda env, request: seen.append(request.args) or {
+                "ok": True, "text": "ok", "data": {}}}):
+            butler_memory.TOOLS["project_remember"](self.env, butler_requests.Request("r1", "project_remember", {
+                "kind": "rule", "title": "部署", "text": "改完就部署"}, "lead-1", NOW))
+            butler_memory.TOOLS["project_remember"](self.env, butler_requests.Request("r2", "project_remember", {
+                "kind": "fact", "text": "旧的"}, "lead-1", NOW))
+        self.assertEqual(seen, [{"kind": "constraint", "title": "部署", "text": "部署：改完就部署"}, {"kind": "fact", "text": "旧的"}])
+
+
 class OpeningArgumentsTest(unittest.TestCase):
     """What the model reads of topic_start and project_topic_start: a Harness, model or budget the owner names must be
     passed on (2026-11-16: "用 Claude Code" opened a topic on the default Harness)."""

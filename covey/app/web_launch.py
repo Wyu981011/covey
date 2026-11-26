@@ -7,14 +7,14 @@ owner's private chat, pushed for the page's chat box (``catalog``), and the page
   preselected model first, then the chat's recent ones), each model with its Harness and provider and their titles, the budgets the
   card offers (core/menu_choice.py plain_budgets: the levels by name), ``start_budget`` (the budget the card
   preselects when that model is chosen: launch_selection with that model as the draft, so the 新话题 page's budget, the chat's usual one
-  and 推荐 come in the card's order), whether it can redact and its work modes; the workspaces the private chat may use, most recently
-  used first, a device's with its title and the Harnesses it declares; and ``preselect``, what a launch card of the private chat
+  and 推荐 come in the card's order), whether it can redact and its work modes; ``devices`` (v43, only with COVEY_DEVICES=1 and devices: [{name, dot, harnesses}], the page's 执行设备 choice; no
+  workspaces or run modes any more: a topic starts in the home); and ``preselect``, what a launch card of the private chat
   preselects now (the 新话题 page, the last 开始任务, the chat's usage). The page applies two rules of the card's: a Harness or provider
   choice keeps the model when it is among that one's models, else takes the first in this order (core/menu_choice.py tier_pick); a
   model choice takes its ``start_budget``.
 - ``launch``: the choices checked as 开始任务 checks them (the model on the menu, a budget it offers, a work mode it has, 敏感词脱敏 only
-  where it can redact, a workspace of the list the chat may use, a device's only where it is allowed and declares the Harness, never a
-  worktree on a device), then the topic opened as the butler opens one that starts at once (app/butler_topics.py: its topic card at the
+  where it can redact, a device's only where it is allowed and declares the Harness; an older page's workspace and run mode as before, never a
+  worktree on a device; ``repos``, at most ten, as app/butler_topics.py declared_repos takes them), then the topic opened as the butler opens one that starts at once (app/butler_topics.py: its topic card at the
   top level of the private chat with the configuration line, its topic.json bound, its first turn queued), the turn being the owner's own
   words (no handoff). The choice is kept as the chat's last 开始任务 and in its usage (app/launch_submit.py remember_launch), so the next card
   and the next page preselect it. A worktree takes minutes to check out, which only the launch card does: such a topic gets the launch
@@ -68,14 +68,34 @@ def _reads(env, ctx, chat) -> dict:
             "defaults": defaults}
 
 
-def _selection(env, choices, config, harnesses, reads, draft=None):
+def _selection(env, choices, reads, draft=None):
+    from covey.app.launch import alias_harnesses
     from covey.app.preselection import launch_selection
     _, base = base_app(env)
     defaults = reads["defaults"]
-    return launch_selection(choices, reads["usage"], config, device_harnesses=harnesses,
-                            model=f"{env.topics.default}:{base.model}", workspace=config["default"], work_mode="", fresh=True,
+    return launch_selection(choices, reads["usage"], device_harnesses=alias_harnesses(),
+                            model=f"{env.topics.default}:{base.model}", work_mode="", fresh=True,
                             saved=reads["saved"], draft=draft, topic_budget=reads["budget"],
-                            topic_model=(defaults.harness.lower(), defaults.model), topic_workspace=defaults.workspace)
+                            topic_model=(defaults.harness.lower(), defaults.model))
+
+
+def device_rows(env, ctx, chat) -> list:
+    """The data contract v43 ``devices`` of the launch block: [{name, dot, harnesses}] of the devices the chat may use, only with
+    COVEY_DEVICES=1 and devices in devices.json (else empty, and the page has no such choice). ``dot``: the node panel's status
+    word (app/web_panels.py node_row), "gray" where it is not known."""
+    from covey.app.launch import alias_harnesses
+    harnesses = alias_harnesses()
+    if not harnesses:
+        return []
+    dots = {}
+    try:
+        from covey.app.node_panel import facts
+        from covey.app.web_panels import node_row
+        dots = {row["alias"]: node_row(row)["dot"] for row in facts(Path(ctx.state_dir), "")["rows"]}
+    except Exception:  # noqa: BLE001 - a dot the page cannot read is gray, not a launch refused
+        pass
+    return [{"name": alias, "dot": dots.get(alias) or "gray", "harnesses": list(declared)}
+            for alias, declared in harnesses.items() if env.runtime.access.allows_device(chat, alias)]
 
 
 def catalog(env, ctx, chat) -> dict:
@@ -83,11 +103,9 @@ def catalog(env, ctx, chat) -> dict:
     from covey.app.launch_models import available_models
     from covey.core.menu_choice import budget_options, harness_of, offered_models, plain_budget, plain_budgets, tiers
     from covey.core.defaults import WORK_MODES
-    from covey.core.workspaces import RUN_MODES
     choices = available_models(env.topics, ctx)
-    config, titles, harnesses = workspace_config(env, ctx, chat)
     reads = _reads(env, ctx, chat)
-    found = _selection(env, choices, config, harnesses, reads)
+    found = _selection(env, choices, reads)
     # The models the launch card lists (docs/ui.md 13 U5): Claude Code's "Default (recommended)" names none, so it is not
     # one of them; 开始任务's check (model_choice) still takes the whole menu.
     ranked = offered_models(found.choices, found.model)
@@ -99,7 +117,7 @@ def catalog(env, ctx, chat) -> dict:
         # the preselected and default ones are replaced by the level they name. 开始任务's check (model_choice) still
         # takes the card's whole list, a superset.
         options = plain_budgets(entry)
-        start = plain_budget(entry, _selection(env, choices, config, harnesses, reads, draft={"model": key}).effort)
+        start = plain_budget(entry, _selection(env, choices, reads, draft={"model": key}).effort)
         default = plain_budget(entry, budget_options(entry)[1])
         models.append({"key": key, "harness": harness, "harness_title": names.get(harness, harness),
                        "provider": entry.get("provider", ""), "provider_title": providers.get(entry.get("provider", ""), "自带"),
@@ -113,13 +131,10 @@ def catalog(env, ctx, chat) -> dict:
                        "work_mode_texts": {mode: "{}（{}）".format(*WORK_MODES[mode]) if mode in WORK_MODES else mode
                                            for mode in entry.get("work_modes") or ()}})
     defaults = reads["defaults"]
-    workspaces = [{"name": name, "device": titles.get(name, ""), "harnesses": list(harnesses.get(name) or ())}
-                  for name in found.names]
-    return {"models": models, "workspaces": workspaces,
-            "run_modes": [{"value": key, "text": text} for key, text in RUN_MODES.items()],
+    devices = device_rows(env, ctx, chat)
+    return {"models": models, **({"devices": devices} if devices else {}),
             "preselect": {"model": found.model, "effort": plain_budget(ranked.get(found.model) or {}, found.effort), "work_mode": found.work_mode,
-                          "redaction": "on" if defaults.redaction else "off", "workspace": found.workspace,
-                          "run_mode": defaults.run_mode if defaults.run_mode in RUN_MODES else "direct"}}
+                          "redaction": "on" if defaults.redaction else "off"}}
 
 
 def record_path(state_dir, op_id) -> Path:
@@ -152,21 +167,63 @@ def model_choice(env, ctx, payload) -> tuple:
     return harness, key, choice, effort, work_mode, redaction
 
 
+REPOS_MAX = 10
+
+
+def repos_of(env, ctx, payload) -> list:
+    """The page's ``repos`` ([{name, mode: read|write}], at most REPOS_MAX; data contract v43) as app/butler_topics.py declared_repos
+    makes them; [] without. ValueError says what is wrong. A release whose butler_topics has no ``declared_repos`` yet gets the
+    list as the page sent it, after the same plain checks."""
+    value = payload.get("repos")
+    if value in (None, "", []):
+        return []
+    if not isinstance(value, list) or len(value) > REPOS_MAX:
+        raise ValueError(f"仓库最多 {REPOS_MAX} 个")
+    from covey.app import butler_topics
+    declared = getattr(butler_topics, "declared_repos", None)
+    if declared is not None:
+        return declared(Path(ctx.state_dir), value)
+    out = []
+    for each in value:
+        name = str(each.get("name") or "").strip() if isinstance(each, dict) else ""
+        mode = each.get("mode") if isinstance(each, dict) else None
+        if not name or len(name) > 64 or mode not in ("read", "write"):
+            raise ValueError("仓库要写名字，用途只能是 read 或 write")
+        out.append({"name": name, "mode": mode})
+    return out
+
+
 def plan_of(env, ctx, chat, payload) -> dict:
-    """The topic's plan from the page's choices, checked as 开始任务 checks them; ValueError says why not."""
+    """The topic's plan from the page's choices, checked as 开始任务 checks them; ValueError says why not.
+
+    No workspace or run mode in the payload: the topic starts in the home (app/launch_submit.py home_binding), on the device the
+    optional ``device`` names. A payload that has them (an older page) is checked as before, a worktree going to the launch card.
+    The optional ``repos`` are the ones the topic declares (``plan["repos"]``; ``plan["home_start"]`` marks a home start, both
+    kept in topic.json by app/butler_topics.py bind_topic)."""
     from covey.app.launch_models import run_choice
+    from covey.app.launch_submit import home_binding
     from covey.core import devices
     from covey.core.menu_choice import chosen_work_mode
     from covey.core.workspaces import RUN_MODES, resolve_binding
     harness, key, choice, effort, work_mode, redaction = model_choice(env, ctx, payload)
-    run_mode = str(payload.get("run_mode") or "direct")
+    repos = repos_of(env, ctx, payload)
+    workspace, requested = str(payload.get("workspace") or ""), str(payload.get("run_mode") or "")
+    run_mode = requested or "direct"
     if run_mode not in RUN_MODES:
         raise ValueError("运行方式只能是原目录或独立 worktree")
-    config, _, _ = workspace_config(env, ctx, chat)
-    workspace = str(payload.get("workspace") or "")
-    if workspace not in config["workspaces"]:
-        raise ValueError(f"没有登记工作区「{workspace}」，请重新选")
-    name, binding = resolve_binding(Path(ctx.state_dir), ctx.default_workdir, workspace)
+    home = not workspace and run_mode == "direct"
+    if home:
+        device = str(payload.get("device") or "")
+        if device and not env.runtime.access.allows_device(chat, device):
+            raise ValueError(f"设备 {device} 不允许在这个聊天里使用")
+        name, binding = home_binding(ctx, device)
+    else:
+        config, _, _ = workspace_config(env, ctx, chat)
+        if not workspace:  # A run mode alone (an older page): in the home.
+            workspace = home_binding(ctx)[0]
+        if workspace not in config["workspaces"]:
+            raise ValueError(f"没有登记工作区「{workspace}」，请重新选")
+        name, binding = resolve_binding(Path(ctx.state_dir), ctx.default_workdir, workspace)
     if binding.device:
         if not env.runtime.access.allows_device(chat, binding.device):
             raise ValueError(f"设备 {binding.device} 不允许在这个聊天里使用")
@@ -179,7 +236,8 @@ def plan_of(env, ctx, chat, payload) -> dict:
     return {"harness": harness, "model": model, "model_key": key, "effort": run_effort, "preference_effort": effort,
             "label": str(choice.get("label") or model), "work_mode": chosen_work_mode(choice, work_mode),
             "workspace": name, "workdir": binding.value if binding.device else str(binding.workdir), "run_mode": run_mode,
-            "redaction": redaction, "start": run_mode == "direct"}
+            "redaction": redaction, "start": run_mode == "direct", **({"repos": repos} if repos else {}),
+            **({"home_start": True} if home else {})}
 
 
 def staged_files(env, op_id, record, payload, fetch) -> list:

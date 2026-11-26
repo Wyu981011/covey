@@ -1,4 +1,4 @@
-"""A launch form's submission: ``submit_launch_form`` checks the 开始任务 click (model, effort, workspace, run mode),
+"""A launch form's submission: ``submit_launch_form`` checks the 开始任务 click (model, effort, device; an older card's workspace, run mode),
 starts the topic and remembers the choice (``remember_launch``); a worktree launch creates its checkout in the
 background (``finish_worktree_launch``) and is finished or given back after a restart (``recover_worktree_launches``).
 The card's own building, rebuilding and closing stay in app/launch.py."""
@@ -14,7 +14,7 @@ from pathlib import Path
 from covey.core import devices, timing
 from covey.core.state import read_each, read_json
 from covey.core.locks import LOCK, resource_lock, topic_lock
-from covey.core.workspaces import RUN_MODES, add_topic_worktree, plan_topic_worktree, resolve_binding
+from covey.core.workspaces import RUN_MODES, add_topic_worktree, load_config, plan_topic_worktree, resolve_binding
 
 
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
@@ -37,6 +37,34 @@ from covey.app.launch import (CLOSED, LATEST_DEFAULTS, RETIRED_TEXT, chat_defaul
 OWNER_ONLY_PATH = '仅机器人主人可以填写其他目录，请选择已保存的工作区'  # A group member's, said on the card (app/access.py).
 RUN_MODE_INVALID = '运行方式只能是原目录或独立 worktree'
 RESTART_ABANDONED = '服务重启时 worktree 尚未创建完成'
+
+
+def home_selection(ctx, device: str = '') -> str:
+    """Where a new topic starts (docs/configuration.md 主目录与仓库地图: one way to start, no workspace to pick): the
+    home, the service's ``--workdir`` (``ctx.default_workdir``), as core/workspaces.py resolve_binding takes it (the
+    saved workspace of that directory, or its path, listed once). On ``device`` (an alias of devices.json, COVEY_DEVICES=1)
+    the saved workspace on that device whose name sorts first, else ``<alias>:<its home>`` when devices.json names one;
+    ValueError when the device has neither."""
+    if not device:
+        return str(Path(ctx.default_workdir).expanduser().resolve())
+    data = load_config(ctx.state_dir, ctx.default_workdir)
+    for name in sorted(data['workspaces']):
+        value = str(data['workspaces'][name])
+        if devices.is_device_value(value) and value.split(':', 1)[0] == device:
+            return name
+    try:
+        home = str(getattr(devices.current().device(device), 'home', '') or '')
+    except (devices.UnknownDevice, devices.DeviceConfigError):
+        raise ValueError(f'devices.json 里没有设备 {device}') from None
+    if not home.startswith('/'):
+        raise ValueError(f'设备 {device} 还没有主目录：在 devices.json 里给它写 home')
+    return f'{device}:{home}'
+
+
+def home_binding(ctx, device: str = '') -> tuple:
+    """(workspace name, core/devices.py Binding) of ``home_selection``: what a new topic's topic.json records
+    (``workspace_name`` and ``workdir`` as before, so an older release's task runner reads it)."""
+    return resolve_binding(ctx.state_dir, ctx.default_workdir, home_selection(ctx, device))
 
 
 def run_in_background(target, *args):
@@ -160,7 +188,7 @@ def _submit_launch_form(app, ctx, event):
         effort, preference_effort = _launch_effort(record, choice, fields)
         name, (model, effort) = choice['harness'], run_choice(choice, effort)
         work_mode = chosen_work_mode(choice, record.get('selected_work_mode'))
-        selection, run_mode = _launch_workspace(record, fields)
+        selection, run_mode, device = _launch_workspace(record, fields)
         if str(fields.get('path') or '').strip() and not app.runtime.access.is_owner(event.get('operator_id', '')):
             raise ValueError(OWNER_ONLY_PATH)  # A typed path is added to the saved workspaces.
         # Validate all user choices before changing a route or queue.
@@ -169,7 +197,9 @@ def _submit_launch_form(app, ctx, event):
         if not _waiting_jobs(ctx, event['chat_id']):
             raise ValueError('本话题没有待启动的消息，请先发送任务')
         timing.mark('checked')
-        workspace, binding = resolve_binding(ctx.state_dir, ctx.default_workdir, selection)
+        # A card of the home start names no workspace: the topic starts in the home (``home_binding``), on its device if chosen.
+        workspace, binding = (resolve_binding(ctx.state_dir, ctx.default_workdir, selection) if selection
+                              else home_binding(ctx, device))
         source = binding.workdir
         if binding.device:
             if not app.runtime.access.allows_device(event['chat_id'], binding.device):
@@ -271,21 +301,25 @@ def _launch_effort(record, choice, fields):
 
 
 def _launch_workspace(record, fields):
-    """(workspace selection, run mode) the form submitted."""
-    # A card sent before the path input went still submits one.
+    """(workspace selection, run mode, device) the form submitted. The selection is '' for a card of the home start, which
+    names no workspace (``device``: its 执行设备 row's alias, '' for 本机); a card sent before it (a record or a click that
+    names a workspace or a typed path) keeps its own and starts there, in its run mode."""
     custom_path = fields.get('path', '')
     if not isinstance(custom_path, str):
         raise ValueError('路径必须是文本')
     # A compact card records its selects as they change; the form holds no select.
     defaults = record.get('form_defaults', {}) if record.get('compact') else {}
-    selection = custom_path.strip() or fields.get('workspace') or defaults.get('workspace')
-    if not isinstance(selection, str) or not selection.strip():
+    selection = custom_path.strip() or fields.get('workspace') or defaults.get('workspace') or ''
+    if not isinstance(selection, str):
         raise ValueError('请选择工作区')
+    device = defaults.get('device') or ''
+    if not isinstance(device, str):
+        raise ValueError('执行设备无效')
     # Cards published before the field existed submit without it.
     run_mode = fields.get('run_mode') or defaults.get('run_mode') or 'direct'
     if not isinstance(run_mode, str) or run_mode not in RUN_MODES:
         raise ValueError(RUN_MODE_INVALID)
-    return selection, run_mode
+    return selection.strip(), run_mode, ('' if selection.strip() else device)
 
 
 def _waiting_jobs(ctx, chat_id):
