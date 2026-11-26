@@ -3,8 +3,10 @@
 
 A model's call of topic_start or project_topic_start (``CHECKED``, refused by app/butler_tools.py before it runs) that names
 ``harness``, ``model`` or ``effort``, and every call of topics_switch (app/batch_switch.py), gives ``basis``: a run of the owner's own words of the turn (app/butler_handoff.py
-``asked``: the message the turn answers and the supplements it took), a run of a principle's text or of a line of the lead's
-project memory, or the id of a principle (core/principles.py, ``p1a2b3c``) or of a memory line the turn carried (``M12``,
+``asked``: the message the turn answers and the supplements it took), a run of a principle's text, of a rule or a decision of
+the owner's (core/memstore.py) or of a line of the lead's project memory, or the short code of a memory entry
+(core/memstore.py CODE_RE, ``R7K2M``: one the owner said that holds, or one the turn carried), the id of a principle
+(core/principles.py, ``p1a2b3c``, also as an alias of the entry it became) or of a memory line the turn carried (``M12``,
 its job record's ``memory_ids``, app/memory_turn.py). ``check`` finds it or says why not; the caller refuses the call then, so
 the model leaves the fields empty (the settings' default) or asks. What it found (``shown``) is kept with the plan and said
 where the owner sees the configuration: the topic card's line (按「…」) and the batch switch card.
@@ -27,9 +29,10 @@ SHORTEST = 3  # Characters of a quote, compacted.
 SHOWN = 24  # Characters of what the cards say of a basis.
 PRINCIPLE_ID = re.compile(r"\bp[0-9a-f]{6}\b")
 MEMORY_ID = re.compile(r"\bM\d{2,3}\b")
+CODE = re.compile(r"(?<![0-9A-Za-z])[RDN][0-9A-HJKMNP-TV-Z]{4,6}(?![0-9A-Za-z])")  # core/memstore.py CODE_RE, in a run of words.
 QUOTES = "「」『』“”\"'‘’《》"
-MISSING = ("填了 harness、model 或 effort 就要写 basis：主人这一轮原话里连续的一段，或记下的原则编号（p1a2b3c）、"
-           "这一轮带的记忆编号（M12）。主人没点名、原则也没明说这一类事用它时，不要填这几项，用设置里的默认。")
+MISSING = ("填了 harness、model 或 effort 就要写 basis：主人这一轮原话里连续的一段，或记忆的短码（R7K2M）、"
+           "记下的原则编号（p1a2b3c）、这一轮带的记忆编号（M12）。主人没点名、原则也没明说这一类事用它时，不要填这几项，用设置里的默认。")
 NOT_FOUND = ("basis「{basis}」在主人这一轮的原话、记下的原则和这一轮带的记忆里都没找到，没有执行。"
              "写主人原话里连续的一段或编号；原则或记忆只管它说的那类事（如“监视进程这类用 Codex”不管修代码），"
              "对不上就不要填 harness、model、effort，用设置里的默认。")
@@ -61,16 +64,40 @@ def _principles(state_dir):
 
 
 def _project_lines(state_dir, project_id):
-    """The texts of the project's memory lines (core/project_memory.py), for a lead's basis; () without a project."""
+    """The texts of the project's memory lines (core/project_memory.py, and its decisions of decisions.jsonl), for a lead's
+    basis; () without a project."""
     if not project_id:
         return ()
     try:
+        from covey.app.project_context import decision_rows
         from covey.core import project_memory, projects
 
         rows = project_memory.live(Path(state_dir), projects.read_record(Path(state_dir), project_id))
+        rows += [row for row in decision_rows(Path(state_dir), project_id, rows) if not row["deleted"]]
     except Exception:  # noqa: BLE001 - only a basis the lead may quote; no project memory is none
         return ()
     return tuple(str(row.get("text") or "") for row in rows if isinstance(row, dict))
+
+
+def _owner_texts(state_dir):
+    """The texts of the owner's global rules and decisions (core/memstore.py), what a principle's text is now too; () when
+    they cannot be read."""
+    try:
+        from covey.core import memstore
+
+        return tuple(entry.text for entry in memstore.entries(Path(state_dir), scope="global", kinds=("rule", "decision"))
+                     if entry.said == "owner")
+    except Exception:  # noqa: BLE001 - no basis from them
+        return ()
+
+
+def _entry(state_dir, key):
+    try:
+        from covey.core import memstore
+
+        return memstore.find(Path(state_dir), key)
+    except Exception:  # noqa: BLE001 - no entry
+        return None
 
 
 def check(state_dir, job_key, basis, *, project_id="") -> tuple[str, str]:
@@ -86,15 +113,26 @@ def check(state_dir, job_key, basis, *, project_id="") -> tuple[str, str]:
         row = next((row for row in rows if row.get("id") == pid), None)
         if row is not None:
             return short(row.get("text")), ""
+        entry = _entry(state_dir, pid)  # A principle moved into the memory: its old id is the entry's alias.
+        if entry is not None and entry.status == "active":
+            return short(entry.text), ""
     record = find_job_record(Path(state_dir), str(job_key or "")) or {}
     carried = {str(row.get("n")) for row in record.get("memory_ids") or () if isinstance(row, dict)}
+    refs = {str(row.get("ref")) for row in record.get("memory_ids") or () if isinstance(row, dict) and row.get("ref")}
     for number in MEMORY_ID.findall(basis):
         if number in carried:
             return f"记忆 {number}", ""
-    wanted = compact(re.sub(PRINCIPLE_ID.pattern + "|" + MEMORY_ID.pattern, "", basis))
+    for code in CODE.findall(basis):
+        entry = _entry(state_dir, code)
+        if entry is not None and entry.status == "active" and (
+                (entry.said == "owner" and entry.kind in ("rule", "decision")) or entry.ref in refs
+                or any(alias in refs for alias in entry.aliases)):
+            return short(entry.title or entry.text), ""
+    wanted = compact(re.sub(PRINCIPLE_ID.pattern + "|" + MEMORY_ID.pattern, "", basis))  # A code-like word may be a quote's.
     if len(wanted) >= SHORTEST:
         said = asked(state_dir, job_key).words
-        sources = [said, *(str(row.get("text") or "") for row in rows), *_project_lines(state_dir, project_id)]
+        sources = [said, *(str(row.get("text") or "") for row in rows), *_owner_texts(state_dir),
+                   *_project_lines(state_dir, project_id)]
         if any(wanted in compact(source) for source in sources if source):
             return short(basis), ""
     return "", NOT_FOUND.format(basis=short(basis, 60))

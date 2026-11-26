@@ -161,7 +161,8 @@ class PackTest(Case):
         self.assertIn("把账单迁到新库，对账一致", pack)
         self.assertIn("T41 · 导出旧账单 · 在做 · 导出第 3 批", pack)
         self.assertIn("T42 · 写对账脚本 · 做完 · 放在 reconcile.py", pack)
-        self.assertIn("[constraint] 〔m1〕旧库时区是 UTC+0", pack)  # An older release's entry in the record, under the kind's new name.
+        code = project_lead.memory_codes(self.state, PID)["m1"]  # Its short code (core/memstore.py), given when first read.
+        self.assertIn(f"[constraint] 〔{code}〕旧库时区是 UTC+0", pack)  # An older release's entry in the record, under the kind's new name.
         self.assertIn("风格：report=milestones；detail=简\n", pack)
         self.assertIn("没有新的。", pack)
 
@@ -170,7 +171,8 @@ class PackTest(Case):
         projects.update(self.state, PID, lambda r: r.update(memory=[{"id": "m1", "kind": "fact", "text": "记忆里的话", "at": NOW}]))
         pack = project_lead.state_pack(self.state, self.reload(), "lead-1", full=False)
         self.assertNotIn("目标和完成标准", pack)
-        self.assertIn("- [fact] 〔m1〕记忆里的话", pack)  # As a member topic reads it (core/memory.py project_view), every turn.
+        code = project_lead.memory_codes(self.state, PID)["m1"]
+        self.assertIn(f"- [fact] 〔{code}〕记忆里的话", pack)  # As a member topic reads it (core/memory.py project_view), every turn.
         self.assertIn("T41", pack)
         self.assertIn("风格：", pack)
 
@@ -1026,8 +1028,9 @@ class RecordToolsTest(ToolsCase):
         pack = project_lead.state_pack(self.state, self.reload(), "lead-1", full=True)
         self.assertIn("现网用 22281a", pack)
         self.assertNotIn("11170f", pack)
-        self.assertIn(f"〔{data['id']}〕", pack)  # The lead sees the ids it passes to the tool.
-        done = self.tool("project_memory_revise", op="retire", id=data["id"], why="不用了")
+        code = project_lead.memory_codes(self.state, PID)[data["id"]]
+        self.assertIn(f"〔{code}〕", pack)  # The lead sees the short codes it passes to the tool.
+        done = self.tool("project_memory_revise", op="retire", id=code, why="不用了")  # The code, or the id, names the line.
         self.assertIn("收进历史", done["text"])
         self.assertIn("已经收进历史", self.refused("project_memory_revise", op="retire", id=data["id"]))
         self.assertIn("op 要是", self.refused("project_memory_revise", op="delete", id=one))

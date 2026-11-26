@@ -12,6 +12,7 @@ from covey.core.jobs import upsert_job_record
 from covey.core.locks import resource_lock
 from covey.cards.elements import md
 from covey.cards.question_cards import question_element
+from covey.app import question_dedup
 from covey.app.question_display import question_card_lock
 from covey.app.triage import LEAD
 from covey.core.store import directory_store, transition_question, update_question
@@ -198,7 +199,7 @@ class CheckpointQuestions:
                     # The project's lead has it: no card, and not a failure (the task's question_delivery_ok stays true).
                     self.questions.triage.note(ctx, job, record)
                     continue
-                visible = {**record, "display_pending": False}
+                visible = question_dedup.drawn({**record, "display_pending": False})  # Its grey lines and extra question.
                 # A question with samples goes on a card of its own: the task card is no place for two or three cards.
                 on_result_card = bool(use_result_card and not ui_samples.any_of(record.get("questions"))
                                       and self.cards.set_task_element(ctx, job, question_element(visible)))

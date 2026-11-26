@@ -209,7 +209,7 @@
 | `app/proxy_resend.py` | The 重新发送 card: a 代答 reply that never went out, offered to the owner to send again |
 | `app/proxy_send.py` | Proxy replies (代答): Feishu as the owner sees it |
 | `app/proxy_topics.py` | Proxy replies (代答): each contact's topic in the proxy group |
-| `app/question_dedup.py` | Before a question reaches the owner, look for the same question answered before (FINAL-SPEC 修订 6) |
+| `app/question_dedup.py` | Before a question reaches the owner, the same question answered before |
 | `app/question_display.py` | Where a question is shown |
 | `app/questions.py` | Durable questions: the Questions component, answers and delivery recovery |
 | `app/quiet_delivery.py` | The quiet butler turn's side of delivering a result |

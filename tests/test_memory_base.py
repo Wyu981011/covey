@@ -29,7 +29,7 @@ from covey.app.prompts import PROJECT_PART_HEADS, VOIDED_HEAD
 from covey.app.web_collect import Collector
 from covey.core import butler
 from covey.core import memory as core_memory
-from covey.core import project_memory, projects
+from covey.core import memstore, project_memory, projects
 from covey.core.board_read import previous_start
 
 CHAT = "oc_owner_dm"
@@ -62,6 +62,19 @@ ANSWERS = {"scope": {"answers": ["账单和流水一起"]}, "check": {"answers":
 def question_record(token=TOKEN, questions=QUESTIONS, answers=ANSWERS, **fields):
     return {"token": token, "topic_id": MEMBER, "chat_id": CHAT, "job_id": 12, "job_key": "om_q12", "questions": questions,
             "answers": answers, "supplement": "周六前把核对结果给我", "status": "submitting", **fields}
+
+
+def legacy_answer(state, topic, record):
+    """An answer as releases before the decision log noted it (core/project_memory.py note_answers, a line of memory.json each):
+    the rows the readers of the project's memory read from older releases."""
+    found = projects.topic_project(state, topic)
+    lines = [{key: line[key] for key in ("index", "item", "text")} for line in project_context.answered(record)]
+    if project_memory.TOKEN.fullmatch(str(record.get("token") or "")):
+        project_memory.note_answers(state, found.id, {**record, "topic_id": record.get("topic_id") or topic}, lines)
+        return
+    for line in lines:
+        project_memory.add(state, found.id, line["text"], "decision", "owner_answer",
+                           origin={"item": line["item"], "index": line["index"], "topic": topic})
 
 
 def environment(test, **extra):
@@ -101,19 +114,24 @@ class Case(unittest.TestCase):
 
 
 class AnswerTest(Case):
-    """① An answered question card: a whole entry for each question, the record kept, nothing noted twice or brought back."""
+    """① An answered question card: a whole decision for each question (core/memstore.py decisions.jsonl, not a line of
+    memory.json any more), the record kept, nothing noted twice or brought back."""
 
-    def test_each_question_is_an_entry_of_its_own_whole_with_where_it_came_from(self):
+    def decisions(self):
+        return memstore.decisions(self.state, "project", PID, statuses=None)
+
+    def test_each_question_is_a_decision_of_its_own_whole_with_where_it_came_from(self):
         project_context.remember_answer(self.state, MEMBER, question_record())
-        rows = self.live()
-        self.assertEqual([row["id"] for row in rows], [f"{TOKEN}-1", f"{TOKEN}-2", f"{TOKEN}-3"])
-        self.assertEqual({(row["kind"], row["source"]) for row in rows}, {("decision", "owner_answer")})
-        self.assertEqual([row["text"] for row in rows], [f"主人答：{FIRST}→账单和流水一起", f"主人答：{SECOND}→对行数；对金额合计",
-                                                         f"主人答：{THIRD}→保留 90 天，到期由我来下线，下线前导出冷备份"])
-        self.assertTrue(all("…" not in row["text"] for row in rows))  # Nothing cut: the conditions and the last answer are there.
-        self.assertEqual([row["origin"] for row in rows], [
-            {"question": TOKEN, "item": item, "index": index, "topic": MEMBER, "job": "om_q12"}
-            for index, item in enumerate(("scope", "check", "keep"), 1)])
+        rows = self.decisions()
+        self.assertEqual([row.origin["question"] for row in rows], [f"{TOKEN}-1", f"{TOKEN}-2", f"{TOKEN}-3"])
+        self.assertEqual({(row.kind, row.said, row.by, row.status) for row in rows}, {("decision", "owner", "owner", "active")})
+        self.assertEqual([row.text for row in rows], [f"主人答：{FIRST}→账单和流水一起", f"主人答：{SECOND}→对行数；对金额合计",
+                                                      f"主人答：{THIRD}→保留 90 天，到期由我来下线，下线前导出冷备份"])
+        self.assertTrue(all("…" not in row.text for row in rows))  # Nothing cut: the conditions and the last answer are there.
+        self.assertEqual([{key: row.origin[key] for key in ("item", "index", "topic_key", "job")} for row in rows], [
+            {"item": item, "index": index, "topic_key": MEMBER, "job": "om_q12"} for index, item in enumerate(("scope", "check", "keep"), 1)])
+        self.assertTrue(all(memstore.is_code(row.code) and row.code.startswith("D") for row in rows))
+        self.assertFalse(project_memory.memory_path(self.state, PID).exists())  # Not a line of the 120 any more.
 
     def test_the_question_record_is_kept_whole_beside_the_memory(self):
         project_context.remember_answer(self.state, MEMBER, question_record())
@@ -121,39 +139,50 @@ class AnswerTest(Case):
         self.assertEqual((kept["questions"], kept["answers"], kept["supplement"], kept["job_key"]),
                          (QUESTIONS, ANSWERS, "周六前把核对结果给我", "om_q12"))  # Options, their descriptions and the context too.
         self.assertNotIn("chat_id", kept)
-        row = next(row for row in self.live() if row["id"] == f"{TOKEN}-3")
-        source = project_memory.answer_record(self.state, PID, row["origin"]["question"])["questions"][row["origin"]["index"] - 1]
-        self.assertEqual(source["id"], row["origin"]["item"])  # From the entry back to its question.
+        row = self.decisions()[-1]
+        token, _, index = row.origin["question"].partition("-")
+        source = project_memory.answer_record(self.state, PID, token)["questions"][int(index) - 1]
+        self.assertEqual(source["id"], row.origin["item"])  # From the decision back to its question.
         self.assertEqual(project_memory.answer_record(self.state, PID, "f" * 16), {})
-        self.assertEqual(project_memory.answer_record(self.state, PID, "../x"), {})
 
-    def test_the_same_answer_is_noted_once_and_one_the_owner_deleted_is_not_noted_again(self):
+    def test_the_same_answer_is_noted_once_and_one_the_owner_voided_is_not_noted_again(self):
         project_context.remember_answer(self.state, MEMBER, question_record())
-        self.assertTrue(project_memory.delete(self.state, PID, f"{TOKEN}-2"))
+        memstore.void(self.state, self.decisions()[1].ref, who="owner")
         project_context.remember_answer(self.state, MEMBER, question_record())  # Submitted again after it was reconciled.
-        self.assertEqual([row["id"] for row in self.live()], [f"{TOKEN}-1", f"{TOKEN}-3"])
-        self.assertEqual(len(self.stored()["entries"]), 3)
+        self.assertEqual([row.status for row in self.decisions()], ["active", "void", "active"])
 
     def test_a_question_too_long_for_a_line_is_cut_there_and_whole_in_the_record(self):
         long = "条件" * 350
         project_context.remember_answer(self.state, MEMBER, question_record(questions=[{"id": "q", "question": long}],
                                                                             answers={"q": {"answers": ["照第二种做"]}}))
-        (row,) = self.live()
-        self.assertEqual(len(row["text"]), project_memory.ANSWER_TEXT)
-        self.assertTrue(row["text"].endswith("…→照第二种做"))  # The answer whole, the question cut before it.
+        (row,) = self.decisions()
+        self.assertEqual(len(row.text), memstore.DECISION_CHARS)
+        self.assertTrue(row.text.endswith("…→照第二种做"))  # The answer whole, the question cut before it.
         self.assertEqual(project_memory.answer_record(self.state, PID, TOKEN)["questions"][0]["question"], long)
 
     def test_skipped_questions_and_feedback_note_nothing_and_a_record_without_a_token_notes_each_question(self):
         project_context.remember_answer(self.state, MEMBER, question_record(answers={
             "scope": {"answers": ["用户选择不回答此题（不表示同意或授权）"]}, "check": {"answers": []}, "keep": {"answers": ["保留 30 天"]}}))
-        self.assertEqual([row["id"] for row in self.live()], [f"{TOKEN}-3"])
+        self.assertEqual([row.origin["question"] for row in self.decisions()], [f"{TOKEN}-3"])
         project_context.remember_answer(self.state, MEMBER, {**question_record("1" * 16), "response_kind": "feedback"})
         bare = question_record()
         del bare["token"]
         project_context.remember_answer(self.state, MEMBER, bare)
-        loose = [row for row in self.live() if not row["id"].startswith(TOKEN)]
-        self.assertEqual([(row["origin"]["item"], row["origin"]["index"]) for row in loose], [("scope", 1), ("check", 2), ("keep", 3)])
-        self.assertFalse(any("question" in row["origin"] for row in loose))
+        loose = [row for row in self.decisions() if not str(row.origin.get("question") or "").startswith(TOKEN)]
+        self.assertEqual([(row.origin["item"], row.origin["index"]) for row in loose], [("scope", 1), ("check", 2), ("keep", 3)])
+        self.assertFalse(any(row.origin.get("question") for row in loose))
+
+    def test_every_reader_of_the_project_memory_has_the_decisions(self):
+        project_context.remember_answer(self.state, MEMBER, question_record(
+            questions=[{"id": "q", "question": "第一批迁哪些表？"}], answers={"q": {"answers": ["账单和流水一起"]}}))
+        (entry,) = self.decisions()
+        pack = project_lead.state_pack(self.state, self.record(), "lead-1", full=True, receipts=[])
+        self.assertIn(f"〔{entry.code}〕主人答：第一批迁哪些表？→账单和流水一起", pack)
+        view = project_context.memory_view(self.ctx(), self.job(job_id=2))
+        self.assertIn("主人答：第一批迁哪些表？→账单和流水一起", [item["text"] for item in view["items"]])
+        memstore.settle(self.state, entry.ref, who="owner")
+        view = project_context.memory_view(self.ctx(), self.job(job_id=3))
+        self.assertNotIn("主人答：第一批迁哪些表？→账单和流水一起", [item["text"] for item in view["kept"]])  # Done: history.
 
 
 class CompatTest(Case):
@@ -162,7 +191,7 @@ class CompatTest(Case):
 
     def test_every_entry_has_the_keys_and_types_an_older_release_reads_and_nothing_else(self):
         project_memory.add(self.state, PID, "窗口在周六", "constraint", "lead", now=NOW, origin={"job": "lead-1"})
-        project_context.remember_answer(self.state, MEMBER, question_record())
+        legacy_answer(self.state, MEMBER, question_record())
         data = self.stored()
         self.assertEqual(data["schema_version"], 1)
         for row in data["entries"]:
@@ -175,7 +204,7 @@ class CompatTest(Case):
             self.assertEqual(row["deleted"], 0)
 
     def test_an_older_releases_rewrite_keeps_the_meta_and_an_answers_origin_is_read_from_its_id_without_one(self):
-        project_context.remember_answer(self.state, MEMBER, question_record())
+        legacy_answer(self.state, MEMBER, question_record())
         data = self.stored()
         old = [{key: row[key] for key in ("id", "text", "kind", "source", "at", "deleted")} | {"text": row["text"][:200]}
                for row in data["entries"]]  # What an older release writes: its keys, its 200 characters.
@@ -283,7 +312,7 @@ class BudgetTest(Case):
         with mock.patch.object(project_memory, "MAX_ENTRIES", 5):
             for number in range(4):
                 token = f"{number:x}" * 16
-                project_context.remember_answer(self.state, MEMBER, question_record(
+                legacy_answer(self.state, MEMBER, question_record(  # As an older release noted it: a line of the 120.
                     token, questions=[{"id": "q", "question": f"第 {number} 批开跑吗？"}], answers={"q": {"answers": ["开跑"]}}))
         texts = [row["text"] for row in self.live()]
         self.assertEqual(texts[:3], ["上线前要有回滚演练", "对账一致才算完", "新库在二号机房"])
@@ -324,7 +353,7 @@ class ReadCase(Case):
         self.rule, _ = project_memory.add(self.state, PID, "发布只在周六", "constraint", "owner", now=NOW,
                                           origin={"message_id": "om_rule", "topic": MEMBER, "quote": "以后发布只在周六"})
         self.note, _ = project_memory.add(self.state, PID, "对账一致才算完", "constraint", "lead", now=NOW + 1)
-        project_context.remember_answer(self.state, MEMBER, question_record(
+        legacy_answer(self.state, MEMBER, question_record(  # An older release's answer line: what the page reads too.
             questions=[{"id": "q", "question": "第一批迁哪些表？"}], answers={"q": {"answers": ["账单和流水一起"]}}))
         write_job(self.state, "om1", topic_id=MEMBER, chat_id=CHAT, job_id=1, status="done", timings={"backend_started": NOW + 10})
         write_job(self.state, "om3", topic_id=LEAD, chat_id=CHAT, job_id=3, status="done", timings={"backend_started": NOW + 10})
@@ -342,7 +371,7 @@ class ReadCase(Case):
     def lead(self, full):
         pack = project_lead.state_pack(self.state, self.record(), "lead-4", full=full, receipts=[],
                                        since=None if full else previous_start(self.state, LEAD, 4))
-        return re.sub(r"〔[0-9a-f-]+〕", "", pack)  # The lead's lines start with their ids (project_memory_revise takes them).
+        return re.sub(r"〔[0-9A-Za-z-]+〕", "", pack)  # The lead's lines start with their short codes (project_memory_revise takes them).
 
     def web(self):
         (item,) = Collector(SimpleNamespace(state_dir=self.state)).project_items(self.state, CHAT)

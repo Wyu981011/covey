@@ -1,7 +1,9 @@
 """A backend's question as it arrives: saved once as a record with how it waits, then shown there
 - a live native form on its own card, a paused turn, or the task card's question element - and the
 check that a live form still belongs to the running task (``live_control``). A checkpoint's question
-is registered here too (``defer_question``); checkpoint_questions.py shows it after the result."""
+is registered here too (``defer_question``); checkpoint_questions.py shows it after the result. Before a question is
+registered it is looked up among the ones answered before (``dedup``, app/question_dedup.py): refused in the same turn
+with the old answer, or registered with the grey line and the extra question its card draws."""
 
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from covey.core.locks import resource_lock
 from covey.core.proxy import NO_QUESTION
 from covey.core.roster import LIVE_QUESTIONS
 from covey.cards.question_cards import question_element
-from covey.app import butler_relay
+from covey.app import butler_relay, question_dedup
 from covey.app.triage import LEAD
 from covey.core import triage as triage_state
 from covey.app.question_display import question_card_lock
@@ -51,7 +53,10 @@ class NativeQuestions:
         if kind == "question":
             if not defer_question and rpc is not None and self.refused_in_proxy_topic(ctx, job, data, rpc):
                 return
-            registered = self.register(ctx, job, data, rpc, defer_question=defer_question)
+            marks = self.dedup(ctx, job, data, rpc, defer_question=defer_question)
+            if marks is None:
+                return  # Refused with the old answer before any record was saved: nothing holds the topic.
+            registered = self.register(ctx, job, data, rpc, defer_question=defer_question, marks=marks)
             if registered is not None and not defer_question:
                 self.show(ctx, job, rpc, *registered)
                 self.mirror(ctx, job, registered[0])
@@ -105,9 +110,49 @@ class NativeQuestions:
         self.runtime.log(f"proxy job=#{job.job_id} native question refused")
         return True
 
-    def register(self, ctx, job, data, rpc, *, defer_question):
+    def dedup(self, ctx, job, data, rpc, *, defer_question):
+        """A question answered before (app/question_dedup.py), before it is registered: None when it is refused here with
+        the old answers (every question of it a hit, none of the high-risk classes, a backend that takes the refusal back
+        in the same turn, none refused before: ``in_turn``, ``may_refuse``), else what its record keeps (the grey line's
+        ``dedup``, the ``extra_questions``; {} for nothing). A question its project's lead is to have (app/triage.py
+        ``leads``) is never refused: the old answer goes to the lead with it, and it gets no extra question. Never raises."""
+        questions = data.get("questions")
+        if not questions or not isinstance(questions, list) or any(not isinstance(q, dict) or q.get("isSecret") for q in questions):
+            return {}
+        if question_dedup.engine() is None:
+            return {}  # No similarity to match by yet: nothing is matched (app/question_dedup.py).
+        try:
+            state = ctx.state_dir
+            asking = {"topic_id": job.topic_id, "chat_id": job.chat_id, "job_id": job.job_id, "questions": questions,
+                      "blocking": data.get("isBlocking", True) is not False, "status": "pending"}
+            refusing = not defer_question and question_dedup.in_turn(self.harness, rpc)
+            rows = question_dedup.refused(state, job.topic_id) if refusing else []
+            if any(row.get("request") == str(data.get("request_id")) for row in rows):
+                return None  # Refused already (the same event again): its turn went on without it.
+            hits = question_dedup.check(ctx, asking, questions)
+            leads = self.questions.triage.leads(ctx, asking)
+            if (hits and not leads and refusing
+                    and all(str(q.get("id")) in hits and not question_dedup.risky(q) for q in questions)
+                    and all(question_dedup.may_refuse(rows, q, hits[str(q.get("id"))]) for q in questions)):
+                pairs = [(q, hits[str(q.get("id"))]) for q in questions]
+                question_dedup.note_refused(state, job, data["request_id"], pairs)
+                rpc.reject_question(data["request_id"], question_dedup.reject_text(pairs))
+                question_dedup.signal(state, [hit for _, hit in pairs])
+                self.runtime.log(f"question of job #{job.job_id} answered before: refused with {len(pairs)} old answer(s)")
+                return None
+            kept = question_dedup.marks(hits)
+            extra = [] if leads else question_dedup.class3(ctx, asking, questions)
+            if extra:
+                kept[question_dedup.EXTRA_KEY] = extra
+            return kept
+        except Exception as exc:  # noqa: BLE001 - the question is asked as before
+            self.runtime.log(f"question dedup of job #{job.job_id} failed: {type(exc).__name__}")
+            return {}
+
+    def register(self, ctx, job, data, rpc, *, defer_question, marks=None):
         """Save a backend's question as a record (once: a redelivered event finds it saved), with
         how it waits: a live native form, a paused turn, or a form shown after the result.
+        ``marks``: what ``dedup`` found, kept beside the questions (never in them: live_question_proof hashes those).
         None when it cannot be asked here."""
         if not data.get("questions") or any(q.get("isSecret") for q in data["questions"]):
             if rpc is not None:
@@ -130,6 +175,7 @@ class NativeQuestions:
             "backend_session_id": getattr(rpc, "session_id", "") or getattr(rpc, "thread_id", ""),
             "status": "pending",
             "created_at": time.time(),
+            **(marks or {}),
         }
         pause_question = (not defer_question and record["blocking"] and rpc is not None
             and not getattr(rpc, "native_blocking_questions", False)
@@ -181,7 +227,7 @@ class NativeQuestions:
                     record = json.loads(path.read_text())
                     with rpc.control_lock:
                         self.live_control(ctx, job, record)
-                visible = {**record, "display_pending": False}
+                visible = question_dedup.drawn({**record, "display_pending": False})
                 # Feishu can clear unsent form values when any sibling
                 # task-card element refreshes. Keep live forms on their
                 # own stable card; activity and process pages stay live.
@@ -193,8 +239,9 @@ class NativeQuestions:
             rpc.wait_for_answer("\n".join(q["question"] for q in record["questions"]))
             return
         self.cards.close_streaming_reply(ctx, job.progress) if job.progress else None
-        if not self.cards.set_task_element(ctx, job, question_element(record)):
-            self.questions.publish_question_card(ctx, record)
+        drawn = question_dedup.drawn(record)
+        if not self.cards.set_task_element(ctx, job, question_element(drawn)):
+            self.questions.publish_question_card(ctx, record, **({"visible": drawn} if drawn is not record else {}))
         if record["blocking"] and rpc is not None and not getattr(rpc, "native_blocking_questions", False):
             rpc.wait_for_answer("\n".join(q["question"] for q in record["questions"]))
 
@@ -242,7 +289,7 @@ class NativeQuestions:
                             self.live_control(ctx, job, record)
                     if not record.get("display_pending"):
                         continue
-                    visible = {**record, "display_pending": False}
+                    visible = question_dedup.drawn({**record, "display_pending": False})
                     shown = bool(self.questions.publish_question_card(ctx, record, visible=visible))
                     if not shown or job.cancel_event.is_set():
                         upsert_job_record(ctx.state_dir, job.message_id, question_delivery_ok=False)

@@ -6,7 +6,7 @@ read back every WATCH_SECONDS while its task lives, and for GRACE_SECONDS after 
 
 - **recalled** (``deleted``): its task stops as its card's 停止 would (queued: never runs; running: stopped), the card
   saying 原消息已撤回. A supplement it was goes after as another one: ignore it. A turn already ended keeps its answer,
-  but what it 记下了 (memory lines, knowledge entries) is taken back. Each topic the butler opened, forked or handed work
+  but what it 记下了 (memory lines, knowledge entries, the entries of core/memstore.py it wrote) is taken back. Each topic the butler opened, forked or handed work
   to from that turn gets a line in its thread, 来源消息已撤回, with 停止 while a task of it still goes (rather than
   stopping them).
 - **edited** (``updated``, a newer ``update_time`` and words that differ from the ones it had: a thread started under
@@ -228,8 +228,35 @@ class SourceWatch:
                     dropped += 1
                 except ValueError:
                     pass
+        dropped += self.take_back_entries(target, record, key)
         if lines or dropped:
             self.runtime.log(f"source recall took back memory={lines} knowledge={dropped} job=#{record.get('job_id')}")
+
+    def take_back_entries(self, target, record, key) -> int:
+        """The entries of core/memstore.py the recalled turn ``key`` wrote (its origin's ``job``), not one the owner wrote
+        himself: voided (a 墓碑, as 不对 leaves it). Read in the global memory, the turn's topic and its project only."""
+        if not key:
+            return 0
+        from covey.core import memstore, projects
+
+        state, topic = Path(target.state_dir), str(record.get("topic_id") or "")
+        taken = 0
+        try:
+            found = projects.topic_project(state, topic) if topic else None
+            pool = memstore.entries(state, scope="global", statuses=("active", "pending"))
+            if topic:
+                pool += memstore.entries(state, scope="topic", owner_key=topic, statuses=("active", "pending"))
+            if found is not None:
+                pool += memstore.entries(state, scope="project", owner_key=found.id, statuses=("active", "pending"))
+            for entry in pool:
+                origin = entry.origin or {}
+                if entry.by in ("owner", "web", "import") or key not in (origin.get("job"), origin.get("job_key")):
+                    continue
+                memstore.void(state, entry.ref, who="owner", because={"message_id": str(record.get("message_id") or "")})
+                taken += 1
+        except Exception as exc:  # noqa: BLE001 - the rest of the recall goes on
+            self.runtime.log(f"source recall memory entries failed: {type(exc).__name__}")
+        return taken
 
     def mark_opened(self, app, base, item, record) -> None:
         """Each topic the butler's turn ``record`` opened, forked or handed work to: 来源消息已撤回 in its thread, with 停止

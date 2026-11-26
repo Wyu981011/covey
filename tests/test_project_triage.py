@@ -910,7 +910,8 @@ class MemoryInterplayTest(Held):
         self.route()
 
     def notes(self):
-        return [(row["kind"], row["source"], row["text"]) for row in project_memory.stored(self.state, PID)]
+        rows = project_memory.stored(self.state, PID)  # And the owner's answers in decisions.jsonl (core/memstore.py).
+        return [(row["kind"], row["source"], row["text"]) for row in rows + project_context.decision_rows(self.state, PID, rows)]
 
     def answered(self, record):
         return {**record, "status": "submitting", "answers": {"0": {"answers": ["新版"]}}}

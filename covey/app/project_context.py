@@ -6,10 +6,13 @@ COVEY_PROJECTS=1 and COVEY_PROJECT_MEMORY=1; with either off every function here
   lead's (it has its pack, app/project_lead.py) and a 代答 topic get none. The memory is ``memory_view``'s, the one read the
   lead's pack and the web page take too (core/memory.py project_view): its three layers, each with its own room, what was
   voided since the topic's previous turn, the version.
-- ``remember_answer`` (app/questions.py): the owner's answer to a question card of a project's topic or lead becomes memory
-  entries, one a question answered (kind decision, source owner_answer, "主人答：question→answer", ``answer_line``), and the
-  question record as it was answered is kept whole beside them (core/project_memory.py note_answers). Feedback and skipped
-  answers do not. A question that names an entry of another project's memory by its id (``elsewhere``) is history at once.
+- ``remember_answer`` (app/questions.py): the owner's answer to a question card becomes decisions (core/memstore.py
+  add_decision: the project's decisions.jsonl for a project's topic or lead, the topic's for an ordinary topic), one a question
+  answered ("主人答：question→answer", ``answer_line``; ``question_ref`` the record's token and the question's place, so an answer
+  submitted again is not noted twice). Feedback and skipped answers do not, nor the card's own extra question
+  (app/question_dedup.py; ``settle`` takes the owner's pick there). A question that names an entry of another project's memory
+  by its id (``elsewhere``) is history at once. ``decision_rows``: those decisions as the lines of the project's memory read
+  them (core/memory.py project_view), so every reader of it (a member topic's turn, the lead's pack, triage's grounds) has them.
 - ``fix_memory``: the owner's correction of a line (docs/web.md memory_fix: ``scope`` its conditions, ``once`` only that time,
   ``confirm`` his for good), for the page and the cards to call once they checked the click is the owner's.
 - ``owner_files`` (app/app.py, the message of the owner in a lead's topic: quoting the project's card goes there): the files it
@@ -22,16 +25,19 @@ Rule 1 (AGENTS.md): the records are written under their own lock; nothing is sen
 is never why a turn or an answer does not go through."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
+from covey.app import question_dedup
 from covey.app.answers import SKIPPED
 from covey.app.prompts import project_block, project_memory_lines
 from covey.core import board_read
 from covey.core import memory as core_memory
-from covey.core import memory_usage, project_library, project_memory, projects, triage
+from covey.core import memory_usage, memstore, project_library, project_memory, projects, triage
 from covey.core.attachments import ATTACHMENTS_HEADER, parse_attachment_block
 from covey.core.checkpoint import checkpoint_delivery, read_checkpoint
 from covey.core.redaction import topic_redaction
+from covey.core.state import write_json
 from covey.core.text import cut
 from covey.core.topics import proxy_topic
 
@@ -61,9 +67,50 @@ def memory_rows(ctx, job) -> tuple[str, list]:
     when ``member_record`` has none. Never raises."""
     try:
         found = member_record(ctx, job)
-        return (found[0], project_memory.live(ctx.state_dir, found[1], style=False)) if found else ("", [])
+        if not found:
+            return "", []
+        rows = project_memory.live(ctx.state_dir, found[1], style=False)
+        return found[0], rows + [row for row in decision_rows(ctx.state_dir, found[0], rows) if not row["deleted"]]
     except Exception:  # noqa: BLE001 - the turn goes on without it
         return "", []
+
+
+DECISION_VALID = {"done": "done", "archived": "done", "pending": "done"}  # A decision's status as a line's ``valid``.
+
+
+def decision_rows(state_dir, project_id, rows=None) -> list:
+    """The project's decisions noted in its decisions.jsonl (core/memstore.py add_decision: the owner's answers since the
+    memory moved there) as lines of its memory ({id, text, kind decision, source owner_answer, at, deleted, valid, origin,
+    code}), the ones ``rows`` (the memory's own lines, read when None) do not have already; [] when none can be read."""
+    try:
+        if rows is None:
+            rows = project_memory.entries(state_dir, projects.read_record(state_dir, project_id))
+        known = {row.get("id") for row in rows}
+        out = []
+        for entry in memstore.decisions(state_dir, "project", project_id):
+            entry_id = entry.ref.rsplit(":", 1)[-1]
+            if entry_id in known or not entry.ref.startswith("decision:"):
+                continue
+            origin = {key: value for key, value in (entry.origin or {}).items() if key not in ("at", "topic_key")}
+            token, _, place = str(origin.get("question") or "").partition("-")
+            if project_memory.TOKEN.fullmatch(token):  # The question record and its place, as an older answer line names them.
+                origin["question"] = token
+                origin.setdefault("index", int(place) if place.isdigit() else origin.get("index"))
+            if (entry.origin or {}).get("topic_key"):
+                origin["topic"] = entry.origin["topic_key"]
+            row = {"id": entry_id, "text": entry.text, "kind": "decision", "source": "owner_answer" if entry.said == "owner" else "lead",
+                   "at": entry.at, "deleted": (entry.edited_at or entry.at or 1) if entry.status == "void" else 0,
+                   "origin": {key: value for key, value in origin.items() if value not in (None, "")}, "code": entry.code}
+            if entry.superseded_by:
+                row.update(valid="superseded", superseded_by=entry.superseded_by.rsplit(":", 1)[-1])
+            elif entry.status in DECISION_VALID:
+                row["valid"] = DECISION_VALID[entry.status]
+            if entry.redacted:
+                row["redacted"] = True
+            out.append(row)
+        return out
+    except Exception:  # noqa: BLE001 - the memory's own lines are read all the same
+        return []
 
 
 def marked(state_dir, topic_id) -> bool:
@@ -85,7 +132,8 @@ def memory_view(ctx, job, *, redacted=None):
     pid, record = found
     topic = getattr(job, "topic_id", "") or ctx.topic_id
     since = board_read.previous_start(ctx.state_dir, topic, getattr(job, "job_id", 0))
-    return core_memory.project_view(project_memory.entries(ctx.state_dir, record), pid,
+    rows = project_memory.entries(ctx.state_dir, record)
+    return core_memory.project_view(rows + decision_rows(ctx.state_dir, pid, rows), pid,
                                     redacted=marked(ctx.state_dir, topic) if redacted is None else redacted, since=since,
                                     used=memory_usage.last_used(ctx.state_dir) if core_memory.learning() else None)
 
@@ -143,42 +191,79 @@ def elsewhere(state_dir, project_id, lines, log=None) -> None:
 
 
 def remember_answer(state_dir, topic_id, record, log=None) -> None:
-    """Note the owner's saved answer ``record`` (a question record with ``answers``) of ``topic_id`` in its project's memory:
-    a decision for each question answered (``answer_line``), the record kept whole beside them (core/project_memory.py
-    note_answers; a record with no token, as none is, an entry a question with no record kept); one whose question is about
-    another project's memory is history (``elsewhere``).
+    """Note the owner's saved answer ``record`` (a question record with ``answers``) of ``topic_id`` as decisions (core/memstore.py
+    add_decision): the project's (COVEY_PROJECT_MEMORY=1) for a topic or the lead of a project, the topic's own (COVEY_MEMORY on)
+    for an ordinary one; a decision each question answered (``answer_line``), its ``question_ref`` ``<token>-<place>`` so it is
+    noted once; one whose question is about another project's memory is history (``elsewhere``). Only the record's
+    ``questions``: the card's extra question (app/question_dedup.py) is never a decision, its pick goes to ``settle``.
     An answer the lead gave in the owner's place (COVEY_PROJECT_TRIAGE=1: the record is still ``held`` while it is saved,
     app/triage.py ``answer``) is not the owner's word and is not noted; the 分流记录 and the decision log hold it, and the
     owner's 不对 corrects it. A question the lead passed on (``escalated``) and the owner answered is noted as always."""
     try:
-        if not projects.memory_enabled() or record.get("response_kind") == "feedback" or triage.state(record) in {triage.HELD, triage.ANSWERED}:
+        if record.get("response_kind") == "feedback" or triage.state(record) in {triage.HELD, triage.ANSWERED}:
             return
-        found = projects.topic_project(state_dir, topic_id)
-        if found is None:
+        state = Path(state_dir)
+        found = projects.topic_project(state, topic_id)
+        if found is not None and not projects.memory_enabled():
             return
-        answers = record.get("answers") if isinstance(record.get("answers"), dict) else {}
-        lines = []
-        for index, question in enumerate(record.get("questions") or (), 1):
-            if not isinstance(question, dict):
-                continue
-            given = (answers.get(question.get("id")) or {}).get("answers")
-            parts = [str(part) for part in given or () if str(part).strip() and part != SKIPPED]
-            if parts:
-                lines.append({"index": index, "item": str(question.get("id") or ""),
-                              "text": answer_line(question.get("question") or question.get("header"), "；".join(parts)),
-                              "asked": " ".join(str(question.get(key) or "") for key in ("id", "header", "question"))})
-        if not lines:
+        scope, owner = ("project", found.id) if found is not None else ("topic", str(topic_id or ""))
+        if scope == "project" and not projects.read_record(state, owner):
+            raise KeyError("project record")  # Gone: nothing to note it in (logged below).
+        if scope == "topic" and (not core_memory.enabled() or not (state / "topics" / owner / "topic.json").is_file()):
             return
-        if project_memory.TOKEN.fullmatch(str(record.get("token") or "")):
-            elsewhere(state_dir, found.id, lines, log)
-            project_memory.note_answers(state_dir, found.id, {**record, "topic_id": record.get("topic_id") or topic_id}, lines)
-            return
-        for line in lines:
-            project_memory.add(state_dir, found.id, line["text"], "decision", "owner_answer",
-                               origin={"item": line["item"], "index": line["index"], "topic": topic_id})
+        lines = answered(record)
+        if lines:
+            token = str(record.get("token") or "")
+            if scope == "project":
+                elsewhere(state, owner, lines, log)
+            redacted = marked(state, topic_id)
+            if scope == "project" and project_memory.TOKEN.fullmatch(token):
+                keep_record(state, owner, {**record, "topic_id": record.get("topic_id") or topic_id})
+            for line in lines:
+                memstore.add_decision(state, scope=scope, owner_key=owner, question=line["question"], answer=line["answer"],
+                                      text=line["text"], question_ref=f"{token}-{line['index']}" if project_memory.TOKEN.fullmatch(token) else "",
+                                      topic_key=str(topic_id or ""), chosen=line["answer"], category=question_dedup.category(line["asked"]),
+                                      polarity=question_dedup.polarity(line["answer"]),
+                                      status="done" if line.get("valid") == "done" else "active", redacted=redacted,
+                                      origin={"topic_key": str(topic_id or ""), "item": line["item"], "index": line["index"],
+                                              **({"job": str(record["job_key"])} if record.get("job_key") else {})},
+                                      who="owner")
+        question_dedup.settle(state, topic_id, record, {line["item"]: line["answer"] for line in answered(record)}, owner=True, log=log)
     except Exception as exc:  # noqa: BLE001 - the answer is delivered whether or not it was noted
         if log is not None:
-            log(f"project memory of an answer failed: {type(exc).__name__}")
+            log(f"memory of an answer failed: {type(exc).__name__}")
+
+
+RECORD_KEYS = ("token", "topic_id", "job_id", "job_key", "questions", "answers", "supplement", "attachments", "created_at")
+
+
+def keep_record(state_dir, project_id, record) -> None:
+    """The question record as it was answered kept whole beside the project's memory the first time (answers/<token>.json,
+    core/project_memory.py answer_record reads it): the options, their descriptions and the context a decision's line leaves out."""
+    path = project_memory.answer_path(state_dir, project_id, str(record.get("token") or ""))
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_json(path, {"schema_version": project_memory.SCHEMA, **{key: record[key] for key in RECORD_KEYS if key in record},
+                      "noted_at": time.time()}, ensure_ascii=False, indent=1)
+
+
+def answered(record) -> list:
+    """The questions of ``record`` the owner answered (skipped ones left out), in order: {index (from 1), item (its id),
+    question, answer, text (``answer_line``), asked (its id, header and words)}. Never the card's extra question."""
+    answers = record.get("answers") if isinstance(record.get("answers"), dict) else {}
+    lines = []
+    for index, question in enumerate(record.get("questions") or (), 1):
+        if not isinstance(question, dict):
+            continue
+        given = (answers.get(question.get("id")) or {}).get("answers")
+        parts = [str(part) for part in given or () if str(part).strip() and part != SKIPPED]
+        if parts:
+            words = str(question.get("question") or question.get("header") or "")
+            lines.append({"index": index, "item": str(question.get("id") or ""), "question": cut(" ".join(words.split()), 590),
+                          "answer": cut("；".join(parts), 590), "text": answer_line(words, "；".join(parts)),
+                          "asked": " ".join(str(question.get(key) or "") for key in ("id", "header", "question"))})
+    return lines
 
 
 def fix_memory(state_dir, project_id, entry_id, what, *, owner, message_id, applies="") -> dict:

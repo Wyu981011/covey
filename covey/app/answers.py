@@ -3,6 +3,10 @@
 A submitted form's fields become the saved answers (or feedback that releases the questions);
 a saved answer becomes the text its cards show, the message the backend gets, and the answers a
 native question returns. Questions (app/questions.py) saves, sends and queues them.
+
+The question a card adds of its own (app/question_dedup.py: the record's ``extra_questions``, drawn after its questions) is
+never one of the answers: its pick is saved apart (``extra_answers``, ``submitted_answer``), so nothing of it reaches the
+model, the answer's title or the decision noted.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ import hashlib
 import re
 
 from covey.app.held_notes import note_parts
+from covey.app.question_dedup import EXTRA_ANSWERS, extra_answers
 from covey.cards.question_cards import GENERIC_HEADER, SKIP_LABEL, SKIP_VALUE, SUBMIT_LABEL, SUPPLEMENT, single_choice
 from covey.cards.review import compact_text
 
@@ -149,6 +154,9 @@ def submitted_answer(record, fields):
     response = {"response_kind": "feedback", "feedback": feedback.strip()} if feedback is not None else {}
     if supplement and feedback is None:
         response["supplement"] = supplement
+    extra = extra_answers(record, fields) if feedback is None and not record.get("reconcile_saved") else {}
+    if extra:
+        response[EXTRA_ANSWERS] = extra  # The card's own question (app/question_dedup.py), apart from the answers.
     if attachments:
         response["attachments"] = attachments
     return answers, response

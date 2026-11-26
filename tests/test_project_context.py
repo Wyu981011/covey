@@ -24,7 +24,7 @@ from covey.core.checkpoint import CHECKPOINT_RULES
 from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.app import project_context, project_facts, project_lead, project_loop
 from covey.app.prompts import PROJECT_CHARS, bridge_rules, project_block
-from covey.core import backup, project_library as library, project_memory as memory, projects
+from covey.core import backup, memstore, project_library as library, project_memory as memory, projects
 from covey.core import memory as core_memory
 from covey.core.maintenance import maintain, plan_maintenance
 from covey.core.state import DAY, read_object, write_json
@@ -189,25 +189,30 @@ class SwitchOffTest(Case):
 
 
 class AnswerTest(Case):
+    def decisions(self):
+        return memstore.decisions(self.state, "project", PID, statuses=None)
+
     def test_each_answer_is_a_decision_of_its_own_with_the_owner_as_its_source(self):
         record = {"token": "0123456789abcdef", "questions": [{"id": "a", "question": "按日期还是按租户分区？"}, {"id": "b", "question": "先迁哪年？"},
                                 {"id": "c", "question": "要不要停机？"}],
                   "answers": {"a": {"answers": ["按日期"]}, "b": {"answers": ["2023", "2024"]}, "c": {"answers": ["用户选择不回答此题（不表示同意或授权）"]}}}
         project_context.remember_answer(self.state, MEMBER, record, self.logs.append)
-        rows = memory.live(self.state, self.record())
-        self.assertEqual([(row["kind"], row["source"]) for row in rows], [("decision", "owner_answer")] * 2)
-        self.assertEqual([row["text"] for row in rows], ["主人答：按日期还是按租户分区？→按日期", "主人答：先迁哪年？→2023；2024"])
+        rows = self.decisions()
+        self.assertEqual([(row.kind, row.said, row.by) for row in rows], [("decision", "owner", "owner")] * 2)
+        self.assertEqual([row.text for row in rows], ["主人答：按日期还是按租户分区？→按日期", "主人答：先迁哪年？→2023；2024"])
         project_context.remember_answer(self.state, MEMBER, record)  # The same answer is not noted twice.
-        self.assertEqual(len(memory.live(self.state, self.record())), 2)
+        self.assertEqual(len(self.decisions()), 2)
+        self.assertEqual(memory.live(self.state, self.record()), [])  # decisions.jsonl, not the memory's 120 lines.
 
     def test_the_lead_counts_feedback_and_a_plain_topic_do_not(self):
         record = {"questions": [{"id": "a", "question": "用哪个？"}], "answers": {"a": {"answers": ["新库"]}}}
         project_context.remember_answer(self.state, LEAD, record)
-        self.assertEqual(len(memory.live(self.state, self.record())), 1)
+        self.assertEqual(len(self.decisions()), 1)
         project_context.remember_answer(self.state, MEMBER, {**record, "response_kind": "feedback", "feedback": "不对"})
-        project_context.remember_answer(self.state, "cd" * 16, record)
+        project_context.remember_answer(self.state, "cd" * 16, record)  # No such topic: nothing written for it.
         project_context.remember_answer(self.state, MEMBER, {"questions": [{"id": "a", "question": "q"}], "answers": {"a": {"answers": []}}})
-        self.assertEqual(len(memory.live(self.state, self.record())), 1)
+        self.assertEqual(len(self.decisions()), 1)
+        self.assertFalse((self.state / "topics" / ("cd" * 16)).exists())
         project_context.remember_answer(self.state, MEMBER, {"answers": "broken"}, self.logs.append)
         self.assertEqual(self.logs, [])  # Nothing to note, nothing raised.
 
@@ -232,12 +237,12 @@ class AnswerTest(Case):
         record = {"token": token, "questions": questions,
                   "answers": {question["id"]: {"answers": ["长期都照这条做"]} for question in questions}}
         project_context.remember_answer(self.state, MEMBER, record, self.logs.append)
-        facts = {row["id"]: core_memory.describe(row) for row in memory.stored(self.state, PID)}
-        self.assertEqual((facts[f"{token}-1"]["valid"], facts[f"{token}-1"]["layer"]), ("done", core_memory.HISTORY))
-        self.assertEqual([facts[f"{token}-{i}"]["part"] for i in (2, 3)], [core_memory.DECISION] * 2)  # Naming a project is not it.
+        status = {row.origin["question"]: row.status for row in self.decisions()}
+        self.assertEqual(status, {f"{token}-1": "done", f"{token}-2": "active", f"{token}-3": "active"})  # Naming a project is not it.
         self.assertEqual(self.logs, [f"project memory answer 1 noted as history: it names project {other}'s lines"])
-        carried = core_memory.project_view(memory.entries(self.state, self.record()), PID)["kept"]
-        self.assertNotIn(f"project:{PID}:{token}-1", {item["ref"] for item in carried})
+        rows = memory.entries(self.state, self.record())
+        carried = core_memory.project_view(rows + project_context.decision_rows(self.state, PID, rows), PID)["kept"]
+        self.assertEqual(len([item for item in carried if item["text"].startswith("主人答：")]), 2)
 
     def test_only_a_word_like_an_id_reads_the_other_projects_and_a_failed_read_notes_as_before(self):
         plain = {"token": "0123456789abcdef", "questions": [{"id": "a", "question": "按日期还是按租户分区？"}],
@@ -247,8 +252,7 @@ class AnswerTest(Case):
         with mock.patch.object(memory, "across", side_effect=OSError("nas")):
             project_context.remember_answer(self.state, MEMBER, {**plain, "token": "fedcba9876543210", "questions": [
                 {"id": "a", "question": "〔abc123〕这条还要吗？"}]}, self.logs.append)
-        rows = memory.stored(self.state, PID)
-        self.assertEqual([core_memory.describe(row)["part"] for row in rows], [core_memory.DECISION] * 2)
+        self.assertEqual([row.status for row in self.decisions()], ["active"] * 2)
         self.assertEqual(self.logs, ["project memory answers not read against the other projects: OSError"])
 
 
@@ -267,14 +271,14 @@ class SubmittedAnswerTest(QuestionFixture, unittest.TestCase):
 
     def test_a_submitted_answer_in_a_project_topic_is_noted(self):
         self.app.questions.submit_answer(self.ctx_topic, "oc_chat", self.token, {"option_0": "0"}, "answer-1")
-        rows = memory.live(self.state, projects.read_record(self.state, PID))
-        self.assertEqual([(row["kind"], row["source"], row["text"]) for row in rows],
-                         [("decision", "owner_answer", "主人答：范围？→全部")])
+        rows = memstore.decisions(self.state, "project", PID)
+        self.assertEqual([(row.kind, row.said, row.text) for row in rows], [("decision", "owner", "主人答：范围？→全部")])
 
     def test_with_the_switch_off_it_is_not(self):
         os.environ[projects.MEMORY_ENV] = "0"
         self.app.questions.submit_answer(self.ctx_topic, "oc_chat", self.token, {"option_0": "0"}, "answer-1")
         self.assertEqual(memory.live(self.state, projects.read_record(self.state, PID)), [])
+        self.assertEqual(memstore.decisions(self.state, "project", PID), [])
 
 
 class FilesTest(Case):
