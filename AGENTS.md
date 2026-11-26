@@ -148,7 +148,7 @@
 | `app/harnesses.py` | The Harnesses of one Bridge, one object each |
 | `app/health.py` | Read-only, bounded local health snapshots |
 | `app/held_notes.py` | A message sent while several questions wait for answers is kept, not refused |
-| `app/home_turn.py` | The home's part of a turn (FINAL-SPEC 修订 9) |
+| `app/home_turn.py` | The home's part of a turn: the static home block of the rules and what the Harness's environment adds |
 | `app/idle_compaction.py` | The butler's compaction while it is idle: the owner no longer waits for it |
 | `app/interaction.py` | Backend event dispatch and task-card callbacks |
 | `app/job_dispatch.py` | Running a dequeued job (process_reply_job |
@@ -224,7 +224,7 @@
 | `app/relay_stops.py` | 停住了 at the private chat's top level (app/butler_relay.py relays a topic turn the butler started or handed on … |
 | `app/relay_targets.py` | Where a topic turn's outcome goes back to at the butler's top level |
 | `app/repo_peers.py` | A topic hears that another topic works in the same git repository |
-| `app/repos_turn.py` | The repositories' part of a turn (FINAL-SPEC 修订 9) |
+| `app/repos_turn.py` | The repositories' part of a turn |
 | `app/review.py` | 独立复核: a read-only topic that reviews one finished turn's changes, opened only when the owner clicks the … |
 | `app/revisit_hint.py` | A line under an ordinary topic's answer that says nothing will come back to what the reply put off (display … |
 | `app/revisits.py` | 到点回来看 at the Bridge: a topic that waits on something outside (a training, CI, a deploy) ends its turn with … |

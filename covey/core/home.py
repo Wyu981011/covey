@@ -1,20 +1,63 @@
 """The deployment's home (主目录): where every topic starts, and where its outputs go (``<state>/home.json``).
 
-The home is the service's ``--workdir`` (FINAL-SPEC 修订 9: one way to start, no second path). A taken-over
-directory gets no file written into it; a new install's default home has a short AGENTS.md (and CLAUDE.md), the
-rendered repo map and ``tasks/``. ``home.json`` holds the templates of a topic's run and session directories and
-whether the Harness's cache variables point into the run directory. A0: the shape and its read with defaults; nothing
-calls it yet (package W1).
+The home is the service's ``--workdir``: one way to start, no second path (docs/configuration.md 主目录与仓库地图). A
+taken-over directory gets no file written into it; a home Covey made (``seed_home``: a new install's ``<数据根>/home``)
+has a short AGENTS.md (and the same CLAUDE.md), the rendered repo map, ``.ignore``, ``.skills`` and ``tasks/``, and a
+mark (``SEED_MARK``) that says so. ``home.json`` holds the templates of a topic's run and session directories and
+whether the Harness's cache variables point into the run directory; a taken-over home without one shows no outputs
+directory (its own AGENTS.md says where outputs go). ``env`` is what every Harness process gets: ``COVEY_HOME``,
+``COVEY_TOPIC``, ``COVEY_STATE`` and ``<数据根>/bin`` (where ``ensure_shim`` puts the ``covey`` command) first on
+``PATH``.
 """
 from __future__ import annotations
 
+import datetime
 import json
-from dataclasses import dataclass
+import os
+import re
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
+
+from covey.core.paths import BIN_DIR, data_home
+from covey.core.state import write_private_text
 
 HOME_FILE = "home.json"
 RUN_SCOPES = ("topic_day", "turn")
 TEMPLATE_VARS = ("home", "date", "no", "slug", "topic8", "run")
+SEED_MARK = ".covey-home"  # In a home Covey made (seed_home); a taken-over directory never gets one.
+SHIM = "covey"  # <数据根>/bin/covey: ``covey repo …`` and ``covey memory …`` (ensure_shim).
+SLUG_CHARS = 24
+CACHE_VARS = ("TMPDIR", "XDG_CACHE_HOME", "PIP_CACHE_DIR", "UV_CACHE_DIR", "npm_config_cache")
+# The home's AGENTS.md (and CLAUDE.md, the same text) in a home Covey made: ≤60 lines, the home's few rules.
+AGENTS_TEXT = """# 主目录
+
+这是 Covey 的主目录：每个话题都从这里启动。代码仓库在仓库地图里（`repos.md`，由 Covey 生成，不要手改）。
+
+## 约定
+
+1. 进一个仓库干活之前，先读它的 `AGENTS.md` 或 `CLAUDE.md`，照它的规矩做。
+2. 要改仓库：`covey repo use <名字> --write`，按话题建（或复用）worktree，在打印的目录里改；只读看：`covey repo use <名字>`。
+3. 不要在主目录根递归搜索（`rg`、`grep -r`、`find`、`ls -R`、`du`）：先查仓库地图，只搜具体的仓库或子目录。
+4. 任务的输出、日志、临时文件放 `tasks/runs/` 下本话题的目录，不要散落在主目录根。
+5. 自己的 Skill 放 `.skills/`。
+"""
+IGNORE_TEXT = """# Covey 主目录：搜索时跳过数据、依赖和产物
+*-data/
+tasks/runs/
+node_modules/
+.venv/
+__pycache__/
+*.log
+"""
+SHIM_TEXT = """#!/bin/sh
+# Covey 的命令入口（Covey 生成，升级时重写）：covey repo …、covey memory …
+case "$1" in
+  repo) shift; exec "{python}" -B "{bin}/covey_repo.py" "$@" ;;
+  memory) shift; exec "{python}" -B "{bin}/covey_memory.py" "$@" ;;
+  *) echo "用法：covey repo list|use|status|prune-plan … ；covey memory …" >&2; exit 2 ;;
+esac
+"""
 
 
 @dataclass(frozen=True)
@@ -46,9 +89,23 @@ def read(state_dir) -> HomeConfig:
     return HomeConfig(**known)
 
 
+def configured(state_dir) -> bool:
+    """Whether ``home.json`` is there: only then a topic's rules name its outputs directory."""
+    return path(state_dir).is_file()
+
+
+def write(state_dir, config: HomeConfig) -> None:
+    write_private_text(path(state_dir), json.dumps({"version": 1, **asdict(config)}, ensure_ascii=False, indent=2) + "\n")
+
+
 def home_dir(workdir) -> Path:
     """The home of a deployment whose service runs with ``--workdir`` ``workdir``."""
     return Path(workdir)
+
+
+def of(ctx) -> Path:
+    """The home of ``ctx``'s deployment: its service's ``--workdir`` (``default_workdir``)."""
+    return home_dir(getattr(ctx, "default_workdir", None) or ctx.workdir)
 
 
 def render(template: str, **values) -> str:
@@ -58,3 +115,145 @@ def render(template: str, **values) -> str:
         if name in values:
             out = out.replace("{" + name + "}", str(values[name]))
     return out
+
+
+def seeded(home) -> bool:
+    """Whether Covey made ``home`` (``seed_home``): a taken-over directory is never written into."""
+    return (Path(home) / SEED_MARK).is_file()
+
+
+def seed_home(home) -> list[str]:
+    """Make the home's few files (AGENTS.md, CLAUDE.md, .ignore, .skills with the Harnesses' links to it, tasks/) in
+    ``home`` when it is missing, empty or one Covey made; a file already there is kept. A directory with anything else
+    in it is taken over: nothing is written and [] comes back. The paths made, relative to ``home``."""
+    home = Path(home)
+    try:
+        if home.exists() and not seeded(home) and any(home.iterdir()):
+            return []
+    except OSError:
+        return []
+    made = []
+    home.mkdir(parents=True, exist_ok=True)
+    files = {SEED_MARK: json.dumps({"version": 1, "seeded_at": int(time.time())}) + "\n", "AGENTS.md": AGENTS_TEXT,
+             "CLAUDE.md": AGENTS_TEXT, ".ignore": IGNORE_TEXT}
+    for name, text in files.items():
+        target = home / name
+        if not target.exists():
+            write_private_text(target, text)
+            made.append(name)
+    for folder in (".skills", "tasks/sessions", "tasks/runs", "tasks/shared"):
+        if not (home / folder).is_dir():
+            (home / folder).mkdir(parents=True, exist_ok=True)
+            made.append(folder + "/")
+    for link in (".claude/skills", ".agents/skills"):
+        target = home / link
+        if not target.exists() and not target.is_symlink():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to("../.skills")
+            made.append(link)
+    return made
+
+
+def slug(title) -> str:
+    """A short name of ``title`` for a directory: its latin letters and digits, lower case, joined by '-', at most
+    ``SLUG_CHARS``; ``topic`` when it has none (a Chinese title)."""
+    words = re.findall(r"[a-z0-9]+", str(title or "").lower())
+    out = "-".join(words)[:SLUG_CHARS].strip("-")
+    return out or "topic"
+
+
+def _day(when) -> str:
+    return datetime.datetime.fromtimestamp(float(when)).strftime("%Y%m%d")
+
+
+def topic_dir(config: HomeConfig, home, *, number, topic_id, title="", started=None) -> str:
+    """The topic's outputs directory: ``runs_template`` up to its ``{run}`` part, ``{date}`` the topic's start day."""
+    template = config.runs_template
+    head = template[:template.index("{run}")].rstrip("/") if "{run}" in template else template
+    return render(head, home=str(home), date=_day(started if started else time.time()), no=number or 0,
+                  slug=slug(title), topic8=str(topic_id or "")[:8])
+
+
+def run_dir_for(config: HomeConfig, home, *, number, topic_id, title="", started=None, task_key="", now=None) -> str:
+    """A run's outputs directory (``runs_template``): ``{run}`` is ``YYYYMMDD-HHMM-<task key's first 4>``; with
+    ``run_scope`` ``topic_day`` every run of the topic on one day shares ``YYYYMMDD``."""
+    now = time.time() if now is None else now
+    if config.run_scope == "topic_day":
+        run = _day(now)
+    else:
+        run = datetime.datetime.fromtimestamp(now).strftime("%Y%m%d-%H%M") + "-" + re.sub(r"[^0-9A-Za-z]", "", task_key)[:4]
+    return render(config.runs_template, home=str(home), date=_day(started if started else now), no=number or 0,
+                  slug=slug(title), topic8=str(topic_id or "")[:8], run=run)
+
+
+def cache_env(run_dir) -> dict:
+    """The cache variables (``CACHE_VARS``) under ``run_dir``'s tmp/ and cache/, once both are made and writable;
+    {} when they are not (never quietly /tmp: the caller says so)."""
+    run = Path(run_dir)
+    try:
+        for folder in ("tmp", "cache"):
+            (run / folder).mkdir(parents=True, exist_ok=True)
+            probe = run / folder / f".covey-probe-{os.getpid()}"
+            probe.write_text("")
+            probe.unlink()
+    except OSError:
+        return {}
+    cache = str(run / "cache")
+    return {"TMPDIR": str(run / "tmp"), "XDG_CACHE_HOME": cache, "PIP_CACHE_DIR": cache + "/pip",
+            "UV_CACHE_DIR": cache + "/uv", "npm_config_cache": cache + "/npm"}
+
+
+def bin_dir(root=None) -> Path:
+    """``<数据根>/bin``: the ``covey`` command (``ensure_shim``), first on every Harness process's ``PATH``."""
+    return Path(root or data_home()) / "bin"
+
+
+def shim_text(tool_bin=None, python=None) -> str:
+    return SHIM_TEXT.format(python=python or _python(), bin=str(tool_bin or BIN_DIR))
+
+
+def _python() -> str:
+    import sys
+    return sys.executable or "python3"
+
+
+def ensure_shim(root=None, *, tool_bin=None, force=False) -> Path | None:
+    """Write ``<数据根>/bin/covey`` (``SHIM_TEXT``) naming this release's bin/ when it is missing, names a bin/ that is
+    gone, or ``force`` (a deploy points it at the new release). The path; None when it cannot be written."""
+    target = bin_dir(root) / SHIM
+    tool_bin = Path(tool_bin or BIN_DIR)
+    try:
+        if not force and target.is_file():
+            named = re.search(r'"([^"]+)/covey_repo\.py"', target.read_text(encoding="utf-8"))
+            if named and Path(named.group(1), "covey_repo.py").is_file():
+                return target
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_private_text(target, shim_text(tool_bin))
+        target.chmod(0o755)
+    except OSError:
+        return None
+    return target
+
+
+def env(ctx) -> dict:
+    """What the Harness process of ``ctx``'s turn gets on top of the Bridge's environment: ``COVEY_HOME`` (the home),
+    ``COVEY_TOPIC`` (the topic, '' for none), ``COVEY_STATE`` (the state directory) and ``PATH`` with ``<数据根>/bin``
+    first. Nothing for a device's turn: its process has the device's environment, never the hub's names."""
+    if getattr(ctx, "device", ""):
+        return {}
+    first = str(bin_dir())
+    rest = [part for part in os.environ.get("PATH", "").split(os.pathsep) if part and part != first]
+    return {"COVEY_HOME": str(of(ctx)), "COVEY_TOPIC": str(getattr(ctx, "topic_id", "") or ""),
+            "COVEY_STATE": str(ctx.state_dir), "PATH": os.pathsep.join([first, *rest])}
+
+
+def migrate_v1(state_dir, workdir) -> str:
+    """The home's step of the migration (core/migrate.py): a home Covey made gets ``home.json``'s defaults once; a
+    taken-over one gets none (its own AGENTS.md says where outputs go) and nothing written into it. The log line."""
+    home = home_dir(workdir)
+    if configured(state_dir):
+        return f"home_v1: home.json already there ({home})"
+    if not seeded(home):
+        return f"home_v1: taken-over home {home}, no home.json written"
+    write(state_dir, HomeConfig())
+    return f"home_v1: home.json written with the defaults ({home})"

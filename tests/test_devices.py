@@ -135,6 +135,15 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual((minimal.title, minimal.harnesses, minimal.spaces, minimal.options, minimal.python),
                          ("a", ("claude", "codex"), ("owner_private",), (), "python3"))
 
+    def test_a_device_may_name_its_home_which_is_read_as_written_and_never_resolved_here(self):
+        entry = {"ssh": {"host": "h"}}
+        parsed = devices.parse(json.dumps({"schema": 1, "devices": {
+            "a": {**entry, "home": "~/covey-home"}, "b": {**entry, "home": "/data/me/home"}, "c": entry}}))
+        self.assertEqual([devices.home_of(parsed.device(alias)) for alias in "abc"], ["~/covey-home", "/data/me/home", ""])
+        for bad in ("relative/dir", 7, "~other/x", "/a\nb", " "):
+            text = problems(json.dumps({"schema": 1, "devices": {"a": {**entry, "home": bad}}}))
+            self.assertIn("devices.a.home: must be an absolute path on the device", text, repr(bad))
+
     def test_a_device_declares_the_harnesses_that_run_on_a_device_claude_and_codex_unless_it_names_them(self):
         from covey.core.roster import DEVICE_HARNESSES, NAMES
         self.assertEqual(devices.harness_names(), DEVICE_HARNESSES)
@@ -244,6 +253,14 @@ class BindWorkdirTest(unittest.TestCase):
         self.assertFalse(bound.workdir.exists())
         self.assertFalse(self.state.exists(), "decoding makes no directory")
         self.assertEqual(bound.workdir, devices.standin(self.state, "gpu1", "/home/me/proj"))
+
+    def test_a_device_with_a_home_still_reads_the_old_alias_path_values(self):
+        path = Path(self.temp.name) / "devices.json"
+        path.write_text(config_text(devices={"gpu1": {"ssh": {"host": "h1"}, "home": "~/home"}}))
+        bound = self.bind("gpu1:/home/me/proj")
+        self.assertEqual((bound.device, bound.remote_workdir), ("gpu1", "/home/me/proj"))
+        self.assertTrue(devices.is_device_value("gpu1:~/work", self.environ))
+        self.assertEqual(devices.home_of(devices.load(self.environ).device("gpu1")), "~/home")
 
     def test_the_value_round_trips_and_the_stand_in_is_stable(self):
         for value in ("gpu1:/home/me/proj", "gpu2:/srv/data", "gpu1:~/work", "gpu1:~", "gpu1:/"):

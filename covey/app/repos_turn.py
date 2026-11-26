@@ -1,21 +1,244 @@
-"""The repositories' part of a turn (FINAL-SPEC 修订 9): the dynamic repository block at the prompt's tail, and settling a task's requests.
+"""The repositories' part of a turn: the dynamic repository block at the prompt's tail, and settling a task's requests.
 
-``tail`` is the block app/runs.py puts after the checkpoint note each turn (修订 4: never in the cached rules): the
-repositories the topic uses, whether their rules were read, a repository a declared write still has to read the rules
-of (its first lines inlined, ≤4 KB, and again the next turn when they were not read), and a reminder when the main
-checkout was changed. ``settle`` folds a task's ``runs/<任务键>/repos.json`` into ``topic.json`` when its turn ends.
-A0: ``tail`` is empty and ``settle`` does nothing (package W1).
+``tail`` is the block app/runs.py puts after the checkpoint note each turn (never in the cached rules): the
+repositories the topic uses and whether their rules were read, a repository's rules inlined (its first
+``RULES_INLINE_BYTES``) when the butler or the lead declared it and its rules were not read yet, or when the last turn
+wrote to it without reading them, and a reminder when the last turn changed a repository's main checkout instead of
+the topic's worktree. A topic from before the home shows its repositories only once one was declared or asked for
+(``covey repo use``); its inlined rules and reminders it gets all the same. ``settle`` folds a task's
+``runs/<任务键>/repos.json`` and the repositories its tool calls touched (core/topic_repos.py ``touched``) into
+``topic.json`` when its turn ends, and the repositories it used into the repo map. ``repos_list`` is the Bridge tool's
+answer (docs/configuration.md 主目录与仓库地图).
 """
 from __future__ import annotations
 
+import os
+import time
+
+from covey.core import home, repomap, topic_repos
+from covey.core.paths import data_home
+from covey.core.state import read_json
+from covey.core.topics import home_start, topic_file, update_repos
+
 RULES_INLINE_BYTES = 4096
+CHECKOUT_WRITES = "checkout_writes"  # A topic.json repos entry's: the last turn changed the repository's main checkout.
+
+
+def _topic(ctx, job) -> tuple[str, dict]:
+    topic = getattr(job, "topic_id", "") or ctx.topic_id
+    if not topic:
+        return "", {}
+    try:
+        data = read_json(topic_file(ctx.state_dir, topic))
+    except (OSError, ValueError):
+        return topic, {}
+    return topic, data if isinstance(data, dict) else {}
+
+
+def inline_due(repo: topic_repos.TopicRepo) -> bool:
+    """Whether a turn inlines ``repo``'s rules: not read yet, and declared (the butler or the lead named it) or written
+    without them last turn (``rules_miss``)."""
+    return not repo.rules_read_at and (repo.source == "declared" or repo.rules_miss > 0)
+
+
+def _map(ctx) -> dict:
+    return {os.path.normpath(repo.path): repo for repo in repomap.read(ctx.state_dir)}
+
+
+def _rules_of(entry, mapped) -> tuple:
+    found = mapped.get(os.path.normpath(entry.path))
+    return found.rules if found is not None else ("AGENTS.md",)
+
+
+def _rules(entry, mapped, limit) -> tuple[str, str, bool]:
+    """``entry``'s rules file head (core/repomap.py ``rules_head``): its worktree's, else the repository's."""
+    rules = _rules_of(entry, mapped)
+    found = repomap.rules_head(topic_repos.where(entry), rules, limit)
+    return found if found[0] or not entry.worktree else repomap.rules_head(entry.path, rules, limit)
+
+
+def _row(entry, mapped) -> str:
+    name, _, _ = _rules(entry, mapped, 0)
+    read = (f"规范 {name} ✓已读" if entry.rules_read_at else f"规范 {name} 未读，动它之前先读") if name else "没有规范文件"
+    if entry.mode != "write":
+        return f"- {entry.name}（读，{entry.path}；{read}）"
+    if entry.worktree and os.path.normpath(entry.worktree) != os.path.normpath(entry.path):
+        return f"- {entry.name}（写，worktree {entry.worktree}" + (f"，分支 {entry.branch}" if entry.branch else "") + f"；{read}）"
+    found = mapped.get(os.path.normpath(entry.path))
+    if not entry.worktree and found is not None and found.write_mode == "worktree":
+        return f"- {entry.name}（写，worktree 还没建：先 covey repo use {entry.name} --write；{read}）"
+    return f"- {entry.name}（写，原地改 {entry.path}；{read}）"
 
 
 def tail(ctx, job) -> str:
-    """The repository block of ``job``'s turn: none yet."""
-    return ""
+    """The repository block of ``job``'s turn; '' when the topic has nothing to say about its repositories."""
+    if getattr(ctx, "device", ""):
+        return ""
+    _, data = _topic(ctx, job)
+    entries = topic_repos.of_topic(data)
+    if not entries:
+        return ""
+    mapped = _map(ctx)
+    raw = {str(item.get("name")): item for item in data.get("repos") or () if isinstance(item, dict)}
+    parts = []
+    if home_start(data) or any(entry.source in ("declared", "cli") for entry in entries):
+        parts.append("本话题用到的仓库：\n" + "\n".join(_row(entry, mapped) for entry in entries)
+                     + "\n要改别的仓库：covey repo use <仓库> --write。")
+    for entry in entries:
+        if raw.get(entry.name, {}).get(CHECKOUT_WRITES):
+            parts.append(f"上一轮改到了 {entry.name} 的主检出（{entry.path}）。之后改用 `covey repo use {entry.name} --write` "
+                         "打印的 worktree，主检出里的改动先提交或挪过去。")
+    for entry in entries:
+        if not inline_due(entry):
+            continue
+        name, text, cut = _rules(entry, mapped, RULES_INLINE_BYTES)
+        if not name:
+            continue
+        why = "上一轮改了它却没读它的规范" if entry.rules_miss else "这个仓库是派活时点名的"
+        parts.append(f"{entry.name} 的规范（{name} 开头{'，后面还有，动手前读全文' if cut else ''}；{why}，先照它做）：\n"
+                     f"<<<\n{text.rstrip()}\n>>>")
+    return "\n\n".join(parts)
+
+
+def _workdir_repo(data) -> dict | None:
+    """The repository of a topic from before the home, from its workdir: read, its rules counted as read (the
+    Harness starts in it and reads them itself)."""
+    workdir = str(data.get("workdir") or "")
+    if not workdir.startswith("/"):
+        return None
+    top, linked = topic_repos.checkout_of(workdir)
+    if not top:
+        return None
+    main = top
+    if linked:
+        git = topic_repos.repo_of(top)
+        main = os.path.dirname(git) if git else top
+    now = time.time()
+    return {"name": os.path.basename(main), "path": main, "mode": "read", "worktree": top if linked else "",
+            "source": "touched", "first_at": now, "rules_read_at": now, "rules_miss": 0}
 
 
 def settle(ctx, job, task_dir) -> None:
-    """Fold the ``covey repo use`` requests of ``job``'s task (core/topic_repos.py requests) into its topic: not yet."""
-    return None
+    """Fold what ``job``'s turn did with repositories into its topic: the ``covey repo use`` requests of its task
+    (core/topic_repos.py ``requests``; their rules were printed, so read), the repositories its steps touched (rules
+    read or not, a main checkout changed) and those whose rules ``tail`` inlined (read now); a repository written
+    without its rules gets ``rules_miss`` and its rules inlined next turn. Then the repo map takes the ones it used."""
+    if getattr(ctx, "device", ""):
+        return
+    topic, data = _topic(ctx, job)
+    if not topic or not data:
+        return
+    now = time.time()
+    asked = topic_repos.requests(task_dir) if task_dir else []
+    repos = repomap.read(ctx.state_dir)
+    where = home.of(ctx)
+    found = topic_repos.touched(getattr(job, "tool_trace", None), repos, workdir=ctx.workdir, home=where,
+                                skip=(data_home(),), now=now)
+    listed, patterns = {os.path.normpath(repo.path) for repo in repos}, repomap.exclude(ctx.state_dir)
+    found = [repo for repo in found
+             if os.path.normpath(repo.path) in listed or not repomap.excluded(os.path.basename(repo.path), patterns)]
+    inlined = {entry.name for entry in topic_repos.of_topic(data) if inline_due(entry)}
+    legacy = None if "repos" in data or home_start(data) else _workdir_repo(data)
+    number = data.get("topic_number") if type(data.get("topic_number")) is int else 0
+    own_trees = os.path.normpath(str(topic_repos.topic_worktrees(number, topic))) + os.sep
+    own_top = topic_repos.checkout_of(str(ctx.workdir))[0]
+
+    def ours(worktree) -> bool:  # A worktree of this topic's (or its own workdir): never another topic's.
+        return bool(worktree) and (os.path.normpath(worktree).startswith(own_trees) or worktree == own_top)
+
+    worktree_mode = {os.path.normpath(repo.path): repo.write_mode for repo in repos}
+    own = os.path.normpath(str(ctx.workdir))
+
+    def change(entries):
+        by_name = {str(item.get("name")): item for item in entries}
+        if legacy is not None and legacy["name"] not in by_name:
+            entries.append(legacy)
+            by_name[legacy["name"]] = legacy
+        for item in entries:
+            item.pop(CHECKOUT_WRITES, None)
+            if item.get("name") in inlined:
+                item["rules_read_at"] = now
+        for request in asked:
+            name = str(request.get("name") or "")
+            if not name or not str(request.get("path") or "").startswith("/"):
+                continue
+            item = by_name.get(name)
+            if item is None:
+                item = {"name": name, "path": request["path"], "mode": "read", "source": "cli", "first_at": request.get("at") or now}
+                entries.append(item)
+                by_name[name] = item
+            if request.get("mode") == "write":
+                item["mode"] = "write"
+            for key in ("worktree", "branch", "base", "base_oid"):
+                if request.get(key):
+                    item[key] = request[key]
+            if request.get("rules_file"):
+                item["rules_read_at"] = request.get("at") or now
+        for repo in found:
+            item = by_name.get(repo.name)
+            if item is None:
+                item = {"name": repo.name, "path": repo.path, "mode": "read", "source": "touched", "first_at": now}
+                entries.append(item)
+                by_name[repo.name] = item
+            if repo.worktree and repo.worktree != repo.path and not item.get("worktree") and ours(repo.worktree):
+                item["worktree"] = repo.worktree
+            if repo.mode == "write":
+                item["mode"] = "write"
+            if repo.rules_read_at:
+                item["rules_read_at"] = repo.rules_read_at
+        for repo in found:
+            item = by_name[repo.name]
+            if repo.mode != "write":
+                continue
+            if not item.get("rules_read_at"):
+                item["rules_miss"] = int(item.get("rules_miss") or 0) + 1
+            checkout = not repo.worktree
+            in_place = worktree_mode.get(os.path.normpath(repo.path)) == "inplace" or (
+                item.get("worktree") and os.path.normpath(item["worktree"]) == os.path.normpath(repo.path))
+            if checkout and not in_place and own != os.path.normpath(repo.path) and not own.startswith(os.path.normpath(repo.path) + os.sep):
+                item[CHECKOUT_WRITES] = 1
+        return entries
+
+    entries = update_repos(ctx.state_dir, topic, change)
+    names = {repo.name for repo in found} | {str(request.get("name")) for request in asked}
+    used = [repo for repo in map(topic_repos.from_dict, entries) if repo is not None and repo.name in names]
+    try:
+        repomap.note_used(ctx.state_dir, used, now=now)
+        repomap.render(ctx.state_dir, where)
+    except OSError:
+        pass
+
+
+def repos_list(ctx) -> dict:
+    """The Bridge tool ``repos_list``'s answer: the home, where the map is, each repository of it (whether this topic
+    uses it, and how) and the topic's repositories the map does not list."""
+    where = home.of(ctx)
+    _, data = _topic(ctx, None)
+    used = {entry.name: entry for entry in topic_repos.of_topic(data)}
+    rows = []
+    for repo in repomap.read(ctx.state_dir):
+        entry = used.pop(repo.name, None)
+        rows.append({"name": repo.name, "path": repo.path, "note": repo.note, "status": repo.status,
+                     "write_mode": repo.write_mode, "branch": repo.branch,
+                     **({"used": entry.mode, "worktree": entry.worktree} if entry else {})})
+    return {"home": str(where), "map": str(repomap.rendered_path(ctx.state_dir, where)), "repos": rows,
+            "topic_only": [{"name": e.name, "path": e.path, "used": e.mode, "worktree": e.worktree} for e in used.values()]}
+
+
+def write_dirs(ctx, job) -> list[tuple[str, str]]:
+    """(name, directory) of each repository ``job``'s topic writes to: its worktree, or the repository itself when it is
+    written in place; the turn's diff takes a snapshot of each before it starts (core/diff.py). One whose worktree is
+    not made yet is left out: its main checkout may hold other topics' changes."""
+    if getattr(ctx, "device", ""):
+        return []
+    _, data = _topic(ctx, job)
+    entries = [entry for entry in topic_repos.of_topic(data) if entry.mode == "write"]
+    if not entries:
+        return []
+    mapped = _map(ctx)
+    found = []
+    for entry in entries:
+        listed = mapped.get(os.path.normpath(entry.path))
+        if entry.worktree or (listed is not None and listed.write_mode == "inplace"):
+            found.append((entry.name, topic_repos.where(entry)))
+    return found

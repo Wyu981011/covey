@@ -22,6 +22,10 @@ candidates (``Candidate``), every kind below, each about one object:
   last day, whose conclusion was due at the top level (app/relay_targets.py) and whose relay record does not say it went
   (main-thread/relays/: none, ``submitting``, ``uncertain`` or ``unsent``).
 
+A topic that lists repositories (``topic.json`` ``repos``) is also near another that shares one (``Reader.repos``: the main
+repository of each entry), which counts as the same workspace does in ``group`` and ``join``; a topic that started in the
+home has no workspace of its own for that (its workspace is the home, not a matter).
+
 ``sig`` is the state the object was found in: the same sig is the same matter (core/patrol.py). Words are the title's
 ASCII words of three letters and Chinese pairs, minus the pairs every request has (``STOP``).
 """
@@ -39,6 +43,8 @@ from covey.core.jobs import job_key, select_job_records
 from covey.core.metrics import took_text
 from covey.core.state import epoch_seconds, read_object
 from covey.core.statuses import RUNNING, TERMINAL
+from covey.core.topic_repos import of_topic, repo_of
+from covey.core.topics import home_start, load_topic
 
 GROUP_TOPICS = 30
 PROJECT_THREADS = 6
@@ -152,6 +158,7 @@ class Reader:
             topic = record.get("topic_id") or ""
             if topic and not unrun(record) and int(record.get("job_id") or 0) > int(self.latest.get(topic, {}).get("job_id") or 0):
                 self.latest[topic] = record
+        self._repos = {}
 
     def label(self, topic):
         number, title = board_read.topic_label(self.seen.state, topic)
@@ -164,8 +171,23 @@ class Reader:
         """The id of the project ``topic`` belongs to, '' for a topic of none."""
         return self.project_by_topic.get(topic, "")
 
+    def _data(self, topic) -> dict:
+        try:
+            return load_topic(self.seen.state, topic)
+        except Exception:  # noqa: BLE001 - a topic without a readable record has no repositories
+            return {}
+
     def workspace(self, topic) -> str:
+        if home_start(self._data(topic)):
+            return ""
         return str(self.latest.get(topic, {}).get("workspace_name") or "")
+
+    def repos(self, topic) -> frozenset:
+        """The repositories ``topic`` lists (the main repository of each, else its path); empty for none."""
+        if topic not in self._repos:
+            data = self._data(topic)
+            self._repos[topic] = frozenset((repo_of(item.path) or item.path) for item in of_topic(data))
+        return self._repos[topic]
 
 
 def asks(reader: Reader, config) -> list:
@@ -239,7 +261,7 @@ def groups(reader: Reader, config) -> list:
     seen = reader.seen
     topics = sorted((topic for topic in reader.latest if reader.ordinary(topic)),
                     key=lambda topic: -board_read.job_number(reader.latest[topic]))[:GROUP_TOPICS]
-    info = {topic: (words(reader.label(topic)[1]), reader.workspace(topic)) for topic in topics}
+    info = {topic: (words(reader.label(topic)[1]), reader.workspace(topic), reader.repos(topic)) for topic in topics}
     parent = {topic: topic for topic in topics}
 
     def root(topic):
@@ -251,7 +273,7 @@ def groups(reader: Reader, config) -> list:
     for i, one in enumerate(topics):
         for other in topics[i + 1:]:
             shared = len(info[one][0] & info[other][0])
-            same_place = bool(info[one][1]) and info[one][1] == info[other][1]
+            same_place = (bool(info[one][1]) and info[one][1] == info[other][1]) or bool(info[one][2] & info[other][2])
             if shared >= 4 or (same_place and shared >= 2):
                 parent[root(other)] = root(one)
     clusters = {}
@@ -277,6 +299,10 @@ def project_places(reader: Reader, record) -> set:
     return {reader.workspace(topic) for topic in record.get("threads") or () if reader.workspace(topic)}
 
 
+def project_repos(reader: Reader, record) -> set:
+    return {repo for topic in record.get("threads") or () for repo in reader.repos(topic)}
+
+
 def joins(reader: Reader, config) -> list:
     seen, found = reader.seen, []
     live = [record for record in seen.projects if record.get("state") == projects.ACTIVE and projects.valid_id(record.get("id"))]
@@ -289,7 +315,7 @@ def joins(reader: Reader, config) -> list:
         best = None
         for record in live:
             shared = len(mine & project_words(record))
-            near = bool(place) and place in project_places(reader, record)
+            near = (bool(place) and place in project_places(reader, record)) or bool(reader.repos(topic) & project_repos(reader, record))
             if shared >= 2 or (near and shared >= 1):
                 if best is None or shared > best[0]:
                     best = (shared, record)

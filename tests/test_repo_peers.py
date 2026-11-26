@@ -128,6 +128,54 @@ class NoteTest(Case):
         self.assertIn("…》", self.note())
 
 
+class RepoAwareTest(Case):
+    def make_repo(self, name):
+        repo = self.root / name
+        (repo / ".git").mkdir(parents=True)
+        return repo
+
+    def test_a_write_repository_of_the_topic_counts_beyond_its_workdir(self):
+        covey = self.make_repo("covey")
+        self.topic("other", 812, "改 covey")
+        write_topic(self.state, topic_id="other", topic_number=812, origin={"title": "改 covey"}, chat_id="oc_chat",
+                    home_start=True, repos=[{"name": "covey", "path": str(covey), "mode": "write",
+                                             "worktree": str(self.root / "wt-covey")}])
+        self.job("other", self.root)  # Its workdir is the home directory, not a repository.
+        write_topic(self.state, topic_id="mine", repos=[{"name": "covey", "path": str(covey), "mode": "write"}])
+        line = self.note(self.root)
+        self.assertIn("T812《改 covey》 也在改 covey（worktree " + str(self.root / "wt-covey") + "）", line)
+        self.assertIn("git fetch", line)
+        self.assertEqual([named for named, _ in repo_peers.others(self.state, "mine", self.root, self.now)], ["T812《改 covey》"])
+
+    def test_a_read_repository_does_not_count(self):
+        covey = self.make_repo("covey")
+        write_topic(self.state, topic_id="other", topic_number=812, origin={"title": "看 covey"}, chat_id="oc_chat",
+                    repos=[{"name": "covey", "path": str(covey), "mode": "read"}])
+        self.job("other", self.root)
+        write_topic(self.state, topic_id="mine", repos=[{"name": "covey", "path": str(covey), "mode": "write"}])
+        self.assertEqual(self.note(self.root), "")
+
+    def test_a_worktree_is_its_main_repository(self):
+        covey = self.make_repo("covey")
+        tree = self.root / "wt"
+        tree.mkdir()
+        (covey / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (tree / ".git").write_text(f"gitdir: {covey}/.git/worktrees/wt\n")
+        write_topic(self.state, topic_id="mine", repos=[{"name": "covey", "path": str(covey), "mode": "write",
+                                                         "worktree": str(tree)}])
+        self.topic("other", 9, "同仓库")
+        self.job("other", covey)
+        self.assertTrue(self.note(tree).startswith("同一个仓库里还有话题在做：T9《同仓库》"))
+
+    def test_duplicates_use_the_same_set(self):
+        covey = self.make_repo("covey")
+        write_topic(self.state, topic_id="a", topic_number=12, origin={"title": "查昨晚的失败日志"}, chat_id="oc_chat",
+                    repos=[{"name": "covey", "path": str(covey), "mode": "write"}])
+        self.job("a", self.root)
+        write_topic(self.state, topic_id="mine", repos=[{"name": "covey", "path": str(covey), "mode": "write"}])
+        self.assertEqual(repo_peers.duplicates(self.state, "mine", self.root, "查失败日志", self.now), ["T12《查昨晚的失败日志》"])
+
+
 class DuplicatesTest(Case):
     def test_only_a_title_like_it_in_the_same_repository(self):
         self.topic("a", 12, "查昨晚的失败日志")

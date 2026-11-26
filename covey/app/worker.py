@@ -24,7 +24,7 @@ from covey.app import devices as device_turns
 from covey.core.jobs import (DEVICE_LOST_STATUS, RECALLED, SIGTERM_STATUS, context_for_job, job_key, quick_held,
                              topic_job_records)
 from covey.core.progress import turn_seconds
-from covey.core import timing, turn_source
+from covey.core import timing, topic_repos, turn_source
 from covey.core.metrics import mark, mark_first_output
 from covey.core.longtask import SEED_PHASE, TaskMonitor
 from covey.core.status_line import STARTING
@@ -32,7 +32,7 @@ from covey.cards.review import stopped_sentence
 from covey.core.state import write_json
 from covey.core.logs import append_private_text
 from covey.core.butler import worded
-from covey.app import auto_retry, butler_reactions, butler_relay, butler_reply, butler_tracks, policy_retry, project_lead, quota_return, track_digest, unstick
+from covey.app import auto_retry, butler_reactions, butler_relay, butler_reply, butler_tracks, policy_retry, project_lead, quota_return, repos_turn, track_digest, unstick
 from covey.app.turn_delivery import TurnDelivery, outgoing_markdown, show_outcome
 from covey.app.turn_images import TurnImages
 from covey.app.turn_settle import TurnResult, settle_turn
@@ -215,12 +215,31 @@ def process_bridge_reply_job(job: Any, ctx: Any, *, harness, runtime, messenger,
     if turn.status != "waiting_user":  # A track of the butler forgets its session (app/butler_tracks.py).
         butler_tracks.release_pointer(ctx, job, harness, runtime)
     if turn.status == "interrupted":
+        settle_repos(ctx, job, runtime)
         leave_interrupted(ctx, job, harness=harness, runtime=runtime, record_job_state=record_job_state)
         return
     _deliver_turn(job, ctx, turn, snapshot, harness=harness, runtime=runtime, messenger=messenger, cards=cards,
                   artifacts=artifacts, questions=questions, steering=steering, record_job_state=record_job_state,
                   send_text=send_text, capabilities=capabilities)
     runtime.log(f"finished reply job #{job.job_id}")
+
+
+def settle_repos(ctx, job, runtime) -> None:
+    """Once the turn has ended, before its result is recorded and sent (the topic's next turn may start as soon as it
+    is): the repositories it used into its topic and the repo map (app/repos_turn.py ``settle``). A failure here is
+    logged and changes nothing of the turn."""
+    try:
+        repos_turn.settle(ctx, job, topic_repos.task_dir_of(ctx.state_dir, job))
+    except Exception as exc:  # noqa: BLE001 - the turn is over; only its repositories stay as they were
+        runtime.log(f"repositories of job #{job.job_id} not settled: {type(exc).__name__}")
+
+
+def _write_repos(ctx, job) -> list:
+    """(name, directory) of each repository ``job``'s topic writes to: the diff's other snapshots (core/diff.py)."""
+    try:
+        return repos_turn.write_dirs(ctx, job)
+    except Exception:  # noqa: BLE001 - no other snapshots: the turn runs as before
+        return []
 
 
 TRACE_CHARS = 4000  # Of a failed turn's traceback in the log: its last frames, where it was raised.
@@ -307,7 +326,7 @@ def _run_turn(job, ctx, *, harness, runtime, cards, sessions, runs, record_job_s
         timing.mark("monitor")
         # After the monitor starts: 执行中 does not wait for git (0.2-0.35 s, S34); the backend does.
         # A device's directory is not on this machine: git here would answer "no changes" (also skips finalize_job_diff).
-        snapshot = None if getattr(ctx, "device", "") else capture_job_diff_snapshot(ctx.workdir)
+        snapshot = None if getattr(ctx, "device", "") else capture_job_diff_snapshot(ctx.workdir, repos=_write_repos(ctx, job))
         timing.mark("snapshot")
         result = _generate_reply(ctx, job, session_id, progress, runs=runs, record_job_state=record_job_state)
         if job.interrupted and not finished_before(result):
@@ -360,6 +379,7 @@ def _deliver_turn(job, ctx, turn, snapshot, *, harness, runtime, messenger, card
         # card goes out now, and its failure, stop or question is said there as on any task card.
         cards.reveal_held(ctx, job, "ended")
     show_outcome(cards, ctx, job, turn.status, runtime)
+    settle_repos(ctx, job, runtime)  # After the outcome is up, before the job is recorded finished.
 
     retry = auto_retry.plan(harness, ctx, job, turn)
     quota_return.register(ctx, job, turn, retry)  # A spent quota too far off to wait for: told of when it is back.

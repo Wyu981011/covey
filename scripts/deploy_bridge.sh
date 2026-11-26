@@ -513,6 +513,18 @@ boot = sh(["./scripts/bootstrap_harness_bridge.sh", *BOOTSTRAP], cwd=release, ti
 result["bootstrap_exit"] = boot.returncode
 if boot.returncode:
     finish(error="bootstrap failed, see bootstrap.log")
+# <data home>/bin/covey (core/home.py ensure_shim) names the live release's bin/: point it at this one. A warning only.
+shim_code = ("import sys; sys.path.insert(0, sys.argv[1]); from covey.core import home; "
+             "from pathlib import Path; sys.exit(0 if home.ensure_shim(sys.argv[2], tool_bin=Path(sys.argv[1]) / 'bin', "
+             "force=True) else 1)")
+try:
+    shim = sh([planned[0], "-B", "-c", shim_code, str(release), str(DATA)], cwd=release, timeout=60, log="shim.log")
+    result["shim_exit"] = shim.returncode
+    if shim.returncode:
+        print(f"warning: the covey command in {DATA}/bin was not updated, see shim.log", file=sys.stderr)
+except (OSError, subprocess.TimeoutExpired) as exc:
+    result["shim_exit"] = str(exc)
+    print(f"warning: the covey command in {DATA}/bin was not updated: {exc}", file=sys.stderr)
 
 # ---- post-checks
 DOCTOR_SETTLE = 90

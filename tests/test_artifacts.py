@@ -53,6 +53,23 @@ class ArtifactTest(TopicFixture, unittest.TestCase):
             with self.assertRaises(ValueError):
                 resolve_artifact(self.record, artifact_key(str(secret)))
 
+    def test_a_home_start_topic_resolves_against_its_home_and_may_publish_from_its_worktrees(self):
+        """workdir is the home for a ``home_start`` topic; a file in the topic's worktree is an artifact, a secret there is not."""
+        home = self.root / "home"
+        tree = self.root / "worktrees" / "T7-abcd1234" / "proj"
+        for folder in (home / "tasks", tree):
+            folder.mkdir(parents=True)
+        (home / "tasks" / "out.md").write_text("out")
+        (tree / "report.md").write_text("report")
+        (tree / ".env").write_text("secret")
+        record = {**self.record, "workdir": str(home)}
+        self.cp.write_text(json.dumps({"artifacts": ["tasks/out.md", str(tree / "report.md"), str(tree / ".env")]}))
+        self.assertEqual(resolve_artifact(record, artifact_key("tasks/out.md")), (home / "tasks" / "out.md").resolve())
+        self.assertEqual(resolve_artifact(record, artifact_key(str(tree / "report.md"))), (tree / "report.md").resolve())
+        with self.assertRaises(ValueError):
+            resolve_artifact(record, artifact_key(str(tree / ".env")))
+        self.assertEqual(drive_paths(record), ["tasks/out.md", str(tree / "report.md")])
+
     def test_a_diff_report_removed_by_maintenance_says_so(self):
         from covey.app.artifact_policy import DIFF_PRUNED
         diff = self.root / "job-diffs" / "artifact" / "diff.md"

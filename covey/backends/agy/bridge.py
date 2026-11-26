@@ -56,6 +56,7 @@ from covey.backends.agy.home import EAGER_ENV, PrivateHome
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
                                 JobCancelled, LEAD, TOOL_LIMIT, UUID_RE, for_device)
 from covey.core import env as cenv
+from covey.core import home as covey_home
 from covey.core import extensions, procfs
 from covey.core.process import device_of, is_owned, process_identity, stop_group, stream_subprocess_lines
 from covey.core.process_env import child_process_env, process_device
@@ -450,7 +451,8 @@ class AntigravityBackend(BackendRuntime):
         return ask_once(self, ctx, system, data, heavy=heavy, limit=limit, cwd=cwd, settings=READ_ONLY_SETTINGS)
 
     def environment(self, ctx):
-        return child_process_env(ctx.workdir, device=process_device(ctx))
+        # COVEY_HOME, COVEY_TOPIC, COVEY_STATE and <数据根>/bin on PATH (core/home.py), none on a device.
+        return {**child_process_env(ctx.workdir, device=process_device(ctx)), **covey_home.env(ctx)}
 
     def model_catalog(self, ctx):
         path = Path(ctx.state_dir) / "launch-models" / "agy.json"

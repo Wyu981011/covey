@@ -7,7 +7,9 @@ and the turn's changes: the commits its checkpoint names and the diff the Bridge
 carried into the new topic's incoming_media). Not the reviewed topic's session, its replies or the model's own account of
 what it checked: an implementer's reasoning leads its reviewer along.
 
-The new topic runs where the reviewed one ran, its workspace and directory as 原目录 (an uncommitted change is there to
+A topic that lists repositories it writes (``topic.json`` ``repos``, mode write) is reviewed per repository: the plan carries
+each one's directory (its worktree, else the repository) and branch (``repo_dirs``), and the prompt lists them where an
+older topic's names its one workspace. The new topic runs where the reviewed one ran, its workspace and directory as 原目录 (an uncommitted change is there to
 see), read-only as the butler's read-only topics are (``origin.readonly``; its message says what it may and may not do),
 on the model the 设置 card's 模型 page names for it (core/butler_settings.py ReviewModel, ``configured``) while that one
 can run it, else on a model of another vendor than the turn's that is available now (``pick``: core/model_names.py
@@ -29,9 +31,10 @@ from types import SimpleNamespace
 from covey.app.card_actions import action_value
 from covey.app.card_queue import CardActionQueue
 from covey.cards.answer_card import REVIEW_KIND, review_element
-from covey.core import criteria
+from covey.core import criteria, topic_repos
 from covey.core.process_env import env_flag
 from covey.core.state import keyed_json_path, read_object, write_json
+from covey.core.topic_repos import of_topic
 
 ENV = "COVEY_REVIEW"
 KIND = REVIEW_KIND
@@ -155,18 +158,36 @@ def configured(topics, runtime, state_dir, redacting):
     return {"harness": review.harness, "model": review.model, "effort": review.effort}
 
 
-def review_prompt(*, label, title, source, job_id, workdir, words, commits, absent, diff_items) -> str:
+def repo_dirs(topic) -> list:
+    """[{name, dir, branch}] of the repositories ``topic`` (its topic.json) writes, in its order: ``dir`` is the worktree,
+    else the repository, as long as it is a directory; [] for a topic without any."""
+    found = []
+    for repo in of_topic(topic):
+        where = topic_repos.where(repo)
+        if repo.mode == "write" and Path(where).is_dir():
+            found.append({"name": repo.name, "dir": where, "branch": repo.branch})
+    return found
+
+
+def review_prompt(*, label, title, source, job_id, workdir, words, commits, absent, diff_items, repos=()) -> str:
     """What the review topic's model gets first (see the module's docstring): the Bridge's note, the owner's words, the
-    turn's changes, how to answer; the diff's attachment block after it."""
+    turn's changes, how to answer; the diff's attachment block after it. ``repos`` (``repo_dirs``) replaces the one
+    workspace line by a line a repository."""
     from covey.core.attachments import attachment_block
 
     named = f"{label}「{title}」" if label else f"「{title}」"
+    if repos:
+        where = (f"仓库（和 {source} 同一批目录，没提交的改动也在这里）：\n"
+                 + "\n".join(f"- {item['name']}：{item['dir']}" + (f"（分支 {item['branch']}）" if item.get("branch") else "")
+                              for item in repos))
+    else:
+        where = f"工作区：{workdir}（和 {source} 同一个目录，没提交的改动也在这里）。"
     parts = [
         f"[Bridge 说明] 你在话题 {named}。主人在 {source} 的答案卡上点了「独立复核」：你来独立复核 {source} 任务 #{job_id} "
         "这一轮的改动。你只拿到主人的原话、完成标准和这一轮的改动，没有原话题的过程和它对自己的评价，这是有意的："
         "按要求和改动本身判断，不要猜它为什么这么做。",
         "这是只读复核：可以读文件、看 git 记录（git show、git diff、git log）、跑不改文件的检查；不要改文件、提交、推送、"
-        f"部署，不要停止或重启任何任务和服务。工作区：{workdir}（和 {source} 同一个目录，没提交的改动也在这里）。",
+        f"部署，不要停止或重启任何任务和服务。{where}",
     ]
     if words:
         quoted = [f"主人的原话（{source}，按时间）："]
@@ -276,6 +297,7 @@ class Review(CardActionQueue):
         if not workdir or not Path(workdir).is_dir():
             return "这个话题的工作目录不在了。"
         redacting = topic.get(TOPIC_KEY) is True
+        repos = repo_dirs(topic)
         defaults = butler_settings.load(state).topic_defaults
         args = configured(self.topics, self.topics.runtime, state, redacting)
         found, aside = None, ""
@@ -296,7 +318,7 @@ class Review(CardActionQueue):
         return {"aside": aside, "harness": found["harness"], "model": found["model"], "model_key": found["model_key"],
                 "effort": found["effort"], "work_mode": "", "start": True, "run_mode": "direct", "redaction": redacting,
                 "workspace": str(topic.get("workspace_name") or record.get("workspace_name") or Path(workdir).name),
-                "workdir": workdir}
+                "workdir": workdir, **({"repos": repos} if repos else {})}
 
     def launch(self, path, saved, chat, target):
         """The review topic's card, binding and first turn, each once; its answer ({first, again}, kept once the first
@@ -357,7 +379,12 @@ class Review(CardActionQueue):
         state = Path(self.env.state_dir)
         delivery = checkpoint_delivery(read_checkpoint(Path(saved["checkpoint_path"]))) if saved["checkpoint_path"] else {}
         commits = [commit for commit in delivery_commits(delivery) if COMMIT_ID.fullmatch(commit)]
-        absent = set(missing_commits(saved["plan"]["workdir"], commits) or ()) if commits else set()
+        repos = saved["plan"].get("repos") or []
+        absent = set()
+        if commits:  # Missing only where no listed repository has it.
+            absent = set(commits)
+            for where in [item["dir"] for item in repos] or [saved["plan"]["workdir"]]:
+                absent &= set(missing_commits(where, commits) or ())
         diff = str(saved.get("diff_artifact_path") or "")
         items = []
         if diff and Path(diff).is_file():
@@ -366,5 +393,5 @@ class Review(CardActionQueue):
         words = owner_words(saved.get("history_path") or "", saved.get("message_id") or "")
         return review_prompt(label=label, title=saved["title"], source=saved["source"], job_id=saved["job_id"],
                              workdir=saved["plan"]["workdir"], words=words, commits=commits, absent=absent,
-                             diff_items=items)
+                             diff_items=items, repos=repos)
 

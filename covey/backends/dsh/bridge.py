@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import time
 
-from covey.core import env as cenv
+from covey.core import env as cenv, home
 from covey.backends.gateway import connection
 from covey.core import gateways
 from covey.core.harness import (BackendConfig, BackendRuntime, HARNESS_REGISTRY, HarnessCapabilities, HarnessSpec,
@@ -208,7 +208,7 @@ class DshBackend(BackendRuntime):
         return model, effort
 
     def environment(self, ctx):
-        env = connection.child_env(self.gateway(), child_process_env(ctx.workdir))
+        env = connection.child_env(self.gateway(), {**child_process_env(ctx.workdir), **home.env(ctx)})
         # Full access matches Codex's default; dsh's headless approvals have nobody to ask. A lead's turn is read-only.
         env.update(DSH_HOME=str(native_home()), DSH_PERMISSION_MODE="read-only" if lead_turn(ctx) else "danger-full-access",
                    DSH_TELEMETRY_MODE="DISABLED")

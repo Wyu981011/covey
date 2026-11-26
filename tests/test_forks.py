@@ -72,6 +72,27 @@ class ForkTests(UnifiedCase):
         self.assertEqual(len(again), 1)
         self.assertEqual(again[0]['mode'], 'fork')
 
+    def test_a_fork_of_a_home_topic_keeps_home_start_and_gets_its_repos_read_only(self):
+        data = read_topic(self.source)
+        data.update(home_start=True, repos=[
+            {'name': 'proj', 'path': '/absolute/proj', 'mode': 'write', 'worktree': '/absolute/wt', 'branch': 'covey/T1',
+             'base': 'main', 'base_oid': 'abc', 'source': 'asked', 'first_at': 5, 'rules_read_at': 6}])
+        write_topic(self.source, data)
+        self.app_, self.source = self.route('src')
+        self.fork()
+        _, target = self.route_reply('om_forwarded')
+        made = read_topic(target)
+        self.assertIs(made['home_start'], True)
+        self.assertEqual(made['repos'], [{'name': 'proj', 'path': '/absolute/proj', 'mode': 'read', 'source': 'touched',
+                                          'first_at': 5, 'rules_read_at': 6}])
+        self.assertEqual(read_topic(self.source)['repos'][0]['mode'], 'write')  # The source is untouched.
+
+    def test_a_fork_of_a_topic_without_them_gets_neither(self):
+        self.fork()
+        _, target = self.route_reply('om_forwarded')
+        self.assertNotIn('home_start', read_topic(target))
+        self.assertNotIn('repos', read_topic(target))
+
     def test_a_fork_keeps_redacting(self):
         # A topic chose 敏感词脱敏 for its life; its forks carry the same history, so they redact too.
         for n, redacts in enumerate((None, True)):

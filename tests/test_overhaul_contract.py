@@ -143,7 +143,12 @@ class HookTest(unittest.TestCase):
     def test_the_empty_hooks_leave_the_rules_and_the_message_as_they_were(self):
         self.assertEqual(turn_tail("", ""), "")
         self.assertEqual(turn_tail("A", "", "B"), "\n\nA\n\nB")
-        self.assertEqual((home_turn.static_block(self.ctx), home_turn.env(self.ctx)), ("", {}))
+        self.assertEqual(home_turn.static_block(self.ctx), "")  # A topic that did not start in the home keeps its workspace block.
+        environment = home_turn.env(self.ctx)  # W1: every Harness process gets the home, the topic and the state, covey on PATH.
+        self.assertEqual({k: environment[k] for k in ("COVEY_HOME", "COVEY_TOPIC", "COVEY_STATE")},
+                         {"COVEY_HOME": str(self.ctx.default_workdir), "COVEY_TOPIC": self.ctx.topic_id,
+                          "COVEY_STATE": str(self.ctx.state_dir)})
+        self.assertEqual(environment["PATH"].split(os.pathsep)[0], str(home.bin_dir()))
         self.assertEqual(repos_turn.tail(self.ctx, self.job), "")
         self.assertEqual(memory_turn.tail(self.ctx, self.job, lambda: True), "")
         self.assertEqual(self.runs._turn_tail(self.ctx, self.job), "")

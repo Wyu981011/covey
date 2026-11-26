@@ -811,6 +811,31 @@ class DeployPrecompileTests(DeployFixture):
         self.assertEqual(out["bootstrap_exit"], 1)
 
 
+class DeployShimTests(unittest.TestCase):
+    """The deploy points <data home>/bin/covey at the new release once bootstrap went through (core/home.py ensure_shim)."""
+
+    def source(self):
+        text = DEPLOY.read_text()
+        return text[text.index("<<'PY'\n") + len("<<'PY'\n"):text.rindex("\nPY\n")]
+
+    def test_the_shim_is_pointed_at_the_new_release_after_bootstrap_and_before_the_post_checks(self):
+        source = self.source()
+        self.assertLess(source.index('error="bootstrap failed'), source.index("ensure_shim"))
+        self.assertLess(source.index("ensure_shim"), source.index("# ---- post-checks"))
+        self.assertIn("warning: the covey command", source)  # A failure is a warning, never a failed deploy.
+
+    def test_the_code_it_runs_writes_the_shim_naming_the_release_bin(self):
+        import ast
+        code = next(ast.literal_eval(node.value) for node in ast.walk(ast.parse(self.source()))
+                    if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == "shim_code" for t in node.targets))
+        with tempfile.TemporaryDirectory() as data:
+            done = subprocess.run([sys.executable, "-B", "-c", code, str(REPO), data], capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            shim = Path(data) / "bin" / "covey"
+            self.assertIn(str(REPO / "bin"), shim.read_text())
+            self.assertTrue(shim.stat().st_mode & 0o100)  # Executable (os.access says no on a noexec test directory).
+
+
 class CardkitCheckTests(unittest.TestCase):
     CARD = {"schema": "2.0", "header": {"title": {"tag": "plain_text", "content": "t"}},
             "body": {"elements": [{"tag": "markdown", "content": "x"}]}}

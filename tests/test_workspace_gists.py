@@ -14,7 +14,7 @@ from covey.app import workspace_gists
 from covey.app.prompts import WORKSPACE_GISTS_HEAD, bridge_rules
 from covey.core import topic_gist
 from covey.core.jobs import upsert_job_record
-from covey.core.state import write_json
+from covey.core.state import read_object, write_json
 from covey.core.topics import topic_file
 
 CHAT = "oc_dm"
@@ -77,6 +77,48 @@ class WorkspaceGistsTests(unittest.TestCase):
         self.assertEqual(self.block(), "")
         write_json(topic_file(self.state, HERE), {"redaction": True})
         self.assertIn("脱敏话题的事", self.block())
+
+    def declared(self, topic, repos, *, home=True, project=None):
+        """Rewrite ``topic``'s topic.json (its jobs stay) as one that started in the home with ``repos`` (names to paths)."""
+        data = {**read_object(topic_file(self.state, topic)), "home_start": home,
+                "repos": [{"name": name, "path": path, "mode": "read"} for name, path in repos]}
+        if project:
+            data["project"] = {"id": project, "role": "thread"}
+        write_json(topic_file(self.state, topic), data)
+
+    def test_a_home_topic_reads_only_the_topics_of_its_declared_repositories(self):
+        used, other = self.state / "used", self.state / "other"
+        for repo in (used, other):
+            (repo / ".git").mkdir(parents=True)
+        self.topic("a" * 16, 1, "同一个仓库的事")
+        self.declared("a" * 16, [("used", str(used))])
+        self.topic("b" * 16, 2, "别的仓库的事")
+        self.declared("b" * 16, [("other", str(other))])
+        self.topic("c" * 16, 3, "同工作区但没声明仓库")
+        self.topic(HERE, 7, "这个话题自己")
+        self.declared(HERE, [("used", str(used))])
+        block = self.block()
+        self.assertEqual(block.splitlines()[0], WORKSPACE_GISTS_HEAD.format(name="used"))
+        self.assertIn("同一个仓库的事", block)
+        self.assertNotIn("别的仓库的事", block)
+        self.assertNotIn("同工作区但没声明仓库", block)
+
+    def test_a_home_topic_without_repositories_carries_nothing(self):
+        self.topic("a" * 16, 1, "同一个工作区的事")
+        self.topic(HERE, 7, "这个话题自己")
+        self.declared(HERE, [])
+        self.assertEqual(self.block(), "")
+
+    def test_a_project_topic_reads_its_project_s_topics_in_any_workspace(self):
+        self.enterContext(mock.patch.dict(os.environ, {"COVEY_PROJECTS": "1"}))
+        self.topic("a" * 16, 1, "专项里的事", workspace="docs")
+        self.declared("a" * 16, [], home=False, project="0123456789ab")
+        self.topic("b" * 16, 2, "同工作区不在专项")
+        self.topic(HERE, 7, "这个话题自己")
+        self.declared(HERE, [], home=False, project="0123456789ab")
+        block = self.block()
+        self.assertIn("专项里的事", block)
+        self.assertNotIn("同工作区不在专项", block)
 
     def test_only_a_new_sessions_rules_carry_it(self):
         base = dict(backend_name="Claude Code", workspace_name="covey", workdir=self.state)

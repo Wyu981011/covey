@@ -37,6 +37,21 @@ FINISHED = frozenset({"done", "waiting_user", "continued"})  # A turn a fork may
 THREAD_PAGE = 50
 
 
+def home_fields(source):
+    """What a fork takes from the source's ``topic.json`` about the home: ``home_start``, and the repos it touched as
+    read-only ones (a fork never carries on in the source's worktree: ``worktree``, ``branch``, ``base`` and ``base_oid``
+    go, ``source`` becomes ``touched``). Nothing for a topic that has neither."""
+    fields = {}
+    if "home_start" in source:
+        fields["home_start"] = source["home_start"]
+    repos = source.get("repos")
+    if isinstance(repos, list):
+        dropped = ("worktree", "branch", "base", "base_oid")
+        fields["repos"] = [{**{k: v for k, v in repo.items() if k not in dropped}, "mode": "read", "source": "touched"}
+                           for repo in repos if isinstance(repo, dict)]
+    return fields
+
+
 def fork_token(topic_id, click_id):
     """One fork per request: the new topic's key in the source topic's ``forks``."""
     return hashlib.sha256(f"{topic_id}\0{click_id}".encode()).hexdigest()[:24]
@@ -100,6 +115,7 @@ class Forks:
                 data.update({key: source[key] for key in ("harness_id", "model", "effort", "model_settings_snapshot",
                                                           "work_mode", "workspace_name", "workdir", "redaction")
                              if key in source},
+                            **home_fields(source),
                             binding_revision=1, workspace_locked=True, harness_locked=True, forked_from=origin)
                 write_json(target.history_path.parent / "topic.json", data, ensure_ascii=False, indent=2)
             new_label = topic_label(ctx.state_dir, target.topic_id)

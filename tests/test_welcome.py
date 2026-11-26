@@ -134,16 +134,21 @@ class WorkspaceGuideTest(unittest.TestCase):
         self.folder = Path(tmp.name) / "workspace"
         self.folder.mkdir()
 
-    def test_an_empty_workspace_gets_the_guide_once_and_stays_bare(self):
+    def test_an_empty_workspace_is_seeded_as_a_home_once_and_stays_bare(self):
+        from covey.core import home
         self.assertTrue(welcome.bare_workspace(self.folder))
         self.assertTrue(welcome.seed_workspace(self.folder))
-        self.assertEqual([p.name for p in self.folder.iterdir()], [welcome.GUIDE])
-        text = (self.folder / welcome.GUIDE).read_text()
-        self.assertTrue(text.startswith(welcome.GUIDE_TITLE + "\n"))
-        for words in ("「设置」→「工作区」", "＋ 添加工作区…", "./install --workdir", "可以随意改、删"):
-            self.assertIn(words, text)
+        self.assertTrue(home.seeded(self.folder))
+        self.assertTrue({"AGENTS.md", "CLAUDE.md", ".ignore"} <= {p.name for p in self.folder.iterdir()})
         self.assertTrue(welcome.bare_workspace(self.folder))
-        self.assertFalse(welcome.seed_workspace(self.folder))  # Not empty any more: never written again.
+        (self.folder / "main.py").write_text("print(1)\n")
+        self.assertFalse(welcome.bare_workspace(self.folder))
+        self.assertFalse(welcome.seed_workspace(self.folder / "missing"))
+
+    def test_the_guide_an_older_install_wrote_still_counts_as_bare(self):
+        (self.folder / welcome.GUIDE).write_text(welcome.GUIDE_TEXT)
+        self.assertTrue(welcome.bare_workspace(self.folder))
+        self.assertFalse(welcome.seed_workspace(self.folder))  # Not empty: taken over, nothing written.
 
     def test_anything_else_in_it_is_a_project(self):
         (self.folder / welcome.GUIDE).write_text("# my project\n")  # A README of the owner's own.
@@ -154,7 +159,6 @@ class WorkspaceGuideTest(unittest.TestCase):
         (self.folder / "main.py").write_text("print(1)\n")
         self.assertFalse(welcome.bare_workspace(self.folder))
         self.assertFalse(welcome.bare_workspace(self.folder / "missing"))
-        self.assertFalse(welcome.seed_workspace(self.folder / "missing"))
 
 
 class CardTest(unittest.TestCase):

@@ -3,7 +3,8 @@ record written but the gists the backfill reads (core/topic_gist.py); app/projec
 
 - ``material``: one topic as the judge reads it: its number and title, its 话题要点, every word the owner said in it (each turn's
   request, OWNER_CHARS in all, the start and the end kept), the first paragraph of each turn's conclusion (CONCLUSIONS of them),
-  its workspace, the project it is in, its age in days and how many turns the owner started.
+  its workspace (none for a topic that started in the home) and the repositories it lists (``repos``), the project it is in,
+  its age in days and how many turns the owner started.
 - ``backfill``: a topic that has no 话题要点 (one from before 整理专项) is read once by a call of its own (``GIST_SYSTEM``: its
   material with READ_CHARS of its words) and its gist written (core/topic_gist.py, source ``backfill``). A call that fails (the
   model refuses the content, times out, answers nothing usable) only marks that topic unreadable (``mark_unreadable``): it sits
@@ -33,7 +34,8 @@ from covey.core import projects, redaction, topic_gist
 from covey.core.jobs import topic_job_records
 from covey.core.state import epoch_seconds, read_object
 from covey.core.text import cut as _cut
-from covey.core.topics import label_title, topic_file
+from covey.core.topic_repos import of_topic
+from covey.core.topics import home_start, label_title, topic_file
 
 OWNER_CHARS = 1200
 CONCLUSIONS = 6
@@ -50,7 +52,7 @@ SUGGESTIONS = 12  # Read of an answer (the card shows at most app/project_tidy.p
 JUDGE_SYSTEM = (
     "你替一位用户整理他交给助理的事。输入是一个 JSON：projects（他已有的专项：index、name、goal、state、topics 里各话题的本质）、"
     "topics（最近的话题：index、label、title、gist 话题要点、owner 他在话题里说过的话、conclusions 每轮结论的第一段、"
-    "project 所在专项的 index、days 开了几天、turns 他说了几次、workspace）、lessons（他以前说过的整理规则，以它为准）、"
+    "project 所在专项的 index、days 开了几天、turns 他说了几次、workspace、repos 他在话题里用到的仓库名，只有声明过仓库的话题才有，从主目录开的话题没有工作区）、lessons（他以前说过的整理规则，以它为准）、"
     "focus（只整理这一个话题时它的 index，否则为 null）、scope（只整理和这个词有关的，空就是全部）、full（你要求全文的话题）。"
     "专项是一个具体的目标：分几个话题、跨几天推进，有说得出的终点（做到什么就算完）。一次性的总结、查询、验收测试、闲聊都不算专项，"
     "反复出现也只是同一类事，不是同一件事。长期值守、日常运维、没有终点的事不建专项。只有一个话题的不建专项（至少两个话题是同一个目标）。"
@@ -91,6 +93,7 @@ class Topic:
     turns: int
     last_job: str
     updated: float
+    repos: tuple = ()  # Names of the repositories its topic.json lists (``involves`` of the gist says the same in words).
 
 
 def _keep(words, limit) -> list:
@@ -134,9 +137,10 @@ def material(state, chat, topic, now, *, owner_chars=OWNER_CHARS) -> Topic:
     found = projects.topic_project(state, topic)
     last = jobs[-1] if jobs else {}
     return Topic(topic, label, _cut(title, 60), topic_gist.gist_of(topic_gist.read(state, topic)), _keep(owner, owner_chars),
-                 conclusions[-CONCLUSIONS:], str(data.get("workspace_name") or ""),
+                 conclusions[-CONCLUSIONS:], "" if home_start(data) else str(data.get("workspace_name") or ""),
                  found.id if found is not None and found.role == projects.MEMBER else "", max(0.0, (now - started) / 86400),
-                 len(owner), f"{last.get('message_id') or ''}:{last.get('job_id') or ''}" if last else "", updated)
+                 len(owner), f"{last.get('message_id') or ''}:{last.get('job_id') or ''}" if last else "", updated,
+                 tuple(dict.fromkeys(repo.name for repo in of_topic(data))))
 
 
 def hidden(state, topic) -> bool:
@@ -259,6 +263,8 @@ def topic_row(index, item, project_index, full=False) -> dict:
     row = {"index": index, "label": item.label, "title": item.title, "gist": item.gist, "owner": item.owner,
            "conclusions": item.conclusions, "project": project_index.get(item.project), "days": round(item.days, 1),
            "turns": item.turns, "workspace": item.workspace}
+    if item.repos:
+        row["repos"] = list(item.repos)
     if full:
         row["full"] = True
     return row
