@@ -31,7 +31,8 @@ it stopped. Nobody sees a change: the records keep what older releases read.
   without one as automatic.
 
 The steps of ``HOME_STEPS`` need the home, the service's ``--workdir``: they run at the Bridge's start, which passes it
-(``migrate(..., workdir=)``); maintenance ``--apply`` has none and leaves them to it (docs/configuration.md 主目录与仓库地图).
+(``migrate(..., workdir=)``), before anything else; maintenance ``--apply`` has none and leaves them to it, and its
+``--dry-run`` (``pending``) does not list them (docs/configuration.md 主目录与仓库地图).
 Each is W1's ``migrate_v1``: it writes a file only when it is missing, so an older release (which reads neither file) and a
 run cut short are safe, and a step that raised is run again at the next start.
 
@@ -107,7 +108,7 @@ def pending(state_dir: Path) -> dict:
     """What the steps not marked done would still do (step -> records), reading only: maintenance --dry-run."""
     state_dir = Path(state_dir)
     finished = done(state_dir)
-    return {name: still(state_dir) for name, (_, still) in {**STEPS, **HOME_STEPS}.items() if name not in finished}
+    return {name: still(state_dir) for name, (_, still) in STEPS.items() if name not in finished}
 
 
 def _unwritten(state_dir: Path) -> int:

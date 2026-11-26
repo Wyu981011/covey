@@ -566,7 +566,7 @@ def repos_list(env, request):
     from covey.app import repos_turn
     home = home_of(env)
     found = {**repos_turn.repos_list(repos_context(env, request)), "home": home}
-    rows, extra = list(found.get("repos") or ()), list(found.get("topic_only") or ())
+    rows, extra = list(found.get("repos") or ()), list(found.get("unmapped") or ())
     found["count"] = len(rows)
     if not rows:
         listed = workspaces_list(env, request)

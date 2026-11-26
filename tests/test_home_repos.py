@@ -234,11 +234,9 @@ class MigrateStepsTest(Sandbox):
         seeded = self.root / "seeded"
         home.seed_home(seeded)
         make_repo(seeded / "app")
-        self.assertEqual({name: count for name, count in migrate.pending(self.state).items() if name in migrate.HOME_STEPS},
-                         {"home_v1": 1, "repos_v1": 1})
         self.assertFalse({"home_v1", "repos_v1"} & set(self.migrate()))  # Maintenance --apply: no home, the home's steps wait.
         self.assertFalse(home.configured(self.state) or (self.state / "repos.json").exists())
-        self.assertIn("repos_v1", migrate.pending(self.state))
+        self.assertFalse({"home_v1", "repos_v1"} & set(migrate.pending(self.state)))  # Not maintenance's to list.
         summary = self.migrate(workdir=str(seeded))
         self.assertEqual((summary["home_v1"], summary["repos_v1"]), ({"written": 1, "failed": 0}, {"written": 1, "failed": 0}))
         self.assertTrue(home.configured(self.state))
@@ -249,7 +247,6 @@ class MigrateStepsTest(Sandbox):
         before = (self.state / "repos.json").read_text()
         self.assertEqual(self.migrate(workdir=str(seeded)), {})  # Once: one read of migrations.json from then on.
         self.assertEqual((self.state / "repos.json").read_text(), before)
-        self.assertNotIn("repos_v1", migrate.pending(self.state))
 
     def test_a_taken_over_home_gets_no_home_json_and_a_map_already_there_is_kept(self):
         make_repo(self.home / "core")
@@ -497,7 +494,7 @@ class ReposTurnTest(Sandbox):
         found = repos_turn.repos_list(self.ctx())
         self.assertEqual(found["home"], str(self.home))
         self.assertEqual(found["repos"][0]["used"], "write")
-        self.assertEqual(found["topic_only"], [{"name": "x", "path": "/absolute/x", "used": "read", "worktree": ""}])
+        self.assertEqual(found["unmapped"], [{"name": "x", "path": "/absolute/x", "used": "read", "worktree": ""}])
 
 
 class HomeBlockTest(Sandbox):

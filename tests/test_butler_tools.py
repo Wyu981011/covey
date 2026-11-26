@@ -471,11 +471,11 @@ class ReposAndMemoryToolsTest(unittest.TestCase):
         self.assertEqual((data["home"], data["count"], data["map"]), (str(home), 2, str(self.state / "repos.md")))
         self.assertEqual([(row["name"], row.get("used"), row.get("worktree")) for row in data["repos"]],
                          [("covey", "write", "/wt/T1-x/covey"), ("web", None, None)])
-        self.assertEqual(data["topic_only"], [{"name": "notes", "path": "/w/notes", "used": "read", "worktree": ""}])
+        self.assertEqual(data["unmapped"], [{"name": "notes", "path": "/w/notes", "used": "read", "worktree": ""}])
         # A job whose record is gone: the map alone, no topic's repositories.
         alone = butler_tools.TOOLS["repos_list"](self.env, butler_requests.Request("r2", "repos_list", {}, "gone-1", NOW))
         self.assertEqual(alone["text"].splitlines()[1:], ["covey · 可写 · 原地改 · 用途：核心 · /w/covey", "web · 只读 · /w/web"])
-        self.assertEqual(alone["data"]["topic_only"], [])
+        self.assertEqual(alone["data"]["unmapped"], [])
         # An empty map and no saved workspace: what the topic uses is still said.
         (self.state / "repos.json").write_text(json.dumps({"version": 1, "repos": []}), encoding="utf-8")
         empty = butler_tools.TOOLS["repos_list"](self.env, butler_requests.Request("r3", "repos_list", {}, "lead-1", NOW))

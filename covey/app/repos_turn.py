@@ -211,7 +211,7 @@ def settle(ctx, job, task_dir) -> None:
 
 def repos_list(ctx) -> dict:
     """The Bridge tool ``repos_list``'s answer: the home, where the map is, each repository of it (whether this topic
-    uses it, and how) and the topic's repositories the map does not list."""
+    uses it, and how) and the topic's repositories the map does not list (``unmapped``)."""
     where = home.of(ctx)
     _, data = _topic(ctx, None)
     used = {entry.name: entry for entry in topic_repos.of_topic(data)}
@@ -222,7 +222,7 @@ def repos_list(ctx) -> dict:
                      "write_mode": repo.write_mode, "branch": repo.branch,
                      **({"used": entry.mode, "worktree": entry.worktree} if entry else {})})
     return {"home": str(where), "map": str(repomap.rendered_path(ctx.state_dir, where)), "repos": rows,
-            "topic_only": [{"name": e.name, "path": e.path, "used": e.mode, "worktree": e.worktree} for e in used.values()]}
+            "unmapped": [{"name": e.name, "path": e.path, "used": e.mode, "worktree": e.worktree} for e in used.values()]}
 
 
 def write_dirs(ctx, job) -> list[tuple[str, str]]:
