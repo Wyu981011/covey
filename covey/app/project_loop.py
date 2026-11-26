@@ -30,6 +30,11 @@ when something happened since it last looked, and the mechanical checks that sto
 - Receipts: ``after_runner`` (the Bridge, once a task's runner is gone: rule 8 keeps a task process to its own card and
   record) writes ``thread_end`` (the receipt kind keeps its name on disk) for a member's turn that ended and counts the tokens; ``heard`` (the Bridge, on the owner's
   message in a member's topic) writes ``owner_said``; the loop writes ``stalled``; the Bridge's sweep of the held questions (app/triage.py, COVEY_PROJECT_TRIAGE=1) writes ``question``.
+- A lead that a wake would only see fail on a limit is not woken (``limit_wait``): its latest turn failed on a rate limit,
+  a spent quota or a passing server fault and its automatic retry is to come (app/auto_retry.py, at the reset when one is
+  known), or none is to come and it ended less than LIMIT_REST ago, or its model draws on a gateway quota that is held
+  (core/quota_hold.py). The receipts wait in the inbox; the retry reads them all in one turn, as any lead turn takes them.
+  A receipt of the owner's own doing that came after that turn (``start``, ``owner_choice``) still wakes it, once.
 - ``silent`` (app/turn_delivery.py TurnDelivery): a wake-up turn's reply is not sent to the owner, unless the lead recorded a
   report note in it that its style lets through (``project_lead.reportable``); then it goes as the lead's reply does. A
   member's turn the owner waits for (the lead handed it on while he was there) had its result sent to him by its runner
@@ -52,8 +57,8 @@ from collections import namedtuple
 from contextlib import contextmanager
 from pathlib import Path
 
-from covey.app import butler_harness, project_context, project_lead, triage as triage_flow
-from covey.core import board_read, collab, collab_records, projects, triage, turn_source
+from covey.app import auto_retry, butler_harness, project_context, project_lead, triage as triage_flow
+from covey.core import board_read, collab, collab_records, failure, projects, quota_hold, triage, turn_source
 from covey.core import env as cenv
 from covey.core.history_storage import append_history
 from covey.core.jobs import find_job_record, job_field, job_key, job_path, read_job_record, topic_job_records
@@ -98,6 +103,9 @@ CHOICE_CHECKLIST = ("目标检查表里没满足的条目标 dropped，gap 写�
 BATCH_ENV = "COVEY_PROJECT_BATCH_SECONDS"  # 协作 on: how long ordinary receipts are gathered before they wake the lead.
 BATCH_SECONDS = 20
 BATCH_STRETCH = 4  # The oldest receipt of a batch waits at most this many windows, however many keep coming.
+LIMIT_REST = 600  # A lead turn that failed on a limit with no retry to come: the next wake waits this long after it ended.
+OWN_WAKES = ("start", "owner_choice")  # The owner's own doing: wakes the lead once even while it waits out a limit.
+RETRY_COMING = ("pending", "submitting")  # app/auto_retry.py AUTO_RETRY_TRANSITIONS: the retry has not been queued yet.
 
 
 def wakes_of(record) -> dict:
@@ -673,6 +681,7 @@ class ProjectLoop:
         self.generation = 0  # Moves on when a look is left behind; a look of an older one changes nothing (``behind``).
         self.mine = threading.local()  # .generation of the look this thread runs.
         self.at, self.moved, self.slowest, self.slow_logged = "", 0.0, ("", 0.0), 0.0
+        self.waiting = {}  # project id -> (why, until) of the wake held back last (``waits``): logged once.
 
     def threads(self):
         return ((self.name, self.run),) if projects.enabled() else ()
@@ -819,6 +828,8 @@ class ProjectLoop:
             if due and settling(pending, now):
                 return  # 协作 on: more ordinary receipts may come in a moment (members ending together): one turn reads them all.
             if due and not open_turns(state, [lead]):
+                if self.waits(record, state, pending, now):
+                    return  # A wake would only fail on a limit; no wake, so nothing for the wakes guard to count either.
                 reason = hold(record, now)
                 return self.pause(record, reason, now) if reason else self.wake(record, now)
             if not due:
@@ -894,11 +905,24 @@ class ProjectLoop:
         if now - float(marker.get("at") or now) > projects.stall_seconds():
             self.pause(record, "stalled", now, now - activity)
 
+    def waits(self, record, state, pending, now) -> bool:
+        """Whether the lead's wake is held back (``limit_wait``): a wake would only fail on a limit. Logged when it begins
+        or what it waits for changes, not every look."""
+        pid = record["id"]
+        why, until = limit_wait(state, record, pending, now)
+        if not why or self.behind():
+            return bool(why)
+        if self.waiting.get(pid) != (why, until):
+            self.waiting[pid] = (why, until)
+            self.runtime.log(f"project wake held project={pid[:8]} why={why} until={time.strftime('%H:%M:%S', time.localtime(until))}")
+        return True
+
     def wake(self, record, now) -> None:
         """One wake-up turn queued (its number counted first: a lost one is looked for again, never doubled)."""
         pid, mine = record["id"], []
         if self.behind():
             return
+        self.waiting.pop(pid, None)  # A wait that begins again later is logged again.
 
         def change(data):
             wakes = wakes_of(data)
@@ -975,3 +999,37 @@ def autowake_due(pending) -> bool:
     if any(kind in ALWAYS_WAKE or collab.RECEIPT_WAKES.get(kind) for kind in kinds):
         return True
     return projects.autowake_enabled() and any(kind not in collab.RECEIPT_WAKES for kind in kinds)
+
+
+def limit_wait(state_dir, record, pending, now) -> tuple:
+    """(why, until when) a lead that ``pending`` receipts are due to wake is not woken now, or ('', 0.0): a wake would
+    only fail on a limit. T99, 2026-11-25 21:59–22:11: three accounts spent; each failed wake gave its receipts back
+    (``unread``), the next look woke the lead again, about every 20 s (65 failed turns), and each wake, a new message in
+    the topic, cancelled the retry the failed turn had at the account's reset.
+
+    - ``retry``: the lead's latest turn failed on a limit (app/auto_retry.py OTHER_CODES: a rate limit, a spent quota, a
+      passing server fault) and its automatic retry is to come: that turn takes the inbox as any lead turn does, every
+      receipt that came meanwhile in one turn. One overdue by LIMIT_REST holds no more (its tick may be gone).
+    - ``rest``: it failed so with no retry to come (the ladder ran out, its Harness retries none): until LIMIT_REST
+      after it ended.
+    - ``quota``: the lead's model draws on a gateway quota that is held (core/quota_hold.py ``blocks``): its turn would
+      fail before it starts. Until the reset; the hold itself is checked again RECHECK after it was last found spent.
+
+    A receipt of the owner's own doing (OWN_WAKES) that came after the latest turn ended wakes the lead all the same:
+    once, as the turn it wakes is then the latest. A retry cancelled (the owner's 停止自动重试, a model switch) holds
+    nothing."""
+    lead = str(record.get("lead_topic_id") or "")
+    latest = max(jobs_of(state_dir, lead), key=lambda job: int(job.get("job_id") or 0), default={})
+    ended = board_read.ended_at(latest) if latest else 0.0
+    if any(item.get("kind") in OWN_WAKES and float(item.get("at") or 0) > ended for item in pending):
+        return "", 0.0
+    if latest and failure.failure_code(latest) in auto_retry.OTHER_CODES:
+        state = latest.get("auto_retry_state")
+        due = float(latest.get("auto_retry_at") or 0) or ended
+        if state in RETRY_COMING and now - due < LIMIT_REST:
+            return "retry", due
+        if not state and now - ended < LIMIT_REST:
+            return "rest", ended + LIMIT_REST
+    data = load_topic(Path(state_dir), lead)
+    found = quota_hold.blocks(state_dir, data.get("harness_id"), data.get("model"), now)
+    return ("quota", float(found[1]["reset_at"])) if found is not None else ("", 0.0)
