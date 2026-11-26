@@ -123,7 +123,7 @@ tail -n 100 "$STATE_DIR/bridge.log"
 | DeepSeek Harness | 没有声明给 dsh 用的模型网关，或网关密钥没配 | 日志的 `detail=` 写原因；配法见[最小网关示例](harnesses.md#最小网关示例) |
 | Antigravity | `agy` 没登录或 `agy models` 没回应 | 在服务的账号下跑 `agy models` |
 
-已提交的任务在执行前再检查一次后端，不可用时话题里回复“后端暂不可用，任务尚未执行。”。
+已提交的任务在执行前再检查一次后端，不可用时话题里回复“后端暂不可用，任务尚未执行。”。专项负责人的唤醒轮连着起不来时只在第一轮回复，之后巡检隔 1、3、10 分钟再试，不再每次回复（日志 `backend startup notice held`、`project wake held … why=down`）。
 
 ## 模型调用报权限错误
 
