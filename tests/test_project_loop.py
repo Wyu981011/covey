@@ -16,17 +16,19 @@ from support import make_job
 from support.records import write_job, write_topic
 from support.world import UnifiedCase
 
-from covey.app import project_lead, project_loop
+from covey.app import auto_retry, project_lead, project_loop
 from covey.app.cards import Cards
 from covey.app.project_facts import facts
 from covey.app.project_loop import ProjectLoop
-from covey.core import butler, butler_settings, placement, projects
-from covey.core.jobs import job_key
+from covey.core import butler, butler_settings, placement, projects, quota_hold
+from covey.core.jobs import find_job_record, job_key, topic_job_records
 from covey.core.state import write_json
+from covey.core.topics import load_topic
 
 from support.butler import CHAT as BUTLER_CHAT
 from test_butler_quiet import DeliverCase
 from test_project_lead import CHAT, LEAD, NOW, ON, PID, Case
+from test_quota_hold import configure, spent_text
 
 THREAD = "b" * 32
 HOUR = 3600
@@ -317,6 +319,173 @@ class NoBudgetTest(Loop):
         self.assertEqual(self.reload()["state"], projects.ACTIVE)
         self.loop.tick(NOW + 5)
         self.assertEqual(self.reload()["state"], projects.ACTIVE)  # And it is not paused again for its tokens.
+
+
+class LimitTest(Loop):
+    """T99 (2026-11-25 21:59–22:11): three accounts spent; each lead's wake-up failed on the rate limit, gave its receipts
+    back, and the next look woke the lead again, about every 20 s (65 failed turns in two hours); each wake, a new message
+    in the topic, cancelled the retry the failed turn had at the account's reset. Now the lead is not woken while a wake
+    would only fail on a limit, and the receipts wait for the one turn that reads them all (``limit_wait``)."""
+
+    def failed(self, number, ended=NOW + 15, key="", **fields):
+        """The lead's turn ``number`` (a wake-up unless ``key`` says otherwise) failed on the rate limit at ``ended``, its
+        automatic retry at the reset an hour on, as app/auto_retry.py schedule_fields writes it (``fields`` change it, a
+        None drops one); its key."""
+        key = key or projects.wake_id(PID, number)
+        record = {"status": "failed", "failure_code": "rate_limited", "auto_retry_state": "pending", "auto_retry_kind": "rate_limited",
+                  "auto_retry_at": NOW + HOUR, "auto_retry_attempt": 1, "backend": "claude",
+                  "timings": {"execution_finished": ended}, **fields}
+        write_job(self.state, key, topic_id=LEAD, chat_id=CHAT, job_id=number, message_id=key,
+                  **{name: value for name, value in record.items() if value is not None})
+        self.update(wakes={"count": number, "streak": number, "last_at": NOW, "recent": [NOW]})
+        return key
+
+    def woken(self):
+        return [message for message, _ in self.queued]
+
+    def test_topics_stopping_one_after_another_wake_the_lead_once_and_its_retry_reads_every_receipt(self):
+        self.autowake()
+        came = [self.receipt(text="T41 的任务 #7 停住了：模型服务限流")]
+        self.loop.tick(NOW + 5)
+        self.assertEqual(self.woken(), [f"lead-{PID}-1"])
+        key = self.failed(1)
+        self.assertEqual(len(project_lead.take_receipts(self.state, PID, key)), 1)  # Its turn took the receipt, then failed.
+        for n in range(1, 61):  # Ten minutes of a look every 10 s, a topic stopping on the limit every minute.
+            if n % 6 == 0:
+                came.append(self.receipt(text=f"T{41 + n} 的任务 #{7 + n} 停住了：模型服务限流", at=NOW + 10 * n))
+            self.loop.tick(NOW + 15 + 10 * n)
+        self.assertEqual(self.woken(), [f"lead-{PID}-1"])  # Not woken again (before: 30 more turns, each failing).
+        record = self.reload()
+        self.assertEqual((record["wakes"]["count"], record["state"]), (1, projects.ACTIVE))  # No wakes-guard pause either.
+        self.assertEqual([line for line in self.logs if "wake held" in line],
+                         [f"project wake held project={PID[:8]} why=retry until={time.strftime('%H:%M:%S', time.localtime(NOW + HOUR))}"])
+        # The retry stays: no newer task in the topic cancels it as a new message (app/auto_retry.py blocker).
+        jobs = SimpleNamespace(runtime=SimpleNamespace(jobs=SimpleNamespace(topic_jobs=lambda *a: [])))
+        records = topic_job_records(self.state, LEAD)
+        self.assertEqual(auto_retry.blocker(jobs, find_job_record(self.state, key), records, load_topic(self.state, LEAD)), "")
+        # Every receipt kept, unread.
+        self.assertEqual([item["id"] for item in project_loop.unread(self.state, PID)], [item["id"] for item in came])
+        # The reset: the retry runs and takes them all in one turn; a turn that ended well leaves nothing to wake for.
+        write_job(self.state, key, auto_retry_state="queued")
+        retry = "auto-retry-1-1"
+        write_job(self.state, retry, topic_id=LEAD, chat_id=CHAT, job_id=2, message_id=retry, status="running")
+        self.loop.tick(NOW + HOUR + 40)
+        taken = project_lead.take_receipts(self.state, PID, retry)
+        self.assertEqual([item["id"] for item in taken], [item["id"] for item in came])
+        write_job(self.state, retry, status="done")
+        self.loop.tick(NOW + HOUR + 120)
+        self.assertEqual(self.woken(), [f"lead-{PID}-1"])
+        self.assertEqual(project_loop.unread(self.state, PID), [])
+
+    def test_a_retry_that_fails_again_keeps_the_wait_until_its_next_one(self):
+        self.autowake()
+        self.receipt()
+        self.failed(1)
+        self.loop.tick(NOW + 30)
+        write_job(self.state, f"lead-{PID}-1", auto_retry_state="queued")
+        retry = self.failed(2, ended=NOW + HOUR + 60, key="auto-retry-1-1", auto_retry_at=NOW + HOUR + 240,
+                            auto_retry_attempt=2)  # The retry, failed on the limit too: its own next one is at +4 min.
+        project_lead.take_receipts(self.state, PID, retry)
+        self.loop.tick(NOW + HOUR + 70)
+        self.assertEqual(self.woken(), [])
+        self.assertTrue(any("until=" + time.strftime("%H:%M:%S", time.localtime(NOW + HOUR + 240)) in line for line in self.logs))
+
+    def test_a_lead_waiting_out_a_limit_is_not_paused_by_the_wakes_guard(self):
+        # No wake is queued, so there is nothing for the guard to stop: the retry is not a wake and is not counted.
+        self.autowake()
+        self.receipt()
+        self.failed(1)
+        self.update(wakes={"count": 12, "streak": 12, "last_at": NOW, "recent": [NOW + i for i in range(12)]})
+        self.loop.tick(NOW + 30)
+        self.assertEqual((self.reload()["state"], self.woken()), (projects.ACTIVE, []))
+
+    def test_a_server_fault_holds_as_a_rate_limit_does_and_a_spent_quota_rests(self):
+        self.autowake()
+        self.receipt()
+        self.failed(1, failure_code="server_fault", auto_retry_kind="server_fault", auto_retry_at=NOW + 135)
+        self.loop.tick(NOW + 30)
+        # A spent gateway quota is retried by nobody (app/auto_retry.py KINDS): the next wake rests after it.
+        self.failed(2, key="k-quota", failure_code="quota_exhausted", auto_retry_state=None, auto_retry_at=None,
+                    auto_retry_kind=None, auto_retry_attempt=None)
+        self.loop.tick(NOW + 60)
+        self.assertEqual(self.woken(), [])
+        self.assertEqual([line.split("why=")[1].split()[0] for line in self.logs if "wake held" in line], ["retry", "rest"])
+
+    def test_with_no_retry_to_come_the_next_wake_waits_after_the_failure(self):
+        self.autowake()
+        self.receipt()
+        self.failed(1, auto_retry_state=None, auto_retry_at=None, auto_retry_kind=None, auto_retry_attempt=None)
+        self.loop.tick(NOW + 15 + project_loop.LIMIT_REST - 5)
+        self.assertEqual(self.woken(), [])
+        self.loop.tick(NOW + 15 + project_loop.LIMIT_REST + 5)
+        self.assertEqual(self.woken(), [f"lead-{PID}-2"])
+
+    def test_a_retry_long_overdue_holds_no_more(self):
+        self.autowake()
+        self.receipt()
+        self.failed(1, auto_retry_at=NOW + 60)
+        self.loop.tick(NOW + 60 + project_loop.LIMIT_REST - 5)
+        self.assertEqual(self.woken(), [])
+        self.loop.tick(NOW + 60 + project_loop.LIMIT_REST + 5)
+        self.assertEqual(len(self.queued), 1)
+
+    def test_a_retry_cancelled_by_the_owner_or_a_model_switch_holds_nothing(self):
+        self.autowake()
+        self.receipt()
+        for note in ("model_switch", "stopped"):
+            self.queued.clear()
+            self.failed(1, auto_retry_state="cancelled", auto_retry_note=note)
+            self.loop.tick(NOW + 30)
+            self.assertEqual(len(self.queued), 1, note)
+
+    def test_other_failures_wake_as_before(self):
+        self.autowake()
+        self.receipt()
+        self.failed(1, failure_code="failed", auto_retry_state=None, auto_retry_at=None, auto_retry_kind=None)
+        self.loop.tick(NOW + 30)
+        self.assertEqual(len(self.queued), 1)
+
+    def test_the_owners_choice_after_the_failure_wakes_the_lead_once(self):
+        self.receipt("start", at=NOW - 60)  # Read and failed on: the start is older than the failed turn.
+        self.failed(1)
+        self.loop.tick(NOW + 30)
+        self.assertEqual(self.woken(), [])
+        self.receipt("owner_choice", "主人看了停住的原因，选了继续", at=NOW + 40)
+        self.loop.tick(NOW + 45)
+        self.assertEqual(self.woken(), [f"lead-{PID}-2"])
+        self.failed(2, ended=NOW + 60, auto_retry_at=NOW + HOUR)  # That turn failed on the limit too.
+        for at in range(70, 400, 10):
+            self.loop.tick(NOW + at)
+        self.assertEqual(self.woken(), [f"lead-{PID}-2"])
+
+    def test_a_lead_on_a_held_gateway_quota_waits_for_its_recheck(self):
+        gateway = configure(self)
+        self.env.topics.apps["codex"] = self.app
+        write_topic(self.state, topic_id=LEAD, chat_id=CHAT, harness_id="codex", model="mygw/gpt-x",
+                    project=projects.project_field(PID, projects.LEAD))
+        quota_hold.note(self.state, gateway, spent_text(NOW + HOUR), now=NOW)
+        self.autowake()
+        self.receipt()
+        self.loop.tick(NOW + 5)
+        self.assertEqual(self.woken(), [])
+        self.assertTrue(any("why=quota" in line for line in self.logs))
+        self.loop.tick(NOW + quota_hold.RECHECK + 5)  # A turn then starts and asks the gateway again (core/quota_hold.py blocks).
+        self.assertEqual(len(self.queued), 1)
+
+    def test_the_owners_own_turn_in_the_lead_topic_is_not_held(self):
+        # The owner speaking to the lead is his message's own turn (app/project_loop.py owner_turn), not a wake: nothing
+        # here holds it, and it is the topic's newest task, so the pending retry gives way to it as before.
+        self.autowake()
+        self.receipt()
+        key = self.failed(1)
+        project_loop.owner_turn(self.state, LEAD, CHAT, "om_owner")
+        write_job(self.state, "om_owner", topic_id=LEAD, chat_id=CHAT, job_id=2, message_id="om_owner", status="running")
+        jobs = SimpleNamespace(runtime=SimpleNamespace(jobs=SimpleNamespace(topic_jobs=lambda *a: [])))
+        records = topic_job_records(self.state, LEAD)
+        self.assertEqual(auto_retry.blocker(jobs, find_job_record(self.state, key), records, load_topic(self.state, LEAD)),
+                         "new_message")
+        self.loop.tick(NOW + 30)
+        self.assertEqual(self.woken(), [])  # Its turn runs: no wake on top of it.
 
 
 class PauseAskTest(Loop):
