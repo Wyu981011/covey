@@ -31,6 +31,9 @@ from covey.core.process_env import env_flag
 from covey.core.run_dir import ACKS, EXIT, INBOX, OP
 from covey.core.state import keyed_json_path, read_each, read_json, write_json
 
+# A queued message's delivery id: this prefix and its message id (app/steering.py steer_queued_job; app/relay_targets.py
+# and app/source_watch.py read it back by the message).
+QUEUED_STEER = "queued-steer-"
 # A topic's message sent while the topic's task runs goes into that task as a supplement (app/submission.py
 # steers_on_arrival), unless 0: then it is queued as the next round, as before (docs/configuration.md).
 TOPIC_STEER = "COVEY_TOPIC_STEER"

@@ -3,7 +3,8 @@
 gave, or an automatic retry of either; ``area_target``: the latest request that touched a 话题区, or the owner's own
 launch from the web page, ``web_root``), the message a relay quotes (``relay_quote``, ``butler_job_owner_message``), its
 "你问" block (``ask_for``), the card its T number opens (``turn_card``), and a project member's turn the owner waits for
-(``awaited_target``: one the lead handed on while he was there). A hand-on can come from a turn that was handed on itself
+(``awaited_target``: one the lead handed on while he was there, or one he asked for himself from outside the topic's
+thread, ``asked_outside``). A hand-on can come from a turn that was handed on itself
 (a lead's turn the butler's project_send started, ``_handed_up``): the quote and the "你问" block are then the ones of
 the turn the owner spoke in, up that chain. Reads records only: nothing here sends or writes."""
 from __future__ import annotations
@@ -13,7 +14,7 @@ from pathlib import Path
 from covey.app import answer_cards
 from covey.cards.relay_card import WAITING
 from covey.core import butler_opened, placement, projects
-from covey.core.jobs import find_job_record, job_field, job_key
+from covey.core.jobs import find_job_record, job_field, job_key, topic_job_records
 from covey.core.store import directory_store
 from covey.core.topics import load_topic, topic_label
 
@@ -229,11 +230,17 @@ def awaited_target(state_dir, job):
     the lead handed it on (project_topic_start, project_topic_send or the supplement it gave, main-thread/opened/) in a turn
     of the lead the owner was in, one that was not a wake-up (``projects.is_wake``); as ``relay_target`` gives it, quoting
     the lead's card, else what the turn the owner spoke in has (``relay_quote``: the butler's card of a project_send).
-    None for any other turn: a member's row relays nothing of its own (core/placement.py), what a wake-up turn handed out
-    is the lead's to tell (its style)."""
+    Else a turn he asked for himself from outside the topic's thread (``asked_outside``). None for any other turn: a
+    member's row relays nothing of its own (core/placement.py), what a wake-up turn handed out is the lead's to tell (its
+    style), and what he says in the topic's own thread is answered there."""
     topic_id, chat = str(job_field(job, "topic_id")), str(job_field(job, "chat_id"))
     if not projects.enabled() or not projects.is_member_topic(state_dir, topic_id):
         return None
+    return _lead_handed(state_dir, job, topic_id, chat) or asked_outside(state_dir, job, topic_id, chat)
+
+
+def _lead_handed(state_dir, job, topic_id, chat):
+    """``awaited_target`` of a member's turn the lead handed on in a turn of his the owner was in; None for any other."""
     message_id, job_id = _origin_job(state_dir, job)
     found = _opened(state_dir, message_id, job_id, topic_id)
     if found is None:
@@ -251,6 +258,65 @@ def awaited_target(state_dir, job):
     return {"chat_id": str(record.get("chat_id") or chat), "reply_to": reply_to,
             "label": topic_label(Path(state_dir), topic_id) or "话题", "token": token, "kind": kind,
             "topic_id": topic_id, "main_key": lead_key}
+
+
+def asked_outside(state_dir, job, topic_id, chat):
+    """``awaited_target`` of a member's turn the owner asked for from outside the topic's thread (T812, 2026-11-26: he
+    quoted T824's relay at the top level and asked again, #7397 answered in T824's thread, its message got DONE, and the
+    top level heard nothing): his message quoting a card of the topic there (引用直达) started it (its ``top_message``,
+    app/butler_reactions.py, or that of the turn its automatic retry chain started from), kind "follow", whose "你问" is the
+    turn's own words; or such a message went into it as a supplement and the task took it (``_steered_outside``), kind
+    "steer", whose "你问" is that message's. Either quotes his message. None for a turn he started in the thread, as the
+    member's row has it."""
+    label = topic_label(Path(state_dir), topic_id) or "话题"
+    top = _top_of(state_dir, job)
+    if top:
+        return {"chat_id": chat, "reply_to": top, "label": label, "token": "", "kind": "follow", "topic_id": topic_id,
+                "main_key": ""}
+    steered = _steered_outside(state_dir, job, topic_id, chat)
+    if steered is None:
+        return None
+    return {"chat_id": chat, "reply_to": str(steered.get("top_message")), "label": label, "token": "", "kind": "steer",
+            "topic_id": topic_id, "main_key": str(steered.get("key") or "")}
+
+
+def _top_of(state_dir, job) -> str:
+    """``job``'s ``top_message`` (a person's message quoted from outside its topic's thread), else that of the turn its
+    automatic retry chain started from (``_origin_job``); ''."""
+    from covey.app.butler_reactions import top_of
+
+    top = top_of(job)
+    if top:
+        return top
+    message_id, job_id = _origin_job(state_dir, job)
+    if message_id == str(job_field(job, "message_id")):
+        return ""
+    return top_of(find_job_record(Path(state_dir), job_key(message_id, job_id)) or {})
+
+
+def _steered_outside(state_dir, job, topic_id, chat):
+    """The record of the latest message quoted from outside the topic's thread that went into the running task ``job``
+    as a supplement (app/steering.py steer_queued_job: its own turn cancelled, ``merged_into_job_id``, its ``top_message``
+    kept) and that the task took: its delivery sent or read, not one that waits unread or that the task ended without
+    (core/deliveries.py ``unread``, ``target_ended``; such a one becomes a turn of its own with the same
+    ``top_message``). None for none."""
+    from covey.app.butler_reactions import top_of
+    from covey.core.deliveries import QUEUED_STEER, delivery_path, read_delivery, unread
+
+    job_id = str(job_field(job, "job_id"))
+    if not job_id:
+        return None
+    found = None
+    for record in topic_job_records(Path(state_dir), topic_id, chat_id=chat, status="cancelled"):
+        if str(record.get("merged_into_job_id") or "") != job_id or not top_of(record):
+            continue
+        delivery = read_delivery(delivery_path(Path(state_dir), topic_id, QUEUED_STEER + str(record.get("message_id") or "")))
+        if (not isinstance(delivery, dict) or delivery.get("status") not in ("sent", "read") or unread(delivery)
+                or delivery.get("target_ended")):
+            continue
+        if found is None or int(record.get("job_id") or 0) > int(found.get("job_id") or 0):
+            found = record
+    return found
 
 
 def turn_card(state_dir, job, outcome) -> str:

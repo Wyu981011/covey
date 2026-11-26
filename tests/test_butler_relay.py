@@ -898,6 +898,154 @@ class HandedLeadDeliverTest(HandedLeadCase):
         self.assertEqual("sent", read_object(relay_send.relay_path(self.state, job_key("main-t1", 9))).get("state"))
 
 
+ASKED_AGAIN = "上一轮说的两个数差这么多，原因能再讲讲吗？"
+
+
+class AskedOutsideCase(AwaitedCase):
+    """T812, 2026-11-26: the owner quoted the relay of a member topic's turn at the top level and asked again (引用直达);
+    the turn it started (#7397, its ``top_message`` his message) answered in the topic's thread, his message got DONE,
+    and the top level heard nothing: the member's row relays nothing of its own, and no lead handed that turn on."""
+
+    def quoted(self, message_id="om_quoted", job_id=12, **fields):
+        """The turn the owner's message ``message_id``, quoting a card of the topic at the top level, started."""
+        upsert_job_record(self.state, job_key(message_id, job_id), job_id=job_id, message_id=message_id, chat_id=CHAT,
+                          topic_id=TOPIC, status="done", top_message=message_id, user_text=ASKED_AGAIN,
+                          **fields)
+        return self.job(message_id, job_id, top_message=message_id, user_text=ASKED_AGAIN)
+
+    def steered(self, into, message_id="om_quoted2", job_id=15, status="read", **delivery):
+        """The owner's message ``message_id`` quoting a card at the top level, gone into the running task ``into`` as a
+        supplement (app/steering.py steer_queued_job): its own turn cancelled, merged into it; its delivery ``status``."""
+        from covey.core.deliveries import QUEUED_STEER, delivery_path, save_delivery
+
+        upsert_job_record(self.state, job_key(message_id, job_id), job_id=job_id, message_id=message_id, chat_id=CHAT,
+                          topic_id=TOPIC, status="cancelled", merged_into_job_id=into, top_message=message_id,
+                          user_text="顺便问下现在到哪一步了")
+        save_delivery(delivery_path(self.state, TOPIC, QUEUED_STEER + message_id),
+                      {"status": status, "topic_id": TOPIC, "chat_id": CHAT, "job_id": into,
+                       "requeue": {"text": "顺便问下现在到哪一步了", "top": message_id}, **delivery})
+        return job_key(message_id, job_id)
+
+
+class AskedOutsideTest(AskedOutsideCase):
+    def test_a_turn_he_asked_quoting_its_card_at_the_top_level_relays_its_conclusion_and_its_stop(self):
+        job = self.quoted()
+        self.assertEqual({"chat_id": CHAT, "reply_to": "om_quoted", "label": "T410", "token": "", "kind": "follow",
+                          "topic_id": TOPIC, "main_key": ""}, relay_targets.awaited_target(self.state, job))
+        send = self.send()
+        self.assertEqual("sent", relay(self.state, job, DONE, send=send, text=REPLY))
+        self.assertIn(ASKED_AGAIN[:10], json.dumps(send.call_args.args[4], ensure_ascii=False))  # "你问": his words.
+        again = self.quoted("om_quoted_again", 13)
+        self.assertEqual("sent", relay(self.state, again, STOPPED, send=send, reason="任务失败"))
+        self.assertEqual(2, send.call_count)
+        # Its question stays the question flow's.
+        self.assertIsNone(relay(self.state, self.quoted("om_quoted_3", 14), WAITING, send=send, question="选哪个？"))
+        self.assertEqual(2, send.call_count)
+
+    def test_one_he_started_in_the_topics_own_thread_is_answered_there(self):
+        upsert_job_record(self.state, job_key("om_in_thread", 13), job_id=13, message_id="om_in_thread", chat_id=CHAT,
+                          topic_id=TOPIC, status="done")
+        job = self.job("om_in_thread", 13)
+        self.assertIsNone(relay_targets.awaited_target(self.state, job))
+        send = self.send()
+        self.assertIsNone(relay(self.state, job, DONE, send=send, text=REPLY))
+        send.assert_not_called()
+
+    def test_with_projects_off_or_in_an_ordinary_topic_this_is_not_the_way(self):
+        from covey.core import projects
+
+        job = self.quoted()
+        with mock.patch.dict("os.environ", {projects.ENV: "0"}):
+            self.assertIsNone(relay_targets.awaited_target(self.state, job))
+        self.topic(TOPIC, topic_id=TOPIC, topic_number=410, chat_id=CHAT)  # No member: relay_target's, as before.
+        self.assertIsNone(relay_targets.awaited_target(self.state, job))
+
+    def test_an_automatic_retry_of_it_relays_for_the_turn_it_continues(self):
+        self.quoted(auto_retry_state="queued")
+        upsert_job_record(self.state, job_key("auto-retry-12-1", 16), job_id=16, message_id="auto-retry-12-1", chat_id=CHAT,
+                          topic_id=TOPIC, status="done", retry_of=job_key("om_quoted", 12))
+        target = relay_targets.awaited_target(self.state, self.job("auto-retry-12-1", 16))
+        self.assertEqual(("om_quoted", "follow"), (target["reply_to"], target["kind"]))
+        # A retry that is no automatic one, without a top_message of its own, is not followed back (one the owner clicks
+        # keeps the top_message, app/task_controls.py requeue).
+        upsert_job_record(self.state, job_key("om_quoted", 12), auto_retry_state="cancelled")
+        self.assertIsNone(relay_targets.awaited_target(self.state, self.job("auto-retry-12-1", 16)))
+
+    def test_a_quote_that_went_into_the_running_turn_as_a_supplement_relays_that_turn(self):
+        upsert_job_record(self.state, job_key("om_in_thread", 13), job_id=13, message_id="om_in_thread", chat_id=CHAT,
+                          topic_id=TOPIC, status="done")
+        running = self.job("om_in_thread", 13)
+        key = self.steered(13)
+        target = relay_targets.awaited_target(self.state, running)
+        self.assertEqual(("om_quoted2", "steer", key), (target["reply_to"], target["kind"], target["main_key"]))
+        with mock.patch.object(relay_targets.answer_cards, "asked", return_value={"tag": "ask"}) as asked:
+            relay_targets.ask_for(self.state, running, target)
+        self.assertEqual(15, asked.call_args.args[1]["job_id"])  # "你问": the supplement he sent.
+        send = self.send()
+        self.assertEqual("sent", relay(self.state, running, DONE, send=send, text=REPLY))
+        self.assertIn("顺便问下现在到哪一步了", json.dumps(send.call_args.args[4], ensure_ascii=False))
+
+    def test_a_supplement_the_task_did_not_take_or_one_in_the_thread_is_not(self):
+        upsert_job_record(self.state, job_key("om_in_thread", 13), job_id=13, message_id="om_in_thread", chat_id=CHAT,
+                          topic_id=TOPIC, status="done")
+        running = self.job("om_in_thread", 13)
+        # Sent and never read on a Harness that reports reads, ended unread, held, refused: it becomes (or stays) a
+        # turn of its own, with its own top_message, which relays itself.
+        for n, (status, extra) in enumerate((("sent", {"reads": True}), ("sent", {"target_ended": True}), ("held", {}),
+                                             ("refused", {}), ("uncertain", {}))):
+            self.steered(13, f"om_q{n}", 20 + n, status, **extra)
+        self.assertIsNone(relay_targets.awaited_target(self.state, running))
+        # Into another task, or a supplement from the thread (no top_message).
+        self.steered(99, "om_other", 30)
+        upsert_job_record(self.state, job_key("om_thread_steer", 31), job_id=31, message_id="om_thread_steer", chat_id=CHAT,
+                          topic_id=TOPIC, status="cancelled", merged_into_job_id=13)
+        self.assertIsNone(relay_targets.awaited_target(self.state, running))
+        # Sent on a Harness that reports no reads: taken.
+        self.steered(13, "om_codex", 32, "sent")
+        self.assertEqual("om_codex", relay_targets.awaited_target(self.state, running)["reply_to"])
+
+    def test_a_turn_the_lead_handed_on_still_relays_as_it_did(self):
+        self.lead_turn("main-lead1")
+        target = relay_targets.awaited_target(self.state, self.job(top_message="om_quoted"))
+        self.assertEqual(("start", "om_lead_card"), (target["kind"], target["reply_to"]))
+
+    def test_the_leads_receipt_says_it_was_sent_so_a_wake_up_that_retells_it_stays_quiet(self):
+        from covey.app import project_lead, project_loop
+        from covey.core import projects
+
+        projects.create(self.state, projects.new_record(chat_id=CHAT, name="仓库评估", goal="评估", project_id=self.PID,
+                                                        now=time.time()))
+        projects.add_member(self.state, self.PID, TOPIC)
+        job = self.quoted(final_text="两个数差在统计口径上")
+        self.assertEqual("sent", relay(self.state, job, DONE, send=self.send(), text=REPLY))
+        project_loop.after_runner([].append, self.state, job)
+        [item] = project_loop.unread(self.state, self.PID)
+        self.assertEqual(("thread_end", True), (item["kind"], item.get("relayed")))
+        self.assertIn(project_lead.RELAYED_NOTE, project_lead.receipt_line(item))
+        wake = f"lead-{self.PID}-1"
+        project_lead.take_receipts(self.state, self.PID, wake)
+        note = {"id": "n1", "at": time.time(), "text": "T410 答了", "report": True, "kind": "thread", "job": wake}
+        projects.update(self.state, self.PID, lambda record: record.update(style={"report": "each_thread"}, notes=[note]))
+        self.assertTrue(project_loop.told_already(self.state, self.PID, wake))
+        self.assertFalse(project_loop.reported(self.state, self.lead_topic, wake))
+
+
+class AskedOutsideDeliverTest(AskedOutsideCase):
+    """TurnDelivery.deliver relays such a turn from its task runner."""
+
+    deliver = DeliverTest.deliver
+
+    def test_a_done_turn_he_asked_at_the_top_level_sends_its_conclusion(self):
+        job = self.quoted()
+        job.progress = SimpleNamespace()
+        send = self.deliver(job)
+        send.assert_called_once()
+        self.assertIn("两种做法都行", json.dumps(send.call_args.kwargs["card"]["body"], ensure_ascii=False))
+
+    def test_one_in_the_thread_sends_nothing(self):
+        self.deliver(self.job("om_in_thread", 13, progress=SimpleNamespace())).assert_not_called()
+
+
 class AwaitedDeliverTest(AwaitedCase):
     """TurnDelivery.deliver relays a member's awaited turn as it does a butler topic's."""
 

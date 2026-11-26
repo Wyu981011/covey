@@ -18,8 +18,9 @@ import threading
 import time
 
 from covey.cards.steer_receipts import CHECK_KIND, INTERRUPT_KIND, REQUEUE_KIND, WITHDRAW_KIND
-from covey.core.deliveries import (REQUEUE, delivery_path, delivery_token, end_unread, lost, marked, offers,
-                                   on_arrival, read_delivery, reconcile, save_delivery, shown_preview, update_delivery)
+from covey.core.deliveries import (QUEUED_STEER, REQUEUE, delivery_path, delivery_token, end_unread, lost, marked,
+                                   offers, on_arrival, read_delivery, reconcile, save_delivery, shown_preview,
+                                   update_delivery)
 from covey.cards.steer_form import closed_card, latest_request
 from covey.core.jobs import upsert_job_record, find_job_record
 from covey.core import background, timing
@@ -44,7 +45,6 @@ from covey.app.steer_interrupt import SteerInterrupt
 
 STEER_WATCH_SECONDS = 120
 STEER_KINDS = frozenset({"bridge_steer", CHECK_KIND, REQUEUE_KIND, WITHDRAW_KIND, INTERRUPT_KIND})
-QUEUED_STEER = "queued-steer-"  # A queued message's delivery id: this prefix and its message id.
 
 
 def refusal_reason(text) -> str:
