@@ -339,6 +339,8 @@ def _start_topic(app, ctx, path, record, plan, directory, branch):
     target = app.topics.select_harness(ctx, chat_id, name)
     # '' for the default mode, so a default-mode or no-mode binding is written as before work modes.
     mode = {'work_mode': plan['work_mode']} if plan.get('work_mode') else {}
+    # Its slug's title read before LOCK (rule 2: no history read under it).
+    title = topic_title(ctx.state_dir, ctx.topic_id) if plan.get('home_start') else ''
     # One topic is the authority for future messages, including after restart.
     with LOCK:
         topic = read_topic(target)
@@ -351,7 +353,7 @@ def _start_topic(app, ctx, path, record, plan, directory, branch):
         else:
             topic.pop(REDACTION_KEY, None)
         if plan.get('home_start'):  # Once, with its start and slug: its outputs directory never moves after (app/home_turn.py).
-            mark_home(topic, title=topic_title(ctx.state_dir, ctx.topic_id), now=plan['submitted_at'])
+            mark_home(topic, title=title, now=plan['submitted_at'])
         save_record(target.history_path.parent / 'topic.json', topic)
     for job in pending:
         upsert_job_record(ctx.state_dir, job['key'], backend=name, harness_id=name,
