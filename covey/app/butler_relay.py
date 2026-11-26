@@ -319,7 +319,7 @@ def after_turn(delivery, delivered, execution_status, *, messenger, profile, voi
                     state_dir, record, job_field(job, "topic_id"), voice) if record else None, None),
                 files_status=_part(log, job, "files status", lambda: (answer_cards.ledger_of(
                     state_dir, record, voice) or {}).get("status") if record else None, None))
-            changed = _part(log, job, "change", lambda: answer_cards.change(job), {})
+            changed = _part(log, job, "change", lambda: answer_cards.change(job, state_dir), {})
             if changed:
                 facts["change"] = changed  # Only with one: a relay's facts without it are as before.
             noted = _part(log, job, "notes", lambda: answer_cards.notes(state_dir, job), [])

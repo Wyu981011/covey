@@ -31,7 +31,7 @@ from covey.cards.review import answer_card, answer_lead, answer_summary, bare_an
 from covey.core import collab, criteria
 from covey.core.checkpoint import (checkpoint_acceptance, checkpoint_delivery, delivery_commits, read_checkpoint,
                                    shows_change)
-from covey.core.diff import missing_commits
+from covey.core.diff import missing_in_repos
 from covey.core.locks import resource_lock
 from covey.core.metrics import job_took
 from covey.core.state import keyed_json_path, read_json, read_object, write_json
@@ -106,32 +106,49 @@ def files_changed(job) -> bool:
     return bool(path) and Path(path).is_file()
 
 
-def change(job) -> dict:
+def change(job, state_dir=None) -> dict:
     """The 改动 of ``job`` for its answer card's fold (cards/answer_card.py change_element): its checkpoint's
     ``delivery`` (core/checkpoint.py checkpoint_delivery, as written) when the turn changed code (``shows_change``:
-    a commit, or files changed and a delivery), else {}. With NOT_FOUND too when the repository of the turn's
-    workdir has no commit for an id it names (``absent_commits``), so the card marks what the model wrote wrong."""
+    a commit, or files changed and a delivery), else {}. With NOT_FOUND too when no repository the turn wrote to has a
+    commit for an id it names (``absent_commits``), so the card marks what the model wrote wrong."""
     path = _field(job, "checkpoint_path")
     found = checkpoint_delivery(read_checkpoint(Path(path))) if path else {}
     if not (found and shows_change(found, files_changed(job))):
         return {}
-    absent = absent_commits(job, found)
+    absent = absent_commits(job, found, state_dir)
     return {**found, NOT_FOUND: absent} if absent else found
 
 
-def absent_commits(job, delivery) -> list:
-    """The commit ids ``delivery`` names that the git repository of ``job``'s workdir lacks (core/diff.py
-    missing_commits: one bounded git call, never under a lock: a turn's delivery and its relay take none); [] when
-    there are none or it cannot be told: a turn on a device (its workdir is there), no workdir, not a repository,
-    no git, too slow."""
-    workdir = _field(job, "workdir")
-    if _field(job, "device") or not workdir:
+def written_dirs(job, state_dir) -> list:
+    """The directories ``job``'s commits may be in: its workdir's repository and, given ``state_dir``, each repository its
+    topic writes to (app/repos_turn.py write_dirs: its worktree, or the repository written in place). A topic that
+    started in the home has a workdir no repository is in; its commits are in those."""
+    found = [_field(job, "workdir")]
+    topic = _field(job, "topic_id")
+    if state_dir and topic:
+        from types import SimpleNamespace
+
+        from covey.app import repos_turn
+        try:
+            found += [where for _, where in repos_turn.write_dirs(SimpleNamespace(state_dir=Path(state_dir), topic_id=topic,
+                                                                                  device=""), job)]
+        except Exception:  # noqa: BLE001 - the workdir's alone, as before
+            pass
+    return [str(where) for where in found if where]
+
+
+def absent_commits(job, delivery, state_dir=None) -> list:
+    """The commit ids ``delivery`` names that no repository of ``written_dirs`` has (core/diff.py missing_in_repos: a
+    bounded git call each, never under a lock: a turn's delivery and its relay take none); [] when there are none or it
+    cannot be told: a turn on a device (its workdir is there), no workdir, not a repository, no git, too slow."""
+    if _field(job, "device") or not _field(job, "workdir"):
         return []
     commits = tuple(delivery_commits(delivery))
-    key, now = (workdir, commits), time.monotonic()
+    where = tuple(written_dirs(job, state_dir))
+    key, now = (where, commits), time.monotonic()
     found = _ABSENT.get(key)
     if found is None or now - found[0] > ABSENT_SECONDS:
-        found = (now, missing_commits(workdir, commits) or [])
+        found = (now, missing_in_repos(where, commits) or [])
         _ABSENT.pop(key, None)
         _ABSENT[key] = found
         while len(_ABSENT) > ABSENT_KEPT:

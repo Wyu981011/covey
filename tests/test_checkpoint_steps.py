@@ -404,6 +404,33 @@ class AnswerCardTest(unittest.TestCase):
                           {"checkpoint_path": str(point), "workdir": str(Path(directory) / "gone")}):
                 self.assertEqual(answer_cards.change(other), {"commit": "a6bc148d38", "deployed": "", "verified": ""})
 
+    def test_a_home_topics_commit_is_looked_up_in_the_repositories_it_writes_to(self):
+        """Seam W1 ↔ W2 (T870): a topic that started in the home runs in a directory no repository is in; its commits are
+        in the worktree (or the repository written in place) of each repository it writes to (core/diff.py
+        missing_in_repos over app/repos_turn.py write_dirs)."""
+        from support.git import commit_all, init_git_repo, run_git
+        from support.records import write_topic
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            home, state, worktree, point = base / "home", base / "state", base / "wt" / "covey", base / "cp.json"
+            home.mkdir()
+            worktree.mkdir(parents=True)
+            init_git_repo(worktree)
+            (worktree / "a.txt").write_text("a")
+            commit_all(worktree)
+            head = run_git(worktree, "rev-parse", "HEAD").strip()
+            write_topic(state, topic_id="t" * 16, home_start=True, workdir=str(home), repos=[
+                {"name": "covey", "path": str(base / "covey"), "mode": "write", "worktree": str(worktree), "source": "declared"}])
+            point.write_text(json.dumps({"delivery": {"commit": f"{head} a6bc148d38"}}))
+            job = SimpleNamespace(checkpoint_path=str(point), workdir=home, topic_id="t" * 16)
+            self.assertEqual(answer_cards.change(job, state)["not_found"], ["a6bc148d38"])
+            point.write_text(json.dumps({"delivery": {"commit": head}}))
+            self.assertNotIn("not_found", answer_cards.change(job, state))
+            # Without the state directory: the home alone, which cannot tell; nothing said, as before.
+            point.write_text(json.dumps({"delivery": {"commit": "a6bc148d38"}}))
+            self.assertNotIn("not_found", answer_cards.change(job))
+
 
 class AcceptanceTest(unittest.TestCase):
     """#21: 改了什么 / 去哪看 / 怎么验 of a UI change or a turn the owner asked to accept, from the checkpoint."""
