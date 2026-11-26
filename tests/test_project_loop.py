@@ -20,7 +20,7 @@ from covey.app import auto_retry, project_lead, project_loop
 from covey.app.cards import Cards
 from covey.app.project_facts import facts
 from covey.app.project_loop import ProjectLoop
-from covey.core import butler, butler_settings, placement, projects, quota_hold
+from covey.core import butler, butler_settings, failure, placement, projects, quota_hold
 from covey.core.jobs import find_job_record, job_key, topic_job_records
 from covey.core.state import write_json
 from covey.core.topics import load_topic
@@ -343,6 +343,102 @@ class LimitTest(Loop):
 
     def woken(self):
         return [message for message, _ in self.queued]
+
+    def down(self, number, ended, key="", why="ValueError: 模型后端尚未登录"):
+        """The lead's turn ``number`` (a wake-up unless ``key`` says otherwise) did not start, its Harness's login check
+        failing, as app/job_dispatch.py records it: its record's last write, at ``ended``, is its end. Its key."""
+        key = key or projects.wake_id(PID, number)
+        with mock.patch("covey.core.jobs.utc_now_iso", return_value=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ended))):
+            write_job(self.state, key, topic_id=LEAD, chat_id=CHAT, job_id=number, message_id=key, backend="claude",
+                      status="failed", status_message=failure.STARTUP_FAILED + why)
+        return key
+
+    def wake_job(self, number, message=""):
+        return SimpleNamespace(message_id=message or projects.wake_id(PID, number), job_id=number, topic_id=LEAD)
+
+    def test_a_backend_that_does_not_start_wakes_the_lead_on_a_ladder_and_the_first_turn_that_starts_reads_every_receipt(self):
+        # 2026-11-26 10:57: the lead's Claude Code on the remote machine failed its login check, a wake every 10 s, each
+        # failing 5 s on and telling the owner 后端暂不可用 with a recovery card, until the wakes guard paused the project.
+        # Here: 40 minutes of a look every 10 s, a topic's receipt every 3 minutes, every wake failing its login check.
+        self.autowake()
+        came = [self.receipt(text="T41 的任务 #7 停住了")]
+        woken_at = []
+        for n in range(241):
+            at = NOW + 5 + 10 * n
+            if n and n % 18 == 0:
+                came.append(self.receipt(text=f"T{41 + n} 的任务 #{7 + n} 停住了", at=at - 1))
+            self.loop.tick(at)
+            if len(self.queued) > len(woken_at):  # The Bridge runs the wake: its login check fails 5 s on.
+                woken_at.append(at)
+                self.down(len(woken_at), at + 5)
+        # 1, 3, then 10 minutes after the latest (before: 240 wakes, or 12 and a pause card each hour with the guard).
+        self.assertEqual([later - earlier for earlier, later in zip(woken_at, woken_at[1:])], [70, 190, 610, 610, 610])
+        record = self.reload()
+        self.assertEqual((record["wakes"]["count"], record["state"]), (6, projects.ACTIVE))  # Not paused: no pause card.
+        self.stop.assert_not_called()
+        self.assertEqual({line.split("why=")[1].split()[0] for line in self.logs if "wake held" in line}, {"down"})
+        # The owner was told of the first that did not start; of the tries after it, nothing (app/job_dispatch.py).
+        self.assertEqual([project_loop.quiet_start(self.state, self.wake_job(n), now=woken_at[n - 1] + 5)
+                          for n in range(1, 7)], [False] + [True] * 5)
+        # Every receipt kept, unread.
+        self.assertEqual([item["id"] for item in project_loop.unread(self.state, PID)], [item["id"] for item in came])
+        # The backend is back: the next wake starts, takes them all in one turn, and leaves nothing to wake for.
+        self.loop.tick(NOW + 2700)
+        self.assertEqual(len(self.queued), 7)
+        key = projects.wake_id(PID, 7)
+        write_job(self.state, key, topic_id=LEAD, chat_id=CHAT, job_id=7, message_id=key, status="running")
+        self.assertEqual([item["id"] for item in project_lead.take_receipts(self.state, PID, key)],
+                         [item["id"] for item in came])
+        write_job(self.state, key, status="done")
+        for at in range(2710, 3400, 10):
+            self.loop.tick(NOW + at)
+        self.assertEqual(len(self.queued), 7)
+        self.assertEqual(project_loop.unread(self.state, PID), [])
+
+    def test_the_ladder_counts_the_lead_turns_in_a_row_that_did_not_start(self):
+        self.autowake()
+        self.receipt()
+        self.down(1, NOW)
+        self.update(wakes={"count": 1, "streak": 1, "last_at": NOW, "recent": [NOW]})
+        write_job(self.state, "k-done", topic_id=LEAD, chat_id=CHAT, job_id=2, message_id="k-done", status="done",
+                  timings={"execution_finished": NOW + 100})
+        self.down(3, NOW + 200, key="om_owner", why="ValueError: 模型后端程序不可用")  # The owner's own turn counts too.
+        self.loop.tick(NOW + 255)
+        self.assertEqual(self.woken(), [])  # One in a row: a minute.
+        self.loop.tick(NOW + 265)
+        self.assertEqual(len(self.queued), 1)
+
+    def test_a_task_runner_that_did_not_start_holds_as_a_backend_down(self):
+        self.autowake()
+        self.receipt()
+        key = projects.wake_id(PID, 1)
+        write_job(self.state, key, topic_id=LEAD, chat_id=CHAT, job_id=1, message_id=key, status="failed",
+                  runner_start_failed=True, timings={"execution_finished": NOW})
+        self.update(wakes={"count": 1, "streak": 1, "last_at": NOW, "recent": [NOW]})
+        self.loop.tick(NOW + 30)
+        self.assertEqual(self.woken(), [])
+        self.loop.tick(NOW + 65)
+        self.assertEqual(len(self.queued), 1)
+
+    def test_the_owners_choice_after_a_backend_down_wakes_the_lead_at_once(self):
+        self.receipt("start", at=NOW - 60)
+        self.down(1, NOW)
+        self.update(wakes={"count": 1, "streak": 1, "last_at": NOW, "recent": [NOW]})
+        self.loop.tick(NOW + 10)
+        self.assertEqual(self.woken(), [])
+        self.receipt("owner_choice", "主人看了停住的原因，选了继续", at=NOW + 20)
+        self.loop.tick(NOW + 25)
+        self.assertEqual(self.woken(), [f"lead-{PID}-2"])
+
+    def test_only_a_wake_up_after_a_lead_turn_that_did_not_start_tells_the_owner_nothing(self):
+        quiet = project_loop.quiet_start
+        self.assertFalse(quiet(self.state, self.wake_job(1), now=NOW))  # The first: he is told.
+        self.down(1, NOW)
+        self.assertTrue(quiet(self.state, self.wake_job(2), now=NOW + 70))
+        self.assertFalse(quiet(self.state, self.wake_job(2, "om_owner"), now=NOW + 70))  # His own turn: told.
+        self.assertFalse(quiet(self.state, self.wake_job(2), now=NOW + HOUR + 1))  # An hour on: a new outage, told.
+        write_job(self.state, "k-done", topic_id=LEAD, chat_id=CHAT, job_id=2, message_id="k-done", status="done")
+        self.assertFalse(quiet(self.state, self.wake_job(3), now=NOW + 70))  # The turn before it started: told.
 
     def test_topics_stopping_one_after_another_wake_the_lead_once_and_its_retry_reads_every_receipt(self):
         self.autowake()

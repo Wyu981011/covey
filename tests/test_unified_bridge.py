@@ -184,6 +184,28 @@ class UnifiedTests(UnifiedCase):
         self.assertIn('harness=claude: ValueError: 模型后端尚未登录 token=[已隐藏]', line)
         self.assertNotIn('synthetic-secret', ''.join(logs) + json.dumps(record, ensure_ascii=False))
 
+    def test_a_lead_wake_up_that_does_not_start_after_one_that_did_not_either_tells_the_owner_nothing(self):
+        """T99: a lead woken every 10 s, its login check failing each time, told the owner 后端暂不可用 with a recovery
+        card each time. The first is told (above); the loop's tries after it (app/project_loop.py quiet_start) are not."""
+        self.receive('again', 'initial')
+        _, ctx = self.route('again')
+        self.app.topics.select_harness(ctx, 'chat', 'claude')
+        app, ctx = self.route('again')
+        app.submission.start_workspace(ctx, 'chat', ctx.workspace_name)
+        job = self.app.runtime.jobs.queue.get_nowait()
+        logs, said = [], len(self.said())
+        self.app.runtime.log_sink = logs.append
+        with mock.patch('covey.app.job_dispatch.check_or_raise', side_effect=ValueError('模型后端尚未登录')), \
+             mock.patch('covey.app.project_loop.quiet_start', return_value=True) as quiet, \
+             mock.patch.object(app.controls, 'show_recovery_card') as recovery:
+            self.app.process_reply_job(job, self.ctx)
+        self.assertEqual(quiet.call_args.args[1], job)
+        recovery.assert_not_called()
+        self.assertEqual(self.said()[said:], [])
+        self.assertEqual(find_job_record(self.ctx.state_dir, 'again')['status'], 'failed')
+        self.assertNotIn(job.job_id, self.app.runtime.jobs.by_id)
+        self.assertTrue(any(line.startswith(f'backend startup notice held job=#{job.job_id}') for line in logs))
+
     def test_a_task_runner_does_not_repeat_its_bridges_backend_check(self):
         self.receive('checked', 'initial')
         _, ctx = self.route('checked')

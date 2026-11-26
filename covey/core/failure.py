@@ -52,7 +52,10 @@ UNFINISHED = {
 # Not error codes: what failure_code says of a record that names none. start_failed: its task runner never started
 # (app/detached.py not_started, or one that ended before its job began), so nothing of the turn ran.
 START_FAILED = "start_failed"
-PSEUDO = frozenset({"policy", "restart", "interrupted", "incomplete", "failed", "undelivered", START_FAILED})
+# The status line's opening of a turn its Harness never started (app/job_dispatch.py: its login check, its program, its
+# start-up raised); failure_code says "failed" of it.
+STARTUP_FAILED = "后端初始化失败："
+PSEUDO =frozenset({"policy", "restart", "interrupted", "incomplete", "failed", "undelivered", START_FAILED})
 # Out of a limit of the run: continue, or the same in smaller steps.
 LIMITS = {
     "timeout": "到了任务的时间上限",

@@ -4,11 +4,11 @@ jobs, the butler's lost supplements). JobDispatch is a part of app/unified.py's 
 and runtime it reads."""
 from __future__ import annotations
 
-from covey.app import butler_harness, detached
+from covey.app import butler_harness, detached, project_loop
 from covey.app.availability import check_or_raise
 from covey.app.launch_submit import recover_worktree_launches
 from covey.app.topics import retired_notice, topic_target
-from covey.core import timing, turn_source
+from covey.core import failure, timing, turn_source
 from covey.core.harness import backend_capabilities
 from covey.core.jobs import (context_for_job, find_job_record, harness_of, running_job_records,
                                       upsert_job_record)
@@ -75,8 +75,13 @@ class JobDispatch:
             # What it said, not only its kind: "ValueError" alone left the owner and the log nothing to go on.
             reason = error_reason(exc)
             self.runtime.log(f'backend startup failed job=#{job.job_id} harness={name}: {reason}')
-            app.record_job_state(record_ctx, job, 'failed', '后端初始化失败：' + reason)
+            app.record_job_state(record_ctx, job, 'failed', failure.STARTUP_FAILED + reason)
             app.runtime.unregister_reply_job(job)
+            if project_loop.quiet_start(ctx.state_dir, job):
+                # A lead's wake-up after its turn that did not start either: the owner was told then, the loop tries
+                # again a while apart (app/project_loop.py limit_wait). Not a message and a card at each try.
+                self.runtime.log(f'backend startup notice held job=#{job.job_id}: its lead did not start before either')
+                return
             app.messenger.reply(record_ctx, job.chat_id, BACKEND_UNAVAILABLE, app.key('startup-failed', job.message_id), voice=app.voice)
             app.controls.show_recovery_card(record_ctx, find_job_record(ctx.state_dir, job.message_id))
             return

@@ -33,8 +33,11 @@ when something happened since it last looked, and the mechanical checks that sto
 - A lead that a wake would only see fail on a limit is not woken (``limit_wait``): its latest turn failed on a rate limit,
   a spent quota or a passing server fault and its automatic retry is to come (app/auto_retry.py, at the reset when one is
   known), or none is to come and it ended less than LIMIT_REST ago, or its model draws on a gateway quota that is held
-  (core/quota_hold.py). The receipts wait in the inbox; the retry reads them all in one turn, as any lead turn takes them.
-  A receipt of the owner's own doing that came after that turn (``start``, ``owner_choice``) still wakes it, once.
+  (core/quota_hold.py), or its latest turns did not start (``backend_down``: its Harness's login check or program failed,
+  its task runner did not start) and the latest ended less than DOWN_LADDER says ago. The receipts wait in the inbox; the
+  retry, or the wake after the wait, reads them all in one turn, as any lead turn takes them. A receipt of the owner's own
+  doing that came after that turn (``start``, ``owner_choice``) still wakes it, once. A wake-up that does not start after
+  one that did not either tells the owner nothing (``quiet_start``): he was told when the first did not.
 - ``silent`` (app/turn_delivery.py TurnDelivery): a wake-up turn's reply is not sent to the owner, unless the lead recorded a
   report note in it that its style lets through (``project_lead.reportable``); then it goes as the lead's reply does. A
   member's turn the owner waits for (the lead handed it on while he was there) had its result sent to him by its runner
@@ -106,6 +109,7 @@ BATCH_STRETCH = 4  # The oldest receipt of a batch waits at most this many windo
 LIMIT_REST = 600  # A lead turn that failed on a limit with no retry to come: the next wake waits this long after it ended.
 OWN_WAKES = ("start", "owner_choice")  # The owner's own doing: wakes the lead once even while it waits out a limit.
 RETRY_COMING = ("pending", "submitting")  # app/auto_retry.py AUTO_RETRY_TRANSITIONS: the retry has not been queued yet.
+DOWN_LADDER = (60, 180, 600)  # The lead's turns that did not start, 1, 2, 3 or more in a row: the next wake waits this long.
 
 
 def wakes_of(record) -> dict:
@@ -829,7 +833,7 @@ class ProjectLoop:
                 return  # 协作 on: more ordinary receipts may come in a moment (members ending together): one turn reads them all.
             if due and not open_turns(state, [lead]):
                 if self.waits(record, state, pending, now):
-                    return  # A wake would only fail on a limit; no wake, so nothing for the wakes guard to count either.
+                    return  # A wake would only fail (a limit, a backend down); no wake, so nothing for the wakes guard to count either.
                 reason = hold(record, now)
                 return self.pause(record, reason, now) if reason else self.wake(record, now)
             if not due:
@@ -906,7 +910,7 @@ class ProjectLoop:
             self.pause(record, "stalled", now, now - activity)
 
     def waits(self, record, state, pending, now) -> bool:
-        """Whether the lead's wake is held back (``limit_wait``): a wake would only fail on a limit. Logged when it begins
+        """Whether the lead's wake is held back (``limit_wait``): a wake would only fail. Logged when it begins
         or what it waits for changes, not every look."""
         pid = record["id"]
         why, until = limit_wait(state, record, pending, now)
@@ -1003,9 +1007,9 @@ def autowake_due(pending) -> bool:
 
 def limit_wait(state_dir, record, pending, now) -> tuple:
     """(why, until when) a lead that ``pending`` receipts are due to wake is not woken now, or ('', 0.0): a wake would
-    only fail on a limit. T99, 2026-11-25 21:59–22:11: three accounts spent; each failed wake gave its receipts back
-    (``unread``), the next look woke the lead again, about every 20 s (65 failed turns), and each wake, a new message in
-    the topic, cancelled the retry the failed turn had at the account's reset.
+    only fail, on a limit or a backend down. T99, 2026-11-25 21:59–22:11: three accounts spent; each failed wake gave
+    its receipts back (``unread``), the next look woke the lead again, about every 20 s (65 failed turns), and each wake,
+    a new message in the topic, cancelled the retry the failed turn had at the account's reset.
 
     - ``retry``: the lead's latest turn failed on a limit (app/auto_retry.py OTHER_CODES: a rate limit, a spent quota, a
       passing server fault) and its automatic retry is to come: that turn takes the inbox as any lead turn does, every
@@ -1014,15 +1018,25 @@ def limit_wait(state_dir, record, pending, now) -> tuple:
       after it ended.
     - ``quota``: the lead's model draws on a gateway quota that is held (core/quota_hold.py ``blocks``): its turn would
       fail before it starts. Until the reset; the hold itself is checked again RECHECK after it was last found spent.
+    - ``down``: the lead's latest turn did not start (``backend_down``; 2026-11-26 10:57: a Claude Code on the remote
+      machine that its login check could not reach, a wake every 10 s, each telling the owner 后端暂不可用 with a
+      recovery card). Until DOWN_LADDER after it ended, by how many of its latest turns in a row did not; the wake then
+      is the try whether it starts again, and the first that does reads every receipt.
 
     A receipt of the owner's own doing (OWN_WAKES) that came after the latest turn ended wakes the lead all the same:
     once, as the turn it wakes is then the latest. A retry cancelled (the owner's 停止自动重试, a model switch) holds
     nothing."""
     lead = str(record.get("lead_topic_id") or "")
-    latest = max(jobs_of(state_dir, lead), key=lambda job: int(job.get("job_id") or 0), default={})
+    turns = sorted(jobs_of(state_dir, lead), key=lambda job: int(job.get("job_id") or 0), reverse=True)
+    latest = turns[0] if turns else {}
     ended = board_read.ended_at(latest) if latest else 0.0
     if any(item.get("kind") in OWN_WAKES and float(item.get("at") or 0) > ended for item in pending):
         return "", 0.0
+    if latest and backend_down(latest):
+        row = next((n for n, job in enumerate(turns) if not backend_down(job)), len(turns))
+        until = ended + DOWN_LADDER[min(row, len(DOWN_LADDER)) - 1]
+        if now < until:
+            return "down", until
     if latest and failure.failure_code(latest) in auto_retry.OTHER_CODES:
         state = latest.get("auto_retry_state")
         due = float(latest.get("auto_retry_at") or 0) or ended
@@ -1033,3 +1047,30 @@ def limit_wait(state_dir, record, pending, now) -> tuple:
     data = load_topic(Path(state_dir), lead)
     found = quota_hold.blocks(state_dir, data.get("harness_id"), data.get("model"), now)
     return ("quota", float(found[1]["reset_at"])) if found is not None else ("", 0.0)
+
+
+def backend_down(job) -> bool:
+    """Whether nothing of ``job``'s turn ran as its Harness could not start it: its login check or its program failed, or
+    its start-up raised (app/job_dispatch.py, core/failure.py STARTUP_FAILED), or its task runner did not start
+    (START_FAILED)."""
+    if job.get("status") == "failed" and str(job.get("status_message") or "").startswith(failure.STARTUP_FAILED):
+        return True
+    return failure.failure_code(job) == failure.START_FAILED
+
+
+def quiet_start(state_dir, job, now=None) -> bool:
+    """Whether the owner is told nothing of ``job``, a turn whose Harness did not start (app/job_dispatch.py: no
+    后端暂不可用, no recovery card): it is a wake-up, so he is not there, and the lead's turn before it did not start
+    either, less than an hour ago: he was told of that one, and the loop tries again DOWN_LADDER apart (``limit_wait``).
+    Never raises: on any doubt he is told, as before."""
+    now = time.time() if now is None else now
+    try:
+        if not projects.enabled() or not projects.is_wake(job_field(job, "message_id")):
+            return False
+        number = int(job_field(job, "job_id") or 0)
+        earlier = [record for record in topic_job_records(Path(state_dir), job_field(job, "topic_id"))
+                   if int(record.get("job_id") or 0) < number]
+        before = max(earlier, key=lambda record: int(record.get("job_id") or 0), default=None)
+        return before is not None and backend_down(before) and now - board_read.ended_at(before) < HOUR
+    except Exception:  # noqa: BLE001 - on the failure path of a turn: he is told, as before
+        return False
