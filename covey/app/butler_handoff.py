@@ -12,6 +12,11 @@ core/deliveries.py). The attachments those list are linked or copied into the ta
 (``carry``), so they reach its model as they would from a message sent there (core/attachments.py
 native_image_attachments, Codex's read-only roots); only files saved in the butler's own incoming_media (or the
 state directory's) are, as a listed path can come from a forwarded message's text.
+
+A project's lead hands work on in its own words (``Asked.lead``, app/butler_topics.py handed): the note says the
+project's lead sent it, the model gets the lead's task and no quote, and the card, the history and the thread's line
+show that task. What the owner said in the lead's turn stays the lead's: one turn of it often hands several topics
+different work.
 """
 from __future__ import annotations
 
@@ -201,8 +206,9 @@ def summary(items) -> str:
 
 def shown(owner: Asked, task, items) -> str:
     """What the topic's card and history show of the turn: the owner's words (the butler's task when the
-    turn's record is gone), and the attachments it got in words."""
-    words = owner.words or task
+    turn's record is gone), and the attachments it got in words; a lead's task, its words being its own
+    (app/butler_topics.py handed)."""
+    words = task if owner.lead else owner.words or task
     return words + (f"\n附件：{summary(items)}" if items else "")
 
 
@@ -309,12 +315,13 @@ def quoted_words(text) -> str:
 def handoff_prompt(kind, *, label, title, task, owner: Asked, items=(), extra="", source="", read_only=False) -> str:
     """What the topic's model gets: the Bridge's ``note``, the butler's task (its ``extra`` line after it, then
     LOOK_NOTE for a turn started at once because it was judged read-only, ``read_only``), the owner's words quoted,
-    and the attachments block of ``items`` (those carried into the topic)."""
+    and the attachments block of ``items`` (those carried into the topic). A lead's (``owner.lead``) quotes nothing: what
+    it hands on is its task alone (app/butler_topics.py handed)."""
     who = "负责人" if owner.lead else "管家"
     parts = [note(kind, label=label, title=title, owner=owner, source=source),
              f"任务说明（{who}整理）：\n" + task + (f"\n{who}补充：{extra}" if extra else "")
              + ("\n\n" + LOOK_NOTE if read_only else "")]
-    if owner.words or items:
+    if not owner.lead and (owner.words or items):
         quoted = []
         for index, (words, at) in enumerate(owner.said):
             if index and not words:

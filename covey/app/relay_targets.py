@@ -67,9 +67,10 @@ def _owner_message(job) -> str:
 def butler_job_owner_message(state_dir, butler_job_key) -> str:
     """The owner's top-level message the butler job ``butler_job_key`` answers (the one its card quotes); ''
     when its record is gone or names no Feishu message. That job's own only, never one up its hand-ons
-    (``relay_quote`` follows them): a lead's turn the butler handed on answers no message of the owner's itself, so the
-    topics it opens hang under none (app/butler_topics.py place), and what it says in them is the lead's
-    (app/web_said.py)."""
+    (``relay_quote`` follows them): a lead's turn the butler handed on answers no message of the owner's itself. Whatever a
+    lead's turn answers, the topics it opens hang under none (app/butler_topics.py place) and what it hands them is its
+    own words (app/butler_topics.py handed, app/web_said.py); the conclusions of what it handed on while the owner was there
+    still come back quoting his message (``awaited_target``)."""
     return _owner_message(find_job_record(Path(state_dir), str(butler_job_key or "")) or {})
 
 

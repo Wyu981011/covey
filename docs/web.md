@@ -239,7 +239,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - **按钮怎么叫、怎么做**（v33，`app/web_turns.py` 的 `failure_of`）：`labels` 是 `{action: 按钮上的字}`，和任务卡一样（continue 是“检查并继续”，结果没发出去时是“重新投递结果”；retry 是“现在重试”）。`how` 是 `{action: recover | switch | feishu}`：`recover` 发 `recover` 操作（见下）；`switch` 打开网页自己的换配置（`switch` 操作，话题的 `config`；负责人的也是，v36）；`feishu` 只有飞书能做（管家的换个模型），这时才提示去飞书。网页不再用 `say` 替这些按钮发话。
   - **排好的自动重试**（v33）：`auto_retry` 只在排着时有，`{state: "pending", at, attempt, total, kind, now}`：`at` 是几点重试（秒），`attempt` 第几次，`total` 一共几次（限流那条有进展就重新数，为 null），`kind` 是 rate_limited、server_fault、incomplete、restarted，`now` 是现在就跑它的那个 action（retry 或 continue），`labels`、`how` 里另有 `now` 那一项和 `stop_auto_retry`（“停止自动重试”）。有 `auto_retry` 时网页只画这两颗（立即重试、停止自动重试）和 `actions` 里别的，不再另画 continue/retry；倒计时从 `at` 自己算（推的内容不按分钟变）。`title` 里已经写了几点、第几次。
 - **谁说的、给人看的正文**（v11，`app/web_said.py`）：
-  - `owner` 那一轮带 `by`：`owner`（你）、`lead`（负责人）、`butler`（管家）。负责人、管家交来的话（消息 `main-<请求>`）按请求记录找到发起的那一轮：那一轮是回你的一条消息，交来的就是你的原话，`by` 为 `owner`、`via` 为 `lead` 或 `butler`；不是的，`by` 就是它。
+  - `owner` 那一轮带 `by`：`owner`（你）、`lead`（负责人）、`butler`（管家）。负责人、管家交来的话（消息 `main-<请求>`）按请求记录找到发起的那一轮：管家那一轮是回你的一条消息，交来的就是你的原话，`by` 为 `owner`、`via` 为 `butler`；不是的，`by` 就是它。负责人交来的一律是它自己写的任务说明（请求记录带 `by: lead`），`by` 为 `lead`；更早的版本写的请求记录没有这一项，负责人那一轮回的是你的消息时那一行存的是你的原话，仍是 `by` 为 `owner`、`via` 为 `lead`。
   - 问题卡的回答：负责人分流替你答的是 `lead`，管家按你的话代答的是 `butler`，其余是你。
   - `display` 是去掉内部前缀的正文，和原文不同时才带：答题写成“答了 2 题：B；没答”；反馈问题写“没答，补充：…”；编辑过的消息只给改后的全文，另带 `edited: true`；撤回补充写“撤回了刚才那条补充：「…」”；纠正负责人的回答写“纠正负责人替你答的「…」：…”。
   - 答题那一轮另带 `note`（选项之外写的字）。`body` 仍是原文，旧网页照旧显示。

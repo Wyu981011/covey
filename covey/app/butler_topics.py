@@ -14,7 +14,8 @@ topic_fork, handlers as app/butler_env.py describes them. Only in the owner's pr
 
 What each topic's model gets is app/butler_handoff.py's: the Bridge's note, the butler's task, the owner's words
 from the butler turn's record and its attachments, carried into the topic's incoming_media; its card and
-history show the owner's words.
+history show the owner's words. A project's lead's call (``lead_of``) hands on its task alone, its card and history show
+that (``handed``), and the topic it opens hangs under no message of the owner's (``place``).
 - ``topic_fork`` forks a topic's last finished turn, on whichever Harness it ran (app/forks.py create_fork), and submits
   the new topic's first.
 - The 派发卡 (``dispatch_card``, COVEY_DISPATCH_CARD=1) is topic_send's alone, in the thread of the owner's question
@@ -30,7 +31,6 @@ the one a card's write needs for its sequence (rule 3).
 """
 from __future__ import annotations
 
-import dataclasses
 import re
 import time
 from pathlib import Path
@@ -141,14 +141,17 @@ def media_dir(ctx) -> Path:
 
 def handed(env, request, ctx):
     """(the owner's message the request's butler turn answers, the attachments of it the call hands ``ctx``'s
-    topic, carried into its incoming_media)."""
-    owner = butler_handoff.asked(env.state_dir, request.job_key)
+    topic, carried into its incoming_media). A project's lead's call hands on its own words alone: Asked with ``lead``
+    and nothing said, no attachments, whatever its turn answers."""
     lead = lead_of(env, request)
     if lead is not None:
-        # The words of a lead's turn are the Bridge's wake-up message unless the owner spoke in it (its message is the
-        # owner's, not a synthetic one): never quoted to a thread as the owner's.
-        owner = dataclasses.replace(owner if butler_job_owner_message(env.state_dir, request.job_key) else butler_handoff.Asked(),
-                                    lead=lead[1] or "专项")
+        # The lead runs the project: what the owner said in its turn (a reply to its card, his supplements, their files) is
+        # the lead's to act on, and one turn of it often opens several topics and reminds another of something else. Its
+        # task says what each is to do; the owner's words are never handed on as theirs, nor his files (T856, 2026-11-27:
+        # T831, handed a reminder, got the owner's whole reply about two other documents, and the threads T852 to T855
+        # opened in that turn and the next showed his words in place of their task).
+        return butler_handoff.Asked(lead=lead[1] or "专项"), []
+    owner = butler_handoff.asked(env.state_dir, request.job_key)
     items = butler_handoff.picked(owner.attachments, request.args.get("attachments"))
     return owner, butler_handoff.carry(items, media_dir(ctx), owner.roots) if items else []
 
@@ -322,10 +325,9 @@ def topic_start(env, request):
     if record.get("answer"):
         return record["answer"]  # The same request: the same topic, nothing sent again.
     if not record.get("plan"):
-        shown = ""
+        shown, lead = "", lead_of(env, request)
         if config_basis.named(args) and arg_text(args.get("basis")):
             # What the model's call named its Harness, model or budget on (app/butler_tools.py refused one without, T786).
-            lead = lead_of(env, request)
             shown = config_basis.check(env.state_dir, request.job_key, args.get("basis"),
                                        project_id=lead[0] if lead else "")[0]
         settings = butler_settings.load(env.state_dir)
@@ -341,9 +343,17 @@ def topic_start(env, request):
         # (app/tool_limits.py LOOK). A plan saved before it has none: as before.
         plan["read_only"] = bool(plan["start"]) and args.get("readonly") is True
         record = {"request": request.id, "job_key": request.job_key, "chat_id": chat, "title": title,
-                  "why": why, "plan": plan, "at": time.time(), "sequence": 0}
+                  "why": why, "plan": plan, "at": time.time(), "sequence": 0, **said_by(lead)}
         save(path, record)
     return _open(env, request, path, record, chat, prompt, args)
+
+
+def said_by(lead) -> dict:
+    """What a request's record says of whose words it handed on, for a project's lead's call (``lead``, lead_of's): its
+    own (``handed``), so the page shows them as the lead's (app/web_said.py Origins) whatever its turn answers. {} for the
+    butler's: the owner's words when its turn answers his message. A lead's record from before T856 has none, and handed
+    on the owner's words when its turn answered his message."""
+    return {"by": "lead"} if lead is not None else {}
 
 
 def _open(env, request, path, record, chat, prompt, args):
@@ -473,8 +483,11 @@ def place(env, request, chat) -> tuple:
     hanging under the owner's question the request answers, the area root; a message has one thread, so a second
     topic opened on the same question gets a topic card at the top level as its root (area root '', taken), and so does
     one whose question's thread holds the 派发卡 of a topic_send before it (core/dispatch_records.py threaded). ('',
-    False) with the switch off or that message not known: the topic card and its thread, as before."""
-    if not butler.enabled():
+    False) with the switch off or that message not known: the topic card and its thread, as before; and for a project's
+    lead's call, whatever its turn answers: the owner's message there is his to the lead (a reply to its card), which
+    keeps it, not the question of a topic it opens (T856, 2026-11-27: T852 took his reply about two other documents as
+    its root, its thread hung under it and the message's alias moved to it)."""
+    if not butler.enabled() or lead_of(env, request) is not None:
         return "", False
     owner = butler_job_owner_message(env.state_dir, request.job_key)
     if not owner:
@@ -523,8 +536,9 @@ def hand_line(env, ctx, chat, request, record, kind, owner, text, items, token):
 
     try:
         butler_record = find_job_record(Path(env.state_dir), request.job_key) or {}
+        # A lead's words are its own (``handed``): the line goes as text, never a card opening a message of the owner's.
         back = (ask_url(env.state_dir, butler_record, profile=env.profile, log=env.runtime.log)
-                if butler_record and not (owner.lead and not owner.said) else "")
+                if butler_record and not owner.lead else "")
     except Exception as exc:  # noqa: BLE001 - the line as text
         env.runtime.log(f"handoff line link unavailable: {type(exc).__name__}")
         back = ""
@@ -565,7 +579,8 @@ def topic_send(env, request):
         return reply(False, found)
     app, ctx, topic = found
     label = topic_label(Path(env.state_dir), ctx.topic_id) or arg_text(request.args.get("topic"))
-    if projects.enabled() and lead_of(env, request) is None and projects.is_member_topic(Path(env.state_dir), ctx.topic_id):
+    lead = lead_of(env, request)
+    if projects.enabled() and lead is None and projects.is_member_topic(Path(env.state_dir), ctx.topic_id):
         # A project's thread takes words through the project's lead (project_send), which knows what the others are doing.
         return reply(False, f"{label or '这个话题'} 是专项的话题，不能直接转话：用 projects_list 查专项的 id，"
                             "再用 project_send 把话交给负责人，由它决定要不要再开话题。")
@@ -575,7 +590,7 @@ def topic_send(env, request):
     if record.get("answer"):
         return record["answer"]
     record = {"request": request.id, "job_key": request.job_key, "chat_id": chat, "topic_id": ctx.topic_id,
-              "at": time.time(), **({"note": note} if note else {})}  # The note: the card's 转给 line.
+              "at": time.time(), **({"note": note} if note else {}), **said_by(lead)}  # The note: the card's 转给 line.
     save(path, record)
     data = {"topic_id": ctx.topic_id, "label": label}
     changed = set_criteria(env, ctx, request.args.get("criteria"))

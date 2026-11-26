@@ -3,7 +3,8 @@ written by app/butler_topics.py (topic_start, topic_fork, topic_send) and the pr
 (app/butler_projects.py, app/projects.py), which read and write each request's own record by its path (``record_path``,
 ``save``, ``done``: the request ledger of rule 6) while they handle that request; every other reader goes through here. Each
 record: {job_key (the butler job's), chat_id, topic_id or fork_topic_id, plan (topic_start's), source
-(topic_fork's), title, note, answer: {ok, data}, at, ...}.
+(topic_fork's), title, note, by ("lead": a project's lead handed on its own words, app/butler_topics.py said_by),
+answer: {ok, data}, at, ...}.
 
 The scans keep the folder's own order (``Path.glob``): the callers that pick the latest by ``at`` keep the first of
 equal ones, as they did when each scanned the folder itself.

@@ -31,8 +31,10 @@ CHOICE_CHARS = 60
 
 class Origins:
     """Who wrote a hand-on (a ``main-`` message): {message id: (by, via)}, read once each. Its request record names the
-    butler job or the lead's job that made it; that job answering a message of the owner's means the words handed on are
-    his (app/butler_handoff.py shown), else they are the job's own."""
+    butler job or the lead's job that made it; the butler's job answering a message of the owner's means the words handed
+    on are his (app/butler_handoff.py shown), else they are the job's own. A lead's are its own whatever its turn answers
+    (its record's ``by``, app/butler_topics.py said_by); one recorded before T856 without it handed on the owner's words
+    when its turn answered his message, and its line still has them: his, as the page had it."""
 
     def __init__(self, state, chat) -> None:
         self.state, self.chat = Path(state), str(chat or "")
@@ -50,6 +52,8 @@ class Origins:
         from covey.app.relay_targets import butler_job_owner_message
 
         record = butler_opened.by_token(self.state, message_id[len(HANDED):])
+        if record.get("by") == "lead":
+            return "lead", ""  # A lead's own words, even once its job's record or its project is gone.
         key = str(record.get("job_key") or "")
         job = find_job_record(self.state, key) if key else None
         if not job:

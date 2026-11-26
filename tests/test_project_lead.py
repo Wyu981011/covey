@@ -721,6 +721,144 @@ class SendToolsTest(ToolsCase):
         self.assertFalse(self.tool("project_topic_send", thread=LEAD, text="x")["ok"])  # The lead itself is no thread.
 
 
+OWNER_REPLY = "om_owner_to_lead"  # The owner's reply to the lead's card: the lead's turn answers it.
+OWNER_WORDS = "都按你的推荐来；两篇文档也看看，工作区我也没怎么用了"
+OWNER_MORE = "对了同样的，你也让 Neon 一起把关看哈"
+
+
+class OwnerThereTest(ToolsCase):
+    """T856, 2026-11-27: the owner replied to the lead's card (a Feishu message, ``om_``) and in that turn the lead reminded
+    T831 of a conflict (project_topic_send) and opened T852 and T853 (project_topic_start). Every one of them got the
+    owner's whole reply quoted, and his files, in place of the lead's task: T831 said it got words that were not its
+    business, the history, the cards, the threads and the page showed them as what it was asked, and T852 hung its thread
+    under his reply and took the message's alias from the lead. A turn the lead woke up in, or one the butler handed it
+    (``main-``), had none of this: the lead's words alone. Now the lead's words are its own whatever its turn answers."""
+
+    def setUp(self):
+        super().setUp()
+        from covey.core.attachments import ATTACHMENTS_HEADER
+        from covey.core.deliveries import delivery_path, save_delivery
+        from covey.core.topics import remember_topic_message
+
+        media = self.state / "topics" / LEAD / "incoming_media"
+        media.mkdir(parents=True)
+        self.image = media / f"{OWNER_REPLY}-1.png"
+        self.image.write_bytes(b"\x89PNG fake")
+        prompt = "\n\n".join((OWNER_WORDS, ATTACHMENTS_HEADER, f"- 图片 1: `{self.image}`"))
+        at = time.time() - 60
+        write_job(self.state, "lead-job", message_id=OWNER_REPLY, reply_to_message_id=OWNER_REPLY,
+                  user_text=OWNER_WORDS + "\n附件：图片 1 张", prompt_text=prompt, created_at=at)
+        remember_topic_message(self.state, LEAD, CHAT, OWNER_REPLY)  # A reply to the lead's card is the lead's.
+        save_delivery(delivery_path(self.state, LEAD, "om_owner_more"),
+                      {"status": "sent", "text": OWNER_MORE, "topic_id": LEAD, "chat_id": CHAT, "job_id": 1,
+                       "job_key": "lead-job", "mid": "om_owner_more", "saved_at": at + 30})
+        # The owner's words are there to be handed on, as they were (the butler's way to read them).
+        owner = butler_handoff.asked(self.state, "lead-job")
+        self.assertIn(OWNER_MORE, owner.words)
+        self.assertEqual(len(owner.attachments), 1)
+
+    def start(self, request_id, **args):
+        fields = dict(title="记忆 P0 止血", prompt="修记忆 P0 的两个 Bug，清现网脏记忆", workspace="project", readonly=False,
+                      why="记忆代码在这个仓库")
+        fields.update(args)
+        answer = self.tool("project_topic_start", request_id=request_id, **fields)
+        self.assertTrue(answer["ok"], answer)
+        return answer["data"], self.job(request_id)
+
+    def assert_the_leads_alone(self, job, task):
+        """``job`` (a turn the lead handed on) was handed ``task`` and the lead's note alone: no word or file of the owner's."""
+        for words in (OWNER_WORDS, OWNER_MORE, "主人原话", "主人随后补充", "收到的附件", "附件：", self.image.name):
+            self.assertNotIn(words, job.prompt_text)
+            self.assertNotIn(words, job.user_text)
+        self.assertIn("任务说明（负责人整理）：\n" + task, job.prompt_text)
+        self.assertIn("专项「迁移账单」", job.prompt_text)
+        self.assertEqual(job.user_text, task)  # The task card and the history: the lead's task.
+        history = [json.loads(line) for line in job.history_path.read_text().splitlines()]
+        self.assertEqual(history[-1]["content"], task)
+        media = job.history_path.parent / "incoming_media"
+        self.assertFalse(media.exists() and any(media.iterdir()), "the owner's files were carried into the topic")
+
+    def test_a_topic_the_lead_opens_gets_its_task_alone_and_hangs_under_none_of_the_owners_messages(self):
+        from covey.core.topics import message_topic
+
+        first, job = self.start("r1")
+        self.assert_the_leads_alone(job, "修记忆 P0 的两个 Bug，清现网脏记忆")
+        second, other = self.start("r2", title="研读两篇文档", prompt="读两篇文档，评估取消工作区的方案", readonly=True)
+        self.assert_the_leads_alone(other, "读两篇文档，评估取消工作区的方案")
+        for data, request in ((first, "r1"), (second, "r2")):
+            # Its own topic card at the top level, as one a wake-up turn opens; not the owner's reply as its root.
+            self.assertTrue(data["root_message_id"].startswith("om_root"), data)
+            record = json.loads((self.state / "main-thread" / "opened" / f"{butler_topics_token(request)}.json").read_text())
+            self.assertEqual((record["area_root"], record["area_taken"], record["by"]), ("", False, "lead"))
+        self.assertEqual(message_topic(self.state, CHAT, OWNER_REPLY), LEAD)  # His reply is still the lead's.
+        self.assertNotIn("主人这条提问下面", self.tool("project_topic_start", request_id="r1", title="记忆 P0 止血",
+                                                     prompt="x", workspace="project", readonly=False, why="x")["text"])
+
+    def test_words_the_lead_adds_to_a_topic_are_its_own_in_the_thread_the_turn_and_the_history(self):
+        from covey.core.deliveries import delivery_path, read_delivery, shown_text
+
+        data, job = self.start("open")
+        job.execution_started = True
+        job.backend_control = SimpleNamespace(steer=mock.Mock(return_value=None), remote=False)
+        before = len(self.said())
+        reminder = "T845 也在改 web_said.py，合进前先同步"
+        answer = self.tool("project_topic_send", request_id="s1", thread=data["label"], text=reminder)
+        self.assertTrue(answer["ok"] and answer["data"]["steered"], answer)
+        sent = job.backend_control.steer.call_args.args[0]
+        self.assertIn("专项「迁移账单」的负责人给", sent)
+        self.assertIn("任务说明（负责人整理）：\n" + reminder, sent)
+        for words in (OWNER_WORDS, OWNER_MORE, "主人原话", "收到的附件"):
+            self.assertNotIn(words, sent)
+        record = read_delivery(delivery_path(self.state, data["topic_id"], "main-" + butler_topics_token("s1")))
+        self.assertEqual(shown_text(record), reminder)  # The task card's 最新补充 and the history.
+        self.assertEqual(json.loads(job.history_path.read_text().splitlines()[-1])["content"], reminder)
+        # The thread's line: the lead's words as text, never a card opening the owner's reply about something else.
+        self.assertEqual(self.said()[before:], ["负责人转来补充：\n" + reminder])
+        lines = [c for c in self.app.messenger.send_message.call_args_list if "负责人转来" in str(c.args[2])]
+        self.assertEqual([c.kwargs.get("card") for c in lines], [None])
+        # Its next turn once it stopped: the same.
+        self.app.runtime.unregister_reply_job(job)
+        write_job(self.state, job.message_id, status="done")
+        self.assertTrue(self.tool("project_topic_send", request_id="s2", thread=data["label"], text="再核对一遍")["ok"])
+        nxt = self.job("s2")
+        self.assert_the_leads_alone(nxt, "再核对一遍")
+        self.assertIn("负责人转来消息：\n再核对一遍", self.said())
+
+    def test_the_page_shows_the_leads_words_as_the_leads_and_older_lines_as_they_were(self):
+        from covey.app import web_said
+
+        data, _ = self.start("r1")
+        self.tool("project_topic_send", request_id="s1", thread=data["label"], text="顺便看下 T845")
+        origins = web_said.Origins(self.state, CHAT)
+        for request in ("r1", "s1"):
+            self.assertEqual(origins.of("main-" + butler_topics_token(request)), ("lead", ""))
+        # A lead's record from before T856 (no ``by``) handed on the owner's words in a turn that answered his message,
+        # and its line still has them: his, handed on by the lead, as the page had it.
+        write_json(self.state / "main-thread" / "opened" / "old.json", {"job_key": "lead-job", "chat_id": CHAT})
+        self.assertEqual(web_said.Origins(self.state, CHAT).of("main-old"), ("owner", "lead"))
+        row = {"role": "user", "content": "修记忆 P0 的两个 Bug，清现网脏记忆", "message_id": "main-" + butler_topics_token("r1")}
+        self.assertEqual(web_said.said(row, None, origins), {"by": "lead"})
+
+    def test_what_the_owner_waits_for_still_comes_back_to_his_message(self):
+        from covey.app import relay_targets
+
+        _, job = self.start("r1")
+        target = relay_targets.awaited_target(self.state, job)
+        self.assertIsNotNone(target)
+        self.assertEqual((target["reply_to"], target["main_key"], target["kind"]), (OWNER_REPLY, "lead-job", "start"))
+        with mock.patch.object(relay_targets.answer_cards, "asked", return_value={"tag": "ask"}) as asked:
+            relay_targets.ask_for(self.state, job, target)
+        self.assertEqual(asked.call_args.args[1]["message_id"], OWNER_REPLY)  # "你问" is what he said to the lead.
+
+    def test_a_wake_up_turns_hand_on_is_as_it_was(self):
+        write_job(self.state, "lead-job", message_id="lead-pid-1", reply_to_message_id="", user_text="收件箱：T41 做完了",
+                  prompt_text="收件箱：T41 做完了")
+        data, job = self.start("w1")
+        self.assert_the_leads_alone(job, "修记忆 P0 的两个 Bug，清现网脏记忆")
+        from covey.app import relay_targets
+        self.assertIsNone(relay_targets.awaited_target(self.state, job))  # The lead's to tell, as before.
+
+
 class StopToolTest(ToolsCase):
     """project_topic_stop: the lead stops one member topic for the owner (acceptance 2026-11-17: a topic waiting for an answer
     could not be stopped, and the project never wound up)."""
