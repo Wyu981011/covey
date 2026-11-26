@@ -28,7 +28,6 @@ import { QUOTA_TAB, capsuleOf, quotaOn } from './quota';
 import { UPGRADE_TAB, upgradeMark, upgradeOn } from './upgrade';
 import { canDo } from './v34';
 import { Head } from './Shell';
-import { setLight, useUi } from './store';
 import { ago } from './topicText';
 import { useTick } from './ui';
 import { pickKind } from './launch';
@@ -885,25 +884,6 @@ const ProxyTab: React.FC<{ p: SettingsProxyPage; ops: Ops; feishu: string }> = (
 /** 自托管构建才有的“已登录的浏览器”（妙搭上不渲染，也不会加载这一块） */
 const SessionsPanel = lazy(() => import('@client/src/selfhost/SessionsPanel'));
 
-/** 页底的外观：所有标签页下面都有 */
-const Appearance: React.FC = () => {
-  const ui = useUi();
-  return (
-    <>
-      <h3 className="st-h">外观</h3>
-      <div className="st-list">
-        <div className="st-r st-sw-r st-cell">
-          <div className="st-l">主题</div>
-          <div className="st-opts" role="radiogroup" aria-label="主题">
-            <button type="button" role="radio" aria-checked={!ui.light} className={`st-opt${ui.light ? '' : ' on'}`} onClick={() => setLight(false)}>深色</button>
-            <button type="button" role="radio" aria-checked={ui.light} className={`st-opt${ui.light ? ' on' : ''}`} onClick={() => setLight(true)}>浅色</button>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-};
-
 const Body: React.FC<{ data: SettingsData; tab: string; ops: Ops }> = ({ data, tab, ops }) => {
   const page = (data as unknown as Record<string, unknown>)[tab];
   const f: string = data.feishu;
@@ -975,7 +955,6 @@ const SettingsPage: React.FC = () => {
               <FeishuBtn feishu="" />
             </div>
           )}
-          <Appearance />
           {SELFHOST ? <Suspense fallback={null}><SessionsPanel /></Suspense> : null}
         </div>
       </div>

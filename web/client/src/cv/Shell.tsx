@@ -12,6 +12,7 @@ import { byNumberDesc, byRecent, isRunning, isWaiting, pref, setPref, steadyAt, 
 import { Avatar, Dot, useTick } from './ui';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { setCollapsed, setMenu, useUi } from './store';
+import { ThemeToggle } from './ThemeToggle';
 import { listTone } from './topicText';
 import { askNumbers, asks, askSum, haltWords, isHalted, stoppedSet, type Asks } from './projectData';
 import { PaneHandle } from './PaneHandle';
@@ -478,6 +479,8 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
         {!mini && upMark ? (
           <Link to="/settings/upgrade" className="short up-new" title="版本与更新：机器人和网页一起换成最新版本">{upMark}</Link>
         ) : null}
+        {/* 深色、浅色切换（T842）：常驻在设置旁，哪一页都能点；收起的侧栏里叠在设置上面 */}
+        <ThemeToggle />
         {mini ? null : <Avatar />}
       </div>
     </aside>
@@ -617,6 +620,8 @@ export const Head: React.FC<{
       </div>
       {badge}
       {right}
+      {/* 手机没有侧栏：深色、浅色切换（T842）常驻在顶栏最右 */}
+      <ThemeToggle />
     </div>
   );
 };
