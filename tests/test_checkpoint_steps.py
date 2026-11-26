@@ -387,10 +387,10 @@ class AnswerCardTest(unittest.TestCase):
             shown = tail(None, self.inputs, self.outputs, change=changed)
             # Out on the card, never folded (T647 P1-A2: in the fold it went unseen), over the 改动 alone left to look up.
             self.assertEqual([element.get("element_id") for element in shown], [CHECK_ID, CHANGE_ID, "answer_facts"])
-            self.assertEqual(shown[0]["content"], "**提交号对不上**<font color='grey'>：工作区的仓库里没有 a6bc148</font>")
+            self.assertEqual(shown[0]["content"], "**提交号对不上**<font color='grey'>：写过的仓库里没有 a6bc148</font>")
             rows = self.fold(shown)["elements"]
             self.assertEqual(rows[0]["columns"][1]["elements"][0]["content"].split("\n"),
-                             [head, "a6bc148d38 <font color='grey'>（工作区的仓库里没有）</font>"])
+                             [head, "a6bc148d38 <font color='grey'>（写过的仓库里没有）</font>"])
             relayed = relay_card("T1", DONE, text="好了", inputs=self.inputs, outputs=self.outputs, change=changed)[0]
             self.assertIn("提交号对不上", json.dumps(relayed, ensure_ascii=False))
             # Every commit there: the 改动 as before, no line.

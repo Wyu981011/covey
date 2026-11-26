@@ -2,8 +2,11 @@
 
 The check runs in app/native_questions.py ``NativeQuestions.dispatch``, strictly before ``register`` (a registered
 question that is never shown holds the topic). ``check`` finds, for each question, a decision of the topic or of its
-project (core/memstore.py) whose question says the same: core/memory_search.py ``eval_search`` gives the candidates and
-``mutual_similarity`` at least ``DEFAULT_TAU_DUP`` (the absolute similarity, both ways) and the same ``category`` take one.
+project (core/memstore.py) whose question says the same (``same_question``): core/memory_search.py ``eval_search`` finds it
+from the question's words with its one-way similarity at least ``DEFAULT_TAU_DUP`` (what that threshold was set on: a
+question → the decision that answered it), and the old question's words and the new one's are alike both ways too
+(``mutual_similarity`` at least ``MUTUAL_DUP``, measured on the blind set's 20 asked-again questions and 3 that must not
+match); two classes that say different things (``category``, neither of them ``other``) never match.
 While core/memory_search.py has neither of the two, with COVEY_MEMORY off, or in a 代答 topic, nothing is matched. What a
 hit does is the dispatch's:
 
@@ -39,9 +42,14 @@ HIGH_RISK = ("deploy", "delete", "spend", "send", "occupy")  # 部署上线、�
 EXTRA_KEY = "extra_questions"
 
 TAU_DUP = 0.55  # When core/memory_search.py has no DEFAULT_TAU_DUP of its own.
+MUTUAL_DUP = 0.25  # The old and the new question alike both ways (T870 Wave 2B, verify/after/dedup-probe.json: 15 of 20 asked again
+# found, none wrong, none of the 3 that must not match; at 0.2 the nearest negative, 0.18, is too close).
+REFUSE_MUTUAL = 0.5  # A refusal in the turn hands the model the old answer: only for questions this alike both ways (else
+# the grey line alone). With few decisions every word weighs about the same: a shared noun phrase alone reached 0.39.
 CLASS_TAU = 0.4  # Of a question of the same class.
+CLASS_SEARCH_TAU = 0.25  # eval_search's floor for the candidates of a class (CLASS_TAU, both ways, decides).
 CLASS_DAYS = 30
-CANDIDATES = 5  # eval_search's results looked at for a hit.
+CANDIDATES = 10  # eval_search's results looked at for a hit (those of other topics and projects are passed over).
 CLASS_CANDIDATES = 20  # For the same class.
 MARK_KEY = "dedup"  # The record's: {question id: the hit as the card and the lead's receipt say it}.
 EXTRA_ANSWERS = "extra_answers"  # The record's: {extra question id: the label picked}.
@@ -74,6 +82,7 @@ class Hit:
     at: float
     sim: float
     question: str = ""  # The old question's words.
+    mutual: float = 1.0  # The old and the new question alike both ways (REFUSE_MUTUAL for a refusal in the turn).
 
 
 def q_hash(question: dict) -> str:
@@ -198,7 +207,15 @@ def _number(state_dir, entry) -> int | None:
     return int(number) if number else None
 
 
+def search_context(topic, project, tau, purpose) -> dict:
+    """What core/memory_search.py ``eval_search`` is given (its keys: ``topic``, ``project``, ``kinds``, ``statuses``, ``tau``):
+    the decisions in use or done, weighed for this topic and project, none of the global store (no decision is there)."""
+    return {"topic": topic, "project": project, "owner": False, "kinds": ("decision",), "statuses": ("active", "done"),
+            "tau": tau, "purpose": purpose}
+
+
 def _candidates(state_dir, search, question, context, limit) -> list:
+    """[(entry, eval_search's item)] of the decisions ``question`` finds, the best first."""
     try:
         found = search(state_dir, query_of(question), context, limit=limit)
     except Exception:  # noqa: BLE001 - no candidates
@@ -208,8 +225,21 @@ def _candidates(state_dir, search, question, context, limit) -> list:
         entry = _entry(state_dir, item)
         if (entry is not None and entry.kind == "decision" and entry.status in ("active", "done")
                 and not entry.superseded_by):
-            out.append(entry)
+            out.append((entry, item if isinstance(item, dict) else {}))
     return out
+
+
+def same_class(one, other) -> bool:
+    """Whether two ``category``s may be the same question's: equal, or one of them ``other`` (the words say neither)."""
+    return one == other or "other" in (one, other)
+
+
+def same_question(item, mutual_sim, covered, tau) -> bool:
+    """The hit rule of ``check``: eval_search's one-way ``sim`` at least ``tau`` with enough words in common, and the two
+    questions alike both ways (``mutual_sim`` at least ``MUTUAL_DUP``, covered)."""
+    sim = item.get("sim")
+    one_way = float(sim) >= tau if isinstance(sim, (int, float)) else True  # A search that gives no sim: its own threshold.
+    return one_way and item.get("covered", True) is not False and covered and float(mutual_sim) >= MUTUAL_DUP
 
 
 def check(ctx, record: dict, questions) -> dict:
@@ -228,16 +258,19 @@ def check(ctx, record: dict, questions) -> dict:
             if not isinstance(question, dict) or not question.get("id") or not asked(question):
                 continue
             words, kind = asked(question), category(query_of(question))
-            context = {"topic_id": topic, "project_id": project, "kinds": ["decision"], "purpose": "dedup"}
-            best = None
-            for entry in _candidates(state, search, question, context, CANDIDATES):
+            context = search_context(topic, project, tau, "dedup")
+            best, best_mutual = None, 0.0
+            for entry, item in _candidates(state, search, question, context, CANDIDATES):
                 old, answer = split(entry)
-                if entry.owner_key not in owners or not old or not answer or category(f"{old} {answer}") != kind:
+                if entry.owner_key not in owners or not old or not answer or not same_class(category(f"{old} {answer}"), kind):
                     continue
-                sim, covered = mutual(words, old, state_dir=state)
-                if covered and float(sim) >= tau and (best is None or float(sim) > best.sim):
-                    best = Hit(ref=entry.ref, code=entry.code, answer=answer, topic_number=_number(state, entry),
-                               at=float(entry.at or (entry.origin or {}).get("at") or 0), sim=float(sim), question=old)
+                both, covered = mutual(words, old, state_dir=state)
+                if same_question(item, both, covered, tau) and (best is None or float(both) > best_mutual):
+                    sim = item.get("sim")
+                    best, best_mutual = Hit(ref=entry.ref, code=entry.code, answer=answer, topic_number=_number(state, entry),
+                                            at=float(entry.at or (entry.origin or {}).get("at") or 0),
+                                            sim=float(sim) if isinstance(sim, (int, float)) else float(both), question=old,
+                                            mutual=float(both)), float(both)
             if best is not None:
                 hits[str(question["id"])] = best
         return hits
@@ -312,9 +345,10 @@ def refused(state_dir, topic_id) -> list:
 
 
 def may_refuse(rows, question, hit) -> bool:
-    """Whether ``question`` may be refused with ``hit``: neither it (its hash) nor that old answer refused MAX_REJECTS times."""
+    """Whether ``question`` may be refused with ``hit``: the two questions alike enough (``REFUSE_MUTUAL``), and neither it (its
+    hash) nor that old answer refused MAX_REJECTS times."""
     digest = q_hash(question)
-    return (sum(1 for row in rows if row.get("q") == digest) < MAX_REJECTS
+    return (float(getattr(hit, "mutual", 1.0)) >= REFUSE_MUTUAL and sum(1 for row in rows if row.get("q") == digest) < MAX_REJECTS
             and sum(1 for row in rows if row.get("ref") == hit.ref) < MAX_REJECTS)
 
 
@@ -397,9 +431,9 @@ def class3(ctx, record: dict, questions, now=None) -> list:
             key = f"{project or 'global'}:{kind}:{hashlib.sha1(class_name(question).encode()).hexdigest()[:8]}"
             if quiet_until(state, key) > stamp:
                 continue
-            context = {"topic_id": topic, "project_id": project, "kinds": ["decision"], "purpose": "class"}
+            context = search_context(topic, project, CLASS_SEARCH_TAU, "class")
             same = {}
-            for entry in _candidates(state, search, question, context, CLASS_CANDIDATES):
+            for entry, _ in _candidates(state, search, question, context, CLASS_CANDIDATES):
                 ours = entry.owner_key == project if project else (entry.scope == "topic" and not project_of(state, entry.owner_key))
                 if not ours:
                     continue
@@ -427,21 +461,11 @@ def class3(ctx, record: dict, questions, now=None) -> list:
 
 def drawn(record) -> dict:
     """``record`` as its card draws it: each question answered before with the grey line under its words, then the
-    ``extra_questions``. Only for drawing: the record's ``questions`` are never changed. ``record`` itself without either."""
-    from covey.cards.elements import grey
+    ``extra_questions`` (cards/question_cards.py ``with_dedup``, which every drawing of the open form goes through). Only for
+    drawing: the record's ``questions`` are never changed. ``record`` itself without either."""
+    from covey.cards.question_cards import with_dedup
 
-    hits = record.get(MARK_KEY) if isinstance(record.get(MARK_KEY), dict) else {}
-    extra = [q for q in record.get(EXTRA_KEY) or () if isinstance(q, dict) and q.get("id")]
-    if not hits and not extra:
-        return record
-    questions = []
-    for question in record.get("questions") or ():
-        mark = hits.get(str(question.get("id"))) if isinstance(question, dict) else None
-        if isinstance(mark, dict) and mark.get("line"):
-            question = {**question, "question": f"{question.get('question') or ''}\n{grey(mark['line'])}"}
-        questions.append(question)
-    questions += [{key: value for key, value in q.items() if key != "class"} for q in extra]
-    return {**record, "questions": questions}
+    return with_dedup(record)
 
 
 def extra_answers(record, fields) -> dict:

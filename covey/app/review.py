@@ -197,7 +197,7 @@ def review_prompt(*, label, title, source, job_id, workdir, words, commits, abse
         parts.append("\n".join(quoted))
     changes = ["这一轮的改动："]
     for commit in commits:
-        changes.append(f"- 提交 {commit}" + ("（工作区的仓库里没有这个提交，可能写错了）" if commit in absent else "（用 git show 看）"))
+        changes.append(f"- 提交 {commit}" + ("（写过的仓库里都没有这个提交，可能写错了）" if commit in absent else "（用 git show 看）"))
     if diff_items:
         changes.append("- 差异报告：见下方“收到的附件”里的 diff.md（Bridge 在这一轮结束时记下的工作区差异）")
     if len(changes) == 1:

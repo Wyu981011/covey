@@ -1125,7 +1125,8 @@ class WebLaunchTests(LaunchCase):
         models = self.catalog()['models']
         codex, other = (next(m for m in models if (m['harness'] == 'codex') == want) for want in (True, False))
         plan = self.plan(device='gpu1', model=codex['key'], effort=codex['start_budget'])
-        self.assertEqual((plan['workdir'], plan['run_mode'], plan['start'], plan['home_start']), (value, 'direct', True, True))
+        # On a device: not a home start (T870), as the butler's topic_start and the launch card have it.
+        self.assertEqual((plan['workdir'], plan['run_mode'], plan['start'], 'home_start' in plan), (value, 'direct', True, False))
         with self.assertRaisesRegex(ValueError, '没有设备 nowhere'):
             self.plan(device='nowhere', model=codex['key'], effort=codex['start_budget'])
         with self.assertRaisesRegex(ValueError, '只声明了 codex'):

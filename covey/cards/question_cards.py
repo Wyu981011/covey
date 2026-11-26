@@ -140,7 +140,29 @@ def question_element(record, tags="", *, headed=False):
                 "content": "完整结果或问题控件尚未送达，请使用本话题任务卡的重试按钮，重新投递后再回答。"}
     if record.get("status") in {"cancelled", "uncertain", "submitting", "answered", SET_ASIDE}:
         return settled_element(record)
-    return _question_form(record, token, tags, headed)
+    return _question_form(with_dedup(record), token, tags, headed)
+
+
+DEDUP_MARKS, DEDUP_EXTRA, DEDUP_DRAWN = "dedup", "extra_questions", "dedup_drawn"  # app/question_dedup.py MARK_KEY, EXTRA_KEY.
+
+
+def with_dedup(record) -> dict:
+    """``record`` as an open form draws it (app/question_dedup.py ``drawn``): each question answered before with its grey line
+    上次你答过：… under its words, then the ``extra_questions`` (the third same-class one). Every drawing of the form goes
+    through here (the task card's element, the standalone card, the top-level copy, a repaint), so a repaint keeps both; a
+    record drawn already is as it is. Only for drawing: the record's ``questions`` are never changed."""
+    hits = record.get(DEDUP_MARKS) if isinstance(record.get(DEDUP_MARKS), dict) else {}
+    extra = [q for q in record.get(DEDUP_EXTRA) or () if isinstance(q, dict) and q.get("id")]
+    if record.get(DEDUP_DRAWN) or (not hits and not extra):
+        return record
+    questions = []
+    for question in record.get("questions") or ():
+        mark = hits.get(str(question.get("id"))) if isinstance(question, dict) else None
+        if isinstance(mark, dict) and mark.get("line"):
+            question = {**question, "question": f"{question.get('question') or ''}\n{grey(mark['line'])}"}
+        questions.append(question)
+    questions += [{key: value for key, value in q.items() if key != "class"} for q in extra]
+    return {**record, "questions": questions, DEDUP_DRAWN: True}
 
 
 CANCEL_REASONS = {"switched": "话题已换配置，直接在话题里回复新模型即可", "rewound": "这一轮已回退，问题作废",

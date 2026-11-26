@@ -237,7 +237,9 @@ def plan_of(env, ctx, chat, payload) -> dict:
             "label": str(choice.get("label") or model), "work_mode": chosen_work_mode(choice, work_mode),
             "workspace": name, "workdir": binding.value if binding.device else str(binding.workdir), "run_mode": run_mode,
             "redaction": redaction, "start": run_mode == "direct", **({"repos": repos} if repos else {}),
-            **({"home_start": True} if home else {})}
+            # A home start on this machine only: one on a device runs in the device's directory, as the butler's and the
+            # launch card's do (core/topics.py mark_home).
+            **({"home_start": True} if home and not binding.device else {})}
 
 
 def staged_files(env, op_id, record, payload, fetch) -> list:

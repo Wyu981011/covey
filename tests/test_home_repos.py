@@ -270,6 +270,27 @@ class MigrateStepsTest(Sandbox):
         self.assertEqual((self.state / "repos.json").read_text(), before)  # A map an earlier run (or the owner) made stays.
         self.assertIn("| mine |", (self.state / "repos.md").read_text())
 
+    def test_home_repos_and_memory_steps_together_once_and_again_after_an_older_release_wrote(self):
+        """T870 Wave 2B: home_v1, repos_v1 and M1's memory_v2 in one start; the next start runs none; an older release's
+        principle written after a rollback is taken by memory_v2 alone (RECURRING), the home's two stay done and untouched."""
+        from covey.core import memstore, migrate
+        seeded = self.root / "seeded"
+        home.seed_home(seeded)
+        make_repo(seeded / "app")
+        from covey.core import principles
+        principles.save(self.state, "owner", "回复先给结论", now=1.0)  # As every release writes principles.json.
+        first = self.migrate(workdir=str(seeded))
+        self.assertTrue({"home_v1", "repos_v1", "memory_v2"} <= set(first), first)
+        self.assertEqual([e.text for e in memstore.entries(self.state, scope="global")], ["回复先给结论"])
+        files = {name: (self.state / name).read_text() for name in ("home.json", "repos.json")}
+        self.assertEqual(self.migrate(workdir=str(seeded)), {})
+        principles.save(self.state, "owner", "不在主目录根递归搜索", now=2.0)  # An older release's, after a rollback.
+        again = self.migrate(workdir=str(seeded))
+        self.assertEqual(set(again), {"memory_v2"})
+        self.assertEqual(sorted(e.text for e in memstore.entries(self.state, scope="global")), ["不在主目录根递归搜索", "回复先给结论"])
+        self.assertEqual({name: (self.state / name).read_text() for name in files}, files)
+        self.assertEqual(self.migrate(workdir=str(seeded)), {})
+
     def test_a_step_that_raised_runs_again_and_an_older_releases_marks_stay(self):
         from covey.core import migrate
         (self.state / migrate.MIGRATIONS).write_text(json.dumps({"older-step": {"done": True, "at": 1}}))

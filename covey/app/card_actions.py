@@ -201,8 +201,8 @@ ACTIONS = {
     # The 设置 card's 记忆 tab (cards/memory_panel.py KINDS, COVEY_MEMORY=1): handled before topic routing (app/memory_panel.py).
     "bridge_memory_workspace": CardAction("换记忆页的工作区"),
     "bridge_memory_open": CardAction("展开记忆"),
-    "bridge_memory_delete": CardAction("删除记忆"),
-    "bridge_memory_pin": CardAction("标记常驻记忆"),
+    "bridge_memory_delete": CardAction("不要或收起记忆"),
+    "bridge_memory_pin": CardAction("采纳待审核的记忆"),
     "bridge_memory_to_global": CardAction("把记忆升为全局"),  # T647 E4.
     # 手上的事's line of old questions (cards/overview.py DISMISS): only the board's record changes.
     "bridge_overview_dismiss": CardAction("撤下看板"),

@@ -135,6 +135,90 @@ class Case(unittest.TestCase):
         return saved, calls
 
 
+def ask_of(text, qid="q"):
+    return {"id": qid, "question": text, "options": [{"label": "好"}, {"label": "先不"}]}
+
+
+class RealSearchTest(Case):
+    """M2 + M3 together (T870 Wave 2B): core/memory_search.py's real eval_search and mutual_similarity, nothing stubbed. The
+    context keys are the ones eval_search reads (topic, project), the hit is eval_search's one-way sim at DEFAULT_TAU_DUP and
+    both questions alike at MUTUAL_DUP: a question asked again in other words is found, one on the same subject that asks
+    something else is not, nor one answered in another project."""
+
+    def setUp(self):
+        super().setUp()
+        self.other_lead = projects.lead_topic_id(CHAT, OTHER)
+        write_topic(self.state, topic_id=self.other_lead, chat_id=CHAT, project=projects.project_field(OTHER, projects.LEAD))
+        corpus = [("Repair 能不能改题面？", "不能改，只能补测试"), ("r20 要不要整题重跑补进来？", "整题重跑"),
+                  ("评审要不要加非阻塞 minor 档？", "加"), ("现网跑满 12 小时后再推 stable 吗？", "跑满再推"),
+                  ("网页工作台对外怎么处理？", "先内部用"), ("v1.9 的 diff 看过后现在开跑吗？", "开跑"),
+                  ("王钰的主力机器人 console 这次怎么处理？", "不动"), ("Golden 的主指标用哪把尺子？", "新尺子")]
+        for n, (question, said) in enumerate(corpus):
+            answer(self.state, {"question": question}, said, at=NOW - 3600 - n)
+        answer(self.state, {"question": "e2e50b 要不要用新尺子重判一遍？"}, "重判", owner=OTHER)
+
+    def check(self, text, topic=MEMBER):
+        return question_dedup.check(self.ctx(topic), {"topic_id": topic}, [ask_of(text)]).get("q")
+
+    def test_the_search_is_m2s_own(self):
+        search, mutual_, tau = question_dedup.engine()
+        self.assertIs(search, memory_search.eval_search)
+        self.assertIs(mutual_, memory_search.mutual_similarity)
+        self.assertEqual(tau, memory_search.DEFAULT_TAU_DUP)
+        seen = []
+
+        def spy(state_dir, query, context=None, limit=5):
+            seen.append(dict(context or {}))
+            return memory_search.eval_search(state_dir, query, context, limit)
+        with mock.patch.object(memory_search, "eval_search", spy):
+            self.check("Repair 环节可以改题面吗？")
+        project = question_dedup.project_of(self.state, MEMBER)
+        self.assertEqual((seen[0]["topic"], seen[0]["project"], tuple(seen[0]["kinds"]), seen[0]["tau"]),
+                         (MEMBER, project, ("decision",), memory_search.DEFAULT_TAU_DUP))
+        self.assertNotIn("topic_id", seen[0])
+
+    def test_asked_again_in_other_words_is_found(self):
+        for text, old in (("Repair 环节可以改题面吗？", "Repair 能不能改题面？"), ("r20 那道题要整题重跑再补进来吗？", "r20 要不要整题重跑补进来？")):
+            hit = self.check(text)
+            self.assertIsNotNone(hit, text)
+            self.assertEqual(hit.question, old)
+            self.assertGreaterEqual(hit.sim, memory_search.DEFAULT_TAU_DUP)
+
+    def test_the_same_subject_asking_something_else_is_not(self):
+        for text in ("Repair 环节的日志要保留几天？", "现在要不要弄一下这个？"):
+            self.assertIsNone(self.check(text), text)
+
+    def test_with_few_decisions_a_shared_noun_alone_is_only_a_grey_line_never_a_refusal(self):
+        # Eight decisions: every word weighs about the same, 网页工作台 alone makes it look alike (on the live copy's 400
+        # entries it is 0.18 and not even marked, verify/after/dedup-probe.json D02).
+        question = ask_of("网页工作台要不要加夜间自动备份？")
+        weak = self.check(question["question"])
+        if weak is not None:
+            self.assertLess(weak.mutual, question_dedup.REFUSE_MUTUAL)
+            self.assertFalse(question_dedup.may_refuse([], question, weak))
+        strong = self.check("r20 那道题要整题重跑再补进来吗？")
+        self.assertGreaterEqual(strong.mutual, question_dedup.REFUSE_MUTUAL)
+        self.assertTrue(question_dedup.may_refuse([], ask_of("r20 那道题要整题重跑再补进来吗？"), strong))
+
+    def test_a_question_asked_again_is_refused_in_the_turn_with_the_real_search(self):
+        rpc = Rpc()
+        saved, calls = self.ask(self.native(), self.job(), [ask_of("r20 那道题要整题重跑再补进来吗？")], rpc)
+        self.assertEqual((calls, saved), (["dedup"], []))
+        ((_, reason),) = rpc.refused
+        self.assertIn("整题重跑", reason)
+        rpc = Rpc()  # A weak match: asked, with the grey line only.
+        saved, _ = self.ask(self.native(), self.job(key="om_q2", job_id=2), [ask_of("网页工作台要不要加夜间自动备份？")], rpc,
+                            request="req-2")
+        self.assertEqual(rpc.refused, [])
+        self.assertEqual(len(saved), 1)
+
+    def test_an_answer_of_another_project_is_not_this_ones(self):
+        self.assertIsNone(self.check("e2e50b 那批结果要用新尺子再判一遍吗？"))
+        hit = self.check("e2e50b 那批结果要用新尺子再判一遍吗？", topic=self.other_lead)
+        self.assertIsNotNone(hit)
+        self.assertEqual(hit.answer, "重判")
+
+
 class OnlyWithTheNewSimilarityTest(Case):
     def test_nothing_is_matched_while_memory_search_has_not_the_new_similarity(self):
         answer(self.state, MERGE, "合进去")
@@ -264,6 +348,14 @@ class ThirdOfAClassTest(Case):
         drawn = question_dedup.drawn(record)
         self.assertEqual([q["id"] for q in drawn["questions"]], ["merge", question_dedup.EXTRA_ID])
         self.assertNotIn("class", drawn["questions"][1])
+        self.assertEqual(question_dedup.drawn(drawn), drawn)  # Drawn once only, however many callers draw it.
+        # A repaint draws the record as saved (T870): the extra question is on the form all the same.
+        from covey.cards.question_cards import question_element
+        shown = {**record, "display_pending": False, "body_delivery_confirmed": True}  # As it is once its card is out.
+        painted = json.dumps(question_element(shown), ensure_ascii=False)
+        self.assertIn(question_dedup.KEEP_ASKING, painted)
+        self.assertIn(question_dedup.FOLLOW, painted)
+        self.assertEqual(painted.count(question_dedup.FOLLOW), json.dumps(question_element({**drawn, "display_pending": False, "body_delivery_confirmed": True}), ensure_ascii=False).count(question_dedup.FOLLOW))
 
     def test_not_for_a_high_risk_class_nor_with_two_answers_that_disagree(self):
         answer(self.state, DEPLOY, "部署", at=NOW - 2 * 86400)

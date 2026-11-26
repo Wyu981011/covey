@@ -246,7 +246,7 @@ CHANGE_WORD = "改动"
 NOT_FOUND = "not_found"
 CHECK_ID = "answer_change_check"
 MISMATCH = "提交号对不上"
-ABSENT = "（工作区的仓库里没有）"
+ABSENT = "（写过的仓库里没有）"
 
 
 def not_found(change) -> list:
@@ -285,12 +285,12 @@ def change_element(change):
 def check_element(change):
     """The line under the 改动 fold (CHECK_ID) when the repository of the turn's workdir has no commit for an id the
     model wrote (``not_found``): "提交号对不上" in bold body text (orange says 等你 and 可能卡住 alone, docs/ui.md 2.2),
-    then which, grey: "提交号对不上：工作区的仓库里没有 951327a". None when every commit was found or it could not be told."""
+    then which, grey: "提交号对不上：写过的仓库里没有 951327a". None when every commit was found or it could not be told."""
     absent = not_found(change)
     if not absent:
         return None
     ids = "、".join(short_commit(commit) for commit in absent)
-    return md(f"**{MISMATCH}**" + grey(literal_text(f"：工作区的仓库里没有 {ids}")), size="notation", element_id=CHECK_ID)
+    return md(f"**{MISMATCH}**" + grey(literal_text(f"：写过的仓库里没有 {ids}")), size="notation", element_id=CHECK_ID)
 
 
 def box(element_id, inputs, outputs, outputs_id=""):
