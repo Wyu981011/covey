@@ -29,6 +29,13 @@ it stopped. Nobody sees a change: the records keep what older releases read.
   owner's own stand-in, an older version's, or "" for the automatic one. Every term goes out as its automatic stand-in now
   (core/redaction.py): the list is written again without them (``anywhere`` stays), once. An older release reads a row
   without one as automatic.
+- memory_v2 (docs/operations.md 记忆的存储与迁移, ``RECURRING``): the global memory an older release keeps (principles.json,
+  knowledge/, the open candidates) taken into memory/global.json and 待审核 (core/memstore.py sync_legacy), and the lead's
+  lines a project's turns carried in the last 7 days kept rules until the owner decides (guard_project). The first run
+  copies those files to backups/memory-v2-<time>/ first. Not done once and for all: what an older release writes after a
+  rollback is taken at the next start, so each start compares a few stats (the global files, each project's memory.json)
+  with what the last run saw and runs again only when one changed. No topic directory is read: a topic's lines get their
+  codes the first time something reads them.
 
 The steps of ``HOME_STEPS`` need the home, the service's ``--workdir``: they run at the Bridge's start, which passes it
 (``migrate(..., workdir=)``), before anything else; maintenance ``--apply`` has none and leaves them to it, and its
@@ -46,10 +53,11 @@ run cut short are safe, and a step that raised is run again at the next start.
 from __future__ import annotations
 
 import functools
+import shutil
 import time
 from pathlib import Path
 
-from covey.core import butler_settings, projects, redaction
+from covey.core import butler_settings, memstore, projects, redaction
 from covey.core.jobs import find_job_record, read_job_record
 from covey.core.locks import LOCK, resource_lock
 from covey.core.state import epoch_seconds, read_object, write_json
@@ -63,6 +71,8 @@ PROJECT_JOINED = "project-joined"
 REDACTION_STAND_IN = "redaction-stand-in"
 HOME_V1 = "home_v1"
 REPOS_V1 = "repos_v1"
+MEMORY_V2 = "memory_v2"
+MEMORY_BACKUP = "memory-v2-"  # backups/memory-v2-<time>/: the memory files as the first memory_v2 run found them.
 DESK_REGISTRY = Path("main-thread") / "desk"  # One empty file per front-desk topic id (older releases).
 RETIRED, RETIRED_DESK = "retired", "desk"  # topic.json's key and value (core/topics.py RETIRED_DESK).
 FAILED_KEYS = 20  # Keys named in the summary line per step.
@@ -108,7 +118,8 @@ def pending(state_dir: Path) -> dict:
     """What the steps not marked done would still do (step -> records), reading only: maintenance --dry-run."""
     state_dir = Path(state_dir)
     finished = done(state_dir)
-    return {name: still(state_dir) for name, (_, still) in STEPS.items() if name not in finished}
+    return {name: still(state_dir) for name, (_, still) in STEPS.items()
+            if name not in finished or (name in RECURRING and still(state_dir))}
 
 
 def _unwritten(state_dir: Path) -> int:
@@ -173,8 +184,8 @@ def migrate(state_dir: Path, log=None, *, workdir=None) -> dict:
     finished = done(state_dir)
     summary, unwritten = {}, {}
     started = time.monotonic()
-    for name, (run, _) in steps(workdir).items():
-        if name in finished:
+    for name, (run, still) in steps(workdir).items():
+        if name in finished and (name not in RECURRING or not still(state_dir)):
             continue
         written, failed = run(state_dir)
         summary[name] = {"written": written, "failed": len(failed)}
@@ -270,6 +281,77 @@ def drop_stand_ins(state_dir: Path) -> tuple[int, list[str]]:
     return 1, []
 
 
+def _memory_left(state_dir: Path) -> int:
+    """What memory_v2 would take: 1 for the global files an older release changed since the last run, one more for each
+    project whose memory.json changed (a few stats, whatever the number of topics)."""
+    seen = memstore.global_path(state_dir).is_file() and read_object(memstore.global_path(state_dir)).get("projects_seen")
+    if not isinstance(seen, dict):
+        return 1
+    now = memstore.project_sources(state_dir)
+    return int(memstore.legacy_changed(state_dir)) + sum(1 for pid, sig in now.items() if seen.get(pid) != sig)
+
+
+MEMORY_FILES = ("principles.json", "knowledge", "memory-candidates.json", "memory-usage.json")
+
+
+def _memory_backup(state_dir: Path) -> Path:
+    """The memory files as they are (the global ones, each project's memory*.json and answers are untouched anyway) copied
+    to backups/memory-v2-<time>/; its path."""
+    target = state_dir / "backups" / (MEMORY_BACKUP + time.strftime("%Y%m%d-%H%M%S"))
+    if not any((state_dir / name).exists() for name in MEMORY_FILES) and not memstore.project_sources(state_dir):
+        return target  # A deployment with no memory yet: nothing to keep.
+    target.mkdir(parents=True, exist_ok=True)
+    for name in MEMORY_FILES:
+        source = state_dir / name
+        if source.is_dir():
+            shutil.copytree(source, target / name, dirs_exist_ok=True)
+        elif source.is_file():
+            shutil.copy2(source, target / name)
+    for pid in memstore.project_sources(state_dir):
+        folder = projects.folder(state_dir) / pid
+        for file in sorted(folder.glob("memory*.json")) if folder.is_dir() else ():
+            (target / "projects" / pid).mkdir(parents=True, exist_ok=True)
+            shutil.copy2(file, target / "projects" / pid / file.name)
+    return target
+
+
+def memory_v2(state_dir: Path, *, now=None) -> tuple[int, list[str]]:
+    """The memory_v2 step (the module's docstring): (entries and review items written, the parts it could not do)."""
+    state_dir = Path(state_dir)
+    stamp = time.time() if now is None else now
+    written, failed = 0, []
+    first = not memstore.global_path(state_dir).is_file()
+    if first:
+        try:
+            _memory_backup(state_dir)
+        except OSError:
+            return 0, ["backup"]  # Nothing is migrated before the files are kept.
+    try:
+        found = memstore.sync_legacy(state_dir, now=stamp)
+        written += sum(found.values())
+    except Exception:  # noqa: BLE001 - tried again at the next start
+        failed.append("global")
+    seen = read_object(memstore.global_path(state_dir)).get("projects_seen")
+    seen = seen if isinstance(seen, dict) else {}
+    sources = memstore.project_sources(state_dir)
+    changed = [pid for pid, sig in sources.items() if seen.get(pid) != sig]
+    carried = None
+    for pid in changed:
+        try:
+            if memstore.unguarded(state_dir, pid):
+                carried = memstore.carried_refs(state_dir, now=stamp) if carried is None else carried
+                written += memstore.guard_project(state_dir, pid, carried, now=stamp)
+            memstore.entries(state_dir, scope="project", owner_key=pid, statuses=None)  # Its codes given now.
+            seen[pid] = memstore.project_sources(state_dir).get(pid)
+        except Exception:  # noqa: BLE001 - tried again at the next start
+            failed.append(pid)
+    try:
+        memstore.mark_migrated(state_dir, projects_seen={pid: seen[pid] for pid in sources if pid in seen})
+    except OSError:
+        failed.append("mark")
+    return written, failed
+
+
 def _home_left(state_dir: Path) -> int:
     """1 while ``home.json`` is missing (a taken-over home keeps it missing: the Bridge's start marks the step done)."""
     from covey.core import home
@@ -309,5 +391,8 @@ def repos_v1(state_dir: Path, *, workdir) -> tuple[int, list[str]]:
 # directory alone, of HOME_STEPS (its ``run`` given ``workdir=``) when it needs the home too.
 STEPS = {EMBEDDED_TRACE: (embedded_traces, _unwritten), DESK_RETIRE: (retire_desk_topics, _desk_left),
          REDACTION_DEFAULT: (merge_redaction_default, _redaction_default_left), PROJECT_JOINED: (stamp_joined, _joined_left),
-         REDACTION_STAND_IN: (drop_stand_ins, _stand_ins_left)}
+         REDACTION_STAND_IN: (drop_stand_ins, _stand_ins_left), MEMORY_V2: (memory_v2, _memory_left)}
 HOME_STEPS = {HOME_V1: (home_v1, _home_left), REPOS_V1: (repos_v1, _repos_left)}
+# Steps that run again whenever what they would do is not nothing (``still``), done or not: what an older release wrote
+# after a rollback is taken again.
+RECURRING = frozenset({MEMORY_V2})

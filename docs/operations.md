@@ -133,10 +133,10 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ bot-identity.json            应用 ID、owner、profile、机器人自己的 open_id、主人的名字；状态目录和应用一一对应
 │  ├─ owner-chat.json              主人和机器人的私聊（菜单、手上的事、汇总都发在这里）
 │  ├─ migrations.json              已做过的旧记录迁移（core/migrate.py）
-│  ├─ maintenance-status.json、backups/   上次维护结果、每日备份
+│  ├─ maintenance-status.json、backups/   上次维护结果、每日备份；`backups/memory-v2-<时间>/` 是记忆第一次迁移前的原样拷贝
 │  └─ tmp/                         Bridge 和任务进程的 TMPDIR
 ├─ 话题与任务
-│  ├─ topics/<话题>/               topic.json、history.jsonl、收到的附件 incoming_media/、换配置的交接 handoff/
+│  ├─ topics/<话题>/               topic.json、history.jsonl、收到的附件 incoming_media/、换配置的交接 handoff/；话题的记忆 memory.json、它的新字段 memory-v2.json、决定记录 decisions.jsonl
 │  ├─ topics/aliases/              消息和卡片 → 话题的别名
 │  ├─ jobs/、queued/               任务记录；存盘的排队任务，交给任务进程时删除
 │  ├─ runs/<任务键>/                任务进程的运行目录，见“任务进程”一节
@@ -167,8 +167,11 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 ├─ 主人的设置
 │  ├─ workspace-config.json        工作区列表和默认工作区
 │  ├─ groups/                      每个主人 @ 过机器人的群：是否外部群、是否对成员开放、免@
-│  ├─ principles.json              主人的原则（管家的工具写）
-│  ├─ knowledge/                   知识条目（`COVEY_KNOWLEDGE` 没关才有）：`owner.jsonl`/`.md`、`workspaces/<工作区>.jsonl`/`.md`、`owner-brief.md`
+│  ├─ principles.json              主人的原则（旧版写；新版迁进 `memory/global.json` 后只读）
+│  ├─ knowledge/                   知识条目（`COVEY_KNOWLEDGE` 没关才有）：`owner.jsonl`/`.md`、`workspaces/<工作区>.jsonl`/`.md`、`owner-brief.md`（旧版写；新版迁进 `memory/global.json` 后只读）
+│  ├─ memory/                      记忆（`core/memstore.py`）：全局条目 `global.json`、待审核 `review.json`、Harness 记忆导入的状态 `imports.json`、变更记录 `log.jsonl`（留 90 天，撤销用）、短码表 `codes.json`、有记忆的话题 `topics.json`、用到的次数 `usage.json`、自定义同义词 `synonyms.json`、给网页看有没有变的哨兵 `.rev`
+│  ├─ repos.json、home.json        仓库地图（`core/repomap.py`）、主目录的设置（`core/home.py`）
+│  ├─ repos.md                     从仓库地图画出来给每轮看的那份（接管已有主目录时放这里，不写进主目录）
 │  ├─ main-thread.json             私聊模式和管家设置，子 Agent 的模型 `subagents`（`COVEY_BUTLER=0` 时设置卡没有它，默认 `light`，要跟主模型手写 `"same"`）
 │  └─ redaction/                   脱敏词表、看板口令、每轮替换数
 ├─ 可选功能
@@ -182,7 +185,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ digest.json                  早晚汇总
 │  ├─ memory-candidates.json       晚间汇总里“你反复说的”候选和主人点的「记下」「不用」（`COVEY_MEMORY` 没关）
 │  ├─ memory-usage.json、memory-tidy.json、memory-harvest.json   记忆自己长（`COVEY_MEMORY_LEARN=1`）：每条记忆最后一次被用到的时间、每晚整理记忆收起了什么（撤销用）、读过的 Codex 和 Claude Code 自己的记忆
-│  ├─ projects/                    专项（`COVEY_PROJECTS`）：`<专项>.json`；`<专项>/` 里是记忆 `memory.json`、资料库索引 `library.json` 和复制的文件 `library/`、收件箱 `inbox/`；整理专项的记录 `tidy/`
+│  ├─ projects/                    专项（`COVEY_PROJECTS`）：`<专项>.json`；`<专项>/` 里是记忆 `memory.json`（旧版也读写）、它的新字段 `memory-v2.json`、决定记录 `decisions.jsonl`、资料库索引 `library.json` 和复制的文件 `library/`、收件箱 `inbox/`；整理专项的记录 `tidy/`
 │  ├─ owner-send/                  代发的草稿和发送记录
 │  ├─ butler-asks/                 话题转给管家的事（`COVEY_PROJECTS`）：每轮一个，转了什么、发没发出去
 │  ├─ patrol/                      我本来想找你的事（`COVEY_PATROL=shadow`）的记录
@@ -200,6 +203,44 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 ```
 
 `runs/<任务键>/` 是 Bridge 和任务进程之间的协议目录，新旧 release 双向兼容；文件名和读写规则在 `core/run_dir.py`。
+
+### 记忆的存储与迁移
+
+记忆的每一条，不管存在哪个文件，读出来都是同一个样子（`core/memstore.py` 的 `Entry`）：三类（规矩 `rule`、决定 `decision`、资料 `note`）、三个范围（全局、专项、话题）、一个固定短码（类别字母 R/D/N 加 4~6 位，`memory/codes.json` 记着每个码指哪条，给出后不变）。
+
+| 范围 | 存在哪 | 旧版能不能读到 |
+| --- | --- | --- |
+| 全局 | `memory/global.json` | 读不到；旧版只读它自己的 `principles.json`、`knowledge/` |
+| 专项 | 条目照旧在 `projects/<专项>/memory.json`；旧版不认识的字段（标题、三类、谁定的、适用仓库……）在旁边的 `memory-v2.json`；新的决定记录在 `decisions.jsonl` | 条目能读到，新字段和新决定读不到 |
+| 话题 | 同专项：`topics/<话题>/memory.json`、`memory-v2.json`、`decisions.jsonl` | 同上 |
+
+新字段从不写进旧版会按自己的键整个重写的 `memory-meta.json`、`memory-usage.json`，所以回滚到旧版再升级回来，新字段、短码、收起和作废的状态都还在。用到的次数也一样：新的计数在 `memory/usage.json`，读的时候和旧的 `memory-usage.json` 合起来算。
+
+**迁移**（`core/migrate.py` 的 `memory_v2`）在每次启动和 `covey_maintenance.py --apply` 时检查：只看几个文件的修改时间和大小（全局的旧文件、每个专项的 `memory.json`），和上次迁移时一样就什么都不做，所以不随话题数变慢；话题条目的短码在第一次被读到时才给。有变化时：
+
+- 第一次先把旧记忆文件原样拷到 `backups/memory-v2-<时间>/`。
+- 旧版的通用原则、通用知识条目进 `memory/global.json`（旧编号 `principle:p…`、`knowledge:k…` 记成别名，旧编号照样查得到）。回滚期间旧版新加的照样补进来；旧版改了的，新版这边没改过就跟着改，改过就把旧版的写法放进待审核让主人挑；旧版删了的收起（能放回）。工作区的原则和知识条目、没处理的“你反复说的”候选放进待审核 `memory/review.json`。
+- 负责人记的约束和决定（主人没确认过）原来都当参考带。近 7 天每轮实际带过的，迁移后先照旧当专项规矩带（标“别人总结的”），同时放进待审核；主人采纳就算你定的，不要就降成资料。
+
+| 旧来源 | 新的类别 | 谁定的 |
+| --- | --- | --- |
+| 原则 `principles.json` | 规矩 | 主人 |
+| 知识条目：决定、做法 / 坑、事实、待定 | 规矩 / 资料 | 主人 |
+| 专项：主人的话、主人确认过的、风格行 | 规矩（主人标“只限当次”的是决定） | 主人 |
+| 专项：问题卡的回答 | 决定 | 主人 |
+| 专项：负责人记的约束、决定 | 资料；近 7 天带过的先当规矩并进待审核 | 别人总结的 |
+| 专项：负责人记的事实、联系人 | 资料 | 别人总结的 |
+| 话题的记忆 | 规矩（话题范围） | 主人 |
+
+删掉的条目是作废，收进历史（旧版的 `valid` 是 done 或 superseded）的是收起（决定是办完）。
+
+**回滚**：回到旧版时它读自己的旧文件；要把迁移后新记的全局条目和决定也带回旧版，停服务后跑
+
+```bash
+python3 -B scripts/memory_migrate.py --state "$STATE_DIR" --export-legacy
+```
+
+全局规矩写回 `principles.json`、资料写回知识条目、新决定写成专项 `memory.json` 里的回答（新版读的时候不会重复）。`--dry-run` 只报会迁什么，`--apply` 立刻跑一次迁移，`--stats` 打印各范围各类的条数。
 
 ## 注册与启动服务
 
@@ -385,11 +426,12 @@ Bridge 的 maintenance 后台线程每小时检查一次（`core/maintenance.py`
 | 锁文件 `.locks/` | 记录已不存在或 7 天未改动的删除；`cards/.locks/` 里没人持有的都删 |
 | `job-diffs/` | 超过 30 天的删除；总量超过 200 MiB 时从最旧的删，但只删云空间上传已确认的，一天内写的不删 |
 | 备份 | 最多 7 份、合计不超过 400 MiB，超出时从最旧的删，最新一份总保留；重启打断留下的 `.tmp` 一天后删 |
+| 记忆的文件 `memory/`、`decisions.jsonl` | 变更记录 `memory/log.jsonl` 只留 90 天；每个 `decisions.jsonl` 把同一条决定的几行合成一行，作废满 30 天的去掉；`memory/topics.json`（有记忆的话题）照话题目录重做一遍，这是唯一一处逐个看话题目录的地方，启动时不看 |
 | 陈旧记录 | 等待工作区、等待回答的任务和待回答的问题超过 7 天没有动静时关闭，原卡改成“超过 7 天未处理，已自动关闭；需要继续请在本话题直接发消息。”；启动卡没送达的消息 1 天没有动静就关闭。送达未确认的问题和在跑的任务不关。每次关闭记一行 `stale ... closed` |
 
 维护不删除工作区目录或用户产物。
 
-**备份包含**话题（历史、Session 指针、收到的附件）、任务记录、排队任务、执行过程、检查点、问题、暂存的补充与投递记录、已验证结果和产物投递记录、启动卡和工作区管理卡状态、启动卡预选、`model-usage.json`、群记录、模型设置、后端观测，主人的原则 `principles.json`、知识条目 `knowledge/`、管家设置 `main-thread.json`、脱敏词表 `redaction/config.json`、专项 `projects/`（不含资料库复制的文件）、手上的事和话题看板的记录（`pinned-overview.json`、`pinned-topics.json`、`board-priority.json`、`topic-seen.json`、`status-cards/`）、`digest.json`、私聊顶层告警的记录 `top-notices.json`、欢迎卡的记录 `welcome.json`、记忆的候选和记忆自己长的记录（`memory-candidates.json`、`memory-usage.json`、`memory-tidy.json`、`memory-harvest.json`）、网页工作台的操作记录 `web/`、`owner-chat.json`、`migrations.json`，以及 `workspace-config.json`、`session_index.jsonl`、`bot-identity.json`，还有代答的 `proxy/settings.json`、`proxy/contacts/`、`proxy/style.md`、`proxy/owner-context.md`（清单是 `core/backup.py` 的 `BACKUP_DIRS`、`BACKUP_FILES`）。
+**备份包含**话题（历史、Session 指针、收到的附件）、任务记录、排队任务、执行过程、检查点、问题、暂存的补充与投递记录、已验证结果和产物投递记录、启动卡和工作区管理卡状态、启动卡预选、`model-usage.json`、群记录、模型设置、后端观测，主人的原则 `principles.json`、知识条目 `knowledge/`、记忆 `memory/`、仓库地图 `repos.json` 和主目录设置 `home.json`、管家设置 `main-thread.json`、脱敏词表 `redaction/config.json`、专项 `projects/`（不含资料库复制的文件）、手上的事和话题看板的记录（`pinned-overview.json`、`pinned-topics.json`、`board-priority.json`、`topic-seen.json`、`status-cards/`）、`digest.json`、私聊顶层告警的记录 `top-notices.json`、欢迎卡的记录 `welcome.json`、记忆的候选和记忆自己长的记录（`memory-candidates.json`、`memory-usage.json`、`memory-tidy.json`、`memory-harvest.json`）、网页工作台的操作记录 `web/`、`owner-chat.json`、`migrations.json`，以及 `workspace-config.json`、`session_index.jsonl`、`bot-identity.json`，还有代答的 `proxy/settings.json`、`proxy/contacts/`、`proxy/style.md`、`proxy/owner-context.md`（清单是 `core/backup.py` 的 `BACKUP_DIRS`、`BACKUP_FILES`）。
 
 开了 `COVEY_WEB_SELFHOST=1`（并且 `COVEY_WEB=1`、`COVEY_WEB_CONFIG` 指向本机回环）时，每日备份还多一个成员 `selfhost-web/pglite.tar.gz`：向网页进程要的数据库导出（PGlite 的 `dumpDataDir`，几 MB，几秒；超过 256 MiB 不收），这一项做得成做不成都记在 `maintenance-status.json` 的 `web_backup`（`at`，`bytes` 或 `skipped`/`error` 的原因），不影响状态目录的备份；外部 Postgres 用 `pg_dump` 备份，不在这里。没开自托管时备份内容和状态文件和原来一样。网页的开放接口密钥文件和 TLS 私钥不进备份。状态目录的恢复（`restore_backup`）不碰 `selfhost-web/`；网页数据库用 `python3 -B -m covey.service.web_selfhost --restore-db <备份包或 pglite.tar.gz>` 恢复，见[网页工作台 · 备份与恢复](web.md#备份与恢复)。
 

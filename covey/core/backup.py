@@ -52,6 +52,9 @@ BACKUP_DIRS = {
     # not the files its library copied (BACKUP_SKIP).
     "projects",
     "knowledge",  # 知识条目 (core/knowledge.py): what the owner asked to be remembered.
+    # The memory (core/memstore.py): the global entries, 待审核, what of the Harnesses' own memory was imported or ignored,
+    # the change log (its 撤销 still works after a restore), the short codes, the counts of use and the topic index.
+    "memory",
     "status-cards",  # 手上的事's topic cards it pinned: Feishu lists no pins of a private chat (app/pins.py).
     # 网页工作台 (core/web_sync.py): the ledger of the page's operations, so a restore does none of them twice; its key
     # is in the config's key_file, outside the state directory.
@@ -70,13 +73,15 @@ BACKUP_DIRS = {
 # 你反复说的 and what the owner decided (app/memory_candidates.py): what he declined is not offered again after a restore.
 # memory-usage.json, memory-tidy.json, memory-harvest.json (记忆自己长, COVEY_MEMORY_LEARN=1): when each memory line was last of
 # use (without it every older line would read as unused and 整理记忆 put it away), what each night's 整理记忆 put away (its
-# 撤销 still works after a restore) and what of the Harnesses' own memory was read (not offered again).
+# 撤销 still works after a restore) and what of the Harnesses' own memory was read (not offered again). repos.json, the
+# repo map (core/repomap.py), and home.json, the home directory's settings (core/home.py): the owner's, written by hand or
+# by the 仓库 page.
 BACKUP_FILES = {"workspace-config.json", "session_index.jsonl", "bot-identity.json", "launch-defaults.json",
                 "model-usage.json", "proxy/settings.json", "proxy/style.md", "proxy/owner-context.md",
                 "principles.json", "main-thread.json", "redaction/config.json", "owner-chat.json", "migrations.json",
                 "pinned-overview.json", "pinned-topics.json", "board-priority.json", "topic-seen.json", "digest.json",
                 "welcome.json", "memory-candidates.json", "top-notices.json", "memory-usage.json", "memory-tidy.json",
-                "memory-harvest.json"}
+                "memory-harvest.json", "repos.json", "home.json"}
 
 
 # Folders under a backed-up directory that a backup leaves out, by the directory: a project's library/ holds copies of
@@ -136,6 +141,7 @@ NOT_BACKED_UP = {
     "memory-harvest": "the working directory of a small model's run",
     "codex-judge": "the working directory of a small model's run",
     "agy-judge": "the working directory of a small model's run",
+    "repos.md": "the repo map drawn for the turns, made again from repos.json (core/repomap.py)",
     "launch-models": "model lists, asked again",
     "native-models": "model lists, asked again",
     "pi-sessions": "a backend's own sessions: no Harness's session store is backed up",

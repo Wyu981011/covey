@@ -40,6 +40,7 @@ from pathlib import Path
 
 from covey.core import env as cenv
 from covey.core.process_env import env_flag
+from covey.core import memory_rev
 from covey.core.locks import shared_file_lock
 from covey.core.state import epoch_seconds, write_private_text
 
@@ -308,6 +309,7 @@ def _write(state_dir, file, scope, workspace, make, now):
             _append(file, event, bad, now)
     if event is not None:
         refresh(state_dir)
+        memory_rev.touch(state_dir, now, create=False)
     return result
 
 

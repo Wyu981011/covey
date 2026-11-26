@@ -165,7 +165,7 @@
 | `app/memguard_alerts.py` | The memory watchdog's alerts, sent by the Bridge |
 | `app/memory_candidates.py` | 每天一次的候选整理: what the owner corrected more than once in the day's ended topics, at most SHOWN a day, put in the … |
 | `app/memory_collect.py` | What the owner said in a topic's turn that holds from now on becomes memory, and a click takes it back |
-| `app/memory_harvest.py` | What Codex and Claude Code learned of the owner on their own, offered to Covey's memory once a day |
+| `app/memory_harvest.py` | What Codex, Claude Code and Antigravity learned of the owner on their own, offered to Covey's memory once a … |
 | `app/memory_learn.py` | 记忆自己长, one turn at a time |
 | `app/memory_observe.py` | What the Bridge sees of a turn's use of the memory (FINAL-SPEC 修订 8) |
 | `app/memory_panel.py` | The 设置 card's 记忆 tab, shown when COVEY_MEMORY=1 |
@@ -428,10 +428,11 @@
 | `core/memory.py` | The one read port of the owner's memory |
 | `core/memory_gate.py` | The write gate of a memory entry (FINAL-SPEC 修订 8): what is refused or rewritten, what is only flagged |
 | `core/memory_rank.py` | How relevant and how useful a memory entry is (FINAL-SPEC 修订 2 and 8) |
+| `core/memory_rev.py` | The memory's one change sentinel, `<state>/memory/.rev` |
 | `core/memory_review.py` | The one review queue of the memory: what someone other than the owner proposes waits here |
 | `core/memory_search.py` | 按需查记忆: what a turn's memory block could not carry, looked up by its words from the turn itself |
-| `core/memory_usage.py` | Which memory lines the turns used, so what is never of use goes first and in time out of the way |
-| `core/memstore.py` | The one memory store of the overhaul (FINAL-SPEC 修订 3) |
+| `core/memory_usage.py` | Which memory lines the turns used and carried, so what is never of use goes first and in time out of the way |
+| `core/memstore.py` | The one memory store: every entry, whatever file holds it, as one `Entry` with a short code |
 | `core/menu_choice.py` | A model menu's entries and the choices on them |
 | `core/metrics.py` | Content-free job timings |
 | `core/migrate.py` | One-time migrations of old records, so the code that reads records needs no compat branch for them |

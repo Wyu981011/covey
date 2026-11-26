@@ -31,6 +31,7 @@ import secrets
 import time
 from pathlib import Path
 
+from covey.core import memory_rev
 from covey.core.locks import shared_file_lock
 from covey.core.state import read_json, utc_now_iso, write_json
 
@@ -99,6 +100,11 @@ def _read(state_dir):
         return _empty(), True
 
 
+def readable(state_dir) -> bool:
+    """Whether principles.json is missing or reads as principles (core/memstore.py sync_legacy deletes nothing from a bad one)."""
+    return not _read(state_dir)[1]
+
+
 def load(state_dir) -> dict:
     """{"version", "owner": [...], "workspaces": {name: [...]}}, each group oldest first; empty for a bad file."""
     return _read(state_dir)[0]
@@ -125,6 +131,7 @@ def _write(state_dir, data, bad, now):
     if bad and file.exists():
         os.replace(file, file.with_name(f"{FILE}.bad-{int(now)}"))
     write_json(file, data, ensure_ascii=False, indent=1)
+    memory_rev.touch(state_dir, now, create=False)
 
 
 def _new_id(data):

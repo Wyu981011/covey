@@ -50,7 +50,7 @@ import sys
 import time
 from pathlib import Path
 
-from covey.core import projects, turn_source
+from covey.core import memory_rev, projects, turn_source
 from covey.core.state import read_json, read_object, write_json
 
 KINDS = ("decision", "constraint", "contact", "fact", "style")
@@ -386,7 +386,10 @@ def _edit(state_dir, project_id, edit, also=None, now=None):
         record.pop("memory", None)
         if also is not None:
             also(record)
+        box.append(rows != before or meta != meta_before)
     projects.update(state_dir, project_id, change)
+    if box[-1]:
+        memory_rev.touch(state_dir, stamp, create=False)
     return box[0]
 
 
@@ -664,6 +667,47 @@ def unsettle(state_dir, project_id, settled, *, now=None) -> list:
             out.append(str(entry_id))
         return out
     return _edit(state_dir, project_id, edit, None, now)
+
+
+def rewrite(state_dir, project_id, entry_id, *, text=None, kind=None, valid=None, superseded_by=None, deleted=None,
+            now=None) -> dict | None:
+    """The Bridge's own change of the line ``entry_id`` (live or a tombstone), for core/memstore.py: none of the lead's policy
+    (``update``'s), nothing logged in ``fixes``. ``text`` new words (an answer's up to ``ANSWER_TEXT``), ``kind`` one of
+    ``KINDS``, ``valid`` one of ``SETTLED`` or '' for active again, ``superseded_by`` an id ('' none), ``deleted`` a time for a
+    tombstone or 0 for live again. The entry as ``entries`` gives it; None when the file has no such line. KeyError for a
+    project with no record."""
+    stamp = time.time() if now is None else now
+
+    def edit(rows, meta):
+        row = next((row for row in rows if row["id"] == str(entry_id)), None)
+        if row is None:
+            return None
+        if text is not None and clean(text):
+            row["text"] = clean(text, ANSWER_TEXT if row["source"] in ANSWERS else TEXT)
+        if kind is not None:
+            row["kind"] = kind_of(kind)
+        if deleted is not None:
+            row["deleted"] = deleted if isinstance(deleted, (int, float)) and not isinstance(deleted, bool) else 0
+        entry = dict(meta.get(row["id"]) or {})
+        if valid is not None:
+            if valid in SETTLED:
+                entry["valid"] = valid
+            else:
+                entry.pop("valid", None)
+        if superseded_by is not None:
+            if superseded_by:
+                entry["superseded_by"] = clean(superseded_by, 40)
+            else:
+                entry.pop("superseded_by", None)
+        if entry:
+            meta[row["id"]] = entry
+        else:
+            meta.pop(row["id"], None)
+        return row["id"]
+    found = _edit(state_dir, project_id, edit, None, stamp)
+    if found is None:
+        return None
+    return next((row for row in stored(state_dir, project_id) if row["id"] == found), None)
 
 
 def answer_record(state_dir, project_id, token) -> dict:

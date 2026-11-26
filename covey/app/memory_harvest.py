@@ -1,7 +1,14 @@
-"""What Codex and Claude Code learned of the owner on their own, offered to Covey's memory once a day (COVEY_MEMORY_LEARN=1 with
-COVEY_MEMORY=1 and 早晚汇总, docs/butler.md 记忆自己长): each Harness keeps its own memory, only its own topics read it, a
-switch of Harness loses it, and the owner sees none of it. At the evening digest (app/digest.py daily, after 你反复说的)
-this reads, of this machine:
+"""What Codex, Claude Code and Antigravity learned of the owner on their own, offered to Covey's memory once a day
+(COVEY_MEMORY_LEARN=1 with COVEY_MEMORY=1 and 早晚汇总, docs/butler.md 记忆自己长): each Harness keeps its own memory, only its
+own topics read it, a switch of Harness loses it, and the owner sees none of it.
+
+At the evening digest (app/digest.py daily, ``Harvest.offer``) ``queue`` reads every Harness's memory files of this machine
+(core/harness_memory.py fresh: read only, entry by entry, each with a fingerprint) and puts the entries of a file new or
+changed since the night before in 待审核 (core/memstore.py review_put, type import), nothing on the card and no model
+called; the web's 导入 lists all of them for the owner to tick. The first night only notes what is there.
+
+``harvest`` is the way of older releases, kept until 你反复说的 goes to 待审核 too (app/memory_candidates.py): this reads, of
+this machine:
 
 - Codex's memory summary (``$CODEX_HOME/memories/memory_summary.md``, or ``memories_v2/``), its sections on the user;
 - Claude Code's auto memory of each registered workspace (``<config dir>/projects/<the workspace's path>/memory/*.md``), the
@@ -26,7 +33,7 @@ from pathlib import Path
 from covey.app import memory_candidates, track_judge
 from covey.app.track_standby import Failed
 from covey.backends.claude.sessions import ClaudeSessionStore, claude_projects_root
-from covey.core import principles
+from covey.core import harness_memory, memstore, principles
 from covey.core.locks import resource_lock
 from covey.core.state import read_object, write_json
 from covey.core.text import cut
@@ -154,16 +161,35 @@ def parse(text) -> list:
     raise Failed("bad_output")
 
 
+def queue(state_dir, home=None, *, root_of=None, log=print, now=None) -> int:
+    """The entries of the Harnesses' memory files new or changed since the last call put in 待审核 (type import, each
+    with its fingerprint, file and Harness), the first call only noting what is there. How many. Never raises."""
+    try:
+        made = 0
+        for item in harness_memory.fresh(state_dir, Path.home() if home is None else home, root_of=root_of, now=now):
+            _, new = memstore.review_put(state_dir, {
+                "type": "import", "title": item.title, "text": item.text,
+                "suggest": harness_memory.suggest(item), "items": [item.fingerprint],
+                "origin": {"harness": item.harness, "file": item.file, "bucket": item.bucket, "repo": item.repo}}, now=now)
+            made += int(new)
+        log(f"memory import queued={made}")
+        return made
+    except Exception as exc:  # noqa: BLE001 - the digest goes out without them
+        log(f"memory import failed: {type(exc).__name__}")
+        return 0
+
+
 class Harvest:
-    """The digest's hook (app/digest.py ``harvest``, set by app/unified.py): ``topics`` for the small model
-    (app/track_judge.py tools), ``runtime`` for the log."""
+    """The digest's hook (app/digest.py ``harvest``, set by app/unified.py): ``topics`` for the small model of the older
+    way (app/track_judge.py tools), ``runtime`` for the log."""
 
     def __init__(self, runtime, topics):
         self.runtime, self.topics = runtime, topics
 
     def offer(self, ctx, slot) -> list:
-        backend, context = track_judge.tools(getattr(self.topics, "apps", None))
-        return harvest(ctx.state_dir, slot, backend=backend, ctx=context, log=self.runtime.log)
+        """The candidates the digest card shows: none, the Harnesses' entries go to 待审核 (``queue``)."""
+        queue(ctx.state_dir, log=self.runtime.log)
+        return []
 
 
 def harvest(state_dir, slot, *, backend, ctx, log=print, ask=None, env=None, now=None) -> list:
