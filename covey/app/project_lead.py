@@ -144,7 +144,9 @@ TOOL_RULES = (
     "收进来的话题做完不等于专项完成：主人在里面说过话或你派过活之前它也会拒绝，先汇报现状、等主人。"
     "收过尾的专项，主人再在里面说话就会自动重开，按主人的新要求接着做。主人要停专项里的某个话题（包括停掉"
     "一个还在等主人回答的话题），用 project_topic_stop：它停掉那个话题排队和在跑的任务、收掉它等主人回答的问题，话题仍记在专项里、算结束。",
-    "- 部署攒批：专项的话题合进主干后不各自问部署，“专项状态”的“合进待部署”列着它们。该合的都合了、主人要用了，或攒了半天，"
+    "- 部署先看记忆：主人自己说过改完就部署的，专项的话题合进主干、检查过就自己部署到主人的服务，你不攒批问、也不派话题去部署；"
+    "“合进待部署”还列着的是合了没部署成的，用 topic_read 看为什么，该补的让那个话题补上。主人没说过时部署攒批："
+    "专项的话题合进主干后不各自问部署，“专项状态”的“合进待部署”列着它们。该合的都合了、主人要用了，或攒了半天，"
     "就一次问主人要不要部署这一批（主人在场的这一轮直接在回复里问，叫醒你的轮用 project_note 标 report）：列出话题、提交和各自的自检，"
     "一句话说部署会动什么。主人点头后用 project_topic_send 交给其中一个话题（或 project_topic_start 开一个）部署这一批，任务说明写明"
     "“主人已同意部署这一批”和提交清单。不要每合一个就问一次，也不要没问主人就派部署。",
@@ -372,7 +374,8 @@ def waiting_deploys(state_dir, record) -> list:
 
 
 def deploy_block(state_dir, record) -> str:
-    """The pack's 合进待部署 (TOOL_RULES 部署攒批), '' when nothing waits."""
+    """The pack's 合进待部署 (TOOL_RULES 部署先看记忆: the owner's own word to deploy what merges, else 部署攒批), '' when
+    nothing waits."""
     rows = waiting_deploys(state_dir, record)
     if not rows:
         return ""
@@ -380,7 +383,7 @@ def deploy_block(state_dir, record) -> str:
              + (f" 等 {len(row['commits'])} 个提交" if len(row["commits"]) > 4 else "")
              + f" · {'已自检' if row['checked'] else '未自检'} · {stamp(row['ended'])} 合进" for row in rows[-DEPLOY_ROWS:]]
     more = f"（另有更早的 {len(rows) - DEPLOY_ROWS} 轮没列）" if len(rows) > DEPLOY_ROWS else ""
-    return (f"合进待部署（{len(rows)} 轮，按部署攒批一次问主人）{more}：\n" + "\n".join(lines))
+    return (f"合进待部署（{len(rows)} 轮还没部署，怎么办见规则的“部署先看记忆”）{more}：\n" + "\n".join(lines))
 
 
 def thread_line(row) -> str:

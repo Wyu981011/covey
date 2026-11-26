@@ -75,6 +75,11 @@ class RulesTest(unittest.TestCase):
         self.assertIn("deployed 留空", note)
         self.assertIn("部署除外", note)
         self.assertIsNotNone(Asked)
+        # The owner's own word to deploy what merges comes first, in both (a summary by someone else does not count).
+        self.assertIn("部署先看记忆：主人自己说过改完就部署的", rules)
+        self.assertIn("你不攒批问、也不派话题去部署", rules)
+        self.assertIn("部署先看记忆：主人说过改完就部署的（他自己说的，不算别人总结的）", note)
+        self.assertIn("回滚照常问主人", note)
 
 
 if __name__ == "__main__":
