@@ -36,6 +36,7 @@ SOURCE = {"via": "web"}  # What a principle or an entry written here says of whe
 ORIGIN_WORDS = {"web": "网页上记的", "settings_card": "设置卡里升为全局的", "memory_candidates": "晚间候选里记下的",
                 "memory_learn": "自动学习记的"}
 QUOTE_SHOWN = 200  # Characters of the owner's own words an entry's origin carries.
+NOTE_SHOWN = 60  # Characters of a source's note the page shows after where it came from.
 
 
 def enabled() -> bool:
@@ -99,7 +100,16 @@ def _topic_number(state_dir, topic_id, cache) -> str:
 def origin_of(source, by="", state_dir=None, cache=None) -> dict:
     """Where a principle or an entry came from, by what its ``source`` really says: {origin (a few words, '' when it does not say),
     quote (the owner's own words it was learned from), topic (the topic number "T83" it was written in, or the candidates' topics
-    joined)}. ``by``: a knowledge entry's own ``by`` (main: the butler's tool, topic: a topic's turn, import)."""
+    joined)}. ``by``: a knowledge entry's own ``by`` (main: the butler's tool, topic: a topic's turn, import). A ``note`` in the
+    source (what a later look at the line found of where it came from) follows the words."""
+    found = _origin_bare(source, by, state_dir, cache)
+    note = " ".join(str((source if isinstance(source, dict) else {}).get("note") or "").split())[:NOTE_SHOWN]
+    if note:
+        found["origin"] = f"{found['origin']}；{note}" if found["origin"] else note
+    return found
+
+
+def _origin_bare(source, by="", state_dir=None, cache=None) -> dict:
     source = source if isinstance(source, dict) else {}
     cache = {} if cache is None else cache
     quote = " ".join(str(source.get("quote") or "").split())[:QUOTE_SHOWN]

@@ -193,6 +193,11 @@ class T852Tests(StateCase):
             found = web_memory.origin_of(source, by, self.state)
             self.assertEqual((found["origin"], found["quote"], found["topic"]), (words, quote, topic), source)
 
+    def test_a_note_in_the_source_follows_where_it_came_from(self):
+        found = web_memory.origin_of({"by": "memory_candidates", "topics": [], "note": "原是 Bridge 模板里的话"}, "", self.state)
+        self.assertEqual(found["origin"], "晚间候选里记下的；原是 Bridge 模板里的话")
+        self.assertEqual(web_memory.origin_of({"note": "挪到全局"}, "", self.state)["origin"], "挪到全局")
+
     def test_origin_reads_the_topic_number_of_the_job_and_of_candidate_topics(self):
         write_json(self.state / "topics" / "t1" / "topic.json", {"topic_number": 586})
         write_json(self.state / "topics" / "t2" / "topic.json", {"topic_number": 488})
