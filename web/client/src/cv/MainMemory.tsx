@@ -6,7 +6,7 @@ import { newOpId, useMemory } from '@client/src/hooks/use-workbench';
 import { sendOp, type OpResult } from './sendOp';
 import {
   addPayload, byWords, checkDraft, editPayload, edited, filterGroups, hitRanges, kindLabel, placeOptions, previewOptions,
-  roomOf, roomPercent, roomWords, scopeOptions, whenWords, type ScopeFilter,
+  noticeAction, roomOf, roomPercent, roomWords, scopeOptions, sizeOf, sizeTitle, whenWords, type Notice, type ScopeFilter,
 } from './mainMemory';
 import './mainmemory.css';
 
@@ -258,8 +258,9 @@ const Row: React.FC<RowProps> = ({ e, data, query, editing, receipt, onEdit, onC
           {e.origin ? <span>{e.origin}</span> : null}
           {e.at ? <span>{whenWords(e.at)}</span> : null}
           {e.edited ? <span>改过</span> : null}
-          <span>{e.chars} 字</span>
+          <span title={sizeTitle(e)}>{sizeOf(e)} 字</span>
         </div>
+        {e.quote ? <p className="mm2-quote" data-testid="memory-quote">你的原话：“<Hit text={e.quote} query={query} />”</p> : null}
         {receipt && receipt.phase !== 'sending' ? (
           <p className={`mm2-receipt ${receipt.phase}`} role={receipt.phase === 'failed' ? 'alert' : 'status'}>
             {receipt.phase === 'done' ? <Check /> : <X />}{receipt.message}
@@ -321,7 +322,7 @@ const Group: React.FC<{
         <span className="sp" />
         <div className="mm2-room" title={roomWords(g)}>
           <span className="mm2-bar" aria-hidden="true"><i style={{ width: `${roomPercent(g)}%` }} /></span>
-          <span className="mm2-rn">{g.used.toLocaleString()} / {g.limit.toLocaleString()} 字</span>
+          <span className="mm2-rn" title="额度按每条的正文加编号、标注来数，比行上的字数略多">额度 {g.used.toLocaleString()} / {g.limit.toLocaleString()} 字</span>
         </div>
         <button type="button" className="mm2-ic" onClick={onAdd} title={`在${g.title}新建一条`} aria-label={`在${g.title}新建一条`}><Plus /></button>
       </header>
@@ -429,6 +430,15 @@ export const MainMemory: React.FC = () => {
   const [adding, setAdding] = useState<string>('');
   const [what, setWhat] = useState<'principle' | 'knowledge'>('principle');
   const [receipts, setReceipts] = useState<Record<string, Receipt>>({});
+  // 页面级回执：删、作废、记下、不用以后那一行就没了，回执挂在列表上方，几秒后或点掉才消失
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeTimer = useRef<number>(0);
+  const showNotice = useCallback((message: string): void => {
+    window.clearTimeout(noticeTimer.current);
+    setNotice((n: Notice | null) => ({ id: (n?.id ?? 0) + 1, message }));
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 8000);
+  }, []);
+  useEffect(() => () => window.clearTimeout(noticeTimer.current), []);
   const dirty = useRef<boolean>(false);
   const onDirty = useCallback((d: boolean) => { dirty.current = d; }, []);
 
@@ -481,6 +491,15 @@ export const MainMemory: React.FC = () => {
     const res: OpResult = await send(payload);
     const ok: boolean = res.phase === 'done';
     const message: string = ok ? res.message || '已办好' : failWords(res);
+    if (ok && noticeAction(payload)) {
+      setReceipts((r: Record<string, Receipt>) => {
+        const next = { ...r };
+        delete next[key];
+        return next;
+      });
+      showNotice(message);
+      return null;
+    }
     setReceipts((r: Record<string, Receipt>) => ({ ...r, [key]: { phase: ok ? 'done' : 'failed', message } }));
     if (ok) {
       window.setTimeout(() => setReceipts((r: Record<string, Receipt>) => {
@@ -490,7 +509,7 @@ export const MainMemory: React.FC = () => {
       }), 4000);
     }
     return ok ? null : message;
-  }, [send]);
+  }, [send, showNotice]);
 
   const groups: MainMemoryGroup[] = useMemo(() => filterGroups(data?.groups ?? [], scope, query), [data, scope, query]);
   if (q.isLoading) return <p className="st-faint">读取中…</p>;
@@ -520,8 +539,7 @@ export const MainMemory: React.FC = () => {
         <button type="button" className="mm2-btn pri" onClick={() => startAdd(scope === 'all' ? 'global' : scope)} data-testid="memory-new"><Plus />新建</button>
       </div>
       <p className="mm2-intro">
-        这里是每个话题和管家都会读的长期记忆：<b>全局</b>的每一轮都带，<b>工作区</b>的只在那个工作区里带。每组有字数上限，放不下的最早的先不带；
-        要一直带上就标<b>常驻</b>。专项和话题的记忆在专项页、话题页的右栏。
+        这里是每个话题和管家都会读的长期记忆：<b>全局</b>的每一轮都带，<b>工作区</b>的只在那个工作区里带。每组有额度上限，放不下时先带你说的，再按最近用到的先后排（没用过的按记下的时间），后面的这一轮不带；原则标<b>常驻</b>就不受额度限制、每一轮都带。专项和话题的记忆在专项页、话题页的右栏。
       </p>
       {adding ? (
         <Editor
@@ -546,9 +564,13 @@ export const MainMemory: React.FC = () => {
           guard={guard}
         />
       ) : null}
-      {Object.entries(receipts).filter(([k, r]) => k.startsWith('new:') && r.phase === 'done').map(([k, r]) => (
-        <p key={k} className="mm2-receipt done" role="status"><Check />{r.message}</p>
-      ))}
+      {notice ? (
+        <div key={notice.id} className="mm2-notice" role="status" data-testid="memory-notice">
+          <Check aria-hidden="true" />
+          <span>{notice.message}</span>
+          <button type="button" className="mm2-x" onClick={() => { window.clearTimeout(noticeTimer.current); setNotice(null); }} aria-label="知道了" data-testid="memory-notice-close"><X /></button>
+        </div>
+      ) : null}
       {candidates.length && (scope === 'all') ? <Candidates rows={candidates} receipts={receipts} run={run} /> : null}
       {groups.map((g: MainMemoryGroup) => (
         <Group

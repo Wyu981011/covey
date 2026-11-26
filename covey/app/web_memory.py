@@ -20,6 +20,9 @@ from pathlib import Path
 from covey.app import memory_candidates
 from covey.app.prompts import memory_block
 from covey.core import knowledge, memory, memory_usage, principles
+from covey.core.jobs import job_path, read_job_record
+from covey.core.state import read_object
+from covey.core.topics import topic_file
 from covey.core.workspaces import config_path, load_config
 
 GLOBAL, WORKSPACE = memory.GLOBAL, memory.WORKSPACE
@@ -30,7 +33,9 @@ PREVIEWS = 24  # Workspaces the next turn is previewed for: the default one and 
 DROP_REASON = "主人在网页「记忆」里作废"
 EDIT_REASON = "主人在网页「记忆」里改了"
 SOURCE = {"via": "web"}  # What a principle or an entry written here says of where it came from.
-ORIGIN_WORDS = {"web": "网页上记的", "settings_card": "设置卡里升为全局的", "memory_candidates": "候选里记下的"}
+ORIGIN_WORDS = {"web": "网页上记的", "settings_card": "设置卡里升为全局的", "memory_candidates": "晚间候选里记下的",
+                "memory_learn": "自动学习记的"}
+QUOTE_SHOWN = 200  # Characters of the owner's own words an entry's origin carries.
 
 
 def enabled() -> bool:
@@ -65,15 +70,76 @@ def workspace_names(state_dir, default_workdir) -> tuple[str, list]:
     return str(config["default"] or ""), [str(name) for name in config["workspaces"]]
 
 
-def origin(source) -> str:
-    """Where a principle or an entry came from, in a few words ('' when it does not say)."""
+def _job_topic(state_dir, job_key, cache) -> tuple[str, bool]:
+    """(the topic number "T83" or '', whether it is the butler's topic) of the job ``job_key``, '' and False when it cannot be read."""
+    if job_key not in cache:
+        found = ("", False)
+        try:
+            record = read_job_record(job_path(Path(state_dir), job_key)) or {}
+            topic = read_object(topic_file(Path(state_dir), str(record.get("topic_id") or ""))) if record.get("topic_id") else {}
+            number = topic.get("topic_number")
+            found = (f"T{number}" if type(number) is int else "", topic.get("main_thread") is True)
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        cache[job_key] = found
+    return cache[job_key]
+
+
+def _topic_number(state_dir, topic_id, cache) -> str:
+    key = f"topic:{topic_id}"
+    if key not in cache:
+        try:
+            number = read_object(topic_file(Path(state_dir), str(topic_id))).get("topic_number")
+        except (OSError, ValueError, TypeError, AttributeError):
+            number = None
+        cache[key] = f"T{number}" if type(number) is int else ""
+    return cache[key]
+
+
+def origin_of(source, by="", state_dir=None, cache=None) -> dict:
+    """Where a principle or an entry came from, by what its ``source`` really says: {origin (a few words, '' when it does not say),
+    quote (the owner's own words it was learned from), topic (the topic number "T83" it was written in, or the candidates' topics
+    joined)}. ``by``: a knowledge entry's own ``by`` (main: the butler's tool, topic: a topic's turn, import)."""
     source = source if isinstance(source, dict) else {}
+    cache = {} if cache is None else cache
+    quote = " ".join(str(source.get("quote") or "").split())[:QUOTE_SHOWN]
     for key in ("via", "by"):
-        if source.get(key) in ORIGIN_WORDS:
-            return ORIGIN_WORDS[source[key]]
-    if source.get("job_key") or source.get("job_id"):
-        return "管家记的"
-    return ""
+        word = ORIGIN_WORDS.get(source.get(key))
+        if word is None:
+            continue
+        topic = ""
+        if source.get(key) == "memory_candidates" and state_dir is not None:
+            names = [_topic_number(state_dir, tid, cache) for tid in list(source.get("topics") or ())[:6]]
+            topic = "、".join(name for name in names if name)
+        elif source.get(key) == "memory_learn" and state_dir is not None and source.get("job_key"):
+            topic = _job_topic(state_dir, str(source["job_key"]), cache)[0]
+        if topic:
+            word += f"（话题 {topic}）"
+        return {"origin": word, "quote": quote, "topic": topic}
+    topic = str(source.get("topic") or "")
+    job_key = str(source.get("job_key") or "")
+    butler = False
+    if not topic and job_key and state_dir is not None:
+        topic, butler = _job_topic(state_dir, job_key, cache)
+    if source.get("from") and (job_key or topic):  # app/memory_collect.py: a line of a topic's memory raised to 全局.
+        return {"origin": f"话题 {topic} 里升为全局的" if topic else "话题里升为全局的", "quote": quote, "topic": topic}
+    if by == "topic" or (topic and not butler):
+        return {"origin": f"话题 {topic} 里记的" if topic else "话题里记的", "quote": quote, "topic": topic}
+    if by == "import":
+        return {"origin": "导入的", "quote": quote, "topic": topic}
+    if job_key or source.get("job_id"):
+        return {"origin": "管家记的", "quote": quote, "topic": ""}
+    return {"origin": "", "quote": quote, "topic": ""}
+
+
+def origin(source, by="", state_dir=None, cache=None) -> str:
+    """The words of ``origin_of``."""
+    return origin_of(source, by, state_dir, cache)["origin"]
+
+
+def _origin_facts(source, by, state_dir, cache) -> dict:
+    found = origin_of(source, by, state_dir, cache)
+    return {"origin": found["origin"], "quote": found["quote"], "topic": found["topic"]}
 
 
 def _found(state_dir, workspace, knowledge_on, learn, used):
@@ -85,12 +151,17 @@ def _found(state_dir, workspace, knowledge_on, learn, used):
 
 
 def _row(item, carried, facts) -> dict:
-    """An entry of a group: what the item says, and of its store what the page shows besides (kind, origin, knowledge's kind and why)."""
+    """An entry of a group: what the item says, and of its store what the page shows besides (kind, origin, knowledge's kind and why).
+    ``text`` is what the store holds (a knowledge entry's own words, not the line a turn reads, which adds its kind and why), the
+    ``base`` of an edit; ``size`` is its characters as the editor counts them, ``chars`` what the line uses of the group's room
+    (the number and the speaker around it count too)."""
     kind, _, rid = item["ref"].partition(":")
     extra = facts.get(item["ref"], {})
-    row = {"key": item["ref"], "kind": kind, "text": item["text"], "by": item["by"], "pinned": bool(item.get("pinned")),
+    text = extra.get("text", item["text"])
+    row = {"key": item["ref"], "kind": kind, "text": text, "by": item["by"], "pinned": bool(item.get("pinned")),
            "pinnable": kind == PRINCIPLE, "editable": kind in (PRINCIPLE, KNOWLEDGE), "carried": item["ref"] in carried,
-           "chars": memory.line_size(item), "at": item["at"], "origin": extra.get("origin", ""), "edited": extra.get("edited", "")}
+           "chars": memory.line_size(item), "size": len(text), "at": item["at"], "origin": extra.get("origin", ""),
+           "edited": extra.get("edited", ""), "quote": extra.get("quote", ""), "topic": extra.get("topic", "")}
     if kind == KNOWLEDGE:
         row["knowledge_kind"], row["why"] = extra.get("kind", ""), extra.get("why", "")
     return row
@@ -113,16 +184,16 @@ def view(state_dir, default_workdir=None) -> dict:
     used = memory_usage.last_used(state_dir) if learn else None
     default, names = workspace_names(state_dir, default_workdir)
     loaded = principles.load(state_dir)
-    facts = {}
+    facts, cache = {}, {}
     for row in principles.entries(state_dir):
-        facts[f"principle:{row['id']}"] = {"origin": origin(row.get("source")), "edited": row.get("edited", "")}
+        facts[f"principle:{row['id']}"] = {**_origin_facts(row.get("source"), "", state_dir, cache), "edited": row.get("edited", "")}
     spaces = set(loaded["workspaces"])
     if knowledge_on:
         for scope, name, group in knowledge.groups(state_dir):
             for entry in group.values():
                 if entry["state"] == knowledge.CURRENT:
-                    facts[f"knowledge:{entry['id']}"] = {"origin": origin(entry.get("source")), "kind": entry.get("kind", ""),
-                                                          "why": entry.get("why", "")}
+                    facts[f"knowledge:{entry['id']}"] = {**_origin_facts(entry.get("source"), entry.get("by"), state_dir, cache),
+                                                          "text": entry["text"], "kind": entry.get("kind", ""), "why": entry.get("why", "")}
                     if scope == knowledge.WORKSPACE and name:
                         spaces.add(name)
     open_rows = [row for row in memory_candidates.load(state_dir)["rows"] if row.get("state") == memory_candidates.OPEN
@@ -216,7 +287,8 @@ def edit(state_dir, payload) -> str:
     if row is None:
         raise _gone("这条候选")
     if row.get("state") == memory_candidates.SAVED:
-        return "已记下：" + short(row.get("text"))
+        where = f"工作区 {row['workspace']}" if row.get("workspace") else "全局"
+        return f"已记下，记到{where}：" + short(row.get("text"))
     if row.get("state") == memory_candidates.DECLINED:
         return "不用了：" + short(row.get("text"))
     raise ValueError(str(row.get("error") or "这条候选已经处理过了"))
@@ -280,6 +352,6 @@ def _edit(state_dir, kind, rid, payload) -> str:
         if knowledge.clean_text(text) == old["text"] and (kind_ in (None, old["kind"])) and (why is None or knowledge.clean_text(why) == old["why"]):
             return "没有变化"
         entry = knowledge.update(state_dir, rid, text, kind=kind_, why=None if why is None else str(why), reason=EDIT_REASON,
-                                 source=SOURCE, by="main")
+                                 source={**old["source"], "edited_via": "web"}, by=old["by"])  # Where it came from stays.
         return "已保存：" + short(entry["text"])
     raise ValueError("候选不能改，记下以后再改")

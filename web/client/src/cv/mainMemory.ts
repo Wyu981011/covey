@@ -40,9 +40,10 @@ export function scopeOptions(groups: readonly MainMemoryGroup[]): { value: Scope
 }
 
 const matches = (e: MainMemoryEntry, q: string): boolean =>
-  !q || e.text.toLowerCase().includes(q) || (e.why ?? '').toLowerCase().includes(q) || e.origin.toLowerCase().includes(q);
+  !q || e.text.toLowerCase().includes(q) || (e.why ?? '').toLowerCase().includes(q) || e.origin.toLowerCase().includes(q)
+  || (e.quote ?? '').toLowerCase().includes(q) || (e.topic ?? '').toLowerCase().includes(q);
 
-/** 按筛选和搜索留下的组和条目；搜索不分大小写，查正文、原因和来源。组没剩条目时：有搜索词就不列，没有就照列（空组也要能新建） */
+/** 按筛选和搜索留下的组和条目；搜索不分大小写，查正文、原因、来源和原话。组没剩条目时：有搜索词就不列，没有就照列（空组也要能新建） */
 export function filterGroups(groups: readonly MainMemoryGroup[], scope: ScopeFilter, query: string): MainMemoryGroup[] {
   const q: string = query.trim().toLowerCase();
   return groups
@@ -78,9 +79,9 @@ export function roomOf(g: Pick<MainMemoryGroup, 'used' | 'limit' | 'left'>): Roo
 /** 配额一行的说法 */
 export function roomWords(g: Pick<MainMemoryGroup, 'used' | 'limit' | 'left'>): string {
   const room: Room = roomOf(g);
-  if (room === 'full') return `放不下 ${g.left} 条：下一轮不带它们（标灰的）。要一直带上就标常驻，用不着的删掉`;
+  if (room === 'full') return `放不下 ${g.left} 条：下一轮不带它们（标灰的，是最近没用到的）。原则可以标常驻一直带上；用不着的删掉或作废`;
   if (room === 'over') return '常驻的已超过上限，照样都带上；这一组再记的会放不下';
-  if (room === 'near') return '快满了：再记新的，最早的会放不下';
+  if (room === 'near') return '快满了：再记新的，最近没用到的会放不下';
   return '下一轮都带上';
 }
 
@@ -95,6 +96,12 @@ export function kindLabel(e: Pick<MainMemoryEntry, 'kind' | 'knowledge_kind'>, k
   return k ? `知识 · ${k.text}` : '知识';
 }
 
+/** 行上的字数：正文自己的字数（和编辑框里数的一样）；旧版 Covey 没推 size 就按正文数 */
+export const sizeOf = (e: Pick<MainMemoryEntry, 'text' | 'size'>): number => (typeof e.size === 'number' ? e.size : charCount(e.text));
+
+/** 行上字数的说明：正文几字，占这一组额度几字（额度还算编号、标注） */
+export const sizeTitle = (e: Pick<MainMemoryEntry, 'text' | 'size' | 'chars'>): string => `正文 ${sizeOf(e)} 字；占这一组的额度 ${e.chars} 字（额度还算每条的编号和标注）`;
+
 /** 谁说的 */
 export const byWords = (by: MainMemoryEntry['by']): string => (by === 'owner' ? '你说的' : '它总结的');
 
@@ -108,6 +115,15 @@ export function whenWords(at: number, now: number = Date.now() / 1000): string {
   if (d.getFullYear() === n.getFullYear()) return `${d.getMonth() + 1}/${d.getDate()}`;
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
 }
+
+/** 页面级回执：办好的操作回给主人的一句话，条目可能已经从列表里消失，所以挂在列表上方 */
+export interface Notice {
+  id: number;
+  message: string;
+}
+
+/** 办好了要在页面上方留回执的操作：行会消失或换 id 的（删、作废、记下、不用、改、新建）；常驻只在行上写 */
+export const noticeAction = (payload: Pick<MemoryEditPayload, 'action'>): boolean => payload.action !== 'pin' && payload.action !== 'unpin';
 
 /** 新建一条的载荷 */
 export function addPayload(what: 'principle' | 'knowledge', scope: string, text: string, knowledgeKind = 'fact', why = ''): MemoryEditPayload {

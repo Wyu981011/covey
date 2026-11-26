@@ -159,6 +159,61 @@ class EditTests(StateCase):
             self.edit(action="edit", key="candidate:c0123abcd", text="x")
 
 
+class T852Tests(StateCase):
+    def test_a_knowledge_entry_is_pushed_as_its_own_words_and_the_page_can_edit_it(self):
+        k, _ = knowledge.save(self.state, knowledge.OWNER, "decision", "周报每周一早上发", why="主人定的")
+        row = self.group(web_memory.view(self.state))["entries"][0]
+        self.assertEqual((row["text"], row["knowledge_kind"], row["why"]), ("周报每周一早上发", "decision", "主人定的"))
+        self.assertNotIn("原因", row["text"])
+        self.assertEqual(row["size"], len("周报每周一早上发"))
+        self.assertGreater(row["chars"], row["size"])  # The room a line uses: the number and the speaker around it count too.
+        for change, want in ((dict(text="周报每周二早上发"), ("周报每周二早上发", "decision", "主人定的")),
+                             (dict(text="周报每周二早上发", knowledge_kind="fact"), ("周报每周二早上发", "fact", "主人定的")),
+                             (dict(text="周报每周二早上发", why="改了日子"), ("周报每周二早上发", "fact", "改了日子"))):
+            row = self.group(web_memory.view(self.state))["entries"][0]
+            self.assertTrue(self.edit(action="edit", key=row["key"], base=row["text"], **change).startswith("已保存"))
+            now = self.group(web_memory.view(self.state))["entries"][0]
+            self.assertEqual((now["text"], now["knowledge_kind"], now["why"]), want)
+
+    def test_editing_an_entry_keeps_where_it_came_from(self):
+        k, _ = knowledge.save(self.state, knowledge.OWNER, "fact", "测试机在 3 楼", source={"topic": "T83", "job_key": "j1"}, by="topic")
+        self.edit(action="edit", key=f"knowledge:{k['id']}", text="测试机在 5 楼", base="测试机在 3 楼")
+        row = self.group(web_memory.view(self.state))["entries"][0]
+        self.assertEqual((row["origin"], row["topic"]), ("话题 T83 里记的", "T83"))
+
+    def test_origin_says_what_the_source_says(self):
+        cases = [({"via": "web"}, "", "网页上记的", "", ""),
+                 ({"via": "settings_card", "from": "p1"}, "", "设置卡里升为全局的", "", ""),
+                 ({"by": "memory_learn", "job_key": "none", "quote": "以后回复先给结论"}, "", "自动学习记的", "以后回复先给结论", ""),
+                 ({"by": "memory_candidates", "topics": []}, "", "晚间候选里记下的", "", ""),
+                 ({"topic": "T83", "job_key": "j", "job_id": 4}, "topic", "话题 T83 里记的", "", "T83"),
+                 ({"job_key": "j", "job_id": 4}, "main", "管家记的", "", ""),
+                 ({}, "", "", "", "")]
+        for source, by, words, quote, topic in cases:
+            found = web_memory.origin_of(source, by, self.state)
+            self.assertEqual((found["origin"], found["quote"], found["topic"]), (words, quote, topic), source)
+
+    def test_origin_reads_the_topic_number_of_the_job_and_of_candidate_topics(self):
+        write_json(self.state / "topics" / "t1" / "topic.json", {"topic_number": 586})
+        write_json(self.state / "topics" / "t2" / "topic.json", {"topic_number": 488})
+        found = web_memory.origin_of({"by": "memory_candidates", "topics": ["t1", "t2", "gone"]}, "", self.state)
+        self.assertEqual((found["origin"], found["topic"]), ("晚间候选里记下的（话题 T586、T488）", "T586、T488"))
+
+    def test_rows_carry_their_origin_quote_in_the_view(self):
+        principles.save(self.state, principles.OWNER, "回复先给结论", source={"by": "memory_learn", "quote": "我说过很多次了，先给结论"})
+        principles.save(self.state, principles.OWNER, "网页上记的一条", source=web_memory.SOURCE)
+        rows = {r["text"]: r for r in self.group(web_memory.view(self.state))["entries"]}
+        self.assertEqual((rows["回复先给结论"]["origin"], rows["回复先给结论"]["quote"]), ("自动学习记的", "我说过很多次了，先给结论"))
+        self.assertEqual((rows["网页上记的一条"]["origin"], rows["网页上记的一条"]["quote"]), ("网页上记的", ""))
+
+    def test_a_kept_candidate_says_where_it_was_kept(self):
+        rows = [{"id": "c0123abcd", "text": "以后先跑测试再提交", "workspace": "docs", "slot": "s", "at": 100.0, "state": "open"},
+                {"id": "c0123abce", "text": "别再用英文回复", "workspace": "", "slot": "s", "at": 99.0, "state": "open"}]
+        write_json(memory_candidates.path(self.state), {"schema": 1, "rows": rows, "declined": []})
+        self.assertIn("记到工作区 docs", self.edit(action="keep", key="candidate:c0123abcd"))
+        self.assertIn("记到全局", self.edit(action="keep", key="candidate:c0123abce"))
+
+
 class OpTests(StateCase):
     def ops(self, owner=True):
         runtime = SimpleNamespace(owner_open_id="ou_owner", access=SimpleNamespace(is_owner=lambda open_id: owner))

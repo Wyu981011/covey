@@ -72,6 +72,10 @@
 .cv .mm2-text{margin:0;font-size:14px;line-height:1.7;color:var(--t1);overflow-wrap:anywhere;white-space:pre-wrap}
 .cv .mm2-text mark,.cv .mm2-why mark{background:color-mix(in srgb,var(--a1) 28%,transparent);color:inherit;border-radius:3px;padding:0 1px}
 .cv .mm2-why{margin:2px 0 0;font-size:12.5px;line-height:1.6;color:var(--t2)}
+.cv .mm2-quote{margin:3px 0 0;font-size:12.5px;line-height:1.6;color:var(--t2);overflow-wrap:anywhere}
+.cv .mm2-notice{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:10px;border:1px solid color-mix(in srgb,var(--done) 35%,transparent);background:color-mix(in srgb,var(--done) 9%,var(--s1));color:var(--t1);font-size:13px;line-height:1.5}
+.cv .mm2-notice svg{width:15px;height:15px;flex:none;color:var(--done)}
+.cv .mm2-notice span{flex:1;min-width:0;overflow-wrap:anywhere}
 .cv .mm2-meta{display:flex;flex-wrap:wrap;gap:0 10px;margin-top:4px;font-size:12px;color:var(--t3)}
 .cv .mm2-meta span{white-space:nowrap}
 .cv .mm2-meta span+span::before{content:'·';margin-right:10px;color:var(--line2)}

@@ -79,3 +79,22 @@ test('标签、谁说的、时间、下拉选项', () => {
   assert.deepEqual(M.previewOptions({ default: 'web', previews: { docs: {}, web: {} } }), ['web', 'docs']);
   assert.deepEqual(M.placeOptions({ default: 'web', workspaces: ['docs', 'web'] }).map((o) => o.value), ['global', 'w:web', 'w:docs']);
 });
+
+test('知识条目：正文、编辑的 base 都是存的纯正文；行上字数和编辑框同一个数，额度另说清楚（T852）', () => {
+  const k = entry('knowledge:k000002', '周报每周一发', { knowledge_kind: 'decision', why: '主人定的', chars: 38, size: 6 });
+  assert.equal(M.editPayload(k, '周报每周二发', 'decision', '主人定的').base, '周报每周一发');
+  assert.equal(M.edited(k, '周报每周一发', 'decision', '主人定的'), false);
+  assert.equal(M.sizeOf(k), 6);
+  assert.equal(M.sizeOf({ text: '先给 结论', chars: 40 }), 5);  // 旧版 Covey 不推 size：按正文数
+  assert.match(M.sizeTitle(k), /正文 6 字.*额度 38 字/u);
+  assert.equal(M.filterGroups([{ ...groups[0], entries: [entry('principle:p000009', '先给结论', { quote: '我说过很多次，先给结论', topic: 'T83' })] }], 'all', 'T83')[0].entries.length, 1);
+  assert.equal(M.filterGroups([{ ...groups[0], entries: [entry('principle:p000009', '先给结论', { quote: '我说过很多次，先给结论' })] }], 'all', '很多次').length, 1);
+});
+
+test('说明和真实算法一致：放不下的是最近没用到的，原则才能标常驻；删、记下、不用在页面上方留回执，常驻只写在行上（T852）', () => {
+  assert.doesNotMatch(M.roomWords(groups[1]), /最早/u);
+  assert.match(M.roomWords(groups[1]), /最近没用到/u);
+  assert.match(M.roomWords(groups[1]), /原则可以标常驻/u);
+  for (const action of ['delete', 'keep', 'drop', 'edit', 'add']) assert.equal(M.noticeAction({ action }), true);
+  for (const action of ['pin', 'unpin']) assert.equal(M.noticeAction({ action }), false);
+});
