@@ -150,6 +150,32 @@ class OpenTest(ButlerTopicsCase):
         self.assertEqual(self.app.messenger.create_and_send_card.call_count, cards + 1)
         self.assertIn("这一轮已经开过独立复核", self.said()[-1])
 
+    def test_a_topic_with_write_repositories_is_reviewed_per_repository(self):
+        tree = self.ctx.state_dir / "wt-covey"
+        tree.mkdir()
+        other = self.ctx.state_dir / "docs-repo"
+        other.mkdir()
+        source = load_topic(self.ctx.state_dir, self.source)
+        source["repos"] = [{"name": "covey", "path": str(self.ctx.state_dir), "mode": "write", "worktree": str(tree),
+                            "branch": "ovh/w1"},
+                           {"name": "docs", "path": str(other), "mode": "read"}]
+        write_json(self.ctx.state_dir / "topics" / self.source / "topic.json", source, ensure_ascii=False, indent=2)
+        self.app.review.open(self.ctx, self.click, self.raw)
+        job, record = self.opened()
+        self.assertIn(f"- covey：{tree}（分支 ovh/w1）", job.prompt_text)
+        self.assertNotIn("docs-repo", job.prompt_text)  # A read repository is not reviewed.
+        self.assertNotIn("工作区：", job.prompt_text)
+        saved = json.loads(review.record_path(self.ctx.state_dir, review.token_of(self.source, self.job_id)).read_text())
+        self.assertEqual(saved["plan"]["repos"], [{"name": "covey", "dir": str(tree), "branch": "ovh/w1"}])
+
+    def test_a_topic_without_repositories_is_reviewed_as_before(self):
+        self.app.review.open(self.ctx, self.click, self.raw)
+        job, _ = self.opened()
+        self.assertIn("工作区：", job.prompt_text)
+        self.assertNotIn("repos", json.loads(review.record_path(
+            self.ctx.state_dir, review.token_of(self.source, self.job_id)).read_text())["plan"])
+
+
     def test_a_first_turn_the_queue_refuses_is_said_and_a_click_again_tries_again(self):
         target = self.app.apps
         with mock.patch.object(type(next(iter(target.values())).submission), "enqueue_chat_job", return_value=None):

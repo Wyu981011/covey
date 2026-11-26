@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import shutil
 import stat
@@ -18,7 +19,7 @@ from unittest import mock
 
 from support import REPO, exec_tempdir
 
-from covey.core import app_manifest, butler_settings, qr, switches, welcome
+from covey.core import app_manifest, butler_settings, home, qr, switches, welcome
 from covey.core import env as cenv
 from covey.service import install_probe, installer, web_selfhost
 from covey.service.install_probe import Probe
@@ -329,7 +330,7 @@ class FlowTest(InstallerCase):
         ins = installer.Installer(args, env=self.env(), say=self.lines.append, interactive=False)
         with mock.patch.object(Path, "cwd", return_value=REPO):
             ins.check_environment()
-        self.assertEqual(self.data / "workspace", ins.workdir)
+        self.assertEqual(self.data / "home", ins.workdir)
 
 
 class ProxyTest(InstallerCase):
@@ -985,7 +986,7 @@ class UpgraderTest(InstallerCase):
 
 class WorkspaceTest(InstallerCase):
     """D1 (T647): in the checkout without --workdir a terminal run asks once where new topics work; Enter (or a directory that
-    is not there, twice) keeps <data>/workspace, which gets the guide (core/welcome.py GUIDE) while it is empty; a re-run
+    is not there, twice) keeps <data>/home, which is seeded (core/home.py seed_home) while it is empty; a re-run
     keeps the workspace the last run registered (install.json); a project directory is never written to."""
 
     def check(self, *, interactive, answers=(), here=REPO, argv=()):
@@ -1007,7 +1008,7 @@ class WorkspaceTest(InstallerCase):
         self.assertEqual((ins.workdir, len(asked)), (project.resolve(), 1))
         self.assertIn("新话题默认在哪个目录干活", asked[0])
         self.assertEqual(list(project.iterdir()), [])  # Nothing is written into a project.
-        self.assertFalse((self.data / "workspace").exists())
+        self.assertFalse((self.data / "home").exists())
 
     def test_enter_or_a_missing_directory_twice_keeps_the_new_workspace_with_its_guide(self):
         for number, answers in enumerate(([""], ["/absolute/nowhere", "/absolute/nowhere-either"])):
@@ -1015,8 +1016,9 @@ class WorkspaceTest(InstallerCase):
                 self.data = self.root / f"data-{number}"
                 self.lines.clear()
                 ins, asked = self.check(interactive=True, answers=answers)
-                self.assertEqual((ins.workdir, len(asked)), (self.data / "workspace", len(answers)))
-                self.assertTrue((ins.workdir / welcome.GUIDE).read_text().startswith(welcome.GUIDE_TITLE))
+                self.assertEqual((ins.workdir, len(asked)), (self.data / "home", len(answers)))
+                self.assertTrue(home.seeded(ins.workdir))
+                self.assertTrue((ins.workdir / "AGENTS.md").is_file())
                 self.assertTrue(welcome.bare_workspace(ins.workdir))
                 self.assertIn("「设置」→「工作区」", self.text())
                 self.assertIn("--workdir", self.text())
@@ -1024,7 +1026,7 @@ class WorkspaceTest(InstallerCase):
 
     def test_no_terminal_asks_nothing_and_a_rerun_keeps_the_workspace_it_registered(self):
         ins, asked = self.check(interactive=False)
-        self.assertEqual((asked, ins.workdir), ([], self.data / "workspace"))
+        self.assertEqual((asked, ins.workdir), ([], self.data / "home"))
         project = self.root / "proj"
         project.mkdir()
         (self.data / "install.json").write_text(json.dumps({"workdir": str(project)}))
@@ -1036,13 +1038,31 @@ class WorkspaceTest(InstallerCase):
         ins, asked = self.check(interactive=False, here=project)  # Outside the checkout: the current directory.
         self.assertEqual((asked, ins.workdir), ([], project))
 
-    def test_a_workspace_with_anything_in_it_gets_no_guide(self):
-        folder = self.data / "workspace"
+    def test_a_home_with_anything_in_it_is_taken_over_and_written_nothing(self):
+        folder = self.data / "home"
         folder.mkdir(parents=True)
         (folder / "notes.txt").write_text("mine")
         self.check(interactive=False)
         self.assertEqual(sorted(p.name for p in folder.iterdir()), ["notes.txt"])
-        self.assertNotIn("README.md", self.text())
+        self.assertNotIn("AGENTS.md", self.text())
+
+    def test_an_old_deployment_keeps_its_registered_workspace_unseeded(self):
+        old = self.root / "old-workspace"
+        old.mkdir()
+        (self.data).mkdir(parents=True, exist_ok=True)
+        (self.data / "install.json").write_text(json.dumps({"workdir": str(old)}))
+        ins, _ = self.check(interactive=False)
+        self.assertEqual(ins.workdir, old)
+        self.assertEqual(list(old.iterdir()), [])
+        self.assertFalse((self.data / "home").exists())
+
+    def test_the_run_writes_the_covey_shim_into_the_data_root(self):
+        (self.fake / "phone").touch()
+        self.lacking.clear()
+        self.assertEqual(0, self.make("--no-start").run(), self.text())
+        shim = self.data / "bin" / "covey"
+        self.assertTrue(shim.is_file() and shim.stat().st_mode & 0o100)  # Executable (os.access says no on a noexec test directory).
+        self.assertIn(str(installer.REPO_ROOT), shim.read_text())
 
 
 class StopTest(InstallerCase):

@@ -149,6 +149,37 @@ class RuleTests(Records, unittest.TestCase):
         self.job("jb", 2, "done", "b", workspace_name="y")
         self.assertEqual([c for c in self.find() if c.kind == "group"], [])
 
+    def repo_topic(self, topic_id, number, title, repo, **more):
+        write_topic(self.state, {"topic_number": number, "origin": {"title": title}, "home_start": True,
+                                 "repos": [{"name": "r", "path": str(repo), "mode": "write"}], **more}, topic_id=topic_id)
+
+    def test_topics_sharing_a_repository_are_one_matter_whatever_their_workspace(self):
+        repo = self.state / "repo"
+        (repo / ".git").mkdir(parents=True)
+        elsewhere = self.state / "elsewhere"
+        (elsewhere / ".git").mkdir(parents=True)
+        self.repo_topic("a", 1, "发布流程", repo)
+        self.repo_topic("b", 2, "流程发布", repo)
+        self.repo_topic("c", 3, "发布流程", elsewhere)  # Alike title, another repository.
+        for topic, number in (("a", 1), ("b", 2), ("c", 3)):  # The same workspace name: the home, not a matter.
+            self.job(f"j{topic}", number, "done", topic, workspace_name="home", timings={"execution_finished": self.now - 60})
+        found = [candidate for candidate in self.find() if candidate.kind == "group"]
+        self.assertEqual([c.topics for c in found], [("a", "b")])
+
+    def test_a_topic_that_shares_a_repository_with_a_project_s_topic_joins_with_one_word(self):
+        repo = self.state / "repo"
+        (repo / ".git").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"COVEY_PROJECTS": "1"}):
+            self.repo_topic("m", 1, "别的事", repo)
+            self.job("jm", 1, "done", "m", workspace_name="home")
+            self.project("proj001", "发布流程改造", goal="把发布流程文档化", threads=["m"])
+            self.repo_topic("a", 2, "发布", repo)
+            self.job("ja", 2, "done", "a", workspace_name="home")
+            self.repo_topic("b", 3, "发布", self.state / "none")
+            self.job("jb", 3, "done", "b", workspace_name="home")
+            found = [candidate for candidate in self.find() if candidate.kind == "join"]
+            self.assertEqual([c.key for c in found], ["join:a"])
+
     def test_the_butlers_topic_and_a_projects_topics_are_not_grouped(self):
         projects_on = {"COVEY_PROJECTS": "1"}
         with mock.patch.dict(os.environ, projects_on):

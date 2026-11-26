@@ -8,6 +8,7 @@ automatically: the caller's checkpoint-aware retry owns that decision.
 
 from __future__ import annotations
 
+import json
 import logging
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from covey.backends.codex.rpc import AppServer, RpcError, failed
 from covey.backends.codex.turn import close_turn, paused_question_end, read_turn
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.backends.codex import consult
+from covey.core import repomap, topic_repos
 from covey.core.harness import CONSULT, LEAD, LOOK, PROXY, READ, TOOL_LIMIT, JobCancelled, RunResult
 from covey.core.paths import entry_script
 from covey.core.process import device_of
@@ -85,6 +87,44 @@ def sandbox_mode(ctx) -> str:
     return str(ctx.options.get("sandbox") or "danger-full-access")
 
 
+def _topic_data(ctx) -> dict:
+    try:
+        data = json.loads((ctx.history_path.parent / "topic.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def repo_roots(ctx, data=None) -> list:
+    """The writable roots a ``workspace-write`` turn gets for the repositories (core/topic_repos.py ``writable_roots``):
+    its task's run directory, the topic's worktrees directory (made now, so a worktree ``covey repo use --write`` makes
+    this turn is inside it) and each repository the topic writes to (its ``.git``; in place, the repository). Fixed when
+    the turn starts: a repository first asked for in this turn is writable from the next. [] when unreadable."""
+    data = _topic_data(ctx) if data is None else data
+    number = data.get("topic_number") if type(data.get("topic_number")) is int else 0
+    # The worktrees directory of a topic that starts in the home or uses repositories: no empty one for every other topic.
+    trees = ctx.topic_id and (data.get("home_start") is True or bool(data.get("repos")))
+    try:
+        repos = repomap.read(ctx.state_dir)
+        return topic_repos.writable_roots(data, task_dir=topic_repos.task_dir_of(ctx.state_dir),
+                                          worktrees=topic_repos.topic_worktrees(number, ctx.topic_id) if trees else None,
+                                          frozen=[repo.path for repo in repos if repo.status != "active"],
+                                          inplace=[repo.path for repo in repos if repo.write_mode == "inplace"])
+    except Exception:  # noqa: BLE001 - the turn starts with its checkpoints writable, as before
+        return []
+
+
+def reader_roots(ctx, data) -> list:
+    """The workspace reader's ``--extra-root`` for the topic's repositories outside its workdir (a worktree under a data
+    root that is not in the home): each repository's directory the topic works in."""
+    base = str(ctx.workdir).rstrip("/") + "/"
+    try:
+        return [where for where in dict.fromkeys(topic_repos.where(repo) for repo in topic_repos.of_topic(data))
+                if not (where + "/").startswith(base)]
+    except Exception:  # noqa: BLE001 - the reader keeps its roots as before
+        return []
+
+
 def thread_params(ctx, session_id, instructions="", process=None):
     """The thread/start, thread/resume or thread/fork parameters of this turn, and the session it
     forks (None unless a new topic forks one). Codex keeps the developer instructions a thread
@@ -103,12 +143,17 @@ def thread_params(ctx, session_id, instructions="", process=None):
     else:
         cwd = str(ctx.workdir)
         writable = [str(ctx.state_dir / "checkpoints")]
+        data = _topic_data(ctx)
+        if sandbox_mode(ctx) == "workspace-write":
+            writable += repo_roots(ctx, data)
         command = sys.executable
         # Attachments of this topic are downloaded outside the workspace, and so is
         # the transcript a model switch hands over (app/switch_handoff.py).
         args = ["-B", str(entry_script("covey_workspace_reader.py")), "--root", str(ctx.workdir),
                 "--extra-root", str(ctx.history_path.parent / "incoming_media"),
                 "--extra-root", str(ctx.history_path.parent / "handoff")]
+        for root in reader_roots(ctx, data):
+            args += ["--extra-root", root]
     params = {
         "model": ctx.model,
         "cwd": cwd,

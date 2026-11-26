@@ -1,5 +1,10 @@
 """Local allowlist and immutable topic workspace bindings. LOCK and topic_lock live in core/locks.py
-and the topic.json helpers in core/topics.py; the names stay importable from here."""
+and the topic.json helpers in core/topics.py; the names stay importable from here.
+
+A compatibility layer since the home (core/home.py) and the repo map (core/repomap.py): a topic that starts in the home
+names the repositories it uses instead of a workspace, and a repository's worktree is made by ``covey repo use --write``
+(core/repomap.py ``worktree_for``). The workspace list is still read for the topics bound to one, the launch card's
+older choices and a device's ``alias:/path`` values, and it is where the repo map is first made from."""
 
 from __future__ import annotations
 

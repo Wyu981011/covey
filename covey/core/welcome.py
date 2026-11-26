@@ -9,9 +9,10 @@
   (never sent again), SKIPPED.
 - ``first_answer``: how far the owner's private chat has got, from its job records, for ./install's wait
   (docs/install.md 第一个回答).
-- The default workspace ./install makes when none is given (<data>/workspace) starts empty: ``seed_workspace`` writes
-  GUIDE into it (what it is, how to put a project in its place), so the card's examples have something to read, and
-  ``bare_workspace`` tells the welcome card it still holds nothing else (app/welcome.py, cards/welcome.py).
+- The default home ./install makes when none is given (<data>/home) starts with the few files ``core/home.py seed_home``
+  writes (AGENTS.md says what it is and where a project goes), so the card's examples have something to read, and
+  ``bare_workspace`` tells the welcome card it holds nothing else (app/welcome.py, cards/welcome.py). ``seed_workspace``
+  is the old name of that seeding.
 
 Standard library and core only (./install reads it).
 """
@@ -30,8 +31,10 @@ OWNER_CHAT = "owner-chat.json"  # app/access.py OWNER_CHAT: the owner's private 
 # first_answer's stages, in the order a first message goes through them.
 NONE, RECEIVED, LAUNCH, STOPPED, ANSWERED = "none", "received", "launch", "stopped", "answered"
 REPLIED = frozenset({"done", "waiting_user", "continued"})  # A turn that ended with its reply (or its question) sent.
-GUIDE = "README.md"  # What seed_workspace writes into an empty default workspace; its first line is GUIDE_TITLE.
+GUIDE = "README.md"  # What an older ./install wrote into an empty default workspace; its first line is GUIDE_TITLE.
 GUIDE_TITLE = "# 默认工作区"
+# What a home Covey made holds before any project is put in it (core/home.py seed_home, core/repomap.py repos.md).
+SEEDED = frozenset({".covey-home", "AGENTS.md", "CLAUDE.md", ".ignore", ".skills", ".claude", ".agents", "tasks", "repos.md"})
 GUIDE_TEXT = f"""{GUIDE_TITLE}
 
 这是 Covey 装好时建的默认工作区：没指定工作区的新话题在这里干活。现在这里只有这份说明。
@@ -125,31 +128,33 @@ def first_answer(state_dir) -> str:
 
 
 def seed_workspace(path) -> bool:
-    """GUIDE written into the directory ``path`` when it holds nothing (./install's new default workspace); whether it was.
-    Never raises: a workspace that cannot be read or written is left as it is."""
+    """``home.seed_home`` on the directory ``path`` when it holds nothing (./install's new default home); whether it wrote
+    anything. Never raises: a directory that cannot be read or written, or is not there, is left as it is."""
+    from covey.core import home
+
     folder = Path(path)
     try:
-        with os.scandir(folder) as found:
-            if next(found, None) is not None:
-                return False
-        (folder / GUIDE).write_text(GUIDE_TEXT)
+        if not folder.is_dir():
+            return False
+        return bool(home.seed_home(folder))
     except OSError:
         return False
-    return True
 
 
 def bare_workspace(path) -> bool:
-    """Whether the directory ``path`` holds nothing, or nothing but the GUIDE seed_workspace wrote: no project in it yet.
-    False when it cannot be read (the welcome card then says nothing about it)."""
+    """Whether the directory ``path`` holds nothing, or nothing but what ``seed_home`` writes (or the GUIDE an older
+    ./install wrote): no project in it yet. False when it cannot be read (the welcome card then says nothing about it)."""
+    from covey.core import home
+
     folder = Path(path)
     try:
         with os.scandir(folder) as found:
-            names = [entry.name for _, entry in zip(range(2), found)]
+            names = {entry.name for entry in found}
         if not names:
             return True
-        if names != [GUIDE]:
-            return False
-        with open(folder / GUIDE, errors="replace") as guide:
-            return guide.readline().rstrip("\n") == GUIDE_TITLE
+        if names == {GUIDE}:
+            with open(folder / GUIDE, errors="replace") as guide:
+                return guide.readline().rstrip("\n") == GUIDE_TITLE
+        return home.seeded(folder) and names <= SEEDED
     except OSError:
         return False

@@ -19,7 +19,7 @@ import dataclasses
 import shlex
 from typing import Any
 
-from covey.core import extensions
+from covey.core import extensions, home
 from covey.core.harness import BackendRuntime, HarnessCapabilities, HARNESS_REGISTRY, for_device
 
 from covey.core.process import device_of
@@ -137,6 +137,7 @@ class ClaudeBackend(BackendRuntime):
         """The Bridge's environment for a claude child, with the gateway's models unless the Bridge's
         environment names its own value; the compaction window only when configured."""
         env = child_process_env(ctx.workdir, device=process_device(ctx))
+        env.update(home.env(ctx))  # COVEY_HOME, COVEY_TOPIC, COVEY_STATE and <数据根>/bin on PATH (core/home.py).
         env.setdefault(GATEWAY_MODELS_ENV, "1")
         # Every turn backs up the files it edits, so ↩️ 回退 can put them back (backends/claude/rewind.py).
         env.setdefault(rewind.FILE_CHECKPOINTS_ENV, "1")

@@ -365,13 +365,20 @@
 
 `COVEY_GROUP_MEMBERS=read`：没在群聊卡上选过的群也按只读（启用确认卡照这个写）；不设或别的值是 `full`，和以前一样。卡上选过的以卡上为准。日志：`group chat=… member_mode=…`、每轮 `turn limit job=#N limit=read`。
 
-### 主目录与仓库地图（开发中）
+### 主目录与仓库地图
 
-全量改造（工作区下线、一律从主目录启动）的配置先在这里占位，落地前这些都不改变现有行为：
+主目录就是服务的 `--workdir`（参数名不变）。话题记录里写着 `home_start` 的话题从主目录启动（`core/topics.py` 的 `bind_home`）；之前开的话题照它的 `workdir` 跑，规则里照旧是工作区那一段。
 
-- 主目录就是服务的 `--workdir`，参数名不变。话题一律从主目录启动；`<状态目录>/home.json`（`core/home.py`）放话题产物目录和会话目录的模板、要不要把缓存变量指到产物目录，不写时用默认值。
-- 仓库地图 `<状态目录>/repos.json`（`core/repomap.py`）：每个仓库的名字、路径、用途、状态（`active`、`readonly`、`frozen`）和写入方式（`worktree` 建本话题的 worktree，`inplace` 原地改；新装默认 `inplace`）。`<状态目录>/repos.md` 由它渲染，只读。
-- Bridge 将给 Harness 进程设 `COVEY_HOME`（主目录）、`COVEY_TOPIC`（话题 id）、`COVEY_STATE`（状态目录），`PATH` 前面加 `<数据根>/bin`，让 `covey repo`（`bin/covey_repo.py`）找到上下文；任务目录沿用已有的 `COVEY_TASK_DIR`。`covey repo use --write` 只写本任务的 `runs/<任务键>/repos.json`（`core/run_dir.py` 的 `REPOS`）。
+- **主目录**（`core/home.py`）：接管的已有目录（你装之前就有的）一个文件都不写；Covey 新建的主目录（新装默认 `<数据根>/home`，`seed_home`）有一份不超过 60 行的 `AGENTS.md`（同样内容的 `CLAUDE.md`）、`.ignore`、`.skills/`（`.claude/skills`、`.agents/skills` 指向它）和 `tasks/{sessions,runs,shared}/`，另有标记文件 `.covey-home`。
+- **`<状态目录>/home.json`**：话题产物目录和会话目录的模板（`runs_template`、`sessions_template`，变量 `{home} {date} {no} {slug} {topic8} {run}`）、`run_scope`（`topic_day` 同一话题同一天共用一个运行目录，`turn` 每轮一个）、`cache_env`（`true` 时 Harness 进程的 `TMPDIR`、`XDG_CACHE_HOME`、`PIP_CACHE_DIR`、`UV_CACHE_DIR`、`npm_config_cache` 指到运行目录的 `tmp/`、`cache/`，写不进就不设，不悄悄退回 `/tmp`）。有这个文件时话题规则里才写“本话题产物目录”；Covey 新建的主目录第一次启动时写默认值，接管的目录不写（产物放哪由它自己的 `AGENTS.md` 说）。
+- **仓库地图** `<状态目录>/repos.json`（`core/repomap.py`，唯一来源）：每个仓库的名字、路径、用途、状态（`active`；`readonly`、`frozen` 不能改）、写入方式（`worktree` 按话题建 worktree，`inplace` 原地改；Covey 新建的主目录默认 `inplace`，接管的默认 `worktree`）、默认分支、规范文件。第一次启动从旧的工作区列表（`workspace-config.json`，用途取 `main-thread.json` 的 `workspace_notes`，写着“冻结”的记成 `frozen`）和主目录下一层的 git 仓库（`.git` 是目录的；`.git` 是文件的是 worktree，不列）生成，旧文件保留。话题碰过、地图里没有的主目录下的仓库，一轮结束时补进来（数据根和 `exclude` 里的目录除外）。`repos.md` 由它渲染、不要手改：Covey 新建的主目录放主目录里，接管的放 `<状态目录>/repos.md`。
+- **环境变量**：每个 Harness 进程（本机的，设备上的不给）都有 `COVEY_HOME`（主目录）、`COVEY_TOPIC`（话题 id）、`COVEY_STATE`（状态目录），`PATH` 最前面是 `<数据根>/bin`；任务目录沿用 `COVEY_TASK_DIR`。`<数据根>/bin/covey` 是转发壳（`covey repo …` 到 `bin/covey_repo.py`，`covey memory …` 到 `bin/covey_memory.py`），安装和每次部署（`scripts/deploy_bridge.sh`）时写成指向新 release。
+- **`covey repo`**：`list`（地图，标出本话题用到的）、`use <仓库|路径> [--write]`、`status`（本话题用到的仓库、目录、分支、没提交的改动）、`prune-plan [--legacy <目录>]`，都可加 `--json`。`use` 打印仓库目录和它的规范文件开头（`AGENTS.md`/`CLAUDE.md`，至多 4 KB），只写本任务的 `runs/<任务键>/repos.json`（`core/run_dir.py` 的 `REPOS`），一轮结束时 Bridge 把它并进话题记录。
+- **worktree**：`use --write` 在 `<数据根>/worktrees/T<号>-<话题 id 前 8 位>/<仓库>/` 建或复用本话题的 worktree，分支 `topic/T<号>-<id8>`，从远端主干开（`git fetch` 至多 20 秒，取不到用本地主干），同一话题同一仓库加锁，不会建两次；`git worktree add` 中途失败时删掉它刚建的分支。基线提交（`base_oid`）记进 `repos.json`，这一轮的改动对比从它算。`inplace` 的仓库不建 worktree，直接在仓库里改；`readonly`、`frozen` 的仓库 `--write` 被拒。
+- **每轮提示**：从主目录启动的话题，系统规则里是主目录、仓库地图路径和主目录的规矩（话题内不变，能命中缓存）；每轮在消息末尾列本话题用到的仓库和规范读没读（`app/repos_turn.py`）。管家或负责人点名的仓库，第一轮就把规范开头（至多 4 KB）放进消息；某一轮改了一个仓库却没读它的规范，下一轮也放；改到了仓库的主检出（不是本话题的 worktree），下一轮提醒改用 worktree。之前开的话题不列仓库清单，但后两条照样有（它自己 `workdir` 所在的仓库除外：那是它原来的工作方式）。一轮的结果发出之前，Bridge 把它用到的仓库并进话题记录，下一轮读得到。
+- **改动对比**：一轮开始前对话题要写的每个仓库（它的 worktree，或原地改的仓库；worktree 还没建的不拍主检出）各拍一次快照；这一轮中途新建的 worktree 从它的 `base_oid` 算（复用的不算，之前留下的改动不归这一轮）；写过却没有基线的仓库只列文件名，不出 git diff（`core/diff.py`）。别的话题的 worktree 不会记成本话题的。
+- **Codex 的沙箱**：`workspace-write` 时可写根除检查点目录外，还有本任务的运行目录、`<数据根>/worktrees/T<号>-<id8>`（开轮前先建好）和本话题要写的每个仓库的 `.git`（原地改的连仓库本身）。可写根在一轮开头定下：这一轮才用 `covey repo use --write` 声明的仓库，下一轮才进可写根，命令会这样提示。`danger-full-access` 不受影响。数据根在主目录里面时，worktree 本来就在 Codex 能写的范围里。
+- **清理**：按话题分目录后旧的 worktree 不自动删。`covey repo prune-plan [--legacy <目录>]` 只读，列出每个 worktree 干不干净、合没合进主干、多久没动，以及清理用的命令（干净、已合入、一天没动的才给），不执行。
 - 记忆的同义词表 `<状态目录>/memory/synonyms.json` 可选，和核心自带的通用表合并。
 
 ### 多设备（开发中，默认关）
@@ -397,6 +404,7 @@
 | `control_dir` | ssh 主连接套接字放的本地目录：绝对路径，不放网络盘，最长 41 字节（Unix 套接字路径有长度上限，太长时配置报错）。不写用 `/tmp/covey-ssh-<uid>` |
 | 设备别名 | `devices` 的键，`[a-z][a-z0-9-]{0,23}`。工作区写成 `别名:路径`，例如 `gpu1:/home/me/proj`、`gpu1:~/work`（`~` 是设备上的家目录） |
 | `title` | 卡片上显示的名字，默认就是别名 |
+| `home` | 可选，设备上的主目录：`/` 开头的绝对路径，或 `~`、`~/…`（`~` 是设备上的家目录，不在 Bridge 这边展开）。不写时照旧 |
 | `ssh.host` | `~/.ssh/config` 里的别名或 `user@host`。不能有空格，不能以 `-` 开头 |
 | `ssh.options` | 追加的 ssh 参数（`-J` 跳板、`-p`、`-i` 等）。Covey 自己的选项排在前面，这里改不掉它们 |
 | `ssh.python` | 设备上的解释器，默认 `python3`（3.9 起） |
@@ -578,10 +586,10 @@
 | `COVEY_MANAGED` | `app/unified.py` | Manager 启动 Bridge 时设成 `1`，不要手设 | 否 |
 | `COVEY_REQUIRED_MOUNT` | `service/manager.py` | 开机守护设置，不要手设 | 否 |
 | `COVEY_RUNNER_PYTHONPATH` | `app/runner.py` | Bridge 交给任务进程，不要手设 | 否 |
-| `COVEY_TASK_DIR` | `app/leftovers.py`、`core/device_link.py` | 任务进程给本轮命令设置，不要手设 | 否 |
-| `COVEY_STATE` | `core/repomap.py`（`bin/covey_repo.py` 找仓库地图） | 空：`covey repo list` 说地图是空的。开发中：Bridge 还不给 Harness 设它，见[主目录与仓库地图](#主目录与仓库地图开发中) | 否 |
-| `COVEY_HOME` | `core/repomap.py`（`bin/covey_repo.py`） | 空。开发中：将由 Bridge 给 Harness 设成主目录（服务的 `--workdir`），见[主目录与仓库地图](#主目录与仓库地图开发中) | 否 |
-| `COVEY_TOPIC` | `core/repomap.py`（`bin/covey_repo.py`） | 空。开发中：将由 Bridge 给 Harness 设成这一轮的话题 id，`covey repo` 据此记“本话题用到” | 否 |
+| `COVEY_TASK_DIR` | `app/leftovers.py`、`core/device_link.py`、`core/topic_repos.py`（`covey repo use` 写本任务的 `repos.json`，Codex 的可写根） | 任务进程给本轮命令设置，不要手设 | 否 |
+| `COVEY_STATE` | `core/repomap.py`（`bin/covey_repo.py` 找仓库地图和话题记录） | Bridge 给每个本机的 Harness 进程设成状态目录（`core/home.py` 的 `env`），不要手设；空时 `covey repo list` 说地图是空的，见[主目录与仓库地图](#主目录与仓库地图) | 否 |
+| `COVEY_HOME` | `core/repomap.py`（`bin/covey_repo.py`：相对路径从这里算） | Bridge 给每个本机的 Harness 进程设成主目录（服务的 `--workdir`），不要手设，见[主目录与仓库地图](#主目录与仓库地图) | 否 |
+| `COVEY_TOPIC` | `core/repomap.py`（`bin/covey_repo.py`） | Bridge 给每个本机的 Harness 进程设成这一轮的话题 id，`covey repo` 据此找本话题的 worktree 目录和用到的仓库，不要手设 | 否 |
 | `CODEX_HOME` | `core/paths.py`（`codex_home`，Codex 的会话目录从它取）、`core/model_settings.py`、`backends/codex/consult.py`（协作咨询轮的私有 home 从它链接）、`app/memory_harvest.py`（记忆自己长读 Codex 的记忆摘要）、`core/same_account.py`（读它的 config.toml / settings.json，看自己的登录和哪个模型网关是同一账号） | `~/.codex` | 否 |
 | `COVEY_CLAUDE_HOOKS` | `backends/claude/hooks.py`（`enabled`：`TurnHooks.registration` 据此在每轮 Claude Code 的 initialize 里注册 SDK hook） | 开：子 Agent（Explore 除外）开工时收到守则（`SubagentStart`），子 Agent 调 `mcp__bridge__*` 被拒（`PreToolUse`），管家这一轮自己调满 6 次非 Bridge 工具时提醒一次交给话题（`PostToolUse`，主人说了“你直接做”的那一轮没有）；`0` 关：不注册，每轮和原来一样 | 否 |
 | `CLAUDE_CONFIG_DIR` | `backends/claude/sessions.py`、`backends/claude/redaction.py`、`core/maintenance_rules.py`、`core/claude_retention.py`（只读它的 `settings.json`，诊断页和 `./install` 提示会话保留几天）、`core/same_account.py`（读它的 config.toml / settings.json，看自己的登录和哪个模型网关是同一账号） | `~/.claude` | 否 |
@@ -625,7 +633,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--state-dir` | `core/workspaces.py` | 见 `--help` | 否 |
 | `--json` | `service/plugins.py`（`bin/covey_plugins.py`） | `list` 的 JSON 输出；子命令 `list`、`enable`、`disable`、`doctor` 见[扩展](architecture.md#扩展)的「装和卸」 | 否 |
 | `--state`、`--topic`、`--workspace`、`--owner`、`--redacted`、`--limit`、`--json` | `core/memory_search.py`（`bin/covey_memory.py search`，记忆自己长的查记忆） | 状态目录（必填）、这一轮的话题、按哪个工作区查（默认话题自己的）、带上全局的、带上来自脱敏话题的、最多几条（8）、JSON 输出 | 否 |
-| `--json`、`--write`、`--legacy` | `core/repomap.py`（`bin/covey_repo.py`：子命令 `list`、`use <仓库>`、`status`、`prune-plan`） | `--json` JSON 输出；`--write` 是 `use` 的：要改这个仓库；`--legacy` 是 `prune-plan` 的：另看一个目录下的旧 worktree。开发中：这一版只有 `list` 可用，其余说还没启用，见[主目录与仓库地图](#主目录与仓库地图开发中) | 否 |
+| `--json`、`--write`、`--legacy` | `core/repomap.py`（`bin/covey_repo.py`：子命令 `list`、`use <仓库>`、`status`、`prune-plan`） | `--json` JSON 输出（放在子命令前后都行）；`--write` 是 `use` 的：要改这个仓库（建或复用本话题的 worktree）；`--legacy` 是 `prune-plan` 的：另看一个目录下一层的旧 worktree，见[主目录与仓库地图](#主目录与仓库地图) | 否 |
 | `--state-dir`、`--json` | `app/owner_ledger.py`（`bin/covey_ledger.py`：等主人的账，只读） | 状态目录（必填）；`--json` JSON 输出。见[架构 · 等主人的账](architecture.md#等主人的账) | 否 |
 | `--state`、`--limit`、`--json` | `core/inbound_ledger.py`（`bin/covey_inbound.py`，查主人消息的去向） | 状态目录（必填）、`recent` 最多列几条（10）、JSON 输出；子命令 `where <消息 id>`、`recent` | 否 |
 | `--state-dir`、`--no-probe`、`--json` | `service/device_check.py`（`bin/covey_devices.py`） | 见 `--help`；见[多设备](#多设备开发中默认关)的「自检」 | 否 |

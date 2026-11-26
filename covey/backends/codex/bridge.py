@@ -13,7 +13,7 @@ import dataclasses
 import shlex
 from typing import Any
 
-from covey.core import env as cenv
+from covey.core import env as cenv, home
 from covey.core.harness import BackendRuntime, HarnessCapabilities, HARNESS_REGISTRY, for_device
 
 from covey.core.process_env import child_process_env, process_device
@@ -131,6 +131,7 @@ class CodexBackend(BackendRuntime):
         request.check_cancelled()
         ctx = request.context
         env = child_process_env(ctx.workdir, device=process_device(ctx))
+        env.update(home.env(ctx))  # COVEY_HOME, COVEY_TOPIC, COVEY_STATE and <数据根>/bin on PATH (core/home.py).
         removed = retired_provider(ctx.model)
         if removed:  # A job queued on a removed provider's model before (core/providers.py RETIRED_PREFIXES).
             raise ValueError(retired_provider_notice(removed))

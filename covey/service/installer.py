@@ -2,8 +2,8 @@
 
 步骤（每步一行标题，之后只有必要的提示）：
   1 检查环境和目录   Python、平台；数据根、工作区、临时目录、浏览器和 lark-cli 的安装位置都给默认值并自动建；在检出里运行、
-                    没给 --workdir 时终端里问一次默认工作区（回车用 <数据根>/workspace，新建的空目录里放一份说明
-                    core/welcome.py GUIDE）；重跑沿用上次注册的工作区（install.json）
+                    没给 --workdir 时终端里问一次默认工作区（回车用 <数据根>/home，新建的空目录里放一份说明
+                    core/home.py seed_home）；重跑沿用上次注册的工作区（install.json）
   2 准备 lark-cli   没有就装（npm 全局，不行装到数据根下 tools/）；``--skills`` 才同步 Skills
   3 检查 Harness    对 claude、codex、agy 各做一次真实调用（service/install_probe.py），分清没登录、网络不通、其他；PATH 里
                     没有的再看 ~/.local/bin、~/.claude/local（找到就把目录加进服务的 PATH）；没装的合成一句“不用每个都装”；
@@ -49,7 +49,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.core import app_manifest, butler_settings, claude_retention, extensions, gateways, qr, switches, welcome
+from covey.core import app_manifest, butler_settings, claude_retention, extensions, gateways, home, qr, switches, welcome
 from covey.core import env as cenv
 from covey.core.paths import REPO_ROOT, data_home
 from covey.core.process import service_key
@@ -175,7 +175,7 @@ def parser():
     p.add_argument("--skills", action="store_true", help="同时把 skills/ 同步到 Codex 和 Claude 的 Skills 目录（默认不做）")
     p.add_argument("--non-interactive", action="store_true", help="不提问（代理地址等）；缺什么就报什么退出")
     p.add_argument("--data-home", help="数据根（默认：COVEY_DATA_HOME，没设时是仓库同级的 <仓库目录名>-data）")
-    p.add_argument("--workdir", help="默认工作区（默认：当前目录；在仓库里运行时用 <数据根>/workspace）")
+    p.add_argument("--workdir", help="默认工作区（默认：当前目录；在仓库里运行时用 <数据根>/home）")
     p.add_argument("--keep-login", action="store_true", help="结束后不删浏览器里主人的网页登录（默认删）")
     p.add_argument("--browser", action="store_true", help="改用无头浏览器扫一次码完成建应用和授权（默认不用浏览器、直接手机扫码，"
                    "避免无头 Linux 触发条件访问设备认证；若遇条件访问仍会自动切回手机扫码）")
@@ -389,8 +389,8 @@ class Installer:
             raise Fail(f"默认工作区建不了：{self.workdir}（{exc.strerror or type(exc).__name__}）",
                        next="换一个能写的目录：./install --workdir <你的项目目录>") from None
         self.note(f"数据根 {self.data}；默认工作区 {self.workdir}")
-        if made and welcome.seed_workspace(self.workdir):
-            self.note("默认工作区是新建的空目录，里面放了一份说明（README.md）。要它在你的项目里干活：飞书里「设置」→「工作区」"
+        if made and home.seed_home(self.workdir):
+            self.note("主目录是新建的空目录，里面放了一份说明（AGENTS.md）。要它在你的项目里干活：飞书里「设置」→「工作区」"
                       "添加项目目录，或 ./install --workdir <项目目录>")
 
     def recorded_workdir(self):
@@ -403,8 +403,8 @@ class Installer:
         return Path(recorded) if isinstance(recorded, str) and recorded and Path(recorded).is_dir() else None
 
     def choose_workdir(self):
-        """(the default workspace, whether it is the <data>/workspace this run makes): ``--workdir``; else the one the last
-        run registered (a re-run keeps what was chosen); else the current directory, or in the checkout <data>/workspace,
+        """(the default workspace, whether it is the <data>/home this run makes): ``--workdir``; else the one the last
+        run registered (a re-run keeps what was chosen); else the current directory, or in the checkout <data>/home,
         which a run in a terminal offers to change once (docs/install.md 它做了什么)."""
         if self.args.workdir:
             return Path(self.args.workdir).expanduser().resolve(), False
@@ -414,7 +414,7 @@ class Installer:
         here = Path.cwd().resolve()
         if here != REPO_ROOT.resolve():
             return here, False
-        default = self.data / "workspace"
+        default = self.data / "home"
         if not self.interactive:
             return default, True
         for _ in range(2):
@@ -1646,6 +1646,7 @@ class Installer:
             if self.interactive:
                 self.run_hooks("ext_login")
             config_path = self.write_harness_config()
+            home.ensure_shim(self.data, force=True)  # The ``covey`` command every Harness process finds first on PATH.
             if self.args.no_start:
                 self.say("已准备到飞书应用为止（--no-start）。")
             else:

@@ -1,4 +1,11 @@
-"""Per-job workspace diff capture for shared Harness bridge jobs."""
+"""Per-job workspace diff capture for shared Harness bridge jobs.
+
+A turn's diff covers its workdir's repository and, beside it, each repository the topic writes to (its worktree, or the
+repository itself written in place): each snapshot is taken before the turn (``capture_job_diff_snapshot`` ``repos``).
+A worktree ``covey repo use --write`` made in the middle of the turn has no snapshot: its diff starts from the commit it
+was made from (the ``base_oid`` of the task's ``runs/<任务键>/repos.json``, core/topic_repos.py). A repository the turn
+wrote to with neither gets its changed files listed by name only, no git diff (``NO_BASE``).
+"""
 
 from __future__ import annotations
 
@@ -11,6 +18,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from covey.core import topic_repos
 from covey.core.jobs import job_key, safe_slug
 from covey.core.state import ensure_private_dir, write_private_text
 
@@ -19,6 +27,7 @@ MAX_SNAPSHOT_FILE_BYTES = 512 * 1024
 MAX_SNAPSHOT_TOTAL_BYTES = 20 * 1024 * 1024
 MAX_GIT_DIFF_CAPTURE_CHARS = 240_000
 GIT_DIFF_TRUNCATED_MARKER = "[git diff 输出过长，已截断]"
+NO_BASE = "这个仓库没有本轮开始时的基线，只列文件名"
 SENSITIVE_PATH_RE = re.compile(
     r"(^|/)(\.env(?:[./_-]|$)|.*(?:secret|token|credential|password).*)|"
     r"\.(?:pem|key|p12|pfx|crt|cer)$",
@@ -49,6 +58,8 @@ class JobDiffSnapshot:
     started_status: dict[str, str]
     baseline_files: dict[str, BaselineFile]
     skipped_reason: str = ""
+    label: str = ""  # The repository's name, its files' prefix, when the turn's diff covers more than its workdir's.
+    others: list = dataclasses.field(default_factory=list)  # The snapshots of the topic's other repositories written to.
 
 
 @dataclasses.dataclass
@@ -73,13 +84,20 @@ class JobDiffResult:
     hidden_file_count: int = 0
 
 
+GIT_SECONDS = 120  # A git call of the diff that takes longer fails (that repository's diff is skipped), the turn goes on.
+
+
 def _run_git(workdir: Path, args: list[str], *, max_chars: int | None = None) -> subprocess.CompletedProcess[str]:
-    proc = subprocess.run(
-        ["git", "-C", str(workdir), *args],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(workdir), *args],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=GIT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        proc = subprocess.CompletedProcess(["git", *args], 124, "", f"git {args[0] if args else ''} timed out")
     stdout_truncated = False
     if max_chars is not None and len(proc.stdout) > max_chars:
         proc.stdout = proc.stdout[:max_chars]
@@ -149,6 +167,19 @@ def missing_commits(workdir: Path | str, commits, *, timeout: float = COMMIT_CHE
     if proc.returncode != 0 or len(lines) != len(ids):
         return None
     return [commit for commit, line in zip(ids, lines) if line.strip() == f"{commit}^{{commit}} missing"]
+
+
+def missing_in_repos(directories, commits, *, timeout: float = COMMIT_CHECK_SECONDS) -> list[str] | None:
+    """``missing_commits`` across the repositories a turn wrote to (``directories``: its workdir's and each worktree or
+    repository of the topic): a commit any of them has is not missing. None when none of them can tell."""
+    missing = None
+    for directory in dict.fromkeys(str(d) for d in directories if d):
+        found = missing_commits(directory, commits, timeout=timeout)
+        if found is not None:
+            missing = set(found) if missing is None else missing & set(found)
+    if missing is None:
+        return None
+    return [commit for commit in dict.fromkeys(str(c) for c in commits or ()) if commit in missing]
 
 
 def _changed_paths_between(root: Path, before: str, after: str) -> dict[str, str]:
@@ -243,7 +274,22 @@ def _status_label(code: str, path: str) -> str:
     return "?"
 
 
-def capture_job_diff_snapshot(workdir: Path, limits: DiffLimits | None = None) -> JobDiffSnapshot:
+def capture_job_diff_snapshot(workdir: Path, limits: DiffLimits | None = None, *, repos=()) -> JobDiffSnapshot:
+    """The snapshot of ``workdir``'s repository before a turn, with ``others``: one of each of ``repos`` ((name,
+    directory) of the repositories the topic writes to) that is a git checkout ``workdir``'s is not."""
+    snapshot = _capture(Path(workdir), limits)
+    seen = {snapshot.git_root} if snapshot.git_root is not None else set()
+    for name, directory in repos:
+        other = _capture(Path(directory), limits)
+        if other.git_root is None or other.git_root in seen:
+            continue
+        seen.add(other.git_root)
+        other.label = str(name)
+        snapshot.others.append(other)
+    return snapshot
+
+
+def _capture(workdir: Path, limits: DiffLimits | None = None) -> JobDiffSnapshot:
     limits = limits or DiffLimits()
     root = _git_root(workdir)
     if root is None:
@@ -400,9 +446,26 @@ def finalize_job_diff(
     limits = limits or DiffLimits()
     if snapshot is None:
         return JobDiffResult(files=[], skipped_reason="diff snapshot missing")
-    if snapshot.git_root is None:
+    parts = ([snapshot] if snapshot.git_root is not None else []) + list(snapshot.others)
+    parts += _made_in_turn(state_dir, job, {part.git_root for part in parts})
+    unbased = _unbased(job, snapshot.workdir, {part.git_root for part in parts})
+    if not parts and not unbased:
         return JobDiffResult(files=[], skipped_reason=snapshot.skipped_reason or "非 git workspace")
+    files: list[JobDiffFile] = []
+    for part in parts:
+        prefix = f"{part.label}/" if part.label else ""
+        for item in _part_files(part, limits):
+            item.path = prefix + item.path
+            files.append(item)
+    files += unbased
+    result = _build_diff_result(files, limits)
+    if result.files:
+        _write_diff_artifacts(state_dir, job, result, limits)
+    return result
 
+
+def _part_files(snapshot: JobDiffSnapshot, limits: DiffLimits) -> list[JobDiffFile]:
+    """The changed files of one repository's snapshot, against its state now."""
     root = snapshot.git_root
     end_head = _git_head(root)
     end_status = _status_paths(root)
@@ -426,10 +489,52 @@ def finalize_job_diff(
         )
         if item is not None:
             files.append(item)
-    result = _build_diff_result(files, limits)
-    if result.files:
-        _write_diff_artifacts(state_dir, job, result, limits)
-    return result
+    return files
+
+
+def _made_in_turn(state_dir: Path, job: Any, covered: set) -> list[JobDiffSnapshot]:
+    """Snapshots made up for the worktrees ``covey repo use --write`` made during the turn (its task's requests that say
+    ``created``): the commit each started from, no uncommitted change, so its diff is all the turn did there. One used
+    again has no such base (what an earlier turn left uncommitted is not this turn's)."""
+    try:
+        task_dir = topic_repos.task_dir_of(state_dir, job)
+    except (OSError, ValueError, TypeError):
+        return []
+    made = []
+    for request in topic_repos.requests(task_dir) if task_dir is not None else ():
+        worktree, base = str(request.get("worktree") or ""), str(request.get("base_oid") or "")
+        if request.get("mode") != "write" or request.get("created") is not True or not worktree.startswith("/") \
+                or not COMMIT_ID.fullmatch(base):
+            continue
+        root = _git_root(Path(worktree))
+        if root is None or root in covered:
+            continue
+        covered.add(root)
+        made.append(JobDiffSnapshot(workdir=Path(worktree), git_root=root, head_oid=base, started_status={},
+                                    baseline_files={}, label=str(request.get("name") or root.name)))
+    return made
+
+
+def _unbased(job: Any, workdir: Path, covered: set) -> list[JobDiffFile]:
+    """The files the turn's steps (``job.tool_trace``) wrote in a git checkout none of ``covered`` is: listed by name
+    only (``NO_BASE``), no git diff."""
+    trace = getattr(job, "tool_trace", None)
+    if trace is None:
+        return []
+    covered = {Path(root).resolve() for root in covered if root is not None}
+    files, seen = [], set()
+    for path, what in topic_repos.paths_of(trace, workdir=workdir):
+        if what != "write":
+            continue
+        top, _ = topic_repos.checkout_of(path)
+        if not top or Path(top).resolve() in covered or os.path.normpath(path) == os.path.normpath(top):
+            continue
+        rel = os.path.relpath(path, top)
+        name = f"{Path(top).name}/{rel}"
+        if name not in seen:
+            seen.add(name)
+            files.append(JobDiffFile(name, "M", hidden_reason=NO_BASE))
+    return files
 
 
 def _file_label(item: JobDiffFile) -> str:
@@ -438,7 +543,7 @@ def _file_label(item: JobDiffFile) -> str:
     if item.truncated:
         flags.append("已截断")
     if item.hidden_reason:
-        flags.append("已隐藏")
+        flags.append("只列文件名" if item.hidden_reason == NO_BASE else "已隐藏")
     flag_text = f" [{' / '.join(flags)}]" if flags else ""
     return " ".join(part for part in (f"{item.status} {item.path}", suffix) if part) + flag_text
 

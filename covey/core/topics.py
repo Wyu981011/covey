@@ -166,6 +166,69 @@ def bind_topic(ctx, name: str, directory: Path, *, stored: str = "") -> None:
         write_json(path, data, ensure_ascii=False, indent=2)
 
 
+def home_start(data) -> bool:
+    """Whether a topic (its topic.json ``data``) started in the home (core/home.py): its rules show the home block and
+    the repositories it uses, not a workspace. A topic from before the home keeps its workspace."""
+    return isinstance(data, dict) and data.get("home_start") is True
+
+
+def bind_home(ctx, home: Path, *, name: str = "", repos=(), title: str = "", now: float | None = None) -> None:
+    """Start the topic in the home ``home``: ``home_start``, its workdir the home (``workspace_name`` ``name`` and the
+    workspace fields still written, so an older release reads the topic as before), the repositories it is given
+    (``repos``: TopicRepo dicts, ``source`` declared), and, once, its start time and ``slug`` (core/home.py ``slug`` of
+    ``title``): its outputs directory's name never changes after (app/home_turn.py ``outputs_dir``)."""
+    import time
+
+    from covey.core.home import slug
+
+    with LOCK:
+        path = ctx.history_path.parent / "topic.json"
+        data = read_json(path)
+        if (data.get("workspace_locked") or ctx.session_path.exists()) and \
+                Path(str(data.get("workdir") or "")).resolve() != Path(home).resolve():
+            raise ValueError("本话题已绑定工作区，请在其他工作区新开话题")
+        data.update(workspace_name=name or data.get("workspace_name") or ctx.workspace_name, workdir=str(home),
+                    workspace_locked=True, home_start=True)
+        data.setdefault("started_at", time.time() if now is None else now)
+        data.setdefault("slug", slug(title))
+        if repos:
+            data["repos"] = _merged_repos(data.get("repos"), list(repos))
+        write_json(path, data, ensure_ascii=False, indent=2)
+
+
+def _merged_repos(old, new) -> list:
+    """``old`` (a topic.json ``repos``) with each of ``new`` put in by name: an entry there keeps what it has, a write
+    wins over a read."""
+    merged = {str(item.get("name")): dict(item) for item in old or () if isinstance(item, dict) and item.get("name")}
+    for item in new:
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        entry = merged.setdefault(name, dict(item))
+        if item.get("mode") == "write":
+            entry["mode"] = "write"
+    return list(merged.values())
+
+
+def update_repos(state_dir: Path, topic_id: str, change) -> list:
+    """``change(repos) -> repos`` applied to the topic's topic.json ``repos`` (a list of dicts) under LOCK; the list
+    written, [] when the topic is not there. Nothing is written when nothing changed. Like every topic.json writer it
+    holds LOCK of its own process only: the read, the change and the write follow each other at once (no git, no
+    network in between), so another process's write of the same moment is the one window left, as for the others."""
+    with LOCK:
+        path = topic_file(Path(state_dir), topic_id)
+        try:
+            data = read_json(path)
+        except (OSError, ValueError):
+            return []
+        before = [dict(item) for item in data.get("repos") or () if isinstance(item, dict)]
+        after = change([dict(item) for item in before])
+        if after != before:
+            data["repos"] = after
+            write_json(path, data, ensure_ascii=False, indent=2)
+        return after
+
+
 def topic_number(state_dir: Path, topic_id: str) -> int:
     """A short number shown on a topic's cards (T12), so the topic can be named and found.
     Topics created before numbering get theirs when first shown. 0 if there is no topic.

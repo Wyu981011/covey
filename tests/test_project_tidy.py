@@ -30,7 +30,7 @@ from covey.core import project_proposals as proposals
 from covey.core.checkpoint import GIST_BEFORE, GIST_NONE, TOPIC_GIST_RULE, gist_note
 from covey.core.jobs import upsert_job_record
 from covey.core.state import read_object, write_json
-from covey.core.topics import label_title
+from covey.core.topics import label_title, topic_file
 
 A = "修 064 采购审批数据包"
 B = "优化 DataLab 的 Prompt"
@@ -153,6 +153,19 @@ class GistTest(TidyCase):
         self.assertEqual((saved["essence"], [item["text"] for item in saved["essences"]]), (B, [A, B]))
         self.turn(topic, "接着改", gist={"essence": B + "（064 是第一个例子）"})
         self.assertNotIn((topic, "essence"), self.tidy.scan(self.state, CHAT, time.time()))  # Reworded, not changed.
+
+    def test_the_judge_reads_the_repositories_a_topic_lists_and_no_workspace_for_a_home_topic(self):
+        plain = self.topic("旧话题")
+        home = self.topic("主目录开的话题")
+        data = read_object(topic_file(self.state, home))
+        data.update(home_start=True, repos=[{"name": "covey", "path": "/absolute/covey", "mode": "write"},
+                                            {"name": "covey", "path": "/absolute/covey-wt", "mode": "read"}])
+        write_json(topic_file(self.state, home), data)
+        old, new = sorter.material(self.state, CHAT, plain, 0), sorter.material(self.state, CHAT, home, 0)
+        self.assertEqual((old.repos, old.workspace), ((), "project"))
+        self.assertEqual((new.repos, new.workspace), (("covey",), ""))
+        self.assertNotIn("repos", sorter.topic_row(1, old, {}))
+        self.assertEqual(sorter.topic_row(1, new, {})["repos"], ["covey"])
 
     def test_a_gist_is_written_only_when_the_goal_or_scope_moved_and_a_turn_without_one_keeps_the_last(self):
         # #31: "短任务、问答也写" cost a follow-up question a checkpoint write of its own. Now the rule asks for one only for

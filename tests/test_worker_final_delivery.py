@@ -414,7 +414,7 @@ class ChatFinalDeliveryTest(unittest.TestCase):
             with mock.patch.object(worker.TaskMonitor, "start", autospec=True,
                                    side_effect=lambda monitor: (order.append("monitor"), start(monitor))[1]), \
                  mock.patch.object(worker, "capture_job_diff_snapshot",
-                                   side_effect=lambda _workdir: order.append("snapshot")):
+                                   side_effect=lambda _workdir, **_repos: order.append("snapshot")):
                 harness.run(make_reply_job("chat", root=root, with_progress=True))
             self.assertEqual(order, ["monitor", "snapshot", "backend"])
             # The first status line write takes the queued text away (every turn has a trace).

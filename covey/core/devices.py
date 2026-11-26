@@ -9,6 +9,8 @@ nothing changes. A switch that is on with no device listed behaves the same.
   one. Aliases are ``[a-z][a-z0-9-]{0,23}``; ``control_dir`` must be short enough for a Unix socket. A device declares
   Harnesses whose turns run on a device (``harness_names``: core/roster.py ``devices``), Claude Code and Codex unless
   it names them.
+- **Device home** (``home_of``): an entry may name its ``home`` (``/abs/path`` or ``~/path``, as the device reads it);
+  without one callers keep what they did.
 - **Workspace values** (``bind_workdir``): ``gpu1:/home/me/proj`` becomes a ``Binding``: the hub path
   ``<state>/devices/gpu1/standin/<sha12>`` (which never exists, so a place that was not taught about devices fails
   loudly instead of touching a hub directory) with ``device`` and ``remote_workdir``. Callers use it only when
@@ -101,6 +103,7 @@ class Device:
     spaces: tuple
     patience_minutes: float | None = None  # This device's own patience (None: devices.json's defaults).
     waiting_patience_hours: float | None = None
+    home: str = ""  # The home on the device ("" when devices.json gives none); read by ``home_of``, never resolved here.
 
 
 @dataclasses.dataclass(frozen=True, eq=False)
@@ -253,7 +256,7 @@ def _device(alias, entry, fail):
         fail(where, "must be an object")
         return None
     unknown = sorted(set(entry) - {"title", "ssh", "harnesses", "env", "login_shell", "spaces", "patience_minutes",
-                                   "waiting_patience_hours"})
+                                   "waiting_patience_hours", "home"})
     if unknown:
         fail(where, "unknown keys %s" % ", ".join(unknown))
     ok = True
@@ -310,6 +313,11 @@ def _device(alias, entry, fail):
         fail(where + ".spaces", "must be a non-empty list from %s" % ", ".join(SPACES))
         ok, spaces = False, []
     patience = {}
+    home = entry.get("home", "")
+    if home != "" and (not _plain(home) or not home.strip() or len(home) > 1024
+                       or not (home.strip().startswith("/") or home.strip() == "~" or home.strip().startswith("~/"))):
+        fail(where + ".home", "must be an absolute path on the device, or one starting with ~/ (the device's own home)")
+        ok, home = False, ""
     for key in ("patience_minutes", "waiting_patience_hours"):
         if key in entry:
             value, (low, high) = entry[key], LIMITS[key]
@@ -321,7 +329,13 @@ def _device(alias, entry, fail):
     if not ok:
         return None
     return Device(alias, title.strip(), host, tuple(options), python.strip(), tuple(harnesses), dict(env), login,
-                  tuple(spaces), **patience)
+                  tuple(spaces), home=home.strip(), **patience)
+
+
+def home_of(device):
+    """The home the device's entry names in devices.json (``home``), as written: a ``~`` path is the device's own home and
+    is never resolved on the hub. '' when it names none: callers then keep what they did before (the first workspace)."""
+    return str(getattr(device, "home", "") or "")
 
 
 def load(environ=None, *, path=None):

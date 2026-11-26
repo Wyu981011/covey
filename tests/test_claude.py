@@ -38,6 +38,7 @@ from covey.backends.claude.bridge import AUTO_COMPACT_ENV, CLAUDE_SPEC, GATEWAY_
 from covey.backends.claude.rewind import FILE_CHECKPOINTS_ENV
 from covey.backends.claude import argv as claude_argv, runtime, subagents
 from covey.core import butler_settings
+from covey.core import home
 from covey.backends.claude.completion import ClaudeReplyState
 from covey.backends.claude.events import ClaudeEventAdapter
 from covey.backends.claude.models import GATEWAY_KEEP, keep_gateway_models, normalize_catalog
@@ -949,7 +950,7 @@ class ClaudeAutoCompactWindowTests(unittest.TestCase):
         with mock.patch("covey.backends.claude.runtime.run_stream",
                         side_effect=lambda backend, request, env: seen.append(env) or RunResult("ok", SID)):
             self.backend.run(RunRequest(ctx, "hi"))
-        return seen[0], child_process_env(ctx.workdir)
+        return seen[0], {**child_process_env(ctx.workdir), **home.env(ctx)}  # The home's names too (core/home.py env).
 
     def test_argv_takes_only_a_positive_token_count(self):
         self.assertEqual(self.options("--claude-auto-compact-window", "150000")["auto_compact_window"], 150000)

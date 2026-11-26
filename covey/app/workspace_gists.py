@@ -10,10 +10,15 @@ way); a topic with redaction on (or whose setting cannot be read) is read only b
 is skipped (gists are written while 整理专项 is on, COVEY_PROJECT_TIDY). The topics are the ones with a job of the
 workspace within DAYS, newest first; each gist is cut to its essence and goal. Nothing is written; nothing raises into
 the turn.
+
+Whose topics (``scope``): a topic in a project reads the other topics of the same project (any workspace); a topic that
+started in the home (``home_start``) reads only those that used one of the repositories it declared (``repos``), none
+when it declared none, so the home's root never mixes topics together; any other topic reads its workspace's, as before.
 """
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from covey.app.prompts import workspace_gists_block
 from covey.core import env as cenv
@@ -23,8 +28,10 @@ from covey.core.collab import is_channel
 from covey.core.jobs import select_job_records
 from covey.core.redaction import topic_redaction
 from covey.core.state import epoch_seconds
+from covey.core import projects
 from covey.core.text import cut
-from covey.core.topics import label_title, proxy_topic
+from covey.core.topic_repos import of_topic, repo_of
+from covey.core.topics import home_start, label_title, load_topic, proxy_topic
 
 ENV = "COVEY_WORKSPACE_GISTS"
 MAX = 10  # The most topics one block may carry.
@@ -51,9 +58,10 @@ def _redacted(state_dir, topic_id) -> bool:
         return True
 
 
-def recent(state_dir, chat, workspace, topic_id, limit, *, redacted=False, now=None) -> list:
+def recent(state_dir, chat, workspace, topic_id, limit, *, redacted=False, now=None, keep=None) -> list:
     """[(topic, gist)] of the last ``limit`` other topics of ``workspace`` in ``chat`` that have a gist, newest first;
-    a redacting one only when ``redacted``."""
+    a redacting one only when ``redacted``. With ``keep`` (``keep(topic, record)``) ``workspace`` is not asked for: a
+    topic is read when ``keep`` says so."""
     now = time.time() if now is None else now
     since = now - DAYS * 86400
 
@@ -61,7 +69,7 @@ def recent(state_dir, chat, workspace, topic_id, limit, *, redacted=False, now=N
         at = epoch_seconds(fields.get("updated_at"))
         return at is None or at >= since
 
-    records = select_job_records(state_dir, lambda record: (record.get("workspace_name") == workspace
+    records = select_job_records(state_dir, lambda record: ((keep is not None or record.get("workspace_name") == workspace)
                                                             and record.get("topic_id") not in ("", None, topic_id)),
                                  chat_id=chat, narrow=fresh)
     found, seen = [], set()
@@ -70,7 +78,9 @@ def recent(state_dir, chat, workspace, topic_id, limit, *, redacted=False, now=N
         if topic in seen:
             continue
         seen.add(topic)
-        if is_butler_topic(topic, chat) or is_channel(topic) or (_redacted(state_dir, topic) and not redacted):
+        if is_butler_topic(topic, chat) or is_channel(topic) or (keep is not None and not keep(topic, record)):
+            continue
+        if _redacted(state_dir, topic) and not redacted:
             continue
         gist = topic_gist.gist_of(topic_gist.read(state_dir, topic))
         if gist:
@@ -78,6 +88,37 @@ def recent(state_dir, chat, workspace, topic_id, limit, *, redacted=False, now=N
             if len(found) >= limit:
                 break
     return found
+
+
+def _data(state_dir, topic_id) -> dict:
+    try:
+        return load_topic(Path(state_dir), topic_id) if topic_id else {}
+    except Exception:  # noqa: BLE001 - no record, no scope
+        return {}
+
+
+def scope(state_dir, topic_id, workspace):
+    """(name, keep) the topic reads by: ``keep`` is None for the workspace's topics, else a ``keep(topic, record)`` for
+    ``recent``; keep False (never) with a name '' when there is nothing to read (see the module's docstring)."""
+    data = _data(state_dir, topic_id)
+    found = projects.topic_project(Path(state_dir), topic_id) if topic_id else None
+    if found is not None and found.role == projects.MEMBER and projects.enabled():
+
+        def same_project(other, record):
+            there = projects.topic_project(Path(state_dir), other)
+            return there is not None and there.id == found.id
+        return workspace, same_project
+    if not home_start(data):
+        return workspace, None
+    mine = {repo_of(repo.path) for repo in of_topic(data)} - {""}
+    if not mine:
+        return "", False
+    name = "、".join(dict.fromkeys(repo.name for repo in of_topic(data)))
+
+    def used(other, record):
+        theirs = {repo_of(repo.path) for repo in of_topic(_data(state_dir, other))} | {repo_of(record.get("workdir"))}
+        return bool(mine & theirs)
+    return name, used
 
 
 def lines(state_dir, found) -> list:
@@ -101,8 +142,11 @@ def block(ctx, job, *, owner_turn) -> str:
         if (not limit or job is None or not ctx.workspace_name or not chat or proxy_topic(ctx)
                 or is_butler_topic(topic_id, chat) or not owner_turn()):
             return ""
+        name, keep = scope(ctx.state_dir, topic_id, ctx.workspace_name)
+        if keep is False:
+            return ""
         found = recent(ctx.state_dir, chat, ctx.workspace_name, topic_id, limit,
-                       redacted=_redacted(ctx.state_dir, topic_id))
-        return workspace_gists_block(ctx.workspace_name, lines(ctx.state_dir, found))
+                       redacted=_redacted(ctx.state_dir, topic_id), keep=keep)
+        return workspace_gists_block(name, lines(ctx.state_dir, found))
     except Exception:  # noqa: BLE001 - the turn goes on without it
         return ""

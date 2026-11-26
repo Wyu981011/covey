@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from covey.core import env as cenv
-from covey.app import runner_ipc, runner_spawn
+from covey.app import home_turn, runner_ipc, runner_spawn
 from covey.feishu import sdk
 from covey.app.unified import UnifiedBridgeApp
 from covey.core import timing
@@ -147,6 +147,7 @@ def runner_main(argv=None) -> int:
         return 0  # Another runner runs this job: nothing ran here and nothing of its run directory changed.
     try:
         setup = _build(handoff, early, directory)
+        export_home(setup.ctx)
         inbox = _serve(setup, directory)
         status = "finished"
         try:
@@ -159,6 +160,17 @@ def runner_main(argv=None) -> int:
     finally:
         release_run_lock(directory)
     return 0
+
+
+def export_home(ctx) -> None:
+    """Put the job's home, topic and state directory (``COVEY_HOME``, ``COVEY_TOPIC``, ``COVEY_STATE``) and
+    ``<数据根>/bin`` first on ``PATH`` in this process's environment (app/home_turn.py ``env``), so the Harness and every
+    command it runs find ``covey repo`` (its shim, core/home.py ``ensure_shim``, is written by the install and each
+    deploy). Nothing changes when they cannot be had."""
+    try:
+        os.environ.update(home_turn.env(ctx))
+    except (OSError, ValueError, AttributeError) as exc:
+        print_log(f"task runner: home environment not set ({type(exc).__name__})")
 
 
 def _locked(handoff, directory) -> bool:
