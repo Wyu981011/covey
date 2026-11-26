@@ -1,5 +1,7 @@
-"""按需查记忆 (COVEY_MEMORY_LEARN=1, core/memory_search.py, bin/covey_memory.py): what a turn's block could not carry, found by
-its words, with the same rules of who may read what as the block."""
+"""查记忆 (core/memory_search.py, bin/covey_memory.py): the words (short symbols and hyphenated names kept, the words every
+question has dropped), BM25F with an absolute similarity (one weak hit stays weak, a word no entry has counts for nothing),
+enough words in common, the scopes' weights, a question's decisions once, who may read what, two texts' mutual similarity and
+the command's search, show (the ``show`` signal) and list."""
 from __future__ import annotations
 
 import json
@@ -11,15 +13,34 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from support import UNSET_OFF
-from support import REPO
+from support import REPO, UNSET_OFF
 from support.records import write_topic
 
-from covey.core import memory_search, principles, project_memory, projects, topic_memory
-from covey.core.state import write_json
+from covey.core import memory_search, memory_usage, memstore, projects
 
-PID, CHAT = "a1b2c3d4e5f6", "oc_owner_dm"
+PID, OTHER, CHAT = "a1b2c3d4e5f6", "f6e5d4c3b2a1", "oc_owner_dm"
+TOPIC = "ab" * 32
 NOW = 1_800_000_000.0
+
+
+class TermsTest(unittest.TestCase):
+    def test_short_symbols_next_to_chinese_and_hyphenated_names_are_kept(self):
+        words = memory_search.terms("选 F 版，P0-A 先做；covey-internal 的 kvoff-idx256")
+        for word in ("f", "p0-a", "p0", "covey-internal", "covey", "internal", "kvoff-idx256", "idx256"):
+            self.assertIn(word, words)
+        self.assertNotIn("x", memory_search.terms("x y z only latin"))  # A lone letter among Latin words is no word.
+
+    def test_the_words_every_question_has_are_dropped(self):
+        words = memory_search.terms("要不要现在部署")
+        self.assertNotIn("要不", words)
+        self.assertNotIn("不要", words)
+        self.assertIn("部署", words)
+
+    def test_synonyms_widen_the_query_alone_at_half_weight(self):
+        wanted = memory_search.query_weights("什么时候上线")
+        self.assertEqual(wanted["上线"], 1.0)
+        self.assertEqual(wanted["部署"], memory_search.SYNONYM_WEIGHT)
+        self.assertNotIn("部署", memory_search.tokens("什么时候上线"))
 
 
 class Case(unittest.TestCase):
@@ -31,57 +52,120 @@ class Case(unittest.TestCase):
                                                if not name.startswith(("COVEY_", "LARK_BRIDGE_"))} | UNSET_OFF, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
-        projects.create(self.state, projects.new_record(chat_id=CHAT, name="网关", project_id=PID, now=NOW))
-        write_topic(self.state, topic_id="t1", topic_number=7, workspace_name="ws",
-                    project=projects.project_field(PID, projects.MEMBER))
+        for pid, name in ((PID, "网关"), (OTHER, "推理")):
+            projects.create(self.state, projects.new_record(chat_id=CHAT, name=name, project_id=pid, now=NOW))
+        write_topic(self.state, topic_id=TOPIC, topic_number=7, chat_id=CHAT, project=projects.project_field(PID, projects.MEMBER))
+        projects.add_member(self.state, PID, TOPIC)
 
-    def texts(self, query, **options):
-        return [row["text"] for row in memory_search.search(self.state, query, "t1", **options)]
+    def add(self, text, kind="note", scope="project", owner_key=PID, **kw):
+        return memstore.add(self.state, kind=kind, scope=scope, owner_key=owner_key if scope != "global" else "", text=text, **kw)
+
+    def found(self, query, **context):
+        return memory_search.eval_search(self.state, query, {"project": PID, "topic": TOPIC, **context}, limit=8)
 
 
-class SearchTest(Case):
-    def test_it_finds_a_decision_put_away_and_an_answered_question_once(self):
-        done, _ = project_memory.add(self.state, PID, "主人答：镜像要不要先发预发？→先发预发", "decision", "owner_answer")
-        project_memory.settle(self.state, PID, [{"id": done["id"], "valid": "done"}])
-        project_memory.add(self.state, PID, "主人答：要不要现在合入？→现在合入", "decision", "owner_answer")
-        folder = project_memory.memory_path(self.state, PID).parent / project_memory.ANSWERS_DIR
-        write_json(folder / "0123456789abcdef.json", {"questions": [
-            {"id": "q1", "question": "对外 README 要不要点名竞品？"}, {"id": "q2", "question": "镜像要不要先发预发？"}],
-            "answers": {"q1": {"answers": ["只按类别写，不点名"]}, "q2": {"answers": ["先发预发"]}}, "noted_at": NOW})
-        rows = memory_search.search(self.state, "镜像先发预发", "t1")
-        self.assertEqual([(row["kind"], row["state"], row["extra"]) for row in rows],
-                         [("当前决定", "历史", "做完了")])  # The kept question with a line still there: listed once.
-        self.assertEqual(self.texts("README 点名竞品"), ["问：对外 README 要不要点名竞品？ → 答：只按类别写，不点名"])
+class ScoreTest(Case):
+    def test_similarity_is_absolute_a_lone_weak_hit_stays_weak(self):
+        weak = self.add("镜像仓库在内网，拉取要走代理")
+        self.add("周报每周五发，网关的事抄送负责人")  # The query's other words are in other entries: they weigh in its own score.
+        self.add("预发环境回归测试的脚本在仓库根目录")
+        self.add("上线发布按批次走")
+        query = "镜像拉取走代理吗，另外网关发布后要先在预发环境回归测试再上线并通知负责人"
+        alone = {hit["ref"]: hit["sim"] for hit in self.found(query, tau=0.0)}[weak.ref]
+        self.assertLess(alone, 0.5)  # The best there is, and still not 1 (no rel = final / max).
+        strong = self.add("网关发布后先在预发环境回归测试，再上线并通知负责人；镜像拉取走代理")
+        found = {hit["ref"]: hit["sim"] for hit in self.found(query, tau=0.0)}
+        self.assertGreater(found[strong.ref], 0.8)
+        self.assertLess(found[weak.ref], 0.5)
 
-    def test_a_common_word_alone_finds_little(self):
-        for i in range(6):
-            project_memory.add(self.state, PID, f"主人答：要不要做第 {i} 件事？→要", "decision", "owner_answer")
-        project_memory.add(self.state, PID, "主人答：要不要点名竞品？→不点名", "decision", "owner_answer")
-        self.assertEqual(self.texts("要不要点名竞品", limit=1), ["主人答：要不要点名竞品？→不点名"])
+    def test_a_word_no_entry_has_counts_neither_for_nor_against(self):
+        self.add("网关镜像先发预发再发生产")
+        plain = self.found("网关镜像先发预发", tau=0.0)[0]["sim"]
+        odd = self.found("网关镜像先发预发 zxqv", tau=0.0)[0]["sim"]
+        self.assertAlmostEqual(plain, odd, places=3)
 
-    def test_who_may_read_what_is_the_blocks(self):
-        principles.save(self.state, principles.OWNER, "汇报先给结论")
-        principles.save(self.state, principles.WORKSPACE, "这个仓库不跑全量", workspace="ws")
-        topic_memory.add(self.state, "t1", "这件事不用先问", redacted=True)
-        self.assertEqual(self.texts("汇报先给结论"), [])  # 全局: the owner's own turn only.
-        self.assertEqual(self.texts("汇报先给结论", owner=True), ["汇报先给结论"])
-        self.assertEqual(self.texts("全量"), ["这个仓库不跑全量"])
-        self.assertEqual(self.texts("先问"), [])  # From a topic with redaction on.
-        self.assertEqual(self.texts("先问", redacted=True), ["这件事不用先问"])
-        write_topic(self.state, topic_id="t1", topic_number=7, proxy={"chat_id": "oc_x"})
-        self.assertEqual(self.texts("全量"), [])  # A 代答 topic reads nothing.
+    def test_one_common_word_alone_is_not_a_hit(self):
+        for i in range(30):
+            self.add(f"第{i}批部署记录{i}")
+        self.add("夜间备份数据库要加密")
+        hits = self.found("部署", tau=0.0)
+        self.assertTrue(all(not hit["covered"] for hit in memory_search.rank_index(memory_search.index(self.state), "部署",
+                                                                                   {"tau": 0.0})) or hits == [])
+        self.assertEqual(self.found("部署"), [])
 
-    def test_the_entry_prints_lines_and_json(self):
-        project_memory.add(self.state, PID, "主人答：要不要现在合入？→现在合入", "decision", "owner_answer")
-        argv = [sys.executable, "-B", str(REPO / "bin" / "covey_memory.py"), "search", "--state", str(self.state),
-                "--topic", "t1", "现在合入"]
-        out = subprocess.run(argv, capture_output=True, text=True, timeout=60, cwd=self.state)
-        self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertRegex(out.stdout, r"^- \[专项 · 当前决定 · 你说的 · \d\d-\d\d\] 主人答：要不要现在合入？→现在合入")
-        out = subprocess.run([*argv, "--json"], capture_output=True, text=True, timeout=60, cwd=self.state)
-        self.assertEqual(json.loads(out.stdout)[0]["kind"], "当前决定")
-        out = subprocess.run([*argv[:-1], "完全无关"], capture_output=True, text=True, timeout=60, cwd=self.state)
-        self.assertIn("没有查到", out.stdout)
+    def test_the_turns_own_scopes_come_before_another_projects_and_done_after_both(self):
+        mine = self.add("发布前先在预发环境验证一遍")
+        theirs = self.add("发布前先在预发环境验证一遍。", owner_key=OTHER)
+        old = self.add("发布前先在预发环境验证一遍！")
+        memstore.archive(self.state, old.ref)
+        refs = [hit["ref"] for hit in self.found("发布前要先在预发环境验证吗")]
+        self.assertEqual(refs[:3], [mine.ref, theirs.ref, old.ref])
+
+    def test_a_questions_decisions_are_listed_once(self):
+        memstore.add_decision(self.state, scope="project", owner_key=PID, question="镜像要不要先发预发？", answer="先发",
+                              question_ref="aaaa-1", now=NOW)
+        memstore.add_decision(self.state, scope="project", owner_key=PID, question="镜像要不要先发预发？", answer="直接发",
+                              question_ref="bbbb-1", now=NOW + 10)
+        hits = [hit for hit in self.found("镜像先发预发吗") if hit["kind"] == "decision"]
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(sorted(hits[0]), sorted(["ref", "code", "kind", "scope", "owner_key", "project", "status", "said",
+                                                  "title", "text", "aliases", "at", "sim", "score", "weight", "covered",
+                                                  "shared"]))
+
+
+class ReadersTest(Case):
+    def test_who_may_read_what(self):
+        self.add("回复主人用中文", kind="rule", scope="global")
+        self.add("脱敏话题里记的接口名", redacted=True)
+        self.add("待审核的一条接口名", status="pending")
+        self.assertTrue(self.found("回复主人用中文"))
+        self.assertEqual(self.found("回复主人用中文", owner=False), [])
+        self.assertEqual(self.found("接口名", tau=0.0, kinds=("note",)), [])
+        self.assertTrue(self.found("脱敏话题里记的接口名", redacted=True))
+        self.assertEqual(self.found("回复主人用中文", proxy=True), [])
+
+    def test_the_index_follows_a_write(self):
+        self.assertEqual(self.found("镜像仓库在内网"), [])
+        self.add("镜像仓库在内网，拉取要走代理")
+        self.assertTrue(self.found("镜像仓库在内网"))
+
+
+class MutualTest(unittest.TestCase):
+    def test_the_smaller_of_both_directions(self):
+        self.assertEqual(memory_search.mutual_similarity("回复主人用中文", "回复主人用中文"), (1.0, True))
+        one, covered = memory_search.mutual_similarity("回复主人用中文", "回复主人一律用中文")
+        self.assertTrue(0.5 < one < 1.0 and covered)
+        self.assertEqual(memory_search.mutual_similarity("回复主人用中文", "回复主人一律用中文"),
+                         memory_search.mutual_similarity("回复主人一律用中文", "回复主人用中文"))
+        self.assertLess(memory_search.mutual_similarity("部署前先跑预检", "合并前先 fetch 再 rebase")[0], 0.2)
+
+
+class CommandTest(Case):
+    def run_cli(self, *args):
+        found = subprocess.run([sys.executable, "-B", str(REPO / "bin" / "covey_memory.py"), *args, "--state", str(self.state)],
+                               capture_output=True, text=True, timeout=60, env={**os.environ, "PYTHONPATH": ""})
+        return found.returncode, found.stdout
+
+    def test_search_show_and_list(self):
+        made = self.add("镜像仓库在内网，拉取要走代理")
+        code, out = self.run_cli("search", "镜像仓库拉取", "--topic", TOPIC)
+        self.assertEqual(code, 0)
+        self.assertIn(f"- {made.code} · 资料 · 专项 {PID} · 你定的：镜像仓库在内网", out)
+        code, out = self.run_cli("search", "镜像仓库拉取", "--topic", TOPIC, "--json")
+        self.assertEqual(json.loads(out)[0]["code"], made.code)
+        code, out = self.run_cli("show", made.code.lower(), "--topic", TOPIC)
+        self.assertEqual(code, 0)
+        self.assertIn("正文：镜像仓库在内网，拉取要走代理", out)
+        self.assertEqual(memory_usage.counts(self.state)[made.ref]["h"], 1.0)  # The show signal.
+        self.assertEqual(self.run_cli("show", "RZZZZ")[0], 1)
+        code, out = self.run_cli("list", "--topic", TOPIC)
+        self.assertIn(made.code, out)
+
+    def test_the_old_workspace_option_is_taken_and_ignored(self):
+        self.add("镜像仓库在内网，拉取要走代理")
+        code, out = self.run_cli("search", "镜像仓库拉取", "--topic", TOPIC, "--workspace", "ws")
+        self.assertEqual(code, 0)
+        self.assertIn("镜像仓库在内网", out)
 
 
 if __name__ == "__main__":

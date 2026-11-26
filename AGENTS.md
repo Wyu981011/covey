@@ -167,7 +167,7 @@
 | `app/memory_collect.py` | What the owner said in a topic's turn that holds from now on becomes memory, and a click takes it back |
 | `app/memory_harvest.py` | What Codex, Claude Code and Antigravity learned of the owner on their own, offered to Covey's memory once a … |
 | `app/memory_learn.py` | 记忆自己长, one turn at a time |
-| `app/memory_observe.py` | What the Bridge sees of a turn's use of the memory (FINAL-SPEC 修订 8) |
+| `app/memory_observe.py` | What the Bridge sees of a turn's use of the memory: the strong signals the ranking counts, nothing else |
 | `app/memory_panel.py` | The 设置 card's 记忆 tab, shown when COVEY_MEMORY=1 |
 | `app/memory_tidy.py` | 整理记忆, once a day: at the evening digest what the memory holds is put in order, so a project's 当前决定 are not a … |
 | `app/memory_turn.py` | What a turn reads of the owner's memory, for app/runs.py |
@@ -426,11 +426,11 @@
 | `core/maintenance_report.py` | How maintenance's --dry-run words what it would do |
 | `core/maintenance_rules.py` | The rules of daily maintenance |
 | `core/memory.py` | The one read port of the owner's memory |
-| `core/memory_gate.py` | The write gate of a memory entry (FINAL-SPEC 修订 8): what is refused or rewritten, what is only flagged |
-| `core/memory_rank.py` | How relevant and how useful a memory entry is (FINAL-SPEC 修订 2 and 8) |
+| `core/memory_gate.py` | The write gate of a memory entry: what is refused or rewritten, what is only flagged |
+| `core/memory_rank.py` | How relevant and how useful a memory entry is: absolute similarity, the scope weights and one ranking |
 | `core/memory_rev.py` | The memory's one change sentinel, `<state>/memory/.rev` |
 | `core/memory_review.py` | The one review queue of the memory: what someone other than the owner proposes waits here |
-| `core/memory_search.py` | 按需查记忆: what a turn's memory block could not carry, looked up by its words from the turn itself |
+| `core/memory_search.py` | 查记忆: every entry of the memory store looked up by its words, ranked the one way the turn's block, the tools … |
 | `core/memory_usage.py` | Which memory lines the turns used and carried, so what is never of use goes first and in time out of the way |
 | `core/memstore.py` | The one memory store: every entry, whatever file holds it, as one `Entry` with a short code |
 | `core/menu_choice.py` | A model menu's entries and the choices on them |

@@ -1,4 +1,4 @@
-"""How relevant and how useful a memory entry is (FINAL-SPEC 修订 2 and 8): absolute similarity, the scope weights and one ranking.
+"""How relevant and how useful a memory entry is (docs/butler.md 记忆): absolute similarity, the scope weights and one ranking.
 
 Similarity is absolute, never relative to the best hit of the query: ``sim = score(q, d) / max(score(q, q), EPS)``,
 the query scored as a document of its own being the most it can reach. Duplicate checks (a new entry against the old,
@@ -8,7 +8,8 @@ words in common (``covered``): two different meaningful tokens, or one rare prop
 The ranking keeps only strong signals: ``hits`` (``covey memory show``, a question_dedup hit, the owner confirming, a
 checkpoint's ``memory_used`` at half weight) against ``carried`` (the times its whole text went into a turn):
 ``u = min(1, (h + 1) / (e + 4))``, ``S = sim · (0.85 + 0.3·u) · freshness + 0.1·[e == 0 and sim ≥ 0.5]``, a fact
-older than 60 days at freshness 0.8. A0: pure functions, nothing ranks with them yet (package M2).
+older than 60 days at freshness 0.8. Pure functions: core/memory_search.py ranks with them; HIGH_IDF and the
+weights were checked on the private blind set (scripts/memory_eval.py).
 """
 from __future__ import annotations
 

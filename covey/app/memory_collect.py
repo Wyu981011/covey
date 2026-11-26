@@ -8,28 +8,32 @@ record is settled (app/detached.py finish_detached, app/job_dispatch.py for a ru
 
 - A ``quote`` must be a run of the owner's own words of that turn (app/memory_turn.py ``owner_words``: the job record's ``user_text``, but of an
   answer's turn only what he answered and added, never the question's own words); one that is not drops its line.
-- A ``memory`` line becomes a line of 你说的 in the narrowest place there is: the project the topic belongs to (core/project_memory.py,
-  source ``owner``), else the topic (core/topic_memory.py). A topic with redaction on (or whose setting cannot be read) marks it.
-- A ``memory_void`` id must be a number the turn carried (the record's ``memory_ids``) of a line of 它总结的 of the project; it becomes a
-  tombstone (core/project_memory.py delete: the text stays, nothing is lost). A line of 你说的 is never voided this way.
-- The record gets ``memory_notes`` [{kind: remembered|voided|undone, text, scope, entry_id, redacted?}] and the turn's answer cards
+- A ``memory`` line goes through the write gate (core/memory_gate.py: a time that stops being true or a live state is refused,
+  logged, not written) and becomes a rule the owner said (core/memstore.py add, ``said`` owner) in the narrowest place there is:
+  the project the topic belongs to, else the topic; 全局 only when the item says ``scope: global`` and the owner's quote says 全局.
+  A topic with redaction on (or whose setting cannot be read) marks it, and a marked line never goes 全局.
+- A ``memory_void`` id is a short code, a ref or an older M number of a turn (core/memstore.py find_in_turn) of an entry the turn
+  carried that was not said by the owner; it becomes a tombstone (memstore.void: the text stays, nothing is lost). What the owner said
+  himself (a correction of his included) is never voided this way.
+- The record gets ``memory_notes`` [{kind: remembered|voided|undone, text, scope, entry_id, ref?, redacted?}] and the turn's answer cards
   a line each (cards/answer_card.py memory_element); the 不对 on a "记下了" line takes that line back (``undo``): the entry becomes
   a tombstone, the note's kind ``undone``. 升为全局 beside it (``promote``, T647 E4: what he said in one topic held only there)
-  makes the line one of the owner's principles for every topic (core/principles.py, 通用) and the entry a tombstone; the note
-  says 管全局 then, its entry the principle, and 不对 takes the principle back.
+  moves the line to 全局 (memstore.promote); the note says 管全局 then, its entry the new one, and 不对 takes it back.
 
 It writes only when the turn ended well, was the owner's own in an ordinary topic (not the butler's, not a 代答 topic, not one the
 butler handed on) whose words hold a trigger word, and not twice for one job. Never raises: a failure is a log line and the turn's
 other ending steps go on."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from covey.app import answer_cards, memory_turn
 from covey.app.card_actions import action_value
 from covey.app.card_lanes import after_ack
 from covey.cards.answer_card import memory_element
-from covey.core import memory, memory_usage, principles, project_memory, projects, topic_memory, turn_source
+from covey.app import memory_observe
+from covey.core import memory, memory_gate, memory_usage, memstore, principles, project_memory, projects, topic_memory, turn_source
 from covey.core.butler import is_butler_topic
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record, upsert_job_record
@@ -41,6 +45,7 @@ PROJECT_WORDS, TOPIC_WORDS = "管这个专项", "管这个话题"
 GLOBAL_WORDS = "管全局"  # A line 升为全局 (``promote``): one of the owner's principles now.
 WORKSPACE_WORDS = "管这个工作区"  # A line the memory learned as a principle of the topic's workspace (app/memory_learn.py).
 PRINCIPLE_WORDS = (GLOBAL_WORDS, WORKSPACE_WORDS)  # A note whose entry is a principle: 不对 removes the principle.
+SAID_GLOBAL = "全局"  # What the owner's quote says when a ``memory`` line is for every topic.
 REDACTED_REFUSAL = "这条来自开着脱敏的话题，不能升为全局：全局的记忆会带进不脱敏的话题。"
 
 
@@ -90,43 +95,60 @@ def _topic_marked(ctx, topic_id) -> bool:
         return True
 
 
-def _take(ctx, record, text, marked, quote=""):
-    """(the note of one ``memory`` line, or None): the line written in the narrowest place; a project's keeps where it came
-    from (the owner's message the turn answered, its topic and job, and the owner's words ``quote``d)."""
+def _take(ctx, record, text, marked, quote="", *, everywhere=False, log=None):
+    """(the note of one ``memory`` line, or None): the line written in the narrowest place (a rule the owner said); a project's
+    keeps where it came from (the owner's message the turn answered, its topic and job, and the owner's words ``quote``d).
+    ``everywhere``: the owner said 全局 (never for a marked line). The gate's refusal is logged by ``log``, never the words."""
     topic_id = str(record.get("topic_id") or "")
     state = ctx.state_dir
     found = projects.topic_project(state, topic_id) if projects.memory_enabled() else None
-    if found is not None and found.role == projects.MEMBER:
-        entry, new = project_memory.add(state, found.id, text, "constraint", "owner", redacted=marked, origin={
-            "message_id": str(record.get("message_id") or ""), "topic": topic_id, "job": str(record.get("key") or ""),
-            "quote": str(quote or "")})
-        scope = PROJECT_WORDS
+    if everywhere and not marked:
+        scope, owner, words = "global", "", GLOBAL_WORDS
+    elif found is not None and found.role == projects.MEMBER:
+        scope, owner, words = "project", found.id, PROJECT_WORDS
     elif found is None:
-        entry, new = topic_memory.add(state, topic_id, text, source="owner", redacted=marked)
-        scope = TOPIC_WORDS
+        scope, owner, words = "topic", topic_id, TOPIC_WORDS
     else:
         return None  # A lead's own topic: the butler's tools are its way.
-    return ({"kind": "remembered", "text": entry["text"], "scope": scope, "entry_id": entry["id"],
-             **({"redacted": True} if marked else {})} if new else None)
+    text, verdict = memory_gate.accept(text, kind="rule")
+    if not text:
+        if log:
+            log(f"memory line refused by the gate reason={verdict.reason or 'gate'} job=#{record.get('job_id')}")
+        return None
+    origin = {"message_id": str(record.get("message_id") or ""), "topic_key": topic_id, "job": str(record.get("key") or ""),
+              "quote": str(quote or "")}
+    stamp = time.time()
+    entry = memstore.add(state, kind="rule", scope=scope, owner_key=owner, text=text, said="owner", by="owner",
+                         origin=origin, redacted=marked, now=stamp)
+    new = entry.at >= stamp - 1
+    return ({"kind": "remembered", "text": entry.text, "scope": words, "entry_id": memstore.parse_ref(entry.ref)[2],
+             "ref": entry.ref, **({"redacted": True} if marked else {})} if new else None)
 
 
 def _void(ctx, record, item):
-    """(the note of one ``memory_void`` item, or None): a line of 它总结的 the turn carried, struck out."""
-    wanted = str(item.get("id") or "").strip()
-    carried = next((row for row in record.get("memory_ids") or () if isinstance(row, dict) and row.get("n") == wanted), None)
-    if carried is None or carried.get("by") != memory.LEAD or not str(carried.get("ref")).startswith("project:"):
-        return None
-    _, project_id, entry_id = str(carried["ref"]).split(":", 2)
-    row = next((row for row in project_memory.stored(ctx.state_dir, project_id) if row["id"] == entry_id and not row["deleted"]), None)
-    if row is None or memory.describe(row)["asserted_by"] == "owner" or not project_memory.delete(ctx.state_dir, project_id, entry_id):
+    """(the note of one ``memory_void`` item, or None): an entry the turn carried that the owner did not say, struck out."""
+    entry = memstore.find_in_turn(ctx.state_dir, str(item.get("id") or "").strip(), record.get("memory_ids"))
+    carried = {str(row.get("ref")) for row in record.get("memory_ids") or () if isinstance(row, dict)}
+    if entry is None or entry.ref not in carried or entry.status != "active" or entry.said == "owner":
         return None  # What the owner said (a correction of his included) is never voided by a model's word.
-    return {"kind": "voided", "text": row["text"], "scope": PROJECT_WORDS, "entry_id": entry_id}
+    try:
+        entry = memstore.void(ctx.state_dir, entry.ref, who="memory")
+    except ValueError:
+        return None
+    words = {"global": GLOBAL_WORDS, "project": PROJECT_WORDS}.get(entry.scope, TOPIC_WORDS)
+    return {"kind": "voided", "text": entry.text, "scope": words, "entry_id": memstore.parse_ref(entry.ref)[2], "ref": entry.ref}
 
 
 def collect(runtime, messenger, job, ctx) -> None:
-    """Take the turn's ``memory`` and ``memory_void`` as the module says. Nothing when the switch is off."""
+    """Take the turn's ``memory`` and ``memory_void`` as the module says, then count what the turn used of the memory
+    (app/memory_observe.py). Nothing when the switch is off."""
     if not memory.enabled():
         return
+    _lines(runtime, messenger, job, ctx)
+    memory_observe.observe(ctx, job, None)
+
+
+def _lines(runtime, messenger, job, ctx) -> None:
     try:
         record = find_job_record(ctx.state_dir, str(getattr(job, "message_id", "") or ""))
         path = str((record or {}).get("checkpoint_path") or "")
@@ -148,7 +170,8 @@ def collect(runtime, messenger, job, ctx) -> None:
         for item in wanted[:PER_TURN]:
             text = project_memory.clean(item.get("text")) if isinstance(item, dict) else ""
             if text and from_owner(item.get("quote"), said):
-                notes.append(_take(ctx, record, text, marked, item.get("quote")))
+                everywhere = item.get("scope") == "global" and SAID_GLOBAL in _squash(item.get("quote"))
+                notes.append(_take(ctx, record, text, marked, item.get("quote"), everywhere=everywhere, log=runtime.log))
         notes = [note for note in notes if note]
         runtime.log(f"memory lines written={len(notes)} of {len(wanted) + len(voids)} job=#{record.get('job_id')}")
         if notes:
@@ -195,12 +218,14 @@ def take_back(state, topic_id, record, entry_id):
     if note is None:
         return None
     if note["kind"] == "remembered":
-        _forget(state, topic_id, entry_id, note.get("scope"))
+        _forget(state, topic_id, entry_id, note.get("scope"), *([note["ref"]] if note.get("ref") else []))
     elif note["kind"] == "superseded":
         if note.get("project_id"):
             project_memory.unsettle(state, note["project_id"], [(entry_id, note.get("before") or {})])
         else:
             topic_memory.restore(state, topic_id, entry_id)
+    elif entry_id.startswith("review:"):
+        memstore.review_set(state, entry_id, "rejected", by="owner")
     else:
         from covey.app import memory_candidates
         memory_candidates.decide(state, entry_id, "drop")
@@ -210,9 +235,16 @@ def take_back(state, topic_id, record, entry_id):
     return notes
 
 
-def _forget(state, topic_id, entry_id, scope="") -> None:
-    """The entry ``entry_id`` a turn of ``topic_id`` wrote, a tombstone in its project's memory or the topic's; a line that
-    is a principle (``scope`` one of PRINCIPLE_WORDS: it went 升为全局, or the memory learned it as one), the principle removed."""
+def _forget(state, topic_id, entry_id, scope="", ref="") -> None:
+    """The entry ``entry_id`` (``ref``, when the note has it) a turn of ``topic_id`` wrote, a tombstone (memstore.void); a note
+    from before the memory had one store: a tombstone in its project's memory or the topic's, a principle (``scope`` one of
+    PRINCIPLE_WORDS) removed."""
+    if ref:
+        try:
+            memstore.void(state, ref, who="owner")
+        except ValueError:
+            pass  # Gone or voided already.
+        return
     if scope in PRINCIPLE_WORDS:
         principles.delete(state, entry_id)
         return
@@ -222,8 +254,11 @@ def _forget(state, topic_id, entry_id, scope="") -> None:
     topic_memory.delete(state, topic_id, entry_id)
 
 
-def _entry(state, topic_id, entry_id):
+def _entry(state, topic_id, entry_id, ref=""):
     """The live entry ``entry_id`` a turn of ``topic_id`` wrote, in its project's memory or the topic's; None when it is gone."""
+    if ref:
+        found = memstore.find(state, ref)
+        return {"id": entry_id, "text": found.text, "redacted": found.redacted} if found and found.status == "active" else None
     found = projects.topic_project(state, topic_id) if projects.memory_enabled() else None
     rows = [row for row in (project_memory.stored(state, found.id) if found is not None else []) if not row.get("deleted")]
     rows = [*rows, *topic_memory.live(state, topic_id)]
@@ -247,11 +282,18 @@ def promote(host, ctx, event) -> bool:
                  and note.get("scope") in (PROJECT_WORDS, TOPIC_WORDS)), None)
     if note is None:
         return True  # Promoted or taken back already (a second click), or not this turn's.
-    entry = _entry(ctx.state_dir, ctx.topic_id, entry_id)
+    entry = _entry(ctx.state_dir, ctx.topic_id, entry_id, note.get("ref") or "")
     if entry is None:
         raise ValueError("这条记忆已经不在了（在设置卡「记忆」里删掉过）")
     if note.get("redacted") or entry.get("redacted"):  # core/memory.py: only a topic with redaction on reads it.
         raise ValueError(REDACTED_REFUSAL)
+    if note.get("ref"):
+        moved = memstore.promote(ctx.state_dir, note["ref"], scope="global", who="owner")
+        note.update(scope=GLOBAL_WORDS, entry_id=memstore.parse_ref(moved.ref)[2], ref=moved.ref)
+        upsert_job_record(ctx.state_dir, str(record["key"]), memory_notes=notes)
+        host.runtime.log(f"memory line promoted to global job=#{record.get('job_id')}")
+        after_ack(lambda: show(ctx, host.messenger, record, notes, host.runtime.log))
+        return True
     found, _ = principles.save(ctx.state_dir, principles.OWNER, note["text"], source={
         "job_key": str(record.get("key") or ""), "job_id": record.get("job_id"), "from": note.get("scope")})
     held = projects.topic_project(ctx.state_dir, ctx.topic_id) if projects.memory_enabled() else None
@@ -271,7 +313,7 @@ def void_turn(runtime, messenger, ctx, record) -> int:
     topic, taken = str(record.get("topic_id") or ""), 0
     for note in notes:
         if note.get("kind") == "remembered" and note.get("entry_id"):
-            _forget(ctx.state_dir, topic, str(note["entry_id"]), note.get("scope"))
+            _forget(ctx.state_dir, topic, str(note["entry_id"]), note.get("scope"), *([note["ref"]] if note.get("ref") else []))
             note["kind"], taken = "undone", taken + 1
     if taken:
         upsert_job_record(ctx.state_dir, str(record["key"]), memory_notes=notes)

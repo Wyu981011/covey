@@ -12,23 +12,31 @@ and has no redaction (a setting that cannot be read counts as on). The entries a
 source; the same turn (job key) never writes twice (core/knowledge.py collected). Never raises: a failure is a log line
 and the turn's other ending steps go on.
 
+With COVEY_MEMORY=1 the entries go to the one memory (core/memstore.py add; docs/butler.md 记忆) as the owner's own, ``by`` the
+topic's turn: a decision or a practice is a rule, a pitfall, a fact or a question a note; 通用 is 全局, a workspace's is 全局 too with
+the workspace's name in ``repos``. The write gate (core/memory_gate.py) refuses what it does for any entry. The job's record gets
+``knowledge_remembered`` (how many were written) so the same turn never writes twice. Without it the entries are core/knowledge.py's.
+
 A job's ``prompt_text`` says nothing about who handed it on: every message the owner writes is queued with its expanded
 input there (app/app.py handle_event: the text, a group's sender line, attachments, quotes), and so are an answer, a
 page's words and a supplement queued again. Read as "handed on" it dropped every topic's 记一下 (2026-11-22, T651).
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
-from covey.core import knowledge, turn_source
+from covey.core import knowledge, memory_gate, memstore, turn_source
 from covey.core.checkpoint import read_checkpoint
-from covey.core.jobs import find_job_record
+from covey.core import memory as core_memory
+from covey.core.jobs import find_job_record, upsert_job_record
 from covey.core.butler import is_butler_topic
 from covey.core.butler_opened import handed_on
 from covey.core.redaction import topic_redaction
 from covey.core.topics import proxy_topic, topic_file
 from covey.core.state import read_object
 
+RULE_KINDS = ("decision", "practice")  # The knowledge kinds that are a rule of the memory; the others are a note.
 TRIGGERS = ("记一下", "记住", "记下来")
 ENDED_WELL = ("done", "waiting_user")
 
@@ -75,8 +83,43 @@ def collect(runtime, job, ctx) -> None:
         topic_id = str(record.get("topic_id") or "")
         number = read_object(topic_file(Path(ctx.state_dir), topic_id)).get("topic_number") if topic_id else None
         source = {"job_key": key, "job_id": record.get("job_id"), **({"topic": f"T{number}"} if type(number) is int else {})}
-        written = knowledge.remember(ctx.state_dir, remember, job_key=key, source=source,
-                                     workspace=str(record.get("workspace_name") or ""))
+        workspace = str(record.get("workspace_name") or "")
+        if core_memory.enabled():
+            written = _remember(ctx, record, remember, source, workspace, runtime.log)
+        else:
+            written = knowledge.remember(ctx.state_dir, remember, job_key=key, source=source, workspace=workspace)
         runtime.log(f"knowledge remember written={len(written)} job=#{record.get('job_id')}")
     except Exception as exc:  # noqa: BLE001 - the turn's ending goes on; the owner's words are in the record
         runtime.log(f"knowledge remember failed job=#{getattr(job, 'job_id', '?')}: {type(exc).__name__}")
+
+
+def _remember(ctx, record, items, source, workspace, log) -> list:
+    """The ``remember`` items written as entries of the memory (the module's docstring), at most five; the new ones."""
+    key = str(record.get("key") or "")
+    if "knowledge_remembered" in record:
+        return []
+    written = []
+    for item in items[:5]:
+        if not isinstance(item, dict):
+            continue
+        text = knowledge.clean_text(item.get("text"))[:knowledge.TEXT_LIMIT]
+        if not text:
+            continue
+        rule = item.get("kind") in RULE_KINDS
+        text, _ = memory_gate.accept(text, kind="rule" if rule else "note")
+        if not text:
+            log(f"knowledge remember refused by the gate job=#{record.get('job_id')}")
+            continue
+        stamp = time.time()
+        try:
+            entry = memstore.add(ctx.state_dir, kind="rule" if rule else "note", scope="global", text=text,
+                                 why=knowledge.clean_text(item.get("why"))[:knowledge.TEXT_LIMIT], said="owner", by="owner",
+                                 origin={"job": key, **({"topic_number": int(source["topic"][1:])} if source.get("topic") else {})},
+                                 repos=(workspace,) if workspace and item.get("scope") != knowledge.OWNER else (), now=stamp)
+        except ValueError as exc:
+            log(f"knowledge remember skipped job=#{record.get('job_id')}: {exc}")
+            continue
+        if entry.at >= stamp - 1:
+            written.append(entry)
+    upsert_job_record(ctx.state_dir, key, knowledge_remembered=len(written))
+    return written

@@ -49,7 +49,9 @@ def block(ctx, job, *, owner_turn, resumed: bool) -> str:
     # The history command is a path on this machine: a device topic's agent cannot run it.
     command = knowledge.history_cmd() if owner and not getattr(ctx, "device", "") else ""
     mine, theirs = [], []
-    if on and not core_memory.enabled():  # With COVEY_MEMORY=1 the entries are in the one memory block (app/memory_turn.py).
+    # With COVEY_MEMORY=1 the entries are in the one memory (core/memstore.py) and its block carries them (app/memory_turn.py):
+    # only the history command's line is left here.
+    if on and not core_memory.enabled():
         topic_id = getattr(job, "topic_id", "") or ctx.topic_id
         if resumed:
             since, keys = previous_turn(ctx.state_dir, topic_id, getattr(job, "job_id", 0))

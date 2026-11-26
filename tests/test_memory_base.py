@@ -25,7 +25,7 @@ from support import UNSET_OFF
 from support.records import state_dir, write_job, write_topic
 
 from covey.app import memory_turn, project_context, project_lead, project_tools
-from covey.app.prompts import NO_ORIGIN, PROJECT_PART_HEADS, VOIDED_HEAD
+from covey.app.prompts import PROJECT_PART_HEADS, VOIDED_HEAD
 from covey.app.web_collect import Collector
 from covey.core import butler
 from covey.core import memory as core_memory
@@ -198,9 +198,9 @@ class CompatTest(Case):
         self.assertEqual((item["by"], item["asserted_by"], item["recorded_by"], item["layer"], item["part"], item["level"]),
                          (core_memory.OWNER, "owner", "bridge", "decision", "decision", "agent"))
         environment(self, **ON, **{core_memory.ENV: "1"})
-        block = memory_turn.block(self.ctx(), self.job(job_id=2), owner_turn=lambda: True)
-        self.assertIn(f"当前决定 · 你说的{NO_ORIGIN}：{line['text']}（", block)
-        self.assertIn("标“你说的（无出处）”的是", block)  # And what that means.
+        job = self.job(job_id=2)
+        self.assertNotIn(line["text"], memory_turn.block(self.ctx(), job, owner_turn=lambda: True))  # A decision: the tail's.
+        self.assertIn(line["text"], memory_turn.tail(self.ctx(), job, lambda: True))
 
 
 # The sizes of a project's 13 lines when the old choice was measured (1956 of 2000 characters), and a 200-character answer after
@@ -229,10 +229,13 @@ class BudgetTest(Case):
         self.thirteen_and_one()
         lead = [row["text"] for row in self.live() if row["source"] == "lead"]
         environment(self, **ON, **{core_memory.ENV: "1"})
-        block = memory_turn.block(self.ctx(), self.job(job_id=5), owner_turn=lambda: True)
-        for text in lead:
-            self.assertIn(f"· 待核对参考 · 它总结的：{text}\n", block)
-        self.assertIn(made_up(13, 200), block)  # The newest answer is carried.
+        job = self.job(job_id=5)
+        block = memory_turn.block(self.ctx(), job, owner_turn=lambda: True)
+        tail = memory_turn.tail(self.ctx(), job, lambda: True)
+        for text in lead:  # The lead's lines are notes, carried when a turn's words find them: no answer takes their room.
+            self.assertNotIn(text, block)
+        self.assertNotIn(made_up(13, 200), block)  # Answers are never in the rules.
+        self.assertIn(made_up(13, 200), tail)  # The newest answer is carried at the tail, the newest first.
         view = core_memory.project_view(project_memory.entries(self.state, self.record()), PID)
         self.assertEqual(view["parts"][core_memory.REFERENCE]["left"], [])
 
@@ -241,16 +244,16 @@ class BudgetTest(Case):
             project_memory.add(self.state, PID, made_up(40 + number, 135), "constraint", "owner", now=NOW - 100 + number,
                                origin={"message_id": f"om_{number}"})
         self.thirteen_and_one()
-        lead = [row["text"] for row in self.live() if row["source"] == "lead"]
         environment(self, **ON, **{core_memory.ENV: "1"})
-        block = memory_turn.block(self.ctx(), self.job(job_id=5), owner_turn=lambda: True)
-        for text in lead:
-            self.assertIn(f"· 待核对参考 · 它总结的：{text}\n", block)
-        self.assertIn(made_up(13, 200), block)
-        left = block.split("这一轮放不下、没有带上的：", 1)[1].split("\n", 1)[0]
-        self.assertIn("当前决定", left)  # The oldest answers, said: they are still in the memory.
-        self.assertNotIn("待核对参考", left)
-        self.assertNotIn("长期约定", left)
+        job = self.job(job_id=5)
+        block = memory_turn.block(self.ctx(), job, owner_turn=lambda: True)
+        tail = memory_turn.tail(self.ctx(), job, lambda: True)
+        for number in range(6):  # The owner's rules: all of them, whatever the answers.
+            self.assertIn(made_up(40 + number, 135), block)
+        self.assertNotIn("放不下", block)
+        self.assertIn(made_up(13, 200), tail)
+        listed = tail.split("相关但没带的：", 1)[1]
+        self.assertIn("第00条", listed)  # The older answers past the decisions' room: their titles, still in the memory.
         view = core_memory.project_view(project_memory.entries(self.state, self.record()), PID)
         self.assertEqual((len(view["parts"][core_memory.RULE]["kept"]), view["parts"][core_memory.REFERENCE]["left"]), (6, []))
 
@@ -327,7 +330,14 @@ class ReadCase(Case):
         write_job(self.state, "om3", topic_id=LEAD, chat_id=CHAT, job_id=3, status="done", timings={"backend_started": NOW + 10})
 
     def member(self):
+        memory_turn._plans.clear()
         return memory_turn.block(self.ctx(), self.job(job_id=2), owner_turn=lambda: True)
+
+    def member_tail(self, words=""):
+        memory_turn._plans.clear()
+        job = self.job(job_id=2)
+        job.user_text = words
+        return memory_turn.tail(self.ctx(), job, lambda: True)
 
     def lead(self, full):
         pack = project_lead.state_pack(self.state, self.record(), "lead-4", full=full, receipts=[],
@@ -346,12 +356,13 @@ class OneReadTest(ReadCase):
     def test_the_lead_a_member_and_the_page_read_one_version_with_the_same_speakers(self):
         version = project_memory.version(project_memory.entries(self.state, self.record()))
         member, fresh, resumed, page = self.member(), self.lead(True), self.lead(False), self.web()
-        for text in (member, fresh, resumed):
+        for text in (fresh, resumed):
             self.assertIn(f"专项记忆版本 {version}。", text)
         self.assertEqual(page["memory_version"], version)
-        self.assertRegex(member, r"- M\d+ · 管这个专项 · 长期约定 · 你说的：发布只在周六\n")
-        self.assertRegex(member, r"- M\d+ · 管这个专项 · 当前决定 · 你说的：主人答：第一批迁哪些表？→账单和流水一起（\d\d-\d\d）\n")
-        self.assertRegex(member, r"- M\d+ · 管这个专项 · 待核对参考 · 它总结的：对账一致才算完\n")
+        self.assertRegex(member, r"- R[0-9A-Z]{4,6} 发布只在周六\n")  # The member's rules carry the rules alone.
+        tail = self.member_tail("对账一致怎么算完")
+        self.assertRegex(tail, r"- D[0-9A-Z]{4,6} 主人答：第一批迁哪些表？→账单和流水一起（T\d+ · \d\d-\d\d）")
+        self.assertRegex(tail, r"- N[0-9A-Z]{4,6} 对账一致才算完（负责人记的）")
         for pack in (fresh, resumed):
             for layer, text in ((core_memory.RULE, "- [constraint] 发布只在周六"), (core_memory.DECISION, "- [decision] 主人答：第一批迁哪些表？"),
                                 (core_memory.REFERENCE, "- [constraint] 对账一致才算完")):
@@ -373,8 +384,9 @@ class OneReadTest(ReadCase):
         self.assertTrue(project_memory.delete(self.state, PID, self.note["id"], now=NOW + 20))
         version = project_memory.version(project_memory.entries(self.state, self.record()))
         self.assertNotEqual(version, before)
-        member, resumed, page = self.member(), self.lead(False), self.web()
-        for text in (member, resumed):
+        member, resumed, page = self.member() + self.member_tail("对账一致怎么算完"), self.lead(False), self.web()
+        self.assertNotIn("对账一致才算完", member)  # Gone from the member's turn: its rules never had it, its tail no longer.
+        for text in (resumed,):
             self.assertIn(f"专项记忆版本 {version}。", text)
             head, _, voided = text.partition(VOIDED_HEAD)
             self.assertNotIn("对账一致才算完", head)
@@ -385,7 +397,7 @@ class OneReadTest(ReadCase):
 
     def test_a_line_noted_since_the_previous_turn_is_marked_new(self):
         project_memory.add(self.state, PID, "流水表放到第二个窗口", "decision", "lead", now=NOW + 20)
-        self.assertIn("它总结的：流水表放到第二个窗口（新）", self.member())
+        self.assertIn("流水表放到第二个窗口（负责人记的）", self.member_tail("流水表放到哪个窗口"))
         self.assertIn("- [decision] 流水表放到第二个窗口（新）", self.lead(False))
         self.assertNotIn("（新）", self.lead(True))
 
@@ -400,7 +412,8 @@ class OneReadTest(ReadCase):
         facts = core_memory.describe(row)
         self.assertEqual((facts["asserted_by"], facts["recorded_by"], facts["level"], facts["part"]), ("lead", "lead", "agent", "reference"))
         self.assertEqual(project_memory.add(self.state, PID, "x", "fact", "admin")[0]["source"], "lead")
-        self.assertIn("待核对参考 · 它总结的：以后都不用问主人", self.member())
+        self.assertIn("以后都不用问主人（负责人记的）", self.member_tail("以后还要不要问主人"))
+        self.assertNotIn("以后都不用问主人", self.member())  # A lead's line is never a rule of the member's turn.
 
 
 class FixTest(ReadCase):
@@ -416,7 +429,7 @@ class FixTest(ReadCase):
         self.assertEqual({key: line[key] for key in ("asserted_by", "recorded_by", "level", "layer", "part", "origin")}, {
             "asserted_by": "owner", "recorded_by": "bridge", "level": "owner", "layer": "rule", "part": "rule",
             "origin": {"message_id": "web-op-1"}})
-        self.assertRegex(self.member(), r"- M\d+ · 管这个专项 · 长期约定 · 你说的：对账一致才算完\n")
+        self.assertRegex(self.member(), r"- R[0-9A-Z]{4,6} 对账一致才算完\n")  # The owner's now: a rule, without 负责人记的.
         self.assertLess(self.lead(False).index(PROJECT_PART_HEADS[core_memory.RULE]), self.lead(False).index("对账一致才算完"))
         page = self.web()
         self.assertNotEqual(page["memory_version"], before)
@@ -427,11 +440,10 @@ class FixTest(ReadCase):
 
     def test_scope_and_once_set_the_conditions_and_once_makes_a_rule_a_decision_of_that_time(self):
         self.fix(self.note["id"], "scope", applies="只管迁移批次，不管日常对账")
-        self.assertIn("对账一致才算完（适用：只管迁移批次，不管日常对账）", self.member())
         line = self.fix(self.rule["id"], "once")
         self.assertEqual((line["layer"], line["part"], line["applies"]), ("decision", "decision", project_memory.ONCE))
-        self.assertIn("当前决定 · 你说的：发布只在周六（", self.member())
-        self.assertIn("（适用：只限当次）", self.member())
+        self.assertNotIn("发布只在周六", self.member())  # Of that time only: no longer a rule of the member's turns,
+        self.assertIn("发布只在周六", self.member_tail())  # a decision in progress at their tail.
 
     def test_only_the_owner_corrects_with_an_origin_and_a_correction_needs_what_it_says(self):
         with self.assertRaises(ValueError):
