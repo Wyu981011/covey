@@ -37,9 +37,9 @@ class DeployTest(unittest.TestCase):
         npm.chmod(0o755)
         self.out = self.tmp / "out"
         self.env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE_LARK_STATE": str(self.tmp / "fake.json"), "FAKE_OWNER": OWNER}
-        self.saved_env = {k: os.environ.get(k) for k in ("PATH", "FAKE_LARK_STATE", "FAKE_OWNER", "FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV", "FAKE_NPM_VERSION")}
+        self.saved_env = {k: os.environ.get(k) for k in ("PATH", "FAKE_LARK_STATE", "FAKE_OWNER", "FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV", "FAKE_NPM_VERSION", "FAKE_OLD_CLI")}
         os.environ.update(self.env)
-        for k in ("FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV", "FAKE_NPM_VERSION"):
+        for k in ("FAKE_FAIL", "FAKE_RELEASE", "FAKE_MULTIENV", "FAKE_NPM_VERSION", "FAKE_OLD_CLI"):
             os.environ.pop(k, None)
         self.addCleanup(self.restore_env)
 
@@ -63,7 +63,7 @@ class DeployTest(unittest.TestCase):
     def writes(self) -> list[str]:
         names = ("+create", "+feature-enable", "+init", "+db-execute", "+db-env-migrate", "+env-set",
                  "+openapi-key-create", "+release-create", "+access-scope-set")
-        return [c for c in self.fake()["calls"] if any(f" {n} " in f" {c} " for n in names)]
+        return [c for c in self.fake()["calls"] if "--help" not in c and any(f" {n} " in f" {c} " for n in names)]
 
     def test_dry_run_writes_nothing(self):
         code, text = self.run_deploy("--dry-run")
@@ -71,6 +71,43 @@ class DeployTest(unittest.TestCase):
         self.assertEqual(self.writes(), [])
         self.assertFalse((self.out / "miaoda-deploy.json").exists())
         self.assertIn("[不执行]", text)
+
+    def test_old_lark_cli_stops_before_any_write_and_says_how_to_fix_it(self):
+        os.environ["FAKE_OLD_CLI"] = "1"
+        for extra in (("--yes",), ("--dry-run",)):
+            with self.subTest(extra=extra):
+                code, text = self.run_deploy(*extra)
+                self.assertEqual(code, 2, text)
+                self.assertIn("本机 lark-cli（版本 1.0.50）", text)
+                self.assertIn("--apply-reason", text)
+                self.assertIn("lark-cli update", text)
+                self.assertIn("npm i -g @larksuite/cli@latest", text)
+                calls = self.fake()["calls"]
+                self.assertEqual(self.writes(), [])
+                self.assertFalse([c for c in calls if c.startswith("apps +release-create") and "--help" not in c])
+                self.assertFalse((self.out / "miaoda-deploy.json").exists())
+                self.assertFalse((self.tmp / "remote.git").exists())  # 应用的代码仓库一次也没拉过、没推过
+
+    def test_a_lark_cli_that_does_not_answer_is_not_called_old(self):
+        from unittest import mock
+        with mock.patch.object(deploy, "lark_cli_output", return_value=None):
+            code, text = self.run_deploy("--dry-run")
+        self.assertEqual(code, 2, text)
+        self.assertIn("30 秒内没回答", text)
+        self.assertNotIn("不支持 --apply-reason", text)
+        self.assertEqual(self.writes(), [])
+
+    def test_a_lark_cli_with_the_flag_passes_the_probe_and_release_still_sends_it(self):
+        code, text = self.run_deploy("--yes")
+        self.assertEqual(code, 0, text)
+        calls = self.fake()["calls"]
+        self.assertEqual(calls.index("apps +release-create --help") < calls.index(self.writes()[0]), True)
+        self.assertTrue([c for c in calls if c.startswith("apps +release-create") and "--apply-reason" in c])
+
+    def test_only_chat_tab_does_not_probe_because_it_does_not_release(self):
+        os.environ["FAKE_OLD_CLI"] = "1"
+        self.run_deploy("--only-chat-tab", "--dry-run")
+        self.assertFalse([c for c in self.fake()["calls"] if "--help" in c])
 
     def test_without_yes_refuses(self):
         code, text = self.run_deploy()
@@ -126,7 +163,7 @@ class DeployTest(unittest.TestCase):
         code, text = self.run_deploy("--yes")
         self.assertEqual(code, 0, text)
         again = self.fake()["calls"][before:]
-        self.assertFalse([c for c in again if any(n in c for n in ("+create", "+db-execute", "+openapi-key-create", "+release-create", "+access-scope-set", "+env-set"))], again)
+        self.assertFalse([c for c in again if "--help" not in c and any(n in c for n in ("+create", "+db-execute", "+openapi-key-create", "+release-create", "+access-scope-set", "+env-set"))], again)
         self.assertIn("已发布过", text)
 
     def test_existing_app_needs_adopt_flag(self):

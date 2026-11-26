@@ -12,6 +12,7 @@
   FAKE_TABS_WRITE  deny：建/改标签报缺权限；error：报别的错
   FAKE_TABS_NOLIST 1：建/更新的响应里不带标签列表
   FAKE_TABS_SORT   error：排序报错
+  FAKE_OLD_CLI     1：旧版本 lark-cli（1.0.50）：+release-create 的 --help 里没有 --apply-reason，带了就报 unknown flag
   FAKE_TABS_SEED   1：会话里已有一个旧的「工作台」标签（没有 is_built_in）
 """
 import json
@@ -123,6 +124,9 @@ def main():
     args = sys.argv[1:]
     s = load()
     s["calls"].append(" ".join(a for a in args if a not in ("--as", "user", "--format", "json")))
+    if args == ["--version"]:
+        print("lark-cli version " + ("1.0.50" if os.environ.get("FAKE_OLD_CLI") else "1.0.120"))
+        sys.exit(0)
     stdin = sys.stdin.read() if "-" in args and not sys.stdin.isatty() else ""
     try:
         if args[:2] == ["auth", "status"]:
@@ -177,7 +181,14 @@ def main():
         if cmd == "+openapi-key-create":
             s["keys"].append({"name": opt(args, "--name"), "key_preview": "****abcd", "scope_all": "--scope-all" in args})
             out({"ok": True, "data": {"api_key": "fake-secret-abcd"}})
+        if cmd == "+release-create" and "--help" in args:
+            flags = "  --app-id string\n  --branch string\n" + ("" if os.environ.get("FAKE_OLD_CLI") else "  --apply-reason string\n")
+            print("Usage:\n  lark-cli apps +release-create [flags]\n\nFlags:\n" + flags)
+            sys.exit(0)
         if cmd == "+release-create":
+            if os.environ.get("FAKE_OLD_CLI") and "--apply-reason" in args:
+                print("Error: unknown flag: --apply-reason", file=sys.stderr)
+                sys.exit(1)
             s["polls"] = 0
             if os.environ.get("FAKE_RELEASE") == "pending":
                 out({"ok": True, "data": {"release_id": "rel1", "status": "pending",

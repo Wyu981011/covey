@@ -19,7 +19,7 @@
 常用参数：--profile（lark-cli 的 profile，默认用 lark-cli 的默认 profile）、--out-dir（web.json、密钥和进度文件放哪，默认 <状态目录>/web）、
   --name（应用名）、--app-id + --adopt-existing（接手一个已有的应用；会覆盖它的代码，慎用）。
 只补建私聊标签（老部署、或第 10 步当时没做成）：加 --only-chat-tab（见 main 里的参数说明）。
-退出码：0 做完；1 某一步失败；2 前提不满足（没登录、缺命令、参数不对）；3 发布在等审批。
+退出码：0 做完；1 某一步失败；2 前提不满足（没登录、缺命令、lark-cli 太旧不认发布的 --apply-reason、参数不对）；3 发布在等审批。
 """
 from __future__ import annotations
 
@@ -150,6 +150,7 @@ def step_preflight(ctx: Ctx) -> None:
             raise StepFailed(f"找不到 {tool}：先装好它（lark-cli 用 `npm i -g @larksuite/cli`）。", 2)
     if not (WEB / "package.json").is_file() or not SCHEMA.is_file():
         raise StepFailed(f"{WEB} 不像 covey 仓库的 web/ 目录。", 2)
+    require_release_reason()  # 第 7 步的发布命令要认 --apply-reason：旧 lark-cli 在这里停，别等代码推上去了才报 unknown flag
     status = subprocess.run(["lark-cli", "auth", "status", "--json"] + (["--profile", ctx.args.profile] if ctx.args.profile else []),
                             text=True, capture_output=True)
     st = parse_envelope(status.stdout) or {}
@@ -166,6 +167,30 @@ def step_preflight(ctx: Ctx) -> None:
         say("提示：lark-cli 用的飞书应用和 Covey 的不是同一个，open_id 没法直接对；按 lark-cli 登录的人当主人，请确认这就是你自己。")
     owner = me
     ctx.state["owner_open_id"] = owner
+
+
+def lark_cli_output(*argv: str, timeout: int = 10) -> str | None:
+    """跑一条 lark-cli 命令，返回 stdout 加 stderr；起不来或超时返回 None。"""
+    try:
+        proc = subprocess.run(["lark-cli", *argv], text=True, capture_output=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (proc.stdout or "") + (proc.stderr or "")
+
+
+def require_release_reason() -> None:
+    """发布命令（apps +release-create）不认 --apply-reason 的旧 lark-cli，在任何写操作之前停下（退出码 2）。
+    看 --help 里有没有这个参数，不比版本号。核心的 covey/feishu/transport.py release_reason_support 有同样的探测
+    （诊断用，这个脚本要能脱离 covey 包单独跑，所以各留一份）：改一处要改两处。"""
+    shown = lark_cli_output("apps", "+release-create", "--help", timeout=30)
+    if shown is None:  # Not an old lark-cli: one that did not answer (a busy machine), so say that, not "too old".
+        raise StepFailed("lark-cli 30 秒内没回答 `lark-cli apps +release-create --help`，没法确认它的发布命令认不认 --apply-reason，"
+                         "所以停在最前面，什么都没做。机器不忙时重跑这条命令。", 2)
+    if "--apply-reason" in shown:
+        return
+    found = re.search(r"\d+(?:\.\d+)+\S*", lark_cli_output("--version") or "")
+    raise StepFailed(f"本机 lark-cli（版本 {found.group(0) if found else '未知'}）的发布命令不支持 --apply-reason，第 7 步发布会失败，所以停在最前面，什么都没做。"
+                     "运行 `lark-cli update`（或 `npm i -g @larksuite/cli@latest`）后重跑这条命令。", 2)
 
 
 def read_identity(state_dir: str | None) -> dict:
