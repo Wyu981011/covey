@@ -1,5 +1,5 @@
-"""A resumed topic turn whose previous turn left the context over 60% of its window is told to update its checkpoint
-first (app/prompts.py context_full, app/runs.py _context_note)."""
+"""A resumed topic turn whose previous turn left the context high in its window is told the figures, to update its
+checkpoint first and to go on with the turn as usual (app/prompts.py context_high, app/runs.py _context_note)."""
 from __future__ import annotations
 
 import dataclasses
@@ -9,21 +9,35 @@ from pathlib import Path
 from support.world import UnifiedCase
 from test_auto_retry import Failing
 
-from covey.app.prompts import CONTEXT_FULL, context_full
+from covey.app.prompts import CONTEXT_HIGH, context_high
 from covey.core.jobs import find_job_record, upsert_job_record
 
 
-class ContextFullTest(unittest.TestCase):
-    def test_over_sixty_percent_of_a_known_window(self):
-        self.assertEqual(context_full({"context_tokens": 600_000, "context_window": 1_000_000}), CONTEXT_FULL)
-        self.assertEqual(context_full({"context_tokens": 130_000, "context_window": 200_000}), CONTEXT_FULL)
-        self.assertEqual(context_full({"context_tokens": 599_999, "context_window": 1_000_000}), "")
+class ContextHighTest(unittest.TestCase):
+    def test_sixty_percent_of_a_window_up_to_room_short_of_it(self):
+        # Windows of up to 75 万: from 60 % on, as before (Codex's 25.84 万, a 20 万 one).
+        self.assertTrue(context_high({"context_tokens": 155_040, "context_window": 258_400}))
+        self.assertEqual(context_high({"context_tokens": 155_039, "context_window": 258_400}), "")
+        self.assertTrue(context_high({"context_tokens": 120_000, "context_window": 200_000}))
+        # A 1M window: from 30 万 short of it, not from 60 万 (T774 was told at 82.7 万 of 100 万 that it was full).
+        self.assertEqual(context_high({"context_tokens": 600_000, "context_window": 1_000_000}), "")
+        self.assertEqual(context_high({"context_tokens": 699_999, "context_window": 1_000_000}), "")
+        self.assertTrue(context_high({"context_tokens": 700_000, "context_window": 1_000_000}))
+
+    def test_the_line_has_the_figures_and_says_go_on(self):
+        line = context_high({"context_tokens": 827_000, "context_window": 1_000_000})
+        self.assertEqual(line, CONTEXT_HIGH.format(used="82.7 万", window="100 万"))
+        self.assertIn("上一轮结束时上下文 82.7 万 / 100 万 token", line)
+        for words in ("会话照常接着用", "自动压缩", "completed 和 next_step", "照常做完这一轮", "不要因为上下文高就停下",
+                      "提前收尾", "等新会话", "不要说上下文满了"):
+            self.assertIn(words, line)
+        self.assertNotIn("快满了", line)
 
     def test_no_window_or_no_count_is_no_line(self):
         for record in (None, {}, {"context_tokens": 900_000}, {"context_window": 1_000_000},
                        {"context_tokens": 900_000, "context_window": 0}, {"context_tokens": "9", "context_window": 10},
                        {"context_tokens": 9.5, "context_window": 10}):
-            self.assertEqual(context_full(record), "", record)
+            self.assertEqual(context_high(record), "", record)
 
 
 class WiredTest(UnifiedCase):
@@ -49,11 +63,16 @@ class WiredTest(UnifiedCase):
         nxt.checkpoint_path = str(Path(self.root) / "cp.json")
         return ctx, nxt
 
-    def test_a_resumed_turn_after_a_full_context_is_told_first(self):
-        ctx, job = self.started(context_tokens=700_000, context_window=1_000_000)
+    def test_a_resumed_turn_after_a_high_context_is_told_first(self):
+        ctx, job = self.started(context_tokens=827_000, context_window=1_000_000)
         note = self.claude.runs._context_note(ctx, job, "sid")
-        self.assertEqual(note, "\n\n" + CONTEXT_FULL)
-        self.assertIn(CONTEXT_FULL, self.claude.runs._prompt(type("L", (), {"ctx": ctx, "rules_session": True})(), job, "sid")[0])
+        line = CONTEXT_HIGH.format(used="82.7 万", window="100 万")
+        self.assertEqual(note, "\n\n" + line)
+        self.assertIn(line, self.claude.runs._prompt(type("L", (), {"ctx": ctx, "rules_session": True})(), job, "sid")[0])
+
+    def test_sixty_percent_of_a_large_window_gets_no_line(self):
+        ctx, job = self.started(context_tokens=650_000, context_window=1_000_000)
+        self.assertEqual(self.claude.runs._context_note(ctx, job, "sid"), "")
 
     def test_a_new_session_gets_no_line(self):
         ctx, job = self.started(context_tokens=700_000, context_window=1_000_000)

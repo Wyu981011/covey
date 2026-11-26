@@ -79,6 +79,7 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **管家的工具**：管家跑在 Codex 上时（设置卡「配置」页的“管家”一段的 Harness），它那一轮的线程另挂 Bridge 工具服务 `bridge`（`backends/codex/appserver.py` 的 `bridge_servers`），工具等待上限 `tool_timeout_sec` 150 秒，比服务自己的 120 秒长。`approvalPolicy: never` 下调用不弹审批（0.167.2 实测）。
 - **失败**（`backends/codex/turn.py` 的 `codex_failure_code`，按 `codexErrorInfo` 分，不看原文）：`usageLimitExceeded`、`rateLimitExceeded` 或 429 记 `rate_limited`，原文说 quota exceeded、billing、要升级套餐的记 `quota_exhausted`；`serverOverloaded`、`internalServerError`、`flexUnavailable`，以及连接失败或中断（`httpConnectionFailed`、`responseStream*`、`responseTooManyFailedAttempts`）没有状态码或是 500、502、503、504、529 的记 `server_fault`（原文说的是账号的事，如 could not authenticate、sign in again 记 `authentication_error`，insufficient_quota、额度用完记 `quota_exhausted`：`core/limit_reset.py` 的 `account_fault`）；带别的状态码的连接错误还是 `transport_error`；`unauthorized` 和 401、403 记 `authentication_error`（网关每日额度的 403 记 `quota_exhausted`）；模型不存在、请求错误、上下文超长、各类策略拦截和其余的记 `root_failed`。
 - **交接摘要**（`backends/codex/handoff.py`）：在原会话的 `thread/fork`（`ephemeral`，不写 rollout，原会话不动）上请原模型写，单独起一个 app-server，`CODEX_HOME` 用协作同款的私有目录（只链登录和会话，不带主人的 MCP、hook、规则、插件、记忆），只读沙箱、不审批，关掉两种 shell（`shell_tool`、`unified_exec`）、子 Agent、网页搜索、浏览器和看图等工具，不挂 Bridge 工具和工作区只读工具，服务端发来的审批或提问一律拒绝；最多 180 秒，超时或停止时关掉 app-server 并停它的进程组。网关模型同样经一个本轮的中继。
+- **原生压缩**：Bridge 不改 Codex 的自动压缩（不传 `model_auto_compact_token_limit`），模型目录没给 `auto_compact_token_limit` 时由 Codex 自己定（0.172.0 的 27.2 万窗口模型，任务卡报的窗口是它的 95%，即 25.84 万；轮末上下文实测最高 24.48 万，约为 27.2 万的 90%）。
 - **参数**写在 bootstrap 命令上，不进 `harnesses.json`（[常用参数](#常用参数)）；网关模型见[模型网关](#模型网关codex-与-dsh)。
 
 ## Claude Code
@@ -87,7 +88,7 @@ CLI 登录和注册服务要用同一个系统账号、同一套环境变量。�
 - **运行方式**：每轮一个双向 `claude -p --input-format stream-json`。Bridge 不改系统提示：桥接规则在新会话首轮的用户消息开头，续接轮附格式提醒、工作区和检查点约定。
 - **问答**：只回答本轮根任务发出、和已观察到的工具调用一致的 `AskUserQuestion`（1 至 4 题、每题 2 至 4 个选项）；保密问题、子 Agent 的提问和其他权限请求一律拒绝。待答问题属于原任务进程，进程结束后失效。
 - **补充**：Claude 进入会话后才能接收，之前先保存；送达未确认的不自动重发。图片格式不支持时本轮失败。
-- **压缩**：`--claude-auto-compact-window TOKENS` 给子进程设 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（一轮中途）。轮间压缩在续接的一轮开始前做：Bridge 要求（`compact_first`，如管家的阈值），或设了 `--claude-compact-between-turns TOKENS` 且上一轮结束时上下文达到它；用单独的 `claude -p --resume <会话>` 发 `/compact`，会话 ID 不变，token 算进本轮；失败或 20 分钟没完成按原上下文继续。
+- **压缩**：`--claude-auto-compact-window TOKENS` 给子进程设 `CLAUDE_CODE_AUTO_COMPACT_WINDOW`（一轮中途）；不设时子进程的环境原样传下去，由 Claude Code 按模型自己定压缩窗口（1M 模型的会话实测在 96.7 万～97.5 万 token 处压缩，2.1.x），CLI 自己也建议保持 auto；设得比这低，一轮中途会更早压缩，细节丢得更早。轮间压缩在续接的一轮开始前做：Bridge 要求（`compact_first`，如管家的阈值），或设了 `--claude-compact-between-turns TOKENS` 且上一轮结束时上下文达到它；用单独的 `claude -p --resume <会话>` 发 `/compact`，会话 ID 不变，token 算进本轮；失败或 20 分钟没完成按原上下文继续。
 - **回退一步**（[用法](usage.md#回退一步)、[机制](architecture.md#回退一步)）：子进程带 `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=1`；去掉一轮用 `--resume-session-at`，改回文件用 `--rewind-files`。
 - **会话保留天数**（`core/claude_retention.py`）：Claude Code 按它自己的 `cleanupPeriodDays`（`settings.json`，缺省 30 天，要正整数）删掉整个配置目录里更早的会话文件，更早的话题就接不上、回退一步也读不到。诊断页和 `./install` 读 `$CLAUDE_CONFIG_DIR/settings.json`（没设就 `~/.claude/settings.json`；项目级和托管的设置不读），缺省或少于约 90 天时提示加一行 `"cleanupPeriodDays": 3650`；Covey 只提示，不改你的 Claude 配置。
 - **交接摘要**（`backends/claude/handoff.py`）：话题从有会话的 Claude 绑定换走后，新绑定的第一轮先用原模型在原目录 `--resume <旧会话> --fork-session`，请它写一份约 1500 字以内的交接摘要（最多等 180 秒，不带跳过权限和 Bridge 工具，分叉的会话用完删掉）。哪些情况不做见[使用参考 · 换配置之后](reference.md#换配置之后)和[架构](architecture.md#话题中途换配置)。

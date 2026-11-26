@@ -20,7 +20,7 @@ from covey.cards.review import render_history
 from covey.core.process_env import env_flag
 from covey.core import extensions, knowledge, projects, turn_source
 from covey.core import memory as core_memory
-from covey.core.text import stamp
+from covey.core.text import short_count, stamp
 from covey.core.checkpoint import checkpoint_rules
 from covey.core.butler_tool_specs import BUTLER_RULES_ENV
 
@@ -60,18 +60,26 @@ RESUME_HEAD = (
 RESUME_REMINDERS = "\n".join((*RESUME_HEAD, SEARCH_RULE, LANGUAGE_RULE))
 
 
-# A topic's resumed turn whose previous turn left the model's context over FULL_SHARE of its window (the CLI compacts
-# only near the end): one line telling it to bring the checkpoint up to date first (``context_full``).
-FULL_SHARE = 0.6
-CONTEXT_FULL = "上下文快满了：先把检查点的 completed 和 next_step 更新到最新，再接着做。"
+# A topic's resumed turn whose previous turn left the model's context high (``context_high``): one line with the
+# figures that asks for the checkpoint first, so a compaction in the turn loses no progress, and says the turn goes on
+# as usual. The CLIs compact on their own near the end of the window (Claude Code at about 97 万 of 100 万, Codex at 90 %
+# of its model's window), so the line comes from HIGH_SHARE of the window, or only ROOM short of it on a large one: a
+# turn grows the context by less than ROOM nearly always (Claude 1M p99 32 万), and a 1M session is not told from 60 万
+# on. "上下文快满了" made T774 stop short of its work and say its context was full while the session went on.
+HIGH_SHARE = 0.6
+ROOM = 300_000
+CONTEXT_HIGH = ("上一轮结束时上下文 {used} / {window} token。会话照常接着用，到窗口上限前会自动压缩，不用为此做别的："
+                "先把检查点的 completed 和 next_step 更新到最新（压缩后靠它接上进度），然后照常做完这一轮的事。"
+                "不要因为上下文高就停下、提前收尾、把要做的留给下一轮或等新会话，回复里也不要说上下文满了。")
 
 
-def context_full(record: dict | None) -> str:
-    """CONTEXT_FULL when ``record`` (the previous turn's) holds a context size over FULL_SHARE of the window the
-    backend reported for that model; '' for anything else, a window not known included."""
+def context_high(record: dict | None) -> str:
+    """CONTEXT_HIGH with its figures when ``record`` (the previous turn's) holds a context size of at least HIGH_SHARE
+    of the window the backend reported for that model and at least the window less ROOM; '' for anything else, a
+    window not known included."""
     tokens, window = (record or {}).get("context_tokens"), (record or {}).get("context_window")
-    if type(tokens) is int and type(window) is int and window > 0 and tokens >= FULL_SHARE * window:
-        return CONTEXT_FULL
+    if type(tokens) is int and type(window) is int and window > 0 and tokens >= max(HIGH_SHARE * window, window - ROOM):
+        return CONTEXT_HIGH.format(used=short_count(tokens), window=short_count(window))
     return ""
 
 
