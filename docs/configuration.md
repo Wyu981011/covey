@@ -39,7 +39,7 @@
 | [欢迎卡](usage.md#第一次使用) | `COVEY_WELCOME`（默认开） | 新部署第一次启动后私聊里有一张「欢迎使用 Covey」卡；升级前已在用的部署不发 | `COVEY_WELCOME=0` |
 | [限流和临时故障后自动继续](reference.md#自动重试) | `COVEY_AUTO_RETRY_LONG`（默认开） | 限流后的自动重试最久等约 3 小时（Claude 说了恢复时间就等到那时），529/5xx/断连也自动重试几次，每次另加 0–30 秒随机；任务卡上写着几点自动继续 | `COVEY_AUTO_RETRY_LONG=0`（照旧限流只重试两次、临时故障不重试、没有随机） |
 | [几个话题同因停下的合并提示](reference.md#自动重试) | `COVEY_LIMIT_NOTICE`（默认开） | 几个话题差不多同时因限流或临时故障停下、各自排好自动重试时，私聊里多一条提示，列出每个话题几点继续 | `COVEY_LIMIT_NOTICE=0`（没有这条提示，各话题的任务卡照旧） |
-| [账号与额度](quota.md) | `COVEY_QUOTA`（默认开） | Claude Code 登录的是 https 网关、数据根有 `quota-sources.json` 或配了两个以上 agy 号时，Bridge 每分钟看一次额度来源，快照存在状态目录 `quota/`；号池用完时失败卡写清几点恢复，6 小时内到点自动接着做 | `COVEY_QUOTA=0`（不读额度来源、不问网关，失败卡照旧） |
+| [账号与额度](quota.md) | `COVEY_QUOTA`（默认开） | 扩展给了额度来源、数据根有 `quota-sources.json` 或配了两个以上 agy 号时，Bridge 每分钟看一次额度来源，快照存在状态目录 `quota/`；号池用完时失败卡写清几点恢复，6 小时内到点自动接着做 | `COVEY_QUOTA=0`（不读额度来源、不问网关，失败卡照旧） |
 | [别人私聊时回一句](usage.md#基本概念) | `COVEY_STRANGER_REPLY`（默认开） | 让同事私聊你的机器人：他收到“这是你的个人助手，只处理你的消息”，同一个人每天最多一次；设了 `COVEY_INVITE_URL` 时后面带上安装说明的链接 | `COVEY_STRANGER_REPLY=0`（照旧不回） |
 | [机器人停了告诉你](operations.md#机器人停了会告诉主人) | `COVEY_DOWN_NOTICE`（默认开） | Manager 连续 3 次拉不起机器人、启动出错持续 2 分钟，或机器人 10 分钟收不到飞书消息时，私聊里收到一条“⚠️ 机器人没起来…”，好了再收到一条“✅ 机器人恢复了” | `COVEY_DOWN_NOTICE=0` |
 | [敏感词脱敏](#敏感词脱敏) | 没有开关 | 设置卡有「脱敏」标签；话题开了脱敏才替换，只支持 Claude 的模型 | 设置卡上关 |
@@ -459,8 +459,8 @@
 | `COVEY_BROWSER_EXECUTABLE` | `feishu/web_client.py`（`launch`）、`core/browser_env.py`、`service/browser_setup.py` | 空：用 Playwright 下载的 Chromium；`./install` 发现机器上已有 Chrome/Chromium 时写进 `<数据根>/browsers/launch.json` | 否 |
 | `LD_LIBRARY_PATH` | `core/browser_env.py`、`service/browser_setup.py`（无 root 缺 Chromium 系统库时，把 `<数据根>/browsers/syslibs/` 下解出的库目录加在前面，只给浏览器进程） | 不动 | 否 |
 | `TMPDIR` | `service/browser_setup.py`（监视浏览器下载有没有进展的临时目录；`./install` 设成 `<数据根>/tmp`） | `<数据根>/tmp` | 否 |
-| `ANTHROPIC_BASE_URL` | `app/redaction_panel.py`（「探测」）、`backends/claude/redaction.py`（脱敏中继的上游）、`core/same_account.py`（Claude Code 自己的登录去哪：和某个模型网关是同一账号时菜单只列一次）、`core/quota_sources.py`（`claude_login`：是 https 时去同一个网关问 `/covey/quota`，见 [quota.md](quota.md#网关的-coveyquota)） | 空 | 否 |
-| `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_API_KEY` | `core/same_account.py`（只取摘要比对 Claude Code 自己的登录和模型网关是不是同一把密钥，不存、不显示）、`core/quota_sources.py`（`claude_login`：问同一个 https 网关的 `/covey/quota` 时放在请求头里，只发给这个地址，不存、不记日志） | 空 | 否 |
+| `ANTHROPIC_BASE_URL` | `app/redaction_panel.py`（「探测」）、`backends/claude/redaction.py`（脱敏中继的上游）、`core/same_account.py`（Claude Code 自己的登录去哪：和某个模型网关是同一账号时菜单只列一次） | 空 | 否 |
+| `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_API_KEY` | `core/same_account.py`（只取摘要比对 Claude Code 自己的登录和模型网关是不是同一把密钥，不存、不显示） | 空 | 否 |
 | `COVEY_PINNED_OVERVIEW` | `app/overview.py`（`app/pins.py` 的 `laid` 也读：两个开关都开时看板记录的规则才算数；`app/prompts.py` 的 `area_rule` 也读：开着才在管家规则里说“进度主人看 Pin”） | 开；`0`、`off`、`false`、`no` 关 | 否 |
 | `COVEY_GROUP_ALL_MESSAGES` | `app/access.py`（`free_talk_on`；群聊卡 `app/group_manager.py` 经它） | 关；`1` 开（还要应用开通 `im:message.group_msg`） | 否 |
 | `COVEY_GROUP_MEMBERS` | `app/access.py`（`members_default`；群聊卡、启用确认卡和 `app/tool_limits.py` 经它） | `full`：没在群聊卡上选过的群，群成员的任务和你的一样；`read`：这些群的群成员任务只读（见[群成员只读](#群成员只读)） | 否 |
@@ -559,7 +559,7 @@
 | `COVEY_AUTO_RETRY_LONG` | `app/auto_retry.py`（`long_ladder`：`plan` 排自动重试时据此选等待时间表、是否有临时故障一类、是否读恢复时间、是否加随机、做了实事是否清零；`applies`、`status_line` 也看它） | 开（默认，只有 `0` 关）：限流 60 秒到 1 小时共六次、临时故障 30 秒到 5 分钟共三次、读得到恢复时间就等到那时、每次另加 0–30 秒随机；`0`：和原来一样，限流 60、180 秒两次，临时故障不重试，没有随机 | 否 |
 | `COVEY_MAX_WORKERS` | `core/scheduler.py`（`worker_limit`：Bridge 起调度器时读一次；`app/submission.py` 排队时据它说“并发已满（最多 N 个任务）”） | 32：最多同时跑这么多个任务（每个话题一次一个），其中 2 个只留给管家和专项负责人那一轮，普通话题最多占其余的；写大于 0 的整数改它（最多 512），机器小就调低；改了要重新注册服务才生效 | 否 |
 | `COVEY_LIMIT_NOTICE` | `app/limit_notice.py`（`enabled`：`tick` 在 Bridge 的 outbox 循环里据此决定看不看记录、发不发提示） | 开（默认，只有 `0` 关）：私聊里几个话题同一原因停下、各自排好自动重试时发一条合并提示；`0`：不读记录、不发，和原来一样 | 否 |
-| `COVEY_QUOTA` | `core/quota_sources.py`（`enabled`：Bridge 的额度线程 `app/quota_watch.py`、失败说明 `app/quota_failure.py` 据此决定读不读额度来源） | 开（默认，`0`、`off` 才关）：自动去 Claude Code 登录的 https 网关问 `/covey/quota`，读数据根 `quota-sources.json` 里的命令和网址，写 agy 多账号的快照，失败卡按快照说清几点恢复；`0`：都不读、不问，和原来一样。见 [quota.md](quota.md) | 否 |
+| `COVEY_QUOTA` | `core/quota_sources.py`（`enabled`：Bridge 的额度线程 `app/quota_watch.py`、失败说明 `app/quota_failure.py` 据此决定读不读额度来源） | 开（默认，`0`、`off` 才关）：读扩展给的额度来源和数据根 `quota-sources.json` 里的命令和网址，写 agy 多账号的快照，失败卡按快照说清几点恢复；`0`：都不读、不问，和原来一样。见 [quota.md](quota.md) | 否 |
 | `COVEY_STRANGER_REPLY` | `app/strangers.py`（`enabled`） | 开：别人私聊机器人时回一句纯文本“这是某某的个人助手，只处理某某的消息”，每人每天最多一次；`0` 关：和原来一样不回，只记一行 `ignored message … reason=not_owner` | 否 |
 | `COVEY_INVITE_URL` | `app/strangers.py`（`invite_url`） | 扩展的 `invite_url`，都没有时空：那句话不带链接。设了 http(s) 地址时末尾加“想要一个自己的：<地址>”，一般指向安装说明 | 否 |
 | `COVEY_DOWN_NOTICE` | `service/down_notice.py`（`enabled`：Manager 每轮从各服务清单的环境里读，`service/manager.py` 的 `tell`） | 开：Bridge 连续 3 次没能启动、同一个启动错误持续 2 分钟，或运行中 10 分钟收不到飞书消息时，Manager 用这个服务的 lark-cli profile 以机器人身份给主人发一条文字消息，恢复（正常运行 5 分钟）后再发一条；同一个服务的“停了”消息至少隔 1 小时；`0` 关：Manager 不读、不写、不发，和原来一样。见[运维 · 机器人停了会告诉主人](operations.md#机器人停了会告诉主人) | 否 |

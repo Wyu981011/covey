@@ -53,6 +53,8 @@ HOOK_NAMES = {
     "claude_models": "backends/claude/models.py: models() -> list of backends/claude/models.py catalog_row dicts, added to the "
                      "Claude Harness's model catalog; each slug must start with a prefix the same package's PROVIDERS declare "
                      "for claude (else the row is dropped), and the package's claude_turn runs the chosen model",
+    "quota_sources": "core/quota_sources.py: sources(environ) -> list of quota_sources.Source, quota sources the core reads "
+                     "like its own (a command, or an https or loopback address with its headers); every package's",
     "agy_turn": "backends/agy/bridge.py: context manager around an Antigravity turn on this machine (turn(ctx, env, "
                 "run_id=...) -> (env, switch): the first process's environment, and switch(failure) -> (env, note) or "
                 "None, asked when a process failed as SWITCHED)",

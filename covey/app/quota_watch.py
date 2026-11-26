@@ -1,10 +1,10 @@
 """账号与额度 at the Bridge (docs/quota.md): one thread that keeps the quota snapshots (core/quota.py) current, unless
-COVEY_QUOTA=0. Every TICK seconds the sources that are due are read (core/quota_sources.py ``refresh``: the gateway
-Claude Code signs in to, the commands and addresses of quota-sources.json, each at its own interval) and the agy
+COVEY_QUOTA=0. Every TICK seconds the sources that are due are read (core/quota_sources.py ``refresh``: the extensions'
+sources, the commands and addresses of quota-sources.json, each at its own interval) and the agy
 snapshots are written from the accounts' state (backends/agy/accounts.py ``snapshots``: no account is asked). The page,
 the reminders and the failure cards read the files; nothing is sent from here.
 
-A Bridge with nothing to read (no https gateway, no quota-sources.json, fewer than two agy accounts) starts no thread
+A Bridge with nothing to read (no extension's source, no quota-sources.json, fewer than two agy accounts) starts no thread
 (``wanted``, asked when the threads are listed: a source added later is read after the next restart). A
 quota-sources.json that may not be used (another user's, or others may write it) is written to the log once a change.
 """

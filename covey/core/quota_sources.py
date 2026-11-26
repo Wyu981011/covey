@@ -1,14 +1,15 @@
 """额度来源 (docs/quota.md): who gives the snapshots core/quota.py keeps, and reading one. Standard library only.
 
-- The gateway Claude Code signs in to (``gateway``): its ``ANTHROPIC_BASE_URL`` and key, from the process's environment,
-  else the ``env`` of its user settings.json (as core/same_account.py reads them). Only an https address is asked, and
-  only its own origin: ``https://<host>/covey/quota`` with that key in ``x-api-key`` and ``Authorization: Bearer``; no
-  redirect is followed, and the answer is read up to quota.MAX_BYTES. A 404 means the gateway has no such address:
-  nothing is said and it is asked again ABSENT_SECONDS later. Nobody configures it.
+- An extension's ``quota_sources`` hook (core/extensions.py; ``plugin_sources``): ``sources(environ)`` gives Source rows
+  the core reads like its own, a command or an address with the headers it sends (a gateway's key among them, so its
+  ``repr`` hides them). An address is asked only when it is https or this machine's loopback (``address_ok``); no
+  redirect is followed, and the answer is read up to quota.MAX_BYTES. A 404 of a ``gateway`` source means it has no such
+  address: nothing is said and it is asked again ABSENT_SECONDS later. One source may say it is the pool behind Claude
+  Code's own login (``claude``): app/quota_failure.py reads it when a Claude turn fails on a limit.
 - ``quota-sources.json`` in the data home (``configured``): ``{"sources": [{"id", "kind": "command", "argv": [...],
   "interval", "timeout"}, {"id", "kind": "url", "url": "https://…", "token_file": "/absolute/…", "interval",
   "timeout"}]}``. It names commands to run, so it is read only when it is this user's and nobody else may write it
-  (``owned``); a url source sends its token (read from its file) to its own address alone, and never the model's key.
+  (``owned``); a url source sends its token (read from its file) to its own address alone.
 - ``read(source)``: the snapshot, parsed; SourceError says why not (a command's exit status, its timeout, after which its
   whole process group is killed, an answer too large or not a snapshot).
 - ``refresh(state_dir, ...)``: the sources that are due read and their snapshots (or why not) kept; each under a lock file
@@ -23,7 +24,6 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import fcntl
-import hashlib
 import json
 import os
 import signal
@@ -41,10 +41,8 @@ from covey.core.state import ensure_private_dir
 
 SWITCH = "COVEY_QUOTA"  # On unset; 0, off, false or no turns every quota source off.
 CONFIG_FILE = "quota-sources.json"  # Under the data home.
-GATEWAY_PATH = "/covey/quota"
 INTERVAL, MIN_INTERVAL = 300, 60  # Seconds between reads of a source.
 TIMEOUT, MAX_TIMEOUT = 30, 120
-GATEWAY_TIMEOUT = 10
 ABSENT_SECONDS = 6 * 3600  # A gateway without /covey/quota is asked again after this long.
 FAILED_SECONDS = 60  # A source that failed is read again no sooner than this (unless asked to).
 MAX_SOURCES = 20
@@ -69,7 +67,8 @@ class Source:
     interval: int = INTERVAL
     timeout: int = TIMEOUT
     title: str = ""
-    key: str = dataclasses.field(default="", repr=False)  # A gateway's: the model key Claude Code signs in with.
+    key: str = dataclasses.field(default="", repr=False)  # A gateway's: the key it knows its caller by (sent, never shown).
+    claude: bool = False  # The pool behind Claude Code's own login (app/quota_failure.py).
 
 
 def enabled(environ=None) -> bool:
@@ -138,8 +137,8 @@ def configured(path=None) -> list:
             found.append(Source(source, "command", argv=tuple(argv), interval=interval, timeout=timeout, title=title))
         elif kind == "url":
             url, token = str(row.get("url") or ""), str(row.get("token_file") or "")
-            if not quota.link_ok(url):
-                raise ValueError(f"{where}.url 要是 https 地址")
+            if not address_ok(url):
+                raise ValueError(f"{where}.url 要是 https 地址（或本机回环的 http）")
             if token and not Path(token).is_absolute():
                 raise ValueError(f"{where}.token_file 要是绝对路径")
             found.append(Source(source, "url", url=url, token_file=token, interval=interval, timeout=timeout,
@@ -149,55 +148,58 @@ def configured(path=None) -> list:
     return found
 
 
-def claude_login(environ=None):
-    """(base URL, key) Claude Code signs in with: the process's environment first, then its user settings.json's
-    ``env``; None when it names no address of its own (the vendor's sign-in) or no key."""
-    from covey.core.claude_retention import settings_path
-
-    environ = os.environ if environ is None else environ
-    env = {}
-    with contextlib.suppress(OSError, ValueError, AttributeError):
-        found = json.loads(settings_path(environ).read_text()).get("env")
-        env = found if isinstance(found, dict) else {}
-    url = str(environ.get("ANTHROPIC_BASE_URL") or env.get("ANTHROPIC_BASE_URL") or "").strip()
-    key = str(environ.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_AUTH_TOKEN") or environ.get("ANTHROPIC_API_KEY")
-              or env.get("ANTHROPIC_API_KEY") or "").strip()
-    return (url, key) if url and key else None
+def address_ok(url) -> bool:
+    """Whether a source's ``url`` may be asked: https, or http to this machine's loopback (a tunnel's local end)."""
+    parts = urlsplit(str(url or "").strip())
+    if parts.username or parts.password or not parts.hostname or any(ch.isspace() for ch in str(url)):
+        return False
+    scheme = parts.scheme.lower()
+    return scheme == "https" or (scheme == "http" and parts.hostname in ("127.0.0.1", "::1", "localhost"))
 
 
-def gateway_url(base_url) -> str:
-    """``https://<host>/covey/quota`` of an https ``base_url``; '' for any other (the key goes to its own origin alone)."""
-    parts = urlsplit(str(base_url or "").strip())
-    if parts.scheme.lower() != "https" or not parts.hostname or parts.username or parts.password:
-        return ""
-    return f"https://{parts.netloc.lower()}{GATEWAY_PATH}"
+def plugin_sources(environ=None) -> tuple:
+    """(sources, problems): the Source rows the enabled extensions' ``quota_sources`` hooks give, each checked (its id,
+    kind and address); a hook that fails or gives a row that may not be used is a problem, led by its package."""
+    from covey.core import extensions
+
+    found, problems, ids = [], [], set()
+    for package, module in extensions.hooks("quota_sources"):
+        try:
+            rows = list(module.sources(environ) or ())
+        except Exception as exc:  # A package's sources: never the core's thread.
+            problems.append(f"{package}: {type(exc).__name__}")
+            continue
+        for row in rows:
+            good = (isinstance(row, Source) and quota.SOURCE_ID.fullmatch(row.id or "") and row.id not in ids
+                    and not row.id.startswith("agy") and row.kind in ("gateway", "command", "url")
+                    and (row.kind == "command" and row.argv or row.kind != "command" and address_ok(row.url)))
+            if not good:
+                problems.append(f"{package}: 来源 {getattr(row, 'id', '?')!r} 用不了")
+                continue
+            ids.add(row.id)
+            found.append(row)
+    return found, problems
 
 
-def gateway_id(url) -> str:
-    return "gateway-" + hashlib.sha256(url.encode()).hexdigest()[:10]
-
-
-def gateway(environ=None):
-    """The Source of the gateway Claude Code signs in to (see the module docstring), None when there is none to ask."""
-    login = claude_login(environ)
-    url = gateway_url(login[0]) if login else ""
-    if not url:
+def claude_source(environ=None):
+    """The source of the pool behind Claude Code's own login (an extension's, ``claude``), None without one."""
+    if not enabled(environ):
         return None
-    return Source(gateway_id(url), "gateway", url=url, interval=INTERVAL, timeout=GATEWAY_TIMEOUT,
-                  title="Claude · 网关", key=login[1])
+    return next((s for s in plugin_sources(environ)[0] if s.claude), None)
 
 
 def sources(environ=None) -> tuple:
-    """(sources, problem): the gateway's (when there is one) and the configured ones; ``problem`` says why the file's
-    could not be used ('' when they could)."""
+    """(sources, problem): the extensions' (``plugin_sources``) and the configured ones; ``problem`` says why some could
+    not be used ('' when all could)."""
     if not enabled(environ):
         return [], ""
-    found = [s for s in (gateway(environ),) if s is not None]
+    found, problems = plugin_sources(environ)
+    ids = {s.id for s in found}
     try:
-        found += configured()
+        found += [s for s in configured() if s.id not in ids]
     except ValueError as exc:
-        return found, str(exc)
-    return found, ""
+        problems.append(str(exc))
+    return found, "；".join(problems)
 
 
 def no_redirect():
@@ -227,8 +229,8 @@ def _decode(raw) -> dict:
 def _get(source) -> bytes:
     headers = {"Accept": "application/json", "User-Agent": USER_AGENT}
     if source.kind == "gateway":
-        headers.update({"x-api-key": source.key, "Authorization": f"Bearer {source.key}"})
-    elif source.token_file:
+        headers["Authorization"] = f"Bearer {source.key}"
+    if source.token_file:
         try:
             token = Path(source.token_file).read_text().strip()
         except OSError as exc:

@@ -3,8 +3,8 @@
 A gateway in front of Claude Code says a spent pool on a 429 (its words say so: core/limit_reset.py ``quota_spent``),
 but a pool whose accounts all need a sign-in only as a 503, which Claude Code calls "a server-side issue, usually
 temporary" (measured 11-26 on the owner's gateway: three minutes of its own retries, then three more of the Bridge's).
-The gateway's snapshot (core/quota_sources.py ``gateway``, read again first when it is older than RECHECK seconds) says
-which: with no account it can use,
+The snapshot of the pool behind Claude Code's own login (an extension's source that says so: core/quota_sources.py
+``claude_source``; read again first when it is older than RECHECK seconds) says which: with no account it can use,
 
 - some coming back by themselves: 额度用完 (``quota_exhausted``), with when the first is back (``limit.reset_at``, for
   app/auto_retry.py QUOTA: within six hours the turn goes on then), whatever the status said;
@@ -42,7 +42,7 @@ def own_login(ctx) -> bool:
 
 def snapshot(ctx, now):
     """The gateway's snapshot as it is now (read again when older than RECHECK seconds), None without one."""
-    source = quota_sources.gateway()
+    source = quota_sources.claude_source()
     if source is None:
         return None
     store = quota.Store(ctx.state_dir)

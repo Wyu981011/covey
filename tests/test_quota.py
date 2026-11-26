@@ -124,24 +124,35 @@ class Sources(unittest.TestCase):
         path.chmod(mode)
         return path
 
-    def test_the_gateway_is_asked_at_its_own_https_origin_only(self):
-        self.assertEqual(quota_sources.gateway_url("https://GW.example.com:8443/anthropic/"),
-                         "https://gw.example.com:8443/covey/quota")
-        for url in ("http://gw.example.com", "https://user:pw@example.com", "gw.example.com", ""):
-            self.assertEqual(quota_sources.gateway_url(url), "", url)
-        self.assertIsNone(quota_sources.gateway())
-        os.environ.update({"ANTHROPIC_BASE_URL": "https://gw.example.com/x", "ANTHROPIC_AUTH_TOKEN": "fake-key"})
-        found = quota_sources.gateway()
-        self.assertEqual((found.url, found.key, found.kind), ("https://gw.example.com/covey/quota", "fake-key", "gateway"))
-        self.assertNotIn("fake-key", repr(found))
-        del os.environ["ANTHROPIC_AUTH_TOKEN"], os.environ["ANTHROPIC_BASE_URL"]
-        settings = self.root / "home" / ".claude"
-        settings.mkdir()
-        (settings / "settings.json").write_text(json.dumps({"env": {"ANTHROPIC_BASE_URL": "https://gw2.example.com",
-                                                                    "ANTHROPIC_AUTH_TOKEN": "fake-2"}}))
-        self.assertEqual(quota_sources.gateway().url, "https://gw2.example.com/covey/quota")
+    def plugin(self, *rows, fail=False):
+        """A stand-in extension whose quota_sources hook gives ``rows``."""
+        def sources(environ):
+            if fail:
+                raise RuntimeError("broken")
+            return list(rows)
+        return mock.patch("covey.core.extensions.hooks", return_value=[("acme_ext", SimpleNamespace(sources=sources))])
+
+    def test_an_extensions_sources_are_read_like_the_cores_and_only_at_safe_addresses(self):
+        for url, ok in (("https://gw.example.com/covey/quota", True), ("http://127.0.0.1:13425/covey/quota", True),
+                        ("http://[::1]:9/q", True), ("http://gw.example.com/covey/quota", False),
+                        ("https://user:pw@example.com/q", False), ("", False)):
+            self.assertEqual(quota_sources.address_ok(url), ok, url)
+        good = quota_sources.Source("gateway-acme", "gateway", url="https://gw.example.com/covey/quota", key="fake-key",
+                                    claude=True)
+        bad = quota_sources.Source("gateway-plain", "gateway", url="http://gw.example.com/covey/quota", key="fake")
+        with self.plugin(good, bad, quota_sources.Source("agy-x", "command", argv=("/bin/true",))):
+            found, problem = quota_sources.sources()
+            self.assertEqual([s.id for s in found], ["gateway-acme"])
+            self.assertIn("acme_ext", problem)
+            self.assertEqual(quota_sources.claude_source(), good)
+        self.assertNotIn("fake-key", repr(good))
+        with self.plugin(fail=True):
+            self.assertEqual(quota_sources.sources(), ([], "acme_ext: RuntimeError"))
+            self.assertIsNone(quota_sources.claude_source())
         os.environ[quota_sources.SWITCH] = "0"
-        self.assertEqual(quota_sources.sources(), ([], ""))
+        with self.plugin(good):
+            self.assertEqual(quota_sources.sources(), ([], ""))
+            self.assertIsNone(quota_sources.claude_source())
 
     def test_the_gateway_gets_the_key_in_headers_no_redirect_and_a_404_is_no_quota(self):
         source = quota_sources.Source("gateway-x", "gateway", url="https://gw.example.com/covey/quota", key="fake-key",
@@ -174,8 +185,8 @@ class Sources(unittest.TestCase):
             self.assertEqual(quota_sources.read(source)["accounts"][0]["alias"], "A1")
         handler = build.call_args.args[0]
         url, headers, timeout = sent[0]
-        self.assertEqual((url, headers["X-api-key"], headers["Authorization"], timeout),
-                         ("https://gw.example.com/covey/quota", "fake-key", "Bearer fake-key", 5))
+        self.assertEqual((url, headers["Authorization"], timeout), ("https://gw.example.com/covey/quota", "Bearer fake-key", 5))
+        self.assertNotIn("X-api-key", headers)
         self.assertIsNone(handler().redirect_request(None, None, 302, "", {}, "https://elsewhere"))
         missing = urllib.error.HTTPError(source.url, 404, "Not Found", {}, None)
         with mock.patch("urllib.request.build_opener", return_value=opener(error=missing)), \
@@ -235,11 +246,12 @@ class Sources(unittest.TestCase):
     def test_the_thread_starts_only_with_something_to_read(self):
         self.assertFalse(quota_watch.wanted())
         self.assertEqual(quota_watch.QuotaWatch(SimpleNamespace(log=print)).threads(), ())
-        os.environ.update({"ANTHROPIC_BASE_URL": "https://gw.example.com", "ANTHROPIC_AUTH_TOKEN": "fake"})
-        self.assertTrue(quota_watch.wanted())
-        os.environ[quota_sources.SWITCH] = "off"
-        self.assertFalse(quota_watch.wanted())
-        del os.environ[quota_sources.SWITCH], os.environ["ANTHROPIC_BASE_URL"]
+        gateway = quota_sources.Source("gateway-acme", "gateway", url="https://gw.example.com/covey/quota", key="fake")
+        with self.plugin(gateway):
+            self.assertTrue(quota_watch.wanted())
+            os.environ[quota_sources.SWITCH] = "off"
+            self.assertFalse(quota_watch.wanted())
+        del os.environ[quota_sources.SWITCH]
         self.write([{"id": "vps", "kind": "command", "argv": self.script(
             f"print(json.dumps({json.dumps(snapshot(account('V1')))}))")}])
         logged = []
@@ -333,8 +345,8 @@ class GatewayFailure(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.ctx = SimpleNamespace(state_dir=Path(temp.name), model="", device="")
         self.source = quota_sources.Source("gateway-test", "gateway", url="https://gw.example.com/covey/quota",
-                                           key="fake")
-        for patcher in (mock.patch.object(quota_sources, "gateway", return_value=self.source),
+                                           key="fake", claude=True)
+        for patcher in (mock.patch.object(quota_sources, "claude_source", return_value=self.source),
                         mock.patch.dict(os.environ, {}, clear=False)):
             patcher.start()
             self.addCleanup(patcher.stop)

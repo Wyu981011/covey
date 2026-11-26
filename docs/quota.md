@@ -6,12 +6,12 @@
 
 | 来源 | 怎么拿 | 要配什么 |
 | --- | --- | --- |
-| Claude Code 登录的网关 | Covey 用 Claude Code 本来就在用的地址和 Key，去同一个网关问 `/covey/quota` | 不用配。网关没有这个地址就当没有，不报错 |
+| 插件给的来源 | 扩展的 `quota_sources` 钩子给出地址（或命令），核心照常去读，比如公司扩展的「Claude 网关额度」 | 看扩展自己的说明 |
 | 一条命令 | 命令的标准输出就是快照 | 数据根的 `quota-sources.json` |
 | 一个网址 | GET 拿到快照，带来源自己的只读令牌 | 数据根的 `quota-sources.json` |
 | agy 多账号 | Covey 按 agy 多账号的状态自己写，一个模型组一份 | 配了两个以上的号就有，见下文[agy 多账号](#agy-多账号) |
 
-`COVEY_QUOTA=0`（或 `off`）全部关掉：不读、不问，失败卡照旧。没有任何来源时 Bridge 不起额度线程。
+`COVEY_QUOTA=0`（或 `off`）全部关掉：不读、不问，失败卡照旧。扩展给的来源写在扩展自己的说明里。没有任何来源时 Bridge 不起额度线程。
 
 ## 快照格式（第 1 版）
 
@@ -56,19 +56,14 @@
 
 不许出现：邮箱、IP、地址、Key 或令牌、费用、请求数、订阅档位。单份不超过 64 KB，号不超过 50 个，每个号的窗口不超过 8 个。Covey 收下时只留上表的字段（`core/quota.py` 的 `parse`），文字里像邮箱、网址、本机路径、IP、密钥的部分换成“…”，别名只剩这些时整份不收。
 
-## 网关的 `/covey/quota`
+## 插件来源
 
-Claude Code 登录的地址（进程环境的 `ANTHROPIC_BASE_URL`，没有就读它用户级 `settings.json` 的 `env`）是 https 时，Covey 每 5 分钟问一次同一个网关的根路径：
+扩展可以在 manifest 的 `HOOKS` 里挂 `quota_sources`：模块的 `sources(environ)` 返回 `covey.core.quota_sources.Source` 的列表，核心和自己的来源一样去读、存、画。
 
-```text
-GET https://<网关的主机[:端口]>/covey/quota
-x-api-key: <Claude Code 的 Key>
-Authorization: Bearer <同一把 Key>
-```
-
-- 只问 https、只问同一个源，不跟随跳转，回答最多读 64 KB。地址是 http 或者带用户名密码的，不问。
-- 回 200 和一份快照：存下。回 404：当这个网关没有额度接口，6 小时后再问一次，什么都不说。别的状态码、超时、不是快照：保留上一份，标“读数过旧”。
-- 网关按 Key 认人，同事不用配。返回的号、能不能用、几点能用都是这把 Key 看到的。
+- 种类：`gateway`（GET 一个地址，带 `key` 放进 `Authorization: Bearer`；回 404 当没有额度接口，6 小时后再问）、`url`、`command`。
+- 地址只认 https，或者本机回环的 http（隧道的本地一端）；不跟随跳转，回答最多读 64 KB。
+- `claude=True` 表示这是 Claude Code 自己登录背后的号池：Claude 一轮因额度或限流失败时，失败卡按它说清几点恢复（见下文[失败说明](#失败说明)）。
+- 一个扩展的钩子出错只影响它自己的来源，`bridge.log` 里写包名。
 
 ## `quota-sources.json`
 
@@ -86,7 +81,7 @@ Authorization: Bearer <同一把 Key>
 | `id` | 小写字母、数字、点、横线，不以 `agy`、`gateway` 开头，不重复 |
 | `kind` | `command` 或 `url` |
 | `argv` | 命令和参数，第一项是绝对路径；不经过 shell |
-| `url` | https 地址；只带 `token_file` 里的令牌（`Authorization: Bearer`），从不带模型的 Key |
+| `url` | https 地址（或本机回环的 http）；只带 `token_file` 里的令牌（`Authorization: Bearer`） |
 | `interval` | 多久读一次，秒，60 到 86400，默认 300 |
 | `timeout` | 多久没结束就停，秒，1 到 120，默认 30；命令超时停整个进程组 |
 | `title` | 页面上的标题（快照里写了 `title` 的以快照为准） |
@@ -112,7 +107,7 @@ json.dump({"schema": 1, "title": "Claude · 我的 VPS", "collected_at": time.ti
 
 一轮因为额度或限流失败时，失败卡按快照说清楚：
 
-- **网关的号池一个能用的都没有**（Claude Code 登录的网关，快照超过 30 秒先真查一次）：
+- **Claude Code 登录背后的号池一个能用的都没有**（插件标了 `claude` 的来源，快照超过 30 秒先真查一次）：
   - 有会自己恢复的号：原因改判为“额度用完”，写“网关里的号额度都用完了，最早 14:20 恢复”，不管网关回的是 429 还是 503。
   - 都要重新登录、已到期或暂停：写“网关里没有能用的号，要网关的主人处理”，不重试。网关这时回 503，Claude Code 自己会先重试 3 分钟，Covey 不再按“临时故障”加重试。
 - **网关的 429 说额度用完**（“quota usage limit has been reached”“wait for quota to reset”这类说法，`core/limit_reset.py` 的 `quota_spent`）：没有快照也归“额度用完”；文字里有“(in 9h50m)”就按它算恢复时刻。
