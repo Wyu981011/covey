@@ -99,7 +99,9 @@ class Shared:
         self.board = None  # topic id -> its group on the board (``board_groups``); None without the board (COVEY_PINNED_TOPICS unset).
         self.asks = None  # 要你处理 as every card counts it ({waiting, stopped, stuck}, core/board_read.py Asks.counts), data contract v34.
         self.pushed_topics, self.pass_seen, self.pushed_collabs = set(), set(), set()
-        self.stuck = {}  # topic id -> the left-behind thread stuck reading it: looks leave the topic out while that thread lives.
+        # topic id -> the left-behind thread stuck reading it, or a tuple of them (a quick look's, then a touch's or a reread's, app/web_sync.py):
+        # looks leave the topic out while one of them lives (``hold``, ``alive_stuck``).
+        self.stuck = {}
         self.dirty = set()  # The topics the next quick look builds whatever the indexes say (Collector.touch).
         self.unbuilt = {}  # topic id -> the error its build raised, as last logged (Collector.build_each).
         # topic id -> (its inputs as the pass's last build of it read them, ((type, key), rev) of each item that build made, when it
@@ -136,10 +138,28 @@ class Shared:
     def alive_stuck(self) -> set:
         """The topics whose read is stuck in a thread still alive."""
         with self.lock:
-            for topic, thread in list(self.stuck.items()):
-                if not thread.is_alive():
-                    del self.stuck[topic]
+            for topic in list(self.stuck):
+                self.keep_alive(topic)
             return set(self.stuck)
+
+    def hold(self, topic, thread) -> None:
+        """``thread`` is stuck reading ``topic``: the topic is left out while it lives, or one stuck on it before (not replaced)."""
+        with self.lock:
+            threads = self.keep_alive(topic)
+            if thread not in threads:
+                threads += (thread,)
+            self.stuck[topic] = threads if len(threads) > 1 else threads[0]
+
+    def keep_alive(self, topic) -> tuple:
+        """Under ``lock``: the threads still stuck on ``topic``, the dead ones dropped (the topic too when none lives)."""
+        held = self.stuck.get(topic)
+        threads = () if held is None else held if isinstance(held, tuple) else (held,)
+        alive = tuple(thread for thread in threads if thread.is_alive())
+        if not alive:
+            self.stuck.pop(topic, None)
+        elif len(alive) != len(threads):
+            self.stuck[topic] = alive if len(alive) > 1 else alive[0]
+        return alive
 
 
 class Collector:

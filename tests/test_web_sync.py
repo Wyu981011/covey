@@ -1435,7 +1435,7 @@ class SwitchTest(WebCase):
 
     def test_on_there_are_four_threads(self):
         """The quick looks, the full pass (its own thread since T673: a slow read there holds up no quick look) and the inbox."""
-        self.assertEqual([name for name, _ in self.sync.threads()], ["web-push", "web-pass", "web-inbox", "web-touch"])
+        self.assertEqual([name for name, _ in self.sync.threads()], ["web-push", "web-pass", "web-inbox", "web-touch", "web-reread"])
 
     def test_the_bridge_lists_the_threads_only_with_the_switch(self):
         from covey.app.unified import UnifiedBridgeApp
@@ -3024,7 +3024,7 @@ class TouchPastStuckTest(WebCase):
         self.assertTrue(any("web sync touch stuck" in line for line in self.logs))
 
     def test_a_touch_stuck_where_a_quick_look_is_stuck_too_keeps_the_quick_looks_thread(self):
-        """The quick look leaves the topic out until its own stuck read returns, not only until the touch's does."""
+        """The quick look leaves the topic out until every read stuck on it has returned, its own and the touch's."""
         self.topic()
         hang = self.hang_a_quick_look()
         looked = self.sync.shared.stuck[TOPIC]
@@ -3034,13 +3034,16 @@ class TouchPastStuckTest(WebCase):
         touch.start()
         self.sync.toucher.at, self.sync.toucher.thread, self.sync.toucher.touching = TOPIC, touch, {TOPIC}
         self.sync.start_over_touch()
-        self.assertIs(self.sync.shared.stuck[TOPIC], looked)
+        self.assertEqual(self.sync.shared.stuck[TOPIC], (looked, touch))  # Both held: the topic is out while either lives.
         self.assertEqual(self.sync.touch_hung_now(), {TOPIC})
         touch_hang.set()
         touch.join(5)
         self.assertEqual(self.sync.touch_hung_now(), set())
         self.assertIn(TOPIC, self.sync.shared.alive_stuck())  # The quick look's read has not returned yet.
+        self.assertIs(self.sync.shared.stuck[TOPIC], looked)
         hang.set()
+        looked.join(5)
+        self.assertNotIn(TOPIC, self.sync.shared.alive_stuck())
 
     def test_a_touch_given_up_for_a_busy_store_is_logged_and_tried_again(self):
         from covey.core import store
@@ -3074,6 +3077,124 @@ class TouchPastStuckTest(WebCase):
         self.web.fail = 0
         self.assertGreater(self.sync.touch_once(T0 + 2), 0)
         self.assertEqual(self.web.items("question")[-1]["data"]["state"], "answered")
+
+
+class RereadTest(WebCase):
+    """2026-11-26 T837, the half without a click: a topic the quick look leaves out while a read of it hangs on the network disk stood still
+    on the page for as long as that read lasted (T732: 18:17:05 to 18:20:43, its new turn running all the while). web-reread reads such a
+    topic again in a thread of its own, one at a time, and holds back after a reread that hangs too (backoff, a cap on stuck rereads)."""
+
+    def hang_a_quick_look(self, topic=TOPIC):
+        hang = threading.Event()
+        self.addCleanup(hang.set)
+        thread = threading.Thread(target=hang.wait, args=(10,), daemon=True)
+        thread.start()
+        self.sync.leave_out(SimpleNamespace(at=topic, thread=thread), "push")
+        return hang, thread
+
+    def states(self):
+        return [item["data"]["state"] for item in self.web.items("topic") if item["key"] == TOPIC]
+
+    def test_a_topic_whose_run_ended_while_the_quick_look_was_stuck_on_it_reaches_the_page(self):
+        self.topic(status="running")
+        self.sync.push_once(T0)
+        self.assertEqual(self.states(), ["在做"])
+        self.hang_a_quick_look()
+        write_job(self.state, f"k-{TOPIC[:4]}", topic_id=TOPIC, chat_id=CHAT, job_id=7, status="done", model="opus", card_message_id="om_card")
+        append_history(self.state / "topics" / TOPIC / "history.jsonl", "assistant", "做完了", {"message_id": "m-done"})
+        self.sync.push_once(T0 + 1)
+        self.assertEqual(self.states(), ["在做"])  # The quick look leaves it out: before web-reread, so it stayed until the read came back.
+        with mock.patch.object(app_web, "REREAD_AFTER", 0):
+            self.assertGreater(self.sync.reread_once(T0 + 2), 0)
+            self.assertEqual(self.states(), ["在做", "做完"])
+            self.assertEqual(self.sync.reread_once(T0 + 3), 0)  # Quiet now and read since: not read again.
+        self.assertTrue(any(line.startswith(f"web sync reread topic {TOPIC[:12]}: read again in") for line in self.logs))
+
+    def test_a_running_one_is_read_again_every_gap_and_once_more_when_it_ends(self):
+        self.topic(status="running")
+        self.sync.push_once(T0)
+        self.hang_a_quick_look()
+        history = self.state / "topics" / TOPIC / "history.jsonl"
+        with mock.patch.object(app_web, "REREAD_AFTER", 0), mock.patch.object(app_web, "REREAD_GAP", 0.3):
+            self.sync.reread_once(T0 + 1)
+            self.assertEqual(self.sync.rereads[TOPIC]["reads"], 1)
+            append_history(history, "user", "再看看", {"message_id": "m-again"})
+            self.assertEqual(self.sync.reread_once(T0 + 2), 0)  # Within the gap.
+            time.sleep(0.35)
+            self.assertGreater(self.sync.reread_once(T0 + 3), 0)  # Running (hot): read again after the gap.
+            write_job(self.state, f"k-{TOPIC[:4]}", topic_id=TOPIC, chat_id=CHAT, job_id=7, status="done", model="opus", card_message_id="om_card")
+            self.sync.push_once(T0 + 4)  # The quick look finds it no longer runs.
+            self.assertNotIn(TOPIC, self.sync.collector.hot)
+            time.sleep(0.35)
+            self.assertGreater(self.sync.reread_once(T0 + 5), 0)  # Once more: it ended since the last reread.
+            time.sleep(0.35)
+            self.assertEqual(self.sync.reread_once(T0 + 6), 0)
+        self.assertEqual(self.sync.rereads[TOPIC]["reads"], 3)
+        self.assertEqual(self.states()[-1], "做完")
+
+    def test_a_reread_that_hangs_too_backs_off_and_at_the_cap_none_starts(self):
+        self.topic(status="running")
+        self.topic(OTHER, number=8, title="写周报", status="running")
+        self.sync.push_once(T0)
+        self.hang_a_quick_look(TOPIC)
+        self.hang_a_quick_look(OTHER)
+        for topic in (TOPIC, OTHER):
+            append_history(self.state / "topics" / topic / "history.jsonl", "user", "再看看", {"message_id": "m-again"})
+        hang, reads, seen = threading.Event(), [], {}
+        self.addCleanup(hang.set)
+        real = app_collect.Collector.topic_items
+
+        def topic_items(collector, state, chat, topic, records, now):
+            reads.append(topic)
+            if topic == TOPIC and not hang.is_set():
+                hang.wait(10)
+            return real(collector, state, chat, topic, records, now)
+
+        def reread():
+            count = self.sync.reread_once()
+            pushed = {item["key"][:32] for item in self.web.items()[before:]}
+            if step["n"] == 0 and any(line.startswith("web sync reread waits: 1 rereads still stuck") for line in self.logs):
+                step["n"], seen["other_at_cap"] = 1, OTHER in pushed or OTHER in reads
+                hang.set()
+            elif step["n"] == 1 and OTHER in pushed:
+                step["n"] = 2
+                self.runtime.shutdown.set()
+            return count
+        step, before = {"n": 0}, len(self.web.items())
+        guard = threading.Timer(8, self.runtime.shutdown.set)
+        guard.start()
+        self.addCleanup(guard.cancel)
+        with mock.patch.object(app_collect.Collector, "topic_items", topic_items), mock.patch.object(app_web, "REREAD_AFTER", 0), \
+                mock.patch.object(app_web, "REREAD_MAX_LEFT", 1), mock.patch.object(app_web, "REREAD_BACKOFF", 30):
+            self.sync.loop("reread", reread, lambda: 0.01, self.sync.start_over_reread, lambda: self.sync.rereader.moved, stuck=0.2,
+                           where=lambda: self.sync.rereader.doing)
+        self.assertEqual(step["n"], 2)
+        self.assertFalse(seen["other_at_cap"])  # At the cap no reread started, not even of another topic.
+        self.assertEqual(reads.count(TOPIC), 1)  # Its backoff: not read again.
+        self.assertTrue(any(line.startswith(f"web sync reread of topic {TOPIC[:12]} hung too") for line in self.logs))
+        self.assertTrue(any(line == "web sync reread goes on: a stuck reread ended" for line in self.logs))
+        self.assertIn(TOPIC, self.sync.rereads)
+        self.assertGreater(self.sync.rereads[TOPIC]["next"], time.monotonic() + 20)
+
+    def test_the_touch_and_the_reread_build_turns_with_the_images_as_the_quick_look_does(self):
+        """A collector without the images' ledger builds turns with no images: a touch's push took them off the page until the next quick look."""
+        self.assertIsNotNone(self.sync.images)
+        for collector in (self.sync.collector, self.sync.passer, self.sync.toucher, self.sync.rereader):
+            self.assertIs(collector.images, self.sync.images)
+
+    def test_a_stuck_read_that_comes_back_is_logged_and_its_topic_dropped(self):
+        self.topic()
+        self.sync.push_once(T0)
+        hang, thread = self.hang_a_quick_look()
+        with mock.patch.object(app_web, "REREAD_AFTER", 0):
+            self.sync.reread_once(T0 + 1)
+        self.assertIn(TOPIC, self.sync.rereads)
+        hang.set()
+        thread.join(5)
+        self.sync.reread_once(T0 + 2)
+        self.assertEqual(self.sync.rereads, {})
+        self.assertTrue(any(line.startswith(f"web sync push read of topic {TOPIC[:12]} came back after") and line.endswith("read again 1 times meanwhile")
+                            for line in self.logs))
 
 
 class KeepAliveTest(unittest.TestCase):

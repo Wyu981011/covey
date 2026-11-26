@@ -2,14 +2,15 @@
 questions to the web page (网页应用) and fetches what the page sent, which app/web_ops.py does. Off by default: without the switch
 there is no thread and no request.
 
-- ``WebSync`` (app/unified.py PARTS ``web_sync``, a feature object: ``threads()``, none without the switch): four supervised threads.
+- ``WebSync`` (app/unified.py PARTS ``web_sync``, a feature object: ``threads()``, none without the switch): five supervised threads.
   ``web-push`` (the quick looks, ``push_hot``) builds the hot items (``Collector.collect_hot``, app/web_collect.py), keeps those whose ``rev``
   (core/web_sync.py) differs from what was sent, and posts them to /sync/upsert in batches, then a batch of what the pass read; ``web-pass``
   (``pass_once``) reads the full pass a slice a step into that backlog; ``web-inbox`` asks /sync/inbox, writes each operation's seq and op_id
   into the ledger before it is done and hands it to its lane (``OpLanes``: a topic's in order, topics side by side), which does it
   (``Ops.run``), acknowledges it at /sync/ack at once and then runs what it left for after the ack (app/card_lanes.py ``after_ack``);
-  ``web-touch`` (``touch_once``) builds what an operation touched and pushes it at once, not at the quick look's turn. A failed request backs off (2, 4 ... 30 seconds)
-  and touches no other thread.
+  ``web-touch`` (``touch_once``) builds what an operation touched and pushes it at once, not at the quick look's turn; ``web-reread``
+  (``reread_once``) reads again, one at a time and within bounds, a topic the quick look leaves out while a read of it is stuck on the
+  network disk (2026-11-26 T837). A failed request backs off (2, 4 ... 30 seconds) and touches no other thread.
 - What is read, and how often: every ``push_seconds``, and at once when this process wrote a job or a question (core/store.py listen: an
   answer on a card), only the running tasks, the pending questions and the tasks waiting for 开始 on a launch card (three index queries, the
   records they name; core/board_read.py starts), plus the topics that stopped running a moment ago or that the page just acted on, and the
@@ -70,7 +71,19 @@ LEFT_WAIT = 300  # Seconds waited at MAX_LEFT; then the next step runs in a new 
 IMAGES_WAIT = 300  # Seconds images are held back after the page did not take one (push_images).
 INBOX_WAIT = 8  # Seconds a page that knows ``wait`` holds an empty /sync/inbox (it answers ``waited``); within the client's TIMEOUT.
 OP_WAIT = 5.0  # Seconds an inbox step waits for the operations it handed to their lanes before it asks again.
-PACE_SECONDS = 60.0  # A quick look's and a touch's step times are logged once this often (Pace).
+PACE_SECONDS = 60.0  # A quick look's, a touch's and a reread's step times are logged once this often (Pace).
+# 换线程重读 (web-reread, ``reread_once``): a topic a look left out because its read hangs on the network disk is read again in a thread
+# of its own, so a running topic does not stand still on the page for the minutes such a read can last (2026-11-26 T837: T732 from 18:17:05
+# to 18:20:43). Bounded so that it cannot pile threads up or hold the other threads: one reread at a time; REREAD_AFTER seconds after the
+# topic was left out; then every REREAD_GAP while the quick look would look at it (it runs, asks, just ended, the page acted on it) and once
+# more when it stops being so; a topic whose reread hung too waits REREAD_BACKOFF, doubled each time up to REREAD_BACKOFF_MAX, and is not
+# read again while that reread lives; with REREAD_MAX_LEFT rereads still stuck none is started.
+REREAD_PAUSE = 1.0
+REREAD_AFTER = 5.0
+REREAD_GAP = 10.0
+REREAD_BACKOFF = 60.0
+REREAD_BACKOFF_MAX = 600.0
+REREAD_MAX_LEFT = 2
 PACED = ("push",)  # The loops whose step times are logged by loop(); a touch logs its own (from its wake, not its wait).
 
 
@@ -153,6 +166,12 @@ class WebSync:
         # lives (one stuck in a quick look or the pass a touch reads again: Collector.collect_touched); and touches given up in a row
         # because a store was busy, logged as the quick look's are.
         self.touch_hung, self.touch_busy = {}, 0
+        # web-reread (reread_once): its collector, each stuck topic's reread state (``rereads``: topic -> left, next, at, hot, hangs, reads), the threads of rereads that hung (topic ->
+        # thread), whether it holds back at REREAD_MAX_LEFT, rereads given up in a row for a busy store; and when each topic was left out
+        # first and by whom (leave_out), for the line that says when its stuck read came back.
+        self.rereader = Collector(env, None, runtime.log, shared=self.shared)
+        self.rereads, self.reread_hung, self.reread_capped, self.reread_busy = {}, {}, False, 0
+        self.stuck_since, self.stuck_lock = {}, threading.Lock()
         self.post_lock = threading.Lock()  # Choosing what is fresh and posting it, one thread at a time (push_hot, touch_once).
         self.images_ready()
         self.ops = Ops(env, hear, fetch=self.client.request, login=login)
@@ -201,7 +220,9 @@ class WebSync:
                                                    lambda: self.passer.moved, where=lambda: self.passer.doing)),
                 ("web-inbox", lambda ctx: self.loop("inbox", self.inbox_once, self.inbox_pause, again=True)),
                 ("web-touch", lambda ctx: self.loop("touch", self.touch_once, lambda: 0, self.start_over_touch, lambda: self.toucher.moved,
-                                                    stuck=HOT_STUCK_SECONDS, where=lambda: self.toucher.doing)))
+                                                    stuck=HOT_STUCK_SECONDS, where=lambda: self.toucher.doing)),
+                ("web-reread", lambda ctx: self.loop("reread", self.reread_once, lambda: REREAD_PAUSE, self.start_over_reread,
+                                                     lambda: self.rereader.moved, stuck=HOT_STUCK_SECONDS, where=lambda: self.rereader.doing)))
 
     def inbox_pause(self) -> float:
         """Seconds between two asks of the inbox: none after one the page held (it waits for the next operation itself), else poll_seconds."""
@@ -279,12 +300,12 @@ class WebSync:
     def leave_out(self, old, label) -> None:
         """The topic ``old`` (a collector left behind) was reading when it got stuck is left out of every look while its thread lives,
         so the next look does not get stuck on it again (an NFS open of its topic.json that never returned, say). A touch reads such a
-        topic all the same (Collector.collect_touched): one stuck on it too does not take the place of a thread still stuck there."""
+        topic all the same (Collector.collect_touched), and web-reread reads it again (reread_once): one stuck on it too is held with the
+        threads stuck there before (Shared.hold), and the topic stays out until all of them have ended."""
         if old.at and old.thread is not None and old.thread.is_alive():
-            with self.shared.lock:
-                held = self.shared.stuck.get(old.at)
-                if held is None or not held.is_alive():
-                    self.shared.stuck[old.at] = old.thread
+            self.shared.hold(old.at, old.thread)
+            with self.stuck_lock:
+                self.stuck_since.setdefault(old.at, (label, time.monotonic()))
             self.runtime.log(f"web sync {label} leaves topic {old.at[:12]} out while its read is stuck")
 
     def start_over_hot(self) -> None:
@@ -479,19 +500,8 @@ class WebSync:
         if toucher is not self.toucher:
             return 0  # Left behind while it looked: what it read is old.
         toucher.mark("posting")
-        count = 0
         try:
-            with self.post_lock:
-                with self.backlog_lock:
-                    items = self.fresh_items(toucher.groups)
-                for batch in web_sync.batches(items):
-                    self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
-                    toucher.moved = time.monotonic()
-                    with self.backlog_lock:
-                        for each in batch:
-                            self.sent[(each["type"], each["key"])] = each["rev"]
-                    count += len(batch)
-                    self.sent_changed = True
+            count = self.post_fresh(toucher)
         except WebError:
             self.touch_soon(set(topics) - hung)  # Read again and sent once the page takes batches again (the loop waits it out).
             raise
@@ -518,6 +528,147 @@ class WebSync:
         again = set(getattr(old, "touching", ()) or ()) - self.touch_hung_now()
         if again:
             self.touch_soon(again)
+
+    def post_fresh(self, collector) -> int:
+        """Posts the items of ``collector``'s last look (its ``groups``) the page should get (``fresh_items``), under ``post_lock``: how many
+        went out. Raises WebError when the page did not take a batch (the batches before it count)."""
+        count = 0
+        with self.post_lock:
+            with self.backlog_lock:
+                items = self.fresh_items(collector.groups)
+            for batch in web_sync.batches(items):
+                self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
+                collector.moved = time.monotonic()
+                with self.backlog_lock:
+                    for each in batch:
+                        self.sent[(each["type"], each["key"])] = each["rev"]
+                count += len(batch)
+                self.sent_changed = True
+        return count
+
+    # -- reread (换线程重读) ----------------------------------------------------------------------------------------------
+
+    def reread_once(self, now=None) -> int:
+        """One step of web-reread: notes which topics are left out for a stuck read now (and says when one's read came back), then reads
+        again the one most due, if any (``reread_due``), with the board's reading the last quick look left (Collector.collect_touched, as
+        a touch) and posts it; how many items went out. Bounded as REREAD_* says; a reread that hangs too is left behind by the loop
+        (start_over_reread)."""
+        chat = self.runtime.access.owner_chat()
+        if not chat or not self.env.state_dir or not self.sent_loaded:
+            return 0
+        clock = time.monotonic()
+        stuck = self.shared.alive_stuck()
+        self.note_stuck(stuck, clock)
+        hung = self.reread_hung_now()
+        if len(hung) >= REREAD_MAX_LEFT:
+            if not self.reread_capped:
+                self.reread_capped = True
+                self.runtime.log(f"web sync reread waits: {len(hung)} rereads still stuck, none is started until one of them ends")
+            return 0
+        if self.reread_capped:
+            self.reread_capped = False
+            self.runtime.log("web sync reread goes on: a stuck reread ended")
+        with self.shared.lock:
+            hot = set(self.collector.hot) | set(self.shared.dirty)
+        topic = self.reread_due(clock, hot, hung | self.touch_hung_now())
+        if not topic:
+            return 0
+        state = self.rereads[topic]
+        state.update(began=clock, hot=topic in hot)
+        rereader = self.rereader
+        rereader.rereading = topic
+        try:
+            return self.reread_topic(rereader, chat, topic, state, clock, now)
+        finally:
+            rereader.rereading = ""
+
+    def reread_topic(self, rereader, chat, topic, state, clock, now) -> int:
+        """reread_once's read of ``topic`` and its post: how many items went out."""
+        try:
+            with store.bounded(HOT_WAIT):
+                rereader.collect_touched(chat, [topic], time.time() if now is None else now)
+        except store.Busy as exc:
+            state["next"] = clock + REREAD_GAP
+            self.reread_busy += 1
+            if self.reread_busy == 1 or self.reread_busy % BUSY_EVERY == 0:
+                self.runtime.log(f"web sync reread waits: the {exc} index is held by a read that has not ended ({self.reread_busy} rereads given up)")
+            return 0
+        if self.reread_busy:
+            self.runtime.log(f"web sync reread goes on: the index is free again after {self.reread_busy} rereads given up")
+            self.reread_busy = 0
+        if rereader is not self.rereader:
+            return 0  # Left behind while it read: what it read is old.
+        rereader.mark("posting")
+        try:
+            count = self.post_fresh(rereader)
+        except WebError:
+            state["next"] = time.monotonic() + REREAD_GAP
+            raise
+        took = time.monotonic() - clock
+        state.update(at=clock, next=clock + REREAD_GAP, hangs=0, reads=state["reads"] + 1)
+        if state["reads"] == 1:
+            self.runtime.log(f"web sync reread topic {topic[:12]}: read again in {took * 1000:.0f} ms, {count} items sent, "
+                             f"while a read of it stuck since {clock - state['left']:.0f} s holds it out of the quick looks")
+        rereader.mark("")
+        self.pace.note("reread", took)
+        return count
+
+    def reread_due(self, clock, hot, hung) -> str:
+        """The stuck topic to read again now, or "": not one a touch's or a reread's read hangs on (``hung``); REREAD_AFTER after it was
+        left out the first time; then while the quick look would look at it (``hot``) every REREAD_GAP; once more when it stopped being
+        hot since the last reread; after a hung one, not before its backoff. The most overdue first."""
+        due = []
+        for topic, state in self.rereads.items():
+            if topic in hung or clock < state["next"]:
+                continue
+            if state["at"] is not None and topic not in hot and not state["hot"]:
+                continue  # Read again since it went quiet: nothing more to fetch until it runs or is acted on again.
+            due.append((state["next"], topic))
+        return min(due)[1] if due else ""
+
+    def note_stuck(self, stuck, clock) -> None:
+        """Keeps ``rereads`` to the topics left out now (``stuck``); a topic no longer left out had its stuck read come back: logged
+        with how long it held the topic out and how often it was read again meanwhile."""
+        with self.stuck_lock:
+            for topic in list(self.stuck_since):
+                if topic not in stuck:
+                    label, since = self.stuck_since.pop(topic)
+                    reads = (self.rereads.get(topic) or {}).get("reads", 0)
+                    self.runtime.log(f"web sync {label} read of topic {topic[:12]} came back after {clock - since:.0f} s; "
+                                     f"read again {reads} times meanwhile")
+            since = dict(self.stuck_since)
+        for topic in list(self.rereads):
+            if topic not in stuck:
+                del self.rereads[topic]
+        for topic in stuck:
+            if topic not in self.rereads:
+                left = since.get(topic, ("", clock))[1]
+                self.rereads[topic] = {"left": left, "next": left + REREAD_AFTER, "at": None, "hot": False, "hangs": 0, "reads": 0,
+                                       "began": None}
+
+    def reread_hung_now(self) -> set:
+        """The topics a reread's read is stuck on (start_over_reread), while the thread of that read lives."""
+        for topic, thread in list(self.reread_hung.items()):
+            if not thread.is_alive():
+                self.reread_hung.pop(topic, None)
+        return set(self.reread_hung)
+
+    def start_over_reread(self) -> None:
+        """After a reread was left behind (its read hung too): a new collector for web-reread. The topic is not read again while that read
+        lives (``reread_hung``, at most REREAD_MAX_LEFT of them before rereads stop) nor before its backoff, doubled each time."""
+        old = self.rereader
+        topic = getattr(old, "rereading", "") or old.at
+        self.leave_out(old, "reread")
+        if topic and old.thread is not None and old.thread.is_alive():
+            self.reread_hung[topic] = old.thread
+        state = self.rereads.get(topic)
+        if state is not None:
+            state["hangs"] += 1
+            wait = min(REREAD_BACKOFF_MAX, REREAD_BACKOFF * 2 ** (state["hangs"] - 1))
+            state["next"] = time.monotonic() + wait
+            self.runtime.log(f"web sync reread of topic {topic[:12]} hung too: not read again while it hangs nor for {wait:.0f} s "
+                             f"({len(self.reread_hung_now())} rereads still stuck)")
+        self.rereader = Collector(self.env, None, self.runtime.log, self.images, shared=self.shared)
 
     def pass_once(self, now=None) -> int:
         """One step of the full pass (Collector.collect_pass), in its own thread: when one is due (FULL_SECONDS after the last ended) it
@@ -594,7 +745,9 @@ class WebSync:
         if self.images is not None or not self.env.state_dir:
             return
         self.images = web_images.WebImages(self.env.state_dir, self.runtime.log)
-        self.collector.images = self.passer.images = self.images
+        # The touch's and the reread's too: a turn they build carries its images as the quick look's does, or the page would lose them
+        # between two pushes of the same topic.
+        self.collector.images = self.passer.images = self.toucher.images = self.rereader.images = self.images
         self.passer.backfill = not self.images.backfilled
 
     def push_images(self, collector, now) -> None:
