@@ -4,7 +4,7 @@
 .cv .mq-top .upd{margin-left:auto;font-size:12px;color:var(--t3);display:flex;gap:6px;align-items:center}
 .cv .mq-alert{display:flex;align-items:center;gap:8px;padding:9px 14px;margin:0 0 12px;border-radius:10px;font-size:13px;color:var(--fail);background:color-mix(in srgb,var(--fail) 9%,transparent);border:1px solid color-mix(in srgb,var(--fail) 28%,transparent)}
 .cv .mq-alert i{width:7px;height:7px;border-radius:50%;background:var(--fail);flex:none}
-.cv .mq{border:1px solid var(--line);border-radius:12px;background:var(--s1);overflow:hidden}
+.cv .mq{border:1px solid var(--line);border-radius:12px;background:var(--s1);overflow:hidden;container-type:inline-size}
 .cv .mq-row{display:grid;grid-template-columns:minmax(150px,1.1fr) minmax(0,1fr) minmax(0,1fr);gap:0 28px;align-items:center;padding:9px 16px;border-top:1px solid var(--line)}
 .cv .mq-head{padding:7px 16px;border-top:0;font-size:12px;color:var(--t3);background:var(--s2)}
 .cv .mq-grp{background:var(--s2);font-size:13px}
@@ -53,6 +53,11 @@
 .cv .qcap-mini i{position:absolute;top:5px;right:9px;width:7px;height:7px;border-radius:50%;background:var(--fail);box-shadow:0 0 0 2px var(--side)}
 /* 设置页签「账号与额度」字后面的红点 */
 .cv .q-tabdot{display:inline-block;width:6px;height:6px;margin-left:4px;vertical-align:super;border-radius:50%;background:var(--fail)}
+/* 表不到 780px 宽（768 的窄屏、1024 左右开着侧栏）：账号列和间距让一点，“12-31 15:02 恢复”和细条都还在格里；手机的排法在下面，压过这里 */
+@container (max-width:780px){
+  .cv .mq-row{grid-template-columns:minmax(130px,1fr) minmax(0,1fr) minmax(0,1fr);gap:0 16px}
+  .cv .mq-c{gap:0 8px}
+}
 @media (max-width:767px){
   .cv .mq-row{grid-template-columns:1fr 1fr;gap:6px 14px;padding:10px 12px}
   .cv .mq-row>.mq-name{grid-column:1/-1}

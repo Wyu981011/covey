@@ -136,6 +136,10 @@ test('时刻那一列：数字等宽，宽度放得下“12-31 15:02 恢复”�
   const phone = css.slice(css.indexOf('@media (max-width:767px)'));
   assert.match(phone, /\.cv \.mq-c \.b,\.cv \.mq-c \.t\{grid-column:1\/-1\}/u);
   assert.equal(/\.mq-c \.b\{[^}]*grid-row/u.test(phone), false, '细条不钉在第 2 行：有池名时池名在上');
+  // 表窄（768 的窄屏、1024 左右开着侧栏）时账号列和间距让一点；写在手机那段前面，手机的排法压过它
+  assert.match(css.match(/\.cv \.mq\{([^}]*)\}/u)?.[1] ?? '', /container-type:inline-size/u);
+  const narrow = css.indexOf('@container (max-width:780px)');
+  assert.ok(narrow > 0 && narrow < css.indexOf('@media (max-width:767px)'));
 });
 
 test('一格：百分比、细条、时刻；剩余不到 20% 红；用完写“用完”和“HH:MM 恢复”；读不到写“—”', () => {
