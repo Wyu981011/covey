@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from covey.core import env as cenv
 from covey.core.paths import entry_script, service_root
-from covey.core.file_lock import file_lock
+from covey.core.file_lock import LOCK_ROOT_ENV, file_lock
 from covey.service import memguard, web_selfhost
 from covey.service.boot import serve
 from covey.service.down_notice import DownNotice, enabled as notice_enabled
@@ -136,6 +136,43 @@ def generation(state):
     """The generation the Manager (service_root()) runs the service of ``state`` in. Raises OSError when it is not
     registered there, ValueError, KeyError or TypeError when its manifest does not say."""
     return read_json(manifest_path(service_root(), service_key(state)))["generation"]
+
+
+def adopt_lock_root(root, environ=None, say=lambda line: print(line, file=sys.stderr)):
+    """Take the lock directory (COVEY_LOCK_ROOT, docs/runtime-locks.md) the service manifests under ``root`` keep, before
+    a command here takes a lock (config.lock, the data home's extension list): on a cloud file system where flock fails
+    (ENOSYS) the services lock in that directory, and a command that did not would fail, or lock apart from them. Read
+    without a lock (as the Manager reads them). This shell's value wins only when no manifest keeps another one; with none
+    in this shell and the manifests agreeing on one, it goes into ``environ`` under every spelling (so a Manager
+    ensure_manager starts has it too) and one line says so. ValueError when the manifests disagree (config.lock is the whole
+    service root's: one setting for all), or when this shell's differs from theirs: two lock directories exclude nothing.
+    Returns the directory now in use, None for none."""
+    environ = os.environ if environ is None else environ
+    kept = {}
+    for path in sorted((root / "services").glob("*.json")):
+        manifest = read_json(path, None)
+        if not isinstance(manifest, dict):
+            continue
+        saved = manifest.get("environment") if isinstance(manifest.get("environment"), dict) else {}
+        kept[str(manifest.get("id") or path.stem)] = cenv.get(LOCK_ROOT_ENV, None, saved)
+    values = {value for value in kept.values() if value is not None}
+    mine = cenv.get(LOCK_ROOT_ENV, None, environ)
+    listed = "; ".join(f"{key[:12]}: {value if value is not None else '(none)'}" for key, value in sorted(kept.items()))
+    if mine is not None:
+        if values - {mine}:
+            raise ValueError(f"{LOCK_ROOT_ENV}={mine} in this shell, but the service manifests keep another ({listed}): "
+                             "both would lock apart. Run this again without it in this shell, or with the manifests' value")
+        return mine
+    if not values:
+        return None
+    if len(values) > 1 or None in kept.values():
+        raise ValueError(f"the service manifests in {root} do not agree on {LOCK_ROOT_ENV} ({listed}): config.lock is "
+                         f"the whole service root's. Run this with {LOCK_ROOT_ENV} set in this shell to the value the "
+                         "running services use (docs/runtime-locks.md)")
+    [value] = values
+    cenv.put(environ, LOCK_ROOT_ENV, value)
+    say(f"用服务清单里的锁目录 {LOCK_ROOT_ENV}={value}（docs/runtime-locks.md）")
+    return value
 
 
 @contextlib.contextmanager
@@ -633,7 +670,8 @@ def change_settings(root, state, changes, *, dry_run=False, preset=None):
             if before != value:
                 changed[spellings[-1]] = {"from": before, "to": value}
         report = {"state_dir": str(state), "changed": changed, "dry_run": dry_run,
-                  "generation": manifest.get("generation"), **({"preset": preset} if preset else {})}
+                  "generation": manifest.get("generation"), **({"preset": preset} if preset else {}),
+                  **({"lock_root": cenv.get(LOCK_ROOT_ENV)} if cenv.has(LOCK_ROOT_ENV) else {})}
         if not changed:
             return report
         validate_environment(new)
@@ -695,6 +733,8 @@ def main(argv=None):
     if args.action == "run":
         log_to(root / "manager.log")
         return Manager(root, interval=args.interval).run()
+    if args.action != "status":  # Every other action takes config.lock (status only reads).
+        adopt_lock_root(root)
     if args.action in ("set", "unset"):
         preset = getattr(args, "preset", None)
         if not args.settings and not preset:

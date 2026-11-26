@@ -17,7 +17,7 @@ export COVEY_LOCK_ROOT="/dev/shm/lark-bridge-locks-$(id -u)"
 - 运行目录路径或锁文件里有符号链接、上级目录可被他人写入、相对路径、空值，都拒绝。`/dev/shm` 这类带 sticky 位的共享上级目录允许。
 - 设置无效时绝不回退到云上的锁。运维要自己选一个本机、`flock` 可用的内存文件系统；代码不会从目录名推断持久性或文件系统是否支持。
 
-Manager、服务注册和管理命令、Bridge、任务进程、网页服务和后端进程都要设这个变量。Manager 的服务清单本来就会保留这个不含凭据的 `COVEY_*` 设置。
+Manager、服务注册和管理命令、Bridge、任务进程、网页服务和后端进程都要用同一个值。Manager 的服务清单本来就会保留这个不含凭据的 `COVEY_*` 设置，Bridge 和它的任务进程从清单拿到它；管理命令（`covey_service.py` 的 `set`、`unset`、`start`、`stop`、`restart`、`launch`，`covey_plugins.py enable|disable`）在终端没设时从服务清单读（`service/manager.py` 的 `adopt_lock_root`），并带给它顺手拉起的 Manager。终端设的值和清单不同、或服务根下几份清单不一致时它们拒绝：`config.lock` 是整个服务根共用的，两个锁目录等于没有互斥。
 
 上述任一进程在运行时，不要改这个变量，也不要替换目录。在云上锁和运行锁之间切换前，先停下并排空所有写入方，包括旧 release 的任务进程：新旧两种锁模式混用时互不排斥。
 

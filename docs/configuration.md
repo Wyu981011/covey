@@ -92,6 +92,8 @@
 2. **改**：去掉 `--dry-run` 再跑一次。关一个开关时把它设成关闭值（多数是 `0`，各自的取值见上表和[一览](#环境变量与选项一览)），如 `set … COVEY_BUTLER_TRACKS=0`；去掉一个设置用 `unset`：`python3 -B bin/covey_service.py unset --state-dir "$STATE_DIR" COVEY_HISTORY_CMD`。一次可以写几个。
 3. **确认**：输出的 `generation` 加了一，`bridge.log` 有新的 `bridge started`；再在飞书里按上表“怎么确认”那一列看一眼。
 
+服务清单里设了 `COVEY_LOCK_ROOT`（[本机运行锁](runtime-locks.md)）时，`set`、`unset`、`start`、`stop`、`restart` 和 `covey_plugins.py enable|disable` 自己用清单里的锁目录，终端里不用再设；标准错误输出一行“用服务清单里的锁目录 …”。终端里设了另一个值、或几份清单不一致时它拒绝，什么都不改。
+
 `set` 和 `unset` 做的就是[改设置后重新注册](deploy.md#改设置后重新注册)那几步，只是不经过终端：读出清单里现在的变量，只改给出的这几个（存成清单用的旧名 `LARK_BRIDGE_<X>`，见[环境变量的旧名](compat.md#环境变量的旧名)），按清单原样的启动命令、工作目录、profile、日志和健康超时重新注册，代次加一，Manager 换一个 Bridge 进程。所以终端里有什么变量都不影响它，清单里的代理等变量也不会丢；它不换代码（换代码是升级，见[升级与回滚](deploy.md#升级与回滚)）。值没变时什么都不做。
 
 它拒绝、什么都不改的情况：
@@ -558,7 +560,7 @@
 | `COVEY_DOWN_NOTICE` | `service/down_notice.py`（`enabled`：Manager 每轮从各服务清单的环境里读，`service/manager.py` 的 `tell`） | 开：Bridge 连续 3 次没能启动、同一个启动错误持续 2 分钟，或运行中 10 分钟收不到飞书消息时，Manager 用这个服务的 lark-cli profile 以机器人身份给主人发一条文字消息，恢复（正常运行 5 分钟）后再发一条；同一个服务的“停了”消息至少隔 1 小时；`0` 关：Manager 不读、不写、不发，和原来一样。见[运维 · 机器人停了会告诉主人](operations.md#机器人停了会告诉主人) | 否 |
 | `COVEY_PLAYWRIGHT_PYTHON` | `feishu/app_config.py`（`playwright_python`：自动补齐用的解释器） | `<数据根>/proxy-web/venv/bin/python` | 否 |
 | `COVEY_CONSOLE_URL` | `app/app_setup.py`（交给 `feishu/app_console.py` 的 `--console`） | `https://open.feishu.cn`（登录后跟着跳到租户的域名） | 否 |
-| `COVEY_LOCK_ROOT` | `core/file_lock.py`、`service/install.py` | 不设：不用本机运行锁（见[本机运行锁](runtime-locks.md)） | 否 |
+| `COVEY_LOCK_ROOT` | `core/file_lock.py`、`service/install.py`、`service/manager.py` | 不设：不用本机运行锁（见[本机运行锁](runtime-locks.md)）；管理命令在终端没设时用服务清单里的 | 否 |
 | `COVEY_MANAGED` | `app/unified.py` | Manager 启动 Bridge 时设成 `1`，不要手设 | 否 |
 | `COVEY_REQUIRED_MOUNT` | `service/manager.py` | 开机守护设置，不要手设 | 否 |
 | `COVEY_RUNNER_PYTHONPATH` | `app/runner.py` | Bridge 交给任务进程，不要手设 | 否 |

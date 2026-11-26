@@ -194,7 +194,18 @@ def main(argv=None) -> int:
                     where = row["found"] or "找不到"
                     print(f"{mark} {row['package']:<20} {row['source'] or '未启用':<12} {row['summary']}  [{where}]")
             return 0
-        result = doctor() if args.command == "doctor" else turn(args.package, args.command == "enable")
+        if args.command == "doctor":
+            result = doctor()
+        else:
+            # The list file's lock is on the data home: in the lock directory the services use (docs/runtime-locks.md).
+            from covey.core.paths import service_root
+            from covey.service.manager import adopt_lock_root
+            try:
+                adopt_lock_root(service_root())
+            except ValueError as error:
+                print(error)
+                return 1
+            result = turn(args.package, args.command == "enable")
     except extensions.ExtensionError as error:
         result = {"ok": False, "message": str(error)}
     print(result["message"])

@@ -177,6 +177,102 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(self.manifest(), self.first)
 
 
+class LockRootTests(unittest.TestCase):
+    """The management commands take the lock directory the service manifests keep (manager.adopt_lock_root): on a cloud
+    file system whose flock fails (ENOSYS) ``set`` locked config.lock in place and failed (T818)."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.home = Path(tmp.name).resolve()
+        self.root = self.home / "services"
+        self.state = self.home / "state"
+        self.state.mkdir()
+        self.runtime = self.home / "runtime"
+        self.command = [sys.executable, "-B", "/absolute/release/bin/covey_bridge.py", "--harness", "unified"]
+        clean = mock.patch.dict(os.environ)
+        clean.start()
+        self.addCleanup(clean.stop)
+        for name in ("COVEY_LOCK_ROOT", "LARK_BRIDGE_LOCK_ROOT"):
+            os.environ.pop(name, None)
+        started = mock.patch.object(manager, "ensure_manager")
+        started.start()
+        self.addCleanup(started.stop)
+        inherited = mock.patch.object(manager, "manager_environment", return_value={"PATH": "/usr/bin"})
+        inherited.start()
+        self.addCleanup(inherited.stop)
+
+    def register(self, state, lock_root):
+        environment = {"PATH": "/usr/bin", **({"LARK_BRIDGE_LOCK_ROOT": lock_root} if lock_root is not None else {})}
+        with mock.patch.dict(os.environ, {"COVEY_LOCK_ROOT": lock_root} if lock_root is not None else {}):
+            return register(self.root, state, self.command, workdir=self.home, profile=state.name, environment=environment)
+
+    def run_set(self, *words):
+        said = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(said):
+            main(["--root", str(self.root), "set", "--state-dir", str(self.state), *words])
+        return said.getvalue()
+
+    def test_set_locks_in_the_manifests_lock_directory_without_one_in_this_shell(self):
+        import hashlib
+        self.register(self.state, str(self.runtime))
+        said = self.run_set("COVEY_DIGEST_TIMES=21:30")
+        self.assertIn(f"用服务清单里的锁目录 COVEY_LOCK_ROOT={self.runtime}", said)
+        environment = read_json(self.root / "services" / (service_key(self.state) + ".json"))["environment"]
+        self.assertEqual(environment["LARK_BRIDGE_DIGEST_TIMES"], "21:30")
+        self.assertEqual(environment["LARK_BRIDGE_LOCK_ROOT"], str(self.runtime))
+        name = hashlib.sha256(os.fsencode((self.root / "config.lock").resolve())).hexdigest() + ".lock"
+        self.assertTrue((self.runtime / name).is_file())
+        self.assertFalse((self.root / "config.lock").exists())  # Not locked in place on the cloud file system.
+        # This process (and the Manager ensure_manager would start) has it under both spellings.
+        self.assertEqual((os.environ["COVEY_LOCK_ROOT"], os.environ["LARK_BRIDGE_LOCK_ROOT"]), (str(self.runtime),) * 2)
+        # A dry run says which lock directory it would use.
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            main(["--root", str(self.root), "set", "--state-dir", str(self.state), "--dry-run", "COVEY_DIGEST_TIMES=22:00"])
+        self.assertEqual(json.loads(out.getvalue())["lock_root"], str(self.runtime))
+
+    def test_another_value_in_this_shell_or_manifests_that_disagree_are_refused(self):
+        first = self.register(self.state, str(self.runtime))
+        with mock.patch.dict(os.environ, {"COVEY_LOCK_ROOT": str(self.home / "elsewhere")}), \
+                self.assertRaisesRegex(ValueError, "both would lock apart"):
+            self.run_set("COVEY_DIGEST_TIMES=21:30")
+        with mock.patch.dict(os.environ, {"COVEY_LOCK_ROOT": str(self.runtime)}):  # The same value: as before.
+            self.assertNotIn("用服务清单里的锁目录", self.run_set("COVEY_DIGEST_TIMES=21:30"))
+        other = self.home / "other-state"
+        other.mkdir()
+        self.register(other, None)  # A second service without one: which lock directory is the root's is unclear.
+        before = read_json(self.root / "services" / (service_key(self.state) + ".json"))
+        with self.assertRaisesRegex(ValueError, "do not agree on COVEY_LOCK_ROOT"):
+            self.run_set("COVEY_DIGEST_TIMES=08:00")
+        self.assertEqual(read_json(self.root / "services" / (service_key(self.state) + ".json")), before)
+        self.assertNotIn("COVEY_LOCK_ROOT", os.environ)
+        self.assertGreater(before["generation"], first["generation"])
+
+    def test_without_a_lock_directory_anywhere_nothing_changes(self):
+        self.register(self.state, None)
+        self.assertEqual(manager.adopt_lock_root(self.root, say=self.fail), None)
+        self.assertEqual(self.run_set("COVEY_DIGEST_TIMES=21:30"), "")
+        self.assertTrue((self.root / "config.lock").exists())  # flock on the file itself, as before.
+        self.assertNotIn("COVEY_LOCK_ROOT", os.environ)
+        self.assertEqual(manager.adopt_lock_root(self.home / "no-root", say=self.fail), None)  # A first install.
+
+    def test_the_extension_commands_take_it_too(self):
+        from covey.service import plugins
+        self.register(self.state, str(self.runtime))
+        data = self.home / "data"
+        with mock.patch.dict(os.environ, {"COVEY_SERVICE_ROOT": str(self.root), "COVEY_DATA_HOME": str(data)}), \
+                contextlib.redirect_stdout(io.StringIO()) as out, contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(plugins.main(["disable", "some_pkg"]), 0)
+        self.assertIn("已停用 some_pkg", out.getvalue())
+        self.assertIn("用服务清单里的锁目录", err.getvalue())
+        self.assertTrue((data / "extensions" / "enabled").is_file())
+        self.assertFalse((data / "extensions" / "enabled.lock").exists())
+        import hashlib
+        name = hashlib.sha256(os.fsencode((data / "extensions" / "enabled.lock").resolve())).hexdigest() + ".lock"
+        self.assertTrue((self.runtime / name).is_file())
+
+
 class ManagerEnvironmentTests(unittest.TestCase):
     def test_without_a_running_manager_it_is_this_processs_own(self):
         with tempfile.TemporaryDirectory() as root:
