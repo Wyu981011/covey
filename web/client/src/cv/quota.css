@@ -16,9 +16,10 @@
 .cv .mq-name .nodot{width:7px;flex:none}
 .cv .mq-name .reddot,.cv .mq-gdot{width:7px;height:7px;border-radius:50%;background:var(--fail);flex:none}
 .cv .mq-gdot{margin-left:6px}
-.cv .mq-c{display:grid;grid-template-columns:42px minmax(40px,1fr) 78px;align-items:center;gap:0 10px;font-size:13px;min-width:0}
+/* 第 3 列是重置时刻：最长的“12-31 15:02 恢复”一行放得下 */
+.cv .mq-c{display:grid;grid-template-columns:42px minmax(40px,1fr) 108px;align-items:center;gap:0 10px;font-size:13px;min-width:0}
 .cv .mq-c .n{font-variant-numeric:tabular-nums;color:var(--t1);font-weight:500}
-.cv .mq-c .t{font-size:12px;color:var(--t3);white-space:nowrap}
+.cv .mq-c .t{font-size:12px;color:var(--t3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .cv .mq-c.tight .n,.cv .mq-c.out .n{color:var(--fail)}
 .cv .mq-c.stale .n,.cv .mq-c.none .n{color:var(--t3);font-weight:400}
 .cv .mq-c .pool{font-size:11.5px;color:var(--t3);grid-column:1/-1;display:flex;align-items:center;gap:5px}
@@ -58,6 +59,7 @@
   .cv .mq-head{display:none}
   .cv .mq-c{grid-template-columns:auto 1fr;gap:2px 8px}
   .cv .mq-c .lab{display:inline}
-  .cv .mq-c .b{grid-column:1/-1;grid-row:2}
+  /* 名字和百分比一行，下面细条，再下面时刻：时刻占整行，不把“5 小时”那一列撑宽；有池名时池名在最上面 */
+  .cv .mq-c .b,.cv .mq-c .t{grid-column:1/-1}
   .cv .mq-row.login .msg{grid-column:1/-1}
 }

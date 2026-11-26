@@ -1,5 +1,5 @@
 /* 「账号与额度」（数据约定 v42，Covey 推的设置条目 quota）：从条目算出表里每一格写什么、颜色、旧不旧，折起来的来源一行写什么，
- * 侧栏胶囊说什么。纯函数，单测在 scripts/quota.test.mjs。时间都是秒；几点几分按上海时区写，和别处一样。 */
+ * 侧栏胶囊说什么。纯函数，单测在 scripts/quota.test.mjs。时间都是秒；几点几分按上海时区写，和别处一样；重置和恢复的时刻不管哪天都写到几点几分。 */
 import type { QuotaAccount, QuotaData, QuotaPool, QuotaResponse, QuotaSource, QuotaWindow } from '@shared/api.interface';
 import { canDo } from './v34';
 
@@ -16,19 +16,30 @@ export const quotaOn = (ops: readonly string[] | null | undefined, r: QuotaRespo
   canDo(ops, 'quota_refresh') && (r?.data?.sources?.length ?? 0) > 0;
 
 const TZ = 'Asia/Shanghai';
-const dayKey = (sec: number): string => new Date(sec * 1000).toLocaleDateString('zh-CN', { timeZone: TZ });
 const WEEK: readonly string[] = ['日', '一', '二', '三', '四', '五', '六'];
+const DATE = new Intl.DateTimeFormat('en-US', { timeZone: TZ, year: 'numeric', month: 'numeric', day: 'numeric' });
+
+/** 上海的日历日：月、日，和从 1970-01-01 起的第几天 n（相减就是差几天，不看运行它的机器在哪个时区） */
+interface Day { m: number; d: number; n: number }
+function dayOf(sec: number): Day {
+  const p: Record<string, number> = {};
+  for (const x of DATE.formatToParts(new Date(sec * 1000))) if (x.type !== 'literal') p[x.type] = Number(x.value);
+  return { m: p.month, d: p.day, n: Date.UTC(p.year, p.month - 1, p.day) / 86400000 };
+}
 
 export const hm = (sec: number): string =>
   new Date(sec * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', timeZone: TZ });
 
-/** 一个时刻怎么写：今天写 19:05，别的天写周几（一周内），再远写 月-日 */
+/** 一个时刻怎么写，都带几点几分：今天 19:05，明天 明天 01:02，后天到第 6 天 周六 08:00，再远（或已经过去的别的天）12-3 15:02。
+ * 按上海的日历天数，不按小时：23:59 看 6.9 天后也不会写成和今天同名的周几 */
 export function whenWords(sec: number, now: number): string {
   if (!(sec > 0)) return '';
-  if (dayKey(sec) === dayKey(now)) return hm(sec);
-  const weekday: string = WEEK[new Date(new Date(sec * 1000).toLocaleString('en-US', { timeZone: TZ })).getDay()];
-  if (Math.abs(sec - now) < 6.5 * 86400) return `周${weekday}`;
-  return new Date(sec * 1000).toLocaleDateString('zh-CN', { timeZone: TZ, month: 'numeric', day: 'numeric' }).replace('/', '-');
+  const at: Day = dayOf(sec);
+  const ahead: number = at.n - dayOf(now).n;
+  if (ahead === 0) return hm(sec);
+  if (ahead === 1) return `明天 ${hm(sec)}`;
+  if (ahead > 1 && ahead < 7) return `周${WEEK[(((at.n + 4) % 7) + 7) % 7]} ${hm(sec)}`; // 1970-01-01 是周四
+  return `${at.m}-${at.d} ${hm(sec)}`;
 }
 
 /** “6 小时前”这样的话，悬停说读数多旧 */
@@ -143,11 +154,12 @@ export function groupNote(source: QuotaSource, open: boolean): string {
   return source.total > 0 ? `${source.usable}/${source.total} 个能用` : source.failing ? '读不到' : '';
 }
 
-/** 侧栏胶囊：某个来源整体见底，或有号要重新登录；都没有是空串（不画）。点了到这一页 */
-export function capsuleOf(data: QuotaData | null | undefined): string {
+/** 侧栏胶囊：某个来源整体见底，或有号要重新登录；都没有是空串（不画）。点了到这一页。
+ * 恢复时刻和表里一样写（明天、周几、日期都带几点几分）；now 不给就按现在 */
+export function capsuleOf(data: QuotaData | null | undefined, now: number = Date.now() / 1000): string {
   if (!data) return '';
   const low: QuotaSource | undefined = data.sources.find((s: QuotaSource) => s.low);
-  if (low) return `${low.title} 额度见底${low.dry && low.next_available_at ? ` · ${hm(low.next_available_at)} 恢复` : ''}`;
+  if (low) return `${low.title} 额度见底${low.dry && low.next_available_at ? ` · ${whenWords(low.next_available_at, now)} 恢复` : ''}`;
   const first = data.relogin[0];
   if (!first) return '';
   const same: number = data.relogin.filter((r: { source: string }) => r.source === first.source).length;

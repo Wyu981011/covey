@@ -72,14 +72,70 @@ test('Covey 推来的条目理成页面要的形状：读不到是 null 不是 0
   assert.equal(many.sources.length, S.QUOTA_MAX.sources);
 });
 
-test('时刻怎么写：今天写几点几分，别的天写周几', () => {
+test('时刻怎么写：都带几点几分；今天只写时分，明天写“明天”，后天到第 6 天写周几，再远写月-日', () => {
   assert.equal(Q.whenWords(at(19, 5), NOW), '19:05');
-  assert.equal(Q.whenWords(at(9, 0, 1), NOW), '周五'); // 2026-11-27 是周五
-  assert.equal(Q.whenWords(at(9, 0, 3), NOW), '周日');
-  assert.equal(Q.whenWords(at(9, 0, 20), NOW), '12-16');
+  assert.equal(Q.whenWords(at(9, 0, 1), NOW), '明天 09:00'); // 2026-11-27 是周五
+  assert.equal(Q.whenWords(at(8, 0, 2), NOW), '周六 08:00');
+  assert.equal(Q.whenWords(at(9, 0, 3), NOW), '周日 09:00');
+  assert.equal(Q.whenWords(at(9, 0, 4), NOW), '周一 09:00');
+  assert.equal(Q.whenWords(at(23, 59, 6), NOW), '周三 23:59'); // 第 6 天：还写周几
+  assert.equal(Q.whenWords(at(0, 1, 7), NOW), '12-3 00:01'); // 第 7 天和今天同是周四：写日期
+  assert.equal(Q.whenWords(at(15, 2, 7), NOW), '12-3 15:02');
+  assert.equal(Q.whenWords(at(9, 0, 20), NOW), '12-16 09:00');
+  assert.equal(Q.whenWords(at(22, 0, -1), NOW), '11-25 22:00'); // 过去的别的天写日期，不写周几
   assert.equal(Q.whenWords(0, NOW), '');
   assert.equal(Q.agoWords(NOW - 6 * 3600, NOW), '6 小时前');
   assert.equal(Q.agoWords(NOW - 20, NOW), '刚刚');
+});
+
+test('跨零点、跨月、跨年：按上海的日历天算“今天”“明天”，几点几分是上海的', () => {
+  const sh = (iso) => Date.parse(`${iso}+08:00`) / 1000;
+  const late = sh('2026-11-26T23:50:00');
+  assert.equal(Q.whenWords(sh('2026-11-26T23:59:00'), late), '23:59');
+  assert.equal(Q.whenWords(sh('2026-11-27T00:10:00'), late), '明天 00:10'); // 20 分钟后已是明天
+  assert.equal(Q.whenWords(sh('2026-11-27T23:55:00'), sh('2026-11-27T00:05:00')), '23:55'); // 刚过零点，当天的还是今天
+  assert.equal(Q.whenWords(sh('2026-11-28T00:00:00'), late), '周六 00:00');
+  const monthEnd = sh('2026-11-30T10:00:00'); // 周一
+  assert.equal(Q.whenWords(sh('2026-12-01T08:00:00'), monthEnd), '明天 08:00');
+  assert.equal(Q.whenWords(sh('2026-12-02T08:00:00'), monthEnd), '周三 08:00');
+  assert.equal(Q.whenWords(sh('2026-12-07T08:00:00'), monthEnd), '12-7 08:00');
+  const yearEnd = sh('2026-12-31T22:00:00'); // 周四
+  assert.equal(Q.whenWords(sh('2027-01-01T03:00:00'), yearEnd), '明天 03:00');
+  assert.equal(Q.whenWords(sh('2027-01-02T03:00:00'), yearEnd), '周六 03:00');
+  assert.equal(Q.whenWords(sh('2027-01-08T15:02:00'), yearEnd), '1-8 15:02');
+  assert.equal(Q.whenWords(sh('2026-11-27T01:02:00'), Date.parse('2026-11-26T16:00:00Z') / 1000), '01:02'); // UTC 还是 26 日，上海已是 27 日
+});
+
+test('用完的格和侧栏胶囊：恢复时刻跨天也写几点几分', () => {
+  const s = source();
+  const out = (back) => Q.cellOf(s, pool([], { state: 'spent', available_at: back }), '5h', NOW).at;
+  assert.equal(out(at(23, 20)), '23:20 恢复');
+  assert.equal(out(at(8, 0, 1)), '明天 08:00 恢复');
+  assert.equal(out(at(9, 0, 2)), '周六 09:00 恢复');
+  assert.equal(out(at(15, 2, 7)), '12-3 15:02 恢复');
+  const bar = Q.cellOf(s, pool([win('7d', 0.6, { resets_at: at(9, 0, 4) })]), '7d', NOW);
+  assert.equal(bar.at, '周一 09:00'); // 没用完：只写重置时刻
+  const dry = (back) => ({ at: NOW, read_at: NOW, relogin: [], refresh: { at: 0, busy: false, cooldown: 300 },
+    sources: [source({ title: 'agy', low: true, dry: true, next_available_at: back })] });
+  assert.equal(Q.capsuleOf(dry(at(8, 0, 1)), NOW), 'agy 额度见底 · 明天 08:00 恢复');
+  assert.equal(Q.capsuleOf(dry(at(15, 2, 7)), NOW), 'agy 额度见底 · 12-3 15:02 恢复');
+  const real = Date.now;
+  Date.now = () => (NOW + 12 * 3600) * 1000; // 一个参数时按现在算：现在已是 11-27 02:32
+  try {
+    assert.equal(Q.capsuleOf(dry(at(8, 0, 1))), 'agy 额度见底 · 08:00 恢复');
+  } finally {
+    Date.now = real;
+  }
+});
+
+test('时刻那一列：数字等宽，宽度放得下“12-31 15:02 恢复”；手机上时刻单占一行，不撑宽“5 小时”那一列', () => {
+  const css = read('quota.css');
+  const col = css.match(/\.cv \.mq-c\{display:grid;grid-template-columns:42px minmax\(40px,1fr\) (\d+)px;/u);
+  assert.ok(col && Number(col[1]) >= 104 && Number(col[1]) <= 112, '第 3 列 104~112px');
+  assert.match(css.match(/\.cv \.mq-c \.t\{([^}]*)\}/u)?.[1] ?? '', /font-variant-numeric:tabular-nums/u);
+  const phone = css.slice(css.indexOf('@media (max-width:767px)'));
+  assert.match(phone, /\.cv \.mq-c \.b,\.cv \.mq-c \.t\{grid-column:1\/-1\}/u);
+  assert.equal(/\.mq-c \.b\{[^}]*grid-row/u.test(phone), false, '细条不钉在第 2 行：有池名时池名在上');
 });
 
 test('一格：百分比、细条、时刻；剩余不到 20% 红；用完写“用完”和“HH:MM 恢复”；读不到写“—”', () => {
@@ -87,7 +143,7 @@ test('一格：百分比、细条、时刻；剩余不到 20% 红；用完写“
   const ok = Q.cellOf(s, pool([win('5h', 0.64, { resets_at: at(19, 5) })]), '5h', NOW);
   assert.deepEqual([ok.kind, ok.pct, ok.at, ok.tight, ok.stale], ['bar', 64, '19:05', false, false]);
   const week = Q.cellOf(s, pool([win('7d', 0.71, { resets_at: at(9, 0, 1) })]), '7d', NOW);
-  assert.equal(week.at, '周五');
+  assert.equal(week.at, '明天 09:00');
   const tight = Q.cellOf(s, pool([win('5h', 0.12)]), '5h', NOW);
   assert.deepEqual([tight.kind, tight.pct, tight.tight], ['bar', 12, true]);
   assert.equal(Q.cellOf(s, pool([win('5h', 0.2)]), '5h', NOW).tight, false); // 正好 20% 不红
@@ -106,7 +162,7 @@ test('号 state 是用完而读数里没有哪个窗口为 0：写在 5 小时�
   assert.equal(Q.cellOf(s, spent, '7d', NOW).kind, 'none');
   const weekOut = pool([win('5h', 0.6), win('7d', 0, { resets_at: at(9, 0, 2) })], { state: 'spent', available_at: at(9, 0, 2) });
   assert.equal(Q.cellOf(s, weekOut, '5h', NOW).kind, 'bar');
-  assert.equal(Q.cellOf(s, weekOut, '7d', NOW).at, '周六 恢复');
+  assert.equal(Q.cellOf(s, weekOut, '7d', NOW).at, '周六 09:00 恢复');
 });
 
 test('旧读数数字灰、悬停说多旧；已重置还没有新读数写“—”；太旧的来源整份写“—”；读取没成功的灰', () => {
@@ -169,7 +225,7 @@ test('侧栏胶囊：只在某个来源整体见底或有号要重新登录时�
   assert.equal(Q.capsuleOf(fine), '');
   assert.equal(Q.capsuleOf(null), '');
   const dry = { ...fine, sources: [source({ title: 'agy', low: true, dry: true, next_available_at: at(17, 10) })] };
-  assert.equal(Q.capsuleOf(dry), 'agy 额度见底 · 17:10 恢复');
+  assert.equal(Q.capsuleOf(dry, NOW), 'agy 额度见底 · 17:10 恢复');
   assert.equal(Q.capsuleOf({ ...fine, sources: [source({ title: 'agy', low: true })] }), 'agy 额度见底'); // 能用的号只是剩得少：没有恢复时刻
   const login = { ...fine, relogin: [{ source: '我的 VPS', name: 'V2' }, { source: '我的 VPS', name: 'V3' }, { source: 'agy', name: 'a@example.com' }] };
   assert.equal(Q.capsuleOf(login), '我的 VPS 有 2 个号要重新登录');
