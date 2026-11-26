@@ -136,10 +136,11 @@ TOOL_RULES = (
     "- 每次有意义的判断或进展，用 project_note 记一句（专项卡上显示）；要告诉主人的才标 report，别每步都报；"
     "定下的决定标 decision，之后每一轮都会看到最近 10 条。",
     "- 专项的目标和完成标准用 project_goal 写成给主人看的一两句（网页上专项标题下显示）：第一轮写，主人改了要求再更新；只写目标，不写进度。",
-    "- 主人说出这个专项里长期适用的做法、偏好或坑，用 project_remember 记下；主人说“少打扰我”“多报一点”这类，"
-    "用 project_style 改汇报风格。",
-    "- 专项记忆的口径变了（记错了、主人改了主意、两条说同一件事），用 project_memory_revise 改那一条：update 改正文，supersede 用新条"
-    "（或 by 写已有一条的 id）替代旧条，retire 收进历史；不许再追加一条“XXX 作废”，旧条还会每轮带上。主人的长期约定和他留下的限制你不能改，"
+    "- 主人说出这个专项里长期适用的做法、偏好或坑，用 project_remember 记下：kind 写 rule（规矩，以后照做的）或 note（资料，供参考的事实），"
+    "title 写一句不超过 40 字的标题；你记的规矩会进待审核，主人确认后才算他定的。主人答过的题 Bridge 已记成决定，不用再记。"
+    "主人说“少打扰我”“多报一点”这类，用 project_style 改汇报风格。",
+    "- 专项记忆的口径变了（记错了、主人改了主意、两条说同一件事），用 project_memory_revise 改那一条（id 写那一条开头〔〕里的短码）：update 改正文，supersede 用新条"
+    "（或 by 写已有一条的短码）替代旧条，retire 收进历史；不许再追加一条“XXX 作废”，旧条还会每轮带上。主人的长期约定和他留下的限制你不能改，"
     "要改就问主人。",
     "- 不要把发版号、现网第几代、集群瞬时余量、某一刻的进度这类快照写进专项记忆（project_remember 会拒绝），它们过后就过时：写 project_note；"
     "专项记忆只放长期成立的决定、约束、联系人和事实。",
@@ -188,7 +189,7 @@ COLLAB_RULES = (
     "每个写清条目、话题和一句现状（note）；动作的状态由 Bridge 算，不用你写。开话题、给话题加话时带 action 或 item，主人在对话里要改简报就照改。",
 )
 EVIDENCE_RULE = (
-    "- 开了协作，project_answer 必须写 evidence：列出你依据的专项记忆条目 id（状态包专项记忆每行开头〔〕里的）或主人在这个专项里的原话"
+    "- 开了协作，project_answer 必须写 evidence：列出你依据的专项记忆条目短码（状态包专项记忆每行开头〔〕里的）或主人在这个专项里的原话"
     "（msg:消息 id，见状态包“主人在专项里说过的话”）。只有长期约定、当前决定里没标（无出处）、仍有效的条目和主人原话算依据；"
     "待核对参考是你整理的，只能一起列，不能单独作依据；作废、做完、被替代或只限当次的 Bridge 会拒绝。被拒了就用 project_escalate 转给主人，"
     "不要换个说法再答。回答会带上依据，记在专项卡的分流记录里。"
@@ -449,12 +450,27 @@ def entry_id(item) -> str:
     return parts[2] if len(parts) == 3 else ""
 
 
-def memory_lines(view) -> list:
-    """The memory's lines as the pack says them (app/prompts.py project_memory_lines): each carried line starts with its entry id in
-    〔〕, what project_memory_revise takes and, with 协作 on, project_answer's evidence names (app/triage.py grounds)."""
-    parts = {part: {**room, "kept": [{**item, "text": f"〔{entry_id(item)}〕{item['text']}"} for item in room["kept"]]}
+def memory_lines(view, codes=None) -> list:
+    """The memory's lines as the pack says them (app/prompts.py project_memory_lines): each carried line starts with its short
+    code in 〔〕 (core/memstore.py; its entry id when ``codes``, entry id -> code, has none), what project_memory_revise takes
+    and, with 协作 on, project_answer's evidence names (app/triage.py grounds)."""
+    codes = codes or {}
+    parts = {part: {**room, "kept": [{**item, "text": f"〔{codes.get(entry_id(item)) or entry_id(item)}〕{item['text']}"}
+                                     for item in room["kept"]]}
              for part, room in view["parts"].items()}
     return project_memory_lines({**view, "parts": parts})
+
+
+def memory_codes(state_dir, project_id) -> dict:
+    """entry id -> short code of every line of the project's memory (core/memstore.py, a line without one gets it now); {} when
+    they cannot be read (the pack says the ids then)."""
+    from covey.core import memstore
+
+    try:
+        return {entry.ref.rsplit(":", 1)[-1]: entry.code
+                for entry in memstore.entries(state_dir, scope="project", owner_key=project_id, statuses=None) if entry.code}
+    except Exception:  # noqa: BLE001 - the ids then
+        return {}
 
 
 def owner_message(record) -> bool:
@@ -680,9 +696,10 @@ def state_pack(state_dir, record, key, *, full, receipts=None, since=None, redac
     waiting = deploy_block(state_dir, record)
     if waiting:
         out.append(waiting)
-    view = core_memory.project_view(project_memory.entries(state_dir, record), record["id"], redacted=redacted,
+    rows = project_memory.entries(state_dir, record)
+    view = core_memory.project_view(rows + project_context.decision_rows(state_dir, record["id"], rows), record["id"], redacted=redacted,
                                     since=None if full else since)
-    memory = memory_lines(view)
+    memory = memory_lines(view, memory_codes(state_dir, record["id"]) if view["parts"] else None)
     if memory:
         out.append(LEAD_MEMORY_HEAD + "\n" + "\n".join(memory))
     words = owner_word_lines(state_dir, record) if collab_on and triage.enabled() else []

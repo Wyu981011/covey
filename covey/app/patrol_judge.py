@@ -5,8 +5,8 @@ or saved session, killed at COVEY_PATROL_JUDGE_MS (default 30000), and nothing i
 app/track_judge.py ``ask`` puts the small model's questions: the Claude Harness, else Codex's or Antigravity's own CLI (``tools``); with none, nothing (``no_backend``).
 
 The input is one JSON object: ``items`` (index from 1, ``kind`` in words, ``title``, ``what``, ``waited`` words) and the
-owner's ``principles`` (core/principles.py: what he asked to be told or not told about, newest last, at most
-PRINCIPLES of them). A topic that redacts (core/redaction.py) is sent as ``（内容不外发）``: its title never reaches the model.
+owner's ``principles`` (his global rules, core/memstore.py, the principles moved in there among them; core/principles.py's
+own before the memory moved: what he asked to be told or not told about, newest last, at most PRINCIPLES of them). A topic that redacts (core/redaction.py) is sent as ``（内容不外发）``: its title never reaches the model.
 The answer is ``{"decisions":[{"index":1,"verdict":"drop"|"note"|"handle","why":"≤40 字","action":"ask"|"join"|"tidy"|"wake"|"none"}]}``;
 a decision outside that shape is skipped (the candidate stays for the next round), a ``why`` is cut to WHY_CHARS, an action
 the candidate cannot have (``join``, ``tidy`` and ``wake`` need a project) becomes ``none``.
@@ -65,8 +65,21 @@ def payload(state_dir, batch) -> dict:
         items.append({"index": index, "kind": KIND_WORDS.get(row.get("kind"), ""),
                       "title": HIDDEN if secret else cut(row.get("title"), TEXT, beyond=True),
                       "what": HIDDEN if secret else cut(row.get("what"), TEXT, beyond=True), "waited": waited_words(row)})
-    notes = [cut(entry["text"], TEXT, beyond=True) for entry in principles.entries(state_dir)][-PRINCIPLES:]
+    notes = [cut(text, TEXT, beyond=True) for text in owner_rules(state_dir)][-PRINCIPLES:]
     return {"items": items, "principles": notes}
+
+
+def owner_rules(state_dir) -> list:
+    """The texts of the owner's global rules in force, oldest first (core/memstore.py), else of his principles
+    (core/principles.py: a state the memory has not moved yet)."""
+    try:
+        from covey.core import memstore
+
+        rules = sorted((entry for entry in memstore.entries(state_dir, scope="global", kinds=("rule",)) if entry.said == "owner"),
+                       key=lambda entry: entry.at)
+    except Exception:  # noqa: BLE001 - the principles then
+        rules = []
+    return [entry.text for entry in rules] or [entry["text"] for entry in principles.entries(state_dir)]
 
 
 def parse(text, batch) -> list:

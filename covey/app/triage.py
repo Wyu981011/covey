@@ -16,7 +16,7 @@ question goes to the project's lead before the owner, and the owner sees it only
   note saying the lead answered, so the topic goes on as if the owner had clicked. Every answer and hand-back is a row of the
   project's ``triage`` list (the 专项卡's 分流记录); an answer's row has the 不对 button (``correct``).
 - With 协作 on (COVEY_COLLAB=1), or whenever the lead names them, an answer stands on grounds the Bridge checks (``grounds``,
-  docs/projects.md 分流的依据): entries of the project's memory that the owner said and that still hold, or the owner's own
+  docs/projects.md 分流的依据; by id or short code, the decisions of decisions.jsonl too): entries of the project's memory that the owner said and that still hold, or the owner's own
   messages in the project; the lead's notes (待核对参考) never alone, a line voided, done, superseded or only for that once
   never. The grounds go into the answer's note and its 分流记录 row.
 
@@ -29,7 +29,7 @@ import re
 import time
 from pathlib import Path
 
-from covey.app import project_lead
+from covey.app import project_lead, question_dedup
 from covey.app.triage_view import held_questions, lead_held
 from covey.app.answers import AnswerIncomplete, answer_fields
 from covey.cards.question_cards import triage_element
@@ -99,6 +99,18 @@ class Triage:
                                       "receipt": False}}
         update_question(path, hold)
         return LEAD if triage.held(read_object(path)) else OWNER
+
+    def leads(self, ctx, record) -> bool:
+        """Whether ``record``'s question (one not saved yet: app/native_questions.py ``dedup`` asks before it registers) is
+        one ``route`` would hold for the project's lead: the same conditions, nothing written. Never raises (False)."""
+        try:
+            if not triage.enabled():
+                return False
+            project = self.project_of(Path(ctx.state_dir), record)
+            return bool(project is not None and record.get("status", "pending") == "pending" and record.get("blocking") is True
+                        and project_gates.choice_only(record.get("questions")) and not project_gates.hit(record.get("questions")))
+        except Exception:  # noqa: BLE001 - the owner's, as route says when it fails
+            return False
 
     @staticmethod
     def project_of(state_dir, record):
@@ -424,9 +436,11 @@ def receipt(state_dir, project, record, now) -> None:
     which wakes the lead no more than once more)."""
     label = topic_label(Path(state_dir), record.get("topic_id")) or str(record.get("topic_id"))[:8]
     first = (record.get("questions") or [{}])[0]
+    before = question_dedup.lead_line(record)  # The owner's answer to the same question before (app/question_dedup.py).
     project_lead.add_receipt(state_dir, project["id"], RECEIPT,
                              f"{label} 的任务 #{record.get('job_id')} 问：{cut(str(first.get('question') or ''), 160)}"
-                             "（交给你：能答就 project_answer，不能就 project_escalate；3 分钟没处理会转给主人）",
+                             + (f"（{before}）" if before else "")
+                             + "（交给你：能答就 project_answer，不能就 project_escalate；3 分钟没处理会转给主人）",
                              thread=str(record.get("topic_id") or ""), at=now)
     update_question(question_path(state_dir, record["token"]),
                     lambda row: {**row, "triage": {**triage.of(row), "receipt": True}} if triage.held(row) else None)
@@ -449,9 +463,31 @@ WHO = {turn_source.LEVEL_OWNER: "你说的", turn_source.LEVEL_AGENT: "它总结
 
 def ground_id(text) -> str:
     """An evidence as the lead wrote it, the decorations it may have copied from the pack taken off (〔〕, a ref's
-    ``project:<id>:`` head)."""
+    ``project:<id>:`` or ``decision:<id>:`` head)."""
     text = " ".join(str(text or "").split()).strip("〔〕[]【】 ")
-    return text.rsplit(":", 1)[-1] if text.startswith("project:") else text
+    return text.rsplit(":", 1)[-1] if text.startswith(("project:", "decision:")) else text
+
+
+def ground_rows(state_dir, project) -> dict:
+    """entry id -> line of the project's memory a ground may name: its memory.json's and its decisions.jsonl's
+    (app/project_context.py decision_rows)."""
+    from covey.app.project_context import decision_rows
+
+    rows = project_memory.entries(Path(state_dir), project)
+    return {row["id"]: row for row in [*rows, *decision_rows(Path(state_dir), project["id"], rows)]}
+
+
+def coded(state_dir, project, ref, rows=()) -> tuple:
+    """(the entry id, its short code) a ground names by a short code (core/memstore.py CODE_RE), or (ref, '') for another (a
+    line's own id among ``rows`` first: an old six-hex id can read like a code); ('', code) for a code of no line of this project."""
+    from covey.core import memstore
+
+    if ref in rows or ref.startswith(MSG) or not memstore.is_code(ref.upper()):
+        return ref, ""
+    entry = memstore.find(Path(state_dir), ref)
+    if entry is None or entry.scope != "project" or entry.owner_key != project.get("id"):
+        return "", ref.upper()
+    return entry.ref.rsplit(":", 1)[-1], entry.code
 
 
 def owner_message(env, project, message_id) -> dict:
@@ -482,9 +518,13 @@ def grounds(env, project, evidence) -> list:
         raise ValueError(NO_GROUNDS)
     if len(given) > GROUNDS_MAX:
         raise ValueError(f"依据最多 {GROUNDS_MAX} 条，这次写了 {len(given)} 条：只留真正依据的那几条。")
-    rows = {row["id"]: row for row in project_memory.entries(Path(env.state_dir), project)}
+    rows = ground_rows(env.state_dir, project)
     found, problems = [], []
     for ref in given:
+        ref, code = coded(env.state_dir, project, ref, rows)
+        if not ref:
+            problems.append(f"{code} 不是这个专项的记忆（短码抄状态包专项记忆每行开头〔〕里的）")
+            continue
         message = ref[len(MSG):] if ref.startswith(MSG) else ref if ref.startswith(project_lead.OWNER_PREFIXES) else ""
         if message:
             record = owner_message(env, project, message)
@@ -496,8 +536,9 @@ def grounds(env, project, evidence) -> list:
             continue
         row = rows.get(ref)
         if row is None:
-            problems.append(f"{ref} 不在这个专项的记忆里（id 抄状态包专项记忆每行开头〔〕里的）")
+            problems.append(f"{ref} 不在这个专项的记忆里（短码抄状态包专项记忆每行开头〔〕里的）")
             continue
+        code = code or str(row.get("code") or "")
         facts = core_memory.describe(row)
         if row.get("kind") == "style":
             problems.append(f"{ref} 是汇报风格，不是答题的依据")
@@ -509,7 +550,8 @@ def grounds(env, project, evidence) -> list:
             problems.append(f"{ref} 只限当次，不能拿来答别的题")
         else:
             found.append({"ref": ref, "kind": "memory", "level": facts["level"], "layer": facts["layer"],
-                          "part": facts["part"] or "", "text": cut(row.get("text"), 200), "applies": facts["applies"]})
+                          "part": facts["part"] or "", "text": cut(row.get("text"), 200), "applies": facts["applies"],
+                          **({"code": code} if code else {})})
     if problems:
         raise ValueError("；".join(problems) + "。" + ESCALATE)
     if not any(item["level"] == turn_source.LEVEL_OWNER for item in found):
@@ -529,7 +571,7 @@ def ground_note(found) -> str:
     check; NOTE without grounds."""
     if not found:
         return NOTE
-    return "（负责人替主人答的，依据：" + "；".join(f"{item['ref']} {ground_tag(item)}「{cut(item['text'], GROUND_TEXT)}」"
+    return "（负责人替主人答的，依据：" + "；".join(f"{item.get('code') or item['ref']} {ground_tag(item)}「{cut(item['text'], GROUND_TEXT)}」"
                                               for item in found) + "）"
 
 

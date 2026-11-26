@@ -685,7 +685,7 @@ class PackTest(Case):
         self.assertIn("⚠️ c2 标了满足，但它依赖的 c1 还没满足", pack)
         self.assertIn(f"⚠️ T41 已经结束（{RESULTS['done']}），它交付的 c1 还没满足", pack)
         self.assertIn(project_lead.GAPS_HEAD, pack)
-        self.assertIn(f"〔{entry['id']}〕先迁 2024 年", pack)
+        self.assertIn(f"〔{project_lead.memory_codes(self.state, PID)[entry['id']]}〕先迁 2024 年", pack)  # Its short code.
         self.assertIn(project_lead.OWNER_WORDS_HEAD + "\n- msg:om_own1 · ", pack)
         self.assertIn("先迁 2024 年的，其余下周再说", pack)
         self.assertNotIn(f"msg:lead-{PID}-1", pack)  # A wake-up is no word of the owner's.
