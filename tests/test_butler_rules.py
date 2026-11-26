@@ -128,7 +128,7 @@ class ButlerRulesTest(unittest.TestCase):
         rules = butler_rules().split("\n")
         start = 1 + len(AREA_OPENING)  # After the heading and the opening lines.
         self.assertEqual(rules[start:start + 2], list(BUTLER_RULES))
-        self.assertTrue(any("knowledge_save" in line for line in rules))
+        self.assertTrue(any("memory_save 记一条" in line for line in rules))  # The knowledge rule, in the memory tools (T870).
         self.assertEqual(rules[0], "[管家规则]")
 
 

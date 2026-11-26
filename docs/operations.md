@@ -169,7 +169,7 @@ Bridge 自己停了、或者和飞书断了，它自己说不了话。所以由�
 │  ├─ groups/                      每个主人 @ 过机器人的群：是否外部群、是否对成员开放、免@
 │  ├─ principles.json              主人的原则（旧版写；新版迁进 `memory/global.json` 后只读）
 │  ├─ knowledge/                   知识条目（`COVEY_KNOWLEDGE` 没关才有）：`owner.jsonl`/`.md`、`workspaces/<工作区>.jsonl`/`.md`、`owner-brief.md`（旧版写；新版迁进 `memory/global.json` 后只读）
-│  ├─ memory/                      记忆（`core/memstore.py`）：全局条目 `global.json`、待审核 `review.json`、Harness 记忆导入的状态 `imports.json`、变更记录 `log.jsonl`（留 90 天，撤销用）、短码表 `codes.json`、有记忆的话题 `topics.json`、用到的次数 `usage.json`、自定义同义词 `synonyms.json`、给网页看有没有变的哨兵 `.rev`
+│  ├─ memory/                      记忆（`core/memstore.py`）：全局条目 `global.json`、待审核 `review.json`、Harness 记忆导入的状态 `imports.json`、变更记录 `log.jsonl`（留 90 天，撤销用）、短码表 `codes.json`、有记忆的话题 `topics.json`、用到的次数 `usage.json`、同类问题静默到哪天 `dedup.json`（问前查重，Bridge 写）、自定义同义词 `synonyms.json`、给网页看有没有变的哨兵 `.rev`
 │  ├─ repos.json、home.json        仓库地图（`core/repomap.py`）、主目录的设置（`core/home.py`）
 │  ├─ repos.md                     从仓库地图画出来给每轮看的那份（接管已有主目录时放这里，不写进主目录）
 │  ├─ main-thread.json             私聊模式和管家设置，子 Agent 的模型 `subagents`（`COVEY_BUTLER=0` 时设置卡没有它，默认 `light`，要跟主模型手写 `"same"`）

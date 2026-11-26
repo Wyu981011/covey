@@ -273,7 +273,7 @@ class MigrateStepsTest(Sandbox):
     def test_home_repos_and_memory_steps_together_once_and_again_after_an_older_release_wrote(self):
         """T870 Wave 2B: home_v1, repos_v1 and M1's memory_v2 in one start; the next start runs none; an older release's
         principle written after a rollback is taken by memory_v2 alone (RECURRING), the home's two stay done and untouched."""
-        from covey.core import memstore, migrate
+        from covey.core import memstore
         seeded = self.root / "seeded"
         home.seed_home(seeded)
         make_repo(seeded / "app")

@@ -598,10 +598,10 @@ SHARED_RULES = (
     "- 主人说“T412 选 A”这类话，用 question_answer 代为回答；说“T412 急”，用 topic_priority；"
     "说“T412 不用管了”“从看板撤下”，用 topic_priority 并给 remove: true。",
     "- 要看或改管家的设置，用 settings_panel 把设置卡发出来；设置只有主人能在卡上改。",
-    "- 主人说出长期适用的原则或偏好（“以后……”“原则是……”“记住……”“都要……”）时，用 principle_save 记下"
-    "（所有工作区都适用的记通用，只对某个工作区成立的记那个工作区），回复里说一句“已记下：……”；"
-    "只对这件事、这一轮的要求不记。主人说“忘掉/删掉那条”时，用 principles_list 找到它，再用 principle_delete 删掉。"
-    "记下的原则每一轮都附在 Bridge 的规则里，你和各个话题都会看到。",
+    "- 主人说出长期适用的原则或偏好（“以后……”“原则是……”“记住……”“都要……”）时，用 memory_save 记成一条规矩"
+    "（kind rule；处处适用的 scope 写 global，只对某个仓库成立的在 repos 里写仓库名），回复里说一句“已记下：……”和它的短码；"
+    "只对这件事、这一轮的要求不记。主人说“忘掉/删掉那条”时，用 memory_search 找到它的短码，再用 memory_revise（action retire）收起。"
+    "记下的规矩每一轮都附在 Bridge 的规则里，你和各个话题都会看到。",
 )
 # 管家 (COVEY_BUTLER_RULES, on unless 0; docs/butler.md 管家规则): the butler only answers quickly and hands the rest on, so
 # it is free for the owner's next question. It takes the place of SHARED_RULES' first two rules (everything under a
@@ -661,18 +661,18 @@ def knowledge_rules() -> tuple[str, ...]:
     rules = []
     if knowledge.enabled():
         rules += [
-            "- 主人说“记一下……”“记下来”，用 knowledge_save 记一条（决定、做法、坑、事实、待定；通用的记 owner，只对某个工作区的记那个工作区）；"
-            "“记住”若是以后每次都要遵守的做法或偏好，仍用 principle_save，是一件具体的事实、决定或坑就记知识条目。"
-            "主人说“把 T483 的结论记一下”，先用 topic_read 读那一轮再起草。记完在回复里列出 id 和正文。",
-            "- 主人说“改成……”用 knowledge_update（给原因），说“删了”“作废”用 knowledge_drop；先用 knowledge_search 找到 id。"
-            "只记主人说的，不要自己总结着记。"]
+            "- 主人说“记一下……”“记下来”，用 memory_save 记一条：一件具体的事实、做法或坑记资料（kind note），定下的事记决定"
+            "（kind decision），以后每次都要照做的记规矩（kind rule）；通用的 scope 写 global，只关某个仓库的在 repos 里写仓库名。"
+            "主人说“把 T483 的结论记一下”，先用 topic_read 读那一轮再起草。记完在回复里列出短码和正文。",
+            "- 主人说“改成……”用 memory_revise（action update 或 supersede，给原因），说“删了”“作废”用 memory_revise（action retire）；"
+            "先用 memory_search 找到短码。只记主人说的，不要自己总结着记。"]
     if knowledge.history_cmd():
-        order = "knowledge_search → topics_search → history_search" if knowledge.enabled() \
+        order = "memory_search → topics_search → history_search" if knowledge.enabled() \
             else "topics_search → history_search"
         rules.append(f"- 查以前做过的事、之前的决定，按顺序：{order}，前一个找到了就不用查后一个。"
                      "history_search 查的是 Claude、Codex 和 Bridge 的全部历史轮次，给一句话描述；结果里的原文位置可以再用它的输出追问。")
     elif knowledge.enabled():
-        rules.append("- 查以前做过的事、之前的决定，按顺序：knowledge_search → topics_search，前一个找到了就不用查后一个。")
+        rules.append("- 查以前做过的事、之前的决定，按顺序：memory_search → topics_search，前一个找到了就不用查后一个。")
     return tuple(rules)
 
 

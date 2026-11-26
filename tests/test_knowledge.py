@@ -506,19 +506,22 @@ class SpecsTest(StateCase):
 
     def test_the_butlers_rules_name_the_order_of_looking_things_up(self):
         self.env(**{knowledge.ENV: "0", knowledge.HISTORY_ENV: ""})
-        self.assertNotIn("knowledge_search", butler_rules())
+        self.assertNotIn("“记一下……”", butler_rules())
         self.assertNotIn("history_search", butler_rules())
         self.env(**ON)
         rules = butler_rules()
-        for words in ("knowledge_save", "“记一下……”", "topic_read", "列出 id 和正文", "knowledge_update", "knowledge_drop",
-                      "principle_save", "knowledge_search → topics_search，"):
+        # The memory tools the butler is listed (T870 Wave 2B): memory_*, never the older names it cannot call.
+        for words in ("memory_save", "“记一下……”", "topic_read", "列出短码和正文", "memory_revise", "action retire",
+                      "memory_search → topics_search，"):
             self.assertIn(words, rules)
+        for words in ("knowledge_save", "knowledge_update", "knowledge_drop", "knowledge_search", "principle_save", "principles_list"):
+            self.assertNotIn(words, rules)
         self.assertNotIn("history_search", rules)
         self.env(**{knowledge.HISTORY_ENV: "/absolute/kb-history"})
-        self.assertIn("knowledge_search → topics_search → history_search", butler_rules())
+        self.assertIn("memory_search → topics_search → history_search", butler_rules())
         self.env(**{knowledge.ENV: "0"})
         self.assertIn("topics_search → history_search", butler_rules())
-        self.assertNotIn("knowledge_save", butler_rules())
+        self.assertNotIn("“记一下……”", butler_rules())
 
 
 class ToolTest(StateCase):

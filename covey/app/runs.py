@@ -148,8 +148,8 @@ class Runs:
 
     def bridge_rules(self, ctx: BridgeContext, job: ReplyJob | None = None, *, fresh: bool = False) -> str:
         """The rules of ``job``'s turn; ``fresh``: a new session's, which alone carry the workspace's recent topics
-        (app/workspace_gists.py, COVEY_WORKSPACE_GISTS). Static within a topic (FINAL-SPEC 修订 4): what changes turn by
-        turn is ``_turn_tail``'s."""
+        (app/workspace_gists.py, COVEY_WORKSPACE_GISTS). Static within a topic, one cacheable prefix (docs/butler.md 记忆 · 每轮怎么带): what changes
+        turn by turn is ``_turn_tail``'s."""
         return bridge_rules(
             backend_name=self.harness.spec.prompt_agent_name,
             workspace_name=ctx.workspace_name,
@@ -498,8 +498,8 @@ class Runs:
     def _with_rules(self, ctx: BridgeContext, job: ReplyJob, prompt: str, rules: str, *,
                     system: bool, fresh: bool, rules_session: bool) -> str:
         if fresh or not rules_session or not (proxy_topic(ctx) or ctx.options.get(TOOL_LIMIT) == CONSULT):
-            # COVEY_MEMORY=1: the numbers carried, every turn of a topic (FINAL-SPEC 修订 4: a resumed session with the rules at
-            # system level carries them too), not a 代答 topic's or a 协作 ask's resumed one.
+            # COVEY_MEMORY=1: the numbers carried, every turn of a topic (a resumed session with the rules at system level
+            # carries them too: its tail does), not a 代答 topic's or a 协作 ask's resumed one.
             memory_turn.record(ctx, job, lambda: self.owner_turn(ctx, job), self.runtime.log)
         if not system and fresh:
             prompt = rules + "\n\n" + prompt
