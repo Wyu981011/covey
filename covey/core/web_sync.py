@@ -44,7 +44,8 @@ MEMORY_KEY = "memory"  # The ``settings`` item of the owner's main memory, the p
 UPGRADE_KEY = "upgrade"  # The ``settings`` item of 版本与更新, with an upgrader set up only (app/self_upgrade.py view, data contract v39).
 QUOTA_KEY = "quota"  # The ``settings`` item of 账号与额度, with a quota source only (app/web_quota.py view, data contract v42).
 SETTINGS_KEYS = (SETTINGS_KEY, USAGE_KEY, TIDY_KEY, ASKS_KEY, MEMORY_KEY, UPGRADE_KEY, QUOTA_KEY)  # web/shared/api.interface.ts SETTINGS_KEYS.
-# Data contract v43: the memory center's keys (web/shared/api.interface.ts MEMORY_KEY_RE, tests/golden/web_memory_v43.json); none pushed yet.
+# Data contract v43: the memory center's keys (web/shared/api.interface.ts MEMORY_KEY_RE, tests/golden/web_memory_v43.json), pushed by
+# app/web_sync.py push_memory_center (app/web_memory.py Center).
 MEMORY_KEY_RE = re.compile(r"^memory:(index|global|previews|topics|p:[0-9a-z]{6,32}|import:\d{1,3})$")
 PREFIX = "web-"  # The message id of the owner's words from the page: ``web-<op_id>``. Feishu has no such message.
 

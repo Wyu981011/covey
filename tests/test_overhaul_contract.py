@@ -14,7 +14,7 @@ from unittest import mock
 from support import UNSET_OFF, make_context, quiet
 from support.fake_backends import FakeBackend
 from support.world import harness_app
-from covey.app import home_turn, memory_turn, question_dedup, repos_turn
+from covey.app import home_turn, memory_turn, question_dedup, repos_turn, web_memory
 from covey.app.prompts import turn_tail
 from covey.backends.claude.bridge import CLAUDE_SPEC
 from covey.backends.claude.sessions import ClaudeSessionStore
@@ -68,6 +68,7 @@ class WebContractTest(unittest.TestCase):
             self.assertLessEqual(len(entry["text"]), limit)
         actions = {edit["action"] for edit in golden["edits"]}
         self.assertEqual(actions, set(ts_array("MEMORY_EDIT_ACTIONS_V43")))
+        self.assertEqual(list(web_memory.ACTIONS_V43), ts_array("MEMORY_EDIT_ACTIONS_V43"))  # The Bridge does each of them (M4).
         self.assertTrue(all(edit.get("v") == 43 for edit in golden["edits"]))
         self.assertLessEqual({"repos_set", "repos_add", "repos_remove", "worktrees_prune"}, set(ts_array("SETTINGS_WHATS")))
         self.assertNotIn("/home/", GOLDEN.read_text(encoding="utf-8"))

@@ -62,7 +62,7 @@
 | 代答 | `app/proxy.py`（批次）、`app/proxy_intake.py`（收消息）、`app/proxy_topics.py`（联系人话题）、`app/proxy_commands.py`（查找、群成员）、`app/proxy_send.py`（读回和发送器接口；发送器 `extensions/covey_internal/proxy_sender.py`、`extensions/covey_internal/proxy_login.py`）、`core/proxy.py` | [proxy.md](docs/proxy.md)、[代答](docs/architecture.md#代答) |
 | 主人的原则 | `core/principles.py`（`entries`、`delete`）、`app/prompts.py` 的 `principles_block`、`Runs.principles`/`Runs.owner_turn`（`app/runs.py`）、`app/butler_tools.py` | [butler.md](docs/butler.md) |
 | 知识条目与历史搜索 | `core/knowledge.py`、`app/knowledge_turn.py`、`app/knowledge_collect.py`、`app/butler_knowledge.py`、`app/prompts.py` 的 `knowledge_block`/`knowledge_rules`、`app/digest.py` 的 `knowledge_view` | [butler.md](docs/butler.md#知识库)、[配置](docs/configuration.md#知识条目与历史搜索) |
-| 记忆（默认开，`COVEY_MEMORY=0` 关） | `core/memory.py`（读口：条目、编号、范围上限）、`core/topic_memory.py`（话题的记忆）、`app/memory_turn.py`（每轮的块、`memory_ids`、纠正规则）、`app/memory_collect.py`（一轮结束后记下 `memory`、作废 `memory_void`，“不对”点击 `undo`）、`app/prompts.py` 的 `memory_block`、`cards/answer_card.py` 的 `memory_element`、`app/answer_cards.py` 的 `put_memory`、设置卡「记忆」`app/memory_panel.py`（常驻：`core/principles.py` 的 `pin`） | [butler.md](docs/butler.md#记忆)、[配置](docs/configuration.md#记忆) |
+| 记忆（默认开，`COVEY_MEMORY=0` 关） | `core/memory.py`（读口：条目、编号、范围上限）、`core/topic_memory.py`（话题的记忆）、`app/memory_turn.py`（每轮的块、`memory_ids`、纠正规则）、`app/memory_collect.py`（一轮结束后记下 `memory`、作废 `memory_void`，“不对”点击 `undo`）、`app/prompts.py` 的 `memory_block`、`cards/answer_card.py` 的 `memory_element`、`app/answer_cards.py` 的 `put_memory`、设置卡「记忆」`app/memory_panel.py`（看数、处理待审核、去网页）、网页记忆中心 `app/web_memory.py`（v43 各键与 17 个动作，推送 `app/web_sync.py` 的 `push_memory_center`） | [butler.md](docs/butler.md#记忆)、[配置](docs/configuration.md#记忆) |
 | 记忆自己长（`COVEY_MEMORY_LEARN=1`，默认关，要 `COVEY_MEMORY` 开着）：每轮之后读主人的话、用到才留、整理记忆、收拢 Harness 自己记的、查记忆 | `app/memory_learn.py`（`after_turn`：用到的编号、读原话记下）、`core/memory_usage.py`、`app/memory_tidy.py`（晚间汇总的整理记忆，`core/project_memory.py` 的 `settle`）、`app/memory_harvest.py`（Codex、Claude Code 自己的记忆进候选）、`app/memory_candidates.py`（`carried`）、`core/memory_search.py`（`bin/covey_memory.py search`）、`cards/digest.py` 的 `memory_elements`；Harness 自己的记忆在代答和脱敏里关掉：`backends/claude/argv.py` 的 `turn_env`、`backends/codex/appserver.py` 的 `keep_out_of_memories` | [butler.md](docs/butler.md#记忆自己长开关默认关)、[配置](docs/configuration.md#记忆) |
 | 敏感词脱敏 | `core/redaction.py`、`core/redactor.py`、`backends/claude/redaction.py`、`app/redaction_panel.py`（设置卡「脱敏」标签） | [敏感词脱敏](docs/architecture.md#敏感词脱敏) |
 | 官方拒绝与停止 | `app/policy_guard.py`、`core/model_policy.py`、`backends/claude/policy.py`；cyber/bio 拒绝换旧模型重试一次 `app/policy_retry.py` | [policy-stop.md](docs/policy-stop.md) |
@@ -282,7 +282,7 @@
 | `app/web_images.py` | The images of a turn on the web page |
 | `app/web_launch.py` | 网页开新话题 (docs/web.md, COVEY_WEB=1 |
 | `app/web_login.py` | 网页登录确认: the page's `login` operation becomes a card in the owner's private chat, and the owner's click on it … |
-| `app/web_memory.py` | The web page's 记忆 tab (data contract v37, COVEY_MEMORY=1) |
+| `app/web_memory.py` | The web page's memory |
 | `app/web_ops.py` | 网页上发来的操作怎么执行: `Ops.run` does one operation of the page's outbox as the owner's own and says (state, message) … |
 | `app/web_pairing.py` | 网页工作台同步里不碰 Collector 缓存的那部分 |
 | `app/web_panels.py` | 网页设置页的设备和代答两页 (docs/web.md, COVEY_WEB=1 |
@@ -324,7 +324,7 @@
 | `cards/held_note.py` | A held note's card: a message sent while the topic's questions wait, saved to go with the answer |
 | `cards/launch_config.py` | The launch card: its form and the model-scoped reasoning choices on it, and the settings list it shares with … |
 | `cards/launch_receipt.py` | The card a submitted launch form becomes: its immutable topic configuration |
-| `cards/memory_panel.py` | The 设置 card's 记忆 tab: the owner's memory by scope, and what the next turn carries |
+| `cards/memory_panel.py` | The 设置 card's 记忆 tab: the memory's counts, the 待审核 to decide, and the way to the web |
 | `cards/node_cards.py` | The cards of nodes: an alert (⚠️ testbox 内存紧张, what was seen, since when, who used the most memory |
 | `cards/node_panel.py` | The 设置 card's 设备 tab: every node with its state now, adding a device, removing one |
 | `cards/overview.py` | The 手上的事 card, pinned in the owner's private chat with the bot and redrawn whole as its tasks change, in the … |

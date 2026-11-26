@@ -1,249 +1,52 @@
-"""The 设置 card's 记忆 tab (cards/memory_panel.py), shown when COVEY_MEMORY=1 (core/memory.py): the owner's memory by scope
-(全局, 工作区, 专项, 话题), each entry deletable through its own store, a principle marked 常驻, and what the next turn in a
-chosen workspace carries, the block as app/prompts.py memory_block builds it. No model, no Feishu call but the card's.
+"""The 设置 card's 记忆 tab (cards/memory_panel.py), shown when COVEY_MEMORY=1: Feishu keeps the numbers, the light handling of
+待审核 and the way to the web page; managing the memory is the 网页记忆中心's (app/web_memory.py).
 
-What it reads (``facts``), at each draw: the principles (core/principles.py) and, with COVEY_KNOWLEDGE=1, the knowledge entries
-(core/knowledge.py) of 全局 and of the chosen workspace (the default one until the 工作区 row chose another), through
-core/memory.py ``items``, ``fill`` and ``select`` exactly as a turn does (app/memory_turn.py: an ordinary new topic there, the
-owner's own turn); the memory of every project not cancelled (core/project_memory.py, COVEY_PROJECT_MEMORY=1) and of every
-topic a turn wrote one for (core/topic_memory.py; the topics are found by the job records' ``memory_notes``,
-app/memory_collect.py). A scope near its limit (NEAR) or past it says so on the card, with how many entries the next turn
-leaves out: they are not dropped silently any more. A pinned principle (常驻, core/principles.py ``pin``) is carried
-whatever its room (core/memory.py ``fill``).
+What it reads (``facts``), at each draw: ``web_memory.overview`` (the counts of rules, decisions and notes and of 待审核, a line of
+counts for each scope, the open items of 待审核 the oldest first, the rules in use of 全局 and the projects) and the page's
+addresses (``web_memory.center_url``; '' without the web page, then the card lists the rules to 收起).
 
-Deleting goes through the paths that already exist: core/principles.py ``delete``, core/knowledge.py ``drop`` (with a reason
-that says it was the 设置 card), core/project_memory.py ``delete`` and core/topic_memory.py ``delete`` (tombstones, as 不对 on an
-answer card leaves). A button's ``key`` names the entry in its store: ``principle:<id>``, ``knowledge:<id>``,
-``project:<project id>:<id>``, ``topic:<topic id>:<id>``. 升为全局 (``promote``, T647 E4) makes a line of 你说的 in a project's or a
-topic's memory one of the 全局 principles (core/principles.py ``save``) and the entry it was a tombstone, as it does on an answer
-card (app/memory_collect.py promote); not a line from a topic with redaction on, which only such a topic may read.
-
-With COVEY_MEMORY_LEARN=1 (记忆自己长) the candidates a turn carries as 它总结的 (app/memory_candidates.py carried) are read
-too, ordered by their last use as a turn orders them (core/memory_usage.py), and deleted as 不用 deletes them (``key``
-``candidate:<id>``: declined, not offered again).
-
-The tab's record is the 设置 card's (app/settings_hub.py, app/menu_panel.py); a click (app/unified.py PANELS, the owner's) acts
-outside the record's lock, then the whole card is drawn again under it once the click is acknowledged (``notice`` says what
-happened). The same click delivered again acts once: the view keeps the last ``seen`` event ids.
+A click (the owner's) acts outside the record's lock, then the whole card is drawn again under it once the click is
+acknowledged (``notice`` says what happened). 采纳 and 不要 on an item of 待审核 go through ``web_memory.review_decide`` (as the page
+does); 收起 of a rule asks first, then ``memstore.archive``. The kinds of the older tab (the 工作区 row, 升为全局, 常驻) are still
+taken, so a card drawn before does not hang: they change nothing and say the option is offline. The same click delivered again
+acts once: the view keeps the last ``seen`` event ids.
 """
 from __future__ import annotations
 
-import re
+import secrets
 
-from covey.app import memory_candidates
+from covey.app import web_memory
 from covey.app.card_lanes import after_ack
-from covey.app.memory_collect import TOPIC_WORDS
 from covey.app.menu_panel import FOLDED, MenuPanel, hub_top
-from covey.app.prompts import memory_block
-from covey.cards.memory_panel import DELETE, KINDS, OPEN, PIN, PROMOTE, WORKSPACE, WORKSPACES, memory_card
+from covey.cards.memory_panel import ACCEPT, DELETE, KINDS, OFFLINE, OPEN, REVIEW, RULES, memory_card
 from covey.cards.settings_hub import MEMORY
-from covey.core import knowledge, memory, memory_usage, principles, project_memory, projects, topic_memory
-from covey.core.jobs import select_job_records
-from covey.core.topics import label_title
-from covey.core.workspaces import load_config
+from covey.core import memstore
 
 SEEN = 8
-NEAR = 0.8  # A scope this full (of its limit) says so on the card.
-WARNINGS = 4  # Lines of scopes near or past their limit; the rest is one line.
-ENTRY = re.compile(r"[0-9A-Za-z_-]{1,40}")  # A project's or a topic's entry id.
-CANDIDATE = re.compile(r"c[0-9a-f]{8}")  # A candidate's id (app/memory_candidates.py), carried with COVEY_MEMORY_LEARN=1.
-DROP_REASON = "主人在设置卡「记忆」里删掉"
 OWNER_ONLY = '⚠️ 仅机器人主人可以改记忆。'
-SCOPE_TITLES = {memory.GLOBAL: "全局", memory.WORKSPACE: "工作区", memory.PROJECT: "专项", memory.TOPIC: "话题"}
+GONE = '这条已经不在了，卡片按现在的记忆重画了。'
 
 
-def workspace_names(ctx) -> tuple[str, list]:
-    """(the default workspace, the names the 工作区 row offers); ('', []) when the list cannot be read."""
-    try:
-        config = load_config(ctx.state_dir, ctx.default_workdir)
-    except (OSError, ValueError, TypeError, AttributeError):
-        return "", []
-    return str(config["default"]), [str(name) for name in config["workspaces"]]
-
-
-def room_line(title, info) -> str:
-    """The line of a scope near its limit or past it ('' otherwise): how many entries the next turn leaves out. 常驻 is only
-    offered for a principle (core/principles.py pin): the hint is there only when one of the entries left out is."""
-    used, limit, left = info["used"], info["limit"], len(info["left"])
-    if left:
-        pin = "要一直带上的原则点「常驻」，" if any(str(item.get("ref", "")).startswith("principle:") for item in info["left"]) else ""
-        return f"⚠️ {title}放不下 {left} 条，下一轮不带它们（最早的先放不下）：{pin}用不着的删掉。"
-    if used > limit:
-        return f"{title}的常驻已超过 {limit:,} 字，照样都带上；这里再记的会放不下。"
-    if used >= NEAR * limit:
-        return f"{title}快满了（{used:,}/{limit:,} 字）：再记新的，最早的会放不下。"
-    return ""
-
-
-def promotable(item, source="") -> bool:
-    """Whether 升为全局 is offered for a line of a project's or a topic's memory (``promote``): the owner's own, not marked
-    redacted, not put away in the history and not an answer to a question (a decision for what that question asked)."""
-    return (item["ref"].startswith(("project:", "topic:")) and item["by"] == memory.OWNER and not item.get("redacted")
-            and item.get("layer") != memory.HISTORY and source not in memory.ANSWER_SOURCES)
-
-
-def row_of(item, key, carried=None, where="", source="") -> dict:
-    """An entry of the card: ``carried`` the refs the next turn carries (None: the part has no preview). ``promotable``: see
-    that (``source``: the line's own source)."""
-    return {"key": key, "text": item["text"], "by": memory.OWNER_WORDS[item["by"]], "pinned": bool(item.get("pinned")),
-            "pinnable": key.startswith("principle:"), "where": where,
-            "promotable": promotable(item, source),
-            "out": carried is not None and item["ref"] not in carried, "at": item["at"]}
-
-
-def newest(rows) -> list:
-    return sorted(rows, key=lambda row: (-row["at"], row["key"]))
-
-
-def memory_topics(state_dir) -> list:
-    """The topics a turn wrote a memory line for (the job records' ``memory_notes`` of 管这个话题), newest first, each once."""
-    records = select_job_records(state_dir, lambda record: any(
-        isinstance(note, dict) and note.get("scope") == TOPIC_WORDS for note in record.get("memory_notes") or ()))
-    return list(dict.fromkeys(str(record.get("topic_id") or "") for record in records if record.get("topic_id")))
-
-
-def workspace_counts(state_dir, knowledge_on) -> dict:
-    """Workspace -> how many entries it holds (principles, and with COVEY_KNOWLEDGE=1 its current knowledge entries)."""
-    counts = {}
-    for name, group in principles.load(state_dir)["workspaces"].items():
-        counts[name] = counts.get(name, 0) + len(group)
-    if knowledge_on:
-        for scope, name, group in knowledge.groups(state_dir):
-            if scope == knowledge.WORKSPACE:
-                counts[name] = counts.get(name, 0) + sum(1 for entry in group.values() if entry["state"] == knowledge.CURRENT)
-    return counts
-
-
-def other_workspaces(counts, chosen) -> str:
-    """One grey line of the other workspaces' entries: ``其他工作区：docs 3 条、web 1 条``; '' when there are none."""
-    shown = [f"{name} {n} 条" for name, n in sorted(counts.items()) if n and name != chosen]
-    return ("其他工作区：" + "、".join(shown) + "（上面的工作区一行换着看）") if shown else ""
-
-
-def offered(names, chosen, counts) -> list:
-    """The workspaces the 工作区 row offers: the chosen one, then those with memory (the most entries first), then the rest
-    as saved; every one of them is offered up to WORKSPACES, so none that holds memory is out of reach."""
-    holding = sorted((name for name in names if counts.get(name)), key=lambda name: (-counts[name], name))
-    return list(dict.fromkeys([chosen, *holding, *names]))[:WORKSPACES] if chosen else [*holding, *(n for n in names if n not in holding)][:WORKSPACES]
-
-
-def facts(state_dir, names, chosen) -> dict:
-    """The tab's data (cards/memory_panel.py): ``preview`` (the next turn of an ordinary new topic in ``chosen`` on the
-    owner's own turn) and ``parts`` (全局, 工作区, 专项, 话题: their entries, the newest first)."""
-    knowledge_on = knowledge.enabled()
-    counts = workspace_counts(state_dir, knowledge_on)
-    mine, space = principles.for_turn(state_dir, chosen)
-    entries = knowledge.for_turn(state_dir, chosen) if knowledge_on else ((), ())
-    drafts, used = ((), ()), None
-    if memory.learning():
-        drafts, used = memory_candidates.carried(state_dir, chosen), memory_usage.last_used(state_dir)
-    found = memory.items(principles=(mine, space), entries=entries, drafts=drafts, used=used)
-    scopes = memory.fill(found)
-    kept, left = memory.select([dict(item) for item in found])
-    carried = {item["ref"] for item in kept}
-    rooms = [("全局", scopes[memory.GLOBAL]["used"], scopes[memory.GLOBAL]["limit"])]
-    if chosen:
-        rooms.append((f"工作区 {chosen}", scopes[memory.WORKSPACE]["used"], scopes[memory.WORKSPACE]["limit"]))
-    warnings = [line for line in (room_line("全局", scopes[memory.GLOBAL]),
-                                  room_line(f"工作区 {chosen}", scopes[memory.WORKSPACE]) if chosen else "") if line]
-    parts = [{"scope": memory.GLOBAL, "title": "全局",
-              "rows": newest(row_of(item, item["ref"], carried) for item in found if item["scope"] == memory.GLOBAL)},
-             {"scope": memory.WORKSPACE, "title": f"工作区 {chosen}" if chosen else "工作区",
-              "rows": newest(row_of(item, item["ref"], carried) for item in found if item["scope"] == memory.WORKSPACE),
-              "others": other_workspaces(counts, chosen)}]
-    rows = []
-    if projects.memory_enabled():
-        for record in projects.records(state_dir):
-            if projects.state_of(record) == projects.CANCELLED:
-                continue
-            live = project_memory.live(state_dir, record, style=False)
-            sources = {f"project:{record['id']}:{row['id']}": row.get("source") for row in live}
-            items = memory.items(project=live, project_id=record["id"], redacted=True, used=used)
-            name = f"专项「{record.get('name') or record['id']}」"
-            rows += [row_of(item, item["ref"], where=name, source=sources.get(item["ref"], ""))
-                     for item in items if item.get("layer") != memory.HISTORY]  # The history is carried by no turn: not listed.
-            warnings.append(room_line(name, memory.fill(items)[memory.PROJECT]))
-    parts.append({"scope": memory.PROJECT, "title": "专项", "rows": newest(rows),
-                  "empty": "没有" if projects.memory_enabled() else "专项的记忆没开：设置卡「能做什么」里写着怎么打开"})
-    rows = []
-    for topic in memory_topics(state_dir):
-        items = memory.items(topic=topic_memory.live(state_dir, topic), redacted=True, used=used)
-        label = label_title(state_dir, topic)[0] or "一个话题"
-        rows += [row_of(item, f"topic:{topic}:{item['ref'].partition(':')[2]}", where=label) for item in items]
-        warnings.append(room_line(label, memory.fill(items)[memory.TOPIC]))
-    parts.append({"scope": memory.TOPIC, "title": "话题", "rows": newest(rows)})
-    shown = offered(names, chosen, counts)
-    warnings = [line for line in warnings if line]
-    if len(warnings) > WARNINGS:  # Each project and topic may say so: one card holds a few of them.
-        warnings = [*warnings[:WARNINGS - 1], f"另有 {len(warnings) - WARNINGS + 1} 个专项或话题快满了或放不下，展开下面的专项、话题看。"]
-    preview = {"workspace": chosen, "workspaces": shown, "count": len(kept),
-               "chars": sum(memory.line_size(item) for item in kept), "left": left, "rooms": rooms,
-               "warnings": warnings, "text": memory_block(kept, left, learn={"search": ""} if memory.learning() else None)}
-    return {"preview": preview, "parts": parts}
-
-
-def forget(state_dir, key):
-    """The text of the entry ``key`` names, deleted through its own store; None when it is not there (any more)."""
-    kind, _, rest = str(key or "").partition(":")
-    if kind == "principle" and principles.ID.fullmatch(rest):
-        found = principles.delete(state_dir, rest)
-        return found["text"] if found else None
-    if kind == "knowledge" and knowledge.ID.fullmatch(rest):
-        try:
-            return knowledge.drop(state_dir, rest, DROP_REASON, source={"via": "settings_card"}, by="main")["text"]
-        except ValueError:
-            return None
-    if kind == "project":
-        pid, _, entry = rest.partition(":")
-        if not (projects.valid_id(pid) and ENTRY.fullmatch(entry)):
-            return None
-        row = next((row for row in project_memory.entries(state_dir, projects.read_record(state_dir, pid))
-                    if row["id"] == entry and not row["deleted"]), None)
-        try:
-            return row["text"] if row is not None and project_memory.delete(state_dir, pid, entry) else None
-        except KeyError:  # The project has no record any more.
-            return None
-    if kind == "topic":
-        topic, _, entry = rest.partition(":")
-        if not (projects.TOPIC_RE.fullmatch(topic) and ENTRY.fullmatch(entry)):
-            return None
-        row = next((row for row in topic_memory.live(state_dir, topic) if row["id"] == entry), None)
-        return row["text"] if row is not None and topic_memory.delete(state_dir, topic, entry) else None
-    if kind == "candidate" and CANDIDATE.fullmatch(rest):
-        row = memory_candidates.decide(state_dir, rest, "drop")
-        return row["text"] if row is not None and row.get("state") == memory_candidates.DECLINED else None
-    return None
-
-
-def promote(state_dir, key):
-    """The text of the entry ``key`` names (a project's or a topic's), made one of the 全局 principles and a tombstone where it
-    was; None when it is not there (any more). ValueError says why nothing changed: a line of 它总结的, one from a topic with
-    redaction on, a full group (core/principles.py save)."""
-    kind, _, rest = str(key or "").partition(":")
-    owner, _, entry = rest.partition(":")
-    if kind == "project" and projects.valid_id(owner) and ENTRY.fullmatch(entry):
-        row = next((row for row in project_memory.entries(state_dir, projects.read_record(state_dir, owner))
-                    if row["id"] == entry and not row["deleted"]), None)
-    elif kind == "topic" and projects.TOPIC_RE.fullmatch(owner) and ENTRY.fullmatch(entry):
-        row = next((row for row in topic_memory.live(state_dir, owner) if row["id"] == entry), None)
-    else:
-        return None
-    if row is None:
-        return None
-    if memory.by_source(row.get("source")) != memory.OWNER:
-        raise ValueError("只有你说的才能升为全局")
-    if kind == "project" and (row.get("source") in memory.ANSWER_SOURCES or memory.describe(row)["layer"] == memory.HISTORY):
-        raise ValueError("已收起的历史和问答的回答不能升为全局")
-    if row.get("redacted"):
-        raise ValueError("这条来自开着脱敏的话题，不能升为全局：全局的记忆会带进不脱敏的话题")
-    found, _ = principles.save(state_dir, principles.OWNER, row["text"], source={"via": "settings_card", "from": key})
-    memory_usage.carry(state_dir, key if kind == "project" else f"topic:{entry}", f"principle:{found['id']}")
-    return forget(state_dir, key)
+def click_token() -> str:
+    """The undo token of one change made from the tab (core/memstore.py log_change): its own, so the 记录 page of the web's
+    memory center can take that one click back."""
+    return f"feishu-{secrets.token_hex(6)}"
 
 
 def short(text, limit=24) -> str:
     text = " ".join(str(text or "").split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def facts(state_dir) -> dict:
+    """The tab's data (cards/memory_panel.py): ``web_memory.overview`` and the page's addresses; ``error`` says so when the memory
+    cannot be read (the card is still drawn)."""
+    try:
+        data = dict(web_memory.overview(state_dir))
+    except Exception as exc:  # noqa: BLE001 - A broken store is a line on the card, not a card that does not draw.
+        data = {"counts": {}, "scopes": [], "review": [], "rules": [], "error": f"⚠️ 记忆读不出来（{type(exc).__name__}），稍后再看。"}
+    data["url"], data["review_url"] = web_memory.center_url(), web_memory.center_url("review")
+    return data
 
 
 class MemoryPanel:
@@ -263,7 +66,7 @@ class MemoryPanel:
 
     @staticmethod
     def tab_view(token):
-        return {'token': token, 'revision': 1, 'hub': True, 'workspace': '', 'open': '', 'page': 0}
+        return {'token': token, 'revision': 1, 'hub': True, 'review_page': 0, 'rules_page': 0}
 
     @staticmethod
     def tab_fields(ctx):
@@ -278,14 +81,8 @@ class MemoryPanel:
     def refuse(self, ctx, path, event):
         return self.menu.refuse(ctx, path, event, OWNER_ONLY, lambda view, record: self.draw(ctx, path.stem, view))
 
-    def chosen(self, ctx, view) -> tuple[str, list]:
-        default, names = workspace_names(ctx)
-        wanted = view.get('workspace') or ''
-        return (wanted if wanted in names else default), names
-
     def draw(self, ctx, token, view):
-        chosen, names = self.chosen(ctx, view)
-        return memory_card(token, view, facts(ctx.state_dir, names, chosen), top=hub_top(MEMORY, token, view))
+        return memory_card(token, view, facts(ctx.state_dir), top=hub_top(MEMORY, token, view))
 
     def click(self, ctx, event, value, owner):
         entry = self.menu.entry(ctx, event, value, unfolded=True)
@@ -317,44 +114,44 @@ class MemoryPanel:
         return True
 
     def act(self, ctx, value, view):
-        """The view's changes for the click; the store written first when it deletes or pins (no Feishu call)."""
+        """The view's changes for the click; the store written first when it decides or puts away (no Feishu call)."""
         kind = value.get('kind')
-        if kind == WORKSPACE:
-            _, names = workspace_names(ctx)
-            option = value.get('option')
-            return {'workspace': option, 'confirm': None} if isinstance(option, str) and option in names else {}
         if kind == OPEN:
             scope, page = value.get('scope'), value.get('page')
-            if scope not in ('', *memory.SCOPES) or isinstance(page, bool) or not isinstance(page, int) or page < 0:
+            if scope not in (REVIEW, RULES) or isinstance(page, bool) or not isinstance(page, int) or page < 0:
                 return {}
-            return {'open': scope, 'page': page, 'confirm': None}
+            return {f'{scope}_page': page, 'confirm': None}
         key, op = value.get('key'), value.get('op')
-        if not isinstance(key, str):
-            return {}
-        if kind == DELETE:
-            if op == 'ask':
-                return {'confirm': key}
-            if op == 'cancel':
-                return {'confirm': None}
-            if op != 'confirm':
-                return {}
-            text = forget(ctx.state_dir, key)
-            self.runtime.log(f'memory entry deleted from the 记忆 tab kind={key.partition(":")[0]} found={text is not None}')
-            return {'confirm': None, 'notice': f'已删掉：{short(text)}' if text is not None else '这条已经不在了，卡片按现在的记忆重画了。'}
-        if kind == PROMOTE:
-            try:
-                text = promote(ctx.state_dir, key)
-            except (ValueError, KeyError) as exc:  # KeyError: the project has no record any more.
-                return {'notice': f'⚠️ {exc}' if isinstance(exc, ValueError) else '这条已经不在了，卡片按现在的记忆重画了。'}
-            self.runtime.log(f'memory entry promoted from the 记忆 tab kind={key.partition(":")[0]} found={text is not None}')
-            return {'confirm': None, 'notice': f'已升为全局：{short(text)}' if text is not None else '这条已经不在了，卡片按现在的记忆重画了。'}
-        if kind == PIN and key.startswith('principle:') and isinstance(value.get('on'), bool):
-            try:
-                found = principles.pin(ctx.state_dir, key.partition(':')[2], value['on'])
-            except ValueError as exc:
-                return {'notice': f'⚠️ {exc}'}
-            if found is None:
-                return {'notice': '这条已经不在了，卡片按现在的记忆重画了。'}
-            self.runtime.log(f'memory entry pinned={value["on"]} from the 记忆 tab')
-            return {'notice': ('已标常驻：' if value['on'] else '已取消常驻：') + short(found['text'])}
-        return {}
+        if kind == ACCEPT and isinstance(key, str) and key.startswith('review:') and op == 'accept':
+            return self.decide(ctx, key, 'accept', '已采纳')
+        if kind == DELETE and isinstance(key, str) and key.startswith('review:') and op == 'reject':
+            return self.decide(ctx, key, 'reject', '已选「不要」')
+        if kind == DELETE and isinstance(key, str) and op in ('ask', 'cancel', 'confirm'):
+            return self.put_away(ctx, key, op, view)
+        self.runtime.log(f'memory tab click of an offline option kind={kind}')
+        return {'confirm': None, 'notice': OFFLINE}
+
+    def decide(self, ctx, key, action, words):
+        title = next((row.get('title') or row.get('text') for row in memstore.review_items(ctx.state_dir) if row.get('key') == key), None)
+        try:
+            web_memory.review_decide(ctx.state_dir, [key], action, who='owner', token=click_token())
+        except ValueError as exc:  # Already decided, or the store says why not.
+            return {'notice': f'⚠️ {exc}'}
+        self.runtime.log(f'memory review decided from the 记忆 tab action={action}')
+        return {'confirm': None, 'notice': f'{words}：{short(title)}' if title else words}
+
+    def put_away(self, ctx, key, op, view):
+        """收起 of a rule: ``ask`` marks it for 确认收起, ``cancel`` unmarks, ``confirm`` archives it (only a rule in use: the
+        click of an older card for another entry finds it not there)."""
+        if op == 'ask':
+            return {'confirm': key}
+        if op == 'cancel':
+            return {'confirm': None}
+        if key not in {row.get('key') for row in web_memory.overview(ctx.state_dir).get('rules') or ()}:
+            return {'confirm': None, 'notice': GONE}
+        try:
+            entry = memstore.archive(ctx.state_dir, key, who='owner', token=click_token())
+        except ValueError as exc:
+            return {'confirm': None, 'notice': f'⚠️ {exc}'}
+        self.runtime.log('memory rule put away from the 记忆 tab')
+        return {'confirm': None, 'notice': f'已收起：{entry.code} {short(entry.title)}'}
