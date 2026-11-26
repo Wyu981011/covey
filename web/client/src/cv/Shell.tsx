@@ -395,7 +395,8 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
               <StatusGroups a={a} data={data} running={topics.filter((t: SnapshotTopic) => t.kind === 'topic' && toneOf(t) === 'running')} act={act} now={now} />
               {groups.length ? (
                 <div className="sec" id="side-projects">
-                  <span>专项</span>
+                  {/* 点“专项”打开专项一览（/projects，一个专项一张简报卡）：电脑上没有底部标签栏，从这里进 */}
+                  <Link to="/projects" className="a-secl" title="专项一览：一个专项一张简报卡">专项</Link>
                   <span>{groups.length}</span>
                 </div>
               ) : null}

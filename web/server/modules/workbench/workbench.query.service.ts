@@ -13,10 +13,12 @@ import {
   type SettingsResponse,
   type TidyResponse,
   artifactsOf,
+  type BriefAction,
   type ChecklistItem,
   type HomeResponse,
   type LibraryItem,
   type MemoryItem,
+  type ProjectGap,
   type ProjectNote,
   type OutboxRequest,
   type OutboxResponse,
@@ -55,7 +57,7 @@ import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
 import { wake, waitFor } from './workbench.wake';
 import {
-  answersOf, asksOf, checklistOf, configOf, criteriaOf, deliveryOf, failureOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectNotesOf, projectOpShape, recoverShape,
+  actionsOf, answersOf, asksOf, backgroundOf, checklistOf, configOf, criteriaOf, deliveryOf, failureOf, gapsOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectNotesOf, projectOpShape, recoverShape,
   revisitCancelShape, revisitOf,
 } from './workbench.v4';
 import { upgradeOf, upgradeShape } from './workbench.upgrade';
@@ -649,6 +651,10 @@ export class WorkbenchQueryService {
       const checklist: ChecklistItem[] | undefined = checklistOf(d.checklist);
       const milestones: ProjectNote[] | undefined = projectNotesOf(d.milestones);
       const decisions: ProjectNote[] | undefined = projectNotesOf(d.decisions);
+      // v41：「简报」的背景、动作、缺口，同样按类型过滤
+      const background: string | undefined = backgroundOf(d.background);
+      const actions: BriefAction[] | undefined = actionsOf(d.actions);
+      const gaps: ProjectGap[] | undefined = gapsOf(d.gaps);
       return {
         key: p.key,
         avatar: str(d.avatar),
@@ -671,6 +677,9 @@ export class WorkbenchQueryService {
         ...(checklist ? { checklist } : {}),
         ...(milestones ? { milestones } : {}),
         ...(decisions ? { decisions } : {}),
+        ...(background ? { background } : {}),
+        ...(actions ? { actions } : {}),
+        ...(gaps ? { gaps } : {}),
       };
     });
     const asked: SettingsAsks | undefined = asksOf(asks);

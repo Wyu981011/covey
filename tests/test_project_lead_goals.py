@@ -10,6 +10,10 @@
   only for that once, a line with no origin and a made-up one are refused and the lead is told to escalate; the owner's own
   line that still holds, or his own message in the project, answers, and the grounds are on the answer and its row.
 
+- 简报 (docs/projects.md 项目简报): the lead writes the project's background and the actions its goal is split into
+  (core/project_actions.py, project_goal's ``background``, project_checklist's ``actions``), opens topics on an action or an
+  item, and reads it as a short block of its pack; an action's state is read off its items and topics, never kept.
+
 With COVEY_COLLAB off none of it changes anything: each part says so here, and the older tests of each part still pass."""
 from __future__ import annotations
 
@@ -54,6 +58,12 @@ def checklist():
     before it, where the other tests fail on what they check, not on an import)."""
     from covey.core import project_checklist
     return project_checklist
+
+
+def actions():
+    """core/project_actions.py, imported where a test uses it (see ``checklist``)."""
+    from covey.core import project_actions
+    return project_actions
 
 
 def label_of(state, topic) -> str:
@@ -135,6 +145,226 @@ class ChecklistTest(unittest.TestCase):
                                                                                "needs": ["c1", 7, "zz"]}]
         [item] = self.pc.items({"checklist": {"items": rows}})
         self.assertEqual((item["id"], item["state"], item["needs"]), ("c3", "open", ["c1"]))
+
+
+class ChecklistItemTest(unittest.TestCase):
+    """The newer fields of an item (title, waiting_on, done_at, topics) and what is read off ``needs`` and the fields
+    (core/project_checklist.py): the same on a record from before, which has none of them."""
+
+    def setUp(self):
+        self.pc = checklist()
+
+    def test_done_at_is_written_when_an_item_turns_done_kept_while_it_stays_and_cleared_when_it_turns_back(self):
+        record = {"id": PID}
+        self.pc.apply(record, [{"criterion": "导出"}, {"criterion": "对账", "state": "done", "evidence": "报告"}], now=NOW)
+        first, second = self.pc.items(record)
+        self.assertEqual((first["done_at"], second["done_at"]), (0, NOW))
+        self.assertNotIn("done_at", record["checklist"]["items"][0])  # Not kept for an item that has none.
+        self.pc.apply(record, [{"id": "c1", "state": "done", "evidence": "提交 abc"}], now=NOW + 5)
+        self.pc.apply(record, [{"id": "c1", "gap": "补一句"}, {"id": "c2", "evidence": "新报告"}], now=NOW + 9)
+        first, second = self.pc.items(record)
+        self.assertEqual((first["done_at"], first["at"], second["done_at"], second["at"]), (NOW + 5, NOW + 9, NOW, NOW + 9))
+        self.pc.apply(record, [{"id": "c1", "state": "open"}, {"id": "c2", "state": "dropped", "gap": "主人说不要了"}], now=NOW + 20)
+        self.assertEqual([item["done_at"] for item in self.pc.items(record)], [0, 0])
+        self.assertFalse(any("done_at" in row for row in record["checklist"]["items"]))
+
+    def test_waiting_on_is_the_owner_or_not_and_the_owner_needs_a_gap_to_say_what_he_is_to_do(self):
+        record = {"id": PID}
+        self.pc.apply(record, [{"criterion": "上线", "gap": "只差主人点头"}, {"criterion": "对账"}], now=NOW)
+        before = copy.deepcopy(record)
+        for rows, words in (([{"id": "c1", "waiting_on": "me"}], "waiting_on 要是 owner"),
+                            ([{"id": "c2", "waiting_on": "owner"}], "要在 gap 里写要主人做什么")):
+            with self.subTest(words=words), self.assertRaisesRegex(ValueError, words):
+                self.pc.apply(record, rows, now=NOW + 1)
+            self.assertEqual(record, before)
+        first, second = self.pc.items(record)
+        self.assertEqual((first["waiting_on"], self.pc.owners(first)), (None, (True, True)))  # Not written: the gap's words are read.
+        self.assertEqual(self.pc.owners(second), (False, False))
+        self.pc.apply(record, [{"id": "c1", "waiting_on": ""}, {"id": "c2", "waiting_on": "owner", "gap": "要主人给账号"}], now=NOW + 2)
+        first, second = self.pc.items(record)
+        self.assertEqual((self.pc.owners(first), self.pc.owners(second)), ((False, False), (True, False)))  # Written: not guessed.
+        self.assertEqual(record["checklist"]["items"][0]["waiting_on"], "")  # '' is written: it says not the owner's.
+        self.pc.apply(record, [{"id": "c2", "state": "done", "evidence": "账号给了"}], now=NOW + 3)
+        self.assertEqual(self.pc.owners(self.pc.items(record)[1]), (False, False))  # Met: nobody's.
+
+    def test_a_title_is_cut_and_topics_are_a_group_beside_the_main_topic_replaced_whole(self):
+        record = {"id": PID}
+        self.pc.apply(record, [{"criterion": "导出", "title": "标" * 30, "topic": "t1", "topics": ["t2", "t3", "t2", ""]}], now=NOW)
+        [item] = self.pc.items(record)
+        self.assertEqual((item["title"], item["topics"], self.pc.topics_of(item)), ("标" * 24, ["t2", "t3"], ["t1", "t2", "t3"]))
+        self.pc.apply(record, [{"id": "c1", "topics": ["t1", "t4"]}], now=NOW + 1)
+        [item] = self.pc.items(record)
+        self.assertEqual((item["topics"], self.pc.topics_of(item)), (["t1", "t4"], ["t1", "t4"]))  # The main one counts once.
+        self.pc.apply(record, [{"id": "c1", "topics": []}], now=NOW + 2)
+        self.assertEqual(self.pc.items(record)[0]["topics"], [])
+        self.assertNotIn("topics", record["checklist"]["items"][0])
+        before = copy.deepcopy(record)
+        with self.assertRaisesRegex(ValueError, "c1 的 topics 最多 6 个"):
+            self.pc.apply(record, [{"id": "c1", "topics": [f"t{n}" for n in range(7)]}], now=NOW + 3)
+        self.assertEqual(record, before)
+        self.assertEqual(self.pc.topics_of({"topic": "", "topics": []}), [])
+
+    def test_a_record_from_before_reads_with_none_of_them_and_is_written_back_as_it_was(self):
+        old = {"id": "c1", "criterion": "导出", "topic": "t1", "needs": [], "evidence": "", "gap": "", "state": "open", "at": NOW, "job": "j"}
+        record = {"id": PID, "checklist": {"items": [old], "closed": {}, "next": "c2", "at": NOW, "job": "j"}}
+        [item] = self.pc.items(record)
+        self.assertEqual((item["title"], item["waiting_on"], item["done_at"], item["topics"]), ("", None, 0, []))
+        self.pc.apply(record, [{"criterion": "对账"}], now=NOW + 1)
+        self.assertEqual(record["checklist"]["items"][0], old)
+        self.assertEqual(set(record["checklist"]["items"][1]), set(old))
+
+    def test_what_waits_on_an_item_directly_is_read_from_needs(self):
+        record = {"id": PID}
+        self.pc.apply(record, [{"criterion": "A"}, {"criterion": "B", "needs": ["c1"]}, {"criterion": "C", "needs": ["c1", "c4"]},
+                               {"criterion": "D"}, {"criterion": "E", "needs": ["c1"], "state": "done", "evidence": "x"},
+                               {"criterion": "F", "needs": ["c2"]}], now=NOW)
+        entries = self.pc.items(record)
+        self.assertEqual(self.pc.rev(entries)["c1"], ["c2", "c3", "c5"])
+        # c5 is met already and c6 lies further on (it waits on c2): only c2 and c3 begin or wait for what c1 gives.
+        self.assertEqual(self.pc.unlocks(entries, ["c1"]), [("c2", []), ("c3", ["c4"])])
+        self.assertEqual(self.pc.unlocks(entries, ["c1", "c4"]), [("c2", []), ("c3", [])])
+        self.assertEqual(self.pc.unlocks(entries, ["c6"]), [])
+
+    def test_the_column_an_item_is_in_and_the_count_of_each(self):
+        record = {"id": PID}
+        self.pc.apply(record, [
+            {"criterion": "A", "state": "done", "evidence": "x"},
+            {"criterion": "B", "gap": "只差主人点头"},
+            {"criterion": "C", "gap": "只差主人点头", "waiting_on": "", "topic": "t1"},
+            {"criterion": "D", "needs": ["c5"]},
+            {"criterion": "E", "topics": ["t2"]},
+            {"criterion": "F", "state": "blocked", "gap": "卡着", "topic": "t1"},
+            {"criterion": "G"},
+            {"criterion": "H", "state": "dropped", "gap": "主人说不要了"}], now=NOW)
+        entries = self.pc.items(record)
+        by_id = {item["id"]: item for item in entries}
+        self.assertEqual([self.pc.column(item, by_id) for item in entries],
+                         ["done", "owner", "doing", "next", "doing", "next", "next", "done"])
+        self.assertEqual(self.pc.columns(record), {"done": 2, "doing": 2, "next": 3, "owner": 1, "total": 8})
+        self.assertEqual(self.pc.columns({}), {"done": 0, "doing": 0, "next": 0, "owner": 0, "total": 0})
+
+
+class ActionsTest(unittest.TestCase):
+    """core/project_actions.py on a record of its own: what an action is, what a change may do, the state read off its items
+    and topics, the topics no item names."""
+
+    def setUp(self):
+        self.pa, self.pc = actions(), checklist()
+        self.record = {"id": PID, "threads": ["t1", "t2", "t3"]}
+        self.pc.apply(self.record, [{"criterion": "导出", "topic": "t1"}, {"criterion": "对账", "needs": ["c1"], "topic": "t2"},
+                                    {"criterion": "上线"}], now=NOW)
+
+    def test_actions_get_ids_in_order_and_a_change_replaces_only_what_it_names_and_its_groups_whole(self):
+        touched = self.pa.apply(self.record, [{"title": "导出和对账", "note": "在做", "items": ["c1", "c2"], "topics": ["t1"]},
+                                              {"title": "上线"}], job="j1", now=NOW)
+        self.assertEqual(touched, ["a1", "a2"])
+        first, second = self.pa.items(self.record)
+        self.assertEqual((first["id"], first["title"], first["note"], first["items"], first["topics"], first["state"], first["job"]),
+                         ("a1", "导出和对账", "在做", ["c1", "c2"], ["t1"], "open", "j1"))
+        self.assertEqual((second["items"], second["topics"], second["note"]), ([], [], ""))
+        self.assertEqual(self.record["actions"]["next"], "a3")
+        self.pa.apply(self.record, [{"id": "a1", "note": "做完了"}], job="j2", now=NOW + 1)
+        first = self.pa.items(self.record)[0]
+        self.assertEqual((first["note"], first["items"], first["topics"], first["title"], first["at"], first["job"]),
+                         ("做完了", ["c1", "c2"], ["t1"], "导出和对账", NOW + 1, "j2"))
+        self.pa.apply(self.record, [{"id": "a1", "items": ["c2"], "topics": ["t2", "t3"]}], now=NOW + 2)
+        first = self.pa.items(self.record)[0]
+        self.assertEqual((first["items"], first["topics"]), (["c2"], ["t2", "t3"]))  # The group is replaced, not added to.
+        self.assertTrue(self.pa.kept(self.record))
+        self.assertFalse(self.pa.kept({"id": PID}))
+        self.pa.apply(self.record, [{"id": "a1", "title": "标" * 40, "note": "写" * 100}], now=NOW + 3)
+        first = self.pa.items(self.record)[0]
+        self.assertEqual((len(first["title"]), len(first["note"])), (self.pa.TITLE, self.pa.NOTE))
+
+    def test_what_does_not_fit_is_refused_and_nothing_changes(self):
+        self.pa.apply(self.record, [{"title": "导出", "items": ["c1"]}], now=NOW)
+        before = copy.deepcopy(self.record)
+        for rows, words in (([{"note": "没有名字"}], "新加的动作要写 title"),
+                            ([{"id": "a9", "note": "x"}], "没有动作 a9"),
+                            ([{"title": "对账", "items": ["c1", "c7"]}], "条目 c7 不在目标检查表里"),
+                            ([{"title": "对账", "topics": ["t9"]}], "不是这个专项的话题"),
+                            ([{"id": "a1", "state": "finished"}], "state 要是 open、dropped 之一"),
+                            ([{"id": "a1", "title": ""}], "title 不能为空"),
+                            (["a1"], "要是一个对象"),
+                            ([{"title": f"第 {n} 个"} for n in range(self.pa.MAX_OPEN)], "最多 10 个"),
+                            ([{"title": "好的一个"}, {"id": "a9"}], "没有动作 a9")):
+            with self.subTest(words=words), self.assertRaisesRegex(ValueError, words):
+                self.pa.apply(self.record, rows, now=NOW + 1)
+            self.assertEqual(self.record, before)  # The good row of a refused call is not written either.
+
+    def test_a_dropped_action_stays_with_its_id_and_does_not_count_against_the_limit(self):
+        self.pa.apply(self.record, [{"title": f"第 {n} 个"} for n in range(1, 11)], now=NOW)
+        with self.assertRaisesRegex(ValueError, "最多 10 个"):
+            self.pa.apply(self.record, [{"title": "多一个"}], now=NOW + 1)
+        self.pa.apply(self.record, [{"id": "a3", "state": "dropped", "note": "主人说不做了"}], now=NOW + 2)
+        self.assertEqual(self.pa.apply(self.record, [{"title": "替它的"}], now=NOW + 3), ["a11"])  # Not a3 again.
+        rows = self.pa.items(self.record)
+        self.assertEqual((len(rows), rows[2]["id"], rows[2]["state"], rows[-1]["id"]), (11, "a3", "dropped", "a11"))
+        with self.assertRaisesRegex(ValueError, "最多 10 个"):
+            self.pa.apply(self.record, [{"id": "a3", "state": "open"}], now=NOW + 4)
+
+    def test_a_topic_is_hung_on_an_action_and_an_item_and_what_is_full_is_left_alone(self):
+        self.pa.apply(self.record, [{"title": "导出", "items": ["c1"]}, {"title": "也含 c1", "items": ["c1", "c2"]},
+                                    {"title": "不做的", "items": ["c1"], "state": "dropped"}], now=NOW)
+        for words, args in (("没有动作 a9", {"action": "a9"}), ("没有条目 c9", {"item": "c9"}), ("已经不做了", {"action": "a3"})):
+            with self.subTest(words=words), self.assertRaisesRegex(ValueError, words):
+                self.pa.check(self.record, **args)
+        self.pa.check(self.record, "a1", "c2")
+        self.pa.check(self.record)
+        self.assertEqual(self.pa.attach(self.record, "t3", item="c1", job="j", now=NOW + 1), (["a1", "a2", "c1"], []))
+        self.assertEqual({row["id"]: row["topics"] for row in self.pa.items(self.record)}, {"a1": ["t3"], "a2": ["t3"], "a3": []})
+        self.assertEqual(self.pc.items(self.record)[0]["topics"], ["t3"])
+        self.assertEqual(self.pa.attach(self.record, "t3", "a1", "c1", now=NOW + 2), ([], []))  # Already there: nothing new.
+        # Naming the action hangs it on that one alone; the item's own main topic is not put in its group.
+        self.assertEqual(self.pa.attach(self.record, "t1", action="a2", item="c1", now=NOW + 3), (["a2"], []))
+        self.assertEqual({row["id"]: row["topics"] for row in self.pa.items(self.record)}, {"a1": ["t3"], "a2": ["t3", "t1"], "a3": []})
+        self.assertEqual(self.pc.items(self.record)[0]["topics"], ["t3"])
+        # Full: an item has six beside its main topic, an action TOPICS.
+        self.pc.apply(self.record, [{"id": "c3", "topics": [f"x{n}" for n in range(6)]}], now=NOW + 4)
+        self.assertEqual(self.pa.attach(self.record, "t3", item="c3", now=NOW + 5), ([], ["c3 已有 6 个参与的话题"]))
+        self.record["threads"] = [f"m{n}" for n in range(self.pa.TOPICS)]
+        self.pa.apply(self.record, [{"id": "a1", "topics": self.record["threads"]}], now=NOW + 6)
+        self.assertEqual(self.pa.attach(self.record, "t3", action="a1", now=NOW + 7), ([], [f"a1 的话题已满 {self.pa.TOPICS} 个"]))
+
+    def test_what_an_action_reads_as_from_its_items_and_the_states_of_its_topics(self):
+        pa, pc = self.pa, self.pc
+        pc.apply(self.record, [{"id": "c1", "state": "done", "evidence": "x"}, {"id": "c3", "gap": "只差主人点头"}], now=NOW)
+        entries = pc.items(self.record)
+
+        def action(items, topics):
+            return {"id": "a1", "title": "x", "note": "", "items": items, "topics": topics, "state": "open", "at": 0, "job": ""}
+        run, wait, end = pa.RUNNING, pa.WAITING, pa.ENDED
+        for items, topics, found, words in (
+                (["c1"], [], {}, pa.DONE),  # Its items met, no topic.
+                (["c1", "c2"], [], {}, pa.NEXT),  # Not met, no topic yet.
+                (["c1", "c2"], ["t1"], {"t1": end}, pa.CHECK),  # Not met, its topics ended: what they say is a claim, the lead checks.
+                (["c1", "c2"], ["t1", "t2"], {"t1": end, "t2": run}, pa.DOING),
+                (["c1"], ["t1"], {"t1": run}, pa.DOING),  # Running beats done.
+                (["c1"], ["t1"], {"t1": end}, pa.DONE),
+                (["c2"], ["t1", "t2"], {"t1": run, "t2": wait}, pa.OWNER),  # A topic waiting for the owner beats one running.
+                (["c3"], ["t1"], {"t1": run}, pa.OWNER),  # An item whose next step is the owner's (read off its gap).
+                (["c3"], [], {}, pa.OWNER),
+                ([], [], {}, pa.NEXT),  # With no item it is never done.
+                ([], ["t1"], {"t1": end}, pa.CHECK),
+                (["c1", "c9"], ["t9"], {"t1": run}, pa.DONE)):  # An item gone and a topic not counted are left out.
+            with self.subTest(items=items, topics=topics, found=found):
+                self.assertEqual(pa.state(action(items, topics), entries, found), words)
+        pc.apply(self.record, [{"id": "c3", "waiting_on": ""}], now=NOW + 1)  # The lead says it is not the owner's.
+        self.assertEqual(pa.state(action(["c3"], ["t1"]), pc.items(self.record), {"t1": end}), pa.CHECK)
+        self.assertEqual(pa.STATE_WORDS, {"owner": "等你", "doing": "在做", "done": "做完", "check": "待核对", "next": "将要做"})
+
+    def test_the_member_topics_no_item_names_are_unmapped(self):
+        self.assertEqual(self.pa.unmapped(self.record), ["t3"])  # c1 has t1, c2 has t2.
+        self.pc.apply(self.record, [{"id": "c3", "topics": ["t3"]}], now=NOW + 1)
+        self.assertEqual(self.pa.unmapped(self.record), [])
+        self.assertEqual(self.pa.unmapped({"id": PID}), [])
+
+    def test_a_record_with_bad_rows_reads_what_it_can(self):
+        self.assertEqual(self.pa.items({}), [])
+        rows = [{"id": "x1", "title": "不是我们的 id"}, {"id": "a1"}, "a2",
+                {"id": "a3", "title": "好", "state": "weird", "items": ["c1", 7, "zz"], "topics": ["t1", 5, "t1"]}]
+        [action] = self.pa.items({"actions": {"items": rows}})
+        self.assertEqual((action["id"], action["state"], action["items"], action["topics"]), ("a3", "open", ["c1"], ["t1"]))
 
 
 class ChecklistToolTest(ToolsCase):
@@ -257,6 +487,149 @@ class ChecklistToolTest(ToolsCase):
         self.assertEqual(done["text"], "专项已记为完成：账单迁完")
 
 
+class BriefToolTest(ToolsCase):
+    """The 简报 as the lead writes it: project_goal's background, project_checklist's actions with the items they name in the same
+    call, and a topic opened or fed on an action or an item. 协作 on; off, the new arguments are refused."""
+
+    def setUp(self):
+        super().setUp()
+        mock.patch.dict(os.environ, COLLAB).start()
+        self.addCleanup(mock.patch.stopall)
+
+    def member(self, request, title, **args):
+        answer = self.tool("project_topic_start", request_id=request, title=title, prompt=title, workspace="project",
+                           readonly=True, why="x", **args)
+        self.assertTrue(answer["ok"], answer)
+        topic = answer["data"]["topic_id"]
+        return topic, label_of(self.state, topic)
+
+    def running(self, request, **fields):
+        write_job(self.state, "main-" + butler_topics_token(request), status="running", phase="做事", **fields)
+
+    def test_the_goal_and_the_background_are_written_apart_and_one_of_them_at_least(self):
+        self.assertEqual(self.tool("project_goal", text="把账单迁到新库")["text"], "已记下专项的目标：把账单迁到新库")  # As before.
+        answer = self.tool("project_goal", background="旧库在老机房，下月到期。\n新库已建好。")
+        self.assertEqual(answer["text"], "已记下专项的背景：旧库在老机房，下月到期。 新库已建好。")
+        record = self.reload()
+        self.assertEqual((record["lead_goal"]["text"], project_lead.lead_background(record)), ("把账单迁到新库", "旧库在老机房，下月到期。 新库已建好。"))
+        self.assertEqual(set(record["lead_background"]), {"text", "at", "job"})
+        both = self.tool("project_goal", text="迁完", background="背" * 400)
+        self.assertEqual(both["text"].count("已记下专项的"), 2)
+        record = self.reload()
+        self.assertEqual((record["lead_goal"]["text"], len(record["lead_background"]["text"])), ("迁完", 300))
+        self.assertIn("text（目标）和 background（背景）至少给一个", self.refused("project_goal"))
+        self.assertIn("text（目标）和 background（背景）至少给一个", self.refused("project_goal", text=" ", background=""))
+
+    def test_actions_are_written_with_the_items_they_name_and_topics_by_t_number_all_or_nothing(self):
+        first, first_label = self.member("a", "导出新版结果")
+        second, second_label = self.member("b", "跑新版对比")
+        self.running("a")
+        answer = self.tool("project_checklist",
+                           items=[{"criterion": "新版结果导出", "title": "导出", "topic": first_label},
+                                  {"criterion": "对比报告", "topic": second_label, "topics": [first_label], "needs": ["c1"]}],
+                           actions=[{"title": "新版导出和对比", "note": "在做导出", "items": ["c1", "c2"], "topics": [first_label, second]}])
+        self.assertTrue(answer["ok"], answer)
+        record = self.reload()
+        [action] = actions().items(record)
+        self.assertEqual((action["id"], action["items"], action["topics"], action["note"]), ("a1", ["c1", "c2"], [first, second], "在做导出"))
+        self.assertEqual([item["topics"] for item in checklist().items(record)], [[], [first]])  # Topic ids, not T numbers.
+        self.assertTrue(answer["text"].startswith("已更新目标检查表和简报（c1、c2、a1）。\n简报（1 个动作）："))
+        self.assertIn("- a1 新版导出和对比 · 在做 · 没满足 c1、c2 · 现状：在做导出", answer["text"])
+        self.assertEqual(answer["data"]["unmet"], ["c1", "c2"])
+        # One bad row refuses the whole call, the items of the same call with it.
+        before = self.reload()
+        for args, words in (({"items": [{"criterion": "新条目"}], "actions": [{"title": "x", "items": ["c9"]}]}, "c9 不在目标检查表里"),
+                            ({"items": [{"criterion": "新条目"}], "actions": [{"id": "a7", "note": "x"}]}, "没有动作 a7"),
+                            ({"actions": [{"title": "x", "topics": ["T9999"]}]}, "没有找到话题 T9999")):
+            with self.subTest(words=words):
+                refused = self.tool("project_checklist", **args)
+                self.assertFalse(refused["ok"])
+                self.assertIn(words, refused["text"])
+                self.assertEqual(self.reload(), before)
+        # A topic that is not the project's is no topic of an action, nor of an item's group.
+        outside = "a" * 32
+        write_topic(self.state, {"topic_id": outside}, topic_id=outside, chat_id=CHAT, harness_id="claude", topic_number=88, root_id="om_root88")
+        for args in ({"actions": [{"title": "x", "topics": ["T88"]}]}, {"items": [{"id": "c1", "topics": ["T88"]}]}):
+            self.assertIn("不是这个专项的话题", self.tool("project_checklist", **args)["text"])
+        self.assertEqual(self.reload(), before)
+
+    def test_an_action_changed_alone_and_dropped_and_reading_shows_the_brief_with_its_groups(self):
+        topic, label = self.member("a", "导出")
+        self.assertTrue(self.tool("project_checklist", items=[{"criterion": "导出"}], actions=[{"title": "导出", "items": ["c1"], "topics": [label]},
+                                                                                           {"title": "试试看"}])["ok"])
+        before = self.reload()["checklist"]
+        answer = self.tool("project_checklist", actions=[{"id": "a2", "state": "dropped", "note": "主人说不做了"}])
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual(self.reload()["checklist"], before)  # Actions alone leave the items as they were.
+        self.assertTrue(answer["text"].startswith("已更新简报（a2）。\n简报（1 个动作，另有 1 个不做了）："), answer["text"])
+        shown = self.tool("project_checklist")["text"]
+        self.assertIn(f"- a1 导出 · 在做 · 没满足 c1 · 条目 c1 · 话题 {label}", shown)  # The group a change would replace.
+        self.assertNotIn("a2", shown)
+        self.assertIn("目标检查表（1 条", shown)
+        self.assertEqual(self.reload()["actions"]["items"][0]["topics"], [topic])
+
+    def test_a_topic_opened_on_an_action_or_an_item_is_hung_on_them_once_it_is_a_member(self):
+        self.tool("project_checklist", items=[{"criterion": "导出"}, {"criterion": "对账", "needs": ["c1"]}],
+                  actions=[{"title": "导出和对账", "items": ["c1", "c2"]}, {"title": "对账再核", "items": ["c2"]}])
+        topic, _ = self.member("s1", "导出", action="a1", item="c1")
+        answer = self.tool("project_topic_start", request_id="s1", title="导出", prompt="导出", workspace="project", readonly=True, why="x",
+                           action="a1", item="c1")
+        self.assertEqual(answer["data"]["topic_id"], topic)  # The same request again opens nothing new, and hangs nothing twice.
+        self.assertNotIn("已挂到", answer["text"])
+        record = self.reload()
+        self.assertEqual({row["id"]: row["topics"] for row in actions().items(record)}, {"a1": [topic], "a2": []})
+        self.assertEqual([item["topics"] for item in checklist().items(record)], [[topic], []])
+        self.assertEqual(record["threads"], [topic])
+        second, _ = self.member("s2", "对账", item="c2")  # An item alone: every action that has it.
+        record = self.reload()
+        self.assertEqual({row["id"]: row["topics"] for row in actions().items(record)}, {"a1": [topic, second], "a2": [second]})
+        self.assertIn("已挂到 a1、a2、c2", self.tool("project_topic_start", request_id="s3", title="再对一次", prompt="x", workspace="project",
+                                                       readonly=True, why="x", item="c2")["text"])
+        self.assertEqual(self.tool("project_topic_start", request_id="s4", title="只挂条目", prompt="x", workspace="project",
+                                   readonly=True, why="x", action="a2")["text"].count("已挂到 a2"), 1)
+
+    def test_ids_that_are_not_the_records_refuse_the_start_before_a_topic_is_opened(self):
+        self.tool("project_checklist", items=[{"criterion": "导出"}], actions=[{"title": "导出", "items": ["c1"]}, {"title": "弃", "state": "dropped"}])
+        for fields, words in (({"action": "a9"}, "没有动作 a9"), ({"item": "c9"}, "没有条目 c9"), ({"action": "a2"}, "已经不做了"),
+                              ({"action": "a1", "item": "c9"}, "没有条目 c9")):
+            with self.subTest(words=words):
+                answer = self.refused("project_topic_start", title="x", prompt="y", workspace="project", readonly=True, why="z", **fields)
+                self.assertIn(words, answer)
+                self.assertEqual(self.reload()["threads"], [])
+                self.assertIsNone(self.job("rx"))
+        topic, label = self.member("s1", "导出")
+        self.assertIn("没有动作 a9", self.refused("project_topic_send", thread=label, text="再看", action="a9"))
+        self.assertIsNone(self.job("rx"))
+        self.assertEqual([row["topics"] for row in actions().items(self.reload())], [[], []])
+
+    def test_a_topic_fed_with_an_action_or_an_item_is_hung_on_them_and_a_refused_send_hangs_nothing(self):
+        topic, label = self.member("open", "导出")
+        job = self.job("open")
+        self.app.runtime.unregister_reply_job(job)
+        write_job(self.state, job.message_id, status="done")
+        self.tool("project_checklist", items=[{"criterion": "导出"}], actions=[{"title": "导出", "items": ["c1"]}, {"title": "另一个"}])
+        answer = self.tool("project_topic_send", request_id="s1", thread=label, text="再核对一遍金额", action="a2", item="c1")
+        self.assertTrue(answer["ok"], answer)
+        self.assertIn("已挂到 a2、c1", answer["text"])
+        record = self.reload()
+        self.assertEqual([row["topics"] for row in actions().items(record)], [[], [topic]])
+        self.assertEqual(checklist().items(record)[0]["topics"], [topic])
+        self.assertEqual(self.job("s1").user_text, "再核对一遍金额")  # The topic's own words carry none of it.
+        self.assertNotIn("a2", self.job("s1").prompt_text)
+
+    def test_off_the_brief_arguments_are_refused_and_the_calls_without_them_are_as_before(self):
+        os.environ.pop(turn_source.SWITCH)
+        self.assertIn("没有简报", self.refused("project_goal", background="x"))
+        self.assertIn("没有简报", self.refused("project_topic_start", title="x", prompt="y", workspace="project", readonly=True, why="z", action="a1"))
+        self.assertIn("没有简报", self.refused("project_topic_start", title="x", prompt="y", workspace="project", readonly=True, why="z", item="c1"))
+        self.assertEqual(self.reload()["threads"], [])
+        self.assertIn("text 不能为空", self.refused("project_goal"))
+        self.assertEqual(self.tool("project_goal", text="迁完")["text"], "已记下专项的目标：迁完")
+        self.assertNotIn("lead_background", self.reload())
+        self.assertTrue(self.tool("project_topic_start", request_id="plain", title="x", prompt="y", workspace="project", readonly=True, why="z")["ok"])
+        self.assertNotIn("actions", self.reload())
+
+
 class PackTest(Case):
     """What the lead's rules and pack say, 协作 on and off."""
 
@@ -292,7 +665,7 @@ class PackTest(Case):
             self.assertEqual(project_lead.lead_rules(), rules)
         with mock.patch.dict(os.environ, TRIAGE):
             triaged = project_lead.state_pack(self.state, record, "lead-1", full=True, receipts=receipts)
-        for words in ("目标检查表", "〔", "先看：", "没处理的协作缺口", "主人在专项里说过的话", "msg:"):
+        for words in ("目标检查表", "〔", "先看：", "没处理的协作缺口", "主人在专项里说过的话", "msg:", "简报"):
             self.assertNotIn(words, pack)
             self.assertNotIn(words, triaged)
         self.assertIn("自上次唤醒以来的收件箱：\n" + "\n".join(map(project_lead.receipt_line, receipts)), pack)
@@ -347,9 +720,121 @@ class PackTest(Case):
         mock.patch.dict(os.environ, {**COLLAB, **TRIAGE}).start()
         self.addCleanup(mock.patch.stopall)
         texts = [*project_lead.COLLAB_RULES, project_lead.EVIDENCE_RULE, project_lead.CHECKLIST_EMPTY, project_lead.GAPS_HEAD,
-                 project_lead.OWNER_WORDS_HEAD, project_loop.CHOICE_CHECKLIST,
+                 project_lead.OWNER_WORDS_HEAD, project_lead.BRIEF_EMPTY, project_loop.CHOICE_CHECKLIST,
                  *strings(butler_tool_specs.lead_tools({**COLLAB, **TRIAGE}))]
         self.assertEqual([text[:40] for text in texts if RETIRED.search(text)], [])
+
+    def brief(self, background="主人用 Covey 跑本机飞书机器人，要迁账单到新库。"):
+        """A project with a 目标检查表, a background and three actions: 导出 met and its topic ended, 对账 running, 下线旧库 for the owner."""
+        done, running, loose = "1" * 32, "2" * 32, "3" * 32
+        self.thread(done, "导出账单", 41, status="done", final_text="做完了")
+        self.thread(running, "对账", 42, status="running", phase="核对金额")
+        self.thread(loose, "旧库迁移", 43, status="done", final_text="做完了")
+        pc, pa = checklist(), actions()
+
+        def change(record):
+            pc.apply(record, [{"criterion": "导出 2024 年账单", "topic": done, "state": "done", "evidence": "/absolute/out.csv"},
+                              {"criterion": "对账一致", "topic": running, "needs": ["c1"]},
+                              {"criterion": "旧库下线", "needs": ["c1"], "gap": "等主人点头", "waiting_on": "owner"}], now=NOW)
+            pa.apply(record, [{"title": "导出", "items": ["c1"], "topics": [done], "note": "做完了"},
+                              {"title": "对账", "items": ["c2"], "topics": [running], "note": "核对中：金额"},
+                              {"title": "下线旧库", "items": ["c3"], "note": "等你定日期"},
+                              {"title": "不做的", "state": "dropped"}], now=NOW)
+            if background:
+                record["lead_background"] = {"text": background, "at": NOW, "job": "lead-1"}
+        projects.update(self.state, PID, change)
+        return done, running, loose
+
+    def test_the_pack_has_a_short_brief_before_the_checklist_and_only_with_collab_on(self):
+        self.brief()
+        record = self.reload()
+        full = project_lead.state_pack(self.state, record, "lead-1", full=True, receipts=[])
+        self.assertNotIn("简报", full)  # Off: the pack is as it was.
+        mock.patch.dict(os.environ, COLLAB).start()
+        self.addCleanup(mock.patch.stopall)
+        full = project_lead.state_pack(self.state, record, "lead-1", full=True, receipts=[])
+        block = full[full.index("简报（"):full.index("目标检查表（")]
+        self.assertEqual(block.strip().splitlines(), [
+            "简报（3 个动作，另有 1 个不做了）：",
+            "背景：主人用 Covey 跑本机飞书机器人，要迁账单到新库。",
+            "- a1 导出 · 做完",
+            "- a2 对账 · 在做 · 没满足 c2 · 现状：核对中：金额",
+            "- a3 下线旧库 · 等你 · 没满足 c3 · 现状：等你定日期",
+            "还没挂到条目上的话题：T43"])
+        self.assertLess(full.index("话题（3 个"), full.index("简报（"))
+        resumed = project_lead.state_pack(self.state, record, "lead-1", full=False, receipts=[])
+        self.assertNotIn("背景：", resumed)  # The background is said once, in a new session.
+        self.assertIn("- a3 下线旧库 · 等你", resumed)
+        self.assertIn("简报（3 个动作", project_lead.read_only_pack(self.state, record))
+
+    def test_the_background_is_cut_in_the_pack_the_unmapped_topics_are_eight_and_a_count_and_no_brief_is_one_line(self):
+        mock.patch.dict(os.environ, COLLAB).start()
+        self.addCleanup(mock.patch.stopall)
+        empty = project_lead.state_pack(self.state, self.reload(), "lead-1", full=True, receipts=[])
+        self.assertIn(project_lead.BRIEF_EMPTY, empty)
+        self.assertEqual(empty.count("简报"), 1)  # One sentence and nothing else.
+        for number in range(10):
+            self.thread(f"{number:x}" * 32, f"话题 {number}", 50 + number, status="done", final_text="好")
+        projects.update(self.state, PID, lambda record: record.update(lead_background={"text": "背" * 200, "at": NOW, "job": "j"}))
+        pack = project_lead.state_pack(self.state, self.reload(), "lead-1", full=True, receipts=[])
+        self.assertIn("背景：" + "背" * 119 + "…\n", pack)
+        self.assertIn("动作：还没写（project_checklist 的 actions 拆 3–8 个）", pack)
+        self.assertIn("还没挂到条目上的话题：T50、T51、T52、T53、T54、T55、T56、T57 等 10 个", pack)
+        self.assertNotIn(project_lead.BRIEF_EMPTY, pack)
+        # Actions and no background: the lead is asked for one in a new session, not in a resumed one.
+        projects.update(self.state, PID, lambda record: (record.pop("lead_background"), actions().apply(record, [{"title": "导出"}], now=NOW)))
+        self.assertIn("背景：还没写（project_goal 的 background）", project_lead.state_pack(self.state, self.reload(), "lead-1", full=True, receipts=[]))
+        self.assertNotIn("背景：", project_lead.state_pack(self.state, self.reload(), "lead-1", full=False, receipts=[]))
+
+    def test_an_item_says_the_topics_that_took_part_when_the_tool_shows_the_checklist_in_detail(self):
+        mock.patch.dict(os.environ, COLLAB).start()
+        self.addCleanup(mock.patch.stopall)
+        done, running, _ = self.brief()
+        projects.update(self.state, PID, lambda record: checklist().apply(record, [{"id": "c2", "topics": [done]}], now=NOW + 1))
+        record = self.reload()
+        rows = project_lead.member_rows(self.state, record)
+        self.assertNotIn("参与的话题", project_lead.checklist_block(self.state, record, rows))
+        self.assertIn("- c2 · 没满足 · 对账一致 · T42（在做） · 参与的话题 T41 · 依赖 c1（满足）",
+                      project_lead.checklist_block(self.state, record, rows, detail=True))
+        # An item with no main topic names the first that took part, and still says the others.
+        projects.update(self.state, PID, lambda record: checklist().apply(record, [{"id": "c3", "topics": [done, running]}], now=NOW + 2))
+        record = self.reload()
+        self.assertIn("- c3 · 没满足 · 旧库下线 · T41（做完） · 参与的话题 T42", project_lead.checklist_block(self.state, record, rows, detail=True))
+        self.assertIn("- c3 · 没满足 · 旧库下线 · T41（做完） · 依赖 c1", project_lead.checklist_block(self.state, record, rows))
+
+    def test_a_delivery_that_ends_says_what_its_item_unlocks_and_what_those_still_wait_on(self):
+        mock.patch.dict(os.environ, COLLAB).start()
+        self.addCleanup(mock.patch.stopall)
+        checkpoint = "c" * 32
+        projects.update(self.state, PID, lambda record: checklist().apply(record, [
+            {"criterion": "导出", "topic": THREAD}, {"criterion": "对账", "needs": ["c1"]}, {"criterion": "上线", "needs": ["c1", "c4"]},
+            {"criterion": "审批"}, {"criterion": "归档", "needs": ["c2"]}, {"criterion": "已做", "needs": ["c1"], "state": "done", "evidence": "x"},
+            {"criterion": "另一个话题的", "topics": [checkpoint]}], now=NOW))
+        receipts = [project_lead.add_receipt(self.state, PID, "thread_end", "T41 的任务 #41 做完：导出好了", thread=THREAD),
+                    project_lead.add_receipt(self.state, PID, "thread_end", "T9 做完", thread=checkpoint)]
+        inbox = project_lead.inbox_block(self.state, receipts, self.reload())
+        self.assertIn("（它交付的 c1 还没满足；满足后 c2 可开始、c3 还在等 c4）", inbox)  # c6 is met, c5 lies further on.
+        self.assertIn("（它交付的 c7 还没满足）", inbox)  # Nothing waits on c7: as before.
+        projects.update(self.state, PID, lambda record: checklist().apply(record, [{"id": "c1", "state": "done", "evidence": "y"}], now=NOW + 1))
+        self.assertNotIn("它交付的 c1", project_lead.inbox_block(self.state, receipts, self.reload()))  # Met: no hint.
+        mock.patch.dict(os.environ, {turn_source.SWITCH: "0"}).start()
+        self.assertEqual(project_lead.inbox_block(self.state, receipts, self.reload()),
+                         "自上次唤醒以来的收件箱：\n" + "\n".join(map(project_lead.receipt_line, receipts)))  # Off: a line each, as before.
+
+    def test_the_rules_say_the_brief_in_two_sentences_with_collab_on_only(self):
+        rules = project_lead.lead_rules()
+        for words in ("简报", "background", "actions", "action 或 item"):
+            self.assertNotIn(words, rules)
+        mock.patch.dict(os.environ, COLLAB).start()
+        self.addCleanup(mock.patch.stopall)
+        on = project_lead.lead_rules()
+        self.assertEqual([line for line in on.splitlines() if line in rules.splitlines()], rules.splitlines())  # What was there stays.
+        self.assertEqual(project_lead.COLLAB_RULES[-1][:5], "- 简报：")
+        added = [rule for rule in project_lead.COLLAB_RULES if rule.startswith("- 简报：")]
+        self.assertEqual(len(added), 1)
+        self.assertEqual(added[0].count("。"), 2)
+        for words in ("project_goal 的 background", "project_checklist 的 actions", "3–8 个动作", "状态由 Bridge 算", "action 或 item"):
+            self.assertIn(words, added[0])
 
 
 class BatchTest(Loop):
@@ -673,6 +1158,27 @@ class ListingTest(Case):
         listed = [tool["name"] for tool in butler_mcp.tool_list({butler.LEAD_ENV: PID, **COLLAB})]
         self.assertIn("project_checklist", listed)
         self.assertNotIn("project_checklist", [tool["name"] for tool in butler_tool_specs.listed({**COLLAB, projects.ENV: "1"})])
+
+    def test_the_brief_arguments_are_listed_with_collab_on_only_and_the_shared_specs_are_not_changed(self):
+        woken = {butler_tool_specs.AUTOWAKE_ENV: "1"}
+        off = {tool["name"]: tool for tool in butler_tool_specs.lead_tools(woken)}
+        for tool in butler_tool_specs.PROJECT_TOOLS:
+            self.assertEqual(off[tool["name"]], tool)  # Off: as they were.
+        on = {tool["name"]: tool for tool in butler_tool_specs.lead_tools({**COLLAB, **woken})}
+        for name in ("project_topic_start", "project_topic_send"):
+            self.assertEqual(sorted(set(on[name]["input_schema"]["properties"]) - set(off[name]["input_schema"]["properties"])), ["action", "item"])
+            self.assertEqual(on[name]["input_schema"]["required"], off[name]["input_schema"]["required"])
+            self.assertEqual(on[name]["description"], off[name]["description"])
+        goal = on["project_goal"]["input_schema"]
+        self.assertEqual((sorted(goal["properties"]), "required" in goal, off["project_goal"]["input_schema"]["required"]),
+                         (["background", "text"], False, ["text"]))
+        checklist_schema = on["project_checklist"]["input_schema"]["properties"]
+        self.assertEqual(sorted(checklist_schema), ["actions", "close_gaps", "items"])
+        self.assertEqual(sorted(checklist_schema["actions"]["items"]["properties"]), ["id", "items", "note", "state", "title", "topics"])
+        self.assertTrue({"title", "topics", "waiting_on"} <= set(checklist_schema["items"]["items"]["properties"]))
+        self.assertEqual(checklist_schema["items"]["items"]["properties"]["waiting_on"]["enum"], ["owner", ""])
+        for tool in butler_tool_specs.PROJECT_TOOLS:  # Not changed in place.
+            self.assertFalse({"action", "item", "background"} & set(tool["input_schema"]["properties"]))
 
     def test_a_call_to_project_checklist_on_a_server_without_the_switch_is_refused(self):
         server = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "k", butler.LEAD_ENV: PID},

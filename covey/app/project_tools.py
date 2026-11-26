@@ -20,7 +20,10 @@ app/butler_env.py describes them; app/butler_tools.py puts them with the butler'
   (app/triage.py). With 协作 on (COVEY_COLLAB=1), or when it names them, an answer stands on ``evidence`` the Bridge checks
   (app/triage.py grounds): no ground of the owner's that still holds, no answer.
 - With 协作 on, ``project_checklist`` keeps the project's 目标检查表 (core/project_checklist.py), and ``project_finish``
-  refuses while an item of it is not met or a 协作 gap is not dealt with (``checklist_gate``).
+  refuses while an item of it is not met or a 协作 gap is not dealt with (``checklist_gate``). Also with it on, the 简报
+  (docs/projects.md 项目简报): ``project_goal``'s ``background``, ``project_checklist``'s ``actions`` (core/project_actions.py),
+  and the optional ``action`` and ``item`` of ``project_topic_start`` and ``project_topic_send``, which hang the topic on them
+  (``place_of`` looks at the ids before anything is done, ``hang`` writes them once the topic is a member).
 
 A tool that hands out, stops or answers (``acted``) marks the lead's turn as one that changed something, so the reply of
 a wake-up turn that did is sent to the owner (app/project_loop.py reported: 有变化才发).
@@ -34,7 +37,7 @@ from pathlib import Path
 
 from covey.app import butler_topics, project_lead, triage as triage_flow
 from covey.app.butler_env import reply
-from covey.core import butler, project_memory, projects, quota_hold, triage, turn_source
+from covey.core import butler, project_actions, project_memory, projects, quota_hold, triage, turn_source
 from covey.core import project_checklist as checklist
 from covey.core import project_proposals as proposals
 from covey.core.jobs import find_job_record
@@ -47,6 +50,7 @@ OFFERED_KINDS = project_memory.KINDS[:-1]
 ACTED_KEPT = 40  # The record's ``acted`` rows kept: one a lead turn that handed out, stopped or answered.
 TRIAGE_OFF = "问题分流没有开：负责人不能替主人答题，也不能转交问题；话题里的问题会直接问主人。"
 CHECKLIST_OFF = "协作没有开（COVEY_COLLAB）：没有目标检查表，收尾照原来的规则。"
+BRIEF_OFF = "协作没有开（COVEY_COLLAB）：没有简报，不能带 background、action、item。"
 FINISH_NEXT = ("现在不能收尾。先安排补齐：project_topic_send 让原话题返工，或 project_topic_start 开新话题；核对过证据再用 project_checklist "
                "把那一条标 done（写 evidence）；主人说不要了的标 dropped，在 gap 里写主人怎么说的；协作缺口处理完用 close_gaps 写怎么处理的。"
                "要主人定范围或取舍的，合成一个问题用 project_note 标 report 问他。")
@@ -148,14 +152,44 @@ def acted(env, pid, request, what) -> None:
     projects.update(env.state_dir, pid, change)
 
 
+def place_of(record, args) -> tuple:
+    """(action id, item id) a topic's ``action`` and ``item`` name, each '' when not given; ValueError when the ids are not the
+    record's (``project_actions.check``), or 协作 is off (then there is no 简报: the call is refused, as nothing has been done)."""
+    action, item = (" ".join(str(args.get(name) or "").split()) for name in ("action", "item"))
+    if not (action or item):
+        return "", ""
+    if not turn_source.enabled():
+        raise ValueError(BRIEF_OFF)
+    project_actions.check(record, action, item)
+    return action, item
+
+
+def hang(env, pid, topic, request, place) -> str:
+    """The words to add to the answer once ``topic`` is a member: it is put on the action and the item ``place`` (``place_of``) in
+    the record, under its lock. '' when ``place`` names none."""
+    action, item = place
+    if not (action or item):
+        return ""
+    found = []
+
+    def change(data):
+        found[:] = project_actions.attach(data, topic, action, item, job=str(request.job_key or ""))
+    projects.update(env.state_dir, pid, change)
+    done, full = found
+    return (f" 已挂到 {'、'.join(done)}。" if done else "") + (f" 没挂上：{'；'.join(full)}。" if full else "")
+
+
 def project_topic_start(env, request):
     pid, record = lead(env, request)
     active(record, "开新话题")
-    args = {**request.args, "user_requested": request.args.get("user_requested") is True}
+    place = place_of(record, request.args)
+    args = {**{key: value for key, value in request.args.items() if key not in ("action", "item")},
+            "user_requested": request.args.get("user_requested") is True}
     answer = butler_topics.topic_start(env, dataclasses.replace(request, args=args))
     topic = answer.get("data", {}).get("topic_id")
     if topic:
         projects.add_member(env.state_dir, pid, topic)  # Again for a request that ran before: once only.
+        answer = {**answer, "text": answer["text"] + hang(env, pid, topic, request, place)}
         acted(env, pid, request, "start")
     return answer if answer.get("ok") else {**answer, "text": "没有开出话题：" + answer["text"]}
 
@@ -163,6 +197,7 @@ def project_topic_start(env, request):
 def project_topic_send(env, request):
     pid, record = lead(env, request)
     active(record, "给话题加话")
+    place = place_of(record, request.args)
     chat = env.chat()
     found = butler_topics.find_topic(env, chat, request.args.get("thread"))
     if isinstance(found, str):
@@ -178,6 +213,7 @@ def project_topic_send(env, request):
     args = {"topic": topic, "text": request.args.get("text"), "note": request.args.get("note")}
     answer = butler_topics.topic_send(env, dataclasses.replace(request, args=args))
     if answer.get("ok"):
+        answer = {**answer, "text": answer["text"] + hang(env, pid, topic, request, place)}
         acted(env, pid, request, "send")
     return answer
 
@@ -272,14 +308,24 @@ def project_note(env, request):
 
 def project_goal(env, request):
     """The project's goal as the lead keeps it: the record's ``lead_goal`` {text, at, job}. The record's ``goal`` stays what
-    the project was opened with (the owner's words, or the work it took over), which reads as no goal."""
+    the project was opened with (the owner's words, or the work it took over), which reads as no goal. With 协作 on also its
+    background, ``lead_background`` {text, at, job} (``background``): one of the two at least."""
     pid, _ = lead(env, request)
-    text = text_of(request.args)
+    background = " ".join(str(request.args.get("background") or "").split())[:project_actions.BACKGROUND]
+    if background and not turn_source.enabled():
+        raise ValueError(BRIEF_OFF)
+    if turn_source.enabled() and not background and not str(request.args.get("text") or "").strip():
+        raise ValueError("text（目标）和 background（背景）至少给一个")
+    text = text_of(request.args) if not background or str(request.args.get("text") or "").strip() else ""
+    stamp = {"at": time.time(), "job": str(request.job_key or "")}
 
     def change(data):
-        data["lead_goal"] = {"text": text, "at": time.time(), "job": str(request.job_key or "")}
+        if text:
+            data["lead_goal"] = {"text": text, **stamp}
+        if background:
+            data["lead_background"] = {"text": background, **stamp}
     projects.update(env.state_dir, pid, change)
-    return reply(True, "已记下专项的目标：" + text)
+    return reply(True, "；".join(([f"已记下专项的目标：{text}"] if text else []) + ([f"已记下专项的背景：{background}"] if background else [])))
 
 
 def project_remember(env, request):
@@ -343,43 +389,72 @@ def project_finish(env, request):
     return reply(True, f"专项已记为完成：{summary}{told}", state=projects.DONE)
 
 
+def member_ref(env, record, ref, where) -> str:
+    """The topic id of ``ref`` (T number or topic id) when it is one of the project's topics; ValueError, with ``where`` (the row it is
+    in) when it is not or there is none."""
+    found = butler_topics.find_topic(env, env.chat(), ref)
+    if isinstance(found, str):
+        raise ValueError(f"{where}：{found}")
+    if found[1].topic_id not in (record.get("threads") or ()):
+        label = topic_label(Path(env.state_dir), found[1].topic_id) or found[1].topic_id[:8]
+        raise ValueError(f"{label} 不是这个专项的话题：先用 project_topic_send 把它收进来，或换成专项里交付这一条的话题。")
+    return found[1].topic_id
+
+
+def topic_rows(env, record, rows, what) -> list:
+    """``rows`` (items or actions of the call) with the topics they name (``topic`` of an item, ``topics`` of an item or an action) as
+    topic ids of the project's; ValueError for one that is not (``member_ref``)."""
+    out = []
+    for row in rows:
+        row = dict(row) if isinstance(row, dict) else row
+        if isinstance(row, dict):
+            where = row.get("id") or what
+            if str(row.get("topic") or "").strip():
+                row["topic"] = member_ref(env, record, row["topic"], where)
+            if row.get("topics") is not None:
+                refs = row["topics"] if isinstance(row["topics"], list) else [row["topics"]]
+                row["topics"] = [member_ref(env, record, ref, where) for ref in refs if str(ref or "").strip()]
+        out.append(row)
+    return out
+
+
 def project_checklist(env, request):
-    """The project's 目标检查表 (core/project_checklist.py, 协作 on): items added or changed (``items``; a ``topic`` is one of
-    this project's topics, T number or topic id), 协作 gaps closed (``close_gaps``), or nothing given to read it. The record
-    changes under its lock (core/project_checklist.py apply checks everything first: a refusal writes nothing). The answer
-    is the checklist as the pack shows it."""
+    """The project's 目标检查表 (core/project_checklist.py, 协作 on): items added or changed (``items``; a ``topic`` or ``topics`` are
+    this project's topics, T number or topic id), 协作 gaps closed (``close_gaps``), the 简报's actions added or changed
+    (``actions``, core/project_actions.py), or nothing given to read them. The record changes under its lock, items first and
+    then actions, which may name the items just written (each ``apply`` checks everything first: a refusal writes nothing, of
+    either). The answer is the checklist as the pack shows it, and, for ``actions`` or a read, the 简报 above it."""
     pid, record = lead(env, request)
     if not turn_source.enabled():
         return reply(False, CHECKLIST_OFF)
     state = Path(env.state_dir)
-    rows = request.args.get("items") if isinstance(request.args.get("items"), list) else []
-    close = request.args.get("close_gaps") if isinstance(request.args.get("close_gaps"), list) else []
-    if rows or close:
+    args = request.args
+    rows, close, acts = (args.get(key) if isinstance(args.get(key), list) else [] for key in ("items", "close_gaps", "actions"))
+    what = ("目标检查表和简报" if rows or close else "简报") if acts else "目标检查表"
+    if rows or close or acts:
         active(record, "改目标检查表")
-        chat, wanted = env.chat(), []
-        for row in rows:
-            row = dict(row) if isinstance(row, dict) else row
-            if isinstance(row, dict) and str(row.get("topic") or "").strip():
-                found = butler_topics.find_topic(env, chat, row["topic"])
-                if isinstance(found, str):
-                    return reply(False, f"{row.get('id') or '新条目'}：{found}")
-                if found[1].topic_id not in (record.get("threads") or ()):
-                    label = topic_label(state, found[1].topic_id) or found[1].topic_id[:8]
-                    return reply(False, f"{label} 不是这个专项的话题：先用 project_topic_send 把它收进来，或换成专项里交付这一条的话题。")
-                row["topic"] = found[1].topic_id
-            wanted.append(row)
+        try:
+            wanted, wanted_actions = topic_rows(env, record, rows, "新条目"), topic_rows(env, record, acts, "新动作")
+        except ValueError as exc:
+            return reply(False, str(exc))
         receipts, changed = project_lead.inbox_items(state, pid), []
 
         def change(data):
-            changed[:] = checklist.apply(data, wanted, close, receipts=receipts, job=request.job_key)
+            if rows or close:
+                changed[:] = checklist.apply(data, wanted, close, receipts=receipts, job=request.job_key)
+            if acts:
+                changed.extend(project_actions.apply(data, wanted_actions, job=request.job_key))
         try:
             record = projects.update(state, pid, change)
         except ValueError as exc:
-            return reply(False, f"目标检查表没有改：{exc}")
+            return reply(False, f"{what}没有改：{exc}")
     else:
         changed = []
-    text = project_lead.checklist_block(state, record, project_lead.member_rows(state, record))
-    head = f"已更新目标检查表（{'、'.join(changed)}）。" if changed else ""
+    members = project_lead.member_rows(state, record)
+    text = project_lead.checklist_block(state, record, members, detail=True)
+    if acts or not (rows or close):
+        text = project_lead.brief_block(state, record, members, full=True, detail=True) + "\n" + text
+    head = f"已更新{what}（{'、'.join(changed)}）。" if changed else ""
     left, gaps = checklist.unmet(record, project_lead.inbox_items(state, pid))
     return reply(True, head + "\n" + text if head else text, unmet=[item["id"] for item in left], gaps=[gap["id"] for gap in gaps])
 

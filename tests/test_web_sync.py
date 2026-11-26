@@ -21,7 +21,7 @@ from support.records import write_job, write_topic
 from covey.app import answers as answer_words, card_lanes, source_watch, web_ops, web_said, web_sync as app_web, web_collect as app_collect, web_pairing as app_pairing
 from covey.app.web_sync import WebError, WebSync
 from covey.app import project_lead, web_turns
-from covey.core import butler_opened, http_upstream, model_names, placement, project_library, project_memory, project_proposals, projects, triage, web_sync
+from covey.core import butler_opened, collab, http_upstream, model_names, placement, project_checklist, project_library, project_memory, project_proposals, projects, triage, turn_source, web_sync
 from covey.core.butler import butler_topic_id
 from covey.core.history_storage import append_history
 from covey.core.serving import LoopbackServer
@@ -1911,7 +1911,7 @@ class ExtrasTest(WebCase):
         project_lead.append(self.state, PID, "notes", project_lead.entry("派出了 T8", kind="thread"), project_lead.NOTES_KEPT)
         self.sync.push_once(T0 + 5)
         data = self.web.items("project")[-1]["data"]
-        self.assertFalse({"checklist", "milestones", "decisions"} & set(data))
+        self.assertFalse({"checklist", "milestones", "decisions", "background", "actions", "gaps"} & set(data))
 
     def test_milestones_are_the_milestone_and_finish_notes_and_decisions_the_newest_ten(self):
         for number, kind in enumerate(("note", "milestone", "thread", "finish", "milestone"), 1):
@@ -1928,6 +1928,110 @@ class ExtrasTest(WebCase):
         self.assertEqual([row["id"] for row in data["decisions"]], [f"d{number}" for number in range(3, 13)])
         self.assertEqual(data["decisions"][-1], {"id": "d12", "at": T0 + 12, "kind": "note", "text": "决定 12"})
         self.assertNotIn("checklist", data)
+
+    def brief(self, **fields):
+        """The record of a project whose lead wrote a 简报: a background, two actions (the second dropped) and a checklist whose first
+        item has all the newer fields and whose second has none."""
+        projects.update(self.state, PID, lambda record: record.update(
+            lead_background={"text": "迁账单到新库", "at": T0, "job": "k-lead"},
+            actions={"items": [{"id": "a1", "title": "导出", "note": "在做", "items": ["c1", "c2"], "topics": [OTHER], "state": "open",
+                                "at": T0 + 1, "job": "k-lead"},
+                               {"id": "a2", "title": "试试看", "note": "", "items": [], "topics": [], "state": "dropped", "at": T0 + 2,
+                                "job": "k-lead"}], "next": "a3", "at": T0 + 2, "job": "k-lead"},
+            checklist={"items": [{"id": "c1", "criterion": "新库能写", "topic": OTHER, "needs": [], "evidence": "提交 a1b2c3d", "gap": "", "state": "done",
+                                  "at": T0, "job": "k-lead", "title": "新库能写", "waiting_on": "", "done_at": T0 + 3, "topics": [TOPIC]},
+                                 {"id": "c2", "criterion": "对账一致", "topic": "", "needs": ["c1"], "evidence": "", "gap": "只差主人点头", "state": "open",
+                                  "at": T0 + 1, "job": "k-lead"}], "closed": {}, "next": "c3", "at": T0 + 1, "job": "k-lead"}, **fields))
+
+    def test_a_project_carries_its_background_its_actions_and_the_newer_fields_of_its_items(self):
+        """The page's 简报 (docs/web.md 专项条目 v41): ``background`` and ``actions`` (the dropped too, nothing of the lead's ``job``), the item's
+        ``title``, ``waiting_on`` (written: '' too), ``done_at`` and ``topics`` only on an item that has them."""
+        self.thread(OTHER, "对账", 8, status="done")
+        self.brief()
+        self.sync.push_once(T0 + 5)
+        data = self.web.items("project")[-1]["data"]
+        self.assertEqual(data["background"], "迁账单到新库")
+        self.assertEqual(data["actions"], [
+            {"id": "a1", "title": "导出", "note": "在做", "items": ["c1", "c2"], "topics": [OTHER], "state": "open", "at": T0 + 1},
+            {"id": "a2", "title": "试试看", "note": "", "items": [], "topics": [], "state": "dropped", "at": T0 + 2}])
+        first, second = data["checklist"]
+        self.assertEqual({key: first[key] for key in ("title", "waiting_on", "done_at", "topics")},
+                         {"title": "新库能写", "waiting_on": "", "done_at": T0 + 3, "topics": [TOPIC]})
+        self.assertEqual(set(second), set(app_collect.CHECKLIST_SHOWN))  # An item with none of them: the keys as before.
+        self.assertNotIn("gaps", data)
+
+    def test_the_newer_fields_are_each_left_out_when_the_record_says_nothing(self):
+        self.brief()
+        projects.update(self.state, PID, lambda record: record["checklist"]["items"][0].update(waiting_on=None, done_at=0, topics=[], title=""))
+        self.sync.push_once(T0 + 5)
+        first = self.web.items("project")[-1]["data"]["checklist"][0]
+        self.assertEqual(set(first), set(app_collect.CHECKLIST_SHOWN))
+
+    def test_a_changed_action_or_background_alone_builds_the_project_again(self):
+        self.brief()
+        self.sync.push_once(T0 + 5)
+        self.assertEqual(self.sync.push_once(T0 + 6), 0)
+        projects.update(self.state, PID, lambda record: record["actions"]["items"][0].update(note="做完了", at=T0 + 7))
+        self.assertEqual(self.sync.push_once(T0 + 8), 1)
+        self.assertEqual(self.web.items("project")[-1]["data"]["actions"][0]["note"], "做完了")
+        projects.update(self.state, PID, lambda record: record["lead_background"].update(text="换了背景"))
+        self.assertEqual(self.sync.push_once(T0 + 9), 1)
+        self.assertEqual(self.web.items("project")[-1]["data"]["background"], "换了背景")
+
+    def gap(self, text="缺原版基线数据", at=T0 + 3, thread=OTHER):
+        return project_lead.add_receipt(self.state, PID, collab.RECEIPT_GAP, text, thread=thread, at=at)
+
+    def test_the_gaps_not_dealt_with_are_pushed_and_one_that_comes_or_is_closed_builds_the_project_again(self):
+        mock.patch.dict(os.environ, {turn_source.SWITCH: "1"}).start()
+        self.addCleanup(mock.patch.stopall)
+        self.thread(OTHER, "对账", 8, status="done")
+        self.brief()
+        self.sync.push_once(T0 + 5)
+        self.assertNotIn("gaps", self.web.items("project")[-1]["data"])
+        self.assertEqual(self.sync.push_once(T0 + 6), 0)
+        receipt = self.gap(text="缺" * 300)
+        self.gap(text="两份结果冲突", at=T0 + 4, thread="")
+        self.assertEqual(self.sync.push_once(T0 + 7), 1)  # A receipt alone, no change of the record.
+        gaps = self.web.items("project")[-1]["data"]["gaps"]
+        self.assertEqual([(row["thread"], len(row["text"]), row["at"]) for row in gaps], [(OTHER, 200, T0 + 3), ("", 6, T0 + 4)])
+        self.assertEqual(gaps[0]["id"], project_checklist.gap_id(receipt["id"]))
+        self.assertEqual(set(gaps[0]), {"id", "thread", "text", "at"})
+        projects.update(self.state, PID, lambda record: project_checklist.apply(
+            record, close=[{"gap": gaps[0]["id"], "how": "T8 补了"}], receipts=project_lead.inbox_items(self.state, PID), now=T0 + 8))
+        self.assertEqual(self.sync.push_once(T0 + 9), 1)
+        self.assertEqual([row["id"] for row in self.web.items("project")[-1]["data"]["gaps"]], [gaps[1]["id"]])
+
+    def test_with_collab_off_no_gap_is_pushed(self):
+        self.brief()
+        self.gap()
+        self.sync.push_once(T0 + 5)
+        self.assertNotIn("gaps", self.web.items("project")[-1]["data"])
+
+    def checkpoint(self, **fields):
+        path = self.state / "checkpoint.json"
+        write_json(path, {"phase": "改卡片", "completed": [], "artifacts": [], "next_step": "", "requires_user": False, **fields})
+        return path
+
+    def test_a_running_topic_says_its_next_step_and_what_it_waits_for_from_its_checkpoint(self):
+        """Data contract v41: ``progress`` carries ``next_step`` (120 characters) and ``waiting`` (the question while ``requires_user``, 160),
+        each only when the checkpoint has one: not the seed's next step, not "无"; core/progress.py's own fields are as they were."""
+        self.topic(status="running", lines=(("user", "做一下"),))
+        path = self.checkpoint(next_step="补测试" + "试" * 200, requires_user=True, question="用哪个库？" + "问" * 200)
+        write_job(self.state, f"k-{TOPIC[:4]}", checkpoint_path=str(path), phase="改卡片", timings={"backend_requested": T0 - 60})
+        self.sync.push_once(T0)
+        progress = [item for item in self.web.items("topic") if item["key"] == TOPIC][-1]["data"]["progress"]
+        self.assertEqual((len(progress["next_step"]), progress["next_step"][:3], len(progress["waiting"]), progress["waiting"][:6]),
+                         (120, "补测试", 160, "用哪个库？问"))
+        self.assertEqual(progress["phase"], "改卡片")
+        for fields in ({"next_step": "检查任务要求与已有状态"}, {"next_step": "无"}, {"next_step": "无。"}, {"next_step": "", "question": "x"},
+                       {"requires_user": True, "question": ""}):
+            with self.subTest(fields=fields):
+                path = self.checkpoint(**fields)
+                self.sync.collector.touch(TOPIC)
+                write_job(self.state, f"k-{TOPIC[:4]}", checkpoint_path=str(path), updated_at=f"2026-11-25T10:00:0{len(fields)}Z")
+                self.sync.push_once(T0 + 1)
+                progress = [item for item in self.web.items("topic") if item["key"] == TOPIC][-1]["data"]["progress"]
+                self.assertFalse({"next_step", "waiting"} & set(progress), progress)
 
 
 class LeadTest(WebCase):

@@ -1,5 +1,5 @@
-// 专项的「进度」标签（v40，client/src/cv/progressData.ts）：目标检查表分栏（做完 / 正在做 / 将要做 / 等你）、尾巴、解锁反查、依赖图（成环不死循环）、
-// “等你”按缺口文字推断、近 10 条决定和里程碑，服务端怎么过滤 Covey 推来的三样。跑：npm run test:progress
+// 专项的「进度」三栏（v40，client/src/cv/progressData.ts；v41 起并进「简报」标签，负责人还没写简报时显示）：目标检查表分栏（做完 / 正在做 / 将要做 / 等你）、尾巴、解锁反查、依赖图（成环不死循环）、
+// “等你”先看 waiting_on、没写过再按缺口文字推断、近 10 条决定和里程碑，服务端怎么过滤 Covey 推来的三样。简报的在 brief.test.mjs。跑：npm run test:progress
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -196,8 +196,9 @@ test('服务端只收数组，按类型过滤：state 只认 open、done、block
   assert.equal(S.projectNotesOf(Array.from({ length: 14 }, (_, i) => ({ id: `n${i}`, text: `第 ${i} 条` }))).length, 10);
 });
 
-test('专项页：「进度」放在全图和报告之间，路由 /progress，手机上同样一个标签', () => {
+test('专项页：第一期的三栏并进「简报」标签，负责人还没写背景和动作时才在那里显示，不再单独占标签', () => {
   const page = readFileSync(join(CV, 'ProjectPage.tsx'), 'utf8');
-  assert.match(page, /\['graph', '\/graph', '全图'\], \['progress', '\/progress', '进度'\], \['report', '\/report', '报告'\]/u);
-  assert.match(page, /rest\.startsWith\('\/progress'\)/u);
+  assert.match(page, /\['brief', '\/brief', '简报'\]/u);
+  assert.doesNotMatch(page, /ProjectProgress/u);
+  assert.match(readFileSync(join(CV, 'ProjectBrief.tsx'), 'utf8'), /<ProjectProgress /u);
 });

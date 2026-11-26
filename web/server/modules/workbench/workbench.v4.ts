@@ -1,14 +1,18 @@
 /* 数据约定 v4 的可选字段：话题要点 gist、进度 progress、问题卡的回答 answers、没做成的一轮 failure。
  * Covey 推来的是 jsonb，形状不对就当没有（返回 undefined），页面拿不到就不画那一块。 */
 import {
+  ACTION_STATES,
   CHECKLIST_STATES,
   FAILURE_ACTIONS,
   FAILURE_HOWS,
   RECOVER_ACTIONS,
+  type ActionStoredState,
+  type BriefAction,
   type ChecklistItem,
   type ChecklistState,
   type FailureAction,
   type OwnerSendDraft,
+  type ProjectGap,
   type ProjectNote,
   type SettingsAsks,
   type TopicRevisit,
@@ -72,6 +76,11 @@ export function progressOf(v: unknown): TopicProgress | undefined {
   if ('slow_step' in d) p.slow_step = slowStepOf(d.slow_step);
   const command: TopicCommand | undefined = commandOf(d.command);
   if (command) p.command = command;
+  // v41：下一步、在等主人答什么（专项「简报」的 session 行用）
+  const next: string = clip(d.next_step, 120);
+  if (next) p.next_step = next;
+  const waiting: string = clip(d.waiting, 160);
+  if (waiting) p.waiting = waiting;
   return Object.keys(p).length ? p : undefined;
 }
 
@@ -308,10 +317,61 @@ export function checklistOf(v: unknown): ChecklistItem[] | undefined {
     const criterion: string = clip(d.criterion, 400);
     if (!ITEM_ID.test(id) || !criterion || !isState(d.state) || out.some((it: ChecklistItem) => it.id === id)) continue;
     const needs: string[] = Array.isArray(d.needs) ? d.needs.filter((n: unknown): n is string => typeof n === 'string' && ITEM_ID.test(n)).slice(0, 12) : [];
-    out.push({ id, criterion, topic: clip(d.topic, 64), needs, evidence: clip(d.evidence, 400), gap: clip(d.gap, 400), state: d.state, at: finite(d.at) ?? 0 });
+    const item: ChecklistItem = { id, criterion, topic: clip(d.topic, 64), needs, evidence: clip(d.evidence, 400), gap: clip(d.gap, 400), state: d.state, at: finite(d.at) ?? 0 };
+    // v41 的可选字段：没有（或形状不对）就不带键，旧页面照旧
+    const title: string = clip(d.title, 40);
+    if (title) item.title = title;
+    if (d.waiting_on === 'owner' || d.waiting_on === '') item.waiting_on = d.waiting_on;
+    const doneAt: number | undefined = finite(d.done_at);
+    if (doneAt !== undefined && doneAt > 0) item.done_at = doneAt;
+    const topics: string[] = refsOf(d.topics, 12);
+    if (topics.length) item.topics = topics;
+    out.push(item);
   }
   return out.length ? out.slice(0, 50) : undefined;
 }
+
+/** 话题引用的列表（key 或 T 号）：字符串、去空去重、各 64 字 */
+function refsOf(v: unknown, max: number): string[] {
+  if (!Array.isArray(v)) return [];
+  return [...new Set(v.map((x: unknown) => clip(x, 64)).filter(Boolean))].slice(0, max);
+}
+
+/* v41：专项「简报」（Covey app/web_collect.py progress_fields）。动作、缺口都是数组，每条按类型过滤；一条都不剩就当没推 */
+const ACTION_ID = /^a[1-9][0-9]{0,3}$/u;
+
+/** 动作（Covey 限没 dropped 的最多 10 个，id 不复用，所以 dropped 的也会推来；这里放宽到 40）：id 是 a 加数字，title 不空，
+ * state 只认 open、dropped；items 只留条目 id，topics 是话题引用 */
+export function actionsOf(v: unknown): BriefAction[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: BriefAction[] = [];
+  for (const x of v) {
+    const d: Record<string, unknown> = obj(x);
+    const id: string = str(d.id);
+    const title: string = clip(d.title, 60);
+    if (!ACTION_ID.test(id) || !title || !(ACTION_STATES as readonly unknown[]).includes(d.state) || out.some((a: BriefAction) => a.id === id)) continue;
+    const items: string[] = Array.isArray(d.items) ? [...new Set(d.items.filter((n: unknown): n is string => typeof n === 'string' && ITEM_ID.test(n)))].slice(0, 50) : [];
+    out.push({ id, title, note: clip(d.note, 200), items, topics: refsOf(d.topics, 40), state: d.state as ActionStoredState, at: finite(d.at) ?? 0 });
+  }
+  return out.length ? out.slice(0, 40) : undefined;
+}
+
+/** 没处理的协作缺口（最多 50 条）：id 和 text 不空才要 */
+export function gapsOf(v: unknown): ProjectGap[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const out: ProjectGap[] = [];
+  for (const x of v) {
+    const d: Record<string, unknown> = obj(x);
+    const id: string = clip(d.id, 32);
+    const text: string = clip(d.text, 200);
+    if (!id || !text) continue;
+    out.push({ id, thread: clip(d.thread, 64), text, at: finite(d.at) ?? 0 });
+  }
+  return out.length ? out.slice(0, 50) : undefined;
+}
+
+/** 背景（≤300 字）：非空字符串才要 */
+export const backgroundOf = (v: unknown): string | undefined => clip(v, 300) || undefined;
 
 /** 里程碑、决定日志（各最新 10 条，旧的在前）：text 不空才要 */
 export function projectNotesOf(v: unknown): ProjectNote[] | undefined {

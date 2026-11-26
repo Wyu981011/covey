@@ -1,4 +1,4 @@
-/* 专项的「进度」标签（v39，ProjectProgress.tsx）：颜色只用 token，深浅两种模式同一套；状态色配图标和字，不单靠颜色。
+/* 专项的「进度」标签（v40，ProjectProgress.tsx）：颜色只用 token，深浅两种模式同一套；状态色配图标和字，不单靠颜色。
    做完绿 --done、在做蓝 --run、等你琥珀 --wait、将要做和不做了是中性灰 --t3 */
 .cv .k-done{--c:var(--done)}
 .cv .k-doing{--c:var(--run)}
@@ -16,6 +16,9 @@
 .cv .pg-h{margin:0 0 6px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:0;color:var(--t1)}
 .cv .pg-h em{font-style:normal;margin-left:5px}
 .cv .pg-h .pg-hint{margin-left:auto;padding-left:10px;font-weight:400;color:var(--t3);font-size:11px;text-align:right}
+
+/* 简报退回到这里时顶上那一句（ProjectProgress 的 hint） */
+.cv .pg-hintbar{font-size:12.5px;color:var(--t2);background:var(--s2);border:1px dashed var(--line2);border-radius:8px;padding:7px 10px}
 
 /* 顶上一行：多少条、分段条（段间 2px 缝）、图例 */
 .cv .pg-sum{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;min-height:30px}
