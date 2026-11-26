@@ -14,13 +14,15 @@ import type {
   SettingsProxyContact,
   SettingsProxyPage,
   SettingsRedactionPage,
+  SettingsRepoItem,
+  SettingsReposPage,
   SettingsRow,
   SettingsTone,
   SettingsTopicPage,
   SettingsWorkspaceItem,
   SettingsWorkspacePage,
 } from '@shared/api.interface';
-import { newOpId, useMemory, useQuota, useSettings, useUpgrade } from '@client/src/hooks/use-workbench';
+import { newOpId, useMemoryMode, useQuota, useSettings, useUpgrade } from '@client/src/hooks/use-workbench';
 import { MainMemory } from './MainMemory';
 import { UpgradePanel } from './Upgrade';
 import { QuotaPanel } from './Quota';
@@ -34,7 +36,9 @@ import { pickKind } from './launch';
 import { appendLines, dropLine, planTerms, type TermLine, type TermPlan } from './redactionTerms';
 import { opWords, plainReceipt } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
+import * as RP from './reposPage';
 import './settings.css';
+import './repos.css';
 
 /* ---------- 发件：每个动作一个 id，保存中 → 回执（Covey 回的话，回执前 Covey 已推新快照）→ 立刻重拉快照，2 秒后再拉一次保险 ---------- */
 /** late：等满了 Covey 还没回音（不是失败：操作还在发件箱里，Covey 回来会照做；说法同 opWords，P1-C2） */
@@ -504,6 +508,187 @@ const WorkspaceTab: React.FC<{ p: SettingsWorkspacePage; ops: Ops; feishu: strin
   );
 };
 
+/* ---------- 仓库页（v43）：纯函数在 reposPage.ts，样式在 repos.css（类名前缀 rp-） ---------- */
+const RepoRow: React.FC<{ it: SettingsRepoItem; ops: Ops; now: number }> = ({ it, ops, now }) => {
+  const [edit, setEdit] = useState<boolean>(false);
+  const [ask, setAsk] = useState<boolean>(false);
+  const [d, setD] = useState<RP.RepoDraft>(RP.draftOf(it));
+  const sid = `repo:set:${it.name}`;
+  const rid = `repo:rm:${it.name}`;
+  const busy: boolean = ops.st[sid]?.phase === 'saving';
+  const payload = RP.repoSetPayload(it, d);
+  const save = (): void => {
+    if (!payload) return;
+    setEdit(false);
+    void ops.run(sid, payload);
+  };
+  const label: string = RP.statusLabel(it.status);
+  return (
+    <div className={`rp-row${it.status !== 'active' ? ' dim' : ''}`}>
+      <div className="rp-main">
+        <div className="rp-hd">
+          <b className="rp-name">{it.name}</b>
+          {label ? <span className="pill tone-queued">{label}</span> : null}
+        </div>
+        {it.note ? <div className="rp-note">{it.note}</div> : null}
+        <div className="rp-meta">{RP.repoMeta(it, now, ago).join(' · ')}</div>
+      </div>
+      {!edit && !ask ? (
+        <div className="rp-act">
+          <button type="button" className="st-link" disabled={busy} onClick={() => { setD(RP.draftOf(it)); setEdit(true); }}>改</button>
+          <button type="button" className="st-link danger" disabled={ops.st[rid]?.phase === 'saving'} onClick={() => setAsk(true)}>移除</button>
+        </div>
+      ) : null}
+      {edit ? (
+        <div className="rp-edit">
+          <div className="rp-f">
+            <input
+              className="st-in-t"
+              value={d.note}
+              maxLength={RP.NOTE_MAX}
+              autoFocus
+              placeholder="写一句它是干什么的"
+              aria-label="用途"
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setD({ ...d, note: e.target.value })}
+              onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEdit(false); }}
+            />
+            <span className="st-cnt">{Array.from(d.note).length}/{RP.NOTE_MAX}</span>
+          </div>
+          <div className="rp-f">
+            <select className="st-sel" aria-label="状态" value={d.status} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setD({ ...d, status: e.target.value as RP.RepoStatus })}>
+              {RP.STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
+            </select>
+            <select className="st-sel" aria-label="写法" value={d.write_mode} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setD({ ...d, write_mode: e.target.value as RP.RepoWriteMode })}>
+              {RP.MODE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.text}</option>)}
+            </select>
+          </div>
+          <div className="rp-f">
+            <button type="button" className="btn pri sm" disabled={!payload} onClick={save}>保存</button>
+            <button type="button" className="btn sm st-quiet" onClick={() => setEdit(false)}>取消</button>
+          </div>
+        </div>
+      ) : null}
+      {ask ? (
+        <Confirm
+          text="只是不再登记，目录不删"
+          ok="确认移除"
+          busy={ops.st[rid]?.phase === 'saving'}
+          onOk={() => { setAsk(false); void ops.run(rid, RP.repoRemovePayload(it.name)); }}
+          onNo={() => setAsk(false)}
+        />
+      ) : null}
+      <Receipt s={ops.st[sid]} />
+      <Receipt s={ops.st[rid]} />
+    </div>
+  );
+};
+
+const RepoAdd: React.FC<{ ops: Ops }> = ({ ops }) => {
+  const [path, setPath] = useState<string>('');
+  const [name, setName] = useState<string>('');
+  const [note, setNote] = useState<string>('');
+  const [more, setMore] = useState<boolean>(false);
+  const s: Phase | undefined = ops.st['repo:add'];
+  const busy: boolean = s?.phase === 'saving';
+  const payload = RP.repoAddPayload(path, name, note);
+  const add = (): void => {
+    if (!payload) return;
+    void ops.run('repo:add', payload);
+    setPath(''); setName(''); setNote('');
+  };
+  const onKey = (e: React.KeyboardEvent): void => { if (e.key === 'Enter') add(); };
+  return (
+    <>
+      <h3 className="st-h">添加仓库</h3>
+      <div className="st-list">
+        <div className="rp-add">
+          <div className="rp-addrow">
+            <input className="st-in-t" value={path} maxLength={RP.PATH_MAX} disabled={busy} placeholder="绝对路径，或 设备别名:路径" aria-label="仓库路径"
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPath(e.target.value)} onKeyDown={onKey} />
+            <button type="button" className="btn pri" disabled={busy || !payload} onClick={add}>添加</button>
+          </div>
+          {more ? (
+            <div className="rp-addrow">
+              <input className="st-in-t" value={name} maxLength={RP.NAME_MAX} disabled={busy} placeholder="名字（可不填）" aria-label="仓库名字"
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)} onKeyDown={onKey} />
+              <input className="st-in-t" value={note} maxLength={RP.NOTE_MAX} disabled={busy} placeholder="用途（可不填）" aria-label="仓库用途"
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNote(e.target.value)} onKeyDown={onKey} />
+            </div>
+          ) : <button type="button" className="st-link rp-more" onClick={() => setMore(true)}>更多</button>}
+        </div>
+      </div>
+      <Receipt s={s} />
+    </>
+  );
+};
+
+const RepoPrune: React.FC<{ p: SettingsReposPage; ops: Ops }> = ({ p, ops }) => {
+  const list = p.worktrees?.prunable ?? [];
+  const [sel, setSel] = useState<string[]>([]);
+  const [ask, setAsk] = useState<boolean>(false);
+  const s: Phase | undefined = ops.st['wt:prune'];
+  const busy: boolean = s?.phase === 'saving';
+  // 快照变了，没了的勾选自动丢掉
+  const picked: string[] = RP.keepSelected(sel, list);
+  const batch = RP.pruneBatch(picked, list);
+  if (!list.length) {
+    return (
+      <>
+        <div className="rp-none">{RP.pruneEmptyText(p.worktrees?.total ?? 0)}</div>
+        <Receipt s={s} />
+      </>
+    );
+  }
+  const all: boolean = picked.length === list.length;
+  return (
+    <>
+      <h3 className="st-h">可清理的 worktree（{list.length}）</h3>
+      <div className="st-list">
+        <div className="rp-pr-hd">
+          <label className="rp-chk"><input type="checkbox" checked={all} onChange={() => { setAsk(false); setSel(RP.toggleAll(picked, list)); }} />全选</label>
+        </div>
+        {list.map((w) => {
+          const k: string = RP.pruneKey(w);
+          return (
+            <label key={k} className="rp-pr">
+              <input type="checkbox" checked={picked.includes(k)} onChange={() => { setAsk(false); setSel(RP.toggleKey(picked, k)); }} />
+              <span className="rp-prt">{RP.pruneLine(w)}</span>
+            </label>
+          );
+        })}
+        <div className="rp-pr-ft">
+          {ask && picked.length ? (
+            <Confirm
+              text={RP.pruneAskText(batch.paths.length, batch.rest)}
+              ok="确认清理"
+              busy={busy}
+              onOk={() => { setAsk(false); setSel(picked.filter((x) => !batch.paths.includes(x))); void ops.run('wt:prune', RP.prunePayload(batch.paths)); }}
+              onNo={() => setAsk(false)}
+            />
+          ) : (
+            <button type="button" className="btn" disabled={busy || !picked.length} onClick={() => setAsk(true)}>清理选中的 {picked.length} 个</button>
+          )}
+        </div>
+      </div>
+      <Receipt s={s} />
+    </>
+  );
+};
+
+const ReposTab: React.FC<{ p: SettingsReposPage; ops: Ops; feishu: string }> = ({ p, ops, feishu }) => {
+  const now: number = useTick(60000);
+  return (
+    <>
+      <Top summary={RP.summaryText(p)} feishu={feishu} />
+      <div className="st-list rp-list">
+        {p.items.length ? p.items.map((it) => <RepoRow key={it.name} it={it} ops={ops} now={now} />) : <div className="st-r st-tr"><span className="st-faint">还没有仓库</span></div>}
+      </div>
+      <RepoAdd ops={ops} />
+      <RepoPrune p={p} ops={ops} />
+    </>
+  );
+};
+
 const Switch: React.FC<{ on: boolean; busy: boolean; label: string; onClick: () => void }> = ({ on, busy, label, onClick }) => (
   <button type="button" role="switch" aria-checked={on} aria-label={label} className={`st-sw${on ? ' on' : ''}`} disabled={busy} onClick={onClick}><i /></button>
 );
@@ -893,6 +1078,7 @@ const Body: React.FC<{ data: SettingsData; tab: string; ops: Ops }> = ({ data, t
     case 'config': return <ConfigTab p={page as SettingsConfigPage} ops={ops} feishu={f} />;
     case 'topic': return <TopicTab p={page as SettingsTopicPage} ops={ops} feishu={f} />;
     case 'main': return <MainTab p={page as SettingsMainPage} ops={ops} feishu={f} />;
+    case 'repos': return <ReposTab p={page as SettingsReposPage} ops={ops} feishu={f} />;
     case 'workspace': return <WorkspaceTab p={page as SettingsWorkspacePage} ops={ops} feishu={f} />;
     case 'redaction': return <RedactionTab p={page as SettingsRedactionPage} ops={ops} feishu={f} />;
     case 'groups': return <GroupsTab p={page as SettingsGroupsPage} ops={ops} feishu={f} />;
@@ -908,16 +1094,19 @@ const MEMORY_TAB = { key: 'memory', label: '记忆' };
 const SettingsPage: React.FC = () => {
   const { tab } = useParams<{ tab: string }>();
   const q = useSettings();
-  const mem = useMemory();
+  const mem = useMemoryMode();
   const ops: Ops = useOps();
   const snap = q.data ?? null;
-  const memoryOn: boolean = !!mem.data?.data?.on;
+  // v43：记忆搬到了记忆中心（/memory），设置页不再有「记忆」页签；旧 Covey（只推 v37 的 memory）照旧
+  const memoryOn: boolean = mem.mode === 'v37';
   // 「更新」（v39）：Covey 认 upgrade 操作、也推过版本条目才有，排在最后
   const upgradable: boolean = canDo(snap?.data.ops, 'upgrade');
   const up = useUpgrade(upgradable);
   const upgradeShown: boolean = upgradeOn(snap?.data.ops, up.data);
+  // v43：Covey 推了 repos 就把「工作区」换成「仓库」（旧 Covey 照旧）
+  const covTabs: { key: string; label: string }[] = snap ? RP.tabsWithRepos(snap.data.tabs, snap.data) : [];
   const base: { key: string; label: string }[] = snap
-    ? (memoryOn ? [...snap.data.tabs.slice(0, 1), MEMORY_TAB, ...snap.data.tabs.slice(1)] : snap.data.tabs)
+    ? (memoryOn ? [...covTabs.slice(0, 1), MEMORY_TAB, ...covTabs.slice(1)] : covTabs)
     : [];
   // 「账号与额度」（v42）：Covey 认 quota_refresh 操作、也推了来源才有，排在「更新」前
   const quotable: boolean = canDo(snap?.data.ops, 'quota_refresh');
@@ -929,7 +1118,11 @@ const SettingsPage: React.FC = () => {
   const mark: boolean = !!upgradeMark(up.data?.data);
   const first: string | undefined = tabs[0]?.key;
   // 「记忆」「更新」要等各自的数据取回来再判断有没有，免得刷新时先被跳到第一页
-  const waiting: boolean = (tab === MEMORY_TAB.key && mem.isLoading) || (tab === UPGRADE_TAB.key && upgradable && up.isLoading) || (tab === QUOTA_TAB.key && quotable && qt.isLoading);
+  // 仓库模式下旧地址 /settings/workspace 跳到 /settings/repos
+  const toRepos: string | null = snap ? RP.repoRedirect(tab, tabs) : null;
+  if (toRepos) return <Navigate to={`/settings/${toRepos}`} replace />;
+  if (tab === MEMORY_TAB.key && mem.mode === 'v43') return <Navigate to="/memory" replace />;
+  const waiting: boolean = (tab === MEMORY_TAB.key && mem.mode === 'loading') || (tab === UPGRADE_TAB.key && upgradable && up.isLoading) || (tab === QUOTA_TAB.key && quotable && qt.isLoading);
   if (snap && first && !waiting && (!tab || !tabs.some((t) => t.key === tab))) return <Navigate to={`/settings/${first}`} replace />;
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { Check, Copy } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { TurnRanWith, TurnView } from '@shared/api.interface';
 import { fmtDur, fmtTok, turnStats } from './lib';
 import { criteriaSummary, deliveryBits } from './v34';
 import './v34.css';
+import './launch.css';
 
 /* 回答下面的输入、输出两行和「复制」（T645）：话题页、大厅的回答和大厅里展开的话题结论（回带）共用，和飞书答案卡、回带卡一样 */
 
@@ -62,6 +64,7 @@ export const AnswerFoot: React.FC<{
 }> = ({ turn, copy: what }) => {
   const [done, setDone] = useState<boolean>(false);
   const [open, setOpen] = useState<boolean>(false);
+  const [memOpen, setMemOpen] = useState<boolean>(false);
   const rows: { label: string; tip: string; bits: string[] }[] = [
     { label: '输入', tip: '这一轮用的配置', bits: inputBits(turn.ran_with) },
     { label: '输出', tip: '这一轮的用时和用量', bits: outputBits(turn) },
@@ -70,6 +73,32 @@ export const AnswerFoot: React.FC<{
   ].filter((r) => r.bits.length > 0);
   // v34：完成标准一行：几条满足，点开是每一条和它的依据
   const crit = criteriaSummary(turn.criteria);
+  // v43：这一轮带了几条记忆、用到几条；点开每条是链接，去记忆中心按短码看
+  const mem = turn.memory && turn.memory.count > 0 ? turn.memory : null;
+  const memText: string = mem ? `带了 ${mem.count} 条记忆${mem.used.length ? ` · 用到 ${mem.used.length} 条` : ''}` : '';
+  const memRow: React.ReactNode = mem ? (
+    <>
+      <div className="afoot-row" key="memory">
+        <b>记忆</b>
+        <span className="afoot-bits">
+          {mem.used.length ? (
+            <button type="button" className="afoot-crit" aria-expanded={memOpen} onClick={() => setMemOpen(!memOpen)}>
+              {memText}{memOpen ? ' · 收起' : ' · 展开'}
+            </button>
+          ) : <span>{memText}</span>}
+        </span>
+      </div>
+      {memOpen && mem.used.length ? (
+        <div className="afoot-list">
+          {mem.used.map((title: string, i: number) => (
+            <span key={i}>
+              {mem.codes[i] ? <Link to={`/memory?code=${encodeURIComponent(mem.codes[i])}`}><span className="st">{mem.codes[i]}</span>{title}</Link> : title}
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </>
+  ) : null;
   const copy = (): void => {
     void copyText(what?.text ?? turn.body).then((ok: boolean) => {
       if (!ok) {
@@ -88,14 +117,18 @@ export const AnswerFoot: React.FC<{
   );
   return (
     <div className="afoot">
+      {rows.some((r) => r.label === '输入') ? null : memRow}
       {rows.map((r, i: number) => (
-        <div className="afoot-row" key={r.label}>
+        <React.Fragment key={r.label}>
+        <div className="afoot-row">
           <b>{r.label}</b>
           <span className="afoot-bits">
             {r.bits.map((x: string, j: number) => <span key={j} title={r.tip}>{x}</span>)}
             {i === rows.length - 1 ? button : null}
           </span>
         </div>
+        {r.label === '输入' ? memRow : null}
+        </React.Fragment>
       ))}
       {rows.length ? null : <div className="afoot-row">{button}</div>}
       {crit.text ? (

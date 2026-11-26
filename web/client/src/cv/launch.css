@@ -42,3 +42,13 @@
   .cv .lx-bar{flex-wrap:wrap}
   .cv .lx-sum{flex:1 1 100%;white-space:normal}
 }
+
+/* v43：仓库选择行（点一下 不用 → 只读 → 可写）和一轮的记忆链接 */
+.cv .lx-repos{display:flex;flex-wrap:wrap;gap:6px}
+.cv .lx-rp{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;border:1px dashed var(--line2);background:transparent;color:var(--t3);font-size:12px;cursor:pointer;white-space:nowrap}
+.cv .lx-rp:hover{color:var(--t1)}
+.cv .lx-rp.read{border-style:solid;background:var(--s2);color:var(--t1)}
+.cv .lx-rp.write{border-style:solid;background:color-mix(in srgb,var(--a1) 22%,transparent);color:var(--t1);font-weight:600}
+.cv .lx-rp .lx-rm{font-size:11px;color:var(--t3);font-weight:400}
+.cv .afoot-list a{color:var(--t2);text-decoration:none}
+.cv .afoot-list a:hover{color:var(--a1)}

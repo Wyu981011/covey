@@ -5,18 +5,19 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { LaunchData, LaunchModel, SnapshotTopic, SwitchPayload } from '@shared/api.interface';
 import { newOpId, useSettings } from '@client/src/hooks/use-workbench';
+import { isRepoMode, repoLabel, sameRepos, switchPayload } from './launchRepos';
 import { LaunchPanel, type PanelBox } from './LaunchPanel';
 import { engineText } from './lib';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 import { onOpenSwitch } from './switchOpen';
 import { popPlace, POP_GAP, type PopPlace } from './popPlace';
-import { changedFields, fromConfig, leadData, switchBlock, type SwitchSel } from './switchConfig';
+import { changedFields, fromConfig, leadData, switchBlock, withTopicRepos, type SwitchSel } from './switchConfig';
 import './launch.css';
 import './composer.css';
 
 const FIELD_WORD: Record<string, string> = {
-  model: '模型', effort: '思考预算', work_mode: '工作模式', workspace: '工作区', run_mode: '运行方式', redaction: '脱敏',
+  model: '模型', effort: '思考预算', work_mode: '工作模式', workspace: '工作区', run_mode: '运行方式', redaction: '脱敏', device: '执行设备', repos: '仓库',
 };
 type Phase = 'idle' | 'sending' | 'failed';
 
@@ -52,7 +53,7 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
     };
   }, []);
   // 初值按整个目录补（负责人现在的模型不在负责人能用的里面时也认得出它，下面说清为什么不能确认）
-  const base: SwitchSel | null = useMemo(() => (all && config ? fromConfig(all, config) : null), [all, config]);
+  const base: SwitchSel | null = useMemo(() => (all && config ? withTopicRepos(all, fromConfig(all, config), lead ? undefined : topic?.repos) : null), [all, config, lead, topic?.repos]);
   // 没成功的一轮上的「换个模型」（v33 how=switch）直接展开这里，不再让你去飞书点「换配置」；
   // 从看板点过来的带 ?switch=1，面板能用了就展开一次
   const live: boolean = !!base && !!topic;
@@ -121,8 +122,9 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
   }, [open, phase]);
 
   const model: LaunchModel | undefined = all && config ? all.models.find((m: LaunchModel) => m.key === config.model) : undefined;
+  // 话题带仓库（新 Covey）时写“仓库 a、b”，没有就照旧写工作区
   const label: string = [
-    (config?.workspace ?? workspace) ? `工作区 ${config?.workspace ?? workspace}` : '',
+    repoLabel(topic?.repos) || ((config?.workspace ?? workspace) ? `工作区 ${config?.workspace ?? workspace}` : ''),
     model ? `${model.harness_title} · ${topic?.model_name || model.label}` : engineText(topic),
   ].filter(Boolean).join(' · ');
   if (!all || !data || !config || !base) return <span className="t3 cfg-ro" style={{ fontSize: 12 }}>{label}</span>;
@@ -147,7 +149,8 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
   };
   const confirm = (): void => {
     if (!topic || blocked || !changed.length || phase === 'sending') return;
-    const payload: SwitchPayload = { ...cur };
+    // 旧 Covey 原样；新 Covey 去掉 workspace、run_mode，仓库带上（全取消发 []）
+    const payload: SwitchPayload = switchPayload(all, cur, !sameRepos(base.repos, undefined), lead) as unknown as SwitchPayload;
     setPhase('sending');
     setMessage('');
     void (async (): Promise<void> => {
@@ -180,7 +183,7 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
         ) : blocked ? (
           <span className={busy ? 'warn' : 'bad'}>{blocked}</span>
         ) : changed.length ? (
-          <span>改了{changed.map((k: string) => FIELD_WORD[k] ?? k).join('、')}：{lead ? leadNext(changed) : '从下一句话起按新配置做（模型、工作区变了会开新会话，带上最近几轮）'}</span>
+          <span>改了{changed.map((k: string) => FIELD_WORD[k] ?? k).join('、')}：{lead ? leadNext(changed) : `从下一句话起按新配置做（${isRepoMode(all) ? '模型变了会开新会话' : '模型、工作区变了会开新会话'}，带上最近几轮）`}</span>
         ) : (
           <span>{lead ? '这是负责人现在的配置，改哪项点哪项' : '这是话题现在的配置，改哪项点哪项'}</span>
         )}
@@ -199,7 +202,7 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
   );
   return (
     <span className="cfg" ref={wrap}>
-      <button type="button" className={`cfg-btn${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open} title={lead ? '换负责人的配置：Harness、模型、思考预算' : '换配置：Harness、模型、思考预算、工作区…'} data-testid="config-bar">
+      <button type="button" className={`cfg-btn${open ? ' on' : ''}`} onClick={toggle} aria-expanded={open} title={lead ? '换负责人的配置：Harness、模型、思考预算' : `换配置：Harness、模型、思考预算${isRepoMode(all) ? '、仓库' : '、工作区'}…`} data-testid="config-bar">
         <span className="cfg-tx">{label}</span>
         {open ? <ChevronUp /> : <ChevronDown />}
       </button>

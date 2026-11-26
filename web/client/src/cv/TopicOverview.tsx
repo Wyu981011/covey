@@ -8,6 +8,7 @@ import { DraftLines, LaterLine } from './V34Bits';
 import { Dot, useTick } from './ui';
 import { fmtDur, hhmm, isFinished, isRunning, isWaiting, shortWhen, toneOf, toneWord, type ToneKey } from './lib';
 import { TopicMemory } from './MemoryPanel';
+import { MemoryList, useV43TopicEntries } from './MemoryList';
 import {
   FALLBACK_FAILURE, ago, etaText, firstParagraph, firstSentence, groupRounds, isHelperTurn, lastAgent, lastDoneAgent, listTone, progressNote, splitTitle, stopPressing, type Round,
 } from './topicText';
@@ -255,7 +256,10 @@ export const TopicOverview: React.FC<{ topicKey: string; mobile?: boolean; compa
 export const MobileProgress: React.FC<{ topicKey: string }> = ({ topicKey }) => {
   const v: ProgressView = useProgressView(topicKey);
   const { data } = useTurns(topicKey);
-  const mem = data?.memory?.length ? <div className="a-mobmem"><TopicMemory topicKey={topicKey} items={data.memory} /></div> : null;
+  const v43 = useV43TopicEntries(topicKey);
+  const mem = Array.isArray(v43)
+    ? (v43.length ? <div className="a-mobmem"><MemoryList entries={v43} scope="topics" title="这个话题的记忆" /></div> : null)
+    : data?.memory?.length ? <div className="a-mobmem"><TopicMemory topicKey={topicKey} items={data.memory} /></div> : null;
   if (v.total <= 0) return mem;
   return (
     <>
@@ -270,6 +274,7 @@ export const ProgressRail: React.FC<{ topicKey: string }> = ({ topicKey }) => {
   const v: ProgressView = useProgressView(topicKey);
   const { data: snap } = useSnapshot();
   const { data } = useTurns(topicKey);
+  const v43 = useV43TopicEntries(topicKey);
   const now: number = useTick(v.live ? 1000 : 30000);
   const t: SnapshotTopic | undefined = v.topic;
   const p: TopicProgress | undefined = v.progress;
@@ -330,7 +335,7 @@ export const ProgressRail: React.FC<{ topicKey: string }> = ({ topicKey }) => {
         </>
       ) : null}
       {!v.total && !project ? <p className="a-note">这个话题还没有进度数据。</p> : null}
-      <TopicMemory topicKey={topicKey} items={data?.memory} />
+      {Array.isArray(v43) ? (v43.length ? <MemoryList entries={v43} scope="topics" title="这个话题的记忆" /> : null) : <TopicMemory topicKey={topicKey} items={data?.memory} />}
     </aside>
   );
 };

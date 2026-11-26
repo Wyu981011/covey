@@ -1,7 +1,7 @@
 /* 专项的「进度」标签（v40，docs/web.md 专项条目）：把负责人的目标检查表分成 做完 / 正在做 / 将要做 / 等你，算解锁、尾巴、依赖图，
  * 取近 10 条决定和里程碑。全是纯函数，不碰页面。v41 起这一页只在负责人还没写背景和动作时出现（简报在 briefData.ts），
  * “等你”先看条目的 waiting_on，没写过再按缺口文字推断。 */
-import type { ChecklistItem, MemoryItem, ProjectNote, QuestionView, SnapshotProject, SnapshotTopic } from '@shared/api.interface';
+import type { ChecklistItem, MemoryEntry, MemoryItem, ProjectNote, QuestionView, SnapshotProject, SnapshotTopic } from '@shared/api.interface';
 import { STATES } from './look.gen';
 import { byAsked, isRunningTone, isWaiting, toneOf } from './lib';
 
@@ -280,6 +280,34 @@ export function ownerDecisions(memory: readonly MemoryItem[] | undefined, topics
     })
     .sort((a: Decision, b: Decision) => b.at - a.at || a.id.localeCompare(b.id))
     .slice(0, n);
+}
+
+/** v43：专项的决定记录（memory:p:<专项> 里 kind=decision 的条目；作废、归档、待审核的不算），新的在前。
+ *  正文是“主人答：问题→选择”的照旧拆开；拆不开时问题是标题、答案是正文（正文就是标题时答案空） */
+export function entryDecisions(entries: readonly MemoryEntry[] | undefined, topics: readonly SnapshotTopic[], n = 10): Decision[] {
+  const numbers = new Map<string, number | null>(topics.map((t: SnapshotTopic) => [t.key, t.number]));
+  return (entries ?? [])
+    .filter((e: MemoryEntry) => e.kind === 'decision' && (e.status === 'active' || e.status === 'done') && (e.text || e.title))
+    .map((e: MemoryEntry): Decision => {
+      const body: string = (e.text || '').replace(/^\s*(\[decision\]\s*)?主人(答|定)\s*[:：]\s*/u, '').replace(/（推荐）/gu, '').trim();
+      const cut: number = body.indexOf('→');
+      const topicKey: string = e.origin?.topic_key ?? e.topic_key ?? '';
+      return {
+        id: e.key,
+        at: sec(e.origin?.at),
+        number: e.origin?.topic_number ?? e.topic_number ?? numbers.get(topicKey) ?? null,
+        topicKey,
+        question: cut >= 0 ? body.slice(0, cut).trim() : e.title || body,
+        answer: cut >= 0 ? body.slice(cut + 1).trim() : body && body !== e.title ? body : '',
+        text: e.text || e.title,
+      };
+    })
+    .sort((a: Decision, b: Decision) => b.at - a.at || a.id.localeCompare(b.id))
+    .slice(0, n);
+}
+/** 消费方用这一个：拿到了 v43 的专项条目（数组，空也算）就读决定记录，否则（旧 Covey、还没取到）照旧读 v37 的专项记忆 */
+export function projectDecisions(memory: readonly MemoryItem[] | undefined, v43: readonly MemoryEntry[] | null | undefined, topics: readonly SnapshotTopic[], n = 10): Decision[] {
+  return Array.isArray(v43) ? entryDecisions(v43, topics, n) : ownerDecisions(memory, topics, n);
 }
 
 /** 哪天：MM-DD（北京时间，同 lib.ts shortWhen，docs/ui.md 第 7 节） */

@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, NotFoundException, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { NeedLogin } from '@lark-apaas/fullstack-nestjs-core';
 import type {
@@ -25,7 +25,9 @@ import type {
   MainMemoryResponse,
   UpgradeResponse,
   QuotaResponse,
+  MemoryKeyResponse,
 } from '@shared/api.interface';
+import { MEMORY_KEY_RE } from '@shared/api.interface';
 import { WorkbenchImagesService } from './workbench.images.service';
 import { WorkbenchQueryService } from './workbench.query.service';
 import { WorkbenchUploadsService } from './workbench.uploads.service';
@@ -75,11 +77,15 @@ export class WorkbenchController {
     return this.svc.settings();
   }
 
-  /** v37：主记忆（全局和各工作区的原则、知识条目、候选）；Covey 还没推过就是 null */
+  /** v37：主记忆（全局和各工作区的原则、知识条目、候选）；Covey 还没推过就是 null。
+   *  v43：带 ?key=memory:index（或 MEMORY_KEY_RE 认的别的 memory:* 键）取记忆中心那一键，没推过是 null；不认的键 400 */
   @Get('memory')
-  memory(@Req() req: Request): Promise<MainMemoryResponse | null> {
+  memory(@Req() req: Request, @Query('key') key?: string): Promise<MainMemoryResponse | MemoryKeyResponse | null> {
     mustBeOwner(req);
-    return this.svc.memory();
+    if (key === undefined || key === '') return this.svc.memory();
+    const k: string = String(key);
+    if (!MEMORY_KEY_RE.test(k)) throw new BadRequestException('key 要是 memory:* 记忆键（memory:index、memory:global、memory:p:<专项 id>…）');
+    return this.svc.memoryKey(k);
   }
 
   /** v39：版本与更新（现网和最新的 release、更新内容、上次升级的结果）；Covey 没推过就是 null */

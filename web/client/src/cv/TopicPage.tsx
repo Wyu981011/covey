@@ -12,6 +12,7 @@ import { Pill } from './ui';
 import { engineText, harnessName, isRunning, isWaiting, toneOf, toneWord, type ToneKey } from './lib';
 import { MobileProgress, ProgressRail, TopicOverview } from './TopicOverview';
 import { PaneHandle } from './PaneHandle';
+import { repoLabel } from './launchRepos';
 import { TOPIC_RAIL } from './panes';
 import { TopicBadge } from './RoleAvatar';
 import { lastAgent, listTone, stopPressing } from './topicText';
@@ -26,7 +27,7 @@ export const TopicHead: React.FC<{ t: SnapshotTopic | undefined; workspace: stri
   const word: string = toneWord(tn);
   const stateText: string = t.round ? `${word} · 第 ${t.round} 轮` : word;
   const started: string = t.started_at ? `${shortTime(t.started_at).split(' ')[0]} 起` : '';
-  const meta: string = [engineText(t), workspace, started].filter(Boolean).join(' · ');
+  const meta: string = [engineText(t), repoLabel(t.repos) || workspace, started].filter(Boolean).join(' · ');
   return (
     <Head
       title={desktop || !t.number ? t.title : <><TopicBadge number={t.number} />{t.title}</>}

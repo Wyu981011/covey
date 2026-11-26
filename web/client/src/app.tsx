@@ -11,6 +11,7 @@ import SettingsPage from './cv/Settings';
 import SearchPage from './cv/Search';
 import TopicPage from './cv/TopicPage';
 import UsagePage from './cv/UsagePage';
+import MemoryCenterPage from './cv/MemoryCenter';
 import NotFound from './pages/NotFound/NotFound';
 
 const RoutesComponent = () => {
@@ -26,6 +27,8 @@ const RoutesComponent = () => {
         <Route path="topics/:key" element={<TopicPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/:tab" element={<SettingsPage />} />
+        <Route path="memory" element={<MemoryCenterPage />} />
+        <Route path="memory/:tab" element={<MemoryCenterPage />} />
         <Route path="search" element={<SearchPage />} />
         <Route path="usage" element={<UsagePage />} />
       </Route>

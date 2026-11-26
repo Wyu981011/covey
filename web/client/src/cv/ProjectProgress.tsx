@@ -8,9 +8,10 @@ import { TopicBadge } from './RoleAvatar';
 import { useTick } from './ui';
 import { shortWhen, topicHref } from './lib';
 import {
-  board, COL_ICON, COL_WORD, cut, depGraph, endedWords, milestoneDays, ownerDecisions, quoteOf, stateWord, topicNow, waitingTopics, withQuote,
+  board, COL_ICON, COL_WORD, cut, depGraph, endedWords, milestoneDays, projectDecisions, quoteOf, stateWord, topicNow, waitingTopics, withQuote,
   type Board, type Col, type Decision, type DepGraph, type Placed, type WaitTopic,
 } from './progressData';
+import { useV43ProjectEntries } from './MemoryList';
 import './progress.css';
 
 /* 专项的「进度」标签（v40，第一期只读；v41 起只在负责人还没写背景和动作时显示，由 ProjectBrief 退回到这里）：顶上等你带，中间 做完 / 正在做 / 将要做 三栏，下面依赖图，右栏近 10 条决定和最近里程碑；
@@ -419,7 +420,9 @@ const ProjectProgress: React.FC<{ p: SnapshotProject; snap: SnapshotResponse; le
   const b: Board = useMemo(() => board(p.checklist, topics), [p.checklist, topics]);
   const g: DepGraph = useMemo(() => depGraph(p.checklist), [p.checklist]);
   const waits: WaitTopic[] = useMemo(() => waitingTopics(snap, p), [snap, p]);
-  const all: Decision[] = useMemo(() => ownerDecisions(p.memory, snap.topics, 50), [p.memory, snap.topics]);
+  // v43：读记忆中心里这个专项的决定记录；旧 Covey 照旧读专项记忆里主人答过的
+  const v43 = useV43ProjectEntries(p.key);
+  const all: Decision[] = useMemo(() => projectDecisions(p.memory, v43, snap.topics, 50), [p.memory, v43, snap.topics]);
   const pick = (id: string): void => setParams(sel === id ? {} : { sel: id }, { replace: true });
   const discuss = (x: Placed): void => {
     if (!lead) return;

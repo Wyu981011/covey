@@ -10,6 +10,7 @@ import { useTick } from './ui';
 import { fmtDur, fmtTok, isRunning, topicHref } from './lib';
 import { isLayered } from './memoryLayers';
 import { MemoryPanel } from './MemoryPanel';
+import { MemoryList, useV43ProjectEntries } from './MemoryList';
 import './rail.css';
 
 /** 专项右栏（T550 评审第 11 条）：此刻、记忆、文件三块，整栏一起滚，哪块都不裁。
@@ -218,6 +219,8 @@ const FileBlock: React.FC<{ p: SnapshotProject }> = ({ p }) => {
 /** 专项的右栏；mobile 时铺满“记忆与文件”标签 */
 const ProjectRail: React.FC<{ p: SnapshotProject; topics: SnapshotTopic[]; mobile?: boolean }> = ({ p, topics, mobile }) => {
   const live: SnapshotTopic[] = topics.filter(isRunning);
+  // v43：记忆中心推了这个专项的键就画精简清单（规矩、在办决定，点了去记忆中心）；旧 Covey 照旧
+  const v43 = useV43ProjectEntries(p.key);
   return (
     <aside className={mobile ? 'a-prail a-prmob' : 'rp a-prail'}>
       {mobile && p.goal ? <div className="a-pgoal"><b>目标</b>{p.goal.replace(/^\s*目标\s*[:：]\s*/u, '')}</div> : null}
@@ -225,7 +228,8 @@ const ProjectRail: React.FC<{ p: SnapshotProject; topics: SnapshotTopic[]; mobil
       {/* 手机上没有在做的就只占标题这一行，不再单独一块“现在没有话题在跑。” */}
       {mobile && !live.length ? null : <NowBlock live={live} />}
       {/* v31：记忆分了层就按长期约定｜当前决定｜历史记录画；旧数据照旧（MemBlock） */}
-      {isLayered(p.memory) ? <MemoryPanel items={p.memory} scope={{ project_key: p.key }} version={p.memory_version} /> : <MemBlock p={p} />}
+      {Array.isArray(v43) ? <div className="rps a-rblk"><MemoryList entries={v43} scope={`p:${p.key}`} /></div>
+        : isLayered(p.memory) ? <MemoryPanel items={p.memory} scope={{ project_key: p.key }} version={p.memory_version} /> : <MemBlock p={p} />}
       <FileBlock p={p} />
     </aside>
   );

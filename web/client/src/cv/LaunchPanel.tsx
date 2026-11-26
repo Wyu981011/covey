@@ -1,6 +1,7 @@
 import React from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import type { LaunchModel, SettingsOption } from '@shared/api.interface';
+import type { LaunchDevice, LaunchModel, SettingsOption } from '@shared/api.interface';
+import { useSettings } from '@client/src/hooks/use-workbench';
 import {
   harnessOptions,
   pickKind,
@@ -8,12 +9,14 @@ import {
   onDevice,
   pickHarness,
   pickModel,
+  pickDevice,
   pickProvider,
   pickWorkspace,
   providerOptions,
   summaryTags,
   type LaunchBox,
 } from './launch';
+import { cycleRepo, deviceText, isRepoMode, MAX_REPOS, repoChoices, repoModeOf, showDevice, type RepoMode } from './launchRepos';
 import './settings.css';
 import './launch.css';
 
@@ -48,8 +51,15 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
   const modes: SettingsOption[] = (m?.work_modes ?? []).map((v: string) => ({ value: v, text: m?.work_mode_texts?.[v] ?? v }));
   const device: boolean = onDevice(data, sel);
   const place: boolean = !box.fixedPlace;
+  const repoMode: boolean = isRepoMode(data);
+  // 新 Covey：仓库名单来自设置的 repos（出错或没有就不画仓库行）
+  const { data: settings } = useSettings();
+  const reposPage = settings?.data?.repos;
+  const items = reposPage && 'items' in reposPage ? reposPage.items : [];
+  const choices = repoMode && place ? repoChoices(items, sel.repos) : [];
+  const devices: LaunchDevice[] = data.devices ?? [];
   const row = (label: string, body: React.ReactNode, note?: string): React.ReactNode => (
-    <div className={`lx-r st-cell${['模型', '工作区'].includes(label) ? ' wd' : ''}`}>
+    <div className={`lx-r st-cell${['模型', '工作区', '仓库'].includes(label) ? ' wd' : ''}${label === '仓库' ? ' x2' : ''}`}>
       <div className="lx-l st-l">{label}</div>
       <div className="lx-c">
         {body}
@@ -68,19 +78,46 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
       {modes.length || place || m?.redaction ? (
       <div className="st-gr cfg">
       {modes.length ? row('工作模式', <Pick label="工作模式" options={modes} value={sel.work_mode} onPick={(v: string) => box.edit((_d, s) => ({ ...s, work_mode: v }))} />) : null}
-      {place ? row(
+      {place && !repoMode ? row(
         '工作区',
         <Pick
           label="工作区"
           options={(data.workspaces ?? []).map((w) => ({ value: w.name, text: w.device ? `${w.name}（${w.device}）` : w.name }))}
-          value={sel.workspace}
+          value={sel.workspace ?? ''}
           onPick={(v: string) => box.edit((d, s) => pickWorkspace(d, s, v))}
         />,
       ) : null}
-      {place ? row(
+      {place && !repoMode ? row(
         '运行方式',
-        <Pick label="运行方式" options={data.run_modes ?? []} value={device ? 'direct' : sel.run_mode} onPick={(v: string) => box.edit((_d, s) => ({ ...s, run_mode: v }))} disabled={(v: string) => (device && v === 'worktree' ? '设备上只能原目录' : '')} />,
+        <Pick label="运行方式" options={data.run_modes ?? []} value={device ? 'direct' : (sel.run_mode ?? '')} onPick={(v: string) => box.edit((_d, s) => ({ ...s, run_mode: v }))} disabled={(v: string) => (device && v === 'worktree' ? '设备上只能原目录' : '')} />,
         device ? '设备上只能原目录' : undefined,
+      ) : null}
+      {place && showDevice(data) ? row(
+        '执行设备',
+        <Pick label="执行设备" options={devices.map((dv: LaunchDevice) => ({ value: dv.name, text: deviceText(dv) }))} value={sel.device ?? devices[0]?.name ?? ''} onPick={(v: string) => box.edit((d, s) => pickDevice(d, s, v))} />,
+      ) : null}
+      {choices.length ? row(
+        '仓库',
+        <div className="lx-repos" role="group" aria-label="仓库">
+          {choices.map((c) => {
+            const mode: RepoMode = repoModeOf(sel.repos, c.name);
+            const word: string = mode === 'write' ? '可写' : mode === 'read' ? '只读' : '不用';
+            return (
+              <button
+                key={c.name}
+                type="button"
+                className={`lx-rp ${mode}`}
+                aria-label={`${c.name}：${word}，点一下切换`}
+                title={c.note || (c.readonly ? '只读仓库' : '点一下：不用 → 只读 → 可写')}
+                onClick={() => box.edit((_d, s) => ({ ...s, repos: cycleRepo(s.repos, c.name, c.readonly) }))}
+              >
+                {c.name}
+                {mode === 'none' ? null : <span className="lx-rm">{word}</span>}
+              </button>
+            );
+          })}
+        </div>,
+        `默认不带仓库（从主目录起），最多 ${MAX_REPOS} 个`,
       ) : null}
       {m?.redaction
         ? row(
@@ -123,7 +160,7 @@ export const LaunchLine: React.FC<{ box: LaunchBox }> = ({ box }) => {
 
 /** 发出后的一行：独立 worktree 的提示、回执、失败原因 */
 export const LaunchNote: React.FC<{ box: LaunchBox }> = ({ box }) => {
-  const worktree: boolean = box.sel.run_mode === 'worktree' && !onDevice(box.data, box.sel);
+  const worktree: boolean = !isRepoMode(box.data) && box.sel.run_mode === 'worktree' && !onDevice(box.data, box.sel);
   return (
     <>
       {worktree ? <div className="lx-hint">独立 worktree 要在飞书启动卡上点开始（建 worktree 只有启动卡能做）</div> : null}
