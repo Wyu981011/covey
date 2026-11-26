@@ -278,6 +278,10 @@ test('话题身上读出来的几样：Bridge 垫的阶段不算，下一步以�
   assert.deepEqual([B.phaseOf(u), B.nextStepOf(u), B.stepLine(u), B.lastWord(u)], ['模板已跟上线上', '负责人核对', '第 5/5 步', '模板已跟上线上，两个提交都在本地']);
   assert.equal(B.lastWord({ ...u, latest_role: 'owner' }), '');
   assert.equal(B.lastWord({ ...u, latest_status: 'running' }), '');
+  // 回答开头是“## 结论”：跳过这行泛泛的标题、去掉 Markdown 记号（现网 T819 曾显示成“结论：## 结论 …”）；有内容的标题照留
+  assert.equal(B.lastWord({ ...u, latest: '## 结论\n\n机器改好了，**网关**配置已恢复。' }), '机器改好了， 网关 配置已恢复。');
+  assert.equal(B.lastWord({ ...u, latest: '## 换配置面板修好了\n细节见下' }), '换配置面板修好了 细节见下');
+  assert.equal(B.lastWord({ ...u, latest: '## 结论' }), '结论');
   assert.equal(B.waitsOwner(topic(9, 'waiting'), new Set()), true);
   assert.equal(B.waitsOwner(topic(9, 'done'), new Set(['k9'])), true);
 });
