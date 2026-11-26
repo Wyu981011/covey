@@ -13,6 +13,8 @@ standard library only (backends read it).
 - ``freshness``: FRESH within the snapshot's ``ttl``, STALE within twice it, OLD beyond (no figures shown then).
 - ``pool``: how many accounts of a snapshot can be used, of how many, and when one can again when none can;
   ``none_signed_in``: none can, and none will by itself (each needs a sign-in, has expired or is paused).
+- ``accounts[].login`` (optional, W1b): the e-mail an account signed in with, kept only when it looks like one and is at most
+  LOGIN_CHARS long; the one text the page and the push do not scrub (every other text of a snapshot is).
 """
 from __future__ import annotations
 
@@ -28,6 +30,8 @@ FOLDER = "quota"  # Under the state directory.
 MAX_BYTES = 64 * 1024  # A snapshot as the source gives it.
 MAX_ACCOUNTS, MAX_WINDOWS = 50, 8
 TITLE_CHARS, ALIAS_CHARS, LABEL_CHARS = 20, 20, 12
+LOGIN_CHARS = 80  # ``login``: the Google e-mail an account of agy signed in with (W1b): the one text that is not scrubbed.
+EMAIL = re.compile(r"[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 MIN_TTL, MAX_TTL = 30, 7 * 86400
 OK, SPENT, COOLING, PAUSED, LOGIN, EXPIRED, UNKNOWN = ("ok", "spent", "cooling", "paused", "login_required", "expired",
                                                        "unknown")
@@ -58,6 +62,11 @@ def scrub(text, limit) -> str:
         text = pattern.sub(CUT, text)
     text = re.sub(re.escape(CUT) + r"(?:\s*" + re.escape(CUT) + ")+", CUT, text)
     return text[:limit].strip()
+
+
+def login_ok(value) -> bool:
+    """Whether ``value`` is an e-mail of at most LOGIN_CHARS characters (``login`` keeps nothing else)."""
+    return isinstance(value, str) and len(value) <= LOGIN_CHARS and EMAIL.fullmatch(value) is not None
 
 
 def _time(value, what):
@@ -119,6 +128,8 @@ def _account(row, number) -> dict:
                "windows": [_window(w, f"{where}.windows[{n}]") for n, w in enumerate(windows)]}
     if row.get("active") is True:
         account["active"] = True
+    if login_ok(row.get("login")):
+        account["login"] = row["login"]  # Not scrubbed: the page shows who signed in (agy: the Google e-mail).
     expires = _time(row.get("expires_at"), f"{where}.expires_at")
     if expires:
         account["expires_at"] = expires

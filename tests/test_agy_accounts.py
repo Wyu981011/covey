@@ -478,6 +478,51 @@ class MovedRulesTests(TurnSetup):
         self.assertEqual(agy_accounts.snapshots(self.ctx.state_dir), [])
         self.assertEqual(store.entries(), [])
 
+    def log_in(self, cli, *emails, tail=""):
+        """An agy cli.log of the sign-ins it logged (the line agy 1.5.14 writes), then ``tail``."""
+        lines = [f"I1126 20:31:16.740793       1 server_oauth.go:226] OAuth: authenticated successfully as {e}" for e in emails]
+        (cli / "cli.log").write_text("\n".join(["I1126 20:00:00.000000 1 other.go:1] starting", *lines, tail]) + "\n")
+
+    def test_each_account_shows_the_e_mail_its_own_log_says_and_never_reads_the_token(self):
+        self.log_in(self.real_cli, "old@example.com", "main@example.com", tail="I1126 20:32:00.000000 1 x.go:1] done")
+        self.log_in(self.own_cli, "spare@example.com")
+        opened = []
+        real_open = open
+
+        def watching(file, *args, **kwargs):
+            opened.append(str(file))
+            return real_open(file, *args, **kwargs)
+        with mock.patch("builtins.open", watching):
+            agy_accounts.snapshots(self.ctx.state_dir)
+        self.assertFalse([path for path in opened if agy_homes.TOKEN in path], opened)  # The login's file is never opened.
+        main, spare = quota.Store(self.ctx.state_dir).read("agy.gemini")["snapshot"]["accounts"]
+        self.assertEqual((main["alias"], main["login"], spare["login"]), ("主号", "main@example.com", "spare@example.com"))
+        self.assertEqual(agy_accounts.login_email(self.root / "nowhere"), "")
+        # The log is gone (agy starts a new one): the e-mail seen last stays; one never seen leaves the name to show.
+        (self.real_cli / "cli.log").unlink()
+        (self.own_cli / "cli.log").write_text("OAuth: authenticated successfully as not-an-email\n")
+        agy_accounts.snapshots(self.ctx.state_dir)
+        main, spare = quota.Store(self.ctx.state_dir).read("agy.gemini")["snapshot"]["accounts"]
+        self.assertEqual((main["login"], spare["login"]), ("main@example.com", "spare@example.com"))
+        state = agy_accounts.Records(self.ctx.state_dir).read()
+        state["logins"].pop("副号")
+        (self.state / "state.json").write_text(json.dumps(state))
+        agy_accounts.snapshots(self.ctx.state_dir)
+        self.assertNotIn("login", quota.Store(self.ctx.state_dir).read("agy.gemini")["snapshot"]["accounts"][1])
+        self.assertNotIn("fake-login", json.dumps(quota.Store(self.ctx.state_dir).entries()))
+
+    def test_the_snapshot_entries_say_which_accounts_ran_a_turn_in_each_group_this_week(self):
+        now = time.time()
+        records = agy_accounts.Records(self.ctx.state_dir)
+        for at, account, group in ((now - 3600, "主号", "gemini"), (now - 8 * 86400, "副号", "gemini"),
+                                   (now - 2 * 86400, "副号", "3p")):
+            records.turn({"at": round(at), "run": "r", "account": account, "group": group, "model": "m"})
+        with (self.state / "turns.jsonl").open("a") as turns:
+            turns.write("not json\n{\"at\": \"x\"}\n")  # Rows that do not read are skipped.
+        agy_accounts.snapshots(self.ctx.state_dir)
+        store = quota.Store(self.ctx.state_dir)
+        self.assertEqual((store.read("agy.gemini")["recent"], store.read("agy.3p")["recent"]), (["主号"], ["副号"]))
+
     def test_agy_as_installs_as_a_copy_that_needs_nothing_else(self):
         folder = self.root / "bin"
         target = agy_homes.install(folder)

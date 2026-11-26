@@ -119,6 +119,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **开新话题**：选项和启动卡一样（模型、思考预算、工作模式、脱敏、工作区、运行方式），直接开工；要独立 worktree 的话题会在飞书里出一张填好的启动卡，点开始。
 - **设置**：设置卡的各页都能看，第一页和卡上一样是“配置”，分新话题、管家、独立复核（开了独立复核才有）、专项负责人（开了专项才有）、更多几段；卡片一次只展开一段，网页各段都展开。能改的有新话题的每一行，管家的每一行（Harness、供应商、模型、思考预算、脱敏、工作区、压缩阈值）和私聊顶层的消息，独立复核的模型，专项负责人的模型，子 Agent，工作区的用途和增删，脱敏的两个开关和词表的批量增删，群的停用与免@（只能改成关闭或只有你），用 ssh 添加和移除设备，代答的开关和白名单。其余只读，每页有“去飞书改”。
 - **记忆**（v37，默认开，[记忆](butler.md#记忆)没关时）：设置页的「记忆」一页是主人的主记忆：全局和每个工作区的原则、知识条目（`COVEY_KNOWLEDGE` 开着时）和待确认的候选（开了 `COVEY_MEMORY_LEARN` 时）。每组写着用了多少字、上限多少、下一轮带不带每一条（放不下的标出来），常驻的排在前面；能搜、能按全局或工作区筛，能看某个工作区下一轮实际带上的那一段。新建、改正文（数着字，⌘/Ctrl+S 保存）、标或取消常驻、删除或作废、候选的「记下」「不用」都在页上，和飞书设置卡「记忆」改的是同一份。专项和话题的记忆还在专项页、话题页的右栏。
+- **账号与额度**（v42，有额度来源时，`COVEY_QUOTA` 没关）：设置页的「账号与额度」一页，一张表：账号｜5 小时剩余｜周剩余，格里只有百分比、细条和时刻（今天写 `19:05`，别的天写星期几）。剩余不到 20% 红色；用完写“用完”和“17:10 恢复”；读不到写“—”、不画条；旧读数数字变灰。agy 的号展开，一行一个号，写这个号登录的 Google 邮箱（读不到才写 `agy-accounts.json` 里的名字），在用的号前一个蓝点，只画这个号近 7 天真跑过的模型池（Gemini、Claude/GPT 都跑过的，同一格上下两行）；网关和外接命令的来源折成一行平均值和“k/n 个能用”，有冷却或低额度的号时组名后一个红点，点开看每个号（外接命令的来源有号要重新登录或用完时直接展开），来源给了 `link` 才有“运维台↗”。有号要重新登录时表上方一行红条。右上角只有「刷新」：Covey 立刻重读所有来源、agy 查一遍每个号的 `/usage`（5 分钟冷却）。页面上没有暂停、只用这个号、查全部账号。某个来源整体见底（能用的号都用完或剩不到 20%）或有号要重新登录时，侧栏顶上多一行，点了到这一页。
 - **整理专项**：开了[整理专项](projects.md#整理专项)时，看板首屏“要你处理”下面有整理专项的建议。
   - 有要你定的：一条一块（原因、目标、话题），直接点照办或「不用」；标题栏「收起」收成一行“要你定 N 条”，来了新建议再展开。
   - 定好的（24 小时内）一行一条：标签、动作、几个话题、结果（已拆出、不用、没做成……），照办了的带「去专项」；点一行看原因、话题和没做成的原因。有要你定的时它们收在底下“已定 N 条”里。
@@ -313,6 +314,12 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - `checked_at`（秒，没查过是 0）、`checking`、`error`（上次查没成功的原因，成功是空串，旧的结果照留）、`blocked`（现在不能升级的原因，比如检出有没提交的改动；能升级是空串）。
   - `running`：在升级时 `{op_id, started_at, log}`，否则 null。`last`：上一次从网页点的升级 `{state, message, at, release, log, tail}`，`state` 是 `done`（Bridge 和网页都好了）、`partial`（Bridge 升好了、网页没更新上）、`failed`；`tail` 是升级输出的最后几行。没有是 null。
   - 单独一个请求推：查完、升级开始和结束（两个文件和升级进程变了，推的线程每一步看几个 stat）、全量对时、`upgrade` 操作回执之前。比 v39 旧的网页拒收这个 key 时只记日志。
+- **key `quota`**（v42，`app/web_quota.py` 的 `view`）：网页的「账号与额度」读它，见[账号与额度](#账号与额度)。有额度快照（`<状态目录>/quota/`）才推；来源都没了（关了 `COVEY_QUOTA`、删了配置）就推一次 `sources: []`，网页收起这一页。`ops` 里有 `quota_refresh`（没有可读的来源时没有）。
+  - `sources[]`：每个来源 `{id, kind, title, link?, collected_at, ttl, stale_after, read_at, failing, usable, total, next_available_at, low, dry, expand, relogin[], accounts[]}`。agy 的两份模型组快照（`agy.gemini`、`agy.3p`）并成一个来源 `agy`；别的来源一份一个。`failing`：上次读没成功，数字是更早的；`low`：这个来源整体见底（能用的号每个都有一个窗口剩不到 20%，或者一个都不能用）；`dry`：一个能用的号都没有、有的会自己恢复（`next_available_at` 是最早恢复时刻）；`expand`：网页默认展开（agy，或外接来源里有号要重新登录、用完）。`relogin`：要重新登录的号的显示名。
+  - `accounts[]`：`{name, login?, state, available_at, pools[]}`。`login` 是 agy 这个号登录的 Google 邮箱（从它自己的 `cli.log` 读，快照格式的 `accounts[].login`；**唯一不脱敏的文字**，其余文字照旧过白名单）。`pools[]`：`{key, label, active, state, available_at, windows[]}`，agy 一个号一份额度，只列这个号近 7 天跑过的模型池（`turns.jsonl` 的 group，没跑过就取任何号跑过的，再没有就是 Gemini），别的来源一个号一个池（`key`、`label` 是空串）；`windows[]`：`{kind, label, left, resets_at?, checked_at?, ceiling?}`，`left` 是剩下的比例（读不到是 null，不是 0）。
+  - `relogin[]`：`{source, name}`，所有要重新登录的号。`read_at`：最近一次读的时刻。`refresh`：`{at, busy, cooldown}`，页面上最近一次「刷新」开始的时刻、读完没有、冷却秒数（300）。`at`：这份条目生成的时刻，不算进 `rev`。
+  - 页面自己算和时间有关的：`checked_at` 比 `stale_after` 早的数字变灰，窗口 `resets_at` 过了而读数在它之前就当读不到。
+  - 单独一个请求推：快照文件和 `refresh.json` 变了（推的线程每一步看几个 stat）、全量对时、`quota_refresh` 回执之前。比 v42 旧的网页拒收这个 key 时只记日志。
 ### 网页发回的操作
 
 `web-inbox` 线程 GET `/sync/inbox?after=<seq>&wait=8`（取到新操作就立刻再取一次）。认 `wait` 的网页（回的 JSON 带 `"waited": true`，见[更快的取数](#更快的取数可选参数)）没有新操作时把请求挂住，等到有了再回，Covey 拿到回音马上再问；不认的旧网页马上回，Covey 照旧隔 `poll_seconds`（默认 0.5 秒）再问。
@@ -343,6 +350,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | `project_stop`（v34） | `project_key`：专项的「停止」，同专项卡的“停止专项”、停住卡的“停”，见下 |
 | `memory_edit`（v37） | 不带 `topic_key`、`project_key`，`payload` 是 `{action, …}`：改主记忆，同飞书设置卡「记忆」，见下 |
 | `upgrade`（v39） | 不带 `topic_key`、`project_key`，`payload` 是 `{action}`：`check` 查新版本、`run` 升级，见[版本与更新](#版本与更新)；没配升级器时回 failed |
+| `quota_refresh`（v42） | 不带 `topic_key`、`project_key`，`payload` 空，只认主人：立刻重读所有额度来源、agy 查每个号的 `/usage`，在后台线程里做，回执马上回；Bridge 侧 5 分钟冷却，冷却内只重新推一次现有快照，回执说“刚查过”，见[账号与额度](#账号与额度)；没有可读的来源时回 failed |
 | `revisit_cancel`（v35） | `topic_key`，`payload` 是 `{set_at}`：取消话题的 Covey 定时回看，同飞书看板的「取消」，见下 |
 | `memory_undo`（v34） | `topic_key`，`payload` 是 `{job_id, entry_id}`：撤销这一轮刚记下的一条记忆，同答案卡上的「不对」，见下 |
 | `login` | 自托管网页的“用飞书登录”：`op_id` 是 `login-<request_id>`，`payload` 是 `{request_id, code, browser, os, ip, at}`；Covey 在私聊发确认卡（[网页登录确认](#网页登录确认)），回执只说卡发出了；主人的决定由 Covey 推 `type` 为 `login` 的条目（`key` 是 `request_id`，`data` 是 `{decision: approved \| denied, decided_at}`）告诉网页 |
@@ -429,6 +437,16 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - 这条操作走自己的车道，查的这一两分钟不挡设置、开新话题这些。
 - 只有核心、在 git 检出里 `./install` 装的部署，安装器和 `scripts/upgrade.sh` 写一份用 `scripts/upgrade.sh --status --json` 和 `scripts/upgrade.sh` 的 `upgrade.json`（`by` 是 `covey`；不覆盖扩展写的），自托管网页跟着升级，见 [deploy.md 日常升级](deploy.md#日常升级)。
 - 网页上的查和升级，与[定时自动升级](deploy.md#定时自动升级)（`COVEY_AUTO_UPGRADE`，`app/auto_upgrade.py`）用的是同一个升级器（`self_upgrade.shared`），同时只查一次；定时升级起的那次在 `run.json` 里 `by` 是 `auto`，日志在 `deploy-runs/<时间>-auto/`。
+
+### 账号与额度
+
+数据约定 v42。代码在 `app/web_quota.py`，快照的格式和来源见 [quota.md](quota.md)。页面只读 `settings` 的 `quota` 条目，只发一种操作 `quota_refresh`。
+
+- **页面**：照主人 11-26 挑定的样张 F。标题行右边是最近一次读的时刻和「刷新」；有号要重新登录时下面一行红条（只有事实，没有按钮）；再下面一张表，列是账号、5 小时剩余、周剩余。`5h` 和 `7d` 以外的窗口（`day`、`other`）表里不画；同一种窗口有几个（网关的“Fable 周”和“周”）取剩得最少的那个。
+- **颜色和字**：剩余不到 20% 红色；用完写“用完”，后面写“HH:MM 恢复”；读不到写“—”、不画条；读数时刻比 `stale_after` 早的数字灰色（悬停看读数时刻），比 `ttl` 的两倍还旧的来源整份写“—”。
+- **侧栏**：只在某个来源 `low`（见底）或有号要重新登录时，侧栏搜索框下多一行，点了到这一页；否则不出现。设置里的「账号与额度」标签只在 `ops` 有 `quota_refresh`、条目里有来源时出现。
+- **刷新**：Bridge 收到后先看 `<状态目录>/quota/refresh.json`：5 分钟内刚开始过一次就回“刚查过（HH:MM）…”，什么都不重读（回执之前仍重新推一次条目）；否则记下开始时刻，在 `quota-refresh` 线程里 `quota_sources.refresh(force=True)`、`probe_accounts(which="all")`、再写 agy 的快照，回执立刻回“开始重新读取…”，读完 `refresh.json` 记结束时刻、条目的 `refresh.busy` 变回 false。读的时候页面按钮锁着。同一个 Covey 只有一份冷却。agy 的 `/usage` 是唯一会去问备用号的，所以只在主人点的时候问。
+- **飞书提醒**（`app/quota_notice.py`，`quota_watch` 线程每分钟看一次）：一个来源一个能用的号都没有了（带最早恢复时刻）、有号要重新登录，两种，各说一次，一两句加「去网页看」的链接（`page_url` 加 `/settings/quota`）。说过的记在 `<状态目录>/quota/notices.json`，那件事不成立了就忘掉，再出现算新的；一个状态目录的第一次只记下现状、不说；夜里按 `COVEY_QUIET_HOURS` 不发也不记，早上把还成立的合成一条发。
 
 ### 更快的取数（可选参数）
 
@@ -528,3 +546,4 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v39 | `settings` 的 `upgrade` 条目和 `upgrade` 操作（[版本与更新](#版本与更新)：查新版本，点一下升级 Bridge 和网页）；只在数据根有 `upgrade.json` 时有，`ops` 里也才有 `upgrade` |
 | v40 | 专项条目的 `checklist`、`milestones`、`decisions`（专项页的「进度」标签），都可选 |
 | v41 | 专项条目的 `background`、`actions`、`gaps`，`checklist` 条目的 `title`、`waiting_on`、`done_at`、`topics`；话题 `progress` 的 `next_step`、`waiting`（专项页的「简报」标签），都可选 |
+| v42 | `settings` 的 `quota` 条目（[账号与额度](#账号与额度)：每个来源一份、agy 一个号一行只列近 7 天用过的模型池、号的 `login`）和 `quota_refresh` 操作；`ops` 里有 `quota_refresh` 才画这一页 |

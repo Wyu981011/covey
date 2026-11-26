@@ -35,9 +35,14 @@ taking turns from one machine).
 
 All of it is fail-open: a configuration, state or probe that fails never fails a turn, it is written to the log.
 
+Each account's snapshot row has ``login``, the Google e-mail its own ``cli.log`` last says it signed in as (``login_email``:
+that log alone, never the token file; the last one seen is kept in the state's ``logins`` when a log says none), and each
+agy entry in ``<state>/quota/`` has ``recent``: the accounts that ran a turn in its group in the last RECENT_DAYS days
+(``recent_use``, from ``turns.jsonl``), for the page to draw only the model groups an account really uses.
+
 Records under ``<state>/agy-accounts/``: ``state.json`` ({"active": {group: name}, "spent": {name: {group: epoch}},
 "login": {name: {"at", "mark"}}, "unknown": {name: epoch}, "groups": {model: group}, "usage": {name: {"at", "groups"}},
-"paused": {name: epoch}, "only": name, "switched": {group: {"at", "from", "to", "why"}}}; an older file's one ``active``
+"paused": {name: epoch}, "only": name, "switched": {group: {"at", "from", "to", "why"}}, "logins": {name: e-mail}}; an older file's one ``active``
 name is every group's, its ``login`` epochs hold until then), written under ``state.lock``; ``accounts.log`` (each
 switch and probe; no token, no answer, no prompt) and ``turns.jsonl`` (which account each turn ran on, its run id).
 """
@@ -80,6 +85,9 @@ QUOTA_WORDS = re.compile(r"exhausted your (?:quota|capacity)|out of quota|quota.
 RESET_WORDS = re.compile(r"reset after\s+((?:\d+\s*[dhms]\s*)+)", re.I)
 GROUPS = ("gemini", "3p")  # The groups agy's /usage has (its buckets' ids: gemini-5h, 3p-weekly), in the page's order.
 GROUP_LABELS = {"gemini": "Gemini", "3p": "Claude/GPT"}
+LOGIN_WORDS = re.compile(r"OAuth: authenticated successfully as (\S+)")  # The line agy's cli.log keeps of a sign-in.
+LOG_TAIL = 256 * 1024  # How much of the end of cli.log is read for it.
+RECENT_DAYS = 7  # A model group is drawn on the page for an account that ran a turn in it this recently.
 WINDOW_LABELS = {"5h": "5 小时额度", "weekly": "周额度"}
 WINDOW_KINDS = {"5h": ("5h", "5 小时"), "weekly": ("7d", "周")}  # /usage's window -> the snapshot's kind and label.
 
@@ -306,7 +314,7 @@ class Records:
         ensure_private_dir(self.folder)
         with file_lock(self.folder / "state.lock"):
             state = self.read()
-            for key in ("spent", "login", "groups", "unknown", "usage", "paused", "switched"):
+            for key in ("spent", "login", "groups", "unknown", "usage", "paused", "switched", "logins"):
                 if not isinstance(state.get(key), dict):
                     state[key] = {}
             if not isinstance(state.get("active"), dict):
@@ -606,14 +614,65 @@ def probe_accounts(state_dir, command, environ, *, which="active", fresh=0, now=
     return done
 
 
+def login_email(home) -> str:
+    """The Google e-mail the account whose HOME is ``home`` signed in with: the last ``OAuth: authenticated successfully as
+    <e-mail>`` line of its ``.gemini/antigravity-cli/cli.log`` (the end of it); '' when there is none or it does not look
+    like an e-mail. Reads that log alone, never the token file (TOKEN)."""
+    try:
+        with open(Path(home) / GEMINI / CLI / "cli.log", "rb") as log:
+            size = os.fstat(log.fileno()).st_size
+            log.seek(max(0, size - LOG_TAIL))
+            text = log.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+    found = LOGIN_WORDS.findall(text)
+    email = found[-1].rstrip(".,;:)") if found else ""
+    return email if quota.login_ok(email) else ""
+
+
+def logins(records, state, accounts, real) -> dict:
+    """{account name: e-mail} of the accounts whose log says it; one it does not say keeps the e-mail seen last (kept in the
+    state's ``logins``, written only when one changed)."""
+    kept, found, changed = dict(state.get("logins") or {}), {}, {}
+    for account in accounts:
+        email = login_email(real if account.home is None else account.home)
+        if email and kept.get(account.name) != email:
+            changed[account.name] = email
+        if email or kept.get(account.name):
+            found[account.name] = email or kept[account.name]
+    if changed:
+        records.change(lambda s: s["logins"].update(changed))
+    return found
+
+
+def recent_use(state_dir, now, days=RECENT_DAYS) -> dict:
+    """{group: {account names}} of the turns of the last ``days`` days (``turns.jsonl`` and the older file; a row that does
+    not read is skipped)."""
+    found, folder = {}, Path(state_dir) / FOLDER
+    for name in ("turns.jsonl.1", "turns.jsonl"):
+        try:
+            lines = (folder / name).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                row = json.loads(line)
+                if float(row["at"]) >= now - days * 86400 and row["group"] and row["account"]:
+                    found.setdefault(str(row["group"]), set()).add(str(row["account"]))
+            except (ValueError, TypeError, KeyError):
+                continue
+    return found
+
+
 def alias_of(account, number) -> str:
     """The account's name as the page shows it: an e-mail or a path in it is no name (core/quota.py scrub)."""
     alias = quota.scrub(account.name, quota.ALIAS_CHARS)
     return alias if alias and alias != quota.CUT else f"号 {number}"
 
 
-def snapshot(state, accounts, group, now, real=None) -> dict:
-    """The snapshot of ``group`` (core/quota.py's format) made from ``state`` alone."""
+def snapshot(state, accounts, group, now, real=None, emails=None) -> dict:
+    """The snapshot of ``group`` (core/quota.py's format) made from ``state`` alone, and ``emails`` ({account name: the
+    e-mail it signed in with}, ``logins``) for each account's ``login``."""
     only = only_of(state, accounts)
     active = only.name if only else active_of(state, group) or accounts[0].name
     rows = []
@@ -640,7 +699,8 @@ def snapshot(state, accounts, group, now, real=None) -> dict:
             windows.append(window)
         windows.sort(key=lambda w: quota.WINDOW_KINDS.index(w["kind"]))
         rows.append({"alias": alias_of(account, number), **row, "windows": windows,
-                     **({"active": True} if account.name == active else {})})
+                     **({"active": True} if account.name == active else {}),
+                     **({"login": emails[account.name]} if (emails or {}).get(account.name) else {})})
     data = {"schema": quota.SCHEMA, "title": f"agy · {label_of(group)}", "collected_at": now, "ttl": SNAPSHOT_TTL,
             "accounts": rows}
     return quota.parse(data)
@@ -663,15 +723,17 @@ def snapshots(state_dir, environ=None, now=None) -> list:
     state = records.read()
     environ = os.environ if environ is None else environ
     real = Path(environ.get("HOME") or Path.home())
-    written = []
+    emails, used, written = logins(records, state, accounts, real), recent_use(state_dir, now), []
     for group in GROUPS:
         source = f"agy.{group}"
         moved = (state.get("switched") or {}).get(group) or {}
         last = ({"at": moved.get("at"), "from": quota.scrub(moved.get("from"), quota.ALIAS_CHARS),
                  "to": quota.scrub(moved.get("to"), quota.ALIAS_CHARS),
                  "why": quota.scrub(moved.get("why"), 80)} if moved.get("at") else None)
-        store.saved(source, "agy", snapshot(state, accounts, group, now, real), title=f"agy · {label_of(group)}",
-                    now=now, group=group, switched=last)
+        recent = [alias_of(account, number) for number, account in enumerate(accounts, 1)
+                  if account.name in used.get(group, ())]  # Who ran a turn in this group lately (the page draws only those).
+        store.saved(source, "agy", snapshot(state, accounts, group, now, real, emails), title=f"agy · {label_of(group)}",
+                    now=now, group=group, switched=last, recent=recent)
         written.append(source)
     return written
 

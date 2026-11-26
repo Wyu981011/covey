@@ -38,7 +38,7 @@ from covey.cards.redaction_panel import SWITCH_ROWS, TOPICS
 from covey.cards.settings_hub import (ABOUT, CONFIG, DOCTOR, GROUPS, LABELS, MEMORY, NODES, PROXY, REDACTION, TOPIC,
                                       WORKSPACE)
 from covey.cards.workspace_manager import list_entries, tag_words, tail
-from covey.app import self_upgrade, web_launch, web_panels
+from covey.app import quota_watch, self_upgrade, web_launch, web_panels
 from covey.app.access import free_talk_on
 from covey.core import butler, butler_settings, projects, web_sync
 from covey.core.workspaces import add_workspace, load_config, missing_workspaces, remove_workspaces
@@ -92,8 +92,10 @@ def rows_of(settings_) -> list:
 
 def page_ops() -> list:
     """The page's operations this Covey does (``ops``, v34): core/web_sync.py KINDS, ``upgrade`` (v39) only with an upgrader set up
-    (app/self_upgrade.py config), so a page draws 版本与更新 only then."""
-    return [kind for kind in web_sync.KINDS if kind != "upgrade" or self_upgrade.config() is not None]
+    (app/self_upgrade.py config), so a page draws 版本与更新 only then; ``quota_refresh`` (v42) only with a quota source to read
+    (app/quota_watch.py ``wanted``), so a page draws 账号与额度 only then."""
+    return [kind for kind in web_sync.KINDS if (kind != "upgrade" or self_upgrade.config() is not None)
+            and (kind != "quota_refresh" or quota_watch.wanted())]
 
 
 class WebSettings:

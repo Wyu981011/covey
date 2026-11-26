@@ -85,7 +85,7 @@ from covey.app import auto_retry, memory_collect, project_clicks, project_lead, 
 from covey.app.answers import AnswerIncomplete, answer_fields, skip_all_fields, submitted_answer
 from covey.app.binding import stale_job_card
 from covey.app.runtime import job_stage, supplement_target_of
-from covey.app import self_upgrade, web_files, web_memory
+from covey.app import quota_watch, self_upgrade, web_files, web_memory, web_quota
 from covey.app.web_settings import WebSettings
 from covey.app.web_turns import STOP_AUTO_RETRY
 from covey.core import board_read, inbound_ledger, collab, collab_records, failure, project_memory, projects, revisits, triage, turn_source, web_sync
@@ -128,6 +128,7 @@ class Ops:
         self.hear = hear
         self.fetch = fetch  # request(method, path) of the page's /openapi (app/web_push_client.py Client.request): a say's files; None: none taken.
         self.web_settings = WebSettings(env)  # The 设置 page's snapshot (app/web_sync.py) and its changes (``settings``).
+        self._refresher = None  # web_quota.Refresher of ``quota_refresh``, made on the first one (it needs the state directory).
         self._upgrader = None  # self_upgrade, made once the state directory is known (build_context fills it in before any thread).
 
     @property
@@ -142,6 +143,15 @@ class Ops:
             self._upgrader = self_upgrade.shared(self.env.state_dir, self.runtime.log)
         return self._upgrader
 
+    @property
+    def quota_refresher(self):
+        """账号与额度's 刷新 (``quota_refresh``, v42, app/web_quota.py Refresher): one for the Bridge, so its cooldown is one."""
+        if self._refresher is None and self.env.state_dir:
+            self._refresher = web_quota.Refresher(  # The apps are read when asked: they come after this object.
+                self.env.state_dir, log=self.runtime.log,
+                command=lambda: web_quota.agy_command(getattr(getattr(self.env, "topics", None), "apps", None)))
+        return self._refresher
+
     def run(self, row) -> tuple:
         """(state, message) of one outbox row; never raises."""
         kind = str(row.get("kind") or "")
@@ -152,7 +162,8 @@ class Ops:
                        "switch": self.switch, "memory_fix": self.memory_fix, "recover": self.recover,
                        "login": self.login, "project_finish": self.project_finish, "project_stop": self.project_stop,
                        "memory_undo": self.memory_undo, "revisit_cancel": self.revisit_cancel,
-                       "memory_edit": self.memory_edit, "upgrade": self.upgrade}.get(kind)
+                       "memory_edit": self.memory_edit, "upgrade": self.upgrade,
+                       "quota_refresh": self.quota_refresh}.get(kind)
             if handler is None:
                 raise ValueError(f"不认识的操作：{kind[:20]}")
             chat = self.runtime.access.owner_chat()
@@ -855,6 +866,21 @@ class Ops:
         if self_upgrade.available(status):
             return f"已检查：有 {count} 个更新" if count else "已检查：网页要更新到和 Bridge 同一版"
         return "已检查：已经是最新"
+
+    def quota_refresh(self, state, chat, row, payload) -> str:
+        """``quota_refresh`` (v42, docs/web.md 账号与额度): read every quota source and ask agy's /usage of every account now, in a
+        thread of its own; one in COOLDOWN (inside it the page gets the snapshots as they are and is told it just did). Only the
+        owner; never with a topic or a project, and only with a source to read."""
+        if row.get("topic_key") or row.get("project_key"):
+            raise ValueError("quota_refresh 不带话题和专项")
+        if self.runtime.access.is_owner(self.runtime.owner_open_id or "") is not True:
+            raise ValueError("只有主人能刷新额度")
+        if not quota_watch.wanted():
+            raise ValueError("没有可读的额度来源（COVEY_QUOTA 关着，或没有配来源）")
+        refresher = self.quota_refresher
+        if refresher is None:
+            raise ValueError("Covey 还不知道状态目录")
+        return refresher.ask()
 
     def memory_edit(self, state, chat, row, payload) -> str:
         """The page's 记忆 tab (data contract v37): add, change, 常驻, delete a principle or a knowledge entry of 全局 or a workspace,

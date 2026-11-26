@@ -42,7 +42,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import card_lanes, self_upgrade, web_images, web_memory
+from covey.app import card_lanes, self_upgrade, web_images, web_memory, web_quota
 from covey.app.web_collect import Collector, Shared
 from covey.app.web_ops import Ops
 from covey.app.web_push_client import Client, WebError
@@ -174,6 +174,7 @@ class WebSync:
         self.tidy_stamps, self.tidy_lock, self.tidy_failed = None, threading.Lock(), 0  # The 整理专项 item (push_tidy).
         self.memory_stamps, self.memory_lock, self.memory_failed = None, threading.Lock(), 0  # The 记忆 item (push_memory).
         self.upgrade_stamps, self.upgrade_lock, self.upgrade_failed = None, threading.Lock(), 0  # The 版本与更新 item (push_upgrade).
+        self.quota_stamps, self.quota_lock, self.quota_failed = None, threading.Lock(), 0  # The 账号与额度 item (push_quota).
         self.asks_failed, self.asks_tried, self.asks_full = 0, None, False  # The 要你处理 item (push_asks): failures in a row, the rev tried last, a pass began.
         self.ledger = None
         self.op_lanes = OpLanes(runtime.log)  # The page's operations (inbox_once, do_op).
@@ -573,6 +574,8 @@ class WebSync:
         self.push_memory(full=full)
         passer.mark("upgrade")
         self.push_upgrade(full=full)
+        passer.mark("quota")
+        self.push_quota(full=full)
         passer.mark("images")
         self.push_images(passer, now)
         passer.mark("saving")
@@ -838,6 +841,44 @@ class WebSync:
         finally:
             self.upgrade_lock.release()
 
+    def push_quota(self, full=False) -> int:
+        """The ``settings`` item ``quota`` (账号与额度, app/web_quota.py view, data contract v42), posted on its own as ``push_upgrade``
+        is: when a quota snapshot or the refresh record changed (a few stats, from the pass thread each step), on a full pass, and
+        before the ack of a ``quota_refresh`` operation. Nothing while there is no source and never was one; a source gone after one
+        was pushed pushes ``sources: []``, so the page drops its tab. A page older than v42 refuses the key: logged the first time
+        and every tenth. How many went."""
+        state = getattr(self.env, "state_dir", None)
+        if not state or not self.quota_lock.acquire(blocking=False):
+            return 0
+        try:
+            stamps = web_quota.stamps(state)
+            if not full and stamps == self.quota_stamps:
+                return 0
+            self.quota_stamps = stamps
+            data = web_quota.view(state)
+            if not data["sources"] and ("settings", web_sync.QUOTA_KEY) not in self.sent:
+                return 0
+            each = web_sync.item("settings", web_sync.QUOTA_KEY, {**data, "at": 0})  # ``at`` moves each time: not part of the rev.
+            if self.sent.get((each["type"], each["key"])) == each["rev"]:
+                return 0
+            each["data"]["at"] = data["at"]
+            try:
+                self.client.request("POST", "/sync/upsert", {"items": [each], "deleted": []})
+            except Exception as exc:  # noqa: BLE001 - logged; the next change or full look tries again
+                self.quota_failed += 1
+                self.quota_stamps = None
+                if self.quota_failed == 1 or self.quota_failed % 10 == 0:
+                    self.runtime.log(f"web quota not pushed ({self.quota_failed}): {type(exc).__name__}: {self.why(exc)}")
+                return 0
+            self.quota_failed = 0
+            self.sent[(each["type"], each["key"])] = each["rev"]
+            return 1
+        except Exception as exc:  # noqa: BLE001 - snapshots that cannot be read stop nothing
+            self.runtime.log(f"web quota not built: {type(exc).__name__}")
+            return 0
+        finally:
+            self.quota_lock.release()
+
     # -- inbox ----------------------------------------------------------------------------------------------------------
 
     def inbox_once(self) -> int:
@@ -921,7 +962,7 @@ class WebSync:
             for topic in touched:
                 self.collector.touch(topic)
             self.wake.set()  # The quick look builds what the operation touched now, not at its next tick.
-            if kind in ("settings", "launch", "tidy_decide", "memory_edit", "upgrade"):
+            if kind in ("settings", "launch", "tidy_decide", "memory_edit", "upgrade", "quota_refresh"):
                 self.before_ack(kind)  # The page reads the new settings, the tidy list, the memory when it sees done.
             pushed = time.monotonic()
             try:
@@ -952,6 +993,9 @@ class WebSync:
             return
         if kind == "upgrade":
             self.push_upgrade(full=True)  # The page reads what the check found, or that the upgrade is under way, when it sees done.
+            return
+        if kind == "quota_refresh":
+            self.push_quota(full=True)  # The page reads that the reading is under way (or the snapshots as they are: it just did) when it sees done.
             return
         if kind in ("settings", "launch"):
             self.settings_due = True

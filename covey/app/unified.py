@@ -328,7 +328,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # ledger has and the chat lacks.
             self.owner_ledger = OwnerLedger(self.runtime, self.butler_env)
             # 账号与额度 (app/quota_watch.py): one thread that keeps the quota snapshots current, none with nothing to read.
-            self.quota_watch = QuotaWatch(self.runtime)
+            self.quota_watch = QuotaWatch(self.runtime, self.messenger, self.voice)
             features = (self.weekly_usage, self.workspace_manager, self.memguard_alerts, self.storage_alerts, self.proxy,
                         self.group_manager, self.overview, self.topic_seen, self.butler_tools,
                         self.butler_search, self.settings_hub, self.butler, self.digest, self.app_setup, self.welcome,
