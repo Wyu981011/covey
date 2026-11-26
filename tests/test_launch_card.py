@@ -38,6 +38,9 @@ from covey.cards.launch_config import (HARNESS_ACTION, PAGE_ACTION,
                                                 model_settings)
 from covey.core.menu_choice import AUTO_EFFORT_LABEL, budget_options, effort_options, models_of
 from covey.cards.launch_receipt import build_receipt_card
+from covey.cards.elements import CARD_BYTES, CARD_NODES, element_count, json_size
+from covey.cards.launch_config import SHORTENED_NOTE, launch_form_card
+from covey.cards.switch_form import build_switch_card
 from covey.core.jobs import BridgeReplyJob, find_job_record, never_started, upsert_job_record
 from covey.core.topics import read_topic
 from covey.core.workspaces import resolve_selection
@@ -884,3 +887,76 @@ class QueuedClickTests(PickerCase):
         run_queued(self.picker)
         self.assertEqual(self.api.call_count, calls + 1)
         self.assertEqual(self.record()['picker']['path'], str(self.root))
+
+
+def dicts(value):
+    """Every dict in a card, at any depth."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from dicts(child)
+
+
+class CatalogTooLongTests(unittest.TestCase):
+    """A Harness whose provider serves more models than one card holds (a gateway's dozens of routes as Codex's own):
+    the launch and 换配置 cards cut their 模型 row to fit instead of CardKit refusing them (300305)."""
+
+    @staticmethod
+    def choices(count):
+        codex = {f'codex:route/m{i:02d}': {'harness': 'codex', 'title': 'Codex', 'provider': 'openai',
+                                           'provider_title': 'Codex 自带', 'model': f'route/m{i:02d}',
+                                           'display_name': f'Route Model {i:02d} · Gateway', 'label': f'Codex · m{i:02d}',
+                                           'levels': ['low', 'medium', 'high', 'xhigh'], 'default': 'high'}
+                 for i in range(count)}
+        return {'claude:opus': {'harness': 'claude', 'title': 'Claude', 'provider': 'anthropic',
+                                'provider_title': 'Claude 自带', 'model': 'opus', 'display_name': 'Opus 5.5',
+                                'label': 'Claude · Opus 5.5', 'levels': ['high', 'xhigh']}, **codex}
+
+    def form(self, count, selected, current):
+        return {'token': 'f' * 24, 'topic': 'T9', 'workspace': 'project', 'config_revision': 3,
+                'models': self.choices(count), 'selected_model': selected, 'selected_effort': 'high',
+                'current': {'label': 'Codex · current', 'effort': 'high', 'key': current, 'budget': 'high',
+                            'workspace': 'project', 'run_mode': 'direct', 'redaction': False},
+                'workspaces': ['project'], 'selected_workspace': 'project', 'selected_run_mode': 'direct',
+                'selected_redaction': 'off'}
+
+    @staticmethod
+    def model_options(card):
+        return [behavior['value']['option'] for item in dicts(card) if item.get('tag') == 'interactive_container'
+                for behavior in item.get('behaviors', ())
+                if behavior.get('value', {}).get('kind') in ('bridge_switch_model', 'bridge_launch_model')]
+
+    def assert_fits(self, card):
+        self.assertLessEqual(element_count(card), CARD_NODES)
+        self.assertLessEqual(json_size(card), CARD_BYTES)
+
+    def test_the_switch_card_of_a_long_catalog_fits_and_keeps_the_chosen_model_and_the_topics_own(self):
+        card = build_switch_card(self.form(70, 'codex:route/m69', 'codex:route/m68'))
+        self.assert_fits(card)
+        options = self.model_options(card)
+        self.assertLess(len(options), 70)
+        self.assertEqual(options[:3], ['codex:route/m00', 'codex:route/m01', 'codex:route/m02'])
+        self.assertIn('codex:route/m69', options)
+        self.assertIn('codex:route/m68', options)
+        self.assertIn(SHORTENED_NOTE.format(shown=len(options), total=70), json.dumps(card, ensure_ascii=False))
+
+    def test_the_launch_card_of_a_long_catalog_fits_and_keeps_the_chosen_model(self):
+        card = launch_form_card('l' * 24, model='codex:route/m69', choices=self.choices(70), effort='high',
+                                workspace='project', names=['project'], run_mode='direct')
+        self.assert_fits(card)
+        options = self.model_options(card)
+        self.assertLess(len(options), 70)
+        self.assertIn('codex:route/m69', options)
+        self.assertIn(SHORTENED_NOTE.format(shown=len(options), total=70), json.dumps(card, ensure_ascii=False))
+
+    def test_a_catalog_that_fits_lists_every_model_and_says_nothing(self):
+        card = build_switch_card(self.form(12, 'codex:route/m03', 'codex:route/m03'))
+        self.assertEqual(len(self.model_options(card)), 12)
+        self.assertNotIn('一张卡放不下', json.dumps(card, ensure_ascii=False))
+        launch = launch_form_card('l' * 24, model='codex:route/m03', choices=self.choices(12), effort='high',
+                                  workspace='project', names=['project'], run_mode='direct')
+        self.assertEqual(len(self.model_options(launch)), 12)
+        self.assertNotIn('一张卡放不下', json.dumps(launch, ensure_ascii=False))

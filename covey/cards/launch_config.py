@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import NamedTuple
 
-from covey.cards.elements import fold, grey, md, panel_header, plain, styled_panel
+from covey.cards.elements import CARD_BYTES, CARD_NODES, fits, fold, grey, md, note, panel_header, plain, styled_panel
 from covey.core.defaults import WORK_MODES
 from covey.core.menu_choice import (budget_options, effort_text, explicit, model_provider, model_tiers, models_of,
                                     offered_models, named_budget, plain_budgets, tiers, work_modes)
@@ -156,10 +156,11 @@ def setting_line(settings, *, token, stamp='', value=None, full=False):
     return {'tag': 'column_set', 'flex_mode': LINE_FLEX, 'horizontal_spacing': '8px', 'columns': columns}
 
 
-def model_settings(choices, model, *, kinds, revision, effort, work_mode=''):
+def model_settings(choices, model, *, kinds, revision, effort, work_mode='', limit=None, keep=()):
     """The Harness, 供应商 and 模型 settings (model_tiers) around ``model``, its 思考预算 (values as the budget
     select's, ``revision``:value) and, for a model with work modes, 工作模式; ``kinds`` the five callback
-    kinds."""
+    kinds. ``limit``: the most models the 模型 row lists (fitted), ``model`` and those of ``keep`` among them all
+    the same; None, every one."""
     # Only what says what it runs (docs/ui.md 13 U5): no "Default (recommended)" (but the selected one), no 推荐 or
     # 模型原生默认; a budget saved as one of them is drawn as the level it runs.
     harness, provider, harnesses, providers, models = model_tiers(offered_models(choices, model), model)
@@ -171,7 +172,7 @@ def model_settings(choices, model, *, kinds, revision, effort, work_mode=''):
         effort = named_budget(choice, effort)
     settings = [Setting('harness', 'Harness', kinds[0], harness, list(harnesses.items())),
                 Setting('provider', '供应商', kinds[1], provider, list(providers.items())),
-                Setting('model', '模型', kinds[2], model, list(models.items())),
+                Setting('model', '模型', kinds[2], model, shortened(list(models.items()), limit, {model, *keep})),
                 Setting('effort', '思考预算', kinds[3], f'{revision}:{effort}',
                         [(f'{revision}:{value}', label) for value, label in options])]
     modes, mode = work_modes(choice, work_mode)
@@ -193,6 +194,45 @@ def listed(options, current, limit):
     if current not in dict(shown):
         shown += [option for option in options if option[0] == current]
     return shown
+
+
+# The launch and 换配置 cards' 模型 row lists every model of the chosen provider, two card nodes each (setting_row). A
+# catalog too long for one card (a model gateway that serves dozens of routes as Codex's own: 62 of them took the 换配置
+# card to 204 nodes, CardKit refused every redraw with 300305 and Codex could not be chosen at all) is cut from its end
+# to what fits, the chosen model and the topic's own kept; the row's last line says so (SHORTENED_NOTE).
+SHORTENED_NOTE = '模型太多，一张卡放不下：这里列了 {shown} 个（共 {total} 个，最近用过的在前），其余的在网页工作台里选。'
+
+
+def shortened(options, limit, keep):
+    """At most ``limit`` of ``options`` (None: all of them) in their order, then those of ``keep`` it left out."""
+    if limit is None:
+        return options
+    return options[:limit] + [option for option in options[limit:] if option[0] in keep]
+
+
+def model_count(choices, model):
+    """How many models the 模型 row around ``model`` would list uncut (model_settings)."""
+    return len(model_tiers(offered_models(choices, model), model)[4])
+
+
+def cut_rows(settings, rows, total):
+    """``rows``, one a setting of ``settings``, with SHORTENED_NOTE under the 模型 row's where that row lists fewer than
+    ``total`` models."""
+    at = next((i for i, setting in enumerate(settings) if setting.key == 'model'), None)
+    if at is None or len(settings[at].options) >= total:
+        return rows
+    return [*rows[:at + 1], note(SHORTENED_NOTE.format(shown=len(settings[at].options), total=total)), *rows[at + 1:]]
+
+
+def fitted(draw, total):
+    """The card ``draw(limit)`` draws, its 模型 row listing the most of its ``total`` models that one card holds
+    (cards/elements.py CARD_NODES, CARD_BYTES): ``draw(None)`` where they all fit, else ``limit`` down one at a time,
+    to a single model at the least."""
+    card, limit = draw(None), total
+    while limit > 1 and not fits(card, CARD_NODES, CARD_BYTES):
+        limit -= 1
+        card = draw(limit)
+    return card
 
 
 def known(options, current, text):
@@ -279,38 +319,44 @@ def launch_form_card(token, *, model, choices, effort, workspace, names, run_mod
     choice = choices.get(model, {})
     lost = unredacted(choice, redaction)  # 脱敏 on, a model that cannot: said, and asked once more.
     mode = work_modes(choice, work_mode)[1]
-    settings = model_settings(choices, model, kinds=(HARNESS_ACTION, PROVIDER_ACTION, MODEL_ACTION, BUDGET_ACTION,
-                                                     WORK_MODE_ACTION), revision=1, effort=effort, work_mode=mode) if choice else []
-    if choice.get('redaction'):
-        settings.append(redaction_setting('redaction', REDACTION_ACTION, 'on' if redaction == 'on' else 'off'))
-    settings += [workspace_setting('workspace', WORKSPACE_ACTION, workspace, names,
-                                   last=[(MANAGE_OPTION, '⚙️ 添加或管理工作区…')],
-                                   labels={name: f'{name} · {title}' for name, title in devices.items()}),
-                 run_mode_setting('run_mode', MODE_ACTION, run_mode)]
-    rows = [setting_row(setting, token=token, open_key=page) for setting in settings]
-    facts = [f'思考预算 {effort_text(choice, effort)}', *(['工作模式 {}（{}）'.format(*WORK_MODES[mode])] if mode else []),
-             *([f"敏感词脱敏 {REDACTION_LABELS.get(redaction, '关')}"] if choice.get('redaction') else []),
-             *(['不脱敏'] if lost else []),
-             f'工作区 {workspace}' + (f' · 设备 {devices[workspace]}' if workspace in devices else ''), RUN_MODES['direct'] + '运行' if run_mode == 'direct' else RUN_MODES['worktree']]
-    summary = summary_block(choice, facts) if choice else md('模型目录准备中，请稍后重新打开配置。')
-    adjust = fold('launch_adjust', md(grey(ADJUST_TITLE)), rows, expanded=bool(expanded or page), background='grey-50',
-                  padding='0px 12px 0px 12px', spacing='0px')
-    buttons = [{'tag': 'button', 'name': prefix + token, 'form_action_type': 'submit', 'type': style, 'width': 'fill',
-                'text': {'tag': 'plain_text', 'content': label}}
-               for prefix, label, style in [(PICKER_PREFIX, '其他目录…', 'default'),
-                                            (SUBMIT_PREFIX, UNREDACTED_START if lost else title, 'primary_filled')]]
-    if lost:
-        buttons[-1]['confirm'] = {'title': plain(UNREDACTED_TITLE), 'text': plain(UNREDACTED_TEXT)}
-    head = panel_header('launch', title, f'话题 {topic_tag}' if topic_tag else '')
-    return styled_panel(head, [
-        *([md(notice)] if notice else []),
-        summary,
-        adjust,
-        *([md(unredacted_note(choices))] if lost else []),
-        # The form holds the buttons only: each choice is recorded as made, and a directory not in the
-        # list is pasted into 其他目录…'s browser (the path input went).
-        {'tag': 'form', 'name': 'launch_form', 'elements': [
-            {'tag': 'column_set', 'horizontal_spacing': '8px', 'columns': [
-                {'tag': 'column', 'width': 'weighted', 'weight': 1, 'elements': [button]} for button in buttons]},
-        ]},
-    ], title + ' · 模型、思考预算、工作区、运行方式')
+    total = model_count(choices, model) if choice else 0
+
+    def draw(limit):  # The card with its 模型 row cut to ``limit`` (fitted).
+        settings = model_settings(choices, model, kinds=(HARNESS_ACTION, PROVIDER_ACTION, MODEL_ACTION, BUDGET_ACTION,
+                                                         WORK_MODE_ACTION), revision=1, effort=effort, work_mode=mode,
+                                  limit=limit) if choice else []
+        if choice.get('redaction'):
+            settings.append(redaction_setting('redaction', REDACTION_ACTION, 'on' if redaction == 'on' else 'off'))
+        settings += [workspace_setting('workspace', WORKSPACE_ACTION, workspace, names,
+                                       last=[(MANAGE_OPTION, '⚙️ 添加或管理工作区…')],
+                                       labels={name: f'{name} · {title}' for name, title in devices.items()}),
+                     run_mode_setting('run_mode', MODE_ACTION, run_mode)]
+        rows = cut_rows(settings, [setting_row(setting, token=token, open_key=page) for setting in settings], total)
+        facts = [f'思考预算 {effort_text(choice, effort)}', *(['工作模式 {}（{}）'.format(*WORK_MODES[mode])] if mode else []),
+                 *([f"敏感词脱敏 {REDACTION_LABELS.get(redaction, '关')}"] if choice.get('redaction') else []),
+                 *(['不脱敏'] if lost else []),
+                 f'工作区 {workspace}' + (f' · 设备 {devices[workspace]}' if workspace in devices else ''), RUN_MODES['direct'] + '运行' if run_mode == 'direct' else RUN_MODES['worktree']]
+        summary = summary_block(choice, facts) if choice else md('模型目录准备中，请稍后重新打开配置。')
+        adjust = fold('launch_adjust', md(grey(ADJUST_TITLE)), rows, expanded=bool(expanded or page), background='grey-50',
+                      padding='0px 12px 0px 12px', spacing='0px')
+        buttons = [{'tag': 'button', 'name': prefix + token, 'form_action_type': 'submit', 'type': style, 'width': 'fill',
+                    'text': {'tag': 'plain_text', 'content': label}}
+                   for prefix, label, style in [(PICKER_PREFIX, '其他目录…', 'default'),
+                                                (SUBMIT_PREFIX, UNREDACTED_START if lost else title, 'primary_filled')]]
+        if lost:
+            buttons[-1]['confirm'] = {'title': plain(UNREDACTED_TITLE), 'text': plain(UNREDACTED_TEXT)}
+        head = panel_header('launch', title, f'话题 {topic_tag}' if topic_tag else '')
+        return styled_panel(head, [
+            *([md(notice)] if notice else []),
+            summary,
+            adjust,
+            *([md(unredacted_note(choices))] if lost else []),
+            # The form holds the buttons only: each choice is recorded as made, and a directory not in the
+            # list is pasted into 其他目录…'s browser (the path input went).
+            {'tag': 'form', 'name': 'launch_form', 'elements': [
+                {'tag': 'column_set', 'horizontal_spacing': '8px', 'columns': [
+                    {'tag': 'column', 'width': 'weighted', 'weight': 1, 'elements': [button]} for button in buttons]},
+            ]},
+        ], title + ' · 模型、思考预算、工作区、运行方式')
+
+    return fitted(draw, total)

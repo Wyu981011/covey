@@ -15,8 +15,8 @@ rows, names the project in its subtitle and says what the lead's next turn gets 
 from __future__ import annotations
 
 from covey.cards.elements import callback_button, fold, grey, md, note, panel_header, plain, row, styled_panel
-from covey.cards.launch_config import (model_settings, redaction_setting, run_mode_setting, setting_row, settings_block,
-                                                workspace_setting)
+from covey.cards.launch_config import (cut_rows, fitted, model_count, model_settings, redaction_setting, run_mode_setting,
+                                       setting_row, settings_block, workspace_setting)
 from covey.core.menu_choice import harness_of
 from covey.core.defaults import work_mode_tag
 from covey.core.text import literal, redact
@@ -103,8 +103,9 @@ def unchanged(form):
     return not (changes(form) - {"Harness", "供应商"})  # Those two change with the model.
 
 
-def switch_settings(form):
-    """The card's settings rows, as the record chose them."""
+def switch_settings(form, limit=None):
+    """The card's settings rows, as the record chose them; ``limit``: the most models its 模型 row lists (fitted), the
+    topic's own among them all the same."""
     model = form["selected_model"]
     choices = offered(form)
     choice = form["models"].get(model, {})
@@ -112,7 +113,8 @@ def switch_settings(form):
     if choices and model in choices:
         settings += model_settings(choices, model, kinds=(HARNESS, PROVIDER, MODEL, BUDGET, WORK_MODE),
                                    revision=form["config_revision"], effort=form.get("selected_effort", ""),
-                                   work_mode=form.get("selected_work_mode", ""))
+                                   work_mode=form.get("selected_work_mode", ""), limit=limit,
+                                   keep=(form["current"].get("key") or "",))
     if choice.get("redaction"):
         settings.append(redaction_setting("redaction", REDACTION, form.get("selected_redaction") or "off"))
     # compat(ecb0458): a record from before the workspace select names only the topic's workspace; retire when no
@@ -128,11 +130,18 @@ def switch_settings(form):
 
 def build_switch_card(form):
     """The 🔁 换配置 card; ``form`` is the switch record, its ``page`` the row drawn open, ``top_level`` a card at the private
-    chat's top level (its subtitle names the topic and where a reply goes)."""
+    chat's top level (its subtitle names the topic and where a reply goes). Its 模型 row is cut to what one card holds
+    (cards/launch_config.py fitted)."""
+    choices, model = offered(form), form["selected_model"]
+    total = model_count(choices, model) if model in choices else 0
+    return fitted(lambda limit: switch_card(form, switch_settings(form, limit), total), total)
+
+
+def switch_card(form, settings, total):
+    """build_switch_card with ``settings``, of a 模型 row out of ``total`` models."""
     token, model = form["token"], form["selected_model"]
     choices = offered(form)
     changed = changes(form)
-    settings = switch_settings(form)
     lead = form.get("lead") or {}
     subtitle = (f"专项「{lead.get('name') or '专项'}」的负责人 · 确认后负责人下一轮起生效" if lead
                 else (f"话题 {form['topic']} · " if form.get("topic") else "") + (
@@ -142,8 +151,9 @@ def build_switch_card(form):
         elements.append(md("模型目录准备中，请稍后重新打开换配置。"))
     # Its token stays the same across redraws: the revision makes each redraw's rows new, so a chosen row closes.
     stamp = f"r{form['config_revision'] % 10000}"
-    elements.append(settings_block([setting_row(setting, token=token, open_key=form.get("page") or "",
-                                                changed=setting.label in changed, stamp=stamp) for setting in settings]))
+    elements.append(settings_block(cut_rows(settings, [setting_row(setting, token=token, open_key=form.get("page") or "",
+                                                                   changed=setting.label in changed, stamp=stamp)
+                                                       for setting in settings], total)))
     if form["current"].get("redaction") and form.get("selected_redaction") == "off" and not choice_redacts(form):
         elements.append(note(AUTO_OFF_NOTE))
     if form.get("active_task"):
