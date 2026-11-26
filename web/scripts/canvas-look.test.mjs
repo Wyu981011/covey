@@ -148,3 +148,13 @@ test('输入框和底座不裁往外浮的面板（T789：换配置面板被 .co
   assert.match(fixed['max-height'], /var\(--room/u);
   assert.match(readFileSync(join(cv, 'ConfigBar.tsx'), 'utf8'), /popPlace\(host\.getBoundingClientRect\(\)/u);
 });
+
+test('换配置面板放不下时，「取消」「确认更换」那一行贴在面板底上，不被挤出滚动区（T833，fork Wyu981011/covey 的 1ca78f3）', () => {
+  const css = rules('composer.css');
+  const foot = at(css, '.cv .cfg-foot');
+  assert.equal(foot.position, 'sticky');
+  assert.equal(foot.bottom, '0');
+  assert.equal(foot.background, 'var(--s1)', '贴底时盖住下面滚过去的字');
+  // 面板自己的下内边距归零，留白由贴底的那一行出：不然贴底的行和面板底之间漏一条滚动的字
+  assert.match(at(css, '.cv .cfg-pop').padding, / 0$/u);
+});

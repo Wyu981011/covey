@@ -106,11 +106,12 @@
 .cv .cfg-btn:hover,.cv .cfg-btn.on{border-color:var(--line2);background:var(--s2);color:var(--t1)}
 .cv .cfg-btn svg{width:14px;height:14px;flex:none}
 .cv .cfg-tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.cv .cfg-pop{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:30;max-height:min(70vh,620px);overflow-y:auto;border-radius:12px;border:1px solid var(--line2);background:var(--s1);box-shadow:0 18px 48px -12px rgba(0,0,0,.55);padding:10px 14px 8px}
+.cv .cfg-pop{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:30;max-height:min(70vh,620px);overflow-y:auto;border-radius:12px;border:1px solid var(--line2);background:var(--s1);box-shadow:0 18px 48px -12px rgba(0,0,0,.55);padding:10px 14px 0}
 .cv .cfg-head{display:flex;align-items:baseline;gap:10px;padding:0 0 6px;font-size:13px;color:var(--t1)}
 .cv .cfg-head .t3{font-size:12px}
 .cv .cfg-pop .lx-panel{padding:0;border:0;background:transparent}
-.cv .cfg-foot{display:flex;align-items:center;gap:8px;padding:10px 0 2px;border-top:1px solid var(--line)}
+/* 放不下时中间那几行滚动，「取消」「确认更换」那一行贴在面板底上：矮屏上选了模型、说明变长也看得见确认（T833，照 fork Wyu981011/covey 的 1ca78f3） */
+.cv .cfg-foot{position:sticky;bottom:0;z-index:1;display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--line);background:var(--s1)}
 .cv .cfg-note{flex:1;min-width:0;font-size:12px;line-height:1.5;color:var(--t3)}
 .cv .cfg-note .bad{color:var(--fail)}
 .cv .cfg-note .warn{color:var(--wait)}
