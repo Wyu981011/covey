@@ -247,7 +247,7 @@ class CardSwitchTest(UpCase):
         for raw in ({"project_id": "f" * 12}, {"topic_id": "e" * 32}):
             with self.subTest(raw=raw):
                 self.assertEqual(self.open(click="click-" + json.dumps(raw), **raw), (None, None))
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(self.open(click="click-off"), (None, None))
 
     def test_the_web_pages_switch_changes_the_lead_and_keeps_its_workspace(self):

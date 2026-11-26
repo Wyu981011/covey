@@ -43,8 +43,15 @@ class WindowTest(unittest.TestCase):
         self.assertEqual(quiet_hours.window({"COVEY_QUIET_HOURS": "0:30-6:00", "COVEY_DIGEST_TIMES": "09:30,21:30"}),
                          (30, 360))
 
+    def test_unset_it_comes_from_the_default_digest_times(self):
+        for environ in ({}, {"COVEY_DIGEST_TIMES": ""}):
+            self.assertEqual(quiet_hours.window(environ), (21 * 60 + 30, 9 * 60 + 30), environ)
+            self.assertTrue(quiet_hours.quiet(at(2), environ))
+        for off in ("off", "0", "no", "none", "false"):
+            self.assertIsNone(quiet_hours.window({"COVEY_DIGEST_TIMES": off}), off)
+
     def test_none_off_with_one_digest_time_or_a_value_that_is_neither(self):
-        for environ in ({}, {"COVEY_DIGEST_TIMES": "09:30"}, {"COVEY_QUIET_HOURS": "off", "COVEY_DIGEST_TIMES": "09:30,21:30"},
+        for environ in ({"COVEY_DIGEST_TIMES": "off"}, {"COVEY_DIGEST_TIMES": "09:30"}, {"COVEY_QUIET_HOURS": "off", "COVEY_DIGEST_TIMES": "09:30,21:30"},
                         {"COVEY_QUIET_HOURS": "0"}, {"COVEY_QUIET_HOURS": "夜里"}, {"COVEY_QUIET_HOURS": "23:00"},
                         {"COVEY_QUIET_HOURS": "08:00-08:00"}, {"COVEY_QUIET_HOURS": "25:00-08:00"}):
             self.assertIsNone(quiet_hours.window(environ), environ)

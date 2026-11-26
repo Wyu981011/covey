@@ -119,7 +119,7 @@ class Butler:
     def __init__(self, topics) -> None:
         self.topics = topics
         self.runtime = topics.runtime
-        self.tracks = Tracks(self)  # 多路并行 (app/butler_tracks.py); idle unless COVEY_BUTLER_TRACKS=1 and the mode says so.
+        self.tracks = Tracks(self)  # 多路并行 (app/butler_tracks.py); idle when COVEY_BUTLER_TRACKS is 0 or the mode says so.
 
     @staticmethod
     def close() -> None:

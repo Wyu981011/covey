@@ -12,8 +12,7 @@ from covey.core.loops import every
 from covey.core.state import read_json, write_json
 from covey.core.roster import HARNESSES
 from covey.core.process import device_of
-from covey.core.process_env import child_process_env, env_flag, process_device
-from covey.core import harness_probe
+from covey.core.process_env import child_process_env
 from covey.core import gateways
 from covey.backends.claude import profiles as claude_profiles
 from covey.core.result import ERROR_CODES
@@ -22,27 +21,12 @@ from covey.core.result import ERROR_CODES
 # a logout then shows when a task runs, not before it starts. The
 # availability watch checks every minute and refreshes or clears it.
 LOGIN_REUSE = 300
-# COVEY_HARNESS_PROBE=1: besides the local preflight, the availability watch runs one real call per Claude
-# and Codex (core/harness_probe.py: claude -p, codex exec) when its cached answer expires (6 h when it passed,
-# 10 min when not), keeps the answer under <data>/harness-probe/ and shows it in the health snapshot. A cached
-# "not logged in" makes the Harness unavailable; a network, timeout or other failure only shows in health, since
-# it may pass again before a task runs. Off by default: a live deployment makes no extra model calls.
-PROBE_ENV = 'COVEY_HARNESS_PROBE'
-PROBED = ('claude', 'codex')
 _logins: dict = {}  # full command -> monotonic time of its last passing login check
 
 
 def _executable(ctx):
     command = ctx.backend_cmd
     return command[0] if isinstance(command, (list, tuple)) else command
-
-
-def probe_enabled():
-    return env_flag(PROBE_ENV, False)
-
-
-def probe_row(result):
-    return {k: result[k] for k in ('ok', 'reason', 'detail', 'checked_at', 'cached') if k in result}
 
 
 def device_check(name, ctx):
@@ -93,12 +77,6 @@ def local_check(name, ctx):
             _logins.pop(login_key, None)
             return {'status': 'unknown', 'reason': 'auth_check_unavailable', 'scope': 'local_preflight'}
         _logins[login_key] = time.monotonic()
-    if name in PROBED and probe_enabled():
-        # Only the cached answer: a task's preflight never waits for a model call (the watch fills the cache).
-        known = harness_probe.read_cache(harness_probe.probe_directory(), name, command=_command(ctx),
-                                         env=child_process_env(ctx.workdir, device=process_device(ctx)))
-        if known and known.get('reason') == 'not_logged_in':
-            return {'status': 'unavailable', 'reason': 'authentication', 'scope': 'live_probe'}
     if name == 'dsh':
         gateway = gateways.dsh_gateway()
         # Only for a dsh check: its modules (urllib and the rest) stay out of a task runner's start.
@@ -109,11 +87,6 @@ def local_check(name, ctx):
         except ValueError:
             return {'status': 'unavailable', 'reason': 'authentication', 'scope': 'local_preflight'}
     return {'status': 'configured', 'scope': 'local_preflight; model access not probed'}
-
-
-def _command(ctx):
-    command = ctx.backend_cmd
-    return list(command) if isinstance(command, (list, tuple)) else command
 
 
 def observe(ctx, name, model, *, status, error=''):
@@ -186,11 +159,6 @@ def sample(gateway, ctx):
     for name, target in contexts.items():
         try:
             checks[name] = {**local_check(name, target), 'checked_at': time.time()}
-            check = checks[name]
-            if name in PROBED and probe_enabled() and (check['status'] != 'unavailable' or check.get('scope') == 'live_probe'):
-                check['probe'] = probe_row(harness_probe.cached_probe(
-                    harness_probe.probe_directory(), name, command=_command(target),
-                    env=child_process_env(target.workdir, device=process_device(target))))
         except (OSError, ValueError, TypeError, AttributeError):
             checks[name] = {'status': 'unknown', 'scope': 'local_preflight'}
     gateway.runtime.availability_health = {'preflight': checks, 'observations': snapshot(ctx.state_dir)}

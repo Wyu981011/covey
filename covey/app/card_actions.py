@@ -36,7 +36,6 @@ QUESTIONS = "interaction.interaction_action"  # Answers, questions' states, supp
 ARTIFACTS = "artifacts.artifact_action"
 RETIRED = "controls.retired_action"  # A button taken off the cards, on a card sent before: what replaces it.
 RETRIES = "controls.task_action"
-EXPORT = "turn_export.export_action"
 
 
 ACTIONS = {
@@ -55,7 +54,7 @@ ACTIONS = {
     "bridge_job_quota_wait": CardAction("等账号恢复", bot_only=True, handler=RETRIES),
     "bridge_fork": CardAction("侧聊或分叉", bot_only=True, handler=RETIRED),  # Off the cards.
     "bridge_compact": CardAction("压缩上下文", bot_only=True, handler=RETIRED),  # Off the cards as well.
-    "bridge_turn_export": CardAction("下载请求与结果", bot_only=True, handler=EXPORT),  # Packs in a thread of the Bridge.
+    "bridge_turn_export": CardAction("下载请求与结果", bot_only=True, handler=RETIRED),  # Off the cards (T813).
     # 看看 under the status line of a turn that may be stuck (cards/task_status.py LOOK_KIND): the Bridge looks at the task
     # runner from outside (app/stuck_check.py), so never forwarded to it; it starts no task.
     "bridge_job_look": CardAction("看看卡住的任务", bot_only=True, handler="stuck_check.look_action"),
@@ -259,6 +258,7 @@ BOT_ONLY = frozenset(kind for kind, action in ACTIONS.items() if action.bot_only
 RETIRED_TEXT = {
     "bridge_fork": "💬 侧聊和 🔀 分叉已下线：要从这个话题分出新话题，在私聊里跟管家说。",
     "bridge_compact": "📦 压缩上下文已下线：会话快到模型窗口时，Claude Code 会自己压缩。",
+    "bridge_turn_export": "📥 下载请求与结果已下线，这次点击没有打包任何东西。",
 }
 # compat: cards sent by a feature that was taken out: (kind, the prefix of its forms' button names) -> what a click gets
 # (a card kind not in ACTIONS is otherwise dropped without a word). Paseo (covey_paseo) was taken out.

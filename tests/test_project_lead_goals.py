@@ -1140,10 +1140,11 @@ class ListingTest(Case):
     """What the lead's MCP server lists, 协作 on and off."""
 
     def test_off_the_leads_tools_are_as_they_were(self):
-        self.assertEqual([tool["name"] for tool in butler_tool_specs.lead_tools({})], LEAD_NAMES)
+        self.assertEqual([tool["name"] for tool in butler_tool_specs.lead_tools({"COVEY_PROJECT_TRIAGE": "0"})], LEAD_NAMES)
         self.assertEqual(butler_tool_specs.lead_tools({**TRIAGE})[-2:], butler_tool_specs.TRIAGE_TOOLS)
         self.assertEqual(butler_tool_specs.lead_tools({turn_source.SWITCH: "0", **TRIAGE}), butler_tool_specs.lead_tools(TRIAGE))
         self.assertNotIn("project_checklist", [tool["name"] for tool in butler_mcp.tool_list({butler.LEAD_ENV: PID})])
+        self.assertIn("project_answer", [tool["name"] for tool in butler_tool_specs.lead_tools({})])  # Triage unset is on.
 
     def test_on_the_lead_has_project_checklist_and_project_answer_asks_for_evidence(self):
         tools = butler_tool_specs.lead_tools({**COLLAB, **TRIAGE})
@@ -1153,7 +1154,7 @@ class ListingTest(Case):
         self.assertIn("evidence", answer["input_schema"]["properties"])
         self.assertIn(butler_tool_specs.EVIDENCE_NOTE, answer["description"])
         self.assertNotIn("evidence", butler_tool_specs.TRIAGE_TOOLS[0]["input_schema"]["properties"])  # Not changed in place.
-        self.assertEqual([tool["name"] for tool in butler_tool_specs.lead_tools(COLLAB)], [*LEAD_NAMES, "project_checklist"])
+        self.assertEqual([tool["name"] for tool in butler_tool_specs.lead_tools({**COLLAB, "COVEY_PROJECT_TRIAGE": "0"})], [*LEAD_NAMES, "project_checklist"])
         listed = [tool["name"] for tool in butler_mcp.tool_list({butler.LEAD_ENV: PID, **COLLAB})]
         self.assertIn("project_checklist", listed)
         self.assertNotIn("project_checklist", [tool["name"] for tool in butler_tool_specs.listed({**COLLAB, projects.ENV: "1"})])

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from covey.cards.review import render_history
-from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.core import extensions, knowledge, projects, turn_source
 from covey.core import memory as core_memory
 from covey.core.text import stamp
@@ -500,7 +500,7 @@ SHARED_RULES = (
     "只对这件事、这一轮的要求不记。主人说“忘掉/删掉那条”时，用 principles_list 找到它，再用 principle_delete 删掉。"
     "记下的原则每一轮都附在 Bridge 的规则里，你和各个话题都会看到。",
 )
-# 管家 (COVEY_BUTLER_RULES=1, docs/butler.md 管家规则): the butler only answers quickly and hands the rest on, so
+# 管家 (COVEY_BUTLER_RULES, on unless 0; docs/butler.md 管家规则): the butler only answers quickly and hands the rest on, so
 # it is free for the owner's next question. It takes the place of SHARED_RULES' first two rules (everything under a
 # minute or two is done in place; what goes to a topic area is what may take over a minute or two); the other rules are
 # the same. Off, the rules are exactly SHARED_RULES. BUTLER_RULES_ENV is core/butler_tool_specs.py's: the tool list reads it too.
@@ -523,12 +523,12 @@ assert BUTLER_RULES[1] != SHARED_RULES[1]
 
 
 def butler_on(environ=None) -> bool:
-    """Whether COVEY_BUTLER_RULES=1 (only ``1``; read on every call)."""
-    return str(cenv.get(BUTLER_RULES_ENV, "", environ)).strip() == "1"
+    """Whether the butler's rules are on: COVEY_BUTLER_RULES unset or anything but 0/off/false/no (read on every call)."""
+    return env_flag(BUTLER_RULES_ENV, True, environ)
 
 
 def shared_rules(environ=None) -> tuple[str, ...]:
-    """SHARED_RULES, the butler's two rules in place of the first two when COVEY_BUTLER_RULES=1."""
+    """SHARED_RULES, the butler's two rules in place of the first two unless COVEY_BUTLER_RULES is off."""
     return BUTLER_RULES + SHARED_RULES[2:] if butler_on(environ) else SHARED_RULES
 
 
@@ -546,9 +546,9 @@ assert PIN_WORDS in AREA_RULE
 
 
 def area_rule(environ=None) -> str:
-    """AREA_RULE, without its "进度主人看 Pin" unless 手上的事 is pinned (COVEY_PINNED_OVERVIEW=1; read on every
+    """AREA_RULE, without its "进度主人看 Pin" when 手上的事 is not pinned (COVEY_PINNED_OVERVIEW off; read on every
     call): an owner without the Pin was sent to look at one."""
-    pinned = str(cenv.get(PINNED_OVERVIEW_ENV, "", environ)).strip() == "1"
+    pinned = env_flag(PINNED_OVERVIEW_ENV, True, environ)
     return AREA_RULE if pinned else AREA_RULE.replace(PIN_WORDS, "")
 
 

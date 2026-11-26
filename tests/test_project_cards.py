@@ -463,7 +463,7 @@ class RefreshTest(CardCase):
 
     def test_no_thread_without_the_switch_and_no_write(self):
         self.assertEqual([name for name, _ in self.writer.threads()], ["project_cards"])
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(self.writer.threads(), ())
             self.tick(1010.0)
         self.assertFalse(self.put.called)
@@ -490,7 +490,7 @@ class SendTest(CardCase):
         self.assertEqual(self.sent.call_count, 1)
 
     def test_nothing_is_sent_without_the_switch(self):
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(project_cards.created(self.env(), self.record()), "")
         self.assertFalse(self.sent.called)
 
@@ -968,7 +968,7 @@ class PinTest(ProjectsCase):
     def test_the_cell_is_named_by_the_project_and_with_the_switch_off_by_nothing_new(self):
         self.assertEqual(label_title(self.state, self.lead_id, "（话题未知）"), ("专项", "迁库"))
         self.assertEqual(board_read.topic_label(self.state, self.lead_id), ("专项", "迁库"))
-        with mock.patch.dict(os.environ, {projects.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertEqual(label_title(self.state, self.lead_id, "（话题未知）"), ("", "（话题未知）"))
             row = self.row("running")
             self.assertEqual(pins.aimed(self.state, "oc_dm", row), row)

@@ -221,7 +221,6 @@ class FlowTest(InstallerCase):
         self.assertEqual([], FakeBrowser.opened)
         self.slash_sync.assert_called_once()
         self.assertEqual(self.slash_sync.call_args.args[0], "covey")
-        self.assertEqual("1", cenv.get("COVEY_BOARD", None, self.slash_sync.call_args.args[1]))
         self.assertIn("斜杠命令已就绪：/usage、/board、/settings", self.text())
         self.assertNotIn("还差：", self.text())
 
@@ -676,7 +675,7 @@ class ServiceTest(InstallerCase):
         ins, _ = self.start()
         self.assertEqual({key: cenv.get(key, None, ins.env) for key in switches.SHOWCASE},
                          {key: switches.INSTALL.get(key) for key in switches.SHOWCASE})
-        self.assertEqual("1", cenv.get("COVEY_REVIEW", None, ins.env))  # 独立复核, 到点回来看, 记忆 ... are on.
+        self.assertIsNone(cenv.get("COVEY_REVIEW", None, ins.env))  # 独立复核, 到点回来看, 记忆 ... are on unset (T813).
         ins, ran = self.start(False, 0, "--showcase")  # Registered (the service is not up) with the 演示套餐.
         self.assertEqual(2, len(ran))
         self.assertEqual({key: cenv.get(key, None, ins.env) for key in switches.SHOWCASE}, switches.SHOWCASE)
@@ -691,8 +690,8 @@ class ServiceTest(InstallerCase):
         self.assertIn("演示套餐没打开（job #3 (running) would be interrupted）", "\n".join(ins.leftovers))
         ins = self.make("--showcase", env=self.env(COVEY_DIGEST_TIMES="10:00", COVEY_COLLAB="0"))
         ins.default_switches()  # What the shell set stays, as with the install switches.
-        self.assertEqual(("10:00", "0", "1"), tuple(cenv.get(key, None, ins.env)
-                                                for key in ("COVEY_DIGEST_TIMES", "COVEY_COLLAB", "COVEY_PINNED_TOPICS")))
+        self.assertEqual(("10:00", "0", "sdk"), tuple(cenv.get(key, None, ins.env)
+                                                  for key in ("COVEY_DIGEST_TIMES", "COVEY_COLLAB", "COVEY_CARD_TRANSPORT")))
 
     def test_the_checkout_is_precompiled_before_registering_even_when_nothing_else_changed(self):
         self.start()
@@ -829,7 +828,7 @@ class SwitchesTest(InstallerCase):
         self.lacking.clear()
         self.assertEqual(0, self.make("--no-start", interactive=True).run())
         seen = self.surveyed[0]
-        self.assertEqual(("1", None), (cenv.get("COVEY_BOARD", None, seen), cenv.get("COVEY_PINNED_TOPICS", None, seen)))
+        self.assertIsNone(cenv.get("COVEY_PINNED_TOPICS", None, seen))  # On unset: the read event is asked for (T813).
         self.surveyed.clear()
         self.assertEqual(0, self.make("--no-start", "--showcase", interactive=True).run())
         seen = self.surveyed[0]  # The menu 看板, the Pin scopes and the read event are asked for in the one scan.
@@ -849,8 +848,9 @@ class SwitchesTest(InstallerCase):
         ins.settle_switches()
         self.assertEqual(ins.env, before)
         get, ins = self.settled("--showcase", COVEY_DIGEST_TIMES="08:00", COVEY_COLLAB="0")
-        # The 演示套餐 turns on what the manifest lacks or has off; what this shell sets wins.
-        self.assertEqual(("1", "08:00", "0", "1", "/absolute/kb"),
+        # The 演示套餐 (the SDK and 协作 since T813) turns on what the manifest lacks or has off; what this shell sets wins,
+        # and what the manifest set off of the rest stays off.
+        self.assertEqual(("0", "08:00", "0", None, "/absolute/kb"),
                          tuple(get(name) for name in ("COVEY_MEMORY", "COVEY_DIGEST_TIMES", "COVEY_COLLAB",
                                                       "COVEY_PINNED_TOPICS", "COVEY_HISTORY_CMD")))
 
@@ -896,7 +896,7 @@ class FeishuSdkTest(InstallerCase):
         ins = self.settled()
         self.assertIsNone(cenv.get("COVEY_EVENT_TRANSPORT", None, ins.env))
         self.assertIsNone(cenv.get("COVEY_CARD_TRANSPORT", None, ins.env))
-        self.assertEqual(cenv.get("COVEY_PROJECTS", None, ins.env), "1")  # The rest of the install set as before.
+        self.assertIsNone(cenv.get("COVEY_PROJECTS", None, ins.env))  # On unset: never written (T813).
 
     def test_the_shell_wins_and_a_registered_service_gets_no_new_default(self):
         ins = self.settled(COVEY_EVENT_TRANSPORT="cli")
@@ -1145,8 +1145,9 @@ class ClosingTest(InstallerCase):
         state = self.data / "harness-cli_fake"
         for words in (f"数据根      {self.data}", f"状态目录    {state}（日志 {state / 'bridge.log'}）",
                       f"默认工作区  {self.root / 'work'}",
-                      "已经开着：管家、专项（叫醒负责人、停住问你、专项记忆、问题分流）、整理专项（只提议）、菜单「看板」、独立复核、"
-                      "到点回来看、记忆、知识条目",
+                      "已经开着：管家、专项（叫醒负责人、停住问你、专项记忆、问题分流）、整理专项（只提议）、独立复核、"
+                      "到点回来看、记忆、知识条目、置顶的「手上的事」、话题看板、早晚汇总（09:30、21:30）、管家同时做几件事、派发卡、"
+                      "飞书 SDK 收消息（收下先落盘，重启不丢）、飞书 SDK 写卡片",
                       f"演示套餐  python3 -B bin/covey_service.py set --state-dir {state} --preset showcase",
                       "--dry-run COVEY_DIGEST_TIMES=09:30,21:30", "docs/configuration.md「开关速查」", "python3 -B bin/covey_doctor.py",
                       "scripts/upgrade.sh"):
@@ -1159,13 +1160,16 @@ class ClosingTest(InstallerCase):
         self.assertNotIn("管家、", text)
         for words in ("协作（开发中）", "置顶的「手上的事」", "话题看板", "早晚汇总（09:30、21:30）", "管家同时做几件事", "派发卡"):
             self.assertIn(words, text)
-        self.registered({"LARK_BRIDGE_PROJECTS": "0", "LARK_BRIDGE_PROJECT_ASK": "1", "LARK_BRIDGE_MAIN_THREAD": "0"})
-        text = self.closing()
-        self.assertNotIn("已经开着", text)  # The butler off, projects off (an extra of theirs alone is no feature).
+        self.registered({"LARK_BRIDGE_PROJECTS": "0", "LARK_BRIDGE_PROJECT_ASK": "1", "LARK_BRIDGE_MAIN_THREAD": "0",
+                         "LARK_BRIDGE_REVIEW": "0"})
+        on = next(line for line in self.closing().splitlines() if line.startswith("已经开着："))
+        # The butler off, projects off (an extra of theirs alone is no feature, nor is 整理专项), 独立复核 set off.
+        self.assertTrue(on.startswith("已经开着：到点回来看、"), on)
+        self.assertNotIn("专项", on)
 
     def test_every_switch_the_install_or_the_demo_set_writes_has_its_words(self):
         self.assertEqual(set(switches.SHOWCASE) - set(installer.SWITCH_WORDS), set())
-        self.assertEqual(set(installer.PROJECT_PARTS) - set(switches.INSTALL), set())
+        self.assertEqual(set(installer.PROJECT_PARTS) - set(switches.DEFAULTS), set())
 
     def test_the_lines_come_after_what_is_left_and_before_the_call_to_action(self):
         self.registered({"LARK_BRIDGE_REVIEW": "1"})
@@ -1180,7 +1184,7 @@ class ClosingTest(InstallerCase):
             self.assertEqual(0, ins.run())
         self.assertEqual(self.lines[-1], "\n完成。去飞书私聊刚建的机器人发一句话。")
         self.assertLess(self.lines.index("还差：飞书应用还缺 看板"), self.lines.index("装在这里："))
-        self.assertIn("已经开着：独立复核", self.lines)
+        self.assertTrue([line for line in self.lines if line.startswith("已经开着：") and "、独立复核、" in line], self.lines)
         self.lines.clear()
         ins = self.make("--no-start")
         ins.app_id = "cli_fake"
@@ -1343,9 +1347,9 @@ class WithoutClaudeTest(InstallerCase):
         self.assertEqual(self.switches_of(ins), dict(switches.SHOWCASE))
         self.registered({"LARK_BRIDGE_REVIEW": "1", "LARK_BRIDGE_PROJECTS": "0"})
         (self.data / "install.json").write_text("{}")
-        ins = self.start("--showcase")  # Registered, down: registers again with the demo set, 专项 on too.
+        ins = self.start("--showcase")  # Registered, down: registers again with the demo set; 专项, set off, stays off.
         self.assertEqual((cenv.get("COVEY_PROJECTS", None, ins.env), cenv.get("COVEY_PROJECT_TIDY", None, ins.env),
-                          cenv.get("COVEY_PINNED_TOPICS", None, ins.env)), ("1", "suggest", "1"))
+                          cenv.get("COVEY_COLLAB", None, ins.env)), ("0", None, "1"))
         fingerprint = ins.fingerprint(self.data / "harnesses.json")
         (self.data / "install.json").write_text(json.dumps(fingerprint))
         self.registered({"LARK_BRIDGE_REVIEW": "1", "LARK_BRIDGE_PROJECTS": "0"})
@@ -1422,7 +1426,7 @@ class WithoutClaudeTest(InstallerCase):
     def test_the_closing_lines_say_what_the_butler_runs_on_and_how_to_turn_projects_on_where_they_are_off(self):
         installed = {cenv.spellings(key)[-1]: value for key, value in switches.INSTALL.items()}
         state = self.state
-        turn_on = " ".join(f"{key}={switches.INSTALL[key]}" for key in installer.PROJECT_SWITCHES)
+        turn_on = " ".join(f"{key}={switches.DEFAULTS[key]}" for key in installer.PROJECT_SWITCHES)
         command = f"python3 -B bin/covey_service.py set --state-dir {state} {turn_on}"
         text = self.closing(("codex",), installed, butler="codex")
         for words in ("已经开着：管家（Codex）、专项（", "Claude Code 没调通：管家用 Codex，专项的负责人和整理专项、同时做几件事的"
@@ -1437,9 +1441,8 @@ class WithoutClaudeTest(InstallerCase):
         text = self.closing(("agy",), installed)  # No Harness named: the butler follows what works, Antigravity here.
         self.assertIn("已经开着：管家（Antigravity）", text)
         self.assertIn("Claude Code 没调通：管家用 Antigravity", text)
-        older = {key: value for key, value in installed.items()
-                 if not any(key in cenv.spellings(name) for name in installer.PROJECT_SWITCHES)}
-        text = self.closing(("codex",), older, butler="codex")  # An older release installed it with Codex only.
+        older = {**installed, **{cenv.spellings(name)[-1]: "0" for name in installer.PROJECT_SWITCHES}}
+        text = self.closing(("codex",), older, butler="codex")  # An older release installed it with Codex only: set off.
         self.assertIn(f"；专项和整理专项没开，要开：{command}", text)
         self.assertNotIn("专项（", text.split("Claude Code 没调通")[0])
         text = self.closing(("claude", "codex"), older, butler="codex")  # Claude Code installed since.
@@ -1452,7 +1455,7 @@ class WithoutClaudeTest(InstallerCase):
         self.assertIn("已经开着：管家、专项（", text)
 
     def test_the_project_switches_and_the_butler_file(self):
-        self.assertEqual(set(installer.PROJECT_SWITCHES) - set(switches.INSTALL), set())
+        self.assertEqual(set(installer.PROJECT_SWITCHES) - set(switches.DEFAULTS), set())
         self.assertFalse(hasattr(switches, "NEEDS_CLAUDE") or hasattr(switches, "without_claude"))
         self.state.mkdir(parents=True)
         butler_settings.path(self.state).write_text(json.dumps({"model": "gpt-x", "topic_defaults": {"run_mode": "direct"}}))

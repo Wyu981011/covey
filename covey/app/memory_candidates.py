@@ -10,8 +10,8 @@ before the digest time, of ordinary topics (not the butler's, not a 代答 topic
 topic with redaction on or whose setting cannot be read; each message split into sentences, the ones with a correction's word
 (CUES) kept, at most PER_TOPIC a topic and MAX_SENTENCES in all. Nothing is read unless two topics or more have such words.
 
-Who groups them (``find``): the small model (where app/track_judge.py ``ask`` puts it, as app/patrol_judge.py does: the
-model gateway COVEY_JUDGE_GATEWAY names, else Haiku through the Claude Harness's own wrapping, else Codex's or Antigravity's own
+Who groups them (``find``): the small model (where app/track_judge.py ``ask`` puts it, as app/patrol_judge.py does:
+Haiku through the Claude Harness's own wrapping, else Codex's or Antigravity's own
 CLI; no tools, at most JUDGE_SECONDS) groups the sentences that say the same correction and words each group as one rule;
 without any of them, or when the call fails, the rules alone group sentences that read nearly the same
 (core/topic_gist.py ``same_essence``): a correction said in other words is then missed, never invented. A group must span two

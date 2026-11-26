@@ -1,5 +1,5 @@
-"""管家规则 (app/prompts.py BUTLER_RULES, COVEY_BUTLER_RULES=1, docs/butler.md 管家规则): with the variable unset
-(or anything but 1) a butler turn's message is, byte for byte, the one in tests/golden/butler_prompt.txt (taken
+"""管家规则 (app/prompts.py BUTLER_RULES, COVEY_BUTLER_RULES on unless 0, docs/butler.md 管家规则): with the variable at 0
+(off, false, no) a butler turn's message is, byte for byte, the one in tests/golden/butler_prompt.txt (taken
 from the code before the switch existed, knowledge and history search off); with it on, exactly two lines differ, the
 first two of SHARED_RULES, and the knowledge rules still follow them. The tool list is the same: topic_start's description
 (core/butler_tool_specs.py) changes only with the variable on, which the Bridge hands on to the MCP server."""
@@ -21,9 +21,13 @@ from covey.app.prompts import (AREA_OPENING, BUTLER_RULES_ENV, BUTLER_RULES, SHA
 from covey.core import knowledge
 
 GOLDEN = Path(__file__).resolve().parent / "golden" / "butler_prompt.txt"
-CLEAN = {BUTLER_RULES_ENV: "", "LARK_BRIDGE_MAIN_BUTLER": "", knowledge.ENV: "", knowledge.HISTORY_ENV: "",
-         "LARK_BRIDGE_KNOWLEDGE": "", "LARK_BRIDGE_HISTORY_CMD": "", PINNED_OVERVIEW_ENV: "",
-         "LARK_BRIDGE_PINNED_OVERVIEW": ""}
+# The baseline of the golden message: the switches that became default-on set off, the history command unset.
+CLEAN = {BUTLER_RULES_ENV: "0", "LARK_BRIDGE_MAIN_BUTLER": "0", knowledge.ENV: "0", knowledge.HISTORY_ENV: "",
+         "LARK_BRIDGE_KNOWLEDGE": "0", "LARK_BRIDGE_HISTORY_CMD": "", PINNED_OVERVIEW_ENV: "0",
+         "LARK_BRIDGE_PINNED_OVERVIEW": "0", "COVEY_BUTLER_TRACKS": "0", "COVEY_PROJECTS": "0", "COVEY_MEMORY": "0",
+         "COVEY_PROJECT_TIDY": "off"}
+# What listed() reads to give TOOLS as they were: the rules, the knowledge tools and the project tools off.
+TOOLS_OFF = {BUTLER_RULES_ENV: "0", knowledge.ENV: "0", "COVEY_PROJECTS": "0"}
 
 
 class ButlerRulesTest(unittest.TestCase):
@@ -37,11 +41,19 @@ class ButlerRulesTest(unittest.TestCase):
         return GOLDEN.read_bytes().replace(b"{QUICKSTART}", str(QUICKSTART).encode())
 
     def test_with_the_switch_off_the_turns_message_is_the_baseline_byte_for_byte(self):
-        for value in ("", "0", "true", " ", "yes"):
+        for value in ("0", "off", "false", "no", " NO "):
             self.env(**{BUTLER_RULES_ENV: value})
             self.assertFalse(butler_on())
             self.assertEqual(butler_message("快照", "消息").encode(), self.golden(), value)
         self.assertEqual(shared_rules(), SHARED_RULES)
+
+    def test_unset_or_empty_the_rules_are_on(self):
+        for value in ("", "true", " ", "yes"):
+            self.env(**{BUTLER_RULES_ENV: value, "LARK_BRIDGE_MAIN_BUTLER": value})
+            self.assertTrue(butler_on(), value)
+        self.assertTrue(butler_on({}))
+        self.assertTrue(butler_on({"COVEY_X": "0"}))
+        self.assertEqual(shared_rules({}), BUTLER_RULES + SHARED_RULES[2:])
 
     def test_with_the_switch_on_only_the_first_two_shared_rules_differ(self):
         self.env(**{BUTLER_RULES_ENV: "1"})
@@ -55,7 +67,7 @@ class ButlerRulesTest(unittest.TestCase):
 
     def test_the_pin_is_named_only_where_one_is_pinned(self):
         # A new install has no 手上的事 pinned: its butler told the owner to look at a Pin that was not there.
-        for value in ("", "0", "true"):
+        for value in ("0", "off", "false"):
             self.env(**{PINNED_OVERVIEW_ENV: value})
             self.assertNotIn("Pin", butler_rules())
             self.assertEqual(area_rule(), AREA_RULE.replace(PIN_WORDS, ""))
@@ -63,6 +75,7 @@ class ButlerRulesTest(unittest.TestCase):
         self.assertEqual(area_rule(), AREA_RULE)
         self.assertIn("进度主人看 Pin。被问到时", butler_rules())
         self.assertIn("发到聊天区；被问到时", area_rule({PINNED_OVERVIEW_ENV: "0"}))
+        self.assertEqual(area_rule({}), AREA_RULE)  # No key at all: pinned.
 
     def test_the_two_ways_of_asking_each_say_when(self):
         # 要主人定的事 goes to the checkpoint (a question card, the turn ends); which topic a message belongs to is
@@ -79,9 +92,10 @@ class ButlerRulesTest(unittest.TestCase):
         self.assertIn("可以点那张任务卡上的「看看」", AREA_RULE)
 
     def test_the_old_spelling_of_the_variable_works_too(self):
-        self.env(LARK_BRIDGE_MAIN_BUTLER="1")
-        del os.environ[BUTLER_RULES_ENV]  # The new spelling, when set, wins; patch.dict puts it back afterwards.
-        self.assertTrue(butler_on())
+        self.env(LARK_BRIDGE_MAIN_BUTLER="0")
+        for name in cenv.spellings(BUTLER_RULES_ENV)[:-1]:
+            os.environ.pop(name, None)  # The new spellings, when set, win; patch.dict puts them back afterwards.
+        self.assertFalse(butler_on())
 
     def test_the_butler_rules_are_one_line_each_and_say_what_the_owner_decided(self):
         self.assertEqual(len(BUTLER_RULES), 2)
@@ -129,13 +143,15 @@ class ButlerToolsTest(unittest.TestCase):
         self.assertEqual(TOOLS_BUTLER_ENV, BUTLER_RULES_ENV)
 
     def test_with_the_switch_off_the_list_is_the_one_before_it_byte_for_byte(self):
-        for value in (None, "", "0", "true", "yes"):
-            environ = {} if value is None else {BUTLER_RULES_ENV: value}
+        for value in ("0", "off", "false", "no"):
+            environ = {**TOOLS_OFF, BUTLER_RULES_ENV: value}
             self.assertIs(listed(environ), TOOLS, value)
             self.assertIn(START_OWN, self.start(listed(environ))["description"])
+        for environ in ({}, {BUTLER_RULES_ENV: ""}, {BUTLER_RULES_ENV: "true"}):  # On: unset, empty, anything else.
+            self.assertIn(START_BUTLER, self.start(listed(environ))["description"], environ)
 
     def test_with_the_switch_on_only_topic_starts_description_changes(self):
-        on = listed({BUTLER_RULES_ENV: "1"})
+        on = listed({**TOOLS_OFF, BUTLER_RULES_ENV: "1"})
         self.assertEqual([tool["name"] for tool in on], [tool["name"] for tool in TOOLS])
         changed = [name for name, a, b in ((a["name"], a, b) for a, b in zip(TOOLS, on)) if a != b]
         self.assertEqual(changed, ["topic_start"])
@@ -149,6 +165,8 @@ class ButlerToolsTest(unittest.TestCase):
         on = listed({"LARK_BRIDGE_MAIN_BUTLER": "1", "COVEY_KNOWLEDGE": "1"})
         self.assertNotIn("一两分钟", self.start(on)["description"])
         self.assertGreater(len(on), len(TOOLS))
+        off = listed({"LARK_BRIDGE_MAIN_BUTLER": "0", "LARK_BRIDGE_KNOWLEDGE": "0", "LARK_BRIDGE_PROJECTS": "0"})
+        self.assertIs(off, TOOLS)
 
     def test_the_bridge_hands_the_variable_to_the_mcp_server_only_when_it_has_it(self):
         def env():
@@ -156,6 +174,8 @@ class ButlerToolsTest(unittest.TestCase):
         self.env_patch = mock.patch.dict(os.environ, CLEAN)
         self.env_patch.start()
         self.addCleanup(self.env_patch.stop)
+        for name in cenv.spellings("COVEY_BUTLER_RULES"):
+            os.environ.pop(name, None)  # Unset: the Bridge has nothing to hand on, the server reads it as on.
         plain = env()
         self.assertNotIn("COVEY_BUTLER_RULES", plain)
         self.assertNotIn("LARK_BRIDGE_MAIN_BUTLER", plain)

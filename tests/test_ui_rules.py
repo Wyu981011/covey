@@ -60,7 +60,7 @@ MATRIX = {
            "顶层换配置": ("switch.card_top",)},
 }
 # The cards of a conversation (docs/ui.md 10 ③): no conclusion band on any (U1), whatever entry drew them.
-CONVERSATION = ("task.", "question.", "recovery.", "steer.", "switch.", "pages.", "main_task.", "rewind.", "turn_export.",
+CONVERSATION = ("task.", "question.", "recovery.", "steer.", "switch.", "pages.", "main_task.", "rewind.",
                 "topic.")
 # Samples a rule leaves alone, each with why: an old card's look kept, or a test sample that is no card the Bridge sends.
 HEADER_EXEMPT = {"recovery.stopped": "测试样本把“T70 · #431”当成（模板, 标题）传给了 stopped_card；现网的停住卡不带标题栏"}

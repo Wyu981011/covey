@@ -14,8 +14,7 @@ record written but the gists the backfill reads (core/topic_gist.py); app/projec
   asked once more, its last answer taken. ``focus`` (a real-time 整理): only suggestions about that topic count.
 
 Both calls go where app/track_judge.py ``ask`` puts the small model's questions (no tools, MCP servers, hooks or saved session,
-killed past the limit): the model gateway COVEY_JUDGE_GATEWAY names when it is set (its model then that one); else the Claude
-Harness, asked for COVEY_PROJECT_TIDY_MODEL (core/project_proposals.py model, Sonnet by default) through its own wrapping;
+killed past the limit): the Claude Harness, asked for COVEY_PROJECT_TIDY_MODEL (core/project_proposals.py model, Sonnet by default) through its own wrapping;
 else Codex's or Antigravity's own CLI on its default model (a heavy question: core/harness.py ask_once). A topic that
 redacts (core/redaction.py) is never sent and is counted apart. Every failure is a reason, never an exception
 (``Failed``)."""

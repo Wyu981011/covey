@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from support import UNSET_OFF
 from support import make_context, quiet
 from support.fake_backends import FakeBackend
 from support.records import write_job, write_topic
@@ -43,7 +44,7 @@ class Case(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.state = Path(tmp.name)
         patcher = mock.patch.dict(os.environ, {name: value for name, value in os.environ.items()
-                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}, clear=True)
+                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))} | UNSET_OFF, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -254,7 +255,7 @@ class TurnTest(TurnCase):
         runs = self.app().runs
         self.assertFalse(memory_turn.fix_rule(self.ctx, self.job("记住这个坑"), lambda: True))
         self.assertTrue(memory_turn.fix_rule(self.ctx, self.job("记住，以后都这样"), lambda: True))
-        self.env(**{knowledge.ENV: ""})
+        self.env(**{knowledge.ENV: "0"})
         self.assertTrue(memory_turn.fix_rule(self.ctx, self.job("记住这个坑"), lambda: True))
         self.assertIsNotNone(runs)
 
@@ -379,7 +380,7 @@ class CollectTest(CollectCase):
             self.assertNotIn("memory_notes", self.collect(self.turn(memory_lines=[self.LINE])))
 
     def test_the_switch_off_writes_nothing(self):
-        self.env(**{memory.ENV: ""})
+        self.env(**{memory.ENV: "0"})
         self.assertNotIn("memory_notes", self.collect(self.turn(memory_lines=[self.LINE])))
         self.assertEqual(topic_memory.live(self.state, "t1"), [])
         self.messenger.patch_card.assert_not_called()

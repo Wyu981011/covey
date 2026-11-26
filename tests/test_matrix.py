@@ -21,6 +21,7 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
+from support import UNSET_OFF
 from support import make_context
 from support.records import write_job, write_topic
 from support.world import UnifiedCase
@@ -136,7 +137,7 @@ class HarnessCellsCase(UnifiedCase):
     def setUp(self):
         super().setUp()
         env = {name: value for name, value in os.environ.items() if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}
-        patch = mock.patch.dict(os.environ, env, clear=True)
+        patch = mock.patch.dict(os.environ, {**env, **UNSET_OFF}, clear=True)
         patch.start()
         self.addCleanup(patch.stop)
         self.state = self.ctx.state_dir

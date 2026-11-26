@@ -84,7 +84,7 @@ def style_of(record) -> dict:
             for name, choices in STYLE_CHOICES.items()}
 
 
-STYLE_FILE = "project-style.json"  # <state>/: the style last set on any project (COVEY_PROJECT_STYLE_KEEP=1).
+STYLE_FILE = "project-style.json"  # <state>/: the style last set on any project, the next project's start.
 
 
 def last_style(state_dir) -> dict:

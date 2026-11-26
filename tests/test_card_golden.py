@@ -708,19 +708,6 @@ def rewind_cards():
     }
 
 
-def turn_export_panels():
-    from covey.cards.turn_export import export_panel
-
-    return {
-        "offered": export_panel(TOPIC, 431),
-        "building": export_panel(TOPIC, 431, {"status": "building", "at": FROZEN - 30}),
-        "failed": export_panel(TOPIC, 431, {"status": "failed", "error": "上传失败", "at": FROZEN - 30}),
-        "done": export_panel(TOPIC, 431, {"status": "done", "url": "https://example.com/file/x", "at": FROZEN - 30,
-                                          "name": "T70-#431-请求与结果.json.xz", "requests": 12, "subagents": 2,
-                                          "size": 85000, "raw_size": 9000000}),
-    }
-
-
 def switch_cards():
     from covey.cards.elements import notice_card
     from covey.cards.switch_form import build_switch_card, handoff_block
@@ -2048,7 +2035,7 @@ def paged_cards():
 
 GROUPS = {"task": task_cards, "trace": trace_panels, "launch": launch_cards, "question": question_cards,
           "proxy": proxy_cards, "steer": steer_cards, "recovery": recovery_cards, "rewind": rewind_cards,
-          "turn_export": turn_export_panels, "switch": switch_cards, "topic": topic_panels,
+          "switch": switch_cards, "topic": topic_panels,
           "weekly_usage": usage_cards, "menu": menu_panels, "main_topic": main_topic_cards, "main_task": main_task_cards, "status_card": status_cards_samples,
           "main_thread": butler_panels, "settings": settings_cards,
           "overview": overview_cards, "digest": digest_cards, "app_setup": app_setup_cards, "welcome": welcome_cards, "web_login": web_login_cards,

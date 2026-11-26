@@ -284,7 +284,7 @@ class AsksTest(unittest.TestCase):
                       **fields)
         saved = json.loads((self.state / pins.RECORD).read_text())
         write_json(self.state / pins.RECORD, {**saved, "pins": [{"topic_id": lead, "message_id": "om_project_card"}]})
-        for autowake, stopped, tags in (("", [12, 13, 21], ["1 等你", "4 停住了", "2 可能卡住"]),
+        for autowake, stopped, tags in (("0", [12, 13, 21], ["1 等你", "4 停住了", "2 可能卡住"]),
                                         ("1", [12, 13], ["1 等你", "3 停住了", "2 可能卡住"])):
             with self.subTest(autowake=autowake), mock.patch.dict(os.environ, {projects.ENV: "1", projects.AUTOWAKE_ENV: autowake,
                                                                                "COVEY_BOARD": "1", **ON}):
@@ -341,7 +341,7 @@ class AsksTest(unittest.TestCase):
             record["card"] = {"message_id": "om_proposal2"}
             tidy.put_proposal(self.state, record)
             self.assertEqual(self.counted(self.board()[1])[0], 6)  # A new one is read at once (its file changes the folder).
-        with mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1", tidy.ENV: ""}):  # 整理专项 off: as before.
+        with mock.patch.dict(os.environ, {projects.ENV: "1", "COVEY_BOARD": "1", tidy.ENV: "off"}):  # 整理专项 off: as before.
             self.assertEqual(self.counted(self.board()[1])[0], 5)
             self.assertEqual(self.counted(self.overview()[1])[0], 5)
 

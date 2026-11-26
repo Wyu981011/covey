@@ -34,7 +34,9 @@ class ButlerNamesTest(unittest.TestCase):
         self.assertNotEqual(one, butler.butler_topic_id("oc_b"))
 
     def test_mcp_config_names_the_entry_and_the_job(self):
-        config = butler.mcp_config(Path("/r"), Path("/s"), "job-1", "/usr/bin/python3")
+        unset = {name: value for name, value in os.environ.items() if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}
+        with mock.patch.dict(os.environ, unset, clear=True):  # None of the switches it hands on set.
+            config = butler.mcp_config(Path("/r"), Path("/s"), "job-1", "/usr/bin/python3")
         server = config["mcpServers"][butler.MCP_SERVER]
         self.assertEqual(server["args"], ["-B", "/r/" + butler.MCP_ENTRY])
         self.assertEqual(server["env"], cenv.mirrored({butler.STATE_ENV: "/s", butler.JOB_ENV: "job-1"}))

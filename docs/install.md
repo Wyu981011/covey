@@ -36,8 +36,8 @@ git clone https://github.com/ericxk/covey.git && cd covey
 第 3 步 Claude Code 没调通（没装、没登录或调不通）、Codex 或 Antigravity 调通了时，新装的服务这样开：
 
 - **管家用调通的那个**：先 Codex 后 Antigravity。安装器在服务第一次启动前把它写进状态目录里 `main-thread.json` 的 `harness`（文件里已经选了 Harness 的不动），私聊里照样是管家先接住每句话。
-- **别的照常开**：专项（负责人也跑在这个 Harness 上，只读，见[专项 · 负责人只读](projects.md#负责人只读)）、整理专项和其余默认开关都和有 Claude Code 时一样，`--showcase` 也开整套。
-- **小模型判断问它自己的命令行**：整理专项、“我本来想找你的事”、同时做几件事的分流这些一问一答的判断改问 Codex 或 Antigravity，一次 6 到 12 秒（Claude Code 有待命进程时 1 到 3 秒）。分流最多等 10 秒，超时按新开一件；嫌慢可以设 `COVEY_JUDGE_GATEWAY` 走模型网关（[配置 · 小模型判断](configuration.md#小模型判断)）。
+- **别的照常开**：专项（负责人也跑在这个 Harness 上，只读，见[专项 · 负责人只读](projects.md#负责人只读)）、整理专项和其余默认开关都和有 Claude Code 时一样，`--showcase` 同样把协作也开上。
+- **小模型判断问它自己的命令行**：整理专项、“我本来想找你的事”、同时做几件事的分流这些一问一答的判断改问 Codex 或 Antigravity，一次 6 到 12 秒（Claude Code 有待命进程时 1 到 3 秒）。分流最多等 10 秒，超时按新开一件；嫌慢就装好 Claude Code（[配置 · 小模型判断](configuration.md#小模型判断)）。
 - **用不了的**只有 Claude Code 自己的功能：敏感词脱敏、↩️ 回退、子 Agent 的模型（设置卡「能做什么」一页写着）。
 - 装好后的最后几行写着管家用的是哪个、Claude Code 这次为什么没调通（没装、没登录、网络不通），和装好 Claude Code 以后怎么换。
 
@@ -46,7 +46,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 1. 重新运行 `./install`，它把 Claude Code 加进启用的 Harness；已经在跑的服务的开关一项不动。
 2. 想让管家用 Claude Code：飞书里「设置」→「配置」的管家一段，把 Harness 换成 Claude Code（安装器不替你换回）。已有的专项负责人留在原来的 Harness 上，之后新开的专项跟着管家。
 
-旧版本在只有 Codex 时装的服务没开专项和整理专项。重跑 `./install` 时最后几行给出打开它们的命令：`python3 -B bin/covey_service.py set --state-dir "$STATE_DIR" COVEY_PROJECTS=1 COVEY_PROJECT_TIDY=suggest COVEY_PROJECT_AUTOWAKE=1 COVEY_PROJECT_ASK=1 COVEY_PROJECT_MEMORY=1 COVEY_PROJECT_TRIAGE=1`，先加 `--dry-run` 看会改什么（[改开关三步](configuration.md#改开关三步)）。重跑不改你开着或关着的开关，也不改你在设置卡上选过的管家 Harness。
+旧版本在只有 Codex 时装的服务，清单里没有专项这些开关，升级到这个版本后它们不设就是开的，不用再手动打开；重跑 `./install` 最后几行列出现在开着哪些、哪些被你设成了关，要改照[改开关三步](configuration.md#改开关三步)。重跑不改你开着或关着的开关，也不改你在设置卡上选过的管家 Harness。
 
 ## 网页工作台（可选）
 
@@ -87,7 +87,7 @@ bash web/deploy/selfhost/build.sh <数据根>/web/app && python3 -B -m covey.ser
 | `--no-start` | 只准备到飞书应用为止，不注册、不启动服务 |
 | `--web` | 在这台机器上自托管网页工作台（要 Node 22 以上和 npm）：后台构建，注册服务前等它，见[网页工作台](#网页工作台可选)；不加时终端里没开过网页的机器问一次 |
 | `--web-public ADDR` | 隐含 `--web`，同时开公网 HTTPS 直连：IP 或域名（逗号分隔），`auto` 用本机出网网卡的公网地址 |
-| `--showcase` | 演示套餐：默认开的之外，再开协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡，见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动；没有 Claude Code 时也开整套。已经装好的服务：清单里已有的设置照旧，只打开套餐里清单没有或关着的开关（效果同 `covey_service.py set --preset showcase`） |
+| `--showcase` | 演示套餐：默认开的之外，再开协作（开发中），见[演示套餐](configuration.md#演示套餐)；终端里已经设了的开关不动；没有 Claude Code 时也开整套。已经装好的服务：清单里已有的设置照旧，只打开套餐里清单没有或关着的开关（效果同 `covey_service.py set --preset showcase`） |
 
 ## 第一个回答
 
@@ -108,7 +108,7 @@ bash web/deploy/selfhost/build.sh <数据根>/web/app && python3 -B -m covey.ser
 
 ## 装好以后
 
-- **默认开着的**：管家、专项（连同叫醒负责人、停住问你、专项记忆、问题分流四个进阶开关）、整理专项（只提议）、菜单「看板」、独立复核、到点回来看、记忆和知识条目、撤回或编辑消息后跟着处理、自动补齐飞书应用、飞书 SDK 收消息和写卡片（装得上 SDK 时）；没有 Claude Code 时也一样（[没有 Claude Code 时](#没有-claude-code-时)）。推荐再打开的（早晚汇总、置顶的「手上的事」等）见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做；想一次都打开，装的时候加 `--showcase`（[演示套餐](configuration.md#演示套餐)）。
+- **默认开着的**：管家、专项（连同叫醒负责人、停住问你、专项记忆、问题分流四个进阶开关）、整理专项（只提议）、早晚汇总（09:30 和 21:30）、菜单「看板」、置顶的「手上的事」和话题自动 Pin、同时做几件事、派发卡、管家规则、独立复核、到点回来看、记忆和知识条目、撤回或编辑消息后跟着处理、自动补齐飞书应用。这些是代码里的默认，安装器不往服务清单里写；安装器只写飞书 SDK 收消息和写卡片两个开关（装得上 SDK 时）。没有 Claude Code 时也一样（[没有 Claude Code 时](#没有-claude-code-时)）。哪些开着、怎么关见[开关速查](configuration.md#开关速查)，改开关按[改开关三步](configuration.md#改开关三步)做；想把协作也打开，装的时候加 `--showcase`（[演示套餐](configuration.md#演示套餐)）。置顶和话题自动 Pin 要应用有置顶权限和“消息已读”事件，装完「飞书应用待补」卡会提示补齐。
 - **怎么用**：一页纸的[五分钟上手](quickstart.md)；[使用指南](usage.md)从[第一次使用](usage.md#第一次使用)开始。
 - **扩展**：装好后用 `bin/covey_plugins.py` 查看、启用、停用，见[扩展的装和卸](operations.md#扩展的装和卸)。
 - **升级**：在仓库里运行 `scripts/upgrade.sh`（先加 `--dry-run` 看看）：它取上游的新提交，照服务清单原样的开关做部署前检查，再部署成固定的 release、重启机器人，成功后把检出快进过去，自托管的网页也跟着换成新版，见[日常升级](deploy.md#日常升级)。想每天自己升一次：服务清单里设 `COVEY_AUTO_UPGRADE=05:00`，见[定时自动升级](deploy.md#定时自动升级)。不要直接 `git pull`：`./install` 装的服务直接从这个检出运行，拉代码之后新开的任务立刻用新代码，机器人本身却还是旧的。

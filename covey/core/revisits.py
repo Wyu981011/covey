@@ -14,7 +14,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.core.locks import resource_lock
 from covey.core.state import read_object, write_json
 
@@ -28,8 +28,8 @@ LOOK_CHARS = 200
 
 
 def enabled() -> bool:
-    """Whether COVEY_REVISIT=1 (only ``1``; read on every call)."""
-    return str(cenv.get(SWITCH, "")).strip() == "1"
+    """Whether 到点回来看 is on: COVEY_REVISIT unset or anything but 0/off/false/no (read on every call)."""
+    return env_flag(SWITCH, True)
 
 
 def path(state_dir, topic_id) -> Path:

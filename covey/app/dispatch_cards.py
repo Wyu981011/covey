@@ -31,7 +31,7 @@ from covey.cards.dispatch_card import (DONE, FAILED, RUNNING, STEER_KIND, STOP_K
                                        settled_card)
 from covey.core import butler_opened
 from covey.core import dispatch_records as records
-from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.core import board_read, look, projects
 from covey.core.card_sequence import file_card, reserve
 from covey.core.checkpoint import checkpoint_steps
@@ -59,7 +59,8 @@ BODY_CHARS = 300
 
 
 def enabled() -> bool:
-    return cenv.get(ENV, "").strip() == "1"
+    """COVEY_DISPATCH_CARD: on unset, 0/off/false/no turn it off."""
+    return env_flag(ENV, True)
 
 
 KINDS = frozenset({STEER_KIND, STOP_KIND})

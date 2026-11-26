@@ -53,7 +53,7 @@ HUB_ENV = {"LARK_APP_SECRET": "hub-secret-lark", "LARK_BRIDGE_TOKEN": "hub-token
 DOC = {"schema": 1, "control_dir": "/dev/shm/covey-ssh-gates",
        "devices": {"gpu1": {"ssh": {"host": "gpu1.example"}, "harnesses": ["claude", "codex"],
                             "spaces": ["owner_private"]}}}
-REMOVED = {"native_fork", "compaction", "turn_export", "redaction", "rewind", "command_stop", "bridge_tools", "collab",
+REMOVED = {"native_fork", "compaction", "session_files", "redaction", "rewind", "command_stop", "bridge_tools", "collab",
            "ask_once"}  # ask_once: Codex's and agy's one question runs in a home and a directory of this machine.
 
 
@@ -81,14 +81,14 @@ class Capabilities(unittest.TestCase):
         claude = backend_capabilities(ClaudeBackend(), self.ctx())
         self.assertTrue(all(getattr(claude, name) for name in REMOVED - {"ask_once"}))  # Its one-shot is app/track_judge.py's.
         codex = backend_capabilities(CodexBackend(), self.ctx())
-        self.assertTrue(codex.native_fork and codex.turn_export and codex.ask_once)
+        self.assertTrue(codex.native_fork and codex.session_files and codex.ask_once)
         self.assertEqual(backend_capabilities(ClaudeBackend(), self.ctx(device="")), claude)  # "" is this machine.
 
     def test_a_context_without_the_device_fields_is_local(self):
         self.assertEqual(backend_capabilities(ClaudeBackend(), object()), HarnessCapabilities(
             questions=True, image_bytes=claude_caps().image_bytes, image_frame=claude_caps().image_frame, steering=True,
             native_fork=True, rate_limit_retry=True, incomplete_retry=True, fault_retry=True, steer_reads=True, compaction=True,
-            command_stop=True, turn_export=True, redaction=True, rewind=True, bridge_tools=True, read_only=True, collab=True))
+            command_stop=True, session_files=True, redaction=True, rewind=True, bridge_tools=True, read_only=True, collab=True))
 
 
 def claude_caps():
@@ -622,20 +622,18 @@ class DeviceTurn:
         self.assertEqual(self.spec(self.watched[0])["files"], [{"path": mirror["path"]}])  # The shim stores no seed text.
         self.assertTrue(Path(mirror["path"]).is_file(), "the device has the seed where the prompt says")
 
-    @mock.patch.dict(os.environ, {"COVEY_TURN_EXPORT": "1"})  # 下载请求与结果 drawn at all (off unset).
     def test_the_buttons_that_need_the_hubs_files_are_not_on_the_card(self):
         self.ran_on_the_device(self.play(self.job(self.ctx)))
-        self.assertFalse(self.element_ids() & {"rewind_action", "export_action"}, self.element_ids())
+        self.assertNotIn("rewind_action", self.element_ids())
         self.assertIn("switch_action", self.element_ids())  # What a device topic keeps: 换配置.
 
-    @mock.patch.dict(os.environ, {"COVEY_TURN_EXPORT": "1"})
     def test_the_local_twin_has_the_buttons_so_the_check_can_fail(self):
         (self.root / "work").mkdir()
         local = dataclasses.replace(self.local, workdir=self.root / "work")
         record = self.play(self.job(local), local)
         self.assertEqual(record["status"], "done", record.get("status_message"))
         self.assertEqual(self.watched, [])
-        self.assertIn("export_action", self.element_ids())
+        self.assertIn("switch_action", self.element_ids())
         if self.harness == "claude":
             self.assertIn("rewind_action", self.element_ids())
 

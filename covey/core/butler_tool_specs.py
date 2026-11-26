@@ -9,6 +9,7 @@ Every handler answers {"ok": bool, "text": what the model reads, "data": {...}};
 from __future__ import annotations
 
 from covey.core import env as cenv
+from covey.core.process_env import env_flag
 
 TOPIC = {"type": "string", "description": "话题：T 号（如 T412）或 topic_id"}
 # What a handoff need not say (core/checkpoint.py ASK_RULE): every topic is told when to ask the owner. Short: it is on
@@ -464,7 +465,8 @@ BUTLER_PROJECT_NAMES = tuple(tool["name"] for tool in BUTLER_PROJECT_TOOLS) + (T
 
 
 def tidy_listed(environ) -> bool:
-    return str(cenv.get(TIDY_ENV, "", environ)).strip().lower() in ("suggest", "auto")
+    """Whether 整理专项 is on in ``environ``: COVEY_PROJECT_TIDY unset, empty, ``suggest`` or ``auto``."""
+    return (str(cenv.get(TIDY_ENV, "", environ) or "").strip().lower() or "suggest") in ("suggest", "auto")
 
 
 def project_butler_tools(tools, tidy=False) -> tuple:
@@ -495,11 +497,11 @@ def lead_tools(environ=None) -> tuple:
     (``with_brief``). An ``environ`` without
     COVEY_PROJECT_AUTOWAKE=1 (the Bridge hands it on, core/butler.py mcp_config) has project_topic_start say no turn comes
     when its topic ends (NOT_WOKEN)."""
-    triage = environ is not None and str(cenv.get(TRIAGE_ENV, "", environ)).strip() == "1"
+    triage = environ is not None and env_flag(TRIAGE_ENV, True, environ)
     collab = environ is not None and str(cenv.get(COLLAB_ENV, "", environ)).strip() == "1"
     asked = tuple(map(with_evidence, TRIAGE_TOOLS)) if collab else TRIAGE_TOOLS
     tools = PROJECT_TOOLS
-    if environ is not None and str(cenv.get(AUTOWAKE_ENV, "", environ)).strip() != "1":
+    if environ is not None and not env_flag(AUTOWAKE_ENV, True, environ):
         tools = tuple({**tool, "description": tool["description"].replace(WOKEN, NOT_WOKEN)}
                       if tool["name"] == "project_topic_start" else tool for tool in tools)
     return (tuple(tool for tool in TOOLS if tool["name"] in LEAD_SHARED) + (tuple(map(with_brief, tools)) if collab else tools)
@@ -518,15 +520,17 @@ assert SECONDARY | HANDING <= set(ALL_NAMES + BUTLER_PROJECT_NAMES + PROJECT_NAM
 
 
 def listed(environ) -> tuple:
-    """The tools the MCP server lists in ``environ``: TOOLS, with the knowledge tools when COVEY_KNOWLEDGE is
-    1 and history_search when COVEY_HISTORY_CMD is an absolute path; with COVEY_BUTLER_RULES=1 topic_start's
+    """The tools the MCP server lists in ``environ``: TOOLS, with the knowledge tools unless COVEY_KNOWLEDGE is off and
+    history_search when COVEY_HISTORY_CMD is an absolute path; unless COVEY_BUTLER_RULES is off topic_start's
     description is the butler's (``butler_tools``). The Bridge hands the variable on (core/butler.py mcp_config).
     A project's lead (COVEY_PROJECT_LEAD set) has ``lead_tools`` and nothing else."""
     if str(cenv.get(LEAD_ENV, "", environ)).strip():
         return lead_tools(environ)
-    extra = KNOWLEDGE_TOOLS if str(cenv.get(KNOWLEDGE_ENV, "", environ)).strip() == "1" else ()
+    extra = KNOWLEDGE_TOOLS if env_flag(KNOWLEDGE_ENV, True, environ) else ()
     if str(cenv.get(HISTORY_ENV, "", environ)).strip().startswith("/"):
         extra += HISTORY_TOOLS
     tools = TOOLS + extra
-    tools = butler_tools(tools) if str(cenv.get(BUTLER_RULES_ENV, "", environ)).strip() == "1" else tools
-    return project_butler_tools(tools, tidy_listed(environ)) if str(cenv.get(PROJECTS_ENV, "", environ)).strip() == "1" else tools
+    tools = butler_tools(tools) if env_flag(BUTLER_RULES_ENV, True, environ) else tools
+    if not env_flag(PROJECTS_ENV, True, environ):
+        return tools
+    return project_butler_tools(tools, tidy_listed(environ))

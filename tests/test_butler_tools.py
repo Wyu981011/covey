@@ -28,6 +28,9 @@ from covey.core.state import write_private_text
 from covey.core.history_storage import append_history
 from covey.core.topic_seen import SEEN_FILE
 
+# The tool list the server is started with: the optional tools are off at 0 (unset means on).
+SWITCHES_OFF = {"COVEY_KNOWLEDGE": "0", "COVEY_BUTLER_RULES": "0", "COVEY_PROJECTS": "0", "COVEY_PROJECT_TIDY": "off"}
+
 CHAT = "oc_dm"
 BUTLER = butler.butler_topic_id(CHAT)
 NOW = time.time()
@@ -95,7 +98,7 @@ class McpServerTest(unittest.TestCase):
              "params": {"name": "topic_read", "arguments": {"topic": "T9"}}},
             {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "rm_rf", "arguments": {}}},
             {"jsonrpc": "2.0", "id": 7, "method": "resources/list"},
-        ], {butler.STATE_ENV: str(self.state), butler.JOB_ENV: "main-1"})
+        ], {butler.STATE_ENV: str(self.state), butler.JOB_ENV: "main-1", **SWITCHES_OFF})
         self.assertEqual(sorted(replies), [1, 2, 3, 4, 5, 6, 7])  # Nothing for the notification.
         init = replies[1]["result"]
         self.assertEqual(init["protocolVersion"], "2025-06-18")
@@ -131,7 +134,7 @@ class McpServerTest(unittest.TestCase):
         replies = self.serve([
             {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
             {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "topics_list", "arguments": {}}}],
-            {butler.STATE_ENV: str(self.state)})
+            {butler.STATE_ENV: str(self.state), **SWITCHES_OFF})
         self.assertEqual(len(replies[1]["result"]["tools"]), len(NAMES))
         result = replies[2]["result"]
         self.assertTrue(result["isError"])
@@ -397,7 +400,7 @@ class HandlerTest(unittest.TestCase):
         from covey.app import pins
         from covey.core.topic_seen import PINNED_TOPICS_ENV
         self.topic("a1" * 16, 1, "修首页", jobs=[(1, {"status": "done"})])
-        with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: ""}):
+        with mock.patch.dict(os.environ, {PINNED_TOPICS_ENV: "0"}):
             answer = self.call("topic_priority", topic="t1", remove=True)
         self.assertFalse(answer["ok"])  # No board: nothing to take off.
         self.assertFalse((self.state / pins.RECORD).exists())

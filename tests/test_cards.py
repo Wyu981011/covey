@@ -41,7 +41,6 @@ from covey.app.card_lanes import CardLanes
 from covey.app.card_queue import CardActionQueue
 from covey.app.runner_spawn import dump_job, load_job
 from covey.cards.topic_actions import topic_panel
-from covey.cards.turn_export import export_panel
 from covey.app.switch_handoff import switch_panel
 from covey.cards.switch_form import build_switch_card
 from covey.cards.rewind import done_card as rewind_done_card, rewind_card
@@ -257,10 +256,6 @@ def sample_cards(work=None):
     task_card_panels = {
         "topic_panel": topic_panel(TOPIC, 431, ("claude", 2), rewind=True),
         "switch_panel": switch_panel(TOPIC, 431, "codex", 2),
-        "turn_export": export_panel(TOPIC, 431),
-        "turn_export_done": export_panel(TOPIC, 431, {"status": "done", "url": "https://example.com/file/x", "at": 1,
-                                                      "name": "T291-#2165-请求与结果.json.xz", "requests": 12,
-                                                      "subagents": 2, "size": 85000, "raw_size": 9000000}),
         "question_on_task": question_element(question_record()),
         "trace_panel": split_panel(trace_panel(trace, True)),
         "artifacts": artifact_panel([str(work / "result.md"), str(work / "diff.md")], {"job_id": 431}, TOPIC),

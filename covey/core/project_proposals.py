@@ -81,10 +81,10 @@ def model(environ=None) -> str:
 
 
 def mode(environ=None) -> str:
-    """``suggest``, ``auto`` or ``off`` (read on every call; off without COVEY_PROJECTS=1)."""
-    if str(cenv.get(projects.ENV, "", environ)).strip() != "1":
+    """``suggest`` (unset or empty), ``auto``, or ``off`` for anything else (read on every call; off with 专项 off)."""
+    if not projects.enabled(environ):
         return OFF
-    value = str(cenv.get(ENV, "", environ)).strip().lower()
+    value = str(cenv.get(ENV, "", environ) or "").strip().lower() or SUGGEST
     return value if value in (SUGGEST, AUTO) else OFF
 
 

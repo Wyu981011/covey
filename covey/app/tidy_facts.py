@@ -106,7 +106,7 @@ def owner_chat(runtime) -> str:
 
 def judge_tools(env) -> tuple:
     """(the backend, the context) the small model's calls go through (app/track_judge.py tools): the Claude app's, else
-    Codex's or Antigravity's own CLI; (None, None) with none (COVEY_JUDGE_GATEWAY may still answer, track_judge.ask)."""
+    Codex's or Antigravity's own CLI; (None, None) with none."""
     apps = getattr(getattr(env, "topics", None), "apps", None) or {}
     return track_judge.tools(apps)
 

@@ -73,7 +73,7 @@ class MemoryTabTests(MemoryCase):
     def test_the_tab_is_there_with_the_switch_only_and_about_always(self):
         self.assertIn(MEMORY, hub_tabs())
         self.assertEqual(hub_tabs()[-2:], [ABOUT, DOCTOR])  # 能做什么, then the 诊断 tab (app/doctor_panel.py).
-        with mock.patch.dict(os.environ, {'COVEY_MEMORY': ''}):
+        with mock.patch.dict(os.environ, {'COVEY_MEMORY': '0'}):
             self.assertNotIn(MEMORY, hub_tabs())
             self.assertIn(ABOUT, hub_tabs())
 
@@ -301,7 +301,7 @@ class AboutTabTests(HubCase):
         return text_of(self.card())
 
     def test_it_says_what_is_on_and_how_to_get_what_is_not(self):
-        with mock.patch.dict(os.environ, {'COVEY_DIGEST_TIMES': '21:30,09:30', 'COVEY_MEMORY': '', 'COVEY_KNOWLEDGE': ''}):
+        with mock.patch.dict(os.environ, {'COVEY_DIGEST_TIMES': '21:30,09:30', 'COVEY_MEMORY': '0', 'COVEY_KNOWLEDGE': '0'}):
             text = self.about()
         # Three groups by what the owner does with them (T647 D6), each line what it does for him first.
         work, safe, see = (text.index(title + '（开着 ') for title in ('交给它办事', '不断、不丢', '看得全、记得住'))
@@ -311,14 +311,14 @@ class AboutTabTests(HubCase):
         self.assertLess(see, text.index('没开：设 COVEY&#95;MEMORY=1 和 COVEY&#95;KNOWLEDGE=1'))
         self.assertIn('Harness：', text)
         self.assertIn('没有启用扩展', text) if not about_panel.extensions.enabled() else None
-        self.assertIn('--state-dir ' + str(self.state).replace('_', '&#95;'), text.replace('&#45;', '-'))
+        self.assertIn('--state-dir ' + str(self.state).replace('_', '&#95;').replace('.', '&#46;'), text.replace('&#45;', '-'))
         # Read only: the tab row's buttons and none of its own.
         self.assertEqual({v['kind'] for _, v in values(self.card())}, {TAB})
 
     def test_it_lists_what_every_deployment_has_and_the_new_install_s_defaults(self):
         """T647 D6: 重启不打断, 换配置, 回退 and 限流后自动继续 were not listed; the 看板 ./install turns on read as off (only the
         digest's switch was read); 知识条目 was a feature of its own beside 记忆 (docs/glossary.md: one word, 记忆)."""
-        env = {'COVEY_BOARD': '1', 'COVEY_DIGEST_TIMES': '', 'COVEY_REVIEW': '1', 'COVEY_REVISIT': '1', 'COVEY_MEMORY': '1',
+        env = {'COVEY_DIGEST_TIMES': 'off', 'COVEY_REVIEW': '1', 'COVEY_REVISIT': '1', 'COVEY_MEMORY': '1',
                'COVEY_KNOWLEDGE': '1'}
         with mock.patch.dict(os.environ, env):
             rows = {row['name']: row for row in about_panel.features(about_panel.Probe(self.state, self.app.topics.apps,
@@ -331,7 +331,7 @@ class AboutTabTests(HubCase):
         self.assertEqual({row['group'] for row in rows.values()}, {about_panel.WORK, about_panel.SAFE, about_panel.SEE})
         for row in rows.values():
             self.assertTrue(row['good'], row['name'])  # What it does for him, on or off.
-        with mock.patch.dict(os.environ, {'COVEY_MEMORY': '1', 'COVEY_KNOWLEDGE': ''}):
+        with mock.patch.dict(os.environ, {'COVEY_MEMORY': '1', 'COVEY_KNOWLEDGE': '0'}):
             half = about_panel._memory(None)
         self.assertEqual(half[:2], (True, '“记一下”的事还没开：设 COVEY_KNOWLEDGE=1'))
 

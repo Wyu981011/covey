@@ -250,12 +250,13 @@ class OverviewCase(UnifiedCase):
 
 
 class OverviewTests(OverviewCase):
-    def test_off_unless_the_switch_is_set(self):
-        self.assertNotIn("overview", dict(self.app.worker_targets()))
+    def test_off_at_0(self):
+        with mock.patch.dict(os.environ, {ENV: "0"}):
+            self.assertNotIn("overview", dict(self.app.worker_targets()))
         with mock.patch.dict(os.environ, {ENV: "1"}):
             self.assertIn("overview", dict(self.app.worker_targets()))
         with mock.patch.dict(os.environ, {ENV: "yes"}):
-            self.assertNotIn("overview", dict(self.app.worker_targets()))
+            self.assertIn("overview", dict(self.app.worker_targets()))
 
     def test_the_card_says_group_when_the_notify_space_is_a_personal_group(self):
         import dataclasses

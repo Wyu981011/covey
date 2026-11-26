@@ -1,5 +1,5 @@
 """手上的事: one card in the owner's private chat with the bot, pinned (Pin 消息), that lists what waits for the
-owner and what runs there (cards/overview.py). Off unless COVEY_PINNED_OVERVIEW=1 (docs/configuration.md):
+owner and what runs there (cards/overview.py). On unless COVEY_PINNED_OVERVIEW is 0 (docs/configuration.md):
 without it there is no thread and no card. Only the private chat, nothing in groups.
 
 Every TICK seconds the loop reads the private chat's pending questions and running jobs from the indexes of
@@ -43,7 +43,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.app import owner_ledger
 from covey.app.card_lanes import after_ack
 from covey.app.pins import GROUPS, PinnedTopics, dismiss, kept, last_click, record_path, taken_off, undismiss
@@ -128,7 +128,8 @@ class Overview:
 
     @staticmethod
     def enabled():
-        return cenv.get(ENV, "").strip() == "1"
+        """COVEY_PINNED_OVERVIEW: on unset, 0/off/false/no turn it off."""
+        return env_flag(ENV, True)
 
     def threads(self):
         """Its worker, only when switched on (app/unified.py worker_targets)."""

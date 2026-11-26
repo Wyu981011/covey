@@ -22,15 +22,13 @@ from covey.service import app_check
 
 
 class ManifestSlashTests(unittest.TestCase):
-    def test_slash_commands_follow_board_and_proxy_switches(self):
+    def test_slash_commands_always_have_the_board_and_follow_the_proxy_sender(self):
         with mock.patch.object(app_manifest, "proxy_sender", return_value=False):
-            self.assertEqual([c.command for c in app_manifest.slash_commands({})], ["usage", "settings"])
-            self.assertEqual([c.command for c in app_manifest.slash_commands({"COVEY_BOARD": "1"})],
-                             ["usage", "board", "settings"])
-            self.assertEqual([c.command for c in app_manifest.slash_commands({"COVEY_DIGEST_TIMES": "09:30"})],
+            self.assertEqual([c.command for c in app_manifest.slash_commands({})], ["usage", "board", "settings"])
+            self.assertEqual([c.command for c in app_manifest.slash_commands({"COVEY_DIGEST_TIMES": "off"})],
                              ["usage", "board", "settings"])
         with mock.patch.object(app_manifest, "proxy_sender", return_value=True):
-            self.assertEqual([c.command for c in app_manifest.slash_commands({"COVEY_BOARD": "1"})],
+            self.assertEqual([c.command for c in app_manifest.slash_commands({})],
                              ["usage", "board", "proxy", "settings"])
 
     def test_slash_key_matches_exact_commands_and_aliases_only(self):
@@ -106,7 +104,7 @@ class SlashSyncTests(unittest.TestCase):
 
     def test_sync_makes_zero_writes_when_everything_already_matches(self):
         specs = {s.command: s for s in app_manifest.SLASH_COMMANDS}
-        existing = [self._item(specs["usage"]), self._item(specs["settings"])]
+        existing = [self._item(specs["usage"]), self._item(specs["board"]), self._item(specs["settings"])]
         calls = []
 
         def runner(argv, **kwargs):
@@ -118,7 +116,7 @@ class SlashSyncTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["synced"], [])
-        self.assertEqual(result["unchanged"], ["usage", "settings"])
+        self.assertEqual(result["unchanged"], ["usage", "board", "settings"])
         self.assertEqual(len(calls), 1)
 
     def test_sync_tolerates_missing_scope_and_older_lark_cli(self):

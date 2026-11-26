@@ -656,7 +656,7 @@ class BoardTests(UnifiedCase):
         self.assertIn("目标：额度看得准", card)
         self.assertIn(project_proposal.START_KIND, card)
         self.assertNotIn(project_proposal.START_KIND, timed)
-        with mock.patch.dict(os.environ, {projects.ENV: "1", project_proposals.ENV: ""}):
+        with mock.patch.dict(os.environ, {projects.ENV: "1", project_proposals.ENV: "off"}):
             self.assertNotIn("tidy", self.app.digest.board_view(self.ctx, CHAT))
 
     def test_a_stopped_topic_has_its_own_group_with_why_and_its_not_my_concern_takes_it_off(self):
@@ -918,13 +918,14 @@ class BoardTests(UnifiedCase):
         self.assertEqual(self.card()["header"]["title"]["content"], "看板")
         click("ev-open")  # Delivered twice: one card.
         self.assertEqual(len(self.puts), 1)
-        with mock.patch.dict(os.environ, {ENV: ""}):  # No 看板 in this bot.
+        with mock.patch.dict(os.environ, {ENV: "off"}):  # 看板 is always in the bot: no time to set, no switch.
             click("ev-off")
-        self.assertEqual(len(self.puts), 1)
+        self.assertEqual(len(self.puts), 2)
 
-    def test_off_without_a_time(self):
-        with mock.patch.dict(os.environ, {ENV: ""}):
-            self.assertEqual((self.app.digest.menu_items(), self.app.digest.menu_folds()), ({}, {}))
+    def test_the_board_is_there_without_a_time(self):
+        with mock.patch.dict(os.environ, {ENV: "off"}):
+            self.assertEqual(set(self.app.digest.menu_items()), {"digest_board"})
+            self.assertEqual(set(self.app.digest.menu_folds()), {"digest_board"})
 
     def test_the_same_card_as_the_timed_one_and_digest_json_untouched(self):
         for number, topic in enumerate(("ask", "run", "done", "early", "old"), 501):

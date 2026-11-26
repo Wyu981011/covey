@@ -479,7 +479,7 @@ class CapacityTest(TracksCase):
 
 
 class OffTest(TracksCase):
-    tracks = ""
+    tracks = "0"
 
     def test_with_the_switch_off_the_router_is_never_asked(self):
         self.send("om_1", LONG)

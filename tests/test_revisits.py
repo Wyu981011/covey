@@ -224,7 +224,7 @@ class FlowTest(RevisitCase):
     def test_dropping_for_a_project_removes_the_record_once_says_so_and_does_nothing_with_the_switch_off(self):
         self.end(self.first, revisit={"minutes": 5})
         said = []
-        with mock.patch.dict(os.environ, {records.SWITCH: ""}):
+        with mock.patch.dict(os.environ, {records.SWITCH: "0"}):
             self.assertFalse(revisits.drop_for_project(self.state, self.topic, said.append))
         self.assertNotEqual(self.record(), {})
         self.assertTrue(revisits.drop_for_project(self.state, self.topic, said.append))
@@ -285,7 +285,7 @@ class FlowTest(RevisitCase):
 
 class OffTest(RevisitCase):
     def test_off_nothing_is_read_written_or_said(self):
-        with mock.patch.dict(os.environ, {records.SWITCH: ""}):
+        with mock.patch.dict(os.environ, {records.SWITCH: "0"}):
             self.assertEqual(self.app.revisits.threads(), ())
             self.end(self.first, revisit={"minutes": 5})
             self.assertFalse((self.state / records.FOLDER).exists())

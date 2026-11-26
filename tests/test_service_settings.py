@@ -128,17 +128,18 @@ class SettingsTests(unittest.TestCase):
             change_settings(self.services, self.root / "other", {"COVEY_DIGEST_TIMES": "21:30"})
 
     def test_the_showcase_preset_turns_on_what_is_unset_or_off_and_keeps_the_rest(self):
-        self.change(["COVEY_REVIEW=0"])
+        self.change(["COVEY_CARD_TRANSPORT=0"])
         first = self.manifest()
         report = change_settings(self.services, self.state, {}, preset="showcase", dry_run=True)
         self.assertEqual(self.manifest(), first)
         self.assertEqual(report["preset"], "showcase")
         changed = {name: row["to"] for name, row in report["changed"].items()}
-        # The owner's own digest time and the tracks already on stay; COVEY_REVIEW=0 is off, so it is turned on.
+        # The owner's own digest time and the tracks stay (not the preset's since T813); COVEY_CARD_TRANSPORT=0 is off, so
+        # it is turned on.
         self.assertNotIn("LARK_BRIDGE_DIGEST_TIMES", changed)
         self.assertNotIn("LARK_BRIDGE_MAIN_TRACKS", changed)
-        self.assertEqual(report["changed"]["LARK_BRIDGE_REVIEW"], {"from": "0", "to": "1"})
-        self.assertEqual(len(changed), len(switches.SHOWCASE) - 2)
+        self.assertEqual(report["changed"]["LARK_BRIDGE_CARD_TRANSPORT"], {"from": "0", "to": "sdk"})
+        self.assertEqual(len(changed), len(switches.SHOWCASE))
         report = self.change(["COVEY_COLLAB=0"], preset="showcase")  # A setting given with it wins.
         environment = self.manifest()["environment"]
         self.assertEqual(report["generation"], first["generation"] + 1)

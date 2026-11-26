@@ -17,7 +17,7 @@
 | `im.message.receive_v1` | 事件 | 收消息（含斜杠命令） | 总要 |
 | `card.action.trigger` | 回调 | 所有卡片按钮和选择 | 总要 |
 | `application.bot.menu_v6` | 事件 | 旧版底部自定义菜单的点击 | 仅在应用已启用旧版底部自定义菜单时需要；未启用时不要求 |
-| `im.message.message_read_v1` | 事件 | 话题看过没有（已读） | `COVEY_PINNED_TOPICS=1` |
+| `im.message.message_read_v1` | 事件 | 话题看过没有（已读） | `COVEY_PINNED_TOPICS` 没关时要（默认开） |
 
 **权限**：
 
@@ -37,7 +37,7 @@
 | `docs:permission.member:create` | 产物文件夹给你权限 |
 | `application:application:self_manage` | 检查应用配置（自动补齐靠它读应用详情） |
 | `im:chat.tabs:write_only` | 私聊顶栏的「工作台」标签（网页工作台一键部署以机器人身份建，见 [web/README.md 的「部署」](../web/README.md#部署)）；免审核，默认就要。建和更新标签的响应里已带会话全部标签，所以不要 `im:chat.tabs:read` |
-| `im:message.pins:read`、`im:message.pins:write_only` | 置顶看板；`COVEY_PINNED_TOPICS=1` 或 `COVEY_PINNED_OVERVIEW=1` 时要 |
+| `im:message.pins:read`、`im:message.pins:write_only` | 置顶看板；`COVEY_PINNED_TOPICS` 或 `COVEY_PINNED_OVERVIEW` 没关时要（默认开） |
 | `im:chat.members:read` | 群聊免@ 选人；`COVEY_GROUP_ALL_MESSAGES=1` 时要 |
 | `im:message.group_msg` | 群聊免@ 收群里全部消息；`COVEY_GROUP_ALL_MESSAGES=1` 时要，要租户管理员审核 |
 
@@ -48,7 +48,7 @@
 | 斜杠命令 | 中文别名 | 对应菜单键 | 什么时候注册 |
 | --- | --- | --- | --- |
 | `/usage` | `/用量` | `weekly_usage` | 总要 |
-| `/board` | `/看板` | `digest_board` | 设了 `COVEY_BOARD=1`（`./install` 写）或 `COVEY_DIGEST_TIMES` |
+| `/board` | `/看板` | `digest_board` | 每个部署都要 |
 | `/proxy` | `/代答` | `proxy_settings` | 启用的扩展有代答发送器 |
 | `/settings` | `/设置` | `bridge_settings` | 总要 |
 

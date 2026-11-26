@@ -1077,7 +1077,7 @@ class TurnTest(ButlerUnifiedCase):
         self.assertEqual(list(groups['running']), ['b' * 32])
         self.assertNotIn('T7', prompt)
         self.assertIn('T8 topic 8', prompt)
-        for off in ({PINNED_TOPICS_ENV: ''}, {PINNED_TOPICS_ENV: '1', pins.OVERVIEW_ENV: ''}):
+        for off in ({PINNED_TOPICS_ENV: '0'}, {PINNED_TOPICS_ENV: '1', pins.OVERVIEW_ENV: '0'}):
             with self.subTest(off), mock.patch.dict(os.environ, off):  # The board off: its record is not read.
                 self.assertEqual(set(session.snapshot_groups(self.ctx, CHAT, time.time())['running']),
                                  {'a' * 32, 'b' * 32})
@@ -1149,7 +1149,9 @@ class TurnTest(ButlerUnifiedCase):
         job = self.job_of('om_1')
         ctx, _ = self.turn(job)
         config = ctx.options['mcp_config']['mcpServers'][butler.MCP_SERVER]
-        self.assertEqual(config['env'], cenv.mirrored({butler.STATE_ENV: str(self.state), butler.JOB_ENV: 'om_1'}))
+        # The switches are handed on as they stand (the tests run them at 0, unset would mean on).
+        switches = {name: cenv.get(name, '') for name in ('COVEY_KNOWLEDGE', 'COVEY_BUTLER_RULES', 'COVEY_PROJECTS', 'COVEY_PROJECT_TRIAGE', 'COVEY_PROJECT_TIDY')}
+        self.assertEqual(config['env'], cenv.mirrored({butler.STATE_ENV: str(self.state), butler.JOB_ENV: 'om_1', **switches}))
         self.assertEqual(Path(config['args'][-1]), session.RELEASE / butler.MCP_ENTRY)
         self.settings(enabled=False)
         self.send('om_2')

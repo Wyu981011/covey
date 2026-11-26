@@ -1,6 +1,5 @@
-"""菜单「看板」 on its own (COVEY_BOARD=1, core/app_manifest.py board_switch; ./install writes it): the board without
-早晚汇总, which stays its own switch, and a deployment that has 看板 through the digest keeps it. Before T604 看板 came
-only with COVEY_DIGEST_TIMES, so a new install had none."""
+"""菜单「看板」 in every deployment, 早晚汇总 off too (T813: COVEY_BOARD, which T604 added for a board without the
+digest, is retired; a manifest that still sets it changes nothing). Before T604 看板 came only with COVEY_DIGEST_TIMES."""
 from __future__ import annotations
 
 import json
@@ -12,7 +11,6 @@ from unittest import mock
 from support.world import UnifiedCase
 from covey.app.digest import RECORD, Digest
 from covey.core import app_manifest as manifest
-from covey.service import installer
 
 CHAT = "oc_dm"
 
@@ -26,24 +24,19 @@ def slash(env):
 
 
 class ManifestTest(unittest.TestCase):
-    def test_the_app_needs_the_item_with_the_switch_or_the_digest_as_before(self):
+    def test_the_app_always_needs_the_item(self):
         board = ["weekly_usage", "digest_board", "bridge_settings"]
         with mock.patch.object(manifest, "proxy_sender", return_value=False):
             for reader in (slash, menu):
-                self.assertEqual(reader({}), ["weekly_usage", "bridge_settings"])
-                self.assertEqual(reader({"COVEY_BOARD": "0"}), ["weekly_usage", "bridge_settings"])
-                self.assertEqual(reader({"COVEY_BOARD": "1"}), board)
-                self.assertEqual(reader({"COVEY_DIGEST_TIMES": "09:30"}), board)  # Through the digest, as before.
-                self.assertEqual(reader({"COVEY_BOARD": "0", "COVEY_DIGEST_TIMES": "09:30"}), board)
-
-    def test_a_new_install_has_it(self):
-        self.assertEqual(installer.INSTALL_SWITCHES["COVEY_BOARD"], "1")
+                for env in ({}, {"COVEY_BOARD": "0"}, {"COVEY_DIGEST_TIMES": "off"}, {"COVEY_DIGEST_TIMES": "09:30"}):
+                    with self.subTest(reader=reader.__name__, env=env):
+                        self.assertEqual(reader(env), board)
 
 
 class BoardMenuTest(UnifiedCase):
-    def test_with_the_switch_the_menu_has_the_board_and_no_digest_runs(self):
-        self.assertNotIn("digest_board", self.app.menu.actions)  # Neither set: as before.
-        with mock.patch.dict(os.environ, {"COVEY_BOARD": "1"}):
+    def test_with_the_digest_off_the_menu_has_the_board_and_no_digest_runs(self):
+        self.assertIn("digest_board", self.app.menu.actions)
+        with mock.patch.dict(os.environ, {"COVEY_DIGEST_TIMES": "off"}):
             app = type(self.app)(script_path=self.app.runtime.script_path)
             self.assertEqual(app.digest.threads(), ())  # No 早晚汇总: no thread, nothing sent at any time.
         self.assertEqual((app.menu.actions["digest_board"].__func__, app.menu.folds["digest_board"].__func__),
@@ -57,9 +50,7 @@ class BoardMenuTest(UnifiedCase):
         self.app.runtime.access.remember_owner_chat(CHAT)
         self.app.digest.link = lambda ctx, chat, text, cards=None: text  # No T links to look up.
         now = time.time()
-        with mock.patch.dict(os.environ, {"COVEY_BOARD": "1"}):
-            self.app.menu.actions.update(self.app.digest.menu_items())  # As a Bridge launched with the switch.
-            self.app.menu.folds.update(self.app.digest.menu_folds())
+        with mock.patch.dict(os.environ, {"COVEY_DIGEST_TIMES": "off"}):
             self.assertEqual(self.app.digest.board_view(self.ctx, CHAT, now=now)["since"], now - 86400)
             self.app.handle_menu_event({"event_id": "ev1", "event_key": "digest_board", "operator_open_id": "owner"},
                                        self.ctx)

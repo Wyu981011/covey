@@ -16,9 +16,20 @@ from covey.core import env as cenv
 
 ENV = "COVEY_QUIET_HOURS"
 DIGEST_ENV = "COVEY_DIGEST_TIMES"
+DIGEST_DEFAULT = "09:30,21:30"  # 早晚汇总's times where COVEY_DIGEST_TIMES is unset or empty.
+DIGEST_OFF = frozenset({"off", "0", "no", "none", "false"})  # COVEY_DIGEST_TIMES values that turn the digest off.
 ZONE = datetime.timezone(datetime.timedelta(hours=8))  # As app/digest.py ZONE: Asia/Shanghai, no summer time.
 TIME = re.compile(r"([01]?\d|2[0-3]):([0-5]\d)")
 OFF = frozenset({"off", "0", "no", "none"})
+
+
+def digest_times(environ=None) -> str:
+    """COVEY_DIGEST_TIMES as it holds: DIGEST_DEFAULT unset or empty, '' when it turns the digest off (DIGEST_OFF), else
+    the value as set (app/digest.py parse_times reads it)."""
+    raw = str(cenv.get(DIGEST_ENV, "", environ) or "").strip()
+    if not raw:
+        return DIGEST_DEFAULT
+    return "" if raw.lower() in DIGEST_OFF else raw
 
 
 def _minute(text):
@@ -35,7 +46,7 @@ def window(environ=None):
         start, dash, end = raw.replace("～", "-").replace("~", "-").replace("–", "-").partition("-")
         first, last = _minute(start), _minute(end) if dash else None
         return (first, last) if first is not None and last is not None and first != last else None
-    times = sorted({minute for minute in (_minute(part) for part in str(cenv.get(DIGEST_ENV, "", environ) or "").split(","))
+    times = sorted({minute for minute in (_minute(part) for part in digest_times(environ).split(","))
                     if minute is not None})
     return (times[-1], times[0]) if len(times) >= 2 else None
 

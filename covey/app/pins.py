@@ -84,7 +84,7 @@ import functools
 import time
 from pathlib import Path
 
-from covey.core import env as cenv
+from covey.core.process_env import env_flag
 from covey.app import butler_relay
 from covey.app.status_cards import StatusCards, card_message
 from covey.core import board_read, placement, projects
@@ -165,9 +165,9 @@ def record_path(state, chat, name=RECORD):
 
 
 def laid():
-    """Whether the board is laid: COVEY_PINNED_TOPICS=1 and COVEY_PINNED_OVERVIEW=1 (手上的事's loop runs
-    it, app/overview.py); its record's rules and results hold only then."""
-    return enabled() and cenv.get(OVERVIEW_ENV, "").strip() == "1"
+    """Whether the board is laid: COVEY_PINNED_TOPICS and COVEY_PINNED_OVERVIEW both on (unset is on; 手上的事's loop
+    runs it, app/overview.py); its record's rules and results hold only then."""
+    return enabled() and env_flag(OVERVIEW_ENV, True)
 
 
 def kept(state, chat):

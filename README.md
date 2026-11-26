@@ -43,7 +43,7 @@ git clone https://github.com/ericxk/covey.git && cd covey
 
 | 选项 | 做什么 |
 | --- | --- |
-| `--showcase` | 演示套餐：在默认之外再开话题之间的协作（开发中）、置顶的「手上的事」和话题看板、早晚汇总、管家同时做几件事、派发卡 |
+| `--showcase` | 演示套餐：在默认之外再开话题之间的协作（开发中） |
 | `--web` | 在这台机器上自托管网页工作台（要 Node 22+ 和 npm） |
 | `--web-public ADDR` | 网页再开公网 HTTPS 直连，`ADDR` 是 IP 或域名（隐含 `--web`） |
 

@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from support import UNSET_OFF
 from support import make_context
 
 from covey.app import memory_candidates, memory_tidy
@@ -54,7 +55,7 @@ class Case(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         patcher = mock.patch.dict(os.environ, {name: value for name, value in os.environ.items()
-                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))}, clear=True)
+                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))} | UNSET_OFF, clear=True)
         patcher.start()
         self.addCleanup(patcher.stop)
         patcher = mock.patch.dict(os.environ, ON)

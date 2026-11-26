@@ -23,7 +23,7 @@ from covey.core.process import stop_group
 
 HISTORY_TIMEOUT = 70  # Seconds.
 HISTORY_BYTES = 20 * 1024
-OFF = "知识条目没有开（这个部署没设 COVEY_KNOWLEDGE=1），这次调用没有执行。"
+OFF = "知识条目没有开（这个部署设了 COVEY_KNOWLEDGE=0），这次调用没有执行。"
 TOPIC_REF = re.compile(r"[Tt]?(\d+)")
 SINCE = re.compile(r"\d{1,4}d")
 

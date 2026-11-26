@@ -16,7 +16,7 @@ class QuickstartTest(unittest.TestCase):
     def test_the_page_the_butler_reads_is_one_short_page_linked_from_the_readme_and_the_usage_guide(self):
         text = prompts.QUICKSTART.read_text(encoding="utf-8")
         self.assertLessEqual(len(text.splitlines()), 150)
-        for words in ("看板在哪", "怎么开记忆", "COVEY_MEMORY=1", "COVEY_BOARD=1", "install.md"):
+        for words in ("看板在哪", "怎么开记忆", "COVEY_MEMORY=0", "install.md"):
             self.assertIn(words, text)
         self.assertIn("docs/quickstart.md", (REPO / "README.md").read_text(encoding="utf-8"))
         self.assertIn("(quickstart.md)", (REPO / "docs" / "usage.md").read_text(encoding="utf-8"))

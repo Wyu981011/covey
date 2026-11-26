@@ -54,7 +54,7 @@ class UnwatchedTest(HintCase):
         text = json.dumps(element, ensure_ascii=False)
         self.assertIn(answer_card.REVISIT_HINT_LINE, text)
         self.assertIn(answer_card.REVISIT_HINT_KIND, text)
-        with mock.patch.dict(os.environ, {records.SWITCH: ""}):
+        with mock.patch.dict(os.environ, {records.SWITCH: "0"}):
             [bare] = revisit_hint.elements(self.state, **kwargs)
         self.assertIn(answer_card.REVISIT_HINT_LINE, json.dumps(bare, ensure_ascii=False))
         self.assertNotIn(answer_card.REVISIT_HINT_KIND, json.dumps(bare, ensure_ascii=False))

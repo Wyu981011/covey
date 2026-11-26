@@ -1,7 +1,7 @@
 """Harness 能不能真的调通：跑一次最便宜的真实调用（claude -p、codex exec、agy -p），把失败分成几类。
 
 只查二进制在不在、``auth status`` 通过，不等于模型能答：没登录、出口需要代理、直连 403，都是装完才发现。
-安装器、doctor 和（开了 ``COVEY_HARNESS_PROBE=1`` 的）Bridge 共用这里。不导入 app/、feishu/、cards/，
+安装器和 doctor 共用这里。不导入 app/、feishu/、cards/，
 只用标准库和 core/state、core/agy_home。
 
 agy 的探测（只在本机，``command_for`` 不给设备）：没有登录凭据（core/agy_home.py ``signed_in``）就直接算没登录，

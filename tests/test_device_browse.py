@@ -460,22 +460,6 @@ class AvailabilityTest(DeviceEnv, unittest.TestCase):
         local = make_context(self.root, backend_cmd=["definitely-not-installed-xyz"])
         self.assertEqual(availability.local_check("claude", local)["reason"], "executable_missing")
 
-    def test_the_two_probe_cache_reads_take_the_devices_environment(self):
-        seen = []
-        with mock.patch.object(availability, "child_process_env", side_effect=lambda *a, **k: seen.append(k) or {}), \
-                mock.patch.object(availability, "probe_enabled", return_value=True), \
-                mock.patch.object(availability.harness_probe, "read_cache", return_value=None), \
-                mock.patch.object(availability.harness_probe, "cached_probe", return_value={"ok": True}), \
-                mock.patch.object(availability.shutil, "which", return_value="/bin/true"), \
-                mock.patch.object(availability.subprocess, "run", side_effect=OSError):
-            availability.local_check("codex", make_context(self.root, backend_cmd=["codex"]))
-            gateway = mock.Mock()
-            gateway.harnesses = {"codex": mock.Mock(context=self.ctx)}
-            gateway.runtime = mock.Mock()
-            availability.sample(gateway, self.ctx)
-        self.assertEqual(seen[0], {"device": None})
-        self.assertEqual(seen[-1]["device"]["alias"], "gpu1")
-
 
 class CodexModelsTest(DeviceEnv, unittest.TestCase):
     ROW = {"slug": "gpt-device", "visibility": "list", "display_name": "Device GPT"}

@@ -107,7 +107,6 @@ NOT_BACKED_UP = {
     "job-diffs": "each turn's diff report, up to 200 MiB, uploaded to the cloud space",
     "artifact-drive": "the uploads of 产物 to the cloud space",
     "artifact-upload": "files on their way to the cloud space",
-    "turn-exports": "下载请求与结果's packs of sent cards",
     "policy-stops": "official refusals' stop records (policy-stop.md)",
     "policy-inbox": "the feed of official refusals to the running Bridge",
     "policy-source*.json": "the feed of official refusals to the running Bridge",
