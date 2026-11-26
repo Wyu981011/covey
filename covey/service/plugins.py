@@ -15,9 +15,11 @@ that would not load or collides is refused and nothing is written. The Bridge re
 ``covey_service.py restart`` (docs/operations.md 日常操作) puts a change into effect. Nothing here starts, stops or
 restarts anything.
 
-``deploy-check`` asks each enabled package's ``deploy_check`` hook whether this code (a release about to be deployed:
-scripts/deploy_bridge.sh runs it there) can run on this machine, e.g. that an isolated interpreter matches the
-release; it prints one JSON line {'ok', 'problems', 'notes'} and exits 1 when there is a problem.
+``deploy-check`` first imports every hook module and features module of each enabled package (a broken one is caught
+before the deploy, not at the first turn that uses it), then asks each package's ``deploy_check`` hook whether this code
+(a release about to be deployed: scripts/deploy_bridge.sh runs it there) can run on this machine, e.g. that an isolated
+interpreter matches the release; it prints one JSON line {'ok', 'problems', 'notes', 'packages'} ('packages': those with a
+problem) and exits 1 when there is a problem.
 """
 from __future__ import annotations
 
@@ -147,19 +149,30 @@ def doctor(environ=None, root: Path = extensions.ROOT) -> dict:
     return {"ok": not problem, "enabled": on, "message": problem or "启用的扩展都能加载，没有冲突"}
 
 
-def deploy_check(harness_config: Path | None = None) -> dict:
-    """{'ok', 'problems', 'notes'} of every enabled package's ``deploy_check`` hook, each line led by the package; a
-    hook that fails or answers in another shape is a problem."""
-    problems, notes = [], []
-    for package, module in extensions.hooks("deploy_check"):
-        try:
-            said = module.check(harness_config)
-            got = {key: [str(line) for line in said.get(key) or []] for key in ("problems", "notes")}
-        except Exception as error:  # A check that cannot run says nothing about the release: it is a problem.
-            got = {"problems": [f"check failed: {type(error).__name__}: {error}"], "notes": []}
+def deploy_check(harness_config: Path | None = None, environ=None, root: Path = extensions.ROOT) -> dict:
+    """{'ok', 'problems', 'notes', 'packages'} of the enabled packages, each line led by its package: first whether each
+    imports (every hook module and the features module: extensions.import_problems), then its ``deploy_check`` hook; a
+    hook that fails or answers in another shape is a problem. ``packages`` names the packages with a problem, so the
+    deploy can say which one stopped it and how to turn it off (``disable``)."""
+    problems, notes, failed = [], [], []
+    try:
+        loaded = extensions.load(environ, root)
+    except extensions.ExtensionError as error:  # A manifest that does not load: nothing else of it can be asked.
+        return {"ok": False, "problems": [str(error)], "notes": [], "packages": [error.package]}
+    for extension in loaded:
+        package = extension.package
+        got = {"problems": extensions.import_problems(extension), "notes": []}
+        if not got["problems"] and "deploy_check" in extension.hooks:
+            try:
+                said = extensions.import_hook(extension, "deploy_check").check(harness_config)
+                got = {key: [str(line) for line in said.get(key) or []] for key in ("problems", "notes")}
+            except Exception as error:  # A check that cannot run says nothing about the release: it is a problem.
+                got = {"problems": [f"check failed: {type(error).__name__}: {error}"], "notes": []}
         problems += [f"{package}: {line}" for line in got["problems"]]
         notes += [f"{package}: {line}" for line in got["notes"]]
-    return {"ok": not problems, "problems": problems, "notes": notes}
+        if got["problems"]:
+            failed.append(package)
+    return {"ok": not problems, "problems": problems, "notes": notes, "packages": failed}
 
 
 def main(argv=None) -> int:
@@ -177,7 +190,7 @@ def main(argv=None) -> int:
         try:
             result = deploy_check(args.harness_config)
         except extensions.ExtensionError as error:
-            result = {"ok": False, "problems": [str(error)], "notes": []}
+            result = {"ok": False, "problems": [str(error)], "notes": [], "packages": [error.package]}
         print(json.dumps(result, ensure_ascii=False))
         return 0 if result["ok"] else 1
     try:

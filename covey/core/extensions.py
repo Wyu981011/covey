@@ -330,7 +330,8 @@ def unused_env(environ=None) -> list[str]:
             for name, feature in RETIRED_ENV.items() if cenv.get(name, "", environ).strip()]
 
 
-def _hook_module(extension: Extension, name: str):
+def import_hook(extension: Extension, name: str):
+    """The module of hook ``name`` of ``extension``; ExtensionError, with the package and the module, when it does not import."""
     module = extension.hooks[name]
     try:
         return importlib.import_module(module)
@@ -339,11 +340,34 @@ def _hook_module(extension: Extension, name: str):
                                                 f"{type(error).__name__}: {error}") from error
 
 
+def import_problems(extension: Extension) -> list[str]:
+    """What of ``extension`` does not import, one line each: every hook module its manifest names (a retired hook's left
+    out) and its ``features`` module when it has one. Only imported, nothing called: a hook is imported when the core
+    first asks for it, so without this a broken one passes a deploy's check and fails the first turn that uses it
+    (service/plugins.py ``deploy_check``)."""
+    problems = []
+    for name in extension.hooks:
+        if name in RETIRED_HOOKS:
+            continue
+        try:
+            import_hook(extension, name)
+        except ExtensionError as error:
+            problems.append(str(error).split(": ", 1)[-1])
+    try:
+        _import(extension.package, "features")
+    except ModuleNotFoundError as error:
+        if error.name != f"{extension.package}.features":
+            problems.append(f"cannot import {extension.package}.features: {error}")
+    except ExtensionError as error:
+        problems.append(str(error).split(": ", 1)[-1])
+    return problems
+
+
 def hook_module(package: str, name: str):
     """The module of hook ``name`` of the enabled package ``package``."""
     for extension in manifests():
         if extension.package == package and name in extension.hooks:
-            return _hook_module(extension, name)
+            return import_hook(extension, name)
     raise KeyError((package, name))
 
 
@@ -353,7 +377,7 @@ def hook(name: str):
         raise KeyError(name)
     for extension in manifests():
         if name in extension.hooks:
-            return _hook_module(extension, name)
+            return import_hook(extension, name)
     return None
 
 
@@ -362,7 +386,7 @@ def hooks(name: str) -> list[tuple[str, object]]:
     answers for itself (``deploy_check``)."""
     if name not in HOOK_NAMES:
         raise KeyError(name)
-    return [(extension.package, _hook_module(extension, name)) for extension in manifests() if name in extension.hooks]
+    return [(extension.package, import_hook(extension, name)) for extension in manifests() if name in extension.hooks]
 
 
 def setting(name: str, default: str = "") -> str:

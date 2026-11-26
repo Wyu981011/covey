@@ -202,21 +202,46 @@ class PluginsCommandTest(ExtensionCase):
         self.assertIn("already used by " + PACKAGE, result["message"])
         self.assertEqual(extensions.enabled(self.environ, self.root), [PACKAGE])
 
-    def test_deploy_check_asks_every_package_and_a_check_that_fails_is_a_problem(self):
-        from types import SimpleNamespace
+    def checked(self, *packages, config=None):
+        return self.plugins.deploy_check(config, {**self.environ, "COVEY_EXTENSIONS": ",".join(packages)}, self.root)
 
-        def broken(config):
-            raise OSError("no such file")
-        fine = SimpleNamespace(check=lambda config: {"problems": [], "notes": [f"read {config}"]})
-        wrong = SimpleNamespace(check=lambda config: {"problems": ["interpreter at another revision"]})
-        with mock.patch.object(extensions, "hooks", return_value=[("a", fine), ("b", wrong),
-                                                                  ("c", SimpleNamespace(check=broken))]):
-            result = self.plugins.deploy_check(Path("/x/harnesses.json"))
-        self.assertEqual(result, {"ok": False, "notes": ["a: read /x/harnesses.json"],
-                                  "problems": ["b: interpreter at another revision",
-                                               "c: check failed: OSError: no such file"]})
-        with mock.patch.object(extensions, "hooks", return_value=[]):
-            self.assertEqual(self.plugins.deploy_check(None), {"ok": True, "problems": [], "notes": []})
+    def test_deploy_check_asks_every_package_and_a_check_that_fails_is_a_problem(self):
+        hooked = "HOOKS = {'deploy_check': '%s.check'}\n"
+        for name, body in (("pkg_a", "def check(config):\n    return {'problems': [], 'notes': [f'read {config}']}\n"),
+                           ("pkg_b", "def check(config):\n    return {'problems': ['interpreter at another revision']}\n"),
+                           ("pkg_c", "def check(config):\n    raise OSError('no such file')\n")):
+            make_package(self.root / "extensions", name=name, manifest=hooked % name, features=None)
+            (self.root / "extensions" / name / "check.py").write_text(body)
+        self.assertEqual(self.checked("pkg_a", "pkg_b", "pkg_c", config=Path("/x/harnesses.json")),
+                         {"ok": False, "notes": ["pkg_a: read /x/harnesses.json"], "packages": ["pkg_b", "pkg_c"],
+                          "problems": ["pkg_b: interpreter at another revision", "pkg_c: check failed: OSError: no such file"]})
+        self.assertEqual(self.checked(), {"ok": True, "problems": [], "notes": [], "packages": []})
+
+    def test_deploy_check_imports_every_hook_and_features_module_and_names_the_package(self):
+        """A hook is imported only when the core first asks for it: without this a broken one passed the check before a
+        deploy and failed the first turn that used it (T820 W3)."""
+        make_package(self.root / "extensions", name="good_pkg", features=None,
+                     manifest="HOOKS = {'claude_turn': 'good_pkg.turn', 'dashboard_entry': 'good_pkg.gone'}\n")
+        (self.root / "extensions" / "good_pkg" / "turn.py").write_text("import json\n")
+        make_package(self.root / "extensions", name="bad_hook_pkg", features=None,
+                     manifest="HOOKS = {'claude_turn': 'bad_hook_pkg.turn', 'deploy_check': 'bad_hook_pkg.turn'}\n")
+        (self.root / "extensions" / "bad_hook_pkg" / "turn.py").write_text("from covey.core.extensions import moved_away\n")
+        make_package(self.root / "extensions", name="bad_features_pkg", manifest="", features="raise RuntimeError('boom')\n")
+        result = self.checked("good_pkg", "bad_hook_pkg", "bad_features_pkg")
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["packages"], ["bad_hook_pkg", "bad_features_pkg"])  # good_pkg's retired hook is not asked.
+        self.assertEqual(len(result["problems"]), 3, result)
+        self.assertTrue(result["problems"][0].startswith("bad_hook_pkg: cannot import hook claude_turn (bad_hook_pkg.turn): "
+                                                         "ImportError"), result)
+        self.assertTrue(result["problems"][2].startswith("bad_features_pkg: cannot import bad_features_pkg.features: "
+                                                         "RuntimeError: boom"), result)
+        # Only imported: a package without a features module, and the core's own commands, are fine.
+        self.assertEqual(self.checked("good_pkg")["ok"], True)
+        # A manifest that does not load names its package too.
+        make_package(self.root / "extensions", name="broken_pkg", manifest="HARNESSES = 1\n", features=None)
+        result = self.checked("good_pkg", "broken_pkg")
+        self.assertEqual((result["ok"], result["packages"]), (False, ["broken_pkg"]))
+        self.assertIn("manifest HARNESSES must be a dict", result["problems"][0])
 
     def test_the_variable_overriding_the_choice_is_said(self):
         result = self.plugins.turn(PACKAGE, True, {**self.environ, "COVEY_EXTENSIONS": ""}, self.root)
