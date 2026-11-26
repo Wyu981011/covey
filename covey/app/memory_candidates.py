@@ -40,7 +40,7 @@ from pathlib import Path
 
 from covey.app import track_judge
 from covey.app.track_standby import Failed
-from covey.core import memory, principles, topic_gist, turn_source
+from covey.core import memory, memory_usage, principles, topic_gist, turn_source
 from covey.core.board_read import ended_at
 from covey.core.butler import is_butler_topic
 from covey.core.butler_opened import handed_on
@@ -371,6 +371,7 @@ def decide(state_dir, candidate_id, op, *, now=None) -> dict | None:
                 row["error"] = FULL if f"已有 {principles.GROUP_LIMIT} 条" in str(exc) else str(exc)
             else:
                 row.update(state=SAVED, decided_at=now, principle=item["id"])
+                memory_usage.carry(state_dir, f"candidate:{row['id']}", f"principle:{item['id']}")
                 row.pop("error", None)
         save(state_dir, data)
         return dict(row)

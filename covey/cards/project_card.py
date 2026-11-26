@@ -111,6 +111,7 @@ class Project:
     triage: tuple = ()
     joins: tuple = ()  # The 归入记录: (line, topic id) each, the newest first; a topic id '' when the line has no 移出 button.
     memory: tuple = ()
+    memory_total: int = 0  # How many lines the memory holds in all (``memory`` lists the newest LIST_CAP of them); 0: as many as listed.
     library: tuple = ()
     inputs: tuple = ()
     outputs: tuple = ()
@@ -234,14 +235,17 @@ def member_elements(project, folds=MAX_FOLDS, rows=MAX_ROWS) -> list:
     return elements
 
 
-def row_fold(element_id, title, rows, limit=MAX_ROWS) -> dict | None:
+def row_fold(element_id, title, rows, limit=MAX_ROWS, total=0) -> dict | None:
+    """A fold of ``rows`` (``limit`` shown); ``total``: how many there are in all when the rows are fewer (the count and the
+    rest are said of all of them)."""
     rows = list(rows)
     if not rows:
         return None
+    total = max(total, len(rows))
     inside = rows[:limit]
-    if len(rows) > limit:
-        inside.append(note(f"另有 {len(rows) - limit} 条"))
-    return collapsible(element_id, f"{title} · {len(rows)}", inside, expanded=False, size="normal_v2")
+    if total > limit:
+        inside.append(note(f"另有 {total - limit} 条"))
+    return collapsible(element_id, f"{title} · {total}", inside, expanded=False, size="normal_v2")
 
 
 def triage_rows(project) -> list:
@@ -314,7 +318,7 @@ def project_elements(project, rows, folds) -> list:
     elements += member_elements(project, folds, rows)
     elements += [row_fold("pj_join", "归入记录", join_rows(project), rows),
                  row_fold("pj_triage", "分流记录", triage_rows(project), rows),
-                 row_fold("pj_mem", "专项记忆", memory_rows(project), rows),
+                 row_fold("pj_mem", "专项记忆", memory_rows(project), rows, project.memory_total),
                  row_fold("pj_lib", "资料库", library_rows(project), rows),
                  answer_card.box("pj_io", answer_card.input_lines(project.inputs), list(project.outputs)),
                  *buttons(project)]

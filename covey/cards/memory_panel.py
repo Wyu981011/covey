@@ -15,7 +15,7 @@ One layer under the tab row:
 
 Each button's value carries its kind, the card's token and the revision drawn. ``view``: revision, notice, workspace, open,
 page, confirm (the key of the entry asking 确认删除); ``data``: app/memory_panel.py ``facts``. The lines are cut (TEXT,
-WHERE, OTHERS, NAME, at most WORKSPACES workspaces), and a card that would still be too much for CardKit is drawn again
+WHERE, OTHERS, NAME, at most WORKSPACES workspaces, those with memory first), and a card that would still be too much for CardKit is drawn again
 with less (LESS: the block shorter, then one entry a closed section).
 """
 from __future__ import annotations
@@ -40,7 +40,7 @@ PAGE = 8  # Entries a page of the open section shows.
 PREVIEW = 1800  # Characters of the block 看原文 shows (a card holds 30000 bytes of JSON).
 TEXT = 80  # Characters of an entry's line.
 NAME = 24  # Characters of a workspace's name on the 工作区 row.
-WORKSPACES = 8  # Workspaces the 工作区 row offers, the chosen one first (each option carries its whole name).
+WORKSPACES = 30  # Workspaces the 工作区 row offers, the chosen one first, then those with memory (app/memory_panel.py facts), at two nodes each.
 WHERE = 20  # Characters of where an entry came from (专项「…」, T12).
 OTHERS = 120  # Characters of the line of the other workspaces.
 FOOT = ("删掉的下一轮就不带了。标「常驻」的不会因为放不下被挤掉（每组最多 8 条）。专项、话题里你说的点「升为全局」，以后每个话题都带。"

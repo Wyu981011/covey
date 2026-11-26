@@ -18,7 +18,7 @@ one list of items, and one block of a turn's rules (app/prompts.py memory_block)
 - ``pinned``: a principle the owner marked 常驻 (core/principles.py ``pin``).
 
 ``select`` keeps, per scope, what fits the scope's character limit (``LIMITS``; a project's three parts each their own, the room
-one leaves unused lent to the others, so new answers never take the room of what holds for good or of the lead's notes): the pinned ones first whatever their room (never
+one leaves unused lent to the others, the rules first, then the decisions, the 待核对参考 last and up to a cap): the pinned ones first whatever their room (never
 crowded out), then the owner's words first, a whole entry or none (no entry is cut in the middle), the newest first within each
 (of the lead's notes, its decisions and constraints before its facts and contacts); the entries kept get a short number "M123"
 that is the same every turn (a hash of the ref; one taken by another bumps to the next). ``fill`` is the same choice scope by
@@ -53,7 +53,8 @@ REFERENCE = "reference"  # The part of what anybody but the owner noted: 待核�
 PARTS = (RULE, DECISION, REFERENCE)  # What a turn carries of a project, each in its own room, in the order a block lists them.
 PART_WORDS = {RULE: "长期约定", DECISION: "当前决定", REFERENCE: "待核对参考"}
 PART_LIMITS = {RULE: 1000, DECISION: 1000, REFERENCE: 800}  # Characters of a project's lines, a part each.
-SPARE_ORDER = (RULE, REFERENCE, DECISION)  # Who takes, in turn, the room the parts left unused: never the room a part uses itself.
+SPARE_ORDER = (RULE, DECISION, REFERENCE)  # Who takes, in turn, the room the parts left unused: never the room a part uses itself.
+REFERENCE_CAP = PART_LIMITS[REFERENCE] * 5 // 4  # 待核对参考 (1000) never takes more than this with lent room: the owner's decisions come first.
 LIMITS = {GLOBAL: 1200, WORKSPACE: 800, PROJECT: sum(PART_LIMITS.values()), TOPIC: 800}  # Characters of a scope's lines.
 OWNER, LEAD = "owner", "lead"
 # The owner's words that start a correction (app/memory_turn.py, app/memory_candidates.py, app/memory_learn.py).
@@ -202,7 +203,8 @@ def fill(found) -> dict:
     whatever their room, then the owner's words first, the newest first within each; an item that does not fit is left out and a
     smaller one after it may still fit. A project's lines are three choices of their own, one a part up to its ``PART_LIMITS``
     (``parts``: part -> the same four), so one part never takes the room another uses; what the three leave unused goes to the
-    lines they left out, part after part in ``SPARE_ORDER`` (new answers come last: they never push out a rule or a 待核对参考).
+    lines they left out, part after part in ``SPARE_ORDER`` (rules, then the owner's decisions, the 待核对参考 last, and never above ``REFERENCE_CAP``
+    in all: what nobody but the owner noted never takes the room of a decision).
     A line of the history is in none."""
     scopes = {}
     for scope in SCOPES:
@@ -215,7 +217,8 @@ def fill(found) -> dict:
         for part in SPARE_ORDER:
             left, parts[part]["left"] = parts[part]["left"], []
             for item in left:
-                if line_size(item) <= spare:
+                cap = REFERENCE_CAP - parts[part]["used"] if part == REFERENCE else spare
+                if line_size(item) <= min(spare, cap):
                     spare -= line_size(item)
                     parts[part]["used"] += line_size(item)
                     parts[part]["kept"].append(item)
@@ -248,15 +251,16 @@ def select(found) -> tuple[list, int]:
     return kept, sum(len(scopes[scope]["left"]) for scope in SCOPES)
 
 
-def project_view(rows, project_id, *, redacted=False, since=None) -> dict:
+def project_view(rows, project_id, *, redacted=False, since=None, used=None) -> dict:
     """A project's memory as every reader takes it (a member topic's turn, the lead's pack, the web page): ``rows`` is every
     entry of it, tombstones too (core/project_memory.py entries). {version (core/project_memory.py version), items (the live
     lines but the style line, as ``items`` makes them), kept, left, parts (``fill``'s of the project), voided, new}. ``since``,
     when the reader's previous turn began (None: it had none, or reads it whole): ``voided`` the lines deleted after it,
-    as items, ``new`` the refs of the kept ones written after it. A line from a topic with redaction on is only in a view
+    as items, ``new`` the refs of the kept ones written after it. ``used`` (``items``): when a turn last used each line, so the
+    choice is the one the turn's own memory block makes (app/memory_turn.py) and what both say was left out is the same count. A line from a topic with redaction on is only in a view
     with ``redacted``."""
     live = [row for row in rows if not row["deleted"] and row["kind"] != "style"]
-    found = items(project=live, project_id=project_id, redacted=redacted)
+    found = items(project=live, project_id=project_id, redacted=redacted, used=used)
     room = fill(found)[PROJECT]
     gone = [row for row in rows if row["deleted"] and row["kind"] != "style" and since is not None and row["deleted"] > since]
     voided = items(project=gone, project_id=project_id, redacted=redacted)

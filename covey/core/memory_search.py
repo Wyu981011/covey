@@ -83,7 +83,7 @@ def _project_lines(state_dir, project_id, redacted) -> list:
             continue
         facts = memory.describe(row)
         state = HISTORY if facts["layer"] == memory.HISTORY else HELD
-        kind = memory.LAYER_WORDS.get(memory.describe({**row, "valid": "active"})["layer"], "")  # What it was, put away or not.
+        kind = memory.PART_WORDS.get(memory.describe({**row, "valid": "active"})["part"], "")  # What it was, put away or not.
         found.append(_line("专项", kind, memory.OWNER_WORDS[memory.OWNER if facts["asserted_by"] == "owner" else memory.LEAD],
                            row["text"], row["at"], state, "做完了" if facts["valid"] == "done" else
                            "被替代了" if facts["valid"] == "superseded" else ""))

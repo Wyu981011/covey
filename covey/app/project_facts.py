@@ -15,7 +15,7 @@ from covey.cards.facts import tile_count
 from covey.cards.project_card import (CANCELLED, CORRECTED, DONE, IDLE, RUNNING, STOPPED, STUCK, WAITING, Member,
                                       Project)
 from covey.app.card_publish import clock, words
-from covey.core import board_read, look, project_library, project_memory, projects
+from covey.core import board_read, look, memory, memory_usage, project_library, project_memory, projects
 from covey.core import progress as turn_progress
 from covey.core.jobs import topic_job_records
 from covey.core.metrics import run_seconds, timings_of
@@ -159,11 +159,24 @@ def join_lines(state_dir, record) -> tuple:
     return tuple(lines)
 
 
+def memory_listing(state_dir, record) -> tuple:
+    """((entry id, text) of the project's memory, how many lines it holds): what a turn can carry (core/memory.py: a line put
+    away in the history is not carried and not listed), the newest first by when a turn last used it (core/memory_usage.py,
+    with COVEY_MEMORY_LEARN=1) as a turn's own choice orders them; at most LIST_CAP rows, the count is of them all.
+    projects/<id>/memory.json and what an older release kept in the record; a deleted entry and the style line are not rows."""
+    live = project_memory.live(state_dir, record, style=False)
+    used = memory_usage.last_used(state_dir) if memory.learning() else None
+    found = [item for item in memory.items(project=live, project_id=str(record.get("id") or ""), redacted=True, used=used)
+             if item.get("layer") != memory.HISTORY]
+    texts = {row["id"]: row["text"] for row in live}
+    found.sort(key=lambda item: (-memory.seen(item), item["ref"]))
+    rows = [(item["ref"].rpartition(":")[2], words(texts.get(item["ref"].rpartition(":")[2], item["text"]), 120)) for item in found]
+    return tuple(rows[:LIST_CAP]), len(rows)
+
+
 def memory_rows(state_dir, record) -> tuple:
-    """(entry id, text) of the project's memory (core/project_memory.py: projects/<id>/memory.json and what an older release
-    kept in the record), the newest first; a deleted entry and the style line are not rows."""
-    rows = [(row["id"], words(row["text"], 120)) for row in project_memory.live(state_dir, record, style=False)]
-    return tuple(reversed(rows[-LIST_CAP:]))
+    """(entry id, text) of the project's memory, the newest first (``memory_listing``)."""
+    return memory_listing(state_dir, record)[0]
 
 
 def library_rows(state_dir, project_id) -> tuple:
@@ -229,12 +242,13 @@ def facts(state_dir, record, now, titles=None, links=None, avatar="") -> Project
     if tokens:
         parts.append(answer_card.figure("token", tokens))
     ask = record.get("ask") if isinstance(record.get("ask"), dict) else {}
+    listed = memory_listing(state_dir, record)
     return Project(project_id=pid, lead_topic=lead, name=str(record.get("name") or ""), status=status,
                    reason=projects.stop_reason(record), need=need, need_url=str(links.get("need") or ""), need_from=need_from,
                    members=members, avatar=str(avatar or ""),
                    elapsed=elapsed, tokens=tokens,
                    lead_state=projects.reason_words(record) or lead_state(state_dir, record, now), lead_note=lead_note(record),
-                   triage=triage_lines(record), joins=join_lines(state_dir, record), memory=memory_rows(state_dir, record), library=library_rows(state_dir, pid),
+                   triage=triage_lines(record), joins=join_lines(state_dir, record), memory=listed[0], memory_total=listed[1], library=library_rows(state_dir, pid),
                    inputs=inputs, outputs=tuple(answer_card.output_lines(parts, answer_card.RUNNING_LINES)),
                    ask_text=str(ask.get("text") or ""), ask_at=str(ask.get("at") or ""), ask_url=str(ask.get("url") or ""),
                    origin_note=origin_words((record.get("origin") or {}).get("note") if isinstance(record.get("origin"), dict) else ""))

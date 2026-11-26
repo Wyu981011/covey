@@ -59,6 +59,24 @@ def note(state_dir, refs, *, now=None) -> int:
     return len(refs)
 
 
+def carry(state_dir, old, new) -> bool:
+    """The use of the line ``old`` goes to ``new`` (a candidate turned principle, a project's or a topic's line made global): the
+    later ``last``, the counts added, ``old`` gone, so what was in use does not start from nothing and drop out of the room.
+    Whether there was anything to carry."""
+    old, new = str(old or ""), str(new or "")
+    if not old or not new or old == new:
+        return False
+    with shared_file_lock(path(state_dir)):
+        found = read(state_dir)
+        row = found.pop(old, None)
+        if row is None:
+            return False
+        kept = found.get(new) or {"n": 0, "last": 0.0}
+        found[new] = {"n": kept["n"] + row["n"], "last": max(kept["last"], row["last"])}
+        write_json(path(state_dir), {"schema_version": SCHEMA, "refs": found}, ensure_ascii=False)
+    return True
+
+
 def idle(usage, ref, written_at, *, now=None, days=IDLE_DAYS) -> bool:
     """Whether the line ``ref`` (written at ``written_at``) has gone ``days`` days with no turn using it: written that long
     ago and not used since. ``usage`` is ``read``'s."""

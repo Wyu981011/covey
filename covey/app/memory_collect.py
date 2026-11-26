@@ -29,7 +29,7 @@ from covey.app import answer_cards, memory_turn
 from covey.app.card_actions import action_value
 from covey.app.card_lanes import after_ack
 from covey.cards.answer_card import memory_element
-from covey.core import memory, principles, project_memory, projects, topic_memory, turn_source
+from covey.core import memory, memory_usage, principles, project_memory, projects, topic_memory, turn_source
 from covey.core.butler import is_butler_topic
 from covey.core.checkpoint import read_checkpoint
 from covey.core.jobs import find_job_record, upsert_job_record
@@ -241,6 +241,8 @@ def promote(host, ctx, event) -> bool:
         raise ValueError(REDACTED_REFUSAL)
     found, _ = principles.save(ctx.state_dir, principles.OWNER, note["text"], source={
         "job_key": str(record.get("key") or ""), "job_id": record.get("job_id"), "from": note.get("scope")})
+    held = projects.topic_project(ctx.state_dir, ctx.topic_id) if projects.memory_enabled() else None
+    memory_usage.carry(ctx.state_dir, f"project:{held.id}:{entry_id}" if held is not None else f"topic:{entry_id}", f"principle:{found['id']}")
     _forget(ctx.state_dir, ctx.topic_id, entry_id, note.get("scope"))
     note.update(scope=GLOBAL_WORDS, entry_id=found["id"])
     upsert_job_record(ctx.state_dir, str(record["key"]), memory_notes=notes)

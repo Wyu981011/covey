@@ -28,7 +28,7 @@ from covey.app.answers import SKIPPED
 from covey.app.prompts import project_block, project_memory_lines
 from covey.core import board_read
 from covey.core import memory as core_memory
-from covey.core import project_library, project_memory, projects, triage
+from covey.core import memory_usage, project_library, project_memory, projects, triage
 from covey.core.attachments import ATTACHMENTS_HEADER, parse_attachment_block
 from covey.core.checkpoint import checkpoint_delivery, read_checkpoint
 from covey.core.redaction import topic_redaction
@@ -86,7 +86,8 @@ def memory_view(ctx, job, *, redacted=None):
     topic = getattr(job, "topic_id", "") or ctx.topic_id
     since = board_read.previous_start(ctx.state_dir, topic, getattr(job, "job_id", 0))
     return core_memory.project_view(project_memory.entries(ctx.state_dir, record), pid,
-                                    redacted=marked(ctx.state_dir, topic) if redacted is None else redacted, since=since)
+                                    redacted=marked(ctx.state_dir, topic) if redacted is None else redacted, since=since,
+                                    used=memory_usage.last_used(ctx.state_dir) if core_memory.learning() else None)
 
 
 def block(ctx, job, *, resumed: bool) -> str:

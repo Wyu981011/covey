@@ -62,11 +62,12 @@ def workspace_names(ctx) -> tuple[str, list]:
 
 
 def room_line(title, info) -> str:
-    """The line of a scope near its limit or past it ('' otherwise): how many entries the next turn leaves out."""
+    """The line of a scope near its limit or past it ('' otherwise): how many entries the next turn leaves out. 常驻 is only
+    offered for a principle (core/principles.py pin): the hint is there only when one of the entries left out is."""
     used, limit, left = info["used"], info["limit"], len(info["left"])
     if left:
-        return (f"⚠️ {title}放不下 {left} 条，下一轮不带它们（最早的先放不下）："
-                "要一直带上的点「常驻」，用不着的删掉。")
+        pin = "要一直带上的原则点「常驻」，" if any(str(item.get("ref", "")).startswith("principle:") for item in info["left"]) else ""
+        return f"⚠️ {title}放不下 {left} 条，下一轮不带它们（最早的先放不下）：{pin}用不着的删掉。"
     if used > limit:
         return f"{title}的常驻已超过 {limit:,} 字，照样都带上；这里再记的会放不下。"
     if used >= NEAR * limit:
@@ -74,12 +75,19 @@ def room_line(title, info) -> str:
     return ""
 
 
-def row_of(item, key, carried=None, where="") -> dict:
-    """An entry of the card: ``carried`` the refs the next turn carries (None: the part has no preview). ``promotable``: a line
-    of the owner's in a project's or a topic's memory, not marked redacted (``promote``)."""
+def promotable(item, source="") -> bool:
+    """Whether 升为全局 is offered for a line of a project's or a topic's memory (``promote``): the owner's own, not marked
+    redacted, not put away in the history and not an answer to a question (a decision for what that question asked)."""
+    return (item["ref"].startswith(("project:", "topic:")) and item["by"] == memory.OWNER and not item.get("redacted")
+            and item.get("layer") != memory.HISTORY and source not in memory.ANSWER_SOURCES)
+
+
+def row_of(item, key, carried=None, where="", source="") -> dict:
+    """An entry of the card: ``carried`` the refs the next turn carries (None: the part has no preview). ``promotable``: see
+    that (``source``: the line's own source)."""
     return {"key": key, "text": item["text"], "by": memory.OWNER_WORDS[item["by"]], "pinned": bool(item.get("pinned")),
             "pinnable": key.startswith("principle:"), "where": where,
-            "promotable": key.startswith(("project:", "topic:")) and item["by"] == memory.OWNER and not item.get("redacted"),
+            "promotable": promotable(item, source),
             "out": carried is not None and item["ref"] not in carried, "at": item["at"]}
 
 
@@ -94,8 +102,8 @@ def memory_topics(state_dir) -> list:
     return list(dict.fromkeys(str(record.get("topic_id") or "") for record in records if record.get("topic_id")))
 
 
-def other_workspaces(state_dir, chosen, knowledge_on) -> str:
-    """One grey line of the other workspaces' entries: ``其他工作区：docs 3 条、web 1 条``; '' when there are none."""
+def workspace_counts(state_dir, knowledge_on) -> dict:
+    """Workspace -> how many entries it holds (principles, and with COVEY_KNOWLEDGE=1 its current knowledge entries)."""
     counts = {}
     for name, group in principles.load(state_dir)["workspaces"].items():
         counts[name] = counts.get(name, 0) + len(group)
@@ -103,14 +111,27 @@ def other_workspaces(state_dir, chosen, knowledge_on) -> str:
         for scope, name, group in knowledge.groups(state_dir):
             if scope == knowledge.WORKSPACE:
                 counts[name] = counts.get(name, 0) + sum(1 for entry in group.values() if entry["state"] == knowledge.CURRENT)
+    return counts
+
+
+def other_workspaces(counts, chosen) -> str:
+    """One grey line of the other workspaces' entries: ``其他工作区：docs 3 条、web 1 条``; '' when there are none."""
     shown = [f"{name} {n} 条" for name, n in sorted(counts.items()) if n and name != chosen]
     return ("其他工作区：" + "、".join(shown) + "（上面的工作区一行换着看）") if shown else ""
+
+
+def offered(names, chosen, counts) -> list:
+    """The workspaces the 工作区 row offers: the chosen one, then those with memory (the most entries first), then the rest
+    as saved; every one of them is offered up to WORKSPACES, so none that holds memory is out of reach."""
+    holding = sorted((name for name in names if counts.get(name)), key=lambda name: (-counts[name], name))
+    return list(dict.fromkeys([chosen, *holding, *names]))[:WORKSPACES] if chosen else [*holding, *(n for n in names if n not in holding)][:WORKSPACES]
 
 
 def facts(state_dir, names, chosen) -> dict:
     """The tab's data (cards/memory_panel.py): ``preview`` (the next turn of an ordinary new topic in ``chosen`` on the
     owner's own turn) and ``parts`` (全局, 工作区, 专项, 话题: their entries, the newest first)."""
     knowledge_on = knowledge.enabled()
+    counts = workspace_counts(state_dir, knowledge_on)
     mine, space = principles.for_turn(state_dir, chosen)
     entries = knowledge.for_turn(state_dir, chosen) if knowledge_on else ((), ())
     drafts, used = ((), ()), None
@@ -129,27 +150,29 @@ def facts(state_dir, names, chosen) -> dict:
               "rows": newest(row_of(item, item["ref"], carried) for item in found if item["scope"] == memory.GLOBAL)},
              {"scope": memory.WORKSPACE, "title": f"工作区 {chosen}" if chosen else "工作区",
               "rows": newest(row_of(item, item["ref"], carried) for item in found if item["scope"] == memory.WORKSPACE),
-              "others": other_workspaces(state_dir, chosen, knowledge_on)}]
+              "others": other_workspaces(counts, chosen)}]
     rows = []
     if projects.memory_enabled():
         for record in projects.records(state_dir):
             if projects.state_of(record) == projects.CANCELLED:
                 continue
-            items = memory.items(project=project_memory.live(state_dir, record, style=False), project_id=record["id"],
-                                 redacted=True)
+            live = project_memory.live(state_dir, record, style=False)
+            sources = {f"project:{record['id']}:{row['id']}": row.get("source") for row in live}
+            items = memory.items(project=live, project_id=record["id"], redacted=True, used=used)
             name = f"专项「{record.get('name') or record['id']}」"
-            rows += [row_of(item, item["ref"], where=name) for item in items]
+            rows += [row_of(item, item["ref"], where=name, source=sources.get(item["ref"], ""))
+                     for item in items if item.get("layer") != memory.HISTORY]  # The history is carried by no turn: not listed.
             warnings.append(room_line(name, memory.fill(items)[memory.PROJECT]))
     parts.append({"scope": memory.PROJECT, "title": "专项", "rows": newest(rows),
                   "empty": "没有" if projects.memory_enabled() else "专项的记忆没开：设置卡「能做什么」里写着怎么打开"})
     rows = []
     for topic in memory_topics(state_dir):
-        items = memory.items(topic=topic_memory.live(state_dir, topic), redacted=True)
+        items = memory.items(topic=topic_memory.live(state_dir, topic), redacted=True, used=used)
         label = label_title(state_dir, topic)[0] or "一个话题"
         rows += [row_of(item, f"topic:{topic}:{item['ref'].partition(':')[2]}", where=label) for item in items]
         warnings.append(room_line(label, memory.fill(items)[memory.TOPIC]))
     parts.append({"scope": memory.TOPIC, "title": "话题", "rows": newest(rows)})
-    shown = list(dict.fromkeys([chosen, *names]))[:WORKSPACES] if chosen else names[:WORKSPACES]
+    shown = offered(names, chosen, counts)
     warnings = [line for line in warnings if line]
     if len(warnings) > WARNINGS:  # Each project and topic may say so: one card holds a few of them.
         warnings = [*warnings[:WARNINGS - 1], f"另有 {len(warnings) - WARNINGS + 1} 个专项或话题快满了或放不下，展开下面的专项、话题看。"]
@@ -209,9 +232,12 @@ def promote(state_dir, key):
         return None
     if memory.by_source(row.get("source")) != memory.OWNER:
         raise ValueError("只有你说的才能升为全局")
+    if kind == "project" and (row.get("source") in memory.ANSWER_SOURCES or memory.describe(row)["layer"] == memory.HISTORY):
+        raise ValueError("已收起的历史和问答的回答不能升为全局")
     if row.get("redacted"):
         raise ValueError("这条来自开着脱敏的话题，不能升为全局：全局的记忆会带进不脱敏的话题")
-    principles.save(state_dir, principles.OWNER, row["text"], source={"via": "settings_card", "from": key})
+    found, _ = principles.save(state_dir, principles.OWNER, row["text"], source={"via": "settings_card", "from": key})
+    memory_usage.carry(state_dir, key if kind == "project" else f"topic:{entry}", f"principle:{found['id']}")
     return forget(state_dir, key)
 
 

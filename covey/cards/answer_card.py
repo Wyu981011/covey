@@ -14,9 +14,9 @@ split "脱 / 敏关", "缓存 / 命中"), so a line wraps only after a separator
 The task card's 输入/输出 box (cards/task_figures.py io_box) is the grey box, in the topic's thread: while its turn runs, 输出 is 开始 ｜ 已运行 ｜
 token ｜ token/s ｜ 上下文 (｜ 重启) (``running_figures``, ``RUNNING_LINES``).
 
-The parts under an answer that are there to look up (产物, 验收说明, 改动, 记下的事) go into one closed fold
+The parts under an answer that are there to look up (产物, 验收说明, 改动) go into one closed fold
 (``details``); what the owner must see (a commit not found, the completion criteria not met: ALERT_IDS) stays out of it,
-and so do the 输入/输出 lines and 独立复核 under them. No link ends the 输出 line: the card's head (cards/ui.py
+and so do the 记下了 lines (MEMORY_ID: first under the answer, whatever else the card holds), the 输入/输出 lines and 独立复核 under them. No link ends the 输出 line: the card's head (cards/ui.py
 speaker_row) opens the owner's message or the topic. An answer too long for one card goes on several (cards/pages.py),
 these parts under the last, or after them on ``tail_card`` when it cannot hold them too; a file is followed by
 ``tail_card`` as well."""
@@ -416,7 +416,7 @@ def review_element(topic_id, job_id):
 
 DETAILS_ID = "relay_details"  # The id the relay's fold had first: one id for the fold on every card.
 # What a part under the answer is called in the fold's title (``details``), by its element id.
-DETAIL_WORDS = {"answer_acceptance": "验收说明", "answer_change": "改动", "answer_memory": "记下的事"}
+DETAIL_WORDS = {"answer_acceptance": "验收说明", "answer_change": "改动"}
 # The parts the owner must see, never folded (T647 P1-A2: folded in grey small print, they went unseen): a commit the
 # workdir's repository does not have (``check_element``) and the completion criteria not met (``criteria_element``).
 ALERT_IDS = (CHECK_ID, CRITERIA_ID)
@@ -431,7 +431,7 @@ def alerts(change=None, notes=()) -> bool:
 
 
 def details(parts) -> list:
-    """The parts under an answer that are there to look up (产物, 验收说明, 改动, 记下的事) in one closed fold whose title names
+    """The parts under an answer that are there to look up (产物, 验收说明, 改动) in one closed fold whose title names
     them, so the answer stays what the card is for (the owner, 2026-11-22: 底下的东西占了太高); one part alone stays as it is.
     The parts the owner must see (ALERT_IDS) stay out of it, first. The 输入/输出 lines stay outside, under it."""
     parts = [part for part in parts if part]
@@ -455,12 +455,18 @@ def tail(files=None, inputs=(), outputs=(), link="", change=None, notes=(), butt
     ``criteria_element``), those to look up in one fold when more than one and those to see first, outside it
     (``details``), then the 输入/输出 lines, then ``buttons`` (elements: 独立复核, ``review_element``, and the reminder to
     come back, app/revisit_hint.py) under the lines, where they can be clicked at once; one of DETAIL_WORDS among them
-    goes into the fold."""
+    goes into the fold. The 记下了 lines (MEMORY_ID, in ``notes`` or ``buttons``) are never folded: they come first, right
+    under the answer, with or without 产物."""
+    def is_memory(element):
+        return isinstance(element, dict) and element.get("element_id") == MEMORY_ID
+
+    memory = [element for element in (*(notes or ()), *(buttons or ())) if is_memory(element)]
+    notes, buttons = [e for e in notes or () if not is_memory(e)], [e for e in buttons or () if not is_memory(e)]
     looked_up = [element for element in buttons or () if isinstance(element, dict)
                  and element.get("element_id") in DETAIL_WORDS]
     others = [element for element in buttons or () if element not in looked_up]
     parts = details([files, change_element(change), check_element(change), *(notes or ()), *looked_up])
-    return [element for element in (*parts, facts_element(inputs, outputs, link), *others) if element]
+    return [element for element in (*memory, *parts, facts_element(inputs, outputs, link), *others) if element]
 
 
 def tail_card(elements, summary, lead="", *, words=False, **row):

@@ -1,0 +1,182 @@
+"""T852 飞书与核心包: the quota a project's parts lend each other (core/memory.py SPARE_ORDER, REFERENCE_CAP), the 记忆 tab's
+workspaces, 常驻 hint, history and 升为全局 (app/memory_panel.py), the project card's count and the one choice of a turn and the
+card (app/project_facts.py, core/memory.py project_view ``used``), the lookup's label, the use that goes with a line made global
+(core/memory_usage.py carry) and the answer card's 记下了 line out of the fold (cards/answer_card.py tail)."""
+from __future__ import annotations
+
+import os
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+from support import UNSET_OFF, make_context
+
+from covey.app import memory_candidates, memory_panel, project_facts
+from covey.cards import answer_card as cards
+from covey.cards import memory_panel as panel_cards
+from covey.cards.project_card import row_fold
+from covey.core import memory, memory_search, memory_usage, principles, project_memory, projects
+
+ON = {memory.ENV: "1", memory.LEARN_ENV: "1", projects.ENV: "1", projects.MEMORY_ENV: "1"}
+PID, CHAT = "a1b2c3d4e5f6", "oc_owner_dm"
+NOW = 1_800_000_000.0
+
+
+class Case(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        patcher = mock.patch.dict(os.environ, {name: value for name, value in os.environ.items()
+                                               if not name.startswith(("COVEY_", "LARK_BRIDGE_"))} | UNSET_OFF | ON, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.state = make_context(Path(tmp.name)).state_dir
+        projects.create(self.state, projects.new_record(chat_id=CHAT, name="网关", goal="发出去", project_id=PID, now=NOW))
+
+    def line(self, text, source="owner", kind="decision", at=NOW):
+        return project_memory.add(self.state, PID, text, kind, source, now=at)[0]["id"]
+
+    def record(self):
+        return projects.read_record(self.state, PID)
+
+
+def part_item(ref, part, size, at):
+    """A project line of ``part`` of exactly ``size`` characters in the room (core/memory.py line_size)."""
+    by = memory.OWNER if part != memory.REFERENCE else memory.LEAD
+    item = memory.make(ref, memory.PROJECT, by, "字" * (size - 24 - len(memory.PART_WORDS[part]) - 3 - (8 if part == memory.DECISION else 0)), at)
+    item.update(part=part, layer=part)
+    assert memory.line_size(item) == size
+    return item
+
+
+class QuotaTest(Case):
+    def test_the_spare_goes_to_the_owners_decisions_before_the_reference_and_the_reference_is_capped(self):
+        self.assertEqual(memory.SPARE_ORDER, (memory.RULE, memory.DECISION, memory.REFERENCE))
+        self.assertEqual(memory.REFERENCE_CAP, 1000)
+        found = [part_item(f"project:p:d{i}", memory.DECISION, 100, NOW - i) for i in range(15)]  # 10 fit, 5 left out.
+        found += [part_item(f"project:p:r{i}", memory.REFERENCE, 100, NOW - i) for i in range(18)]  # 8 fit, 10 left out.
+        parts = memory.fill(found)[memory.PROJECT]["parts"]  # No rule: its 1000 is spare.
+        self.assertEqual(len(parts[memory.DECISION]["kept"]), 15)  # All the decisions, before the reference.
+        self.assertEqual(parts[memory.REFERENCE]["used"], 1000)  # 800 and the 200 it may borrow, not what was left of the rest.
+        self.assertEqual(len(parts[memory.REFERENCE]["kept"]), 10)
+
+    def test_the_reference_never_takes_more_than_its_cap_with_all_the_spare_there(self):
+        found = [part_item(f"project:p:r{i}", memory.REFERENCE, 100, NOW - i) for i in range(30)]
+        room = memory.fill(found)[memory.PROJECT]
+        self.assertEqual(room["parts"][memory.REFERENCE]["used"], 1000)
+        self.assertEqual(len(room["left"]), 20)
+
+
+class PanelTest(Case):
+    def test_every_workspace_is_offered_and_the_ones_with_memory_first(self):
+        names = [f"ws{i:02d}" for i in range(14)]
+        principles.save(self.state, principles.WORKSPACE, "covey 里回复用中文", workspace="ws13")
+        data = memory_panel.facts(self.state, names, "ws00")["preview"]
+        self.assertEqual(sorted(data["workspaces"]), names)  # Not the first eight.
+        self.assertEqual(data["workspaces"][:2], ["ws00", "ws13"])
+        card = panel_cards.memory_card("tok", {"revision": 1}, memory_panel.facts(self.state, names, "ws00"))
+        self.assertIn("ws13", str(card))
+
+    def test_the_pin_hint_is_only_for_what_can_be_pinned(self):
+        knowledge_left = {"used": 900, "limit": 800, "left": [{"ref": "knowledge:k1"}]}
+        self.assertNotIn("常驻", memory_panel.room_line("专项「网关」", knowledge_left))
+        self.assertIn("删掉", memory_panel.room_line("专项「网关」", knowledge_left))
+        principle_left = {"used": 900, "limit": 800, "left": [{"ref": "principle:p1"}]}
+        self.assertIn("「常驻」", memory_panel.room_line("全局", principle_left))
+
+    def project_rows(self):
+        data = memory_panel.facts(self.state, ["ws"], "ws")
+        return {row["key"].rpartition(":")[2]: row for part in data["parts"] if part["scope"] == memory.PROJECT for row in part["rows"]}
+
+    def test_history_is_not_listed_and_only_the_owners_plain_lines_can_go_global(self):
+        rule = self.line("发布前跑一遍冒烟", kind="constraint")
+        answer = self.line("主人答：用蓝绿发布", source="owner_answer")
+        old = self.line("旧的约定", kind="constraint")
+        lead_old = self.line("负责人记的旧事", source="lead", kind="fact")
+        project_memory.settle(self.state, PID, [{"id": old, "valid": "done"}, {"id": lead_old, "valid": "superseded"}])
+        rows = self.project_rows()
+        self.assertEqual(set(rows), {rule, answer})
+        self.assertTrue(rows[rule]["promotable"])
+        self.assertFalse(rows[answer]["promotable"])
+        for key, why in ((answer, "问答"), (old, "历史")):
+            with self.assertRaises(ValueError, msg=why):
+                memory_panel.promote(self.state, f"project:{PID}:{key}")
+        self.assertEqual(memory_panel.promote(self.state, f"project:{PID}:{rule}"), "发布前跑一遍冒烟")
+
+    def test_the_line_made_global_takes_its_use_along(self):
+        rule = self.line("发布前跑一遍冒烟", kind="constraint")
+        memory_usage.note(self.state, [f"project:{PID}:{rule}"], now=NOW)
+        memory_panel.promote(self.state, f"project:{PID}:{rule}")
+        used = memory_usage.read(self.state)
+        self.assertNotIn(f"project:{PID}:{rule}", used)
+        (ref, row), = used.items()
+        self.assertTrue(ref.startswith("principle:"))
+        self.assertEqual((row["n"], row["last"]), (1, NOW))
+
+
+class UsageCarryTest(Case):
+    def test_the_later_time_and_the_counts_added(self):
+        memory_usage.note(self.state, ["a", "b"], now=100.0)
+        memory_usage.note(self.state, ["a"], now=300.0)
+        memory_usage.note(self.state, ["b"], now=200.0)
+        self.assertTrue(memory_usage.carry(self.state, "a", "b"))
+        self.assertEqual(memory_usage.read(self.state), {"b": {"n": 4, "last": 300.0}})
+        self.assertFalse(memory_usage.carry(self.state, "gone", "b"))
+        self.assertEqual(memory_usage.read(self.state), {"b": {"n": 4, "last": 300.0}})
+
+    def test_a_candidate_made_a_principle_keeps_its_use(self):
+        row, = memory_candidates.add(self.state, [{"text": "回复一律先说结论"}], "slot", source="harvest")
+        memory_usage.note(self.state, [f"candidate:{row['id']}"], now=NOW)
+        done = memory_candidates.decide(self.state, row["id"], "save")
+        self.assertEqual(done["state"], memory_candidates.SAVED)
+        self.assertEqual(memory_usage.last_used(self.state), {f"principle:{done['principle']}": NOW})
+
+
+class ProjectCardTest(Case):
+    def test_the_count_is_of_all_the_lines_and_history_is_not_in_it(self):
+        ids = [self.line(f"约定 {i}", kind="constraint", at=NOW + i) for i in range(60)]
+        project_memory.settle(self.state, PID, [{"id": ids[0], "valid": "done"}])
+        rows, total = project_facts.memory_listing(self.state, self.record())
+        self.assertEqual((len(rows), total), (project_facts.LIST_CAP, 59))
+        fold = row_fold("pj_mem", "专项记忆", rows, 10, total)
+        self.assertIn("专项记忆 · 59", str(fold))
+        self.assertIn("另有 49 条", str(fold))
+        self.assertNotIn(ids[0], [entry for entry, _ in rows])
+
+    def test_the_view_a_turn_and_a_card_take_chooses_as_the_turn_does_with_the_use(self):
+        ids = [self.line("规" * 150 + str(i), kind="constraint", at=NOW + i) for i in range(20)]
+        used = {f"project:{PID}:{ids[0]}": NOW + 1000}  # The oldest, used last.
+        rows = project_memory.entries(self.state, self.record())
+        mine = memory.items(project=[row for row in rows if not row["deleted"]], project_id=PID, used=used)
+        want = {item["ref"] for item in memory.select(mine)[0]}
+        view = memory.project_view(rows, PID, used=used)
+        self.assertEqual({item["ref"] for item in view["kept"]}, want)
+        self.assertIn(f"project:{PID}:{ids[0]}", want)
+        self.assertNotEqual({item["ref"] for item in memory.project_view(rows, PID)["kept"]}, want)
+
+
+class SearchLabelTest(Case):
+    def test_a_leads_note_is_a_reference_to_check_not_a_long_term_rule(self):
+        self.line("负责人总结：网关走 8443", source="lead", kind="fact")
+        self.line("主人定的：别动 8443", source="owner", kind="constraint")
+        kinds = {found["text"]: found["kind"] for found in memory_search._project_lines(self.state, PID, False)}
+        self.assertEqual(kinds["负责人总结：网关走 8443"], "待核对参考")
+        self.assertEqual(kinds["主人定的：别动 8443"], "长期约定")
+
+
+class AnswerCardTest(unittest.TestCase):
+    def test_the_lines_of_what_was_noted_are_out_of_the_fold_and_first(self):
+        element = cards.memory_element([{"kind": "remembered", "text": "以后先说结论", "scope": "管这个专项", "entry_id": "e1"}], "t1", "1")
+        files = {"tag": "markdown", "content": "产物", "element_id": cards.ARTIFACTS_ID}
+        notes = [{"tag": "markdown", "content": "验收", "element_id": "answer_acceptance"}]
+        out = cards.tail(files, notes=notes, buttons=[element])
+        self.assertEqual(out[0].get("element_id"), cards.MEMORY_ID)
+        fold = next(part for part in out if part.get("element_id") == cards.DETAILS_ID)
+        self.assertNotIn("answer_memory", str(fold))
+        self.assertNotIn("记下了", str(fold))
+        self.assertIn("记下了", str(out[0]))
+
+
+if __name__ == "__main__":
+    unittest.main()
