@@ -390,6 +390,10 @@ class WebSettingsTest(UnifiedCase):
         self.assertEqual(raw["exclude"], ["node_modules/"])
         self.assertEqual(next(r for r in raw["repos"] if r["name"] == "docs")["future"], {"k": 1})
         self.assertIn({"name": "device", "path": "gpu1:/srv/x"}, raw["repos"])  # What read() passes over stays as it was.
+        raw["repos"][0]["status"] = "archived"  # A newer release's status: set on the page, the page's from then on.
+        write_json(self.repos_file(), raw)
+        self.assertEqual(self.op(what="repos_set", name="docs", status="active"), ("done", "已改 docs：状态"))
+        self.assertEqual(next(r for r in read_json(self.repos_file())["repos"] if r["name"] == "docs")["status"], "active")
         self.assertEqual(self.op(what="repos_remove", name="docs"), ("done", "已从仓库地图去掉 docs，磁盘目录没有动"))
         self.assertTrue(self.root.is_dir())
         self.assertEqual(self.op(what="repos_remove", name="docs"), ("failed", "没有叫 docs 的仓库"))
@@ -882,6 +886,42 @@ class WebSettingsTest(UnifiedCase):
         self.assertEqual(self.switch(topic, "op-p9", **self.same_config(path), repos=[]), ("done", "已换配置：仓库 covey（改） → 无，会话不变"))
         self.assertEqual(json.loads(path.read_text())["repos"], [])
         self.assertEqual(self.switch(topic, "op-pa", **self.same_config(path), repos=[]), ("failed", "配置没有变化"))
+
+    def test_the_repos_a_page_sends_back_with_every_switch_are_not_checked_again_and_those_it_never_saw_stay(self):
+        """The page sends the topic's repositories back with every switch (web/client/src/cv/launchRepos.ts switchPayload): one
+        the map has frozen since, or never had, does not stop a model change; the entries past the REPOS_KEPT the page was
+        shown are kept, worktree and all (T870 review)."""
+        from covey.app.web_turns import REPOS_KEPT
+        self.repos_map()
+        model = self.snap()["launch"]["models"][0]
+        topic, path = self.opened(model)
+        data = json.loads(path.read_text())
+        data["repos"] = [{"name": "covey", "path": str(self.root / "covey"), "mode": "write", "worktree": "/wt/T1-x/covey",
+                          "source": "declared"},
+                         {"name": "notes", "path": "/absolute/notes", "mode": "read", "source": "touched"},
+                         *({"name": f"r{i}", "path": f"/absolute/r{i}", "mode": "read", "source": "touched"} for i in range(REPOS_KEPT))]
+        write_json(path, data)
+        raw = json.loads(self.repos_file().read_text())
+        raw["repos"][0]["status"] = "frozen"  # covey, frozen on the settings page since the topic took it to write.
+        write_json(self.repos_file(), raw)
+        sent = [{"name": r["name"], "mode": r["mode"]} for r in data["repos"][:REPOS_KEPT]]  # What the page was shown.
+        other = next(m for m in self.snap()["launch"]["models"] if m["key"] != model["key"])
+        state, words = self.switch(topic, "op-k1", model=other["key"], effort=other["start_budget"], work_mode="", redaction="off",
+                                   repos=sent)
+        self.assertEqual(state, "done", words)
+        self.assertNotIn("仓库", words)
+        self.assertEqual(json.loads(path.read_text())["repos"], data["repos"])  # Nothing of them changed, the unseen two too.
+        # One taken out on the page: it goes; the two it never saw stay, after the ones it sent.
+        state, words = self.switch(topic, "op-k2", **self.same_config(path), repos=[r for r in sent if r["name"] != "notes"])
+        self.assertEqual(state, "done", words)
+        names = [r["name"] for r in json.loads(path.read_text())["repos"]]
+        self.assertEqual(names, ["covey", *(f"r{i}" for i in range(REPOS_KEPT))])
+        self.assertEqual(json.loads(path.read_text())["repos"][0]["worktree"], "/wt/T1-x/covey")
+        # Writing to it again once it was made read only: checked, refused.
+        sent = [{"name": "covey", "mode": "read"}, *({"name": f"r{i}", "mode": "read"} for i in range(REPOS_KEPT - 1))]
+        self.assertEqual(self.switch(topic, "op-k3", **self.same_config(path), repos=sent)[0], "done")
+        self.assertEqual(self.switch(topic, "op-k4", **self.same_config(path), repos=[{"name": "covey", "mode": "write"}, *sent[1:]]),
+                         ("failed", "仓库「covey」已冻结，不能改；只读就把 mode 写成 read"))
 
     def test_a_switch_of_the_repos_alone_waits_for_the_running_task_too(self):
         self.repos_map()

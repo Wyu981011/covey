@@ -119,22 +119,27 @@ def change(job, state_dir=None) -> dict:
     return {**found, NOT_FOUND: absent} if absent else found
 
 
+COMMIT_DIRS = 6  # Of written_dirs: one bounded git call each, before the answer goes out.
+
+
 def written_dirs(job, state_dir) -> list:
-    """The directories ``job``'s commits may be in: its workdir's repository and, given ``state_dir``, each repository its
-    topic writes to (app/repos_turn.py write_dirs: its worktree, or the repository written in place). A topic that
-    started in the home has a workdir no repository is in; its commits are in those."""
+    """The directories ``job``'s commits may be in, at most COMMIT_DIRS: its workdir's repository and, given ``state_dir``,
+    the repositories its topic uses (core/topic_repos.py: the written ones first, each its worktree and its checkout: a
+    turn may commit in either). A topic that started in the home has a workdir no repository is in; its commits are in
+    those. A commit any of them has is not missing, so more of them only says less."""
     found = [_field(job, "workdir")]
     topic = _field(job, "topic_id")
     if state_dir and topic:
-        from types import SimpleNamespace
-
-        from covey.app import repos_turn
+        from covey.core import topic_repos
+        from covey.core.state import read_json
+        from covey.core.topics import topic_file
         try:
-            found += [where for _, where in repos_turn.write_dirs(SimpleNamespace(state_dir=Path(state_dir), topic_id=topic,
-                                                                                  device=""), job)]
-        except Exception:  # noqa: BLE001 - the workdir's alone, as before
-            pass
-    return [str(where) for where in found if where]
+            entries = topic_repos.of_topic(read_json(topic_file(Path(state_dir), topic)))
+        except (OSError, ValueError):
+            entries = []
+        for entry in sorted(entries, key=lambda entry: entry.mode != "write"):
+            found += [topic_repos.where(entry), entry.path]
+    return list(dict.fromkeys(str(where) for where in found if where))[:COMMIT_DIRS]
 
 
 def absent_commits(job, delivery, state_dir=None) -> list:

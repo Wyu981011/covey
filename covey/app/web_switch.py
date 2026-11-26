@@ -31,9 +31,20 @@ LEAD_REPOS = "负责人用的仓库跟着专项（只读），不能在这里换
 NO_REPOS = "无"
 
 
+def _named(entries) -> list:
+    """The ``repos`` entries with a name, in order (what app/web_turns.py topic_fields reads)."""
+    return [entry for entry in entries or () if isinstance(entry, dict) and str(entry.get("name") or "").strip()]
+
+
 def _pairs(entries) -> list:
-    return sorted((str(e.get("name")), "write" if e.get("mode") == "write" else "read") for e in entries or ()
-                  if isinstance(e, dict) and str(e.get("name") or "").strip())
+    return sorted((str(e["name"]), "write" if e.get("mode") == "write" else "read") for e in _named(entries))
+
+
+def shown_repos(entries) -> list:
+    """The topic's repositories the page was given (app/web_turns.py topic_fields: the first REPOS_KEPT with a name): those a
+    switch's ``repos`` speaks of. The others it never saw are kept as they are."""
+    from covey.app.web_turns import REPOS_KEPT
+    return _named(entries)[:REPOS_KEPT]
 
 
 def repos_words(entries) -> str:
@@ -42,25 +53,48 @@ def repos_words(entries) -> str:
 
 
 def asked_repos(state, payload, topic):
-    """The repositories the payload's ``repos`` asks for (``merged_repos`` applies them), or None when it has none (or null) or asks for the ones the
-    topic has (the same names and modes). A repository the topic has keeps its entry (worktree, branch, what it read) with the
-    mode asked; a new one is declared as a new topic's is (app/butler_topics.py ``declared_repos``: the repo map's names,
-    never a write to a frozen or read-only one); ``[]`` clears them. ValueError says what is wrong."""
-    if payload.get("repos") is None:
+    """The repositories the payload's ``repos`` asks for, [{name, mode} or a new declared entry] (``merged_repos`` applies
+    them), or None when it has none (or null) or asks for the ones the page was shown (``shown_repos``: the same names and
+    modes; the page sends them back with every switch). Only what changes is checked as a new topic's repositories are
+    (app/butler_topics.py ``declared_repos``: a new name must be the repo map's, a write must not be to a frozen or read-only
+    one): one the topic has and keeps, or writes no more, is not checked again (the map may have frozen or dropped it
+    since). ``[]`` clears them. ValueError says what is wrong."""
+    asked = payload.get("repos")
+    if asked is None:
         return None
-    from covey.app.butler_topics import declared_repos
+    from covey.app.butler_topics import REPO_MODES, REPO_NAME_CHARS, REPOS_MAX, declared_repos
+    if not isinstance(asked, list) or len(asked) > REPOS_MAX:
+        raise ValueError(f"repos 要是最多 {REPOS_MAX} 项的列表，每项 {{name, mode: read|write}}")
+    wanted = {}
+    for item in asked:
+        name = str(item.get("name") or "").strip() if isinstance(item, dict) else ""
+        mode = item.get("mode", "read") if isinstance(item, dict) else ""
+        if not name or len(name) > REPO_NAME_CHARS or mode not in REPO_MODES:
+            raise ValueError(f"repos 的每一项要有 name（{REPO_NAME_CHARS} 字内）和 mode（read 或 write）")
+        wanted[name] = "write" if mode == "write" or wanted.get(name) == "write" else "read"  # A name twice: its write kept.
+    shown = shown_repos(topic.get("repos"))
+    if sorted(wanted.items()) == _pairs(shown):
+        return None
+    had = {str(entry["name"]): entry for entry in shown}
+    fresh = [{"name": name, "mode": mode} for name, mode in wanted.items()
+             if name not in had or (mode == "write" and had[name].get("mode") != "write")]
     try:
-        wanted = declared_repos(state, payload["repos"])
+        declared = {repo["name"]: repo for repo in declared_repos(state, fresh)} if fresh else {}
     except ValueError as exc:
         raise ValueError(str(exc).replace("；用 repos_list 看", "")) from None
-    return None if _pairs(merged_repos(topic.get("repos"), wanted)) == _pairs(topic.get("repos")) else wanted
+    return [{"name": name, "mode": mode} if name in had else declared[name] for name, mode in wanted.items()]
 
 
 def merged_repos(current, wanted) -> list:
-    """topic.json's ``repos`` once ``wanted`` (``asked_repos``) is applied to ``current``: those of ``wanted`` in its order, an
-    entry ``current`` has kept whole with the mode asked; the others gone."""
-    had = {str(entry.get("name")): dict(entry) for entry in current or () if isinstance(entry, dict)}
-    return [{**had[repo["name"]], "mode": repo["mode"]} if repo["name"] in had else dict(repo) for repo in wanted]
+    """topic.json's ``repos`` once ``wanted`` (``asked_repos``) is applied to ``current``: those of ``wanted`` in its order (one
+    ``current`` has kept whole, with the mode asked), then the entries the page was not shown, as they are; the shown ones
+    ``wanted`` leaves out are gone."""
+    current = [dict(entry) for entry in current or () if isinstance(entry, dict)]
+    shown = {str(entry["name"]) for entry in shown_repos(current)}
+    had = {str(entry["name"]): entry for entry in _named(current)}
+    names = {repo["name"] for repo in wanted}
+    out = [{**had[repo["name"]], "mode": repo["mode"]} if repo["name"] in had else dict(repo) for repo in wanted]
+    return out + [entry for entry in current if str(entry.get("name") or "").strip() not in shown | names]
 
 
 def _worktree_prefix() -> str:
@@ -167,7 +201,7 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
         if (workspace, str(payload.get("run_mode") or current["run_mode"])) != (current["workspace"], current["run_mode"]):
             raise ValueError(LEAD_PLACE)
         asked = payload.get("repos")
-        if asked is not None and (not isinstance(asked, list) or _pairs(asked) != _pairs(topic.get("repos"))):
+        if asked is not None and (not isinstance(asked, list) or _pairs(asked) != _pairs(shown_repos(topic.get("repos")))):
             raise ValueError(LEAD_REPOS)
         if not lead_harness.can_lead(choice):
             raise ValueError(lead_harness.CANNOT_LEAD)
@@ -183,7 +217,7 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     reason = busy_reason(env.topics, target, chat, action="换配置")
     if reason:
         raise ValueError(reason.replace("在任务卡上停止", "停止"))
-    moved = f"仓库 {repos_words(topic.get('repos'))} → {repos_words(repos)}" if repos is not None else ""
+    moved = f"仓库 {repos_words(shown_repos(topic.get('repos')))} → {repos_words(repos)}" if repos is not None else ""
 
     def set_repos():
         update_repos(state, target.topic_id, lambda entries: merged_repos(entries, repos))

@@ -62,6 +62,11 @@ class Repo:
     extra: dict = field(default_factory=dict)  # Keys a newer release wrote, kept as they are.
 
 
+# The fields whose value a newer release may write that this one cannot read: read as the default, written back as it was
+# (``to_json``) unless something here set it.
+UNREAD_VALUES = {"status": STATUSES, "write_mode": WRITE_MODES}
+
+
 def path(state_dir) -> Path:
     return Path(state_dir) / REPOS_FILE
 
@@ -88,12 +93,12 @@ def _repos(data) -> list[Repo]:
         rules = known.get("rules")
         rules = [rules] if isinstance(rules, str) else rules if isinstance(rules, (list, tuple)) else ()
         known["rules"] = tuple(str(rule) for rule in rules if str(rule).strip()) or ("AGENTS.md",)
-        if known.get("status") not in STATUSES:
-            known.pop("status", None)
-        if known.get("write_mode") not in WRITE_MODES:
-            known.pop("write_mode", None)
+        extra = {k: v for k, v in item.items() if k not in Repo.__dataclass_fields__}
+        for key, values in UNREAD_VALUES.items():  # A newer release's value: read as the default, kept to write back.
+            if key in known and known[key] not in values:
+                extra[key] = known.pop(key)
         try:
-            found.append(Repo(**known, extra={k: v for k, v in item.items() if k not in Repo.__dataclass_fields__}))
+            found.append(Repo(**known, extra=extra))
         except TypeError:
             continue
     return found
@@ -111,8 +116,13 @@ def find(repos, key: str) -> Repo | None:
 
 
 def to_json(repo: Repo) -> dict:
+    """``repo`` as repos.json holds it; a status or write mode this release could not read (``_repos`` kept it in ``extra``)
+    is written back as it was while the repository still has the default in its place."""
     data = {key: value for key, value in asdict(repo).items() if key != "extra"}
     data["rules"] = list(repo.rules)
+    for key in UNREAD_VALUES:
+        if key in repo.extra and getattr(repo, key) == Repo.__dataclass_fields__[key].default:
+            data[key] = repo.extra[key]
     return {**repo.extra, **data}
 
 

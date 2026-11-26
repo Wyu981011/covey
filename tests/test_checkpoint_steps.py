@@ -430,6 +430,18 @@ class AnswerCardTest(unittest.TestCase):
             # Without the state directory: the home alone, which cannot tell; nothing said, as before.
             point.write_text(json.dumps({"delivery": {"commit": "a6bc148d38"}}))
             self.assertNotIn("not_found", answer_cards.change(job))
+            # A commit made in another repository's main checkout (no worktree of it): found there, not marked.
+            checkout = base / "web"
+            checkout.mkdir()
+            init_git_repo(checkout)
+            (checkout / "b.txt").write_text("b")
+            commit_all(checkout)
+            other = run_git(checkout, "rev-parse", "HEAD").strip()
+            write_topic(state, topic_id="t" * 16, home_start=True, workdir=str(home), repos=[
+                {"name": "covey", "path": str(base / "covey"), "mode": "write", "worktree": str(worktree), "source": "declared"},
+                {"name": "web", "path": str(checkout), "mode": "write", "source": "touched"}])
+            point.write_text(json.dumps({"delivery": {"commit": f"{head} {other}"}}))
+            self.assertNotIn("not_found", answer_cards.change(job, state))
 
 
 class AcceptanceTest(unittest.TestCase):

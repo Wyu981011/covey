@@ -229,7 +229,8 @@ def set_repo(state_dir, home, name, *, note=None, status=None, write_mode=None) 
             raise ValueError(f"没有叫 {name} 的仓库")
         fields = {key: value for key, value in (("note", None if note is None else clean_line(note, NOTE_MAX)),
                                                 ("status", status), ("write_mode", write_mode)) if value is not None}
-        repos[index] = dataclasses.replace(repos[index], **fields)
+        # What the owner sets here is the value from now on, not one of a newer release's this one could not read (repomap.to_json).
+        repos[index] = dataclasses.replace(repos[index], **fields, extra={k: v for k, v in repos[index].extra.items() if k not in fields})
         words = {"note": "用途", "status": "状态", "write_mode": "写法"}
         return repos, f"已改 {name}：" + "、".join(words[key] for key in fields)
 

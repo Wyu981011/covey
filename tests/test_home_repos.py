@@ -213,6 +213,18 @@ class MapWriterTest(Sandbox):
             repomap.note_used(self.state, [topic_repos.TopicRepo(name="b", path="/absolute/b")])  # A turn's settle: no error.
             self.assertEqual((self.state / "repos.json").read_text(), text)
 
+    def test_a_status_or_write_mode_a_newer_release_wrote_is_written_back_as_it_was(self):
+        (self.state / "repos.json").write_text(json.dumps({"version": 1, "repos": [
+            {"name": "a", "path": "/absolute/a", "status": "archived", "write_mode": "sparse"}]}))
+        (repo,) = repomap.read(self.state)
+        self.assertEqual((repo.status, repo.write_mode), ("active", "worktree"))  # Read as the defaults here.
+        repomap.note_used(self.state, [topic_repos.TopicRepo(name="a", path="/absolute/a")], now=5.0)
+        (item,) = json.loads((self.state / "repos.json").read_text())["repos"]
+        self.assertEqual((item["status"], item["write_mode"], item["last_used"]), ("archived", "sparse", 5.0))
+        repomap.update(self.state, lambda repos: [repomap.replace(repos[0], status="frozen")])
+        (item,) = json.loads((self.state / "repos.json").read_text())["repos"]
+        self.assertEqual((item["status"], item["write_mode"]), ("frozen", "sparse"))
+
     def test_a_missing_file_is_made_from_start_only(self):
         repomap.update(self.state, lambda repos: repos)
         self.assertFalse((self.state / "repos.json").exists())
