@@ -373,7 +373,8 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
       {capsule && !mini ? (
         <Link to="/settings/quota" className="qcap" title="账号与额度">
           <i />
-          <span>{capsule}</span>
+          {/* “· 11月27日 02:24 恢复”整块换行，不把“恢复”一个词甩到下一行 */}
+          <span>{capsule.split(' · ').map((part: string, i: number) => (i ? <React.Fragment key={i}> · <span className="qcap-w">{part}</span></React.Fragment> : part))}</span>
           <ChevronRight aria-hidden="true" />
         </Link>
       ) : null}

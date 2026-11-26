@@ -1,5 +1,5 @@
 /* 「账号与额度」（数据约定 v42，Covey 推的设置条目 quota）：从条目算出表里每一格写什么、颜色、旧不旧，折起来的来源一行写什么，
- * 侧栏胶囊说什么。纯函数，单测在 scripts/quota.test.mjs。时间都是秒；几点几分按上海时区写，和别处一样；重置和恢复的时刻不管哪天都写到几点几分。 */
+ * 侧栏胶囊说什么。纯函数，单测在 scripts/quota.test.mjs。时间都是秒；重置、恢复和读数的时刻都按上海时区写几月几号几点几分（11月27日 03:30）。 */
 import type { QuotaAccount, QuotaData, QuotaPool, QuotaResponse, QuotaSource, QuotaWindow } from '@shared/api.interface';
 import { canDo } from './v34';
 
@@ -16,30 +16,15 @@ export const quotaOn = (ops: readonly string[] | null | undefined, r: QuotaRespo
   canDo(ops, 'quota_refresh') && (r?.data?.sources?.length ?? 0) > 0;
 
 const TZ = 'Asia/Shanghai';
-const WEEK: readonly string[] = ['日', '一', '二', '三', '四', '五', '六'];
-const DATE = new Intl.DateTimeFormat('en-US', { timeZone: TZ, year: 'numeric', month: 'numeric', day: 'numeric' });
+const STAMP = new Intl.DateTimeFormat('en-US', { timeZone: TZ, month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
-/** 上海的日历日：月、日，和从 1970-01-01 起的第几天 n（相减就是差几天，不看运行它的机器在哪个时区） */
-interface Day { m: number; d: number; n: number }
-function dayOf(sec: number): Day {
-  const p: Record<string, number> = {};
-  for (const x of DATE.formatToParts(new Date(sec * 1000))) if (x.type !== 'literal') p[x.type] = Number(x.value);
-  return { m: p.month, d: p.day, n: Date.UTC(p.year, p.month - 1, p.day) / 86400000 };
-}
-
-export const hm = (sec: number): string =>
-  new Date(sec * 1000).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', timeZone: TZ });
-
-/** 一个时刻怎么写，都带几点几分：今天 19:05，明天 明天 01:02，后天到第 6 天 周六 08:00，再远（或已经过去的别的天）12-3 15:02。
- * 按上海的日历天数，不按小时：23:59 看 6.9 天后也不会写成和今天同名的周几 */
-export function whenWords(sec: number, now: number): string {
+/** 一个时刻怎么写：上海时间的几月几号几点几分（11月27日 03:30）。当天、跨天、周窗口一个写法，一眼看清哪天几点
+ * （主人 11-27：刷新时刻要写几月几号几点几分）；不看运行它的机器在哪个时区；没有是空串 */
+export function whenWords(sec: number): string {
   if (!(sec > 0)) return '';
-  const at: Day = dayOf(sec);
-  const ahead: number = at.n - dayOf(now).n;
-  if (ahead === 0) return hm(sec);
-  if (ahead === 1) return `明天 ${hm(sec)}`;
-  if (ahead > 1 && ahead < 7) return `周${WEEK[(((at.n + 4) % 7) + 7) % 7]} ${hm(sec)}`; // 1970-01-01 是周四
-  return `${at.m}-${at.d} ${hm(sec)}`;
+  const part: Record<string, string> = {};
+  for (const p of STAMP.formatToParts(new Date(sec * 1000))) part[p.type] = p.value;
+  return `${part.month}月${part.day}日 ${part.hour}:${part.minute}`;
 }
 
 /** “6 小时前”这样的话，悬停说读数多旧 */
@@ -85,7 +70,7 @@ export function cellOf(source: QuotaSource, pool: QuotaPool, kind: '5h' | '7d', 
   if (oldSource) return NONE(`读数太旧（${agoWords(source.collected_at, now)}）`);
   const back: number = pool.available_at ?? w?.resets_at ?? 0;
   if (!w || w.left === null) {
-    return out ? { kind: 'out', pct: 0, at: back ? `${whenWords(back, now)} 恢复` : '', stale: false, tight: false, title: '' } : NONE(w ? '读不到' : '');
+    return out ? { kind: 'out', pct: 0, at: back ? `${whenWords(back)} 恢复` : '', stale: false, tight: false, title: '' } : NONE(w ? '读不到' : '');
   }
   const checked: number = w.checked_at ?? source.collected_at;
   if (!out && w.resets_at && w.resets_at <= now && checked < w.resets_at) return NONE('已重置，还没有新读数');
@@ -93,12 +78,12 @@ export function cellOf(source: QuotaSource, pool: QuotaPool, kind: '5h' | '7d', 
   const title: string = stale ? (checked > 0 ? `${agoWords(checked, now)}的读数${source.failing ? '，上次读取没成功' : ''}` : '上次读取没成功') : '';
   if (out || w.left <= SPENT) {
     const at: number = pool.available_at ?? w.resets_at ?? 0;
-    return { kind: 'out', pct: 0, at: at ? `${whenWords(at, now)} 恢复` : '', stale, tight: false, title };
+    return { kind: 'out', pct: 0, at: at ? `${whenWords(at)} 恢复` : '', stale, tight: false, title };
   }
   return {
     kind: 'bar',
     pct: Math.round(w.left * 100),
-    at: w.resets_at ? whenWords(w.resets_at, now) : '',
+    at: w.resets_at ? whenWords(w.resets_at) : '',
     stale,
     tight: w.left < TIGHT,
     title,
@@ -155,11 +140,11 @@ export function groupNote(source: QuotaSource, open: boolean): string {
 }
 
 /** 侧栏胶囊：某个来源整体见底，或有号要重新登录；都没有是空串（不画）。点了到这一页。
- * 恢复时刻和表里一样写（明天、周几、日期都带几点几分）；now 不给就按现在 */
-export function capsuleOf(data: QuotaData | null | undefined, now: number = Date.now() / 1000): string {
+ * 恢复时刻和表里一样写（几月几号几点几分） */
+export function capsuleOf(data: QuotaData | null | undefined): string {
   if (!data) return '';
   const low: QuotaSource | undefined = data.sources.find((s: QuotaSource) => s.low);
-  if (low) return `${low.title} 额度见底${low.dry && low.next_available_at ? ` · ${whenWords(low.next_available_at, now)} 恢复` : ''}`;
+  if (low) return `${low.title} 额度见底${low.dry && low.next_available_at ? ` · ${whenWords(low.next_available_at)} 恢复` : ''}`;
   const first = data.relogin[0];
   if (!first) return '';
   const same: number = data.relogin.filter((r: { source: string }) => r.source === first.source).length;
@@ -170,4 +155,4 @@ export function capsuleOf(data: QuotaData | null | undefined, now: number = Date
 export const reloginLine = (data: QuotaData): string => data.relogin.map((r: { source: string; name: string }) => `${r.source} · ${r.name} 要重新登录`).join('；');
 
 /** 标题行右边的读数时刻；没有读过是空串 */
-export const readWords = (data: QuotaData): string => (data.read_at > 0 ? hm(data.read_at) : '');
+export const readWords = (data: QuotaData): string => whenWords(data.read_at);

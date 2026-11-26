@@ -10,14 +10,17 @@
 .cv .mq-grp{background:var(--s2);font-size:13px}
 .cv .mq-grp b{font-weight:600;color:var(--t1)}
 .cv .mq-grp small{color:var(--t3);font-size:12px;margin-left:6px;font-weight:400}
+/* 表窄时组名一行放不下：组名、“7/8 个能用”、运维台↗ 各自整块换行，不从字中间断开 */
+.cv .mq-grp .mq-name{flex-wrap:wrap;row-gap:2px}
+.cv .mq-grp .mq-name b,.cv .mq-grp .mq-name small,.cv .mq-link{white-space:nowrap}
 .cv .mq-name{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--t1);min-width:0}
 .cv .mq-name > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv .mq-name .dot{width:7px;height:7px;border-radius:50%;background:var(--a1,#3b6cf6);flex:none}
 .cv .mq-name .nodot{width:7px;flex:none}
 .cv .mq-name .reddot,.cv .mq-gdot{width:7px;height:7px;border-radius:50%;background:var(--fail);flex:none}
 .cv .mq-gdot{margin-left:6px}
-/* 第 3 列是重置时刻：最长的“12-31 15:02 恢复”一行放得下 */
-.cv .mq-c{display:grid;grid-template-columns:42px minmax(40px,1fr) 108px;align-items:center;gap:0 10px;font-size:13px;min-width:0}
+/* 第 3 列是时刻：最长的“12月31日 15:02 恢复”一行放得下；表窄到放不下时（下面的 @container 720px）时刻换到条下面一行 */
+.cv .mq-c{display:grid;grid-template-columns:42px minmax(40px,1fr) 118px;align-items:center;gap:0 10px;font-size:13px;min-width:0}
 .cv .mq-c .n{font-variant-numeric:tabular-nums;color:var(--t1);font-weight:500}
 .cv .mq-c .t{font-size:12px;color:var(--t3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .cv .mq-c.tight .n,.cv .mq-c.out .n{color:var(--fail)}
@@ -45,6 +48,7 @@
 .cv .qcap:hover{background:var(--hover)}
 .cv .qcap i{width:6px;height:6px;border-radius:50%;background:var(--fail);flex:none}
 .cv .qcap svg{width:12px;height:12px;flex:none;margin-left:auto;color:var(--t3)}
+.cv .qcap-w{white-space:nowrap}
 /* 收起成 56px 窄条时的同一件事：一个 40px 的图标位（和「搜索」「新话题」同宽），右上角红点；悬停的提示是胶囊那一句 */
 .cv .qcap-mini{position:relative;display:grid;place-items:center;width:40px;height:32px;margin:0 0 8px;border-radius:8px;color:var(--fail);flex:none}
 .cv .qcap-mini:hover{background:var(--hover)}
@@ -53,10 +57,15 @@
 .cv .qcap-mini i{position:absolute;top:5px;right:9px;width:7px;height:7px;border-radius:50%;background:var(--fail);box-shadow:0 0 0 2px var(--side)}
 /* 设置页签「账号与额度」字后面的红点 */
 .cv .q-tabdot{display:inline-block;width:6px;height:6px;margin-left:4px;vertical-align:super;border-radius:50%;background:var(--fail)}
-/* 表不到 780px 宽（768 的窄屏、1024 左右开着侧栏）：账号列和间距让一点，“12-31 15:02 恢复”和细条都还在格里；手机的排法在下面，压过这里 */
+/* 表不到 780px 宽（768 的窄屏、1024 左右开着侧栏）：账号列和间距让一点；手机的排法在下面，压过这里 */
 @container (max-width:780px){
   .cv .mq-row{grid-template-columns:minmax(130px,1fr) minmax(0,1fr) minmax(0,1fr);gap:0 16px}
   .cv .mq-c{gap:0 8px}
+}
+/* 再窄（不到 720px）“11月27日 03:30 恢复”和细条并排放不下：时刻换到细条下面一行 */
+@container (max-width:720px){
+  .cv .mq-c{grid-template-columns:42px minmax(40px,1fr);row-gap:2px}
+  .cv .mq-c .t{grid-column:2}
 }
 @media (max-width:767px){
   .cv .mq-row{grid-template-columns:1fr 1fr;gap:6px 14px;padding:10px 12px}
