@@ -251,7 +251,7 @@ const TaskGraph: React.FC<{ b: Brief; hl: string | null; pick: (key: string) => 
                 >
                   <title>{`${it.id} ${it.criterion} · ${ITEM_WORD[k]}${t ? ` · T${t.number} 交付` : ''}`}</title>
                   <rect width={NW} height={NH} rx={6} className="pb-gr" />
-                  <text x={8} y={19}><tspan className="pb-ni">{ITEM_ICON[k]}</tspan> <tspan className="pb-nid">{it.id}</tspan> {fitText(itemName(it), t ? 12 : 20)}</text>
+                  <text x={8} y={19}><tspan className="pb-ni">{ITEM_ICON[k]}</tspan> <tspan className="pb-nid">{it.id}</tspan> {fitText(itemName(it), t ? 12 : 17)}</text>
                   {t ? (
                     <g onClick={(e) => { e.stopPropagation(); pick(t.key); }}>
                       <rect x={NW - 36} y={6} width={31} height={18} rx={4} className="pb-gtb" style={{ fill: topicColor(t.number) ?? 'var(--t3)' }} />

@@ -282,6 +282,9 @@ test('话题身上读出来的几样：Bridge 垫的阶段不算，下一步以�
   assert.equal(B.lastWord({ ...u, latest: '## 结论\n\n机器改好了，**网关**配置已恢复。' }), '机器改好了， 网关 配置已恢复。');
   assert.equal(B.lastWord({ ...u, latest: '## 换配置面板修好了\n细节见下' }), '换配置面板修好了 细节见下');
   assert.equal(B.lastWord({ ...u, latest: '## 结论' }), '结论');
+  assert.equal(B.lastWord({ ...u, latest: '## 结论 机器改好了，已推送' }), '机器改好了，已推送', '标题和正文在同一行');
+  assert.equal(B.lastWord({ ...u, latest: '**结论**：可以上线。' }), '可以上线。');
+  assert.equal(B.lastWord({ ...u, latest: '结论是可以上线' }), '结论是可以上线', '“结论”后面没断开的是句子本身');
   assert.equal(B.waitsOwner(topic(9, 'waiting'), new Set()), true);
   assert.equal(B.waitsOwner(topic(9, 'done'), new Set(['k9'])), true);
 });

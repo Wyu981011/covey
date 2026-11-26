@@ -63,12 +63,16 @@ export function stepLine(t: SnapshotTopic): string {
   const doing: string = isDoing(t) ? clean(t.running?.plan_doing) : '';
   return `第 ${now.done}/${now.total} 步${doing ? `「${cut(doing, 18)}」` : ''}`;
 }
-/** 回答开头那行标题只是“结论”“总结”这类的说法时，它不是结论本身 */
-const BARE_HEAD = /^\s*#{1,6}\s*(?:结论|总结|小结|结果|摘要|概要|汇报|进展|说明|TL;?DR|Summary|Result|Conclusion)s?\s*[:：]?\s*\n+(?=\S)/iu;
-/** 最后结论：话题最新一轮是它自己答的、已经结束时那一句（≤120 字），不用在跑那一轮中途的话。和看板一样去掉 Markdown 记号
- * （oneLineText）；开头是“## 结论”这种泛泛的标题时跳过它，取下面的正文 */
-export const lastWord = (t: SnapshotTopic): string =>
-  t.latest_role !== 'owner' && t.latest_status !== 'running' ? oneLineText((t.latest ?? '').replace(BARE_HEAD, ''), 120) : '';
+/** 回答开头只是“结论”“总结”这类的说法（“## 结论”标题、“**结论**：”，换不换行都一样）时，它不是结论本身 */
+const BARE_LEAD = /^(?:结论|总结|小结|结果|摘要|概要|汇报|进展|说明|TL;?DR|Summary|Result|Conclusion)s?(?:\s*[:：]\s*|\s+)(?=\S)/iu;
+const LAST_WORD = 120;
+/** 最后结论：话题最新一轮是它自己答的、已经结束时那一句（≤LAST_WORD 字），不用在跑那一轮中途的话。和看板一样去掉 Markdown 记号
+ * （oneLineText），再去掉开头泛泛的“结论”二字 */
+export function lastWord(t: SnapshotTopic): string {
+  if (t.latest_role === 'owner' || t.latest_status === 'running') return '';
+  const s: string = oneLineText(t.latest ?? '', Number.MAX_SAFE_INTEGER).replace(BARE_LEAD, '');
+  return s.length > LAST_WORD ? `${s.slice(0, LAST_WORD)}…` : s;
+}
 
 /* ---- 一个专项的简报 ---- */
 export interface BriefCtx {
