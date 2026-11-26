@@ -318,7 +318,7 @@ export interface TitleHit {
   title: string;
   key: string;
 }
-/** 短码完全一样的最前，再短码开头、标题包含；最多 n 条 */
+/** 短码完全一样的最前，其次短码开头，再其次标题里有这几个字；最多 n 条 */
 export function searchTitles(titles: MemoryIndex['titles'] | null | undefined, query: string, n = 8): TitleHit[] {
   const q: string = query.trim().toLowerCase();
   if (!q || !titles) return [];

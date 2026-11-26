@@ -8,7 +8,7 @@ const tab = (key, label = key) => ({ key, label });
 const item = (extra = {}) => ({ name: 'demo-repo', tail: 'work/demo-repo', note: '', status: 'active', write_mode: 'worktree', branch: 'main', rules: [], live_topics: 0, ...extra });
 const wt = (n, extra = {}) => ({ repo: 'demo-repo', branch: `topic-${n}`, tail: `wt/demo-repo-${n}`, ...extra });
 const ago = (sec, now) => `${Math.floor((now - sec) / 60)} 分钟前`;
-const page = { home: { tail: 'home/demo' }, items: [item()], worktrees: { total: 3, prunable: [wt(1), wt(2)] } };
+const page = { home: { tail: 'absolute/home' }, items: [item()], worktrees: { total: 3, prunable: [wt(1), wt(2)] } };
 
 test('页签：有 repos 就原样用', () => {
   const tabs = [tab('config'), tab('repos', '仓库'), tab('workspace')];
@@ -40,7 +40,7 @@ test('旧地址 /settings/workspace 仅在仓库模式下跳走', () => {
 });
 
 test('概要：主目录 · 仓库 · 可清理', () => {
-  assert.equal(R.summaryText(page), '主目录 …/home/demo · 仓库 1 个 · 可清理 worktree 2 个');
+  assert.equal(R.summaryText(page), '主目录 …/absolute/home · 仓库 1 个 · 可清理 worktree 2 个');
   assert.equal(R.summaryText({ ...page, home: { tail: '' } }), '仓库 1 个 · 可清理 worktree 2 个');
   assert.equal(R.tailText('…/a/b'), '…/a/b');
   assert.equal(R.tailText('/a/b'), '…/a/b');
