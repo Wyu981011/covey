@@ -353,7 +353,8 @@ CHECKLIST_ITEM = {"type": "object", "properties": {
     "needs": {"type": "array", "items": {"type": "string"}, "description": "依赖的条目 id，最多 6 个"},
     "evidence": {"type": "string", "description": "证据：提交号、产物路径、检查点自检；done 必填"},
     "gap": {"type": "string", "description": "还缺什么、下一步谁做；blocked 写卡在哪，dropped 写为什么不要"},
-    "waiting_on": {"type": "string", "enum": ["owner", ""], "description": "下一步在主人手上写 owner，否则空串"},
+    # Not "": Gemini refuses a declaration with an empty enum value (agy's leads failed each turn with 400, T839).
+    "waiting_on": {"type": "string", "enum": ["owner", "none"], "description": "下一步在主人手上写 owner，不在主人手上写 none"},
     "state": {"type": "string", "enum": ["open", "done", "blocked", "dropped"],
               "description": "open 没满足（默认）/ done 满足 / blocked 卡住 / dropped 不做了"}}}
 ACTION_ITEM = {"type": "object", "properties": {

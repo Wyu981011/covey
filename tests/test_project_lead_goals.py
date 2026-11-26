@@ -184,6 +184,8 @@ class ChecklistItemTest(unittest.TestCase):
         first, second = self.pc.items(record)
         self.assertEqual((self.pc.owners(first), self.pc.owners(second)), ((False, False), (True, False)))  # Written: not guessed.
         self.assertEqual(record["checklist"]["items"][0]["waiting_on"], "")  # '' is written: it says not the owner's.
+        self.pc.apply(record, [{"criterion": "迁移", "waiting_on": "none"}], now=NOW + 2)  # What the tool says now (T839).
+        self.assertEqual((record["checklist"]["items"][2]["waiting_on"], self.pc.owners(self.pc.items(record)[2])), ("", (False, False)))
         self.pc.apply(record, [{"id": "c2", "state": "done", "evidence": "账号给了"}], now=NOW + 3)
         self.assertEqual(self.pc.owners(self.pc.items(record)[1]), (False, False))  # Met: nobody's.
 
@@ -1176,7 +1178,7 @@ class ListingTest(Case):
         self.assertEqual(sorted(checklist_schema), ["actions", "close_gaps", "items"])
         self.assertEqual(sorted(checklist_schema["actions"]["items"]["properties"]), ["id", "items", "note", "state", "title", "topics"])
         self.assertTrue({"title", "topics", "waiting_on"} <= set(checklist_schema["items"]["items"]["properties"]))
-        self.assertEqual(checklist_schema["items"]["items"]["properties"]["waiting_on"]["enum"], ["owner", ""])
+        self.assertEqual(checklist_schema["items"]["items"]["properties"]["waiting_on"]["enum"], ["owner", "none"])  # No '' (T839).
         for tool in butler_tool_specs.PROJECT_TOOLS:  # Not changed in place.
             self.assertFalse({"action", "item", "background"} & set(tool["input_schema"]["properties"]))
 

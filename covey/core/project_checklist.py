@@ -8,7 +8,7 @@
   with its evidence, ``blocked`` held up (by ``needs`` or what ``gap`` says), ``dropped`` the owner let it go (``gap`` says
   why). Ids are ``c1``, ``c2`` … in the order written and never given again. Optional, for the owner's 简报 and 进度表
   (docs/web.md 专项条目): a short ``title`` (TITLE characters); ``waiting_on`` ``owner`` when the next step is the owner's
-  ('' when the lead says it is not, None when it never said: the gap's words are read then, ``owners``); ``done_at``, written
+  ('' when the lead says it is not, writing ``none`` or ''; None when it never said: the gap's words are read then, ``owners``); ``done_at``, written
   by ``apply`` when the item turns done and cleared when it turns back (0 for one done before it was kept); ``topics``, the
   other topics (TOPICS at most) that took part in it beside ``topic`` (``topics_of`` is all of them). A record from before has
   none of them and reads as before.
@@ -45,6 +45,9 @@ TITLE = 24  # Characters of a short title.
 TOPICS = 6  # Topics besides ``topic`` that took part in one item.
 OWNER = "owner"
 WAITING_ON = (OWNER, "")  # What ``waiting_on`` may be: the owner does the next step, or not (None: the lead never said).
+# What the lead may write for it: ``none`` is kept as "" (the web page and older releases read that), and "" itself as
+# before. The tool says ``none`` (core/butler_tool_specs.py): Gemini refuses an empty enum value (T839).
+WAITING_WRITTEN = {OWNER: OWNER, "none": "", "": ""}
 # 等你 read off a gap's words where the lead wrote no ``waiting_on`` (the web page's progressData.ts OWNER_GAP).
 OWNER_GAP = re.compile(r"(只差|等|要|需要)主人")
 DONE_COL, DOING_COL, NEXT_COL, OWNER_COL = "done", "doing", "next", "owner"  # ``column``: 做完, 正在做, 将要做, 等你.
@@ -253,9 +256,10 @@ def apply(record, rows=(), close=(), *, receipts=(), job="", now=None) -> list:
         if "title" in row:
             item["title"] = clean(row.get("title"), TITLE)
         if "waiting_on" in row:
-            waiting = row.get("waiting_on") if row.get("waiting_on") is not None else ""
-            if waiting not in WAITING_ON:
-                problems.append(f"{item_id} 的 waiting_on 要是 owner（下一步在主人手上）或空串")
+            written = row.get("waiting_on") if row.get("waiting_on") is not None else ""
+            waiting = WAITING_WRITTEN.get(written) if isinstance(written, str) else None
+            if waiting is None:
+                problems.append(f"{item_id} 的 waiting_on 要是 owner（下一步在主人手上）或 none（不在主人手上）")
                 continue
             item["waiting_on"] = waiting
         if "topic" in row:

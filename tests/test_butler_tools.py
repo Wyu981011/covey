@@ -449,6 +449,68 @@ class OpeningArgumentsTest(unittest.TestCase):
             self.assertIn(words, rule)
 
 
+class GeminiSchemaTest(unittest.TestCase):
+    """Every tool any Bridge MCP server lists, under every switch, as Gemini takes a function declaration: agy hands the
+    butler's and a lead's tools to it, and it refuses the whole request over one of them (T839: ``waiting_on``'s enum
+    ``["owner", ""]`` failed each turn of every lead on agy with 400 ``enum[1]: cannot be empty``)."""
+
+    TYPES = {"string", "number", "integer", "boolean", "array", "object"}
+    # Each switch of core/butler_tool_specs.py ``listed`` and ``lead_tools``, off and on.
+    SWITCHES = {"COVEY_PROJECT_LEAD": ("", "p1"), "COVEY_KNOWLEDGE": ("0", "1"), "COVEY_HISTORY_CMD": ("", "/bin/true"),
+                "COVEY_BUTLER_RULES": ("0", "1"), "COVEY_PROJECTS": ("0", "1"), "COVEY_PROJECT_TIDY": ("off", "suggest"),
+                "COVEY_PROJECT_TRIAGE": ("0", "1"), "COVEY_COLLAB": ("0", "1"), "COVEY_PROJECT_AUTOWAKE": ("0", "1")}
+
+    def tools(self):
+        import itertools
+        from covey.backends.codex.workspace_reader import TOOLS as READER
+        found = {}
+        for values in itertools.product(*self.SWITCHES.values()):
+            for tool in butler_mcp.tool_list(dict(zip(self.SWITCHES, values))):
+                found.setdefault(json.dumps(tool, sort_keys=True), tool)
+        return [*found.values(), *READER]
+
+    def faults(self, node, path):
+        """What Gemini refuses in the schema ``node`` and those under it."""
+        if not isinstance(node, dict):
+            return [f"{path}: not an object"]
+        faults, kind = [], node.get("type")
+        if "enum" in node:
+            values = node["enum"]
+            if kind != "string" or not isinstance(values, list) or not values:
+                faults.append(f"{path}.enum: a non-empty list on a string")
+            faults += [f"{path}.enum[{index}]: {value!r} is not a non-empty string" for index, value in enumerate(values or ())
+                       if not isinstance(value, str) or not value.strip()]
+        if "type" in node and kind not in self.TYPES:
+            faults.append(f"{path}.type: {kind!r}")
+        if kind == "array" and "items" not in node:
+            faults.append(f"{path}: an array with no items")
+        properties = node.get("properties") or {}
+        faults += [f"{path}.required: {name!r} is not a property" for name in node.get("required") or () if name not in properties]
+        for name, each in properties.items():
+            faults += self.faults(each, f"{path}.properties[{name}]")
+        for key in ("items", "additionalProperties"):
+            if isinstance(node.get(key), dict):
+                faults += self.faults(node[key], f"{path}.{key}")
+        for index, each in enumerate(node.get("anyOf") or ()):
+            faults += self.faults(each, f"{path}.anyOf[{index}]")
+        return faults
+
+    def test_no_tool_has_what_gemini_refuses(self):
+        tools = self.tools()
+        self.assertIn("project_checklist", {tool["name"] for tool in tools})  # The switches reach the lead's 协作 tools.
+        for tool in tools:
+            with self.subTest(tool=tool["name"]):
+                self.assertEqual(tool["inputSchema"].get("type"), "object")
+                self.assertEqual(self.faults(tool["inputSchema"], "parameters"), [])
+
+    def test_the_check_finds_an_empty_enum_value(self):
+        schema = {"type": "object", "required": ["a"], "properties": {"items": {"type": "array", "items": {
+            "type": "object", "properties": {"waiting_on": {"type": "string", "enum": ["owner", ""]}}}}}}
+        self.assertEqual(self.faults(schema, "parameters"),
+                         ["parameters.required: 'a' is not a property",
+                          "parameters.properties[items].items.properties[waiting_on].enum[1]: '' is not a non-empty string"])
+
+
 class AnswerFieldsTest(unittest.TestCase):
     RECORD = {"questions": [
         {"id": "ship", "question": "现在发版吗？", "options": [{"label": "发"}, {"label": "不发"}]},
