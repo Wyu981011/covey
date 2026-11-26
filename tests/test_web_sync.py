@@ -3023,6 +3023,25 @@ class TouchPastStuckTest(WebCase):
         self.assertEqual(reads, [TOPIC])  # Read once while hung: the touch did not hang on it again.
         self.assertTrue(any("web sync touch stuck" in line for line in self.logs))
 
+    def test_a_touch_stuck_where_a_quick_look_is_stuck_too_keeps_the_quick_looks_thread(self):
+        """The quick look leaves the topic out until its own stuck read returns, not only until the touch's does."""
+        self.topic()
+        hang = self.hang_a_quick_look()
+        looked = self.sync.shared.stuck[TOPIC]
+        touch_hang = threading.Event()
+        self.addCleanup(touch_hang.set)
+        touch = threading.Thread(target=touch_hang.wait, args=(10,), daemon=True)
+        touch.start()
+        self.sync.toucher.at, self.sync.toucher.thread, self.sync.toucher.touching = TOPIC, touch, {TOPIC}
+        self.sync.start_over_touch()
+        self.assertIs(self.sync.shared.stuck[TOPIC], looked)
+        self.assertEqual(self.sync.touch_hung_now(), {TOPIC})
+        touch_hang.set()
+        touch.join(5)
+        self.assertEqual(self.sync.touch_hung_now(), set())
+        self.assertIn(TOPIC, self.sync.shared.alive_stuck())  # The quick look's read has not returned yet.
+        hang.set()
+
     def test_a_touch_given_up_for_a_busy_store_is_logged_and_tried_again(self):
         from covey.core import store
         self.topic()

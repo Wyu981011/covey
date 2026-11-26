@@ -277,10 +277,13 @@ class WebSync:
 
     def leave_out(self, old, label) -> None:
         """The topic ``old`` (a collector left behind) was reading when it got stuck is left out of every look while its thread lives,
-        so the next look does not get stuck on it again (an NFS open of its topic.json that never returned, say)."""
+        so the next look does not get stuck on it again (an NFS open of its topic.json that never returned, say). A touch reads such a
+        topic all the same (Collector.collect_touched): one stuck on it too does not take the place of a thread still stuck there."""
         if old.at and old.thread is not None and old.thread.is_alive():
             with self.shared.lock:
-                self.shared.stuck[old.at] = old.thread
+                held = self.shared.stuck.get(old.at)
+                if held is None or not held.is_alive():
+                    self.shared.stuck[old.at] = old.thread
             self.runtime.log(f"web sync {label} leaves topic {old.at[:12]} out while its read is stuck")
 
     def start_over_hot(self) -> None:
