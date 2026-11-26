@@ -71,8 +71,9 @@ class HookTests(unittest.TestCase):
         self.assertRegex(extensions.setting("web_tenant_domain") or "", r"^[a-z0-9-]+(\.[a-z0-9-]+)+$")  # A tenant's host.
 
 
-# A deployment's own package gives these (its own model sources, docs/architecture.md 扩展), not the company extension.
-OWN_HOOKS = {"claude_models"}
+# A deployment's own package gives these (its own model sources, docs/architecture.md 扩展), not the company extension;
+# agy_turn too since agy 多账号 moved into the core (backends/agy/accounts.py, T831): the hook stays for other packages.
+OWN_HOOKS = {"claude_models", "agy_turn"}
 
 
 class SearchRulesTests(unittest.TestCase):
