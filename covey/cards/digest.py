@@ -34,7 +34,7 @@ from covey.cards.elements import callback_button, fits, folded_panel, grey, item
 from covey.cards.overview import clock, named
 from covey.cards.weekly_usage import reached_line
 from covey.core import look
-from covey.core.text import literal, safe_text
+from covey.core.text import cut, literal, safe_text
 
 TITLE = "汇总"
 SHOWN = 8
@@ -54,6 +54,8 @@ REMEMBER_HINT = ("从今天结束的话题里找的、你在不同话题里说�
 REMEMBER_DONE = {"saved": "已记下", "declined": "不用了，以后不再提", "expired": "很久没用，不再带"}
 CARRIED_HINT = ("从今天结束的话题里找的、你在不同话题里说过不止一次的话，已经先照着做（标“它总结的”，你的话和它冲突时以你的为准）。"
                 "点「记下」算你说的；点「不用」就撤下，以后不再提。开了脱敏的话题不看。")
+LEARN_TITLE = "自动学习想记的"
+LEARN_HINT = "从你的话里自动学到、会影响所有话题或整个工作区的规矩，先放在这里，带着你的原话。点「记下」才生效，不点不生效。"
 HARVEST_TITLE = "Codex 和 Claude Code 自己记的"
 HARVEST_HINT = "它们各自记下、只有自己的话题用得上的关于你的偏好。点「记下」才变成所有话题都带的原则，不点不生效。"
 MEMORY_KIND = "bridge_digest_memory"  # 整理记忆's 「撤销」 / 「确认长期」 / 「不对」: ``run``, ``op`` undo, confirm or wrong, ``project``, ``entry``.
@@ -224,18 +226,22 @@ def remember_meta(row, *, plain=False):
     else:
         sources, where = row.get("sources") or "、".join(literal(label) for label in labels), literal(where)
     sources = sources or SOURCE_WORDS.get(str(row.get("source") or ""), "")
-    return (f"来源：{sources} · " if sources else "") + f"记到{where}"
+    quote = cut(row["quote"], 60) if row.get("quote") else ""
+    said = f" · 你说过：“{quote if plain else literal(quote)}”" if quote else ""
+    return (f"来源：{sources} · " if sources else "") + f"记到{where}{said}"
 
 
-SOURCE_WORDS = {"codex": "Codex 自己记的", "claude": "Claude Code 自己记的"}  # As app/memory_candidates.py SOURCE_WORDS.
+SOURCE_WORDS = {"codex": "Codex 自己记的", "claude": "Claude Code 自己记的", "learn": "自动学习记的"}  # As app/memory_candidates.py SOURCE_WORDS.
 
 
 def remember_elements(view):
     rows = view.get("remember") or []
     mine = [row for row in rows if not row.get("source")]
-    theirs = [row for row in rows if row.get("source")]
+    learned = [row for row in rows if row.get("source") == "learn"]
+    theirs = [row for row in rows if row.get("source") and row.get("source") != "learn"]
     hint = CARRIED_HINT if any(row.get("carried") for row in mine) else REMEMBER_HINT
-    return [*candidate_part(REMEMBER_TITLE, mine, hint), *candidate_part(HARVEST_TITLE, theirs, HARVEST_HINT)]
+    return [*candidate_part(REMEMBER_TITLE, mine, hint), *candidate_part(LEARN_TITLE, learned, LEARN_HINT),
+            *candidate_part(HARVEST_TITLE, theirs, HARVEST_HINT)]
 
 
 def candidate_part(title, rows, hint):

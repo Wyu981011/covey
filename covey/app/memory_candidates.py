@@ -29,6 +29,13 @@ app/memory_turn.py; 全局 ones on his own turns only), at most CARRIED of them,
 takes it out for good. An open carried row stays past KEPT_DAYS until he decides it or 整理记忆 lets it go as unused
 (app/memory_tidy.py ``expire``: ``expired``). Rows of other ``source``s (``SOURCE_WORDS``: what Codex and Claude Code noted of
 their own, app/memory_harvest.py ``add``) are offered the same way and never carried: a click makes them count.
+
+Rows of ``source`` LEARN (T852) are what app/memory_learn.py took of one turn that reaches past its topic (a rule for 全局 or
+for the workspace): never carried, never a principle before his click, with his ``quote`` and the topic; they stay in every
+digest until he decides them (``shown_at``).
+
+A turn counts only when its words are the owner's (``not_owner_reason``): a revisit, a Bridge wake-up or note, a hand-on, a
+review, a 协作 turn are the Bridge's or an agent's words and are never read; of an answer only what he answered.
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ import json
 import re
 import secrets
 import time
+from collections.abc import Mapping
 from pathlib import Path
 
 from covey.app import track_judge
@@ -65,12 +73,17 @@ TEXT = 80  # Characters of a candidate's rule.
 JUDGE_SECONDS = 30  # As the patrol judge's default (COVEY_PATROL_JUDGE_MS): about forty short sentences.
 ENDED = ("done", "waiting_user", "failed", "interrupted", "cancelled")
 # A correction's words: memory's own (core/memory.py CORRECTION_WORDS) and the ones a repeated correction is said with.
-CUES = (*memory.CORRECTION_WORDS, "不要", "别", "不是", "应该", "说过", "又", "总是", "老是", "必须", "一定要", "记得", "改成", "先")
+# Only words that say "from now on" (T852): everyday ones (先, 不要, 别, 不是, 应该, 改成, 又, 必须, 记得) are in nearly every message
+# and sent a small model after each of them for nothing.
+CUES = (*memory.CORRECTION_WORDS, "一律", "永远", "总是", "老是", "说过", "规则是", "默认")
+BRIDGE_IDS = ("revisit-", "main-", "review-")  # Message ids the Bridge makes up for a turn nobody spoke: 回看, a hand-on, 复核.
+BRIDGE_TEXT = ("[Bridge", "【Bridge")  # What the Bridge starts its own messages with (叫醒, 唤醒, 说明, 协作…).
 SPLIT = re.compile(r"(?<=[。！？!?；;\n])")
 OPEN, SAVED, DECLINED, EXPIRED = "open", "saved", "declined", "expired"
 CARRIED = 8  # Open carried rows a turn reads (COVEY_MEMORY_LEARN=1), the newest.
 REPEAT = "repeat"  # What the owner repeated in the day's topics (``find``): the rows of every release before ``source``.
-SOURCE_WORDS = {REPEAT: "", "codex": "Codex 自己记的", "claude": "Claude Code 自己记的"}  # How a row's card line says where it is from.
+LEARN = "learn"  # What the learner (app/memory_learn.py) took of one turn that reaches past its topic: waits for his 记下.
+SOURCE_WORDS = {REPEAT: "", "codex": "Codex 自己记的", "claude": "Claude Code 自己记的", LEARN: "自动学习记的"}  # How a row's card line says where it is from.
 FULL = f"这一组的记忆已有 {principles.GROUP_LIMIT} 条，先在菜单「设置」→「记忆」里删掉不用的"  # 记下 refused: the group is full.
 SYSTEM = (
     "你帮一位用户找出他反复纠正助理的话。输入是一个 JSON：sentences（他今天在不同话题里对助理说的话，每条有 index、topic、text）、"
@@ -122,6 +135,44 @@ def _proxy(state_dir, topic_id) -> bool:
         return False
 
 
+def not_owner_reason(*items, text="") -> str:
+    """Why the words of the turn of ``items`` (a job and its record) are not the owner's own ('' when they are): the turn's
+    source (core/turn_source.py) decides, by its kind and who asserted it, and only the owner's own message or answer passes; a
+    turn with none is as before, and then the message id the Bridge makes up (BRIDGE_IDS: a revisit, a hand-on, a review) and,
+    as a last resort, the way its text begins (BRIDGE_TEXT) say it is the Bridge's."""
+    value = turn_source.of(*items)
+    if value is not None:
+        asserted = value.get("asserted_by") if isinstance(value, Mapping) else ""
+        if (not turn_source.behavior(*items).owner_words or turn_source.kind(*items) != turn_source.OWNER
+                or asserted != turn_source.PARTY_OWNER):
+            return "source"
+    for item in items:
+        message = item.get("message_id") if isinstance(item, Mapping) else getattr(item, "message_id", "")
+        if isinstance(message, str) and message.startswith(BRIDGE_IDS):
+            return "bridge-id"
+    if str(text or "").lstrip().startswith(BRIDGE_TEXT):
+        return "bridge-text"
+    return ""
+
+
+def owner_words(record, state_dir=None) -> str:
+    """The owner's own words of the turn of job ``record`` (app/memory_turn.py calls it): its ``user_text``, but of an answer's
+    turn (app/answers.py
+    answer_message) only what he answered and the notes he added, and of a feedback only the feedback; the question's own
+    words, written by the Bridge or a model, are never his. ``state_dir``: where the question record is, to tell an answer of
+    several lines from its question exactly (app/answer_cards.py asked_questions)."""
+    from covey.app.answer_cards import asked_questions
+    from covey.app.answers import FEEDBACK_START, answer_parts
+    said = str(record.get("user_text") or "")
+    if said.startswith(FEEDBACK_START):
+        return said[len(FEEDBACK_START):]
+    asked = asked_questions(state_dir, str(record.get("message_id") or "")) if state_dir is not None else []
+    parts = answer_parts(said, asked)
+    if parts:
+        return "\n".join(text for kind, text in parts if kind in ("answer", "note"))
+    return said
+
+
 def cued(text) -> list:
     """The sentences of ``text`` with a correction's word, each on one line, cut to SENTENCE characters."""
     found = []
@@ -145,11 +196,11 @@ def sentences(state_dir, chat, since, until, owner_turn) -> list:
     for record in sorted(records, key=ended_at):
         topic = str(record.get("topic_id") or "")
         if (not topic or is_butler_topic(topic, chat) or handed_on(record.get("message_id"))
-                or not turn_source.behavior(record).owner_words  # A 协作 turn's words are not the owner's.
+                or not_owner_reason(record, text=record.get("user_text"))  # A revisit, a wake-up, a 协作 turn: not his words.
                 or not owner_turn(chat, str(record.get("sender_id") or "")) or _proxy(state_dir, topic)
                 or _redacted(state_dir, topic)):
             continue
-        for text in cued(record.get("user_text")):
+        for text in cued(owner_words(record, state_dir)):  # An answer's turn: his answer, never the question's words.
             if per.get(topic, 0) >= PER_TOPIC or any(row["topic"] == topic and row["text"] == text for row in found):
                 continue
             per[topic] = per.get(topic, 0) + 1
@@ -261,7 +312,7 @@ def offer(state_dir, chat, slot, finder, *, now=None) -> list:
     with lock(state_dir):
         data = load(state_dir)
         if slot in data["ran"]:
-            return [row for row in data["rows"] if row.get("slot") == slot]
+            return [row for row in data["rows"] if shown_at(row, slot)]
     found = finder()
     carried = memory.learning()
     with lock(state_dir):
@@ -272,7 +323,7 @@ def offer(state_dir, chat, slot, finder, *, now=None) -> list:
             data["rows"] += [{"id": "c" + secrets.token_hex(4), **item, "slot": slot, "at": now, "state": OPEN,
                               **({"carried": True, "source": REPEAT} if carried else {})} for item in found]
             save(state_dir, data)
-        return [row for row in data["rows"] if row.get("slot") == slot]
+        return [row for row in data["rows"] if shown_at(row, slot)]
 
 
 def kept_rows(rows, now) -> list:
@@ -293,7 +344,8 @@ def carried(state_dir, workspace_name) -> tuple[list, list]:
 
 def add(state_dir, items, slot, *, source, now=None) -> list:
     """Rows of ``source`` (one of SOURCE_WORDS but REPEAT: app/memory_harvest.py) offered at ``slot``, never carried; one
-    whose rule says what a principle, an open row or a declined one already says is left out. The rows added."""
+    whose rule says what a principle, an open row or a declined one already says is left out. The rows added. An item's
+    ``quote`` (his words, LEARN's) and ``topics`` are kept."""
     now = time.time() if now is None else now
     with lock(state_dir):
         data = load(state_dir)
@@ -305,9 +357,10 @@ def add(state_dir, items, slot, *, source, now=None) -> list:
             if not key or key in taken:
                 continue
             taken.add(key)
-            added.append({"id": "c" + secrets.token_hex(4), "text": cut(item["text"], TEXT), "topics": [], "labels": [],
+            added.append({"id": "c" + secrets.token_hex(4), "text": cut(item["text"], TEXT),
+                          "topics": [str(topic) for topic in item.get("topics") or ()], "labels": [],
                           "workspace": str(item.get("workspace") or ""), "slot": slot, "at": now, "state": OPEN,
-                          "source": source})
+                          "source": source, **({"quote": cut(item["quote"], 200)} if item.get("quote") else {})})
         if added:
             data["rows"] = [*kept_rows(data["rows"], now), *added]
             save(state_dir, data)
@@ -377,9 +430,14 @@ def decide(state_dir, candidate_id, op, *, now=None) -> dict | None:
         return dict(row)
 
 
+def shown_at(row, slot) -> bool:
+    """Whether ``row`` is in the digest of ``slot``: offered then, or one of the learner's (LEARN) still waiting for his word."""
+    return row.get("slot") == slot or (row.get("source") == LEARN and row.get("state") == OPEN)
+
+
 def rows_of(state_dir, slot) -> list:
     """The rows offered at ``slot``, as they stand now."""
-    return [row for row in load(state_dir)["rows"] if row.get("slot") == slot]
+    return [row for row in load(state_dir)["rows"] if shown_at(row, slot)]
 
 
 class Candidates:

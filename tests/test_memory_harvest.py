@@ -80,6 +80,17 @@ class HarvestTest(Case):
         self.assertEqual({row["from"] for row in self.asked[0]["sources"]}, {"codex", "claude"})
         self.assertEqual((self.memory_dir / "feedback_x.md").read_text().count("改完先跑检查再合并"), 1)  # Not written.
 
+    def test_the_prompt_has_covey_glossary_and_a_person_is_never_a_负责人(self):
+        for words in ("user、owner、用户", "主人", "「负责人」在 Covey 里专指", "回复负责人"):
+            self.assertIn(words, memory_harvest.SYSTEM)
+        added = self.harvest({"rules": [{"text": "回复负责人必须用中文", "workspace": "", "from": "codex"},
+                                        {"text": "需要负责人拍板的决定要列出选项", "workspace": "", "from": "codex"},
+                                        {"text": "负责人汇报进度时要简短", "workspace": "", "from": "claude"}]})
+        self.assertEqual([row["text"] for row in added], ["回复主人必须用中文", "需要主人拍板的决定要列出选项",
+                                                         "负责人汇报进度时要简短"])  # A lead Agent stays one.
+        self.assertEqual(memory_harvest.terms("问负责人之前先查文档，向负责人汇报，负责人确认后再合并"),
+                         "问主人之前先查文档，向主人汇报，主人确认后再合并")
+
     def test_a_slot_is_read_once_and_an_unchanged_source_is_not_sent_again(self):
         self.harvest({"rules": []})
         self.harvest({"rules": []})

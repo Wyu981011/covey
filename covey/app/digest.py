@@ -189,6 +189,7 @@ def remember_row(row) -> dict:
             "workspace": str(row.get("workspace") or ""), "state": row.get("state") or memory_candidates.OPEN,
             **({"error": str(row["error"])} if row.get("error") else {}),
             **({"carried": True} if row.get("carried") else {}),
+            **({"quote": str(row["quote"])} if row.get("quote") else {}),
             **({"source": str(row["source"])} if row.get("source") not in (None, "", memory_candidates.REPEAT) else {})}
 
 

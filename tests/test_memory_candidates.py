@@ -92,6 +92,27 @@ class SentenceTests(State):
         self.assertEqual(found, [{"topic": "a" * 16, "text": "以后回答先给结论，别铺垫。"},
                                  {"topic": "b" * 16, "text": "又是一大段铺垫，以后回答先给结论"}])
 
+    def test_the_cues_are_only_from_now_on_words_and_everyday_ones_do_not_count(self):
+        for word in ("先", "不要", "别", "不是", "应该", "改成", "又", "必须", "记得"):
+            self.assertNotIn(word, candidates.CUES, word)
+        self.assertEqual(candidates.cued("先看一下日志，别动配置，不是这个文件，应该改成 B，不要删"), [])
+        self.assertEqual(candidates.cued("汇报一律先给结论，以后都这样"), ["汇报一律先给结论，以后都这样"])
+
+    def test_a_turn_of_the_bridges_or_an_agents_is_never_read_the_source_decides(self):
+        self.topic("a" * 16, 1)
+        wake = "[Bridge 叫醒] 到了回看时间：以后每次都先查看当前状态"
+        self.turn("a" * 16, wake, message="revisit-")  # A revisit: its id.
+        self.turn("a" * 16, wake)  # No source and an ordinary id: the way its text begins.
+        self.turn("a" * 16, "[Bridge 说明] 负责人转来：以后每次开工前先查看当前状态")
+        self.turn("a" * 16, "以后都先给结论", message="review-")
+        self.turn("a" * 16, "以后每次开工前先查看当前状态", turn_source={"v": 1, "kind": "collab_reply", "asserted_by": "owner"})
+        self.turn("a" * 16, "以后每次先列计划", turn_source={"v": 1, "kind": "handover", "asserted_by": "butler"})
+        self.turn("a" * 16, "以后每次先列清单", turn_source={"v": 1, "kind": "owner", "asserted_by": "lead"})
+        self.turn("a" * 16, "以后回答都先给结论", turn_source={"v": 1, "kind": "owner", "asserted_by": "owner"})
+        found = candidates.sentences(self.state, CHAT, self.now - 86400, self.now, owner_turn)
+        self.assertEqual(found, [{"topic": "a" * 16, "text": "以后回答都先给结论"}])
+        self.assertEqual(candidates.not_owner_reason({"message_id": "om_1"}, text="以后都这样"), "")
+
     def test_the_rules_alone_group_what_reads_nearly_the_same_across_topics(self):
         rows = [{"topic": "a", "text": "以后回答先给结论"}, {"topic": "b", "text": "以后回答先给结论！"},
                 {"topic": "a", "text": "以后回答先给出结论"}, {"topic": "c", "text": "别用表情"}]
@@ -114,7 +135,7 @@ class FindTests(State):
         for number, topic in enumerate(("a" * 16, "b" * 16, "e" * 16), 1):
             self.topic(topic, number)
         self.turn("a" * 16, "以后回答先给结论。测试通过就合并")
-        self.turn("b" * 16, "说过了，回答先给结论。又没跑全量就说通过")
+        self.turn("b" * 16, "说过了，回答先给结论。总是没跑全量就说通过")
         self.turn("e" * 16, "以后先跑全量再说通过")
 
     def find(self, groups=None, error=None):
@@ -137,7 +158,7 @@ class FindTests(State):
                                   "workspace": "covey"}])
         rows, existing, declined = self.asked
         self.assertEqual([(row["label"], row["text"]) for row in rows], [
-            ("T1", "以后回答先给结论。"), ("T2", "说过了，回答先给结论。"), ("T2", "又没跑全量就说通过"),
+            ("T1", "以后回答先给结论。"), ("T2", "说过了，回答先给结论。"), ("T2", "总是没跑全量就说通过"),
             ("T3", "以后先跑全量再说通过")])  # 测试通过就合并 has no correction's word.
 
     def test_what_a_principle_says_or_the_owner_declined_is_not_offered_and_three_at_most(self):
@@ -372,6 +393,19 @@ class CardTests(unittest.TestCase):
         # A view of before has none of these parts.
         old = {key: value for key, value in view.items() if key not in ("remember", "reached", "proxy")}
         self.assertNotIn("你反复说的", json.dumps(digest_card(old), ensure_ascii=False))
+
+
+    def test_what_the_learner_wants_for_every_topic_is_a_part_of_its_own_with_his_quote_and_the_buttons(self):
+        view = {"slot": 1.0, "since": 0.0, "waiting": [], "stale": [], "running": [], "done": [],
+                "remember": [{"id": "c1", "text": "汇报先给结论", "labels": [], "workspace": "", "state": "open",
+                              "source": "learn", "quote": "以后汇报都先给结论"}]}
+        card = digest_card(view)
+        text = json.dumps(card, ensure_ascii=False)
+        self.assertIn("自动学习想记的", text)
+        self.assertIn("来源：自动学习记的 · 记到全局 · 你说过：“以后汇报都先给结论”", text)
+        self.assertNotIn("Codex 和 Claude Code 自己记的", text)
+        self.assertEqual({b["id"] for b in buttons(card) if b["kind"] == REMEMBER_KIND}, {"c1"})
+        self.assertIn("你说过：“以后汇报都先给结论”", digest_text(view))
 
 
 class ClickTests(UnifiedCase):

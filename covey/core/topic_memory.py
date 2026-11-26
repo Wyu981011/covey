@@ -66,3 +66,17 @@ def delete(state_dir, topic_id, entry_id, *, now=None) -> bool:
         row["deleted"] = time.time() if now is None else now
         _write(path, rows)
     return True
+
+
+def restore(state_dir, topic_id, entry_id) -> bool:
+    """Whether the tombstone ``entry_id`` of the topic is a live entry again (app/memory_collect.py take_back: a line the
+    learner put out of the way because the owner contradicted it, and he said 不对); False for one that is not a tombstone."""
+    path = memory_path(state_dir, topic_id)
+    with shared_file_lock(path):
+        rows = project_memory.rows_at(path, writing=True)
+        row = next((row for row in rows if row["id"] == str(entry_id) and row["deleted"]), None)
+        if row is None:
+            return False
+        row["deleted"] = 0
+        _write(path, rows)
+    return True

@@ -181,18 +181,31 @@ def undo(host, ctx, event) -> bool:
     return True
 
 
+UNDOABLE = ("remembered", "superseded", "pending")  # The kinds of a note 不对 takes back (cards/answer_card.py memory_element).
+
+
 def take_back(state, topic_id, record, entry_id):
     """不对 on the entry ``entry_id`` the turn of job ``record`` (of ``topic_id``) wrote, the card's and the web page's
-    (app/web_ops.py memory_undo, data contract v34): the entry a tombstone, its note ``undone`` in the job record. The job's
-    notes as they are now (the caller redraws the answer card's lines from them); None when there is no such note still
-    remembered (taken back already, or not this turn's), nothing changed."""
+    (app/web_ops.py memory_undo, data contract v34): the entry a tombstone, its note ``undone`` in the job record. A line the
+    learner put out of the way (``superseded``, app/memory_learn.py) is back as it was, a candidate it proposed (``pending``) is
+    dropped. The job's notes as they are now (the caller redraws the answer card's lines from them); None when there is no such
+    note still in force (taken back already, or not this turn's), nothing changed."""
     notes = [dict(note) for note in record.get("memory_notes") or ()]
-    note = next((note for note in notes if note.get("kind") == "remembered" and note.get("entry_id") == entry_id), None)
+    note = next((note for note in notes if note.get("kind") in UNDOABLE and note.get("entry_id") == entry_id), None)
     if note is None:
         return None
-    _forget(state, topic_id, entry_id, note.get("scope"))
+    if note["kind"] == "remembered":
+        _forget(state, topic_id, entry_id, note.get("scope"))
+    elif note["kind"] == "superseded":
+        if note.get("project_id"):
+            project_memory.unsettle(state, note["project_id"], [(entry_id, note.get("before") or {})])
+        else:
+            topic_memory.restore(state, topic_id, entry_id)
+    else:
+        from covey.app import memory_candidates
+        memory_candidates.decide(state, entry_id, "drop")
     note["kind"] = "undone"
-    notes = [note if old.get("entry_id") == entry_id and old.get("kind") == "remembered" else old for old in notes]
+    notes = [note if old.get("entry_id") == entry_id and old.get("kind") in UNDOABLE else old for old in notes]
     upsert_job_record(state, str(record["key"]), memory_notes=notes)
     return notes
 

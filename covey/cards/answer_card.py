@@ -311,7 +311,8 @@ def box(element_id, inputs, outputs, outputs_id=""):
 MEMORY_ID = "answer_memory"
 MEMORY_WRONG_KIND = "bridge_memory_wrong"
 MEMORY_PROMOTE_KIND = "bridge_memory_promote"
-MEMORY_LINES = {"remembered": "记下了", "voided": "作废了", "undone": "已撤销"}
+MEMORY_LINES = {"remembered": "记下了", "voided": "作废了", "undone": "已撤销", "superseded": "收起了", "pending": "待审核"}
+UNDOABLE = ("remembered", "superseded", "pending")  # The lines with a 不对 (app/memory_collect.py take_back).
 PROMOTE_LABEL = "升为全局"
 PROMOTABLE = ("管这个专项", "管这个话题")  # app/memory_collect.py PROJECT_WORDS, TOPIC_WORDS: what 升为全局 takes.
 
@@ -328,9 +329,9 @@ def memory_element(notes, topic_id="", job_id=""):
         if kind not in MEMORY_LINES:
             continue
         text = literal_text(note.get("text"))
-        words = f"{MEMORY_LINES[kind]}：{text}" + (f" · {note.get('scope')}" if kind == "remembered" and note.get("scope") else "")
+        words = f"{MEMORY_LINES[kind]}：{text}" + (f" · {note.get('scope')}" if kind in UNDOABLE and note.get("scope") else "")
         line = md(grey(words), size="notation")
-        if kind == "remembered":
+        if kind in UNDOABLE:
             value = {"topic_id": topic_id, "job_id": job_id, "entry_id": str(note.get("entry_id") or "")}
             buttons = [text_button("不对", {"kind": MEMORY_WRONG_KIND, **value})]
             if note.get("scope") in PROMOTABLE and not note.get("redacted"):
