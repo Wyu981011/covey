@@ -285,7 +285,8 @@ class Projects:
         """The lead's topic: topic.json with ``project`` {id, role lead}; its Harness, model and budget as app/lead_harness.py
         ``binding`` picks them (what the butler's call named for it, else the settings' 专项负责人, else the butler's own, from
         the butler's topic.json or as its first message would write them), the butler's 脱敏; the workspace of the topic the
-        project grew from (else the one the direct start chose, else the butler's), locked."""
+        project grew from (else the one the direct start chose, the home, else the butler's), locked, and the repositories
+        of both, read."""
         state, chat, pid = Path(self.env.state_dir), str(record["chat_id"]), record["id"]
         lead, origin = record["lead_topic_id"], record.get("origin") or {}
         field = projects.project_field(pid, projects.LEAD)
@@ -314,6 +315,16 @@ class Projects:
         data.update(topic_id=lead, chat_id=chat, root_id="", thread_id="", binding_revision=1, project=field,
                     workspace_locked=True, harness_locked=True, model_settings_snapshot=True,
                     workspace_name=name, workdir=workdir)
+        # The project's repositories (docs/configuration.md 主目录与仓库地图): those of the topic it grew from and those the
+        # direct start named, read by the lead (it changes no file); a lead of the home says so as its topics do.
+        repos = {}
+        for repo in [*(source.get("repos") or ()), *(origin.get("repos") or ())]:
+            if isinstance(repo, dict) and repo.get("name"):
+                repos.setdefault(repo["name"], {**repo, "mode": "read"})
+        if repos:
+            data["repos"] = list(repos.values())
+        if source.get("home_start") or origin.get("home_start") or (not source and root.get("home_start")):
+            data["home_start"] = True
         with LOCK:
             write_json(path, {**read_object(path), **data}, ensure_ascii=False, indent=2)
         self.env.runtime.log(f"project lead bound project={pid[:8]} harness={chosen['harness_id']} from={chosen['source']}")
@@ -566,7 +577,9 @@ class Projects:
             made = projects.new_record(
                 chat_id=chat, name=title, goal=prompt, project_id=pid,
                 origin={"kind": "direct", "request": request.id, "job_key": request.job_key, "workspace": plan["workspace"],
-                        "workdir": plan["workdir"], "why": arg_text(args.get("why"), 200), "text": words or prompt,
+                        "workdir": plan["workdir"], **({"repos": plan["repos"]} if plan.get("repos") else {}),
+                        **({"home_start": True} if plan.get("home_start") else {}),
+                        "why": arg_text(args.get("why"), 200), "text": words or prompt,
                         **({"topics": joins} if joins else {}), **({"refused": refused} if refused else {}),
                         **({"lead": lead} if lead else {})})
             made["steps"] = {"record": round(time.time(), 3)}

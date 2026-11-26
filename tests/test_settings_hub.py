@@ -1,5 +1,5 @@
 """The 设置 card (app/settings_hub.py, cards/settings_hub.py): the bot menu's one card for the butler's two pages
-(新话题, 管家), 工作区, 脱敏 and 群聊, a tab row on top (新话题 · 管家 · 工作区 · 脱敏 · 群聊, T546), held by one record;
+(新话题, 管家), 仓库, 脱敏 and 群聊, a tab row on top (配置 · 仓库 · 脱敏 · 群聊 · ..., T546), held by one record;
 a tab turns the same record's card to another panel in place, the panels' own buttons keep the row and act only on
 their tab, a card sent under the scheme before (a record each panel) is taken over or finds nothing, 代答 is no tab
 but a record an older card left on it is still drawn there, and the standalone 代答 and 群聊 cards stay as they were."""
@@ -11,7 +11,7 @@ from unittest import mock
 
 from support.proxy import ProxyCase
 from support import requires_extension
-from covey.app import butler_panel
+from covey.app import butler_panel, workspace_manager
 from covey.app.butler_panel import OWNER_ONLY, TOOLS
 from covey.app.menu_panel import MOVED
 from covey.app.settings_hub import MENU_KEY, SettingsHub
@@ -29,7 +29,7 @@ from covey.core.groups import group_path
 from covey.core.state import read_json, write_json
 
 MEMBER = 'ou_member0012345678'
-LABELS = ['配置', '工作区', '脱敏', '群聊', '能做什么', '诊断']  # 记忆 only with COVEY_MEMORY=1, 设备 with nodes.
+LABELS = ['配置', '仓库', '脱敏', '群聊', '能做什么', '诊断']  # 记忆 only with COVEY_MEMORY=1, 设备 with nodes.
 
 
 def row_of(current):
@@ -122,11 +122,11 @@ class SettingsHubTests(HubCase):
             self.assertEqual(self.tabs(), [t for t in row_of('配置') if t[0] != '管家'])
             self.assertNotIn('**管家**', json.dumps(self.card(), ensure_ascii=False))  # No butler: no section of it.
             self.assertEqual({k: a.__func__ for k, a in self.hub.menu_items().items()}, {
-                MENU_KEY: SettingsHub.open, 'manage_workspaces': SettingsHub.open_workspaces,
+                MENU_KEY: SettingsHub.open, 'manage_workspaces': SettingsHub.open_repos,
                 'redaction_dashboard': SettingsHub.open_redaction})
         self.app.messenger.recall.assert_called_once_with(self.ctx.profile, 'om_s1')
         self.assertEqual({k: a.__func__ for k, a in self.hub.menu_items().items()}, {
-            MENU_KEY: SettingsHub.open, 'manage_workspaces': SettingsHub.open_workspaces,
+            MENU_KEY: SettingsHub.open, 'manage_workspaces': SettingsHub.open_repos,
             'redaction_dashboard': SettingsHub.open_redaction, 'main_thread_settings': SettingsHub.open_main})
 
     @requires_extension()
@@ -136,8 +136,8 @@ class SettingsHubTests(HubCase):
         first = self.hub_record()
         self.assertEqual((first['tab'], first['status'], first['view']), ('config', 'open', {
             'token': token, 'revision': 1, 'hub': True}))
-        self.assertEqual(self.press(self.tab('工作区'), 'ev-t0'), 'settings_tab')
-        self.assertEqual((self.title(), self.hub_record()['tab']), ('工作区', 'workspace'))
+        self.assertEqual(self.press(self.tab('仓库'), 'ev-t0'), 'settings_tab')
+        self.assertEqual((self.title(), self.hub_record()['tab']), ('仓库', 'repos'))
         # 代答 is no tab, but an older card's click on it (values as they were) still turns this card to it.
         click = {'kind': TAB, 'tab': 'proxy', 'from': 'main', 'token': token}
         self.assertEqual(self.press(click, 'ev-t1'), 'settings_tab')
@@ -437,8 +437,8 @@ class SixTabsTests(HubCase):
     @requires_extension()
     def test_the_old_keys_open_the_card_on_their_tabs_as_the_one_settings_card(self):
         self.open('ev-w', 'manage_workspaces')
-        self.assertEqual((self.title(), self.tabs()), ('工作区', row_of('工作区')))
-        self.assertEqual(self.hub_record(self.hub.token('dm', 'ev-w'))['tab'], 'workspace')
+        self.assertEqual((self.title(), self.tabs()), ('仓库', row_of('仓库')))  # The old 工作区 key: the 仓库 tab now.
+        self.assertEqual(self.hub_record(self.hub.token('dm', 'ev-w'))['tab'], 'repos')
         self.assertFalse((self.state / 'workspace-managers').exists())  # No card of its own.
         self.app.menu.owner_said('dm')
         self.open('ev-r', 'redaction_dashboard')
@@ -448,64 +448,96 @@ class SixTabsTests(HubCase):
         self.assertEqual(values(self.card(), 'bridge_dashboard_rotate'), [])  # The web dashboard is gone.
 
     @requires_extension()
-    def test_the_workspace_tab_is_the_manager_with_the_butlers_notes(self):
+    def test_the_repos_tab_is_the_home_and_the_repositories_read_only(self):
         settings.update(self.state, workspace_notes=(('alpha', '甲'),))
         self.open()
-        self.assertEqual(self.press(self.tab('工作区'), 'ev-t1'), 'settings_tab')
+        self.assertNotIn('工作区', [label for label, _ in self.tabs()])  # The 工作区 tab is replaced.
+        self.assertEqual(self.press(self.tab('仓库'), 'ev-t1'), 'settings_tab')
         text = json.dumps(self.card(), ensure_ascii=False)
-        for part in ('**alpha**', '**beta**', '用途：甲', '改用途', '＋ 添加工作区…'):
+        # Without the web page: the home, the count, each repository with its state and 用途 (the old list read as a map).
+        for part in ('主目录', str(self.ctx.default_workdir.name), '2 个', '**alpha**', '**beta**', '甲', '可写', '没开网页'):
             self.assertIn(part, text)
-        for part in ('记住的工作区', '设为默认', '"note_0"'):  # 记住的工作区 moved to 新话题; the 用途 are inputs once 改用途.
+        for part in ('＋ 添加工作区…', '改用途', '保存用途', '记住的工作区', '设为默认', '"note_0"', '完成管理'):
             self.assertNotIn(part, text)
-        self.assertNotIn('完成管理', text)  # The 设置 card is not closed from one tab.
-        # A manager button (its name carries the 设置 card's token): acts on the same record, the row kept on top.
-        token = self.hub.token('dm', 'ev-menu')
-        revision = self.hub_record()['view']['revision']
-        from covey.cards.workspace_manager import MANAGER_PREFIX, row_key
-        name = f'{MANAGER_PREFIX}{token}:{revision}:refresh'
-        self.assertEqual(self.press({}, 'ev-d1', action_name=name, form_value={}), 'workspace_manager')
-        self.run_queued()
-        self.assertEqual((self.title(), self.tabs()[1], self.puts[-1][0]), ('工作区', ('工作区', 'primary_filled'), 'hubcard'))
-        # 改用途 turns the lines into inputs; the butler's 保存用途 on it keeps the tab.
-        name = f'{MANAGER_PREFIX}{token}:{self.hub_record()["view"]["revision"]}:notes'
-        self.assertEqual(self.press({}, 'ev-d2', action_name=name, form_value={}), 'workspace_manager')
-        self.run_queued()
-        self.assertIn('"note_0"', json.dumps(self.card(), ensure_ascii=False))
-        self.assertEqual([s for _, _, s in self.puts[1:]], list(range(1, len(self.puts))))  # One record's sequence.
-        save, = [v for _, v in values(self.card(), butler_card.NOTES)]
-        typed = {'beta': '乙'}
-        self.assertEqual(self.press(save, 'ev-n1', form_value={f'note_{i}': typed.get(n, '') for i, n in
-                                                              enumerate(save['workspaces'])}), 'main_panel')
-        self.assertEqual(settings.load(self.state).workspace_notes, (('beta', '乙'),))
-        self.assertEqual((self.title(), self.hub_record()['tab']), ('工作区', 'workspace'))
-        self.assertIn('用途：乙', json.dumps(self.card(), ensure_ascii=False))  # Lines again.
-        # An older card's 设为默认 still acts.
-        name = f'{MANAGER_PREFIX}{token}:{self.hub_record()["view"]["revision"]}:default-{row_key("beta")}'
-        self.assertEqual(self.press({}, 'ev-d3', action_name=name, form_value={}), 'workspace_manager')
-        self.run_queued()
-        from covey.core.workspaces import load_config
-        self.assertEqual(load_config(self.state, self.ctx.default_workdir)['default'], 'beta')
-        self.assertEqual(self.press(self.tab('配置'), 'ev-t5'), 'settings_tab')
-        self.assertNotIn('记住的工作区', json.dumps(self.card(), ensure_ascii=False))  # Retired.
-        self.assertEqual(self.press(self.tab('工作区'), 'ev-t6'), 'settings_tab')
-        # Turned away, the manager's buttons find nothing.
-        self.press(self.tab('群聊'), 'ev-t2')
-        drawn = len(self.puts)
-        name = f'{MANAGER_PREFIX}{token}:{self.hub_record()["view"]["revision"]}:refresh'
-        self.press({}, 'ev-d4', action_name=name, form_value={})
-        self.run_queued()
-        self.assertEqual(len(self.puts), drawn)
+        self.assertEqual({v['kind'] for _, v in values(self.card())}, {TAB})  # No button but the tab row's: read only.
+        self.assertFalse((self.state / 'repos.json').exists())  # Drawing writes nothing.
+        self.assertEqual([r for r in (self.state).glob('workspace-managers/*')], [])
+        # With the web page: the home, the count and the link; no list.
+        with mock.patch('covey.core.web_sync.page_url', return_value='https://web.example/'):
+            self.assertEqual(self.press(self.tab('群聊'), 'ev-t2'), 'settings_tab')
+            self.assertEqual(self.press(self.tab('仓库'), 'ev-t3'), 'settings_tab')
+            text = json.dumps(self.card(), ensure_ascii=False)
+        self.assertIn('(https://web.example/settings/repos)', text)
+        for part in ('**alpha**', '甲', '改状态'):
+            self.assertNotIn(part, text)
+        self.assertIn('2 个', text)
 
     @requires_extension()
-    def test_without_the_butler_the_workspace_tab_is_the_list_alone(self):
+    def test_the_map_file_is_what_the_tab_shows_once_it_exists_and_the_butler_does_not_change_it(self):
+        write_json(self.state / 'repos.json', {'version': 1, 'repos': [
+            {'name': 'covey', 'path': '/srv/covey', 'note': '核心', 'status': 'frozen'},
+            {'name': 'web', 'path': '/srv/web', 'status': 'readonly'}]})
+        self.open()
         with mock.patch.dict(os.environ, {'COVEY_BUTLER': '0'}):
-            self.open()
-            self.assertEqual(self.press(self.tab('工作区'), 'ev-t1'), 'settings_tab')  # The menu opens on 新话题.
-            self.assertEqual((self.title(), self.tabs()), ('工作区', [t for t in row_of('工作区') if t[0] != '管家']))
+            self.assertEqual(self.press(self.tab('仓库'), 'ev-t1'), 'settings_tab')
             text = json.dumps(self.card(), ensure_ascii=False)
-        self.assertIn('**alpha**', text)
-        for part in ('改用途', '保存用途', '记住的工作区', '"note_0"'):
-            self.assertNotIn(part, text)
+        for part in ('**covey**', '已冻结', '核心', '**web**', '只读'):
+            self.assertIn(part, text)
+        self.assertNotIn('**alpha**', text)
+        self.assertEqual(read_json(self.state / 'repos.json')['repos'][0]['status'], 'frozen')
+
+    @requires_extension()
+    def test_a_click_on_the_retired_manager_card_says_it_is_gone_and_changes_nothing(self):
+        self.open()
+        self.assertEqual(self.press(self.tab('仓库'), 'ev-t1'), 'settings_tab')
+        token = self.hub.token('dm', 'ev-menu')
+        puts, record = len(self.puts), self.hub_record()
+        from covey.cards.workspace_manager import MANAGER_PREFIX, row_key
+        sent = self.app.messenger.send_message = mock.Mock()
+        for n, verb in enumerate(('refresh', 'notes', f'remove-{row_key("alpha")}', 'add', 'dir-open0')):
+            name = f'{MANAGER_PREFIX}{token}:{record["view"]["revision"]}:{verb}'
+            self.assertEqual(self.press({}, f'ev-d{n}', action_name=name, form_value={}), 'workspace_manager')
+            self.run_queued()
+            self.assertEqual(sent.call_args.args[2], workspace_manager.RETIRED_TEXT)
+        self.assertEqual(sent.call_count, 5)
+        # The launch card's 管理工作区 option, on a card sent before.
+        from covey.cards import launch_config
+        self.assertEqual(self.press({'kind': launch_config.WORKSPACE_ACTION, 'token': token}, 'ev-l1',
+                                    option=launch_config.MANAGE_OPTION), 'workspace_manager')
+        self.run_queued()
+        self.assertEqual(sent.call_count, 6)
+        self.assertEqual((len(self.puts), self.hub_record()), (puts, record))  # No card or record written.
+        self.assertEqual(self.press({}, 'ev-d9', operator=MEMBER, action_name=f'{MANAGER_PREFIX}{token}:1:refresh',
+                                    form_value={}), 'not_owner')
+        self.assertEqual(sent.call_count, 6)  # Not the owner: nothing said.
+
+    @requires_extension()
+    def test_the_butlers_workspace_buttons_of_an_older_card_say_offline_and_change_nothing(self):
+        """The 工作区 and 运行方式 rows and 保存用途 are off the 配置 page: an older card's button (its record on the retired 工作区 tab too)
+        is answered on the card, 配置 drawn, no setting touched, the 工作区 setting the butler runs in kept."""
+        settings.update(self.state, workspace='alpha')
+        self.open()
+        token = self.hub.token('dm', 'ev-menu')
+        path = self.hub.path(self.ctx, token)
+        write_json(path, {**read_json(path), 'tab': 'workspace'})  # An older card, shown on 工作区.
+        before = settings.load(self.state)
+        for n, (kind, more) in enumerate(((butler_card.TOPIC_WORKSPACE, {'option': 'beta'}), (butler_card.TOPIC_RUN_MODE, {'option': 'worktree'}),
+                                          (butler_card.SPACE, {'option': 'beta'}), (butler_card.NOTES, {'workspaces': ['alpha']}))):
+            write_json(path, {**read_json(path), 'tab': 'workspace'})
+            value = {'kind': kind, 'token': token, 'revision': self.hub_record()['view']['revision'], **more}
+            self.assertEqual(self.press(value, f'ev-o{n}', form_value={'note_0': 'x'}), 'main_panel')
+            self.assertEqual((self.title(), self.hub_record()['tab']), ('配置', 'config'))
+            self.assertIn(butler_card.OFFLINE_NOTICE, json.dumps(self.card(), ensure_ascii=False))
+            self.assertEqual(settings.load(self.state), before)
+        self.assertEqual(settings.load(self.state).workspace, 'alpha')
+        # The page itself has none of the rows or buttons.
+        text = json.dumps(self.card(), ensure_ascii=False)
+        for kind in butler_card.OFFLINE_KINDS:
+            self.assertEqual(values(self.card(), kind), [], kind)
+        for part in ('工作区', '运行方式', '保存用途'):
+            self.assertNotIn(part, text.replace(butler_card.OFFLINE_NOTICE, ''))
+        self.assertTrue(values(self.card(), butler_card.HARNESS))  # The butler's section is the one the last click opened: no 工作区 row.
+        self.assertNotIn('默认工作区', json.dumps(self.card(), ensure_ascii=False))
 
     def test_an_older_cards_rotate_on_the_redaction_tab_says_the_page_went(self):
         # The web dashboard's 换口令 (taken out 2026-11-19, T569), on a card drawn before: the same card redrawn with a
@@ -537,15 +569,15 @@ class SixTabsTests(HubCase):
         start = {'kind': butler_card.START, 'token': token, 'revision': 1, 'tier': 'readonly', 'on': True}
         self.assertEqual(self.press(start, 'ev-s1'), 'main_panel')
         self.assertEqual((self.title(), self.hub_record()['tab']), ('配置', 'config'))
-        # Its 其他 tab (clicked on another page) lands on 工作区, and a tab click from 其他 turns as any.
+        # Its 其他 tab (clicked on another page) lands on 仓库, and a tab click from 其他 turns as any.
         self.assertEqual(self.press({'kind': TAB, 'tab': 'other', 'from': 'main', 'token': token}, 'ev-t1'),
                          'settings_tab')
-        self.assertEqual((self.title(), self.hub_record()['tab']), ('工作区', 'workspace'))
+        self.assertEqual((self.title(), self.hub_record()['tab']), ('仓库', 'repos'))
         write_json(path, {**read_json(path), 'tab': 'other'})
         self.assertEqual(self.press({'kind': TAB, 'tab': 'proxy', 'from': 'other', 'token': token}, 'ev-t2'),
                          'settings_tab')
         self.assertEqual(self.title(), '代答')  # An older card's 代答 click from 其他: the panel is still drawn.
-        # 记住的工作区 (retired) removed from it lands on 配置 as well; the menu's 设置 folds a record on 其他 as 工作区.
+        # 记住的工作区 (retired) removed from it lands on 配置 as well; the menu's 设置 folds a record on 其他 (or the old 工作区) as 仓库.
         write_json(path, {**read_json(path), 'tab': 'other'})
         untrust = {'kind': butler_card.UNTRUST, 'token': token, 'revision': 1, 'key': 'alpha|read'}
         self.assertEqual(self.press(untrust, 'ev-u1'), 'main_panel')
@@ -553,6 +585,9 @@ class SixTabsTests(HubCase):
         write_json(path, {**read_json(path), 'tab': 'other'})
         write_json(path, {**read_json(path), 'tab': 'other'})
         self.assertEqual(self.hub.fold(self.ctx, 'dm', 'ev-menu', 'om_s1'), 'fold')
-        self.assertEqual((self.title(), self.hub_record()['tab']), ('工作区', 'workspace'))
+        self.assertEqual((self.title(), self.hub_record()['tab']), ('仓库', 'repos'))
         self.assertEqual(self.hub.fold(self.ctx, 'dm', 'ev-menu', 'om_s1'), 'unfold')
         self.assertIn('**alpha**', json.dumps(self.card(), ensure_ascii=False))
+        write_json(path, {**read_json(path), 'tab': 'workspace'})  # An older card shown on 工作区 turns the same way.
+        self.assertEqual(self.press({'kind': TAB, 'tab': 'groups', 'from': 'workspace', 'token': token}, 'ev-t8'), 'settings_tab')
+        self.assertEqual(self.title(), '群聊')

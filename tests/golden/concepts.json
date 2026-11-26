@@ -425,13 +425,6 @@
   ],
   "tools": [
    "history_search",
-   "knowledge_drop",
-   "knowledge_save",
-   "knowledge_search",
-   "knowledge_update",
-   "principle_delete",
-   "principle_save",
-   "principles_list",
    "project_answer",
    "project_checklist",
    "project_escalate",
@@ -454,8 +447,7 @@
    "topic_send",
    "topic_start",
    "topics_list",
-   "topics_search",
-   "workspaces_list"
+   "topics_search"
   ],
   "harnesses": [
    "agy",
@@ -717,6 +709,30 @@
    "name": "执行设备",
    "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
    "why": "多设备时话题实际在哪台机器跑"
+  },
+  {
+   "kind": "tools",
+   "name": "memory_save",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "记一条记忆（规矩、决定、资料），取代 principle_save、knowledge_save"
+  },
+  {
+   "kind": "tools",
+   "name": "memory_revise",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "改、替代或收起一条记忆，取代 principle_delete、knowledge_update、knowledge_drop"
+  },
+  {
+   "kind": "tools",
+   "name": "memory_search",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "查记忆，取代 principles_list、knowledge_search"
+  },
+  {
+   "kind": "tools",
+   "name": "repos_list",
+   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
+   "why": "列出仓库地图，取代 workspaces_list"
   }
  ]
 }

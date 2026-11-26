@@ -64,6 +64,54 @@ class ButlerTopicsCase(UnifiedCase):
         return self.app.runtime.jobs.find(0, "main-" + butler_opened.request_token(SimpleNamespace(id=answer)))
 
 
+class HomeStartTest(ButlerTopicsCase):
+    """主目录启动 (docs/configuration.md 主目录与仓库地图): topic_start needs no workspace; the topic starts in the home and
+    keeps the repositories it says it uses; an older call's workspace is one more of them, read."""
+
+    def repo_map(self, **statuses):
+        repos = [{"name": name, "path": str(self.work / name), "status": status} for name, status in statuses.items()]
+        write_json(Path(self.ctx.state_dir) / "repos.json", {"version": 1, "repos": repos})
+
+    def test_a_topic_without_a_workspace_starts_in_the_home(self):
+        answer = self.start("h1", workspace=None, harness="codex")
+        self.assertTrue(answer["ok"] and answer["data"]["started"], answer)
+        topic = load_topic(self.ctx.state_dir, answer["data"]["topic_id"])
+        self.assertEqual(Path(topic["workdir"]), Path(self.work).resolve())
+        self.assertTrue(topic["home_start"])
+        self.assertNotIn("repos", topic)
+        card = json.dumps(self.app.messenger.create_and_send_card.call_args.args[2], ensure_ascii=False)
+        self.assertIn("主目录", card)
+        self.assertNotIn("工作区", card)
+
+    def test_the_repositories_it_names_are_kept_and_a_frozen_one_is_not_written_to(self):
+        self.repo_map(covey="active", web="readonly", old="frozen")
+        answer = self.start("h2", workspace=None, harness="codex", repos=[
+            {"name": "covey", "mode": "write"}, {"name": "web", "mode": "read"}, {"name": "covey", "mode": "read"}])
+        self.assertTrue(answer["ok"], answer)
+        topic = load_topic(self.ctx.state_dir, answer["data"]["topic_id"])
+        self.assertEqual([(repo["name"], repo["mode"], repo["source"]) for repo in topic["repos"]],
+                         [("covey", "write", "declared"), ("web", "read", "declared")])
+        self.assertEqual(topic["repos"][0]["path"], str(self.work / "covey"))
+        card = json.dumps(self.app.messenger.create_and_send_card.call_args.args[2], ensure_ascii=False)
+        self.assertIn("仓库 covey（改）、web", card)
+        for request, repos, words in (("h3", [{"name": "old", "mode": "write"}], "仓库「old」已冻结，不能改"),
+                                      ("h4", [{"name": "web", "mode": "write"}], "仓库「web」只读，不能改"),
+                                      ("h5", [{"name": "nope", "mode": "read"}], "仓库地图里没有「nope」，可选：covey、web、old"),
+                                      ("h6", [{"name": "covey"}] * 11, "repos 要是最多 10 项的列表")):
+            refused = self.start(request, workspace=None, harness="codex", repos=repos)
+            self.assertFalse(refused["ok"], refused)
+            self.assertIn(words, refused["text"])
+
+    def test_an_older_calls_workspace_is_a_repository_read_and_the_topic_still_starts_in_the_home(self):
+        answer = self.start("h7", harness="codex")  # workspace="project", the saved workspace of this Bridge's --workdir.
+        topic = load_topic(self.ctx.state_dir, answer["data"]["topic_id"])
+        self.assertTrue(topic["home_start"])
+        self.assertEqual([(repo["name"], repo["mode"]) for repo in topic["repos"]], [("project", "read")])
+        refused = self.start("h8", harness="codex", workspace="nowhere")
+        self.assertFalse(refused["ok"])
+        self.assertIn("仓库地图里没有「nowhere」", refused["text"])
+
+
 class TopicStartTest(ButlerTopicsCase):
     def test_a_similar_topic_in_the_same_repository_is_said_but_does_not_stop_it(self):
         # Persona's duplicate hint: it only says so (app/repo_peers.py duplicates).
@@ -132,8 +180,11 @@ class TopicStartTest(ButlerTopicsCase):
     def test_a_topic_that_waits_gets_a_prefilled_launch_card_and_no_binding(self):
         from covey.app.launch import build_launch_card
 
-        self.settings(topic_defaults=butler_settings.TopicDefaults(run_mode="worktree"))  # The only wait left: the card creates the worktree.
-        answer = self.start(harness="maso", readonly=False)
+        # A plan an older release saved for 独立 worktree, the only wait there was (no new topic waits any more).
+        plan_start = butler_topics.plan_start
+        with mock.patch.object(butler_topics, "plan_start",
+                               side_effect=lambda *a, **k: {**plan_start(*a, **k), "run_mode": "worktree"}):
+            answer = self.start(harness="maso", readonly=False)
         self.assertTrue(answer["ok"], answer)
         self.assertFalse(answer["data"]["started"])
         self.assertTrue(answer["text"].endswith("：启动卡在话题里，等主人点开始（运行方式是独立 worktree，由启动卡创建）"))
@@ -383,18 +434,16 @@ class DeviceStartTest(ButlerTopicsCase):
         self.assertEqual(topic["workdir"], "gpu1:/home/me/proj")
         self.assertNotIn("redaction", topic)
 
-    def test_a_worktree_in_the_settings_leaves_the_start_to_the_launch_card_in_the_original_directory(self):
+    def test_a_worktree_in_the_settings_no_longer_holds_a_devices_topic_back(self):
+        """独立 worktree is gone as a run mode (docs/configuration.md 主目录与仓库地图): an older setting of it starts the topic at
+        once all the same, in the device's directory."""
         self.settings(topic_defaults=butler_settings.TopicDefaults(run_mode="worktree"))
         answer = self.start("w1", workspace="gpu1-proj", harness="codex", readonly=False)
         self.assertTrue(answer["ok"], answer)
-        self.assertFalse(answer["data"]["started"])
-        self.assertIn("等主人点开始，在设备 GPU 1 上", answer["text"])
-        self.assertTrue(answer["text"].endswith("（设备上的工作区只能用原目录运行，设置里的独立 worktree 用不了，启动卡预选了原目录）"),
-                        answer["text"])
+        self.assertTrue(answer["data"]["started"])
+        self.assertIn("直接开工，在设备 GPU 1 上", answer["text"])
         topic = load_topic(self.ctx.state_dir, answer["data"]["topic_id"])
-        self.assertNotIn("workspace_locked", topic)
-        self.assertEqual((topic["origin"]["launch"]["workspace"], topic["origin"]["launch"]["run_mode"]), ("gpu1-proj", "direct"))
-        self.app.apps["codex"].submission.selection_card.assert_called_once()
+        self.assertEqual((topic["workdir"], topic.get("home_start")), ("gpu1:/home/me/proj", None))
 
     def test_off_a_device_workspace_opens_nothing_and_says_the_switch_is_off(self):
         # Never a topic on a path of this machine that is not there; devices.json is not read, the device not asked.
@@ -650,8 +699,11 @@ class TopicSendTest(ButlerTopicsCase):
         self.assertIsNone(self.job("send-u"))
 
     def test_a_topic_waiting_on_its_launch_card_is_not_sent_to(self):
-        self.settings(topic_defaults=butler_settings.TopicDefaults(run_mode="worktree"))
-        data = self.start(readonly=False)["data"]
+        # A plan an older release saved for 独立 worktree (the launch card starts it): no new topic waits so any more.
+        plan_start = butler_topics.plan_start
+        with mock.patch.object(butler_topics, "plan_start",
+                               side_effect=lambda *a, **k: {**plan_start(*a, **k), "run_mode": "worktree"}):
+            data = self.start(readonly=False)["data"]
         answer = self.call("topic_send", topic=data["label"], text="再加一条")
         self.assertFalse(answer["ok"])
         self.assertIn("启动卡", answer["text"])

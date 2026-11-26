@@ -17,7 +17,7 @@ import dataclasses
 from pathlib import Path
 
 from covey.core import butler as contract
-from covey.core import butler_settings
+from covey.core import butler_settings, devices
 from covey.core.harness import backend_capabilities
 from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 from covey.core.roster import NAMES
@@ -81,10 +81,17 @@ def drawn(settings, apps):
 
 
 def workspace_of(state_dir, default_workdir, settings) -> tuple:
-    """(name, directory) of the workspace the butler runs in: the settings' when it is saved still, else the default one."""
+    """(name, directory) of where a butler (or a lead) that has not run yet starts: the workspace an older release's
+    settings saved, while it is listed still; else the home, the service's ``--workdir`` (``default_workdir``,
+    docs/configuration.md 主目录与仓库地图), under the name the workspace list gives that directory (its own name when the
+    list has none). One that runs already keeps its directory (app/butler.py keep_topic)."""
     config = load_config(state_dir, default_workdir)
-    name = settings.workspace if settings.workspace in config["workspaces"] else config["default"]
-    return name, str(Path(config["workspaces"][name]).expanduser().resolve())
+    if settings.workspace in config["workspaces"] and not devices.is_device_value(config["workspaces"][settings.workspace]):
+        return settings.workspace, str(Path(config["workspaces"][settings.workspace]).expanduser().resolve())
+    home = Path(default_workdir).expanduser().resolve()
+    name = next((space for space, where in config["workspaces"].items()
+                 if not devices.is_device_value(where) and Path(where).expanduser().resolve() == home), home.name)
+    return name, str(home)
 
 
 def unwritten_topic(state_dir, apps) -> dict:

@@ -3,8 +3,8 @@
 
 - ``config``: what a topic runs with, in the words of the ``launch`` block (app/web_launch.py catalog): the model's menu key (a topic bound to a
   budget preset is that model with the preset's budget, as the 换配置 card preselects it, app/preselection.py switch_selection), its budget, work
-  mode, workspace, run mode and 敏感词脱敏. Read from topic.json alone, so a push does not ask anything else.
-- ``switch``: the page's choices checked as 开始任务 checks a model (app/web_launch.py model_choice); a place (workspace, run mode) other than the
+  mode, 敏感词脱敏 and, as read-only facts for a page that still shows them, workspace and run mode. Read from topic.json alone, so a push does not ask anything else.
+- ``switch``: the page's choices checked as 开始任务 checks a model (app/web_launch.py model_choice); a place (workspace, run mode) the payload may still carry (an older page; the new one sends none and the topic stays where it is) other than the
   topic's checked as the switch card checks it, but a worktree the Bridge would have to make now is left to the card (minutes on the NAS, which
   the inbox thread does not wait); then the rebind of the switch card (app/binding.py switch_topic: refused while a task is queued or runs, and
   for nothing changed). The model's choice is kept in the chat's usage as the card keeps it, and the topic's thread in Feishu gets the
@@ -118,12 +118,17 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     choices = available_models(env.topics, ctx)
     current = topic_config(topic, choices)
     harness, key, choice, budget, mode, redaction = model_choice(env, ctx, payload)
+    # The page no longer sends a workspace or run mode (data contract v43: both optional): none, or the topic's own, moves nothing; an
+    # older page's other one is checked and applied as before, a lead's refused. ``repos`` of the payload is not a switch's (a topic's
+    # repos are declared when it opens): ignored.
     workspace = str(payload.get("workspace") or current["workspace"])
     if lead:
         if (workspace, str(payload.get("run_mode") or current["run_mode"])) != (current["workspace"], current["run_mode"]):
             raise ValueError(LEAD_PLACE)
         if not lead_harness.can_lead(choice):
             raise ValueError(lead_harness.CANNOT_LEAD)
+        place = None
+    elif not (payload.get("workspace") or payload.get("run_mode")):
         place = None
     else:
         place = _place(env, ctx, chat, current, workspace, str(payload.get("run_mode") or current["run_mode"]), harness, choice)

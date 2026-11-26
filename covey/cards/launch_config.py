@@ -31,6 +31,7 @@ PROVIDER_ACTION = 'bridge_launch_provider'
 BUDGET_ACTION = 'bridge_launch_budget'
 WORKSPACE_ACTION = 'bridge_launch_workspace'
 MODE_ACTION = 'bridge_launch_mode'
+DEVICE_ACTION = 'bridge_launch_device'  # The 执行设备 row (COVEY_DEVICES=1 with devices): an alias, '' for 本机.
 WORK_MODE_ACTION = 'bridge_launch_work_mode'
 REDACTION_ACTION = 'bridge_launch_redaction'
 REDACTION_LABELS = {'off': '关', 'on': '开'}
@@ -52,7 +53,9 @@ DEFAULT = '默认'  # An empty choice of tier_rows' rows without a ``follows`` t
 # A row's tap on a card sent with options pages (an older release, before the fold rows): its ``page``, or
 # "" from a page's ‹ 返回. Now a redraw with that row open, or none open; the rows open in the client.
 PAGE_ACTION = 'bridge_launch_page'
-PAGES = frozenset({'', 'harness', 'provider', 'model', 'effort', 'work_mode', 'redaction', 'workspace', 'run_mode'})
+PAGES = frozenset({'', 'harness', 'provider', 'model', 'effort', 'work_mode', 'redaction', 'workspace', 'run_mode', 'device'})
+LOCAL = '本机'  # The 执行设备 row's own option (its value is '').
+HOME_ADJUST_TITLE = '调整模型和预算'
 
 
 class Setting(NamedTuple):
@@ -308,13 +311,24 @@ def summary_block(choice, lines):
              md(f'**{name}**　{tags}'.rstrip(), size='heading'), md(grey(' · '.join(lines)), size='notation')]}]}
 
 
-def launch_form_card(token, *, model, choices, effort, workspace, names, run_mode, topic_tag='', notice='',
-                     work_mode='', redaction='off', expanded=False, page='', devices=None):
+def device_setting(key, kind, current, options):
+    """A 执行设备 row: 本机, then each device (alias, title) of ``options``."""
+    return Setting(key, '执行设备', kind, current, [('', LOCAL), *options])
+
+
+def launch_form_card(token, *, model, choices, effort, workspace=None, names=(), run_mode='direct', topic_tag='', notice='',
+                     work_mode='', redaction='off', expanded=False, page='', devices=None, device='', device_options=()):
     """The launch card under the panels' title bar: the summary (summary_block), the settings list folded under
     ADJUST_TITLE (``expanded`` after a choice on it; ``page``, a row drawn open), then 其他目录… and 开始任务 in the
     form. Its token routes every callback to the record build_launch_card saved. ``devices``: the title of the device
-    each of the ``names`` that is a device's workspace is on; the summary and the 工作区 row name it."""
+    each of the ``names`` that is a device's workspace is on; the summary and the 工作区 row name it.
+
+    A topic starts in the home (docs/configuration.md 主目录与仓库地图): the card has no 工作区 or 运行方式 row and no 其他目录…, and
+    ``device_options`` ((alias, title) of each device the chat may use; COVEY_DEVICES=1 with devices only) draws one 执行设备
+    row, ``device`` its choice. A card with a ``workspace`` is one rebuilt from an older card's choices (a butler's
+    worktree launch, a card sent before): it draws the 工作区 and 运行方式 rows and 其他目录… as before."""
     devices = devices or {}
+    legacy = workspace is not None
     title = '开始任务'
     choice = choices.get(model, {})
     lost = unredacted(choice, redaction)  # 脱敏 on, a model that cannot: said, and asked once more.
@@ -327,21 +341,26 @@ def launch_form_card(token, *, model, choices, effort, workspace, names, run_mod
                                   limit=limit) if choice else []
         if choice.get('redaction'):
             settings.append(redaction_setting('redaction', REDACTION_ACTION, 'on' if redaction == 'on' else 'off'))
-        settings += [workspace_setting('workspace', WORKSPACE_ACTION, workspace, names,
-                                       last=[(MANAGE_OPTION, '⚙️ 添加或管理工作区…')],
-                                       labels={name: f'{name} · {title}' for name, title in devices.items()}),
-                     run_mode_setting('run_mode', MODE_ACTION, run_mode)]
+        if legacy:
+            settings += [workspace_setting('workspace', WORKSPACE_ACTION, workspace, names,
+                                           last=[(MANAGE_OPTION, '⚙️ 添加或管理工作区…')],
+                                           labels={name: f'{name} · {title}' for name, title in devices.items()}),
+                         run_mode_setting('run_mode', MODE_ACTION, run_mode)]
+        elif device_options:
+            settings.append(device_setting('device', DEVICE_ACTION, device, device_options))
         rows = cut_rows(settings, [setting_row(setting, token=token, open_key=page) for setting in settings], total)
         facts = [f'思考预算 {effort_text(choice, effort)}', *(['工作模式 {}（{}）'.format(*WORK_MODES[mode])] if mode else []),
                  *([f"敏感词脱敏 {REDACTION_LABELS.get(redaction, '关')}"] if choice.get('redaction') else []),
                  *(['不脱敏'] if lost else []),
-                 f'工作区 {workspace}' + (f' · 设备 {devices[workspace]}' if workspace in devices else ''), RUN_MODES['direct'] + '运行' if run_mode == 'direct' else RUN_MODES['worktree']]
+                 *([f'工作区 {workspace}' + (f' · 设备 {devices[workspace]}' if workspace in devices else ''),
+                    RUN_MODES['direct'] + '运行' if run_mode == 'direct' else RUN_MODES['worktree']] if legacy else
+                   [f'执行设备 {dict(device_options).get(device, device)}'] if device else [])]
         summary = summary_block(choice, facts) if choice else md('模型目录准备中，请稍后重新打开配置。')
-        adjust = fold('launch_adjust', md(grey(ADJUST_TITLE)), rows, expanded=bool(expanded or page), background='grey-50',
+        adjust = fold('launch_adjust', md(grey(ADJUST_TITLE if legacy else HOME_ADJUST_TITLE)), rows, expanded=bool(expanded or page), background='grey-50',
                       padding='0px 12px 0px 12px', spacing='0px')
         buttons = [{'tag': 'button', 'name': prefix + token, 'form_action_type': 'submit', 'type': style, 'width': 'fill',
                     'text': {'tag': 'plain_text', 'content': label}}
-                   for prefix, label, style in [(PICKER_PREFIX, '其他目录…', 'default'),
+                   for prefix, label, style in [*([(PICKER_PREFIX, '其他目录…', 'default')] if legacy else []),
                                                 (SUBMIT_PREFIX, UNREDACTED_START if lost else title, 'primary_filled')]]
         if lost:
             buttons[-1]['confirm'] = {'title': plain(UNREDACTED_TITLE), 'text': plain(UNREDACTED_TEXT)}
@@ -357,6 +376,6 @@ def launch_form_card(token, *, model, choices, effort, workspace, names, run_mod
                 {'tag': 'column_set', 'horizontal_spacing': '8px', 'columns': [
                     {'tag': 'column', 'width': 'weighted', 'weight': 1, 'elements': [button]} for button in buttons]},
             ]},
-        ], title + ' · 模型、思考预算、工作区、运行方式')
+        ], title + (' · 模型、思考预算、工作区、运行方式' if legacy else ' · 模型、思考预算'))
 
     return fitted(draw, total)

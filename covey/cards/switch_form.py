@@ -2,12 +2,15 @@
 
 Harness, then provider, then model, each a short select whose choice redraws the card with the next
 one's options; the model's budget and, where it has them,
-its work mode; the workspace and the run mode; 敏感词脱敏 where the model can redact, and while it
+its work mode; 敏感词脱敏 where the model can redact, and while it
 is on only such models. Each select records its choice and redraws the card; 确认更换 applies them together.
 
 The look: the topic's current choice in one grey line, then the settings
 list (cards/launch_config.py setting_row), a row whose choice differs from the topic's with its label blue
 and bold. A row's options open under it, as on the launch card (no select).
+
+A card drawn since the home start (``no_place`` in its record) has no workspace or run mode rows either; a card sent before
+still draws and applies them (compat: it is a record's own choice).
 
 A project's lead's card (the record's ``lead``, opened from its 专项卡, app/harness_switch.py) has no workspace or run mode
 rows, names the project in its subtitle and says what the lead's next turn gets (LEAD_NOTE).
@@ -35,7 +38,7 @@ CANCEL = "bridge_switch_cancel"
 PAGE = "bridge_switch_page"  # A row's tap on a card sent with options pages (84caa8a): that row drawn open.
 # What a switch does, as its card says it: the handoff's details (the transcript file, HANDOFF_ROUNDS
 # rounds in plain text, app/switch_handoff.py) are the model's to know, not the card's.
-SWITCH_NOTE = ("换 Harness、模型、预算、工作区或运行方式会开新会话，上下文不断：新会话拿到交接摘要和最近的问答，完整记录放在文件里，"
+SWITCH_NOTE = ("换 Harness、模型或预算会开新会话，上下文不断：新会话拿到交接摘要和最近的问答，完整记录放在文件里，"
                "需要时自己去读；交接了什么写在下一张任务卡上。旧会话没答的问题会取消。只改敏感词脱敏时会话不变。")
 SWITCH_GIST = "换了以后：开新会话接着做，上下文不断"  # SWITCH_NOTE's one line under the buttons, which opens on it.
 # A lead's card (``lead``): what the switch does to the lead, and its one line.
@@ -76,8 +79,9 @@ def current_line(form):
     current = form["current"]
     mode = work_mode_tag(current.get("work_mode"))
     return (f"当前：{current['label']} · 思考预算 {current.get('effort') or '模型默认'}" + (f" · {mode}" if mode else "")
-            + f"\n工作区 {place(current.get('workspace') or form.get('workspace') or '', current.get('run_mode') or 'direct')}"
-            + f" · 敏感词脱敏{'开' if current.get('redaction') else '关'}")
+            + ("\n" if form.get("no_place") else
+               f"\n工作区 {place(current.get('workspace') or form.get('workspace') or '', current.get('run_mode') or 'direct')} · ")
+            + f"敏感词脱敏{'开' if current.get('redaction') else '关'}")
 
 
 def changes(form):
@@ -92,8 +96,9 @@ def changes(form):
         "思考预算": form.get("selected_effort") != current.get("budget"),
         "工作模式": (form.get("selected_work_mode") or "") != (current.get("work_mode") or ""),
         "脱敏": (form.get("selected_redaction") == "on") != bool(current.get("redaction")),
-        "工作区": form.get("selected_workspace") != current.get("workspace"),
-        "运行方式": form.get("selected_run_mode") != current.get("run_mode"),
+        # A card drawn since the home start has neither row (``no_place``): nothing of the place can differ.
+        "工作区": not form.get("no_place") and form.get("selected_workspace") != current.get("workspace"),
+        "运行方式": not form.get("no_place") and form.get("selected_run_mode") != current.get("run_mode"),
     }
     return frozenset(label for label, changed in differs.items() if changed)
 
@@ -121,8 +126,8 @@ def switch_settings(form, limit=None):
     # switch-forms record lacks selected_workspace (compat_report: switch-form-fields)
     workspace = form.get("selected_workspace") or form.get("workspace") or ""
     names = form.get("workspaces") or [workspace]
-    if form.get("lead"):
-        return settings  # A project's lead stays where it reads.
+    if form.get("lead") or form.get("no_place"):
+        return settings  # A project's lead stays where it reads; a card of the home start has no place to choose.
     settings += [workspace_setting("workspace", WORKSPACE, workspace, names),
                  run_mode_setting("run_mode", RUN_MODE, form.get("selected_run_mode") or "direct")]
     return settings
@@ -175,7 +180,7 @@ def switch_card(form, settings, total):
     elements.append(fold(NOTE_ID, md(grey(LEAD_GIST if lead else SWITCH_GIST), size="notation"),
                          [md(LEAD_NOTE if lead else SWITCH_NOTE, size="notation")],
                          title_padding="0px 0px 0px 0px", icon_position="follow_text", spacing="4px"))
-    return styled_panel(panel_header("switch", "换配置", subtitle), elements, "换配置 · Harness、模型、工作区、脱敏")
+    return styled_panel(panel_header("switch", "换配置", subtitle), elements, "换配置 · Harness、模型、预算、脱敏")
 
 
 def handoff_block(before, after, *, summary="", rounds=0, kept=0, state="done", why=""):

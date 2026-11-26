@@ -2,8 +2,9 @@
 
 Task and question cards offer 🔁 换配置, which opens the switch card (cards/switch_form.py; a message of
 换配置 is an ordinary one): Harness, provider and model selects, the budget (and its work mode), the
-workspace and run mode, 敏感词脱敏, then 确认更换 or 取消. Confirming a new model, budget, work mode or place
-rebinds the topic under a new binding revision; a new place is another configured workspace or the other
+敏感词脱敏, then 确认更换 or 取消 (a card sent before the home start also has the workspace and run mode rows; it
+still moves the topic: ``place``). Confirming a new model, budget, work mode or place
+rebinds the topic under a new binding revision; a new place (an old card's) is another configured workspace or the other
 run mode, a worktree made then from the workspace's current commit (the old one stays). Pending questions of
 the old binding are cancelled, and cards of earlier jobs can no longer start jobs. 敏感词脱敏 alone only
 sets the topic's choice: each request goes through the relay whole, so the session goes on.
@@ -46,8 +47,7 @@ from covey.app.menu_panel import valid_token
 from covey.core.locks import resource_lock
 from covey.core.state import keyed_json_path, read_json, write_json
 from covey.core import devices
-from covey.core.workspaces import (RUN_MODES, add_topic_worktree, load_config, plan_topic_worktree, resolve_binding,
-                                    visible_workspaces)
+from covey.core.workspaces import RUN_MODES, add_topic_worktree, plan_topic_worktree, resolve_binding
 from covey.app.card_actions import action_value
 from covey.cards.topic_actions import PREFER_OTHER, RELAY, SWITCH_OPEN
 from covey.app.launch_models import available_models, catalog_changed, run_choice
@@ -107,8 +107,8 @@ def done_text(record, choice, effort, mode, place, redaction, was, switched):
                 after[k] for k in ("harness_id", "model", "effort", "work_mode")]:
             lines.append(f"模型：{current['label']}{tagged(current.get('work_mode'))} → "
                          f"{choice['label']} · 思考预算 {effort or '模型默认'}{tagged(mode)}")
-        if lead:
-            pass  # The lead stays where it reads (no workspace row on its card).
+        if lead or record.get("no_place"):
+            pass  # The lead stays where it reads; a card drawn since the home start has no workspace row either.
         elif place:
             lines.append(f"工作区：{switch_form.place(current['workspace'], current['run_mode'])} → "
                          f"{switch_form.place(place['workspace'], place['run_mode'])}"
@@ -268,6 +268,8 @@ class HarnessSwitch(CardActionQueue):
             record["selected_work_mode"] = option
         elif kind == BUDGET and (budget := parse_budget(option, record["config_revision"], choice)) is not None:
             record["selected_effort"] = budget  # 推荐 or 模型原生默认 tapped on a card sent before stays as tapped.
+        elif record.get("no_place") and kind in (WORKSPACE, RUN_MODE):
+            return False  # A card drawn since the home start has neither row: a stale tap moves nothing.
         elif kind == WORKSPACE and option in (record.get("workspaces") or ()):
             record["selected_workspace"] = option
         elif kind == RUN_MODE and option in RUN_MODES:
@@ -353,15 +355,8 @@ class HarnessSwitch(CardActionQueue):
                 if not choices:
                     self.tell(app, target, chat, NO_LEAD_MODEL, "no-lead-model", click)
                     return
-                names = [str(topic.get("workspace_name") or "")]
-            else:
-                try:
-                    config = load_config(ctx.state_dir, ctx.default_workdir)
-                    # A device's workspaces only where its ``spaces`` say (app/access.py allows_device).
-                    config = visible_workspaces(config, lambda alias: self.topics.runtime.access.allows_device(chat, alias))
-                    names = sorted(config["workspaces"], key=lambda name: -config.get("recent", {}).get(name, 0))
-                except (OSError, ValueError):
-                    names = []
+            # No workspace or run mode to choose: the card is drawn without those rows (``no_place`` in its record).
+            names = [str(topic.get("workspace_name") or "")]
             sel = switch_selection(choices, model_usage.recent(ctx.state_dir, chat), topic, names)
             # 换个 Harness on a limit's failure (cards/recovery.py OTHER_HARNESS, #36), and a 停住了 relay's 换个模型
             # (PREFER_OTHER), which opens on the topic's own model when no other Harness can take it now.
@@ -386,8 +381,8 @@ class HarnessSwitch(CardActionQueue):
                                   "workspace": sel.workspace, "run_mode": run_mode, "redaction": sel.redacting,
                                   "workdir": str(topic.get("workdir") or "")},
                       # The topic's mode is preselected while the select shows; "" is the default's.
-                      "selected_work_mode": mode, "workspaces": sel.names, "selected_workspace": sel.workspace,
-                      "selected_run_mode": run_mode, "selected_redaction": "on" if sel.redacting else "off",
+                      "selected_work_mode": mode, "no_place": True,
+                      "selected_redaction": "on" if sel.redacting else "off",
                       "workspace": sel.workspace, "topic": topic_label(ctx.state_dir, target.topic_id),
                       "active_task": active_task(self.topics, ctx.state_dir, target.topic_id),
                       # Opened from a relay card at the top level: it goes there, and so does what it answers.
@@ -521,6 +516,8 @@ class HarnessSwitch(CardActionQueue):
         place is a Bridge worktree not made yet. ValueError for a workspace gone or a directory outside git."""
         current = record["current"]
         workspace, run_mode = record.get("selected_workspace"), record.get("selected_run_mode") or "direct"
+        if record.get("no_place") or not workspace:
+            return None  # A card without the rows (drawn since the home start) never moves the topic.
         if (workspace, run_mode) == (current.get("workspace"), current.get("run_mode")):
             return None
         name, binding = resolve_binding(ctx.state_dir, ctx.default_workdir, workspace)

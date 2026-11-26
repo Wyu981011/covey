@@ -4,13 +4,13 @@ Sent once per deployment, at the top of the owner's private chat.
 ``welcome_card(view)``: the title bar (the machine), the band (with the butler: 有事直接在这里说 and what it does; without
 it: 每条消息开一个话题, why there is no butler and, in the band's 要你做 bar, how to get it), the line under it (with the
 butler: a reaction on his message means it was received, a card follows when there is something to show; without it:
-the launch card), 这台机器 (the Harnesses, those unavailable now, the default workspace), 先试一个 (each example with
+the launch card), 这台机器 (the Harnesses, those unavailable now, the home), 先试一个 (each example with
 发这句, 已发出 once tried) and a grey line. ``view``:
 
 - ``host``: the machine's name; ``harnesses``: the titles of the Harnesses this Bridge enables; ``down``: [title, why] of
   those the availability watch found unavailable;
-- ``workspace``, ``workdir``: the default workspace's name and directory; ``bare_workspace``: True while it holds no project
-  (BARE_WORKSPACE under it);
+- ``workspace``, ``workdir``: the default workspace's name and directory, the deployment's home (shown as 主目录, its directory);
+  ``bare_workspace``: True while it holds no project (BARE_WORKSPACE under it);
 - ``butler``: '' with the butler, else why not: NO_CLAUDE, OFF, TOPICS, DOWN (BUTLER_WORDS);
 - ``examples``: their words; ``tried``: the examples clicked, by their index as a string, and what came of each
   (TRIED: 已发出, the button off; anything else, FAILED, the button again); ``notice``: one grey line under them.
@@ -25,8 +25,8 @@ KIND = "bridge_welcome_try"  # 发这句: the value carries ``example``, its ind
 ICON = "start_outlined"
 TITLE = "欢迎使用 Covey"
 TRY, TRIED_LABEL = "发这句", "已发出"
-# Under the default workspace while it holds no project (``bare_workspace``): how to put one in its place.
-BARE_WORKSPACE = "里面还没有项目：点菜单「设置」→「工作区」→「＋ 添加工作区…」加上你的项目，再在「配置」页的新话题一段选它"
+# Under the home while it holds no project (``bare_workspace``): how to put one in its place.
+BARE_WORKSPACE = "里面还没有项目：把你的项目放进主目录，或在网页设置的「仓库」页加上；新话题都从主目录开始"
 STARTING, SENT, FAILED, UNCERTAIN = "starting", "sent", "failed", "uncertain"  # What became of a click on an example.
 TRIED = frozenset({STARTING, SENT, UNCERTAIN})  # The button is off: never sent twice (a failed one is offered again).
 NO_CLAUDE, OFF, TOPICS, DOWN = "no_claude", "off", "topics", "down"  # Why the private chat has no butler.
@@ -53,7 +53,7 @@ def example_rows(view) -> list:
 
 
 def machine_lines(view) -> str:
-    """这台机器: the Harnesses, those unavailable now, the default workspace."""
+    """这台机器: the Harnesses, those unavailable now, the home."""
     lines = []
     if view.get("harnesses"):
         lines.append("Harness：" + "、".join(literal(title) for title in view["harnesses"]))
@@ -61,8 +61,7 @@ def machine_lines(view) -> str:
     if down:
         lines.append("现在用不了：" + "、".join(down))
     if view.get("workspace"):
-        lines.append(f"默认工作区：{literal(view['workspace'])}" + (ui.font(f" · {literal(view['workdir'])}", "grey")
-                                                                  if view.get("workdir") else ""))
+        lines.append(f"主目录：{literal(view['workdir'] or view['workspace'])}")
         if view.get("bare_workspace"):
             lines.append(ui.font(BARE_WORKSPACE, "grey"))
     return "\n".join(lines)
@@ -86,7 +85,7 @@ def welcome_card(view) -> dict:
     elements += example_rows(view)
     if view.get("notice"):
         elements.append(note(literal(view["notice"])))
-    elements.append(note("这几句都只读，不改文件。发完点菜单「看板」，看它们做到哪、有没有在等你；新话题用的模型和工作区在「设置」里改。"))
+    elements.append(note("这几句都只读，不改文件。发完点菜单「看板」，看它们做到哪、有没有在等你；新话题用的模型在「设置」里改。"))
     headline = "每条消息开一个话题" if butler else "有事直接在这里说"
     head = panel_header(ICON, TITLE, f"装在 {view['host']}" if view.get("host") else "")
     return ui.styled(styled_panel(head, elements, f"{TITLE} · {headline}", spacing="8px"))

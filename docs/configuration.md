@@ -322,7 +322,7 @@
 
 两个变量互相独立：知识条目默认开，历史搜索要自己指一个命令。关着（`COVEY_KNOWLEDGE=0` 或没设 `COVEY_HISTORY_CMD`）时不建目录、不改规则和提示词、管家的工具清单里没有对应的工具、汇总里没有这一节。设计和实现见[管家 · 知识库](butler.md#知识库)，主人怎么用见[使用指南 · 知识条目](usage.md#知识条目)。
 
-- `COVEY_KNOWLEDGE`：默认开，设 `0`、`off`、`false`、`no` 才关。记录在 `<state>/knowledge/`；管家多 `knowledge_save`、`knowledge_update`、`knowledge_drop`、`knowledge_search`；每个话题的新会话带上条目，续接的会话只补上一轮之后新增或改动的；主人在话题里明确说“记一下 / 记住 / 记下来”时，Bridge 在那一轮结束后把检查点的 `remember` 记下来；早晚汇总多“新记的知识”。
+- `COVEY_KNOWLEDGE`：默认开，设 `0`、`off`、`false`、`no` 才关。记录在 `<state>/knowledge/`；管家的知识条目工具已换成一直列着的记忆工具（`memory_save`、`memory_revise`、`memory_search`，[butler.md 工具清单](butler.md#工具清单)），这个开关不再增减工具；每个话题的新会话带上条目，续接的会话只补上一轮之后新增或改动的；主人在话题里明确说“记一下 / 记住 / 记下来”时，Bridge 在那一轮结束后把检查点的 `remember` 记下来；早晚汇总多“新记的知识”。
 - `COVEY_HISTORY_CMD=/absolute/path/to/kb-history`：历史搜索命令的**绝对路径**（相对路径等于没设）。设了以后，主人自己的话题规则里多一行“要查以前做过的事用 `<命令> search <一句话>`”，管家多 `history_search`（跑 `<命令> search [--workspace W] [--since Nd] -- <一句话>`，自己的进程组里最多等 70 秒，超时整组杀，输出最多 20 KB）。命令本身不在这个仓库。
 - 关掉：按[改开关三步](#改开关三步)设成 `0`；已经写下的 `knowledge/` 留着。
 - 日志：`knowledge remember written=N job=#…`、`knowledge remember ignored reason=… job=#…`、`knowledge remember failed job=#…`；管家工具的 `main tool name=knowledge_save …`。
@@ -515,7 +515,7 @@
 | `COVEY_TRACK_JUDGE_SLIM` | `app/track_judge.py`（`slim_enabled`，给小模型的 Claude Code 命令行多两个选项） | 空：开，小模型的 Claude Code 带 `--setting-sources user --disable-slash-commands`，不读项目设置和技能清单；`0`、`off`、`false`、`no` 关 | 否 |
 | `COVEY_BUTLER_STATE`（旧名 COVEY_MAIN_STATE、LARK_BRIDGE_MAIN_STATE） | `core/butler_mcp.py`、（管家任务的 MCP 配置写进去，告诉工具服务 Bridge 的状态目录） | 无；缺了每次调用都回错误 | 否 |
 | `COVEY_BUTLER_JOB`（旧名 COVEY_MAIN_JOB、LARK_BRIDGE_MAIN_JOB） | `core/butler_mcp.py`（管家任务的任务键，Bridge 据此核对调用） | 无；缺了每次调用都回错误 | 否 |
-| `COVEY_PROJECT_LEAD` | `core/butler.py`（`mcp_config`：只在专项负责人的任务里把专项 id 写进 MCP 配置，要专项开着）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此只列负责人的工具） | 无；设了就列 `topic_read`、`topics_search`、`workspaces_list` 加 `project_*`，其余管家工具都不列 | 否 |
+| `COVEY_PROJECT_LEAD` | `core/butler.py`（`mcp_config`：只在专项负责人的任务里把专项 id 写进 MCP 配置，要专项开着）、`core/butler_tool_specs.py`（`listed`：MCP 服务据此只列负责人的工具） | 无；设了就列 `topic_read`、`topics_search`、`repos_list` 加 `project_*`，其余管家工具都不列 | 否 |
 | `COVEY_PROJECT_AUTOWAKE` | `core/projects.py`（`autowake_enabled`，要专项开着）、`app/project_loop.py`（`ProjectLoop` 据此决定哪些回执唤醒负责人、要不要查停滞，关着时不叫醒谁的专项照常空闲收起）、`core/butler.py`（`mcp_config` 把它交给负责人的 MCP 服务）、`core/butler_tool_specs.py`（`lead_tools`：没开时 `project_topic_start` 的说明写话题结束不会叫醒负责人） | 空：开，话题一轮结束、主人在专项的话题里说话、停滞提醒也唤醒负责人，并开停滞检查；`0`、`off`、`false`、`no` 关：只有专项的第一条回执唤醒负责人。见[架构 · 专项](architecture.md#专项) | 否 |
 | `COVEY_PROJECT_MEMORY` | `core/projects.py`（`memory_enabled`，要专项开着）、`app/project_context.py`（专项的话题开工带上记忆和资料库索引、主人答专项的问题卡记一条决定、主人发给负责人的文件和各话题的产物、交付进资料库）、`app/project_lead.py`（`library_index`：状态包的资料库）、`app/runs.py`（`bridge_rules`、`_with_rules` 取专项块） | 空：开，专项的话题开工带上专项记忆和资料库索引，主人的回答记成决定，主人发的文件和话题的产物进资料库；`0`、`off`、`false`、`no` 关：专项的话题开工不多带东西、不自动记、不收资料库。见[专项记忆与资料库](projects.md#专项记忆与资料库) | 否 |
 | `COVEY_MEMORY` | `core/memory.py`（`enabled`）；用它的：`app/memory_turn.py`（每轮那一块“记忆”）、`app/memory_collect.py`（话题一轮结束后核对 `memory`、`memory_void`）、`app/runs.py`、`app/knowledge_turn.py`、`app/project_context.py` | 空：开，原则、知识条目、专项记忆、话题记忆拼成一块“记忆”，主人说的长期要求一轮结束后记下；`0`、`off`、`false`、`no` 关：规则、续接提醒和答案卡与没有这个功能时逐字相同。见[记忆](#记忆) | 否 |

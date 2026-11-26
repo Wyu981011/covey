@@ -195,7 +195,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
         from covey.app.group_manager import GroupManager
         from covey.app.group_menu import GroupMenu
         from covey.app.harness_switch import HarnessSwitch
-        from covey.app import batch_switch, butler_knowledge, butler_search, butler_panel, butler_tools, butler_topics
+        from covey.app import (batch_switch, butler_knowledge, butler_memory, butler_search, butler_panel, butler_tools,
+                                butler_topics)
         from covey.app.butler_env import ButlerEnv
         from covey.app.butler_panel import ButlerPanel
         from covey.app.butler_tools import ButlerTools
@@ -250,7 +251,8 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             # Every tool core/butler_tool_specs.py names, by the module that runs it.
             self.butler_tools = ButlerTools(self.butler_env, handlers={**butler_tools.TOOLS, **butler_search.TOOLS,
                                                                  **butler_topics.TOOLS, **butler_panel.TOOLS,
-                                                                 **butler_knowledge.TOOLS, **batch_switch.TOOLS,
+                                                                 **butler_memory.TOOLS, **butler_knowledge.TOOLS,
+                                                                 **batch_switch.TOOLS,
                                                                  **PROJECT_BUTLER_TOOLS})
             self.butler_search = butler_search.ButlerSearch(self.butler_env)  # Reads the checkpoints topics_search looks into.
             # 独立复核 on an answer card (app/review.py, COVEY_REVIEW=1): a read-only topic opened as the butler opens one.

@@ -343,7 +343,9 @@ class TrackTopicFileTest(UnifiedCase):
         self.keep(1)
         self.assertNotIn("redaction", self.read(topic))
 
-    def test_another_workspace_waits_until_nothing_runs_in_the_slot_and_starts_a_new_session(self):
+    def test_another_workspace_in_the_settings_never_moves_a_slot_that_runs(self):
+        """主目录启动: the butler keeps its directory once it has run (app/butler.py keep_topic), and so does each track,
+        which takes the main thread's; its session goes on."""
         from covey.core.workspaces import add_workspace
         topic = self.keep(1)
         pointer = self.state / "topics" / topic / self.claude.spec.session_filename
@@ -353,17 +355,10 @@ class TrackTopicFileTest(UnifiedCase):
         add_workspace(self.state, self.ctx.default_workdir, str(other))
         self.settings(workspace="other")
         old = self.read(topic)["workdir"]
-        job = SimpleNamespace(job_id=1, message_id="om_x", topic_id=topic, chat_id=CHAT, execution_started=True)
-        self.app.runtime.jobs.register(job)
-        self.keep(1)
-        self.assertEqual(self.read(topic)["workdir"], old)  # A job runs in the slot: not yet.
-        self.assertTrue(pointer.exists())
-        self.app.runtime.jobs.unregister(job)
         self.keep(1)
         data = self.read(topic)
-        self.assertEqual((data["workspace_name"], data["workdir"]), ("other", str(other.resolve())))
-        self.assertEqual(data["binding_revision"], 2)
-        self.assertIsNone(self.claude.sessions.read_session_id(pointer))
+        self.assertEqual((data["workdir"], data["binding_revision"]), (old, 1))
+        self.assertEqual(self.claude.sessions.read_session_id(pointer), "11111111-1111-4111-8111-111111111111")
 
     def test_a_slot_outside_1_to_4_is_refused_and_writes_nothing(self):
         for slot in (0, 5, -1, "1", None):

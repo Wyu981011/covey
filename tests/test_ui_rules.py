@@ -315,12 +315,10 @@ class ModelChoiceTest(UnifiedCase):
     def test_a_launch_never_starts_from_the_nameless_model(self):
         from covey.app.preselection import launch_selection, switch_selection
         from covey.core.defaults import RECOMMENDED
-        config = {"default": "w", "workspaces": {"w": "/absolute/w"}}
         saved = {"model_choice": "claude:default", "effort": RECOMMENDED, "workdir": "/absolute/w"}
-        found = launch_selection(self.MENU, [], config, model="claude:default", workspace="w", work_mode="", fresh=True,
-                                 saved=saved)
+        found = launch_selection(self.MENU, [], model="claude:default", work_mode="", fresh=True, saved=saved)
         self.assertEqual((found.model, found.effort), ("claude:opus", "xhigh"))
-        picked = launch_selection(self.MENU, [], config, model="claude:opus", workspace="w", work_mode="", fresh=False,
+        picked = launch_selection(self.MENU, [], model="claude:opus", work_mode="", fresh=False,
                                   draft={"model": "claude:default", "effort": "default"})
         self.assertEqual((picked.model, picked.effort), ("claude:default", "default"))  # Tapped on a card sent before.
         usual = [{"model": "claude:opus", "effort": RECOMMENDED, "at": 1}]

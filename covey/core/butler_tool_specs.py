@@ -43,6 +43,48 @@ CRITERIA = {"type": "array", "maxItems": 4, "items": {"type": "string"},
 CRITERIA_CHANGE = {"type": "array", "maxItems": 4, "items": {"type": "string"},
                    "description": "可选，主人要改这个话题的完成标准时给出新的 1 到 4 条（给空数组就去掉）；不改不填"}
 
+# 主目录启动 (docs/configuration.md 主目录与仓库地图): a topic starts in the home and names the repositories it uses (the repo
+# map's names, core/repomap.py); ``workspace`` is an older session's argument, taken as one repository read. Short: agy's room.
+REPOS_ARG = {"type": "array", "maxItems": 10, "description": "可选，要用的仓库（repos_list 的名字），write 是要改它",
+             "items": {"type": "object", "required": ["name", "mode"], "properties": {
+                 "name": {"type": "string"}, "mode": {"type": "string", "enum": ["read", "write"]}}}}
+WORKSPACE_ARG = {"type": "string", "description": "旧参数，同 repos 里只读的一项"}
+WHY_ARG = {"type": "string", "description": "一行中文：为什么这样配置"}
+
+# 记忆 (docs/butler.md 记忆): one set of tools for the owner's 规矩, 决定 and 资料 (app/butler_knowledge.py memory_save,
+# memory_revise, memory_search), always listed. The principle_* and knowledge_* tools of older sessions are run as these
+# (RENAMED_TOOLS).
+MEMORY_KINDS = ("rule", "note", "decision")
+MEMORY_SCOPES = ("global", "project", "topic")
+MEMORY_TOOLS = (
+    {"name": "memory_save",
+     "description": "记一条记忆：主人说“以后……”“记住……”“记一下……”时用。kind：rule 规矩（以后都照做）、note 资料（事实、做法、坑）、"
+                    "decision 决定（题和主人的回答）；scope：global 通用、project 本专项、topic 本话题。text 用主人的说法写一句，"
+                    "主人只管某类事时照写那一类，不写机密，不写“今天”“现在”这类会过时的说法。一次性的要求（只对这件事、这一轮）不记，"
+                    "意思相同的不重复记。记完回复“已记下：……”。",
+     "input_schema": {"type": "object", "required": ["text", "kind", "scope"], "properties": {
+         "text": {"type": "string", "description": "一句话，200 字内（决定 600 字内）"},
+         "kind": {"type": "string", "enum": list(MEMORY_KINDS)},
+         "scope": {"type": "string", "enum": list(MEMORY_SCOPES)},
+         "title": {"type": "string", "description": "可选，标题，40 字内"},
+         "why": {"type": "string", "description": "可选，为什么，200 字内"},
+         "repos": {"type": "array", "maxItems": 10, "items": {"type": "string"}, "description": "可选，只对这些仓库成立"}}}},
+    {"name": "memory_revise",
+     "description": "改一条记忆（key 是短码或旧 id，如 R7K2、p1a2b3c）：update 改正文或标题；supersede 用新的替代，旧的收进历史；"
+                    "retire 不再成立或已办完，收进历史。先用 memory_search 找到 key，对不上是哪条时问主人。改完回复改了哪条。",
+     "input_schema": {"type": "object", "required": ["key", "action"], "properties": {
+         "key": {"type": "string", "description": "记忆的短码或旧 id"},
+         "action": {"type": "string", "enum": ["update", "supersede", "retire"]},
+         "text": {"type": "string", "description": "update、supersede 的新正文"},
+         "title": {"type": "string", "description": "可选，新标题，40 字内"}}}},
+    {"name": "memory_search",
+     "description": "查记忆（规矩、决定、资料）：query 写几个词或一句话，留空列最近的；每行是短码 · 类型 · 范围 · 正文。"
+                    "查以前定过什么、某条记过没有时先用它，没找到再 topics_search。",
+     "input_schema": {"type": "object", "required": ["query"], "properties": {
+         "query": {"type": "string", "description": "搜索词"},
+         "limit": {"type": "integer", "minimum": 1, "maximum": 30, "description": "最多几条，默认 10"}}}},
+)
+
 TOOLS = (
     {"name": "topics_list",
      "description": "列出主人私聊里的话题：等你 / 有结果没看 / 在做 / 最近的，每行是 T 号、标题、所在组、工作区、Harness、"
@@ -75,8 +117,8 @@ TOOLS = (
          "job": {"type": "string", "description": "可选，轮次编号（如 2906 或 #2906）：读这一轮，turns 是到它为止的几轮"},
          "turns": {"type": "integer", "minimum": 1, "maximum": 5,
                    "description": "几轮，默认最近 2 轮；给了 job 时默认 1"}}}},
-    {"name": "workspaces_list",
-     "description": "列出可用的工作区：名字、路径、主人写的一行用途、最近在这里开的话题。开话题前用它选工作区。",
+    {"name": "repos_list",
+     "description": "列出仓库地图：名字、状态（可写/只读/冻结）、用途、路径、最近用它的话题。开话题要写 repos 前用它。",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "topic_start",
      "description": "为一件新的事开一个话题去做（可能超过一两分钟的、要改代码或文件的、主人说开话题的），而不是在自己这一轮里做；"
@@ -85,18 +127,18 @@ TOOLS = (
                     "prompt 是交给话题的任务说明：用主人的说法写清楚要做什么、范围和主人提的约束（路径、别做什么、怎么交付），"
                     "可以补指代的是哪个话题、之前定过什么（最多 200 字，只写对话里的事实）。不要写“开个话题”“单开一个”"
                     "“放到 T 号里”这类路由的话，不要写对你说的话，不要抄附件的本机路径；不加你自己的计划和验收标准。"
-                    "主人这条消息的原文和附件 Bridge 会自动附在后面。话题一律直接开工"
-                    "（运行方式是独立 worktree 的除外：它在话题里出一张预填好的启动卡，等主人点开始）。马上返回，不要等它做完：进展会出现在之后消息的快照里。"
+                    "主人这条消息的原文和附件 Bridge 会自动附在后面。话题从主目录直接开工，马上返回，不要等它做完：进展会出现在之后消息的快照里。"
                     + DONE,
-     "input_schema": {"type": "object", "required": ["title", "prompt", "workspace", "readonly", "user_requested", "why"],
+     "input_schema": {"type": "object", "required": ["title", "prompt", "readonly", "user_requested", "why"],
                       "properties": {
          "title": {"type": "string", "description": "话题的标题，说是哪件事：中文、中文标点（：，不用半角 : ,），20 字以内"},
          "prompt": {"type": "string", "description": TASK},
          "attachments": ATTACHMENTS,
-         "workspace": {"type": "string", "description": "工作区名（workspaces_list 里的），不是任意路径"},
+         "repos": REPOS_ARG,
+         "workspace": WORKSPACE_ARG,
          "readonly": {"type": "boolean", "description": "只查看、只回答，不改任何文件、不执行有副作用的命令时为 true"},
          "user_requested": {"type": "boolean", "description": "主人在最新这条消息里亲口要求做这件事（直接下令、“去做”“开个话题”）为 true；你自己推断的为 false"},
-         "why": {"type": "string", "description": "一行中文：为什么选这个工作区和配置"},
+         "why": WHY_ARG,
          "criteria": CRITERIA,
          "harness": {"type": "string", "description": HARNESS_ARG},
          "model": {"type": "string", "description": MODEL_ARG},
@@ -134,26 +176,7 @@ TOOLS = (
                     "主人说某个话题不用管了时，给 remove: true，把它从看板和快照里撤下；话题本身不动，它有新问题或新结果时会自己回来。",
      "input_schema": {"type": "object", "required": ["topic"], "properties": {
          "topic": TOPIC, "remove": {"type": "boolean", "description": "true：从看板撤下，而不是提前"}}}},
-    {"name": "principle_save",
-     "description": "记下主人说的一条长期适用的原则或偏好（“以后……”“原则是……”“记住……”“都要……”），之后每个话题和你自己的每一轮"
-                    "都会看到它，主人不用再重说。一次性的要求（只对这件事、这一轮）不记。scope 选 owner 是通用的、所有工作区都适用；"
-                    "只对某个工作区（仓库、项目）成立的选 workspace 并写工作区名。text 用主人的说法概括成一句，最多 200 字，"
-                    "主人的话只管某一类事时照写那一类（如“监视进程这类用 Codex，其他任务照常”），不扩大成所有任务，"
-                    "不写令牌、密码这类机密。同一组里已有意思相同的会返回已有的 id，不重复记。记下后在回复里说一句“已记下：……”。",
-     "input_schema": {"type": "object", "required": ["scope", "text"], "properties": {
-         "scope": {"type": "string", "enum": ["owner", "workspace"],
-                   "description": "owner：通用，所有话题都看到；workspace：只有这个工作区里的话题看到（你自己在这个工作区时也看到）"},
-         "workspace": {"type": "string", "description": "scope 为 workspace 时必填：工作区名（workspaces_list 里的）"},
-         "text": {"type": "string", "description": "原则本身，一句话，最多 200 字"}}}},
-    {"name": "principle_delete",
-     "description": "主人说“忘掉/删掉那条原则”“以后不用……了”时，删掉记下的那条原则。先用 principles_list 找到它的 id；"
-                    "对不上是哪条时问主人。删完在回复里说删了哪条。",
-     "input_schema": {"type": "object", "required": ["id"], "properties": {
-         "id": {"type": "string", "description": "原则的 id（principles_list 每行开头的，如 p1a2b3c）"}}}},
-    {"name": "principles_list",
-     "description": "列出记下的主人的原则：每行是 id · 通用或工作区名 · 记下的日期 · 正文。主人问记了哪些原则、要删某条、"
-                    "或你要确认某条有没有记过时用。",
-     "input_schema": {"type": "object", "properties": {}}},
+    *MEMORY_TOOLS,
     {"name": "settings_panel",
      "description": "主人要看或改管家的设置时，在私聊里发出设置卡；设置只能由主人在卡上改，你不能改。",
      "input_schema": {"type": "object", "properties": {}}},
@@ -174,57 +197,22 @@ TOOLS = (
 NAMES = tuple(tool["name"] for tool in TOOLS)
 
 # Tools only some deployments have. The MCP server lists them when its environment says so (``listed``;
-# core/butler.py mcp_config hands the two variables on from the Bridge's own): without the variable a tool is
-# not in the list, and a call to it is refused. The variable names are core/knowledge.py's ENV and HISTORY_ENV.
+# core/butler.py mcp_config hands the variable on from the Bridge's own): without it a tool is not in the list, and a
+# call to it is refused. HISTORY_ENV is core/knowledge.py's HISTORY_ENV; KNOWLEDGE_ENV, its ENV, lists nothing any more
+# (the memory tools in TOOLS took the knowledge tools' place) and is named here for the readers that hand it on.
 KNOWLEDGE_ENV = "COVEY_KNOWLEDGE"
 HISTORY_ENV = "COVEY_HISTORY_CMD"
-ENTRY_ID = {"type": "string", "description": "条目的 id（knowledge_search 每行开头的，如 k1a2b3c）"}
-KNOWLEDGE_TOOLS = (
-    {"name": "knowledge_save",
-     "description": "记一条知识条目：主人说“记一下……”“记下来”时用。只记主人说的，不要自己总结着记；说“把 T483 的结论记一下”时，"
-                    "先用 topic_read 读那一轮再起草。text 用主人的说法概括成一句，最多 200 字，不写令牌、密码这类机密。"
-                    "scope 选 owner 是通用的；只对某个工作区成立的选 workspace 并写工作区名。同一组里已有意思相同的会返回已有的 id，"
-                    "不重复记。记完在回复里列出 id 和正文。",
-     "input_schema": {"type": "object", "required": ["scope", "kind", "text"], "properties": {
-         "scope": {"type": "string", "enum": ["owner", "workspace"],
-                   "description": "owner：通用，所有话题都带上；workspace：只有这个工作区里的话题带上"},
-         "workspace": {"type": "string", "description": "scope 为 workspace 时必填：工作区名（workspaces_list 里的）"},
-         "kind": {"type": "string", "enum": ["decision", "practice", "pitfall", "fact", "question"],
-                  "description": "decision 决定，practice 做法，pitfall 坑，fact 事实，question 待定"},
-         "text": {"type": "string", "description": "条目本身，一句话，最多 200 字"},
-         "why": {"type": "string", "description": "可选：为什么，最多 200 字"},
-         "source_topic": {"type": "string", "description": "可选：这条来自哪个话题（T 号，如 T483）"}}}},
-    {"name": "knowledge_update",
-     "description": "主人说“改成……”时，改写一条知识条目：写一条新的取代旧的（新 id），旧的变成已取代、仍可在 knowledge_search 的 history 里查到。"
-                    "先用 knowledge_search 找到 id；kind 和 why 不给就沿用原来的。",
-     "input_schema": {"type": "object", "required": ["id", "text", "reason"], "properties": {
-         "id": ENTRY_ID, "text": {"type": "string", "description": "改写后的正文，一句话，最多 200 字"},
-         "kind": {"type": "string", "enum": ["decision", "practice", "pitfall", "fact", "question"]},
-         "why": {"type": "string", "description": "改写后的原因；不给就沿用"},
-         "reason": {"type": "string", "description": "为什么改（主人的说法）"}}}},
-    {"name": "knowledge_drop",
-     "description": "主人说“删了”“作废”时，把一条知识条目作废（记录留着，不再带进任何话题）。先用 knowledge_search 找到 id。",
-     "input_schema": {"type": "object", "required": ["id", "reason"], "properties": {
-         "id": ENTRY_ID, "reason": {"type": "string", "description": "为什么作废（主人的说法）"}}}},
-    {"name": "knowledge_search",
-     "description": "搜知识条目：query 用空格隔开几个词，命中的词越多越靠前；每行是 id · 组 · 类型 · 日期 · 正文 · 来源 T 号。"
-                    "查以前做过的事、之前的决定时第一步用它；没找到再 topics_search（按链接、路径、关键词找话题）。",
-     "input_schema": {"type": "object", "required": ["query"], "properties": {
-         "query": {"type": "string", "description": "搜索词；留空列出最近的"},
-         "workspace": {"type": "string", "description": "可选：只搜通用和这个工作区的"},
-         "history": {"type": "boolean", "description": "true：也搜已被取代、已作废的"}}}},
-)
 HISTORY_TOOLS = (
     {"name": "history_search",
      "description": "搜 Claude、Codex 和 Bridge 的全部历史轮次（主人的一句请求加之后做的事）：问以前做过的事、之前的做法，"
-                    "knowledge_search 和 topics_search 都没找到时用。query 写一句话描述；返回命中的轮次：时间、工作区、T 号、请求、"
+                    "memory_search 和 topics_search 都没找到时用。query 写一句话描述；返回命中的轮次：时间、工作区、T 号、请求、"
                     "做了哪些步骤、结论开头和原文位置。最多等 70 秒；超时或没有这个命令会直接说。",
      "input_schema": {"type": "object", "required": ["query"], "properties": {
          "query": {"type": "string", "description": "一句话描述要找的事"},
          "workspace": {"type": "string", "description": "可选：只查这个工作区"},
          "since": {"type": "string", "description": "可选：只查最近多久，如 30d（天数）"}}}},
 )
-ALL_NAMES = NAMES + tuple(tool["name"] for tool in KNOWLEDGE_TOOLS + HISTORY_TOOLS)
+ALL_NAMES = NAMES + tuple(tool["name"] for tool in HISTORY_TOOLS)
 
 
 # 管家 (COVEY_BUTLER_RULES=1, app/prompts.py BUTLER_RULES): topic_start's description says what the rules say, not that
@@ -254,15 +242,15 @@ PROJECT_TOOLS = (
     {"name": "project_topic_start",
      "description": "为这个专项开一个话题去做一件事，马上返回，不要等它做完：话题结束后会有下一轮叫醒你。"
                     "prompt 是交给话题的任务说明：做什么、范围、主人提的约束、交付什么，用清楚的话写，不抄本机路径，不加你自己的计划之外的内容。"
-                    "同时在做的话题不设上限；一件独立的事一个话题。工作区用 workspaces_list 选。"
-                    "话题一律直接开工。",
-     "input_schema": {"type": "object", "required": ["title", "prompt", "workspace", "readonly", "why"], "properties": {
+                    "同时在做的话题不设上限；一件独立的事一个话题。话题从主目录直接开工。",
+     "input_schema": {"type": "object", "required": ["title", "prompt", "readonly", "why"], "properties": {
          "title": {"type": "string", "description": "话题的标题，说是哪件事：中文、中文标点，20 字以内"},
          "prompt": {"type": "string", "description": "交给话题的任务说明。" + ASK_NOTE},
-         "workspace": {"type": "string", "description": "工作区名（workspaces_list 里的），不是任意路径"},
+         "repos": REPOS_ARG,
+         "workspace": WORKSPACE_ARG,
          "readonly": {"type": "boolean", "description": "只查看、只回答，不改任何文件、不执行有副作用的命令时为 true"},
          "user_requested": {"type": "boolean", "description": "主人在这个专项里亲口要求做这件事为 true；你自己推断的为 false"},
-         "why": {"type": "string", "description": "一行中文：为什么选这个工作区和配置"},
+         "why": WHY_ARG,
          "criteria": CRITERIA,
          "harness": {"type": "string", "description": HARNESS_ARG},
          "model": {"type": "string", "description": MODEL_ARG},
@@ -298,12 +286,12 @@ PROJECT_TOOLS = (
      "input_schema": {"type": "object", "required": ["text"], "properties": {
          "text": {"type": "string", "description": "目标和完成标准，一两句，最多 200 字"}}}},
     {"name": "project_remember",
-     "description": "记进专项记忆：这个专项里长期适用的决定、约束、联系人和事实，之后每次重建会话都会带上。"
-                    "只记主人说过的或已经定下的，不写令牌、密码这类机密；同类同文的不重复记；主人在专项卡上删掉的不要再记回去。",
+     "description": "记进专项记忆：本专项长期适用的规矩（rule）或资料（note：事实、联系人、做法）。"
+                    "只记主人说过的或定下的，不写机密；同文不重复记；主人删掉的不再记回去。",
      "input_schema": {"type": "object", "required": ["kind", "text"], "properties": {
-         "kind": {"type": "string", "enum": ["decision", "constraint", "contact", "fact"],
-                  "description": "decision 决定，constraint 约束、做法和坑，contact 联系人，fact 事实"},
-         "text": {"type": "string", "description": "条目本身，一句话，最多 200 字"}}}},
+         "kind": {"type": "string", "enum": ["rule", "note"]},
+         "title": {"type": "string", "description": "可选，标题，40 字内"},
+         "text": {"type": "string", "description": "一句话，200 字内"}}}},
     {"name": "project_memory_revise",
      "description": "改专项记忆里已有的一条（id 是专项记忆每行开头〔〕里的）：口径变了、记错了、两条说的是一件事，都用它，"
                     "不要再追加一条“XXX 作废”。op：update 改这条的正文或种类（改之前的原文留在修改记录里）；"
@@ -421,15 +409,20 @@ def with_brief(tool) -> dict:
     return tool
 
 
-# The lead's two tools were project_thread_start and project_thread_send in older releases. The list names only the new ones;
-# a call under an old name (a session that began earlier, a server of an older release) is run as the new one.
-RENAMED_TOOLS = {"project_thread_start": "project_topic_start", "project_thread_send": "project_topic_send"}
+# The lead's two tools were project_thread_start and project_thread_send in older releases, and the butler had workspaces_list,
+# principle_* and knowledge_*. The list names only the new ones; a call under an old name (a session that began earlier, a
+# server of an older release) is run as the new one, its arguments as they were (app/butler_tools.py).
+RENAMED_TOOLS = {"project_thread_start": "project_topic_start", "project_thread_send": "project_topic_send",
+                 # 主目录启动 and the one memory (docs/butler.md): no longer listed; app/butler_tools.py takes their arguments.
+                 "workspaces_list": "repos_list", "principle_save": "memory_save", "knowledge_save": "memory_save",
+                 "principle_delete": "memory_revise", "knowledge_update": "memory_revise", "knowledge_drop": "memory_revise",
+                 "principles_list": "memory_search", "knowledge_search": "memory_search"}
 
 
 def current_name(name):
     """``name``, or the new name of a tool the list no longer has under it (RENAMED_TOOLS)."""
     return RENAMED_TOOLS.get(name, name) if isinstance(name, str) else name
-LEAD_READ = ("topics_list", "topic_read", "topics_search", "workspaces_list")  # What of TOOLS the lead has: it reads, the topics act.
+LEAD_READ = ("topics_list", "topic_read", "topics_search", "repos_list")  # What of TOOLS the lead has: it reads, the topics act.
 # What else of TOOLS the lead has: topics_switch only proposes, on a card the owner confirms (app/batch_switch.py).
 LEAD_SHARED = LEAD_READ + ("topics_switch",)
 
@@ -441,7 +434,7 @@ PROJECTS_ENV = "COVEY_PROJECTS"
 START_PROJECT = {"type": "boolean", "description": "这件事要分成几个话题、跨几天持续推进（例如主人要长期跟进、反复推进），"
                                                    "或主人直接说“开个专项”“转成专项”时填 true：不开普通话题，开一个专项，由它的负责人去开专项的话题。"
                                                    "这时 title 是专项名，prompt 写目标和完成标准（主人的说法），"
-                                                   "workspace 是负责人和专项的话题默认用的工作区；"
+                                                   "repos 是专项常用的仓库；"
                                                    "harness、model、effort 这时是负责人用的，主人点名负责人用哪个（如“负责人用 Codex”）才填，"
                                                    "负责人只能用能接 Bridge 工具的 Harness（不行时这次调用会说明）；主人要专项的话题用哪个模型，写进 prompt，负责人开话题时照办；"
                                                    "主人要把已有的话题收进这个专项时，把它们的 T 号放进 topics；拿不准就不要填"}
@@ -527,22 +520,22 @@ def lead_tools(environ=None) -> tuple:
 # loads the others up front first and lists these by name once the room is taken: they work the same, the model reads
 # one's schema when it calls it. Its budget is the skills' too, and over it agy drops the largest tool whole, which was
 # topic_start (T750: the butler forked a finished topic in its place).
-SECONDARY = frozenset({"topic_priority", "principle_save", "principle_delete", "principles_list", "settings_panel", "topics_switch",
+SECONDARY = frozenset({"topic_priority", "settings_panel", "topics_switch", "repos_list",
                        "project_memory_revise",  # T852: a lead revises a line now and then; agy reads its schema when it calls it.
-                       *(tool["name"] for tool in KNOWLEDGE_TOOLS + HISTORY_TOOLS), TIDY_TOOL["name"]})
+                       *(tool["name"] for tool in MEMORY_TOOLS + HISTORY_TOOLS), TIDY_TOOL["name"]})
 # The tools that hand work to topics, what a turn of the butler or of a lead is for: such a Harness loads them first.
 HANDING = frozenset({"topic_start", "topic_send", "topic_fork", "project_send", "project_topic_start", "project_topic_send"})
 assert SECONDARY | HANDING <= set(ALL_NAMES + BUTLER_PROJECT_NAMES + PROJECT_NAMES) and not SECONDARY & HANDING
 
 
 def listed(environ) -> tuple:
-    """The tools the MCP server lists in ``environ``: TOOLS, with the knowledge tools unless COVEY_KNOWLEDGE is off and
-    history_search when COVEY_HISTORY_CMD is an absolute path; unless COVEY_BUTLER_RULES is off topic_start's
+    """The tools the MCP server lists in ``environ``: TOOLS (the memory tools among them), with history_search when
+    COVEY_HISTORY_CMD is an absolute path; unless COVEY_BUTLER_RULES is off topic_start's
     description is the butler's (``butler_tools``). The Bridge hands the variable on (core/butler.py mcp_config).
     A project's lead (COVEY_PROJECT_LEAD set) has ``lead_tools`` and nothing else."""
     if str(cenv.get(LEAD_ENV, "", environ)).strip():
         return lead_tools(environ)
-    extra = KNOWLEDGE_TOOLS if env_flag(KNOWLEDGE_ENV, True, environ) else ()
+    extra = ()
     if str(cenv.get(HISTORY_ENV, "", environ)).strip().startswith("/"):
         extra += HISTORY_TOOLS
     tools = TOOLS + extra

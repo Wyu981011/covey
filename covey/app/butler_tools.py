@@ -9,11 +9,12 @@ with COVEY_BUTLER_TRACKS=1 the tracks), its status is in RUNNING), only a tool i
 ``main tool name=… ok=… ms=… job=…``. The loop holds no lock: a handler takes the locks it needs and sends to
 Feishu outside them (rules 1 and 2).
 
-The handlers here, in TOOLS: the read-only ones (topics_list, topic_read, workspaces_list: records read without
+The handlers here, in TOOLS: the read-only ones (topics_list, topic_read, repos_list: records read without
 their locks; topics_search, which looks into every turn, is app/butler_search.py), topic_priority (<state>/board-priority.json; with ``remove``, the topic off the pinned board:
 app/pins.py dismiss) and question_answer, which answers a topic's pending
 choice question through the same path as 提交回答 on its card (app/questions.py submit_answer), and the owner's
-principles: principle_save, principle_delete, principles_list (core/principles.py, <state>/principles.json). A project's lead's
+principles: principle_save, principle_delete, principles_list (core/principles.py, <state>/principles.json), which an
+older session's or server's request still names (the memory tools that took their place are app/butler_memory.py's). A project's lead's
 tools (project_*) are app/project_tools.py's, run by the same loop for the lead's job (it is of the family, ``is_butler_topic``).
 """
 from __future__ import annotations
@@ -527,9 +528,40 @@ def principles_list(env, request):
     return reply(True, "\n".join(map(principle_row, rows)), count=len(rows))
 
 
+# 仓库地图 (docs/configuration.md 主目录与仓库地图): repos_list, workspaces_list's successor (an older session's call to that
+# name comes here too, core/butler_tool_specs.py RENAMED_TOOLS). app/repos_turn.py ``repos_list(env) -> dict`` answers it once
+# it is there; until then the map is read here, and a deployment with no map yet hears its saved workspaces.
+
+def repos_list(env, request):
+    from covey.app import repos_turn
+    made = getattr(repos_turn, "repos_list", None)
+    if callable(made):
+        return answer_of(made(env))
+    from covey.core import repomap
+    repos = repomap.read(env.state_dir)
+    if not repos:
+        listed = workspaces_list(env, request)
+        if not listed.get("ok"):
+            return reply(False, "仓库地图是空的，也没有登记的工作区。")
+        return reply(True, "仓库地图还没有建，下面是登记的工作区（名字可以写进 repos）：\n" + listed["text"],
+                     **listed.get("data", {}))
+    words = {"active": "可写", "readonly": "只读", "frozen": "已冻结"}
+    lines = [" · ".join(part for part in (repo.name, words.get(repo.status, repo.status),
+                                          f"用途：{repo.note}" if repo.note else "", repo.path) if part) for repo in repos]
+    return reply(True, "\n".join(lines), count=len(repos))
+
+
+def answer_of(value) -> dict:
+    """An answer {ok, text, data} of what another module's handler gave: as it is, or said as text."""
+    if isinstance(value, dict) and isinstance(value.get("text"), str):
+        return {"ok": bool(value.get("ok", True)), "text": value["text"],
+                "data": value.get("data") if isinstance(value.get("data"), dict) else {}}
+    return reply(bool(value), str(value or "没有结果"))
+
+
 # The project tools of a lead (app/project_tools.py) are listed to a lead's session only (core/butler_tool_specs.py); their
-# handlers refuse any other job.
-TOOLS = {"topics_list": topics_list, "topic_read": topic_read, "workspaces_list": workspaces_list,
+# handlers refuse any other job. The old names (workspaces_list, principle_*) stay for a request an older server wrote.
+TOOLS = {"topics_list": topics_list, "topic_read": topic_read, "repos_list": repos_list, "workspaces_list": workspaces_list,
          "topic_priority": topic_priority, "question_answer": question_answer,
          "principle_save": principle_save, "principle_delete": principle_delete, "principles_list": principles_list,
          **project_tools.TOOLS}

@@ -22,7 +22,7 @@ from covey.app.butler_env import ButlerEnv
 from covey.cards import dispatch_card as view
 from covey.cards.elements import find_element
 from covey.core import dispatch_records as records
-from covey.core import butler_opened, butler_settings
+from covey.core import butler_opened
 from covey.core.jobs import BridgeReplyJob, upsert_job_record
 from covey.core.butler_requests import Request
 from covey.core.state import read_object, write_json
@@ -377,8 +377,10 @@ class CreatedTest(DispatchCase):
     def test_an_older_card_of_a_topic_waiting_on_its_launch_card_still_says_it_waits_for_the_owner(self):
         # Rule 10: the 派发卡 a release before left when topic_start opened a topic (kind start), here one waiting on its
         # launch card, is still drawn as it was.
-        butler_settings.update(self.ctx.state_dir, topic_defaults=butler_settings.TopicDefaults(run_mode="worktree"))
-        topic = self.start("old", harness="codex")["data"]["topic_id"]
+        plan_start = butler_topics.plan_start  # An older release's plan that waits for 开始 (no new topic waits any more).
+        with mock.patch.object(butler_topics, "plan_start",
+                               side_effect=lambda *a, **k: {**plan_start(*a, **k), "run_mode": "worktree"}):
+            topic = self.start("old", harness="codex")["data"]["topic_id"]
         self.assertEqual(self.dispatch_sends(), [])
         token = self.token("old")
         record = records.new_record(token=token, chat_id=CHAT, topic_id=topic, job_key="main-job", mid=self.job_key("old"),

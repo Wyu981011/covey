@@ -18,7 +18,7 @@ from unittest import mock
 from support.world import UnifiedCase
 from support.butler import switch_on
 from covey.core import env as cenv
-from covey.app import compact_runner, detached, idle_compaction, runner_spawn
+from covey.app import butler_harness, compact_runner, detached, idle_compaction, runner_spawn
 from covey.app import butler as session
 from covey.backends.claude.compaction import command as compaction_command
 from covey.backends.claude.argv import stream_argv, turn_env
@@ -226,19 +226,21 @@ class RoutingTest(ButlerUnifiedCase):
         self.settings(workspace='other')
         return other
 
-    def test_another_workspace_waits_until_nothing_runs_and_starts_a_new_session(self):
+    def test_another_workspace_in_the_settings_never_moves_a_butler_that_runs(self):
+        """主目录启动 (docs/configuration.md 主目录与仓库地图): no card sets the butler's workspace any more, and a butler that
+        has run keeps its directory and its session whatever an older release saved; a new one starts there."""
         self.send('om_1')
+        first = (self.topic()['workspace_name'], self.topic()['workdir'])
         pointer = self.state / 'topics' / BUTLER / self.app.apps['claude'].spec.session_filename
         pointer.write_text('11111111-1111-4111-8111-111111111111\n')
         other = self.another_workspace()
-        self.app.butler.keep_topic(self.ctx, self.app.apps['claude'], CHAT)
-        self.assertNotEqual(self.topic()['workdir'], str(other.resolve()))  # A job is here.
         self.done(self.job_of('om_1'))
         self.send('om_2')
-        self.assertEqual((self.topic()['workspace_name'], self.topic()['workdir']), ('other', str(other.resolve())))
-        self.assertEqual(self.topic()['binding_revision'], 2)
-        self.assertEqual(self.job_of('om_2').binding_revision, 2)
-        self.assertIsNone(self.app.apps['claude'].sessions.read_session_id(pointer))
+        self.assertEqual((self.topic()['workspace_name'], self.topic()['workdir']), first)
+        self.assertEqual(self.topic()['binding_revision'], 1)
+        self.assertEqual(self.app.apps['claude'].sessions.read_session_id(pointer), '11111111-1111-4111-8111-111111111111')
+        self.assertEqual(butler_harness.workspace_of(self.state, self.ctx.default_workdir, butler_settings.load(self.state)),
+                         ('other', str(other.resolve())))  # Where a butler that never ran would start.
 
     def test_another_harness_waits_until_nothing_runs_and_starts_a_new_session(self):
         """T614: the butler's Harness is a setting. A turn under way keeps the one it has; once nothing runs the topic

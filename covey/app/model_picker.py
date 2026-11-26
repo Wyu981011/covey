@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from covey.app.card_queue import CardActionQueue
 from covey.app.form_cards import LAUNCH_FORM_LOCK
-from covey.app.launch import (device_harnesses, form_draft, form_topic_root, rebuild_launch_card, refuse_retired_form,
+from covey.app.launch import (alias_harnesses, device_harnesses, form_draft, form_topic_root, rebuild_launch_card, refuse_retired_form,
                                        retired_form, retired_form_at)
-from covey.cards.launch_config import (BUDGET_ACTION, HARNESS_ACTION, MANAGE_OPTION, MODE_ACTION, MODEL_ACTION,
+from covey.cards.launch_config import (BUDGET_ACTION, DEVICE_ACTION, HARNESS_ACTION, MANAGE_OPTION, MODE_ACTION, MODEL_ACTION,
                                                 PAGE_ACTION, PAGES, PROVIDER_ACTION, REDACTION_ACTION, REDACTION_LABELS,
                                                 WORK_MODE_ACTION, WORKSPACE_ACTION)
 from covey.core.menu_choice import find_choice, parse_budget, tier_pick
@@ -40,7 +40,7 @@ class LaunchModelPicker(CardActionQueue):
     def matches(self, event):
         return self.action(event).get('kind') in (HARNESS_ACTION, PROVIDER_ACTION, MODEL_ACTION, BUDGET_ACTION,
                                                   WORK_MODE_ACTION, REDACTION_ACTION, WORKSPACE_ACTION, MODE_ACTION,
-                                                  PAGE_ACTION)
+                                                  DEVICE_ACTION, PAGE_ACTION)
 
     def claim(self, ctx, event, raw, owner):
         """The click's outcome when it is a launch card's choice, else None (app/unified.py EARLY)."""
@@ -91,7 +91,7 @@ class LaunchModelPicker(CardActionQueue):
                 self.submit('configuration remains pending', self.process, ctx, path, revision)
                 return
             record['page'] = ''  # Any choice returns to the list.
-            if kind in (WORKSPACE_ACTION, MODE_ACTION, WORK_MODE_ACTION, REDACTION_ACTION, BUDGET_ACTION):
+            if kind in (WORKSPACE_ACTION, MODE_ACTION, DEVICE_ACTION, WORK_MODE_ACTION, REDACTION_ACTION, BUDGET_ACTION):
                 # On a page, the option already chosen (or one no longer offered) returns to the list too.
                 if not record.get('compact'):
                     return
@@ -100,6 +100,10 @@ class LaunchModelPicker(CardActionQueue):
                     return
                 if changed and kind == WORKSPACE_ACTION:
                     self.fit_device(ctx, record, model)
+                elif changed and kind == DEVICE_ACTION:
+                    fitted = device_fit(record['models'], record['selected_model'], alias_harnesses().get(model))
+                    if fitted != record['selected_model']:
+                        record.update(selected_model=fitted, selected_effort='')
                 # Recorded, then the card is redrawn with it (process): its summary names the choice. Only the
                 # latest revision redraws; a budget from a card a redraw is replacing no longer matches it.
                 revision = record.get('config_revision', 0) + 1
@@ -162,6 +166,12 @@ class LaunchModelPicker(CardActionQueue):
         of the select's options and changed the record. A workspace removed since the card was sent is kept,
         so 开始任务 reports it instead of starting in the previous choice."""
         choice = record['models'][record['selected_model']]
+        if kind == DEVICE_ACTION:
+            if option and option not in alias_harnesses():
+                return False  # '' is 本机.
+            place = record.setdefault('form_defaults', {})
+            changed, place['device'] = place.get('device', '') != option, option
+            return changed
         if kind in (WORKSPACE_ACTION, MODE_ACTION):
             if not (option in RUN_MODES if kind == MODE_ACTION else 0 < len(option) <= 200 and option != MANAGE_OPTION):
                 return False

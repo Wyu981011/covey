@@ -318,14 +318,24 @@ def launch_cards():
     from covey.cards.launch_receipt import build_preparing_card, build_receipt_card
 
     def form(model, **kwargs):
-        values = dict(model=model, choices=CHOICES, effort="xhigh", workspace="project",
-                      names=["project", "notes"], run_mode="worktree", topic_tag="T70")
+        # The home start: no workspace, run mode or 其他目录… (what names a workspace is an older card's, ``legacy``).
+        values = dict(model=model, choices=CHOICES, effort="xhigh", topic_tag="T70")
         return launch_form_card("a" * 24, **{**values, **kwargs})
+
+    def legacy(model, **kwargs):
+        return form(model, **{"workspace": "project", "names": ["project", "notes"], "run_mode": "worktree", **kwargs})
 
     return {
         "codex": form("codex:gpt-6-astra"),
         "codex_effort_open": form("codex:gpt-6-astra", expanded=True, page="effort"),
-        "codex_notice": form("codex:gpt-6-astra", notice="⚠️ 提示", run_mode="original"),
+        "codex_notice": form("codex:gpt-6-astra", notice="⚠️ 提示"),
+        # COVEY_DEVICES=1 with devices (core/devices.py): one 执行设备 row, 本机 first; with a device chosen the summary says so.
+        "codex_device": form("codex:gpt-6-astra", device_options=[("gpu1", "测试机 gpu1"), ("gpu2", "gpu2")]),
+        "codex_device_chosen": form("codex:gpt-6-astra", expanded=True, page="device", device="gpu1",
+                                    device_options=[("gpu1", "测试机 gpu1"), ("gpu2", "gpu2")]),
+        # A card that names a workspace: a butler's worktree launch, a card sent before the home start.
+        "codex_legacy": legacy("codex:gpt-6-astra"),
+        "codex_legacy_notice": legacy("codex:gpt-6-astra", notice="⚠️ 提示", run_mode="original"),
         "claude_redacting": form("claude:opus", redaction="on"),
         # 脱敏 on and a model that cannot (T647 P0-8): said above the buttons, 不脱敏开始 confirmed in the client.
         "codex_unredacted": form("codex:gpt-6-astra", redaction="on"),
@@ -723,12 +733,17 @@ def switch_cards():
                                                             "dsh:ali-deepseek-v4.1-flash")},
             "current": {"label": "Codex · GPT-6-Astra", "effort": "xhigh", "key": "codex:gpt-6-astra",
                         "budget": "xhigh", "workspace": "project", "run_mode": "worktree", "redaction": False},
-            "workspaces": ["project", "notes"], "selected_workspace": "project", "selected_run_mode": "worktree",
-            "selected_redaction": "off"}
+            "no_place": True, "selected_redaction": "off"}
+    # A card sent before the home start: the workspace and run mode rows, and the topic's place in its first line.
+    legacy = {key: value for key, value in form.items() if key != "no_place"}
+    legacy.update(workspaces=["project", "notes"], selected_workspace="project", selected_run_mode="worktree")
     return {
         "card": build_switch_card(form),
         "card_changed": build_switch_card({**form, "selected_model": "dsh:ali-deepseek-v4.1-flash",
-                                           "selected_effort": "low", "selected_run_mode": "original"}),
+                                           "selected_effort": "low"}),
+        "card_legacy": build_switch_card(legacy),
+        "card_legacy_changed": build_switch_card({**legacy, "selected_model": "dsh:ali-deepseek-v4.1-flash",
+                                                  "selected_effort": "low", "selected_run_mode": "original"}),
         "card_old_record": build_switch_card(old),
         "card_redacting": build_switch_card({**form, "selected_model": "claude:opus", "selected_redaction": "off",
                                              "current": {**form["current"], "redaction": True}}),
@@ -1299,20 +1314,20 @@ def doctor_trouble():
 
 def settings_cards():
     """The 设置 card on each tab (cards/settings_hub.py): the panel's card with the tab row on top; the butler's
-    two pages, 新话题 (with 记住的工作区 under 直接开工 too) and 管家 (its question before 每条直接开一个话题, and in the
-    mode 纯话题), 工作区 (with the butler's 用途, being edited, and without), 脱敏 and 诊断. 代答 is an older card's tab."""
+    two pages, 新话题 and 管家 (its question before 每条直接开一个话题, and in the mode 纯话题; no 工作区 or 运行方式 row, v43), 仓库
+    (the home and the repositories, read only: with the web page's link, without it, and with none), 脱敏 and 诊断. 代答 is an older card's
+    tab; a record on the retired 工作区 or 其他 folds as 仓库."""
     from covey.app.doctor_panel import summarize
     from covey.cards.doctor_card import doctor_card
     from covey.cards.group_manager import group_manager_card
-    from covey.cards.butler_panel import WORKSPACE_NOTE, butler_panel_card, notes_button
-    from covey.cards.elements import note
+    from covey.cards.butler_panel import butler_panel_card
     from covey.cards.proxy_panel import proxy_panel_card
     from covey.cards.redaction_panel import redaction_card
     from covey.cards.settings_hub import folded_hub, tab_row
-    from covey.cards.workspace_manager import manager_card
+    from covey.cards.workspace_manager import repos_card
     from covey.core.butler_settings import LeadModel, ReviewModel, Settings
 
-    tabs = ["config", "workspace", "redaction", "groups"]
+    tabs = ["config", "repos", "redaction", "groups"]
 
     def row(tab):
         return [tab_row(tab, "c" * 24, tabs)]
@@ -1322,11 +1337,8 @@ def settings_cards():
     person = {"key": "p2p:ou_fake_z", "kind": "p2p", "target": "ou_fake_z", "name": "张三", "paused": False}
     groups = [{"chat_id": f"oc_fake_group{i}", "active": i % 3 != 0, "external": False} for i in range(4)]
     view = {"revision": 1, "hub": True}
-    config = {"default": "bridge", "workspaces": {"bridge": "/absolute/bridge", "docs": "/absolute/docs"}, "recent": {}}
-    kept = Settings(workspace_notes=(("bridge", "Bridge 的代码"),))
-
-    def value(kind, **more):
-        return {"kind": kind, "token": "c" * 24, "revision": 1, **more}
+    repos = [{"name": "bridge", "status": "active", "note": "Bridge 的代码"}, {"name": "docs", "status": "readonly", "note": ""},
+             {"name": "legacy", "status": "frozen", "note": "只读归档"}]
 
     return {
         # 配置 (T619): the butler's settings on one page, a section open at a time (新话题 first; 管家 from the butler's
@@ -1356,15 +1368,14 @@ def settings_cards():
         # A record still on a retired page (管家, 新话题, 模型) is drawn as 配置.
         "main_retired": butler_panel_card("c" * 24, view, Settings(), BUTLER_CHOICES, ["bridge", "docs"],
                                           top=row("main"), page="main"),
-        "workspace": manager_card("c" * 24, view, config, {}, standalone=True, hub=True, top=row("workspace"),
-                                  notes=(dict(kept.workspace_notes), lambda names: notes_button(value, names)),
-                                  after=[note(WORKSPACE_NOTE)]),
-        "workspace_notes": manager_card("c" * 24, {**view, "notes_edit": True}, config, {}, standalone=True, hub=True,
-                                        top=row("workspace"),
-                                        notes=(dict(kept.workspace_notes), lambda names: notes_button(value, names)),
-                                        after=[note(WORKSPACE_NOTE)]),
-        "workspace_no_main": manager_card("c" * 24, view, config, {}, standalone=True, hub=True,
-                                          top=[tab_row("workspace", "c" * 24, [t for t in tabs if t != "main"])]),
+        # 仓库 (cards/workspace_manager.py repos_card): the home, the count and the web page's link; without the page the
+        # repositories with their states and 用途; with none.
+        "repos": repos_card("c" * 24, view, home="/absolute/home", items=repos, top=row("repos")),
+        "repos_web": repos_card("c" * 24, view, home="/absolute/home", items=repos, link="https://web.example/settings/repos",
+                                top=row("repos")),
+        "repos_empty": repos_card("c" * 24, view, home="/absolute/home", items=[], top=row("repos")),
+        "repos_notice": repos_card("c" * 24, {**view, "notice": "⚠️ 只有机器人主人能改设置。"}, home="/absolute/home", items=repos[:1],
+                                   top=row("repos")),
         # 脱敏 (cards/redaction_panel.py): no term, only its first character and length.
         "redaction": redaction_card("c" * 24, {**view, "notice": "已删除「机··（4 字）」。", "undo": True},
                                     redaction_facts(), top=row("redaction")),
@@ -1395,8 +1406,9 @@ def settings_cards():
         "main_folded": folded_hub("main", "c" * 24, tabs),  # A record still on 管家 folds as 配置.
         "proxy_folded": folded_hub("proxy", "c" * 24, tabs),
         "groups_folded_no_main": folded_hub("groups", "c" * 24, [t for t in tabs if t != "main"]),
-        "workspace_folded": folded_hub("workspace", "c" * 24, tabs),
-        # A record still on the retired 其他 folds as 工作区.
+        "repos_folded": folded_hub("repos", "c" * 24, tabs),
+        "workspace_folded": folded_hub("workspace", "c" * 24, tabs),  # A record still on the retired 工作区 folds as 仓库.
+        # A record still on the retired 其他 folds as 仓库.
         "other_folded": folded_hub("other", "c" * 24, tabs),
         **memory_tab_cards(), **about_tab_cards(),
         # 诊断 (cards/doctor_card.py): service/doctor.py's report in words, read-only; one where every part needs a look.
@@ -1423,7 +1435,7 @@ def settings_cards():
     }
 
 
-FULL_TABS = ["config", "workspace", "redaction", "groups", "memory", "nodes", "about"]
+FULL_TABS = ["config", "repos", "redaction", "groups", "memory", "nodes", "about"]
 
 
 def memory_tab_cards():
@@ -1969,7 +1981,7 @@ def node_cards_samples():
              "line": machine_lines("训练机（gpu1）", {"heard": FROZEN - 2220}, latest, online=False)[0], "grey": "最后：CPU 12% · 内存 41%"}]
     data = {"address": "[2001:db8::1]:10603", "rows": rows}
     view = {"token": "d" * 24, "revision": 3, "hub": True}
-    row = [tab_row("nodes", "d" * 24, ["workspace", "nodes", "redaction"])]
+    row = [tab_row("nodes", "d" * 24, ["repos", "nodes", "redaction"])]
     return {
         "alert_mem": alert_card(mem, "本机", tasks),
         "alert_oom_text": alert_text({"rule": "oom", "kind": "once", "at": FROZEN, "count": 2, "pct": 97.0, "top": top},

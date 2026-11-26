@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 
 FIXTURE = os.environ.get("COVEY_WEB_SETTINGS_FIXTURE", "")  # Writes the snapshot there (the page's local mirror uses it).
@@ -16,8 +17,9 @@ from covey.app.butler_env import ButlerEnv
 from covey.app.web_ops import Ops
 from covey.app.web_sync import WebSync
 from covey.cards import butler_panel as cards
-from covey.core import butler_settings as settings, groups as group_records, redaction, web_sync
-from covey.core.state import write_json
+from covey.core import butler_settings as settings, groups as group_records, redaction, repomap, web_sync
+from covey.core.jobs import upsert_job_record
+from covey.core.state import read_json, write_json
 from covey.core.workspaces import config_path
 from covey.core.defaults import RECOMMENDED
 
@@ -60,7 +62,7 @@ class WebSettingsTest(UnifiedCase):
         from covey.app.proxy_send import available
         # 设备 only with nodes; 代答 only where a sender is (an extension, covey_internal).
         # T619: the card's 配置 is one page here too, every section open (no card's size to keep to).
-        self.assertEqual([t["label"] for t in data["tabs"]], ["配置", "工作区", "脱敏", "群聊"] + (["代答"] if available() else []))
+        self.assertEqual([t["label"] for t in data["tabs"]], ["配置", "仓库", "脱敏", "群聊"] + (["代答"] if available() else []))
         # Data contract v34: the operations this Covey does, so the page shows 收尾、停止 and 不对 only where they are done.
         self.assertTrue({"project_finish", "project_stop", "memory_undo", "recover"} <= set(data["ops"]))
         self.assertNotIn("nodes", data)
@@ -69,19 +71,22 @@ class WebSettingsTest(UnifiedCase):
         self.assertNotIn("review", config)  # COVEY_REVIEW unset.
         self.assertTrue(config["summary"].startswith("新话题 "))
         topic = config["topic"]
-        self.assertEqual([r["label"] for r in topic["rows"]][:1] + [r["label"] for r in topic["rows"]][-3:],
-                         ["Harness", "工作区", "运行方式", "脱敏"])
+        self.assertEqual([r["label"] for r in topic["rows"]][:1] + [r["label"] for r in topic["rows"]][-1:], ["Harness", "脱敏"])
+        for gone in ("工作区", "运行方式"):  # v43: a new topic starts in the home; the repositories are the 仓库 page's.
+            self.assertNotIn(gone, [r["label"] for r in topic["rows"]])
         self.assertEqual(sorted(topic), ["note", "rows", "title"])  # v24: no 直接开工 row, start_note or trusted.
         self.assertEqual({r["label"]: r["line"] for r in topic["rows"]}.get("Harness"), 1)
-        self.assertEqual({r["label"]: r["line"] for r in topic["rows"]}.get("工作区"), 2)
+        self.assertEqual({r["label"]: r["line"] for r in topic["rows"]}.get("脱敏"), 2)
         self.assertTrue(all(r["editable"] for r in topic["rows"] + config["more"]))
         self.assertEqual(config["more"][0]["label"], "子 Agent")
         butler = config["main"]
         self.assertEqual([r["label"] for r in butler["rows"]][0], "Harness")
+        self.assertNotIn("工作区", [r["label"] for r in butler["rows"]])
         self.assertEqual([r["label"] for r in butler["rows"]][-2:], ["压缩阈值", "私聊顶层的消息"])
         mode = butler["rows"][-1]
         self.assertEqual((mode["text"], mode["editable"]), ("交给管家", True))  # T554 2nd round: with a confirm on the page.
         self.assertEqual(mode["confirm"], {"topics": cards.MODE_CONFIRM})
+        self.assertEqual(data["repos"]["home"], {"tail": web_settings.tail(str(self.work), web_settings.PATH_SIZE)})  # v43: the 仓库 page; the old 工作区 page is still pushed.
         names = [w["name"] for w in data["workspace"]["items"]]
         self.assertEqual(names[0], "project")  # The default first, as on the card.
         gone = next(w for w in data["workspace"]["items"] if w["name"] == "gone")
@@ -132,10 +137,10 @@ class WebSettingsTest(UnifiedCase):
         self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="claude"), ("failed", web_settings.GONE))
 
     def test_a_row_changed_on_the_page_is_the_cards_change_and_shows_on_both(self):
-        state, words = self.op(what="row", kind=cards.TOPIC_RUN_MODE, option="worktree")
+        state, words = self.op(what="row", kind=cards.TOPIC_REDACTION, option="on")
         self.assertEqual((state, words), ("done", "已保存：之后新开的话题照这个来。"))
-        self.assertEqual(settings.load(self.ctx.state_dir).topic_defaults.run_mode, "worktree")
-        self.assertEqual(self.row("topic", cards.TOPIC_RUN_MODE)["current"], "worktree")
+        self.assertTrue(settings.load(self.ctx.state_dir).topic_defaults.redaction)
+        self.assertEqual(self.row("topic", cards.TOPIC_REDACTION)["current"], "on")
         state, words = self.op(what="row", kind=cards.COMPACT, option="100000")
         self.assertEqual((state, words), ("done", "已保存：管家下一轮起照这个来。"))
         self.assertEqual(settings.load(self.ctx.state_dir).compact_tokens, 100000)
@@ -146,11 +151,14 @@ class WebSettingsTest(UnifiedCase):
     def test_rows_kept_to_feishu_an_option_gone_and_anyone_else_are_refused(self):
         self.assertEqual(self.op(what="row", kind=cards.MODE, option="topics"), ("failed", "改成每条直接开一个话题要先确认"))
         self.assertEqual(self.op(what="row", kind=cards.ENABLE, option="on"), ("failed", web_settings.READ_ONLY))
-        self.assertEqual(self.op(what="row", kind=cards.TOPIC_WORKSPACE, option="nowhere"), ("failed", web_settings.GONE))
-        self.assertEqual(self.op(operator="ou_other", what="row", kind=cards.TOPIC_RUN_MODE, option="worktree"),
+        self.assertEqual(self.op(what="row", kind=cards.TOPIC_HARNESS, option="nowhere"), ("failed", web_settings.GONE))
+        for kind in (cards.TOPIC_WORKSPACE, cards.TOPIC_RUN_MODE, cards.SPACE):  # Offline: the rows are gone from the page.
+            self.assertEqual(self.op(what="row", kind=kind, option="worktree"), ("failed", cards.OFFLINE_NOTICE))
+        self.assertEqual(self.op(operator="ou_other", what="row", kind=cards.TOPIC_REDACTION, option="on"),
                          ("failed", web_settings.OWNER_ONLY))
-        self.assertEqual(self.op(what="nope", kind=cards.TOPIC_RUN_MODE), ("failed", "不认识的设置改动"))
+        self.assertEqual(self.op(what="nope", kind=cards.TOPIC_REDACTION), ("failed", "不认识的设置改动"))
         self.assertTrue(settings.load(self.ctx.state_dir).enabled)
+        self.assertFalse(settings.load(self.ctx.state_dir).topic_defaults.redaction)
         self.assertEqual(settings.load(self.ctx.state_dir).topic_defaults.run_mode, "direct")
         settings.update(self.ctx.state_dir, enabled=False)  # 纯话题: the butler's rows count for nothing.
         self.assertEqual(self.op(what="row", kind=cards.COMPACT, option="0")[0], "failed")
@@ -236,7 +244,7 @@ class WebSettingsTest(UnifiedCase):
         with mock.patch.dict(os.environ, {web_sync.ENV: "1"}):
             sync = WebSync(self.app.runtime, self.env)
         calls, outbox = [], [{"seq": 1, "op_id": "op-1", "kind": "settings", "topic_key": "", "project_key": "",
-                              "payload": {"what": "row", "kind": cards.TOPIC_RUN_MODE, "option": "worktree"}}]
+                              "payload": {"what": "row", "kind": cards.TOPIC_REDACTION, "option": "on"}}]
 
         def request(method, path, body=None):
             calls.append((path.split("?")[0], body))
@@ -248,8 +256,8 @@ class WebSettingsTest(UnifiedCase):
             paths = [path for path, _ in calls]
             self.assertEqual(paths, ["/sync/inbox", "/sync/upsert", "/sync/ack"])
             pushed, = calls[1][1]["items"]
-            run_mode, = [r for r in pushed["data"]["config"]["topic"]["rows"] if r["kind"] == cards.TOPIC_RUN_MODE]
-            self.assertEqual(run_mode["current"], "worktree")
+            redaction, = [r for r in pushed["data"]["config"]["topic"]["rows"] if r["kind"] == cards.TOPIC_REDACTION]
+            self.assertEqual(redaction["current"], "on")
             outbox.clear()
             calls.clear()
             sync.inbox_once()  # Nothing changed: no post.
@@ -288,6 +296,223 @@ class WebSettingsTest(UnifiedCase):
         self.assertTrue(extra.is_dir())
         self.assertEqual(self.op(what="workspace_prune"), ("done", "已从列表移除 1 项，磁盘目录未删除"))
         self.assertEqual(sorted(w["name"] for w in self.snap()["workspace"]["items"]), ["docs", "project"])
+
+    # -- 仓库 (data contract v43): the repository map, its changes and the worktrees ----------------------------------------------
+
+    def git(self, *args, cwd):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd, check=True, capture_output=True)
+
+    def make_repo(self, path):
+        path.mkdir(parents=True)
+        self.git("init", "-q", "-b", "main", cwd=path)
+        self.git("commit", "-q", "--allow-empty", "-m", "first", cwd=path)
+        return path
+
+    def worktrees_root(self):
+        root = self.root / "wt-root"
+        root.mkdir(exist_ok=True)
+        patcher = mock.patch.object(web_settings, "worktree_root", return_value=root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return root
+
+    def repos_file(self):
+        return repomap.path(self.ctx.state_dir)
+
+    def test_the_repos_page_is_the_old_list_read_only_until_the_first_change(self):
+        self.worktrees_root()
+        page = self.snap()["repos"]
+        self.assertEqual(sorted(page), ["home", "items", "worktrees"])
+        self.assertEqual(page["home"], {"tail": web_settings.tail(str(self.work), web_settings.PATH_SIZE)})
+        self.assertEqual([i["name"] for i in page["items"]], ["docs", "gone"])  # The home itself is no repository.
+        docs = page["items"][0]
+        self.assertEqual(sorted(docs), ["branch", "live_topics", "name", "note", "rules", "status", "tail", "write_mode"])
+        self.assertEqual((docs["status"], docs["write_mode"], docs["note"], docs["live_topics"], docs["rules"]),
+                         ("active", "inplace", "", 0, ["AGENTS.md"]))
+        self.assertEqual(page["worktrees"], {"total": 0, "prunable": []})
+        self.assertFalse(self.repos_file().exists())  # Reading writes nothing.
+        before = config_path(self.ctx.state_dir).read_text()
+        self.assertEqual(self.op(what="note", workspace="docs", note="文档"), ("done", "已保存。"))  # The butler's 用途 shows on the view.
+        self.assertEqual(next(i for i in self.snap()["repos"]["items"] if i["name"] == "docs")["note"], "文档")
+        self.assertFalse(self.repos_file().exists())
+        self.assertEqual(config_path(self.ctx.state_dir).read_text(), before)
+
+    def test_repos_set_changes_what_is_given_and_the_first_change_makes_the_file(self):
+        self.worktrees_root()
+        self.assertEqual(self.op(what="repos_set", name="docs", note="  文档\n手册 ", status="readonly", write_mode="worktree"),
+                         ("done", "已改 docs：用途、状态、写法"))
+        found = {repo.name: repo for repo in repomap.read(self.ctx.state_dir)}
+        self.assertEqual(sorted(found), ["docs", "gone"])  # The old list's repositories came along.
+        self.assertEqual((found["docs"].note, found["docs"].status, found["docs"].write_mode, found["docs"].added_by),
+                         ("文档 手册", "readonly", "worktree", "migrate"))
+        self.assertEqual((found["gone"].status, found["gone"].write_mode), ("active", "inplace"))
+        docs = next(i for i in self.snap()["repos"]["items"] if i["name"] == "docs")
+        self.assertEqual((docs["status"], docs["write_mode"], docs["note"]), ("readonly", "worktree", "文档 手册"))
+        self.assertEqual(self.op(what="repos_set", name="docs", status="frozen"), ("done", "已改 docs：状态"))
+        for payload, why in (({"name": "nope", "note": "x"}, "没有叫 nope 的仓库"), ({"name": "docs"}, "没有要改的项"),
+                             ({"name": "docs", "status": "gone"}, "状态要是 active、readonly 或 frozen"),
+                             ({"name": "docs", "write_mode": "x"}, "写法要是 worktree 或 inplace"),
+                             ({"name": "docs", "note": "x" * 201}, "note 要是不超过 200 个字的文字"),
+                             ({"name": ""}, "要说明 name（最多 64 字）"), ({}, "要说明 name（最多 64 字）")):
+            self.assertEqual(self.op(what="repos_set", **payload), ("failed", why), payload)
+        self.assertEqual(self.op(operator="ou_other", what="repos_set", name="docs", note="x"), ("failed", web_settings.OWNER_ONLY))
+        self.assertEqual(next(r for r in repomap.read(self.ctx.state_dir) if r.name == "docs").status, "frozen")
+
+    def test_repos_add_takes_only_an_existing_absolute_git_directory_and_names_it(self):
+        self.worktrees_root()
+        extra = self.make_repo(self.root / "a" / "extra")
+        self.assertEqual(self.op(what="repos_add", path=str(extra), note="新仓库"), ("done", "已加入仓库地图：extra"))
+        added = next(r for r in repomap.read(self.ctx.state_dir) if r.name == "extra")
+        self.assertEqual((added.path, added.note, added.status, added.added_by), (str(extra), "新仓库", "active", "owner"))
+        self.assertEqual(self.op(what="repos_add", path=str(extra)), ("done", "该目录已在仓库地图里：extra"))
+        again = self.make_repo(self.root / "b" / "extra")
+        self.assertEqual(self.op(what="repos_add", path=str(again)), ("done", "已加入仓库地图：extra-2"))
+        self.assertEqual(self.op(what="repos_add", path=str(self.make_repo(self.root / "c" / "other")), name="extra")[0], "failed")
+        self.assertEqual(self.op(what="repos_add", path=str(self.make_repo(self.root / "d" / "other")), name="mine"),
+                         ("done", "已加入仓库地图：mine"))
+        plain = self.root / "plain"
+        plain.mkdir()
+        self.assertEqual(self.op(what="repos_add", path=str(plain)), ("failed", f"{plain} 不是 git 仓库（里面没有 .git）"))
+        self.assertEqual(self.op(what="repos_add", path=str(self.root / "nowhere")), ("failed", f"目录不存在：{self.root / 'nowhere'}"))
+        self.assertEqual(self.op(what="repos_add", path="relative/dir")[0], "failed")
+        self.assertEqual(self.op(what="repos_add", path=str(extra), name="a/b")[0], "failed")  # No path in a name.
+        self.assertEqual(sorted(r.name for r in repomap.read(self.ctx.state_dir)), ["docs", "extra", "extra-2", "gone", "mine"])
+
+    def test_repos_remove_leaves_the_directory_and_keeps_what_a_newer_release_wrote(self):
+        self.worktrees_root()
+        write_json(self.repos_file(), {"version": 1, "exclude": ["node_modules/"], "repos": [
+            {"name": "docs", "path": str(self.root), "future": {"k": 1}}, {"name": "gone", "path": str(self.root / "nope")},
+            {"name": "device", "path": "gpu1:/srv/x"}]})
+        self.assertEqual(self.op(what="repos_set", name="docs", note="n"), ("done", "已改 docs：用途"))
+        raw = read_json(self.repos_file())
+        self.assertEqual(raw["exclude"], ["node_modules/"])
+        self.assertEqual(next(r for r in raw["repos"] if r["name"] == "docs")["future"], {"k": 1})
+        self.assertIn({"name": "device", "path": "gpu1:/srv/x"}, raw["repos"])  # What read() passes over stays as it was.
+        self.assertEqual(self.op(what="repos_remove", name="docs"), ("done", "已从仓库地图去掉 docs，磁盘目录没有动"))
+        self.assertTrue(self.root.is_dir())
+        self.assertEqual(self.op(what="repos_remove", name="docs"), ("failed", "没有叫 docs 的仓库"))
+        self.assertEqual(sorted(r.name for r in repomap.read(self.ctx.state_dir)), ["gone"])
+        self.assertEqual(self.op(what="repos_remove", name="")[0], "failed")
+
+    def test_a_map_that_cannot_be_read_is_never_written_over_and_repomap_save_is_used_when_it_is_there(self):
+        self.worktrees_root()
+        self.repos_file().write_text("{not json")
+        self.assertEqual(self.op(what="repos_set", name="docs", note="x"), ("failed", "仓库地图读不出来，没有改动"))
+        self.assertEqual(self.repos_file().read_text(), "{not json")
+        self.repos_file().unlink()
+        with mock.patch.object(repomap, "save", create=True) as save:  # W1's writer, once it exists.
+            self.assertEqual(self.op(what="repos_set", name="docs", note="x"), ("done", "已改 docs：用途"))
+        (state, repos), _ = save.call_args
+        self.assertEqual((state, [r.name for r in repos]), (self.ctx.state_dir, ["docs", "gone"]))
+        self.assertFalse(self.repos_file().exists())
+
+    def test_a_topic_running_in_a_repository_is_counted_and_one_elsewhere_is_not(self):
+        self.worktrees_root()
+        upsert_job_record(self.ctx.state_dir, "k1", status="running", topic_id="t1", workdir=str(self.root / "sub"))
+        upsert_job_record(self.ctx.state_dir, "k2", status="running", topic_id="t2", workdir=str(self.root))
+        upsert_job_record(self.ctx.state_dir, "k3", status="running", topic_id="t2", workdir=str(self.root))
+        upsert_job_record(self.ctx.state_dir, "k4", status="done", topic_id="t3", workdir=str(self.root))
+        upsert_job_record(self.ctx.state_dir, "k5", status="running", topic_id="t4", workdir="/elsewhere/project")
+        items = {i["name"]: i for i in self.snap()["repos"]["items"]}
+        self.assertEqual((items["docs"]["live_topics"], items["gone"]["live_topics"]), (2, 0))
+
+    def make_worktree(self, root, rel, repo):
+        """A real worktree of ``repo`` at ``root/rel`` (the main repository is made once, under the test's root)."""
+        main = self.root / "mains" / repo
+        if not main.exists():
+            self.make_repo(main)
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        self.git("worktree", "add", "-q", "-b", f"topic/{rel.replace('/', '-')}", str(target), cwd=main)
+        return target
+
+    def make_topic(self, topic_id, number, status):
+        write_json(self.ctx.state_dir / "topics" / topic_id / "topic.json", {"chat_id": "oc_dm", "topic_number": number})
+        upsert_job_record(self.ctx.state_dir, "job-" + topic_id[:8], status=status, topic_id=topic_id)
+
+    def test_the_worktree_list_offers_only_those_whose_topic_ended_over_a_day_ago(self):
+        root = self.worktrees_root()
+        (self.ctx.state_dir / "topics").mkdir(parents=True, exist_ok=True)
+        old = self.make_worktree(root, "T12-aaaa1111/covey", "covey")
+        self.make_worktree(root, "T13-bbbb2222/covey", "covey")  # Its topic still runs.
+        self.make_worktree(root, "T14-cccc3333/covey", "covey")  # No topic by that id: not told.
+        legacy = self.make_worktree(root, "covey-20261120-101010-dddd4444", "covey")
+        self.make_topic("aaaa1111-1", 12, "done")
+        self.make_topic("bbbb2222-2", 13, "running")
+        self.make_topic("dddd4444-3", 9, "failed")
+        (root / "stray").mkdir()  # Not a worktree, not counted.
+        (root / "T99-eeee5555").mkdir()  # A new-layout directory with nothing in it.
+        now = time.time()
+        page = self.web.snapshot("dm", now=now)["repos"]["worktrees"]
+        self.assertEqual((page["total"], page["prunable"]), (4, []))  # Ended just now: not yet a day.
+        page = self.web.snapshot("dm", now=now + 2 * 86400 + 60)["repos"]["worktrees"]
+        self.assertEqual(page["total"], 4)
+        found = {w["tail"]: w for w in page["prunable"]}
+        self.assertEqual(sorted(found), ["T12-aaaa1111/covey", "covey-20261120-101010-dddd4444"])
+        first = found["T12-aaaa1111/covey"]
+        self.assertEqual((first["repo"], first["branch"], first["topic_number"]), ("covey", "topic/T12-aaaa1111-covey", 12))
+        self.assertAlmostEqual(first["ended_at"], now, delta=60)
+        self.assertEqual(found["covey-20261120-101010-dddd4444"]["topic_number"], 9)
+        self.assertTrue(old.is_dir() and legacy.is_dir())  # Listing removes nothing.
+
+    def test_worktrees_prune_removes_only_those_named_and_only_clean_worktrees_under_the_root(self):
+        root = self.worktrees_root()
+        clean = self.make_worktree(root, "T12-aaaa1111/covey", "covey")
+        dirty = self.make_worktree(root, "T13-bbbb2222/covey", "covey")
+        (dirty / "work.txt").write_text("unsaved")
+        by_tail = self.make_worktree(root, "T14-cccc3333/covey", "covey")
+        not_named = self.make_worktree(root, "T15-dddd4444/covey", "covey")
+        outside = self.make_worktree(self.root / "elsewhere", "T16-eeee5555/covey", "covey")
+        own_git = self.make_repo(root / "plain-repo")  # Under the root, but a repository: its .git is a directory.
+        link = root / "link"
+        link.symlink_to(not_named.parent)
+        state, words = self.op(what="worktrees_prune", paths=[str(clean), str(dirty), "T14-cccc3333/covey", str(outside),
+                                                               str(own_git), str(link), "../x", str(root / "T99-zzzz0000/covey")])
+        self.assertEqual(state, "done")
+        lines = words.splitlines()
+        self.assertEqual(lines[0], "要删 8 个 worktree，删掉 2 个：")
+        self.assertTrue(lines[1].endswith("：已删除") and "T12-aaaa1111/covey" in lines[1])
+        self.assertIn("有未提交的改动或被锁住，没删", lines[2])
+        self.assertTrue(lines[3].endswith("：已删除"))
+        self.assertTrue(all("不在 worktree 目录下" in line for line in (lines[4], lines[7])))
+        self.assertIn("不是 git worktree", lines[5])
+        self.assertIn("路径是个链接", lines[6])
+        self.assertIn("不是 git worktree", lines[8])
+        self.assertFalse(clean.exists() or by_tail.exists())
+        for kept in (dirty, not_named, outside, own_git):  # Not named, refused or outside: untouched.
+            self.assertTrue(kept.exists(), kept)
+        self.assertTrue((dirty / "work.txt").exists())
+        self.assertTrue(link.is_symlink() and (not_named / ".git").is_file())
+        branches = subprocess.run(["git", "branch", "--list"], cwd=self.root / "mains" / "covey", capture_output=True, text=True).stdout
+        self.assertIn("topic/T12-aaaa1111-covey", branches)  # The branch is the owner's: only the directory goes.
+
+    def test_worktrees_prune_with_nothing_removed_is_a_refusal_and_a_bad_list_is_refused(self):
+        root = self.worktrees_root()
+        dirty = self.make_worktree(root, "T13-bbbb2222/covey", "covey")
+        (dirty / "w.txt").write_text("x")
+        state, words = self.op(what="worktrees_prune", paths=[str(dirty)])
+        self.assertEqual(state, "failed")
+        self.assertIn("删掉 0 个", words)
+        self.assertTrue(dirty.exists())
+        for paths in ("x", [], [1], [""], ["a" * 501], ["a"] * 0 + [f"p{n}" for n in range(51)]):
+            self.assertEqual(self.op(what="worktrees_prune", paths=paths)[0], "failed", paths)
+        self.assertEqual(self.op(operator="ou_other", what="worktrees_prune", paths=[str(dirty)]), ("failed", web_settings.OWNER_ONLY))
+        self.assertTrue(dirty.exists())
+
+    def test_the_old_workspace_changes_still_come_in_and_follow_into_the_map(self):
+        self.worktrees_root()
+        extra = self.make_repo(self.root / "g" / "extra")
+        self.assertEqual(self.op(what="workspace_add", path=str(extra)), ("done", "已添加工作区 extra，也加进了仓库地图"))
+        self.assertIn("extra", [r.name for r in repomap.read(self.ctx.state_dir)])
+        self.assertIn("extra", [w["name"] for w in self.snap()["workspace"]["items"]])  # The old page has it too.
+        self.assertEqual(self.op(what="workspace_add", path=str(extra)), ("done", "该目录已在列表中：extra"))
+        self.assertEqual([r.name for r in repomap.read(self.ctx.state_dir)].count("extra"), 1)
+        self.assertEqual(self.op(what="workspace_remove", workspace="extra"), ("done", "已从列表移除 extra，磁盘目录未删除"))
+        self.assertNotIn("extra", [r.name for r in repomap.read(self.ctx.state_dir)])
+        self.assertTrue(extra.is_dir())
+        self.assertEqual(self.op(what="workspace_prune"), ("done", "已从列表移除 1 项，磁盘目录未删除"))  # 'gone'
+        self.assertNotIn("gone", [r.name for r in repomap.read(self.ctx.state_dir)])
+        self.assertIn("docs", [r.name for r in repomap.read(self.ctx.state_dir)])
 
     def test_free_talk_only_tighter_on_the_page(self):
         chat = "oc_group0123456789"
@@ -412,10 +637,9 @@ class WebSettingsTest(UnifiedCase):
             self.assertTrue(model["harness_title"])
         chosen = next(m for m in data["models"] if m["key"] == data["preselect"]["model"])
         self.assertIn(data["preselect"]["effort"], [b["value"] for b in chosen["budgets"]])
-        self.assertEqual(data["preselect"]["workspace"], "project")
-        self.assertEqual([w["name"] for w in data["workspaces"]][0:1] and sorted(w["name"] for w in data["workspaces"]),
-                         ["docs", "gone", "project"])
-        self.assertEqual([r["value"] for r in data["run_modes"]], ["direct", "worktree"])
+        # v43: a new topic starts in the home; the catalog has no workspace to preselect and no run modes (app/web_launch.py).
+        self.assertNotIn("workspace", data["preselect"])
+        self.assertNotIn("run_modes", data)
 
     def launch(self, op_id="op-l1", **payload):
         access = self.app.runtime.access

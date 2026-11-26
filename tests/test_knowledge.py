@@ -459,19 +459,22 @@ class SpecsTest(StateCase):
         quiet = {"COVEY_PROJECTS": "0"}
         names = lambda env: [t["name"] for t in butler_tool_specs.listed({**quiet, **env})]  # noqa: E731
         base = [t["name"] for t in butler_tool_specs.TOOLS]
+        # The knowledge tools gave way to the memory tools, in TOOLS whatever the switch says (docs/butler.md 记忆).
         self.assertEqual(names({knowledge.ENV: "0"}), base)
-        self.assertEqual(names({}), base + ["knowledge_save", "knowledge_update", "knowledge_drop", "knowledge_search"])
-        self.assertIn("knowledge_save", [t["name"] for t in butler_tool_specs.listed({})])  # No key at all: on.
-        self.assertEqual(names({knowledge.ENV: "1"}), base + ["knowledge_save", "knowledge_update", "knowledge_drop",
-                                                             "knowledge_search"])
+        self.assertEqual(names({}), base)
+        self.assertNotIn("knowledge_save", [t["name"] for t in butler_tool_specs.listed({})])
+        self.assertIn("memory_save", base)
+        self.assertEqual(names({knowledge.ENV: "1"}), base)
         self.assertEqual(names({knowledge.ENV: "0", knowledge.HISTORY_ENV: "/a/kb-history"}), base + ["history_search"])
         self.assertEqual(names({knowledge.ENV: "0", knowledge.HISTORY_ENV: "kb-history"}), base)
-        self.assertEqual(len(names({knowledge.ENV: "1", knowledge.HISTORY_ENV: "/a"})), len(base) + 5)
-        for tool in butler_tool_specs.KNOWLEDGE_TOOLS + butler_tool_specs.HISTORY_TOOLS:
+        self.assertEqual(len(names({knowledge.ENV: "1", knowledge.HISTORY_ENV: "/a"})), len(base) + 1)
+        for tool in butler_tool_specs.MEMORY_TOOLS + butler_tool_specs.HISTORY_TOOLS:
             self.assertEqual(set(tool), {"name", "description", "input_schema"})
             for required in tool["input_schema"].get("required", ()):
                 self.assertIn(required, tool["input_schema"]["properties"], tool["name"])
-        self.assertEqual(set(butler_tool_specs.ALL_NAMES) - set(butler_tool_specs.NAMES), set(butler_knowledge.TOOLS))
+        self.assertEqual(set(butler_tool_specs.ALL_NAMES) - set(butler_tool_specs.NAMES), {"history_search"})
+        self.assertLessEqual(set(butler_knowledge.TOOLS) - {"history_search"},  # An older session's names, run as the new.
+                             set(butler_tool_specs.RENAMED_TOOLS))
 
     def test_the_mcp_server_lists_and_accepts_what_its_environment_says(self):
         seen = []
@@ -482,10 +485,10 @@ class SpecsTest(StateCase):
         on = butler_mcp.Server({butler.STATE_ENV: str(self.state), butler.JOB_ENV: "j", **quiet, **ON,
                               knowledge.HISTORY_ENV: "/absolute/kb-history"}, submit=submit)
         self.assertEqual(len(butler_mcp.tool_list(plain.environ)), len(butler_tool_specs.TOOLS))
-        self.assertEqual(len(butler_mcp.tool_list(on.environ)), len(butler_tool_specs.TOOLS) + 5)
-        refused = plain.call({"name": "knowledge_save", "arguments": {}})
-        self.assertTrue(refused["isError"])
-        self.assertIn("没有开 knowledge_save", refused["content"][0]["text"])
+        self.assertEqual(len(butler_mcp.tool_list(on.environ)), len(butler_tool_specs.TOOLS) + 1)
+        renamed = plain.call({"name": "knowledge_save", "arguments": {}})  # An older session's: run as memory_save.
+        self.assertFalse(renamed["isError"])
+        self.assertEqual(seen.pop(), "memory_save")
         self.assertEqual(plain.call({"name": "rm_rf", "arguments": {}})["content"][0]["text"], "没有这个工具：rm_rf")
         self.assertFalse(on.call({"name": "history_search", "arguments": {"query": "x"}})["isError"])
         self.assertEqual(seen, ["history_search"])

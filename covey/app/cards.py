@@ -47,7 +47,8 @@ from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.core.jobs import RUN_STAGES, find_job_record, job_key, quick_held, upsert_job_record
 from covey.core.locks import card_lock
 from covey.core.metrics import run_seconds, run_start, took_text
-from covey.core.topics import remember_topic_message, topic_label
+from covey.core.topics import remember_topic_message, topic_file, topic_label
+from covey.core.state import read_object
 from covey.core.trace_store import save_trace
 from covey.app import auto_retry
 from covey.app.record_cards import RecordCards
@@ -80,6 +81,21 @@ def held_due(job) -> bool:
         return time.time() - begun >= butler.CARD_AFTER
     return time.time() - begun >= job.card_after or held_steps(job)
 
+
+
+PLACE_REPOS = 3  # Repositories a 输入 line names; more read "等 N 个".
+
+
+def place_label(state_dir, topic_id, workspace) -> str:
+    """Where a topic's turn runs, as its card's 输入 says it: a topic that started in the home (``home_start``,
+    docs/configuration.md 主目录与仓库地图) by the repositories it uses (主目录 when none), any other by its workspace."""
+    data = read_object(topic_file(state_dir, topic_id)) if topic_id else {}
+    if data.get("home_start") is not True:
+        return str(workspace or "")
+    names = [str(repo.get("name")) for repo in data.get("repos") or () if isinstance(repo, dict) and repo.get("name")]
+    if not names:
+        return "主目录"
+    return "、".join(names[:PLACE_REPOS]) + (f" 等 {len(names)} 个" if len(names) > PLACE_REPOS else "")
 
 class Cards:
     """One Harness's card writes.
@@ -142,7 +158,8 @@ class Cards:
             job.harness_capabilities = self.harness.backend.capabilities(ctx)
         job.topic_label = topic_label(ctx.state_dir, job.topic_id)
         job.model_label = self.model_label(ctx, job.model)
-        job.workspace_label = ctx.workspace_name  # The 输入/输出 box's 输入 (cards/task_figures.py job_inputs).
+        # The 输入/输出 box's 输入 (cards/task_figures.py job_inputs): where the turn runs (``place_label``).
+        job.workspace_label = place_label(ctx.state_dir, job.topic_id, ctx.workspace_name)
         # Whether the turn redacts (the box's 输入, cards/answer_card.py input_parts): None for a Harness that cannot.
         job.redaction = (topic_redaction(ctx.state_dir, job.topic_id)
                          if getattr(getattr(job, "harness_capabilities", None), "redaction", False) else None)

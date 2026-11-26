@@ -131,19 +131,69 @@ def device_harnesses(config):
     return found
 
 
+def alias_harnesses():
+    """alias -> the Harnesses its device declares (devices.json ``harnesses``), for each device (empty unless COVEY_DEVICES=1
+    with devices): what the 执行设备 row's card preselects a model from (app/preselection.py device_fit)."""
+    if not devices.enabled():
+        return {}
+    try:
+        return {alias: tuple(device.harnesses) for alias, device in devices.current().devices.items()}
+    except (devices.DeviceConfigError, AttributeError):
+        return {}
+
+
+def device_options(topics, chat_id):
+    """[(alias, title)] of the devices ``chat_id`` may use, for the card's 执行设备 row: empty unless COVEY_DEVICES=1 and
+    devices.json has devices (then the card has no such row)."""
+    found = []
+    for alias in alias_harnesses():
+        if topics.runtime.access.allows_device(chat_id, alias):
+            try:
+                found.append((alias, devices.current().device(alias).title))
+            except (devices.UnknownDevice, devices.DeviceConfigError):
+                found.append((alias, alias))
+    return found
+
+
+def legacy_place(config, draft, notice):
+    """(workspace, names, device alias, notice) of a card rebuilt from an older card's choices (``draft['workspace']``: a
+    butler's worktree launch, a card sent before the home start): the 工作区 row's as the card drew it, the workspace of a
+    device the alias of that device (app/preselection.py device_fit)."""
+    names = sorted(config['workspaces'], key=lambda name: -config.get('recent', {}).get(name, 0))
+    workspace = draft['workspace']
+    if workspace not in config['workspaces']:
+        # Chosen on a card sent before its removal: it stays chosen, so 开始任务 reports it instead of starting
+        # elsewhere, and the card, redrawn with it, says so.
+        names = [*names, workspace]
+        notice = '\n'.join(filter(None, [notice, f'⚠️ 工作区「{workspace}」已从列表移除，请换一个工作区。']))
+    value = config['workspaces'].get(workspace, '')
+    return workspace, names, value.partition(':')[0] if devices.is_device_value(value) else '', notice
+
+
 def build_launch_card(topics, ctx, *, new_topic=False, draft=None, notice=''):
     if new_topic:
         raise ValueError('请在主聊天发送任务，在该消息下选择配置')
     if route_locked(ctx):
         raise ValueError('本话题已开始，配置保持不变；新任务请在主聊天发送消息')
-    config = load_config(ctx.state_dir, ctx.default_workdir)
     topic = read_topic(ctx)
     chat_id = topic['chat_id']
-    # A device's workspaces only where its ``spaces`` say (devices.json; app/access.py allows_device).
-    config = visible_workspaces(config, lambda alias: topics.runtime.access.allows_device(chat_id, alias))
     if draft is None:
         # A topic the butler opened shows what it chose (app/butler_topics.py launch_draft).
         draft = (topic.get('origin') or {}).get('launch') or None
+    draft = dict(draft or {})
+    # No workspace to choose: a topic starts in the home. A draft that names one is an older card's (a butler's worktree
+    # launch, a card sent before the home start): its card keeps the 工作区 and 运行方式 rows and 其他目录….
+    legacy = isinstance(draft.get('workspace'), str) and bool(draft['workspace'])
+    options = device_options(topics, chat_id)
+    place = None
+    if legacy:
+        # A device's workspaces only where its ``spaces`` say (devices.json; app/access.py allows_device).
+        config = visible_workspaces(load_config(ctx.state_dir, ctx.default_workdir),
+                                    lambda alias: topics.runtime.access.allows_device(chat_id, alias))
+        place = legacy_place(config, draft, notice)
+        draft['device'], notice = place[2], place[3]
+    elif draft.get('device') not in {alias for alias, _ in options}:
+        draft['device'] = ''
     # The chat's recent launches and switches order the menu and give each model its usual budget.
     usage = model_usage.recent(ctx.state_dir, chat_id)
     defaults = topic_defaults(ctx.state_dir)
@@ -152,20 +202,18 @@ def build_launch_card(topics, ctx, *, new_topic=False, draft=None, notice=''):
         saved = launch_defaults(ctx.state_dir, chat_id) if fresh else None
     except (OSError, ValueError):
         saved = None
-    selection = launch_selection(available_models(topics, ctx), usage, config, device_harnesses=device_harnesses(config),
-                                 model=ctx.options['harness_id'] + ':' + ctx.model, workspace=ctx.workspace_name,
-                                 work_mode=ctx.work_mode, fresh=fresh, saved=saved, draft=draft, notice=notice,
-                                 topic_budget=topic_budget(ctx.state_dir), topic_model=(defaults.harness.lower(), defaults.model),
-                                 topic_workspace=defaults.workspace)
-    draft = draft or {}
+    selection = launch_selection(available_models(topics, ctx), usage, device_harnesses=alias_harnesses(),
+                                 model=ctx.options['harness_id'] + ':' + ctx.model, work_mode=ctx.work_mode, fresh=fresh,
+                                 saved=saved, draft=draft, notice=notice, topic_budget=topic_budget(ctx.state_dir),
+                                 topic_model=(defaults.harness.lower(), defaults.model))
     # 敏感词脱敏 and 运行方式 keep the card's choice across rebuilds; a new card starts from the 新话题 page's.
     redaction = draft.get('redaction') if draft.get('redaction') in ('on', 'off') else (
         'on' if defaults.redaction else 'off')
     token = secrets.token_hex(12)
+    page = draft.get('page') if draft.get('page') in PAGES else ''  # The row drawn open.
     run_mode = draft.get('run_mode') if draft.get('run_mode') in RUN_MODES else (
         defaults.run_mode if defaults.run_mode in RUN_MODES else 'direct')
-    page = draft.get('page') if draft.get('page') in PAGES else ''  # The row drawn open.
-    # Budget, work mode, workspace and run mode are selects outside the form: each choice is
+    # Budget, work mode, device (and an older card's workspace and run mode) are rows outside the form: each choice is
     # recorded when made, so a model change (a whole new card) can keep them.
     save_record(ctx.state_dir / 'launch-forms' / (token + '.json'), {
         'topic_id': ctx.topic_id, 'chat_id': chat_id,
@@ -174,16 +222,18 @@ def build_launch_card(topics, ctx, *, new_topic=False, draft=None, notice=''):
         'schema_version': 3, 'compact': True, 'models': selection.choices, 'selected_model': selection.model,
         'config_revision': 1, 'selected_effort': selection.effort, 'selected_work_mode': selection.work_mode,
         'selected_redaction': redaction,
-        'form_defaults': {'workspace': selection.workspace, 'path': draft.get('path') or '', 'run_mode': run_mode},
+        'form_defaults': ({'workspace': place[0], 'path': draft.get('path') or '', 'run_mode': run_mode} if legacy
+                          else {'device': selection.device}),
         **({'page': page} if page else {}),
         # The card says its 脱敏 is lost on this model and asks (cards/launch_config.py unredacted): its 不脱敏开始 may start it.
         **({'redaction_asked': selection.model} if unredacted(selection.choices.get(selection.model, {}), redaction) else {}),
     })
+    config = load_config(ctx.state_dir, ctx.default_workdir) if legacy else {'workspaces': {}}
     return launch_form_card(token, model=selection.model, choices=selection.choices, effort=selection.effort,
-                            workspace=selection.workspace, names=selection.names, run_mode=run_mode,
+                            **({'workspace': place[0], 'names': place[1], 'run_mode': run_mode} if legacy else {}),
                             notice=selection.notice, work_mode=selection.work_mode, redaction=redaction,
                             topic_tag=topic_label(ctx.state_dir, ctx.topic_id), expanded=bool(draft.get('expanded')),
-                            page=page, devices=device_titles(config))
+                            page=page, devices=device_titles(config), device=selection.device, device_options=options)
 
 
 def remember_launch_card(ctx, card, card_id, message_id, *, sequence=0):

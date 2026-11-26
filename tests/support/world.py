@@ -267,20 +267,20 @@ class LaunchCase(UnifiedCase):
         super().setUp()
         FakeCardKit().start(self)
 
-    def form(self, mid, *, new_topic=False):
+    def form(self, mid, *, new_topic=False, draft=None):
         from covey.app.launch import build_launch_card, card_token, remember_launch_card
         from covey.cards.launch_config import SUBMIT_PREFIX
         from covey.core.topics import remember_topic_message
 
         app, ctx = self.route(mid)
-        card = build_launch_card(app.topics, ctx, new_topic=new_topic)
+        card = build_launch_card(app.topics, ctx, new_topic=new_topic, draft=draft)
         action = SUBMIT_PREFIX + card_token(card)
         remember_topic_message(ctx.state_dir, ctx.topic_id, 'chat', 'card-' + mid)
         remember_launch_card(ctx, card, 'card-id-' + mid, 'card-' + mid)
         return card, {'operator_id': 'owner', 'chat_id': 'chat', 'message_id': 'card-' + mid,
                       'event_id': 'click-' + mid, 'action_tag': 'button', 'action_name': action,
-                      'form_value': {'model': 'maso:maso-model', 'effort': 'high', 'workspace': ctx.workspace_name, 'path': '',
-                                     'run_mode': 'direct'}}
+                      # A card of the home start names no workspace or run mode (a test that wants an older card's puts them in).
+                      'form_value': {'model': 'maso:maso-model', 'effort': 'high', 'path': ''}}
 
     def submit(self, event):
         self.app.handle_card_action_event(self.choose_model(event), self.ctx)
@@ -306,6 +306,10 @@ class LaunchCase(UnifiedCase):
             record = self.launch_form(token)
             if fields.get('effort'):
                 choose('bridge_launch_budget', str(record['config_revision']) + ':' + fields['effort'])
+            if fields.get('run_mode') and not fields.get('workspace'):
+                # A run mode is an older card's choice (the home start has none), which came with its workspace row.
+                from covey.core.workspaces import load_config
+                fields = {**fields, 'workspace': load_config(self.ctx.state_dir, self.work)['default']}
             for kind, name in (('bridge_launch_workspace', 'workspace'), ('bridge_launch_mode', 'run_mode')):
                 if fields.get(name):
                     choose(kind, fields[name])

@@ -51,7 +51,7 @@ class MenuTests(UnifiedCase):
         self.assertEqual(set(fresh.menu.actions), set(KEYS) | {'main_thread_settings', 'digest_board'})
         self.assertEqual({key: action.__func__ for key, action in fresh.menu.actions.items()}, {
             'digest_board': type(fresh.digest).board,
-            'weekly_usage': type(fresh.weekly_usage).send, 'manage_workspaces': type(fresh.settings_hub).open_workspaces,
+            'weekly_usage': type(fresh.weekly_usage).send, 'manage_workspaces': type(fresh.settings_hub).open_repos,
             'proxy_settings': type(fresh.proxy.panel).open, 'redaction_dashboard': type(fresh.settings_hub).open_redaction,
             'manage_groups': type(fresh.group_manager).open, 'bridge_settings': type(fresh.settings_hub).open,
             'main_thread_settings': type(fresh.settings_hub).open_main})

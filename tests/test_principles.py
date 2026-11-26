@@ -338,12 +338,18 @@ class ToolTest(unittest.TestCase):
         self.assertEqual(answer["text"], "principle_save 没有完成：原则的正文是空的")
 
     def test_the_specs_name_every_handler(self):
+        """The principle tools are no longer listed (docs/butler.md 记忆): an older session's call is run as the memory tool
+        that took its place (core/butler_tool_specs.py RENAMED_TOOLS), and a request an older server wrote still has its handler."""
+        from covey.app import butler_memory
+        from covey.core.butler_tool_specs import current_name
         specs = {tool["name"]: tool for tool in TOOLS}
         for name in ("principle_save", "principle_delete", "principles_list"):
             self.assertIn(name, butler_tools.TOOLS)
-            self.assertIn(name, specs)
-        self.assertEqual(specs["principle_save"]["input_schema"]["required"], ["scope", "text"])
-        self.assertIn("一次性的要求", specs["principle_save"]["description"])
+            self.assertNotIn(name, specs)
+            self.assertIn(current_name(name), specs)
+            self.assertIn(current_name(name), butler_memory.TOOLS)
+        self.assertEqual(specs["memory_save"]["input_schema"]["required"], ["text", "kind", "scope"])
+        self.assertIn("一次性的要求", specs["memory_save"]["description"])
 
 
 if __name__ == "__main__":
