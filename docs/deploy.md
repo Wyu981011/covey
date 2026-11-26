@@ -188,7 +188,7 @@ $COVEY_DATA_HOME/extensions/
 ```
 
 - 每次部署（`deploy_bridge.sh`，以及套着它的 `scripts/upgrade.sh`、扩展的安装器、网页上的升级、定时自动升级）自己扫一层这个目录（`covey/service/personal_extensions.py`），把每个检出 `HEAD` 的包和核心、`--ext-repo` 的扩展一起拼进 release，排在最后；结果的 `personal_extensions` 列出它们，release id 末尾多它们的前 8 位，`RELEASE_MANIFEST` 里记成 `personal <提交> <包>…`。运行时仍只从 release 加载：回滚时个人扩展跟着回，改了检出要再升级一次才生效，没提交的改动不带（`pre.personal_notes` 提示）。
-- 预检照常在拼好的 release 里跑扩展自检（`pre.extension_checks`），个人扩展也在里面：每个启用的包的钩子模块和 `features` 模块都试导入一遍，坏了的在部署前就拦下，什么都不换。拦下的是个人扩展时，`pre.extension_disable` 给出临时关掉它的命令（`COVEY_DATA_HOME=… python3 -B …/bin/covey_plugins.py disable <包>`，写的是数据根的选择），关掉后照常升级，改好再 `enable`、升级一次。
+- 预检照常在拼好的 release 里跑扩展自检（`pre.extension_checks`），个人扩展也在里面：每个启用的包的钩子模块和 `features` 模块都试导入一遍，坏了的在部署前就拦下，什么都不换。拦下的是个人扩展（或数据根还启用着、release 里已经没有的包；`--ext-repo` 带的包除外）时，`pre.extension_disable` 给出临时关掉它的命令（`COVEY_DATA_HOME=… python3 -B …/bin/covey_plugins.py disable <包>`，写的是数据根的选择），关掉后照常升级，改好再 `enable`、升级一次。
 - 不打包、只提示的：不是 git 检出的目录、`HEAD` 里没有包的检出。拦下的（`pre.personal_problems`）：属主不是当前用户、或同组和其他人可写的检出（它的代码以 Bridge 的权限运行），还没有提交的检出。几个检出里有同名的包时拼装报错，谁也不盖住谁。
 - 能分享给同事的包，直接提进扩展库、不写进它的 `enabled`，要用的人 `covey_plugins.py enable <包>`；数据根的个人扩展只留给真正私有的代码。不要用 `COVEY_EXTENSION_PATH` 指过去：它只给开发用，服务清单里有它时预检会拦。
 

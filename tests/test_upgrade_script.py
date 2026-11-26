@@ -281,7 +281,7 @@ class UpgradeTests(UpgradeCase):
         self.assertEqual(code, 1, out)
         self.assertIn("扩展自检没过", out)
         self.assertIn("covey_mine: cannot import hook claude_turn", out)
-        self.assertIn("拦下升级的是个人扩展 covey_mine：改好之前可以先关掉它再升级", out)
+        self.assertIn("拦下升级的是扩展 covey_mine（个人扩展", out)
         self.assertIn(command, out)
         self.assertEqual(len(self.calls()), 1)
 

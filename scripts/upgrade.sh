@@ -392,7 +392,7 @@ def explain(code, result, run_dir):
     if any("HTTPS_PROXY" in str(pre.get(key)) for key in ("env_missing", "env_value_diff")):
         found.append("清单里存的是大写的 HTTPS_PROXY：照 docs/deploy.md「升级与回滚」的已知限制改存成小写的 https_proxy 再升级")
     for name, command in (pre.get("extension_disable") or {}).items():
-        found.append(f"拦下升级的是个人扩展 {name}：改好之前可以先关掉它再升级（这个部署不再启用它，改好后把 disable 换成 enable"
+        found.append(f"拦下升级的是扩展 {name}（个人扩展，或数据根还启用着、release 里已经没有的包）：改好之前可以先关掉它再升级（这个部署不再启用它，改好后把 disable 换成 enable"
                      f"、再升级一次）：{command}")
     if pre.get("shell_startup_note"):
         found.append("这个终端设了 " + "、".join(pre.get("shell_startup_env") or []) + "：去掉后重跑（env -u BASH_ENV -u ENV …）")

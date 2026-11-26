@@ -55,8 +55,9 @@
 # --personal; RELEASE_MANIFEST "personal" lines, which the rollback check leaves out), its 8 characters added to the release
 # id; "personal_extensions" lists them. A checkout another user could change, or one without a commit, stops the deploy
 # ("pre.personal_problems"); what is not packed is said in "pre.personal_notes". When the extension check fails for a
-# personal package, "pre.extension_disable" gives the command that turns it off for this deployment (covey_plugins.py
-# disable, the data home's choice), to upgrade without it until it is fixed.
+# package no --ext-repo has (a personal one, or one the data home still enables), "pre.extension_disable" gives the command
+# that turns it off for this deployment (covey_plugins.py disable, the data home's choice), to upgrade without it until it
+# is fixed.
 # Without --ext-repo and personal extensions nothing changes.
 # Said, never stopping: "pre.switches_on", the switches on unset (core/switches.py DEFAULTS) in the checkout that were not
 # in the live release and the manifest does not set (an upgrade turns them on); "post.owner_todo", what covey_doctor lists
@@ -387,11 +388,14 @@ def extension_checks():
 
 if packed:
     pre["extension_checks"], pre["extension_notes"], failing = extension_checks()
-    # A personal package that stopped it: the command that turns it off for this deployment until it is fixed.
+    # A package that stopped it and is not an --ext-repo one (a personal one, or one the data home still enables that the
+    # release no longer has): the command that turns it off for this deployment until it is fixed.
     plugins = Path(sys.argv[1]) / "bin" / "covey_plugins.py"
-    mine_packages = {name for _, _, _, packages in personal for name in packages}
+    theirs_packages = {name.split("/")[0] for path, sha, _ in exts
+                       for name in sh(["git", "ls-tree", "-r", "--name-only", sha], cwd=path).stdout.splitlines()
+                       if re.fullmatch(r"[^/]+/manifest\.py", name)}
     disable = {name: f"COVEY_DATA_HOME={shlex.quote(str(DATA))} python3 -B {shlex.quote(str(plugins))} disable {name}"
-               for name in failing if name in mine_packages}
+               for name in failing if name not in theirs_packages}
     if disable:
         pre["extension_disable"] = disable
 
