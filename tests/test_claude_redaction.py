@@ -23,7 +23,7 @@ from support.records import write_topic
 
 from covey.backends.claude import redaction
 from covey.backends.claude.bridge import REDACTION_NOTE, ClaudeBackend
-from covey.backends.claude.argv import stream_argv
+from covey.backends.claude.argv import home_hooks, merge_hooks, stream_argv
 from covey.core.harness import RunCallbacks, RunInputs, RunRequest
 from covey.core.jobs import BridgeReplyJob as ReplyJob
 from covey.core.redaction import auto_stand_in, recent_turns, save_config
@@ -243,7 +243,9 @@ class TurnTests(Base):
 
     def test_the_turn_points_claude_code_at_the_relay_and_records_its_counts(self):
         backend = ClaudeBackend()
-        self.assertNotIn("--settings", stream_argv(backend, self.ctx))
+        # Off: no relay env, only the home-search hook of a turn started from the home (backends/claude/argv.py home_hooks).
+        argv = stream_argv(backend, self.ctx)
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), {"hooks": home_hooks(self.ctx)})
         env = {"ANTHROPIC_BASE_URL": self.upstream.url, "NO_PROXY": "corp"}
         with redaction.turn(self.ctx, env, run_id=RUN) as (ctx, env2):
             self.assertIs(env2, env)
@@ -342,7 +344,8 @@ class TurnTests(Base):
         merged = {"PreToolUse": audit["PreToolUse"] + remote["PreToolUse"], "SessionEnd": remote["SessionEnd"]}
         self.assertEqual(ctx.options[TURN_HOOKS], merged)
         argv = stream_argv(ClaudeBackend(), ctx)
-        self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["hooks"], merged)
+        # Behind the home-search hook of a turn started from the home (backends/claude/argv.py home_hooks).
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1])["hooks"], merge_hooks(home_hooks(ctx), merged))
         # Hooks of another shape fail the turn naming the package.
         with mock.patch.object(extensions, "hooks", return_value=[package("a", audit), package("bad", ["/abs/x"])]), \
                 mock.patch("covey.backends.claude.runtime.run_stream", return_value="ran"), \

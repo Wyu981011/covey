@@ -1244,7 +1244,9 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
             self.assertEqual(self.summarize(redact=True, run_id="handoff-r3")[1], "写好了")
         self.assertEqual(runs, ["handoff-r3"])  # Its own row in the relay's counts.
         argv = self.argv()
-        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), {"env": settings})
+        # The relay's env, beside the home-search hook of a turn started from the home (backends/claude/argv.py home_hooks).
+        home = claude_argv.home_hooks(self.context("handoff"))
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), {"env": settings, "hooks": home})
         (self.root / "handoff-argv.json").unlink()
         # Its turns went out as they were, but the topic has 敏感词脱敏 on now: through the relay as well.
         topic = codex_context(self.root, "stream-json").state_dir / "topics" / "t-handoff"
@@ -1253,7 +1255,7 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
         with mock.patch.object(redaction, "turn", relay):
             self.assertEqual(self.summarize(topic_id="t-handoff")[1], "写好了")
         argv = self.argv()
-        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), {"env": settings})
+        self.assertEqual(json.loads(argv[argv.index("--settings") + 1]), {"env": settings, "hooks": home})
         (self.root / "handoff-argv.json").unlink()
         (topic / "topic.json").write_text("not json")  # Its setting unknown: not sent.
         self.assertEqual(self.summarize(topic_id="t-handoff"), ("", "敏感词中继不可用，没有发送"))

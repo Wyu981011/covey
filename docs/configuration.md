@@ -638,7 +638,7 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 | `--state`、`--limit`、`--json` | `core/inbound_ledger.py`（`bin/covey_inbound.py`，查主人消息的去向） | 状态目录（必填）、`recent` 最多列几条（10）、JSON 输出；子命令 `where <消息 id>`、`recent` | 否 |
 | `--state-dir`、`--no-probe`、`--json` | `service/device_check.py`（`bin/covey_devices.py`） | 见 `--help`；见[多设备](#多设备开发中默认关)的「自检」 | 否 |
 | `--root`、`--extra-root` | `backends/codex/workspace_reader.py` | 见 `--help` | 否 |
-| `--notes` | `backends/claude/tool_guard.py`（`bin/covey_tool_guard.py`：代答话题 Claude Code 的 PreToolUse 钩子，Bridge 自己写进那一轮的 `--settings`） | 空：编辑工具哪里都不能写；Bridge 给的是联系人的笔记目录 | 否 |
+| `--mode`、`--notes`、`--home` | `backends/claude/tool_guard.py`（`bin/covey_tool_guard.py`：Claude Code 的 PreToolUse 钩子，Bridge 自己写进那一轮的 `--settings`。`--mode proxy` 是代答话题的，`--notes` 是联系人的笔记目录；`--mode home-search` 是从主目录启动的一轮的，`--home` 是主目录，只拦目标是主目录根（或它的上级）又没限深度的递归搜索，`cd <仓库> && rg`、具体子目录、`find -maxdepth` 照常跑，自己出错时放行） | `proxy`；`--notes` 空：编辑工具哪里都不能写 | 否 |
 | `--home`、`--start`、`--idle`、`--max`、`--dy` | `feishu/web_client.py`（`bin/covey_feishu_web.py`） | 见 [浏览器服务](testing.md#浏览器服务) | 否 |
 | `--app-id`、`--home`、`--plan`、`--login-from`、`--console`、`--login-seconds` | `feishu/app_console.py`（`bin/covey_app_console.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |
 | `--profile`、`--app-id`、`--review`、`--json`、`--python`、`--login-from`、`--work` | `service/app_check.py`（`bin/covey_app_setup.py`） | 见[自动补齐飞书应用](feishu-app.md#自动补齐飞书应用) | 否 |

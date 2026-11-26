@@ -608,7 +608,7 @@
 | `backends/claude/sessions.py` | Claude Code session store for the Lark bridge |
 | `backends/claude/subagent_report.py` | What each subagent of a Claude turn delivered, from `<session>/subagents/agent-*.jsonl` and its `.meta.json` |
 | `backends/claude/subagents.py` | Claude Code's subagents on lighter models than the turn's (main-thread.json `subagents`, under 更多 on the 设置 … |
-| `backends/claude/tool_guard.py` | The PreToolUse hook of a 代答 topic's Claude Code turn |
+| `backends/claude/tool_guard.py` | Claude Code's PreToolUse hooks that Covey writes into a turn's --settings (`hooks`), run as … |
 | `backends/claude/transcript.py` | One row of a Claude Code session transcript (a JSONL file), read the way every reader of it does |
 | `backends/claude/usage.py` | Current-invocation root and subagent usage and arrival-time latency, without model text |
 
