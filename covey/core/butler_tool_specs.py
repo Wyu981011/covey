@@ -299,7 +299,7 @@ PROJECT_TOOLS = (
          "text": {"type": "string", "description": "目标和完成标准，一两句，最多 200 字"}}}},
     {"name": "project_remember",
      "description": "记进专项记忆：这个专项里长期适用的决定、约束、联系人和事实，之后每次重建会话都会带上。"
-                    "只记主人说过的或已经定下的，不写令牌、密码这类机密；同类同文的不重复记；主人在专项卡上删掉的不要再记回去；发版号、现网第几代、集群余量、当前进度这类某一刻的快照不要记，写 project_note；已有的口径变了用 project_memory_revise。",
+                    "只记主人说过的或已经定下的，不写令牌、密码这类机密；同类同文的不重复记；主人在专项卡上删掉的不要再记回去。",
      "input_schema": {"type": "object", "required": ["kind", "text"], "properties": {
          "kind": {"type": "string", "enum": ["decision", "constraint", "contact", "fact"],
                   "description": "decision 决定，constraint 约束、做法和坑，contact 联系人，fact 事实"},
@@ -528,6 +528,7 @@ def lead_tools(environ=None) -> tuple:
 # one's schema when it calls it. Its budget is the skills' too, and over it agy drops the largest tool whole, which was
 # topic_start (T750: the butler forked a finished topic in its place).
 SECONDARY = frozenset({"topic_priority", "principle_save", "principle_delete", "principles_list", "settings_panel", "topics_switch",
+                       "project_memory_revise",  # T852: a lead revises a line now and then; agy reads its schema when it calls it.
                        *(tool["name"] for tool in KNOWLEDGE_TOOLS + HISTORY_TOOLS), TIDY_TOOL["name"]})
 # The tools that hand work to topics, what a turn of the butler or of a lead is for: such a Harness loads them first.
 HANDING = frozenset({"topic_start", "topic_send", "topic_fork", "project_send", "project_topic_start", "project_topic_send"})

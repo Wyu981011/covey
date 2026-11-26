@@ -112,6 +112,7 @@ class SentenceTests(State):
         found = candidates.sentences(self.state, CHAT, self.now - 86400, self.now, owner_turn)
         self.assertEqual(found, [{"topic": "a" * 16, "text": "以后回答都先给结论"}])
         self.assertEqual(candidates.not_owner_reason({"message_id": "om_1"}, text="以后都这样"), "")
+        self.assertEqual(candidates.not_owner_reason({"message_id": "lead-791b8d523cd6-63"}, text="以后都这样"), "bridge-id")  # A lead woken.
 
     def test_the_rules_alone_group_what_reads_nearly_the_same_across_topics(self):
         rows = [{"topic": "a", "text": "以后回答先给结论"}, {"topic": "b", "text": "以后回答先给结论！"},

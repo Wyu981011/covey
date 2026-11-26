@@ -76,7 +76,7 @@ ENDED = ("done", "waiting_user", "failed", "interrupted", "cancelled")
 # Only words that say "from now on" (T852): everyday ones (先, 不要, 别, 不是, 应该, 改成, 又, 必须, 记得) are in nearly every message
 # and sent a small model after each of them for nothing.
 CUES = (*memory.CORRECTION_WORDS, "一律", "永远", "总是", "老是", "说过", "规则是", "默认")
-BRIDGE_IDS = ("revisit-", "main-", "review-")  # Message ids the Bridge makes up for a turn nobody spoke: 回看, a hand-on, 复核.
+BRIDGE_IDS = ("revisit-", "main-", "review-", "lead-")  # Message ids the Bridge makes up for a turn nobody spoke: 回看, a hand-on, 复核, a lead woken.
 BRIDGE_TEXT = ("[Bridge", "【Bridge")  # What the Bridge starts its own messages with (叫醒, 唤醒, 说明, 协作…).
 SPLIT = re.compile(r"(?<=[。！？!?；;\n])")
 OPEN, SAVED, DECLINED, EXPIRED = "open", "saved", "declined", "expired"
