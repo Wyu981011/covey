@@ -8,7 +8,8 @@ interrupted one once, ``delays`` seconds after each failure plus 0-30 s of jitte
 retry together). When Claude Code said when a limit resets (core/limit_reset.py, within MAX_RESET_WAIT) the retry is
 at the reset plus a minute instead. A spent quota (QUOTA: a gateway's accounts all spent, every agy account of the
 model's group spent) is retried only at its known reset, within MAX_RESET_WAIT, a minute after it (T831); one further
-off, or with none known, is not retried: its card says when it is back. Each kind counts its own retries along a chain (the job's ``auto_retry``,
+off, or with none known, is not retried: its card says when it is back (a known one is told of when it comes,
+app/quota_return.py). Each kind counts its own retries along a chain (the job's ``auto_retry``,
 ``auto_fault``, ``auto_continue`` and ``auto_resume``; a retry's job carries them on), so they add up and never
 multiply. A retry turn that made progress (``made_progress``) starts the chain's counts again, so a long round is not
 cut off by an old count; MAX_IDLE retries in a row at a reset with no progress stop the chain (the failure card

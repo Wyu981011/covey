@@ -208,3 +208,19 @@ test('页面接线：只有一个「刷新」按钮，没有暂停、只用这�
   assert.match(shell, /useQuota\(on\)/u);
   assert.match(shell, /to="\/settings\/quota"/u);
 });
+
+test('窄条侧栏（收起）：同一个 capsule 条件，带红点的图标，悬停是胶囊那一句，点了到设置 → 账号与额度；不放进底部（那里是设置和深浅色）', () => {
+  const shell = read('Shell.tsx');
+  const mini = shell.match(/\{capsule && mini \? \(\s*<Link to="\/settings\/quota" className="qcap-mini" title=\{capsule\} aria-label=\{capsule\}>[\s\S]*?<\/Link>\s*\) : null\}/u);
+  assert.ok(mini, '窄条的标记：条件、链接、悬停和读屏文字都是 capsule');
+  assert.match(mini[0], /<i aria-hidden="true" \/>/u, '红点');
+  assert.match(shell, /\{capsule && !mini \? \(/u, '展开时的胶囊仍在');
+  const foot = shell.slice(shell.indexOf('className="sidefoot"'));
+  assert.equal(foot.slice(0, foot.indexOf('</aside>')).includes('qcap'), false, '底部没有额度标记');
+  const css = read('quota.css');
+  const rule = css.match(/\.cv \.qcap-mini\{([^}]*)\}/u)?.[1] ?? '';
+  assert.match(rule, /width:40px/u, '和窄条里别的图标位同宽，56px 的窄条（padding 6）放得下');
+  assert.match(css, /\.cv \.qcap-mini i\{position:absolute/u);
+  // 条件和展开时的胶囊一样：capsuleOf 给空串就不画
+  assert.equal(Q.capsuleOf({ at: NOW, read_at: NOW, relogin: [], sources: [source()], refresh: { at: 0, busy: false, cooldown: 300 } }), '');
+});

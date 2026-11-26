@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate, useMatch } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Brain, ChevronDown, ChevronRight, FolderOpen, LayoutDashboard, ListTree, Menu, PanelLeft, Plus, Search, Settings, Share2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Brain, ChevronDown, ChevronRight, FolderOpen, Gauge, LayoutDashboard, ListTree, Menu, PanelLeft, Plus, Search, Settings, Share2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { SnapshotProject, SnapshotResponse, SnapshotTopic } from '@shared/api.interface';
@@ -375,6 +375,13 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
           <i />
           <span>{capsule}</span>
           <ChevronRight aria-hidden="true" />
+        </Link>
+      ) : null}
+      {/* 收起成窄条时：同样的条件，一个带红点的小图标（悬停是胶囊那句话），点了到设置 → 账号与额度 */}
+      {capsule && mini ? (
+        <Link to="/settings/quota" className="qcap-mini" title={capsule} aria-label={capsule}>
+          <Gauge aria-hidden="true" />
+          <i aria-hidden="true" />
         </Link>
       ) : null}
       <div ref={scroller} style={{ overflowY: 'auto', flex: 1, minHeight: 0 }} onClick={(e: React.MouseEvent) => e.stopPropagation()}>

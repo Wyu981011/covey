@@ -56,7 +56,7 @@
 | 回退一步（Claude） | `app/rewind.py`、`backends/claude/rewind.py` | [回退一步](docs/architecture.md#回退一步) |
 | 结果、投递与重投 | `app/turn_settle.py`、`app/worker.py`、`app/turn_delivery.py`、`app/redelivery.py`、`app/outbox.py` | [结果授权与投递](docs/architecture.md#结果授权与投递) |
 | 失败、恢复与自动重试 | `core/recovery.py`、`core/failure.py`（原因和下一步）、`app/recovery_cards.py`、`app/auto_retry.py`；「复制诊断」`app/diag_summary.py`；管家一轮的请求挂住时停下它、让后来的话先跑 `app/unstick.py`；网页上的同名按钮 `app/web_ops.py` 的 `recover`、`app/web_turns.py` 的 `failure_of` | [中断与恢复卡](docs/architecture.md#中断与恢复卡) |
-| 账号与额度（`COVEY_QUOTA`，默认开）：额度快照、来源（扩展的 `quota_sources` 钩子、`quota-sources.json` 的命令和网址）、agy 多账号（配了两个号才开）、按快照写的失败说明和到点接着做 | `core/quota.py`（格式、`Store`）、`core/quota_sources.py`、`app/quota_watch.py`（线程）、`app/quota_failure.py`、网页「账号与额度」和「刷新」`app/web_quota.py`、飞书提醒 `app/quota_notice.py`、`backends/agy/accounts.py`、`backends/agy/account_homes.py`（`bin/agy_as.py`）、`app/auto_retry.py` 的 `QUOTA` | [quota.md](docs/quota.md) |
+| 账号与额度（`COVEY_QUOTA`，默认开）：额度快照、来源（扩展的 `quota_sources` 钩子、`quota-sources.json` 的命令和网址）、agy 多账号（配了两个号才开）、按快照写的失败说明和到点接着做 | `core/quota.py`（格式、`Store`）、`core/quota_sources.py`、`app/quota_watch.py`（线程）、`app/quota_failure.py`、网页「账号与额度」和「刷新」`app/web_quota.py`、飞书提醒 `app/quota_notice.py`、额度很久才恢复的话题到点说一句 `app/quota_return.py`、`backends/agy/accounts.py`、`backends/agy/account_homes.py`（`bin/agy_as.py`）、`app/auto_retry.py` 的 `QUOTA` | [quota.md](docs/quota.md) |
 | 设置卡与机器人菜单 | `app/bot_menu.py`、`app/menu_panel.py`、`app/settings_hub.py`（标签「记忆」`app/memory_panel.py`、「能做什么」`app/about_panel.py`、「诊断」`app/doctor_panel.py`）、`feishu/events.py` | [机器人菜单](docs/usage.md#机器人菜单) |
 | 欢迎卡（新部署只发一次，`COVEY_WELCOME`）和 `./install` 等第一句回答 | `app/welcome.py`、`cards/welcome.py`、`core/welcome.py`（记录、`first_answer`）、`service/installer.py` 的 `wait_answer` | [第一次使用](docs/usage.md#第一次使用)、[第一个回答](docs/install.md#第一个回答) |
 | 代答 | `app/proxy.py`（批次）、`app/proxy_intake.py`（收消息）、`app/proxy_topics.py`（联系人话题）、`app/proxy_commands.py`（查找、群成员）、`app/proxy_send.py`（读回和发送器接口；发送器 `extensions/covey_internal/proxy_sender.py`、`extensions/covey_internal/proxy_login.py`）、`core/proxy.py` | [proxy.md](docs/proxy.md)、[代答](docs/architecture.md#代答) |
@@ -211,6 +211,7 @@
 | `app/quiet_delivery.py` | The quiet butler turn's side of delivering a result |
 | `app/quota_failure.py` | A Claude turn that failed on its model's limit, put right by the gateway's quota snapshot |
 | `app/quota_notice.py` | 账号与额度's two notices to the owner |
+| `app/quota_return.py` | 额度恢复了的一句话 (T831): a turn that failed on a spent quota whose reset is known but further off than … |
 | `app/quota_watch.py` | 账号与额度 at the Bridge: one thread that keeps the quota snapshots current, unless COVEY_QUOTA=0 |
 | `app/record_cards.py` | Writes to a job's card from its record once its own writer has ended (finished, or the job is in another … |
 | `app/recovery_cards.py` | The card of a task that did not end as it should (interrupted, failed, or its result not delivered) and the … |

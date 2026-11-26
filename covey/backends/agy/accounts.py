@@ -556,7 +556,7 @@ class Turn:
         detail = whom + (f"，最早 {when(back)} 恢复" if back else "，没有会自己恢复的号（要重新登录的号登录后再试）")
         code = "quota_exhausted" if back or outcome.error_code != "authentication_error" else "authentication_error"
         changed = dataclasses.replace(outcome, error_code=code)
-        limit = {**(result.limit or {}), "reset_at": back} if back else result.limit
+        limit = {**(result.limit or {}), "reset_at": back, "group": found["group"]} if back else result.limit
         return dataclasses.replace(result, text=changed.summary(detail), outcome=changed, failure_detail=detail,
                                    limit=limit)
 
