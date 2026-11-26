@@ -368,7 +368,8 @@ class ActionsTest(Case):
         with self.assertRaisesRegex(ValueError, "已经处理过了"):
             self.run_op("op-r2", "reject", [self.project_item])
         self.assertEqual(self.run_op("op-all", "accept_all", [self.tidy]), "全部采纳 1 条")
-        self.assertEqual(memstore.find(self.state, "global:g9z9z9").status, "archived")  # A tidy group put away.
+        # A tidy item is what 整理记忆 did already (core/memory_review.py, M2's): accepting keeps it, writes nothing.
+        self.assertEqual(memstore.find(self.state, "global:g9z9z9").status, "active")
         self.assertEqual(self.run_op("op-none", "reject_all", []), "全部不要 1 条")  # The conflict, the last one open.
         self.assertEqual(memstore.review_items(self.state), [])
         with self.assertRaisesRegex(ValueError, "没有要处理的待审核"):
@@ -479,6 +480,52 @@ class PackageM2Test(Case):
         self.assertIn(memstore.find(self.state, self.decision.ref).code, topic["decisions"])
         self.assertEqual(new["decisions"], [])
         self.assertEqual(topic["notes"], [])
+
+
+class IntegratedM2Test(Case):
+    """Seam M4 ↔ M2 (T870 Wave 2B): with package M2 in, its real functions are the ones taken (no stand-in, no silent fall back
+    to this module's baseline), and 在办 is app/memory_turn.py's rule (FINAL-SPEC 修订 5 as docs/butler.md 记忆 says it)."""
+
+    def test_the_probes_pick_m2s_real_functions(self):
+        for module, name, words in ((memory_review, "decide", ("who", "token")), (memory_review, "decide_all", ("keys", "who", "token")),
+                                    (memory_review, "health", ("now",)), (memory_turn, "preview", ("project_key", "title", "query", "repos"))):
+            found = getattr(module, name)
+            self.assertIs(web_memory._m2(module, name, words), found, name)
+            self.assertIn(found.__module__, ("covey.core.memory_review", "covey.app.memory_turn"))
+
+    def test_review_previews_and_health_never_take_the_baseline(self):
+        self.seed()
+        refuse = mock.Mock(side_effect=AssertionError("the baseline was taken"))
+        with mock.patch.object(web_memory, "_baseline_decide", refuse), mock.patch.object(web_memory, "preview_of", refuse):
+            built = self.build()
+            found = web_memory.review_decide(self.state, [self.learn], "accept", token="w-m2-1")
+            web_memory.review_decide(self.state, [self.project_item], "reject", token="w-m2-2")
+        self.assertTrue(found["refs"], found)
+        states = {item["key"]: item["state"] for item in memstore.review_items(self.state, states=None)}
+        self.assertEqual((states[self.learn], states[self.project_item]), ("accepted", "rejected"))
+        self.assertEqual([row["topic_key"] for row in built["memory:previews"]["previews"]], [TID, "new"])
+        self.assertIsInstance(built["memory:index"]["health"], dict)
+
+    def test_a_decision_is_in_progress_by_m2s_rule(self):
+        self.seed()
+        old = memstore.add_decision(self.state, scope="project", owner_key=PID, question="三周前问的事？", answer="先不做",
+                                    origin={"topic_key": "t-gone"}, now=NOW - 21 * 86400)
+        quiet = memstore.add_decision(self.state, scope="project", owner_key=PID, question="四天前问的另一件事？", answer="照旧",
+                                      origin={"topic_key": "t-quiet"}, now=NOW - 4 * 86400)
+        write_job(self.state, "k-quiet", topic_id="t-quiet", chat_id=CHAT, job_id=3, status="done",
+                  finished_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW - 4 * 86400 - 60)))
+        asked = memstore.add_decision(self.state, scope="project", owner_key=PID, question="上线前还要做什么？", answer="跑全量",
+                                      origin={"topic_key": TID}, now=NOW - 3 * 86400)
+        rows = {row["key"]: row for row in self.build()["memory:p:" + PID]["entries"]}
+        self.assertTrue(rows[self.decision.ref]["in_progress"])  # Decided an hour ago.
+        self.assertFalse(rows[old.ref]["in_progress"])  # Past 14 days: the project's other topics carry it no more.
+        self.assertFalse(rows[quiet.ref]["in_progress"])  # 4 days old, and its topic's last turn was before it.
+        self.assertTrue(rows[asked.ref]["in_progress"])  # 3 days old, but its topic had a turn within 48 hours (seed's job).
+        rows = {row["key"]: row for row in self.build()["memory:p:" + PID]["entries"]}
+        write_job(self.state, "k-t001-3", topic_id=TID, chat_id=CHAT, job_id=14, status="done", updated_at=NOW - 1800,
+                  delivery={"commit": "abc1234"})
+        rows = {row["key"]: row for row in self.build()["memory:p:" + PID]["entries"]}
+        self.assertFalse(rows[asked.ref]["in_progress"])  # A delivered commit ends it for the project.
 
 
 class CenterPushTest(WebCase):

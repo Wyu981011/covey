@@ -489,31 +489,34 @@ class ReposAndMemoryToolsTest(unittest.TestCase):
                          ["repos_list", "memory_save", "memory_save", "memory_revise", "memory_revise", "memory_revise",
                           "memory_search", "memory_search"])
 
-    def test_memory_save_keeps_a_rule_as_a_principle_and_an_older_calls_arguments_as_they_were(self):
+    def test_memory_save_writes_the_store_and_an_older_calls_arguments_are_said_in_the_new_words(self):
+        """With package M2 in (T870 Wave 2B) the memory tools are app/butler_knowledge.py's on core/memstore.py: the code back."""
+        from covey.core import memstore
         saved = self.call("memory_save", text="回复先给结论", kind="rule", scope="global")
         self.assertTrue(saved["ok"], saved)
-        self.assertIn("已记下通用的原则", saved["text"])
+        self.assertTrue(saved["text"].startswith("记下了："), saved)
+        self.assertRegex(saved["data"]["code"], memstore.CODE_RE)
+        entry = memstore.find(self.state, saved["data"]["ref"])
+        self.assertEqual((entry.kind, entry.scope, entry.text), ("rule", "global", "回复先给结论"))
         old = self.call("memory_save", scope="owner", text="不在根目录递归搜索")  # principle_save's arguments.
         self.assertTrue(old["ok"], old)
-        found = self.call("memory_search", query="结论")
-        self.assertIn("回复先给结论", found["text"])
-        self.assertNotIn("不在根目录递归搜索", found["text"])
-        self.assertIn("不在根目录递归搜索", self.call("memory_search")["text"])  # principles_list's: no query.
-        self.assertIn("这一版还记不到专项或话题", self.call("memory_save", text="x", kind="rule", scope="project")["text"])
-        with self.assertRaises(ValueError):
-            self.call("memory_save", text="x", kind="practice", scope="global")
+        self.assertEqual(memstore.find(self.state, old["data"]["ref"]).kind, "rule")
+        listed = self.call("memory_search")["text"]  # principles_list's: no query, the latest.
+        self.assertIn(saved["data"]["code"], listed)
+        self.assertIn(old["data"]["code"], listed)
+        self.assertIn("加 project", self.call("memory_save", text="x", kind="rule", scope="project")["text"])
+        self.assertFalse(self.call("memory_save", text="x", kind="practice", scope="global")["ok"])
 
-    def test_memory_revise_retires_or_replaces_a_principle(self):
-        first = self.call("memory_save", text="用 Codex 跑长任务", kind="rule", scope="global")["data"]["id"]
-        changed = self.call("memory_revise", key=first, action="update", text="长任务用 Codex")
+    def test_memory_revise_changes_or_retires_an_entry_by_its_code_or_its_old_arguments(self):
+        from covey.core import memstore
+        first = self.call("memory_save", text="用 Codex 跑长任务", kind="rule", scope="global")["data"]
+        changed = self.call("memory_revise", key=first["code"], action="update", text="长任务用 Codex")
         self.assertTrue(changed["ok"], changed)
-        self.assertIn(f"取代 {first}", changed["text"])
-        texts = self.call("memory_search")["text"]
-        self.assertIn("长任务用 Codex", texts)
-        self.assertNotIn("用 Codex 跑长任务", texts)
-        newer = changed["data"]["id"]
-        self.assertTrue(self.call("memory_revise", id=newer)["ok"])  # principle_delete's arguments.
-        self.assertIn("还没有记下的原则", self.call("memory_search")["text"])
+        self.assertEqual(memstore.find(self.state, first["ref"]).text, "长任务用 Codex")
+        gone = self.call("memory_revise", id=first["ref"])  # principle_delete's arguments: retired.
+        self.assertTrue(gone["ok"], gone)
+        self.assertNotEqual(memstore.find(self.state, first["ref"]).status, "active")
+        self.assertNotIn(first["code"], self.call("memory_search")["text"])
         self.assertFalse(self.call("memory_revise", key="R7K2", action="retire")["ok"])
 
     def test_the_memory_tools_hand_on_to_their_own_handlers_once_they_are_there(self):
@@ -535,7 +538,7 @@ class ReposAndMemoryToolsTest(unittest.TestCase):
             self.call("memory_search", query="部署", limit=3, scope="project", project="P1", kinds=["rule"])
         self.assertEqual(calls[-1], {"query": "部署", "limit": 3, "scope": "project", "project": "P1", "kinds": ["rule"]})
 
-    def test_the_leads_project_remember_takes_rule_and_note_before_its_handler_does(self):
+    def test_the_leads_project_remember_hands_rule_and_note_on_as_they_are(self):
         seen = []
         from covey.app import butler_memory
         with mock.patch.dict(butler_tools.project_tools.TOOLS, {"project_remember": lambda env, request: seen.append(request.args) or {
@@ -544,7 +547,9 @@ class ReposAndMemoryToolsTest(unittest.TestCase):
                 "kind": "rule", "title": "部署", "text": "改完就部署"}, "lead-1", NOW))
             butler_memory.TOOLS["project_remember"](self.env, butler_requests.Request("r2", "project_remember", {
                 "kind": "fact", "text": "旧的"}, "lead-1", NOW))
-        self.assertEqual(seen, [{"kind": "constraint", "title": "部署", "text": "部署：改完就部署"}, {"kind": "fact", "text": "旧的"}])
+        # M3's project_tools takes rule and note itself (MEMORY_KINDS): handed on as they are, never said in older kinds.
+        self.assertEqual(seen, [{"kind": "rule", "title": "部署", "text": "改完就部署"}, {"kind": "fact", "text": "旧的"}])
+        self.assertTrue({"rule", "note"} <= set(butler_tools.project_tools.MEMORY_KINDS))
 
 
 class OpeningArgumentsTest(unittest.TestCase):

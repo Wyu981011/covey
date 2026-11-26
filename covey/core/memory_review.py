@@ -150,7 +150,8 @@ def decide(state_dir, key: str, action: str, *, who: str = "owner", token: str =
     if refs:
         memory_usage.signal(state_dir, refs, "confirm")
     state = "rejected" if action in ("reject", "keep_left") else "accepted"
-    memstore.review_set(state_dir, key, state, by=who, now=stamp, refs=refs)
+    # The token on the item too: an undo of it (app/web_memory.py reopen) puts the item back in 待审核.
+    memstore.review_set(state_dir, key, state, by=who, now=stamp, refs=refs, token=token)
     return {"ok": True, "key": key, "state": state, "refs": refs, "undo_token": token}
 
 

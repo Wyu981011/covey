@@ -427,8 +427,9 @@ def _shown_origin(origin) -> dict:
     return out
 
 
-def entry_view(entry, *, carried, over_cap=False, topic_number=None) -> dict:
-    """One entry as the page reads it (MemoryEntry): never how often a turn carried or used it."""
+def entry_view(entry, *, carried, over_cap=False, topic_number=None, live=None) -> dict:
+    """One entry as the page reads it (MemoryEntry): never how often a turn carried or used it. ``live``: whether a decision is
+    在办 (``Store.in_progress``), its status alone when not given."""
     origin = _shown_origin(entry.origin)
     if entry.scope == "topic":  # Written in that topic: its own key and number when the line does not say.
         origin.setdefault("topic_key", entry.owner_key)
@@ -458,13 +459,12 @@ def entry_view(entry, *, carried, over_cap=False, topic_number=None) -> dict:
     if entry.edited_at:
         out["edited"] = True
     if entry.kind == "decision":
-        out["in_progress"] = in_progress(entry)
+        out["in_progress"] = in_progress(entry) if live is None else bool(live)
     return out
 
 
 def in_progress(entry) -> bool:
-    """Whether a decision is 在办 (carried by its topic's and its project's turns): while it is active; a topic that ended or
-    a newer answer to the same question settles it (core/memstore.py ``settle``; docs/web.md 数据约定 v43, app/memory_turn.py)."""
+    """Whether a decision is active: what 在办 is read as without the job records (``Store.in_progress`` says it with them)."""
     return entry.kind == "decision" and entry.status == "active"
 
 
@@ -483,13 +483,13 @@ def rule_room(entries, scope) -> tuple[set, dict]:
                   "char_limit": chars_limit}
 
 
-def _carried(entry, over) -> bool:
+def _carried(entry, over, live=None) -> bool:
     if entry.status != "active":
         return False
     if entry.kind == "rule":
         return entry.ref not in over
     if entry.kind == "decision":
-        return in_progress(entry)
+        return in_progress(entry) if live is None else bool(live)
     return True  # A note: carried when the turn finds it relevant (memory:previews says which).
 
 
@@ -543,6 +543,7 @@ class Store:
             if found:
                 self.topics[tid] = found
         self.review = memstore.review_items(self.state)
+        self.live_cache = {}  # app/memory_turn.py in_progress's: each asking topic's job records read once a build.
         self.over, self.rooms = set(), {}
         for key, found, scope in [("global", self.globals, "global"),
                                   *((f"p:{pid}", found, "project") for pid, (_, found) in self.projects.items()),
@@ -558,9 +559,23 @@ class Store:
     def topic(self, tid) -> dict:
         return _topic_facts(self.state, tid, self.topic_cache)
 
+    def in_progress(self, entry) -> bool:
+        """在办 as the turns carry a decision (app/memory_turn.py ``in_progress``, docs/butler.md 记忆): a topic's
+        own while it is active; a project's as the project's other topics carry it (14 days at most, ended by the asking
+        topic's delivered commit, kept while it was decided or its topic had a turn within IN_PROGRESS_HOURS)."""
+        if entry.kind != "decision":
+            return False
+        topic = entry.owner_key if entry.scope == "topic" else ""
+        try:
+            return memory_turn.in_progress(self.state, entry, topic, now=self.now, cache=self.live_cache)
+        except (OSError, ValueError, TypeError):
+            return in_progress(entry)
+
     def view(self, entry) -> dict:
         number = self.topic(entry.owner_key)["number"] if entry.scope == "topic" else None
-        return entry_view(entry, carried=_carried(entry, self.over), over_cap=entry.ref in self.over, topic_number=number)
+        live = self.in_progress(entry) if entry.kind == "decision" else None
+        return entry_view(entry, carried=_carried(entry, self.over, live), over_cap=entry.ref in self.over,
+                          topic_number=number, live=live)
 
     def pending(self) -> dict:
         """Open items of 待审核 per scope summary key ('global', 'topics', 'p:<id>'), by where each would go."""
