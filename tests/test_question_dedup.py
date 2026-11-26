@@ -212,6 +212,25 @@ class RealSearchTest(Case):
         self.assertEqual(rpc.refused, [])
         self.assertEqual(len(saved), 1)
 
+    def test_an_old_answer_of_a_high_risk_class_is_never_handed_back(self):
+        """T870 review: the new question's words say neither 删 nor 部署 (``other``), the old answer said 删掉: a grey line only,
+        never a refusal in the turn, never ground for the lead."""
+        answer(self.state, {"question": "旧的 checkpoint 目录能清一下吗？"}, "删掉吧")
+        question = ask_of("旧的 checkpoint 目录能清一下吗？")
+        self.assertFalse(question_dedup.risky(question))
+        hit = self.check(question["question"])
+        self.assertIsNotNone(hit)
+        self.assertTrue(hit.risky)
+        self.assertFalse(question_dedup.may_refuse([], question, hit))
+        marks = question_dedup.marks({"q": hit})
+        self.assertTrue(marks[question_dedup.MARK_KEY]["q"]["risky"])
+        self.assertEqual(question_dedup.lead_line(marks), "")
+        rpc = Rpc()
+        saved, _ = self.ask(self.native(), self.job(key="om_q9", job_id=9), [question], rpc, request="req-9")
+        self.assertEqual(rpc.refused, [])
+        self.assertEqual(len(saved), 1)
+        self.assertIn("q", saved[0][question_dedup.MARK_KEY])  # The grey line is still on the card.
+
     def test_an_answer_of_another_project_is_not_this_ones(self):
         self.assertIsNone(self.check("e2e50b 那批结果要用新尺子再判一遍吗？"))
         hit = self.check("e2e50b 那批结果要用新尺子再判一遍吗？", topic=self.other_lead)

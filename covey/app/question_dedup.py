@@ -83,6 +83,7 @@ class Hit:
     sim: float
     question: str = ""  # The old question's words.
     mutual: float = 1.0  # The old and the new question alike both ways (REFUSE_MUTUAL for a refusal in the turn).
+    risky: bool = False  # The old question or its answer is of the five high-risk classes (``old_risky``): the grey line only.
 
 
 def q_hash(question: dict) -> str:
@@ -207,6 +208,15 @@ def _number(state_dir, entry) -> int | None:
     return int(number) if number else None
 
 
+def old_risky(old, answer) -> bool:
+    """Whether an old decision is of the five high-risk classes by its own words (its question and answer: ``category`` or a
+    gate word of core/project_gates.py). Such an answer is never handed back as the answer of a new question, however alike:
+    a new one that says neither 删 nor 部署 may still ask the same 删掉吗, and what the owner said then is no leave for now."""
+    from covey.core import project_gates
+
+    return category(f"{old} {answer}") in HIGH_RISK or bool(project_gates.hit([{"question": old, "options": [{"label": answer}]}]))
+
+
 def search_context(topic, project, tau, purpose) -> dict:
     """What core/memory_search.py ``eval_search`` is given (its keys: ``topic``, ``project``, ``kinds``, ``statuses``, ``tau``):
     the decisions in use or done, weighed for this topic and project, none of the global store (no decision is there)."""
@@ -270,7 +280,7 @@ def check(ctx, record: dict, questions) -> dict:
                     best, best_mutual = Hit(ref=entry.ref, code=entry.code, answer=answer, topic_number=_number(state, entry),
                                             at=float(entry.at or (entry.origin or {}).get("at") or 0),
                                             sim=float(sim) if isinstance(sim, (int, float)) else float(both), question=old,
-                                            mutual=float(both)), float(both)
+                                            mutual=float(both), risky=old_risky(old, answer)), float(both)
             if best is not None:
                 hits[str(question["id"])] = best
         return hits
@@ -298,7 +308,8 @@ def lead_line(record) -> str:
     """The old answers a held question's receipt hands the lead (``MARK_KEY``), '' for none."""
     marks = record.get(MARK_KEY) if isinstance(record.get(MARK_KEY), dict) else {}
     lines = [f"主人上次答过：{_cut(mark.get('question'), 60)}→{_cut(mark.get('answer'), 80)}"
-             + (f"（{mark['code']}）" if mark.get("code") else "") for mark in marks.values() if isinstance(mark, dict)]
+             + (f"（{mark['code']}）" if mark.get("code") else "") for mark in marks.values()
+             if isinstance(mark, dict) and not mark.get("risky")]  # A high-risk old answer is no ground for the lead either.
     return "；".join(lines)
 
 
@@ -318,7 +329,8 @@ def marks(hits) -> dict:
     if not hits:
         return {}
     return {MARK_KEY: {qid: {"ref": hit.ref, "code": hit.code, "answer": hit.answer, "question": hit.question,
-                             "topic_number": hit.topic_number, "at": hit.at, "line": hint(hit)} for qid, hit in hits.items()}}
+                             "topic_number": hit.topic_number, "at": hit.at, "line": hint(hit),
+                             **({"risky": True} if getattr(hit, "risky", False) else {})} for qid, hit in hits.items()}}
 
 
 # Refusing in the same turn: at most MAX_REJECTS, counted in the topic's job records.
@@ -345,9 +357,11 @@ def refused(state_dir, topic_id) -> list:
 
 
 def may_refuse(rows, question, hit) -> bool:
-    """Whether ``question`` may be refused with ``hit``: the two questions alike enough (``REFUSE_MUTUAL``), and neither it (its
-    hash) nor that old answer refused MAX_REJECTS times."""
+    """Whether ``question`` may be refused with ``hit``: the old answer not of a high-risk class (``Hit.risky``), the two
+    questions alike enough (``REFUSE_MUTUAL``), and neither it (its hash) nor that old answer refused MAX_REJECTS times."""
     digest = q_hash(question)
+    if getattr(hit, "risky", False):
+        return False  # The old answer is of a high-risk class (``old_risky``): only the grey line.
     return (float(getattr(hit, "mutual", 1.0)) >= REFUSE_MUTUAL and sum(1 for row in rows if row.get("q") == digest) < MAX_REJECTS
             and sum(1 for row in rows if row.get("ref") == hit.ref) < MAX_REJECTS)
 
