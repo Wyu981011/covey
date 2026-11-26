@@ -12,6 +12,11 @@
 - A project's lead (data contract v36): its ``config`` is pushed too, and ``switch`` changes it as the 专项卡's 换配置 does
   (app/harness_switch.py): only a model a lead can run on (app/lead_harness.py ``can_lead``), its workspace and run mode as they
   are; the 已换配置 words go as a reply to the 专项卡.
+- The repositories a topic uses (data contract v43 §4, ``repos?: {name, mode}[]``; ``asked_repos``): a payload that has ``repos``
+  sets them (each checked as a new topic's are, app/butler_topics.py ``declared_repos``; one the topic has keeps its worktree and
+  what it read, a new one is declared; ``[]`` clears them), one without leaves them. Repositories alone are a change too: written
+  into topic.json as they are, no rebind and no new session (``binding_revision`` stays), still not while a task runs. A lead's
+  are the project's, read only: not changed here.
 """
 from __future__ import annotations
 
@@ -22,6 +27,40 @@ from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 
 WORKTREE_ON_CARD = "新建独立 worktree 要在飞书的换配置卡上做"
 LEAD_PLACE = "负责人的工作区和运行方式不能换：只能换 Harness、模型、思考预算和脱敏"
+LEAD_REPOS = "负责人用的仓库跟着专项（只读），不能在这里换"
+NO_REPOS = "无"
+
+
+def _pairs(entries) -> list:
+    return sorted((str(e.get("name")), "write" if e.get("mode") == "write" else "read") for e in entries or ()
+                  if isinstance(e, dict) and str(e.get("name") or "").strip())
+
+
+def repos_words(entries) -> str:
+    """The repositories as a receipt names them: ``covey（改）、web``, 无 for none."""
+    return "、".join(name + ("（改）" if mode == "write" else "") for name, mode in _pairs(entries)) or NO_REPOS
+
+
+def asked_repos(state, payload, topic):
+    """The repositories the payload's ``repos`` asks for (``merged_repos`` applies them), or None when it has none (or null) or asks for the ones the
+    topic has (the same names and modes). A repository the topic has keeps its entry (worktree, branch, what it read) with the
+    mode asked; a new one is declared as a new topic's is (app/butler_topics.py ``declared_repos``: the repo map's names,
+    never a write to a frozen or read-only one); ``[]`` clears them. ValueError says what is wrong."""
+    if payload.get("repos") is None:
+        return None
+    from covey.app.butler_topics import declared_repos
+    try:
+        wanted = declared_repos(state, payload["repos"])
+    except ValueError as exc:
+        raise ValueError(str(exc).replace("；用 repos_list 看", "")) from None
+    return None if _pairs(merged_repos(topic.get("repos"), wanted)) == _pairs(topic.get("repos")) else wanted
+
+
+def merged_repos(current, wanted) -> list:
+    """topic.json's ``repos`` once ``wanted`` (``asked_repos``) is applied to ``current``: those of ``wanted`` in its order, an
+    entry ``current`` has kept whole with the mode asked; the others gone."""
+    had = {str(entry.get("name")): dict(entry) for entry in current or () if isinstance(entry, dict)}
+    return [{**had[repo["name"]], "mode": repo["mode"]} if repo["name"] in had else dict(repo) for repo in wanted]
 
 
 def _worktree_prefix() -> str:
@@ -80,7 +119,7 @@ def _place(env, ctx, chat, current, workspace, mode, harness, choice):
     return {"workspace": name, "workdir": str(binding.workdir), "run_mode": "direct", "branch": ""}
 
 
-def _receipt(apps, before, after, redaction, was, lead=False) -> str:
+def _receipt(apps, before, after, redaction, was, lead=False, repos="") -> str:
     from covey.core.model_names import model_name
 
     def named(side):
@@ -94,6 +133,8 @@ def _receipt(apps, before, after, redaction, was, lead=False) -> str:
         parts.append(f"工作区 {before.get('workspace') or '?'} → {after.get('workspace') or '?'}")
     if redaction != was:
         parts.append("脱敏 " + ("关 → 开" if redaction else "开 → 关"))
+    if repos:
+        parts.append(repos)
     return "已换配置：" + "；".join(parts or ["已更新"]) + ("，负责人下一轮起由新会话接着做" if lead else "，下一句话起由新会话接着做")
 
 
@@ -106,7 +147,7 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     from covey.app.web_launch import base_app, model_choice
     from covey.core import devices
     from covey.core.menu_choice import chosen_work_mode
-    from covey.core.topics import topic_label
+    from covey.core.topics import topic_label, update_repos
     state = Path(env.state_dir)
     lead = lead_harness.target(env.topics, state, str(topic_id or ""), chat)  # A project's lead (v36), else None.
     found = lead[:3] if lead else env.topics.target(state, str(topic_id or ""), chat)
@@ -119,12 +160,15 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     current = topic_config(topic, choices)
     harness, key, choice, budget, mode, redaction = model_choice(env, ctx, payload)
     # The page no longer sends a workspace or run mode (data contract v43: both optional): none, or the topic's own, moves nothing; an
-    # older page's other one is checked and applied as before, a lead's refused. ``repos`` of the payload is not a switch's (a topic's
-    # repos are declared when it opens): ignored.
+    # older page's other one is checked and applied as before, a lead's refused. ``repos``: the ones the topic uses (``asked_repos``).
     workspace = str(payload.get("workspace") or current["workspace"])
+    repos = None if lead else asked_repos(state, payload, topic)
     if lead:
         if (workspace, str(payload.get("run_mode") or current["run_mode"])) != (current["workspace"], current["run_mode"]):
             raise ValueError(LEAD_PLACE)
+        asked = payload.get("repos")
+        if asked is not None and (not isinstance(asked, list) or _pairs(asked) != _pairs(topic.get("repos"))):
+            raise ValueError(LEAD_REPOS)
         if not lead_harness.can_lead(choice):
             raise ValueError(lead_harness.CANNOT_LEAD)
         place = None
@@ -132,12 +176,25 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
         place = None
     else:
         place = _place(env, ctx, chat, current, workspace, str(payload.get("run_mode") or current["run_mode"]), harness, choice)
-    if (key, budget, mode, redaction, place) == (current["model"], current["effort"], current["work_mode"],
-                                                 current["redaction"] == "on", None):
+    same = (key, budget, mode, redaction, place) == (current["model"], current["effort"], current["work_mode"],
+                                                     current["redaction"] == "on", None)
+    if same and repos is None:
         raise ValueError("配置没有变化")
     reason = busy_reason(env.topics, target, chat, action="换配置")
     if reason:
         raise ValueError(reason.replace("在任务卡上停止", "停止"))
+    moved = f"仓库 {repos_words(topic.get('repos'))} → {repos_words(repos)}" if repos is not None else ""
+
+    def set_repos():
+        update_repos(state, target.topic_id, lambda entries: merged_repos(entries, repos))
+    if same:  # Only the repositories: topic.json's, no rebind (binding_revision and the session stay).
+        set_repos()
+        try:
+            app.messenger.reply(target, chat, f"🔁 网页上改了用到的仓库：{moved[3:]}（会话不变）", app.key("switch-web", str(op_id)),
+                                voice=app.voice)
+        except Exception as exc:  # noqa: BLE001 - the page has its receipt
+            env.runtime.log(f"web switch note not sent topic={str(topic_id)[:12]}: {type(exc).__name__}")
+        return f"已换配置：{moved}，会话不变"
     if key == current["model"] and budget == current["effort"]:
         model, effort = str(topic.get("model") or ""), str(topic.get("effort") or "")  # The topic's own, untouched (a preset, a default).
     else:
@@ -155,17 +212,19 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
                           "workspace": current["workspace"], "run_mode": current["run_mode"], "workdir": str(topic.get("workdir") or "")},
               **({"lead": lead_harness.named(lead[3])} if lead else {})}
     switched = switch_topic(env.topics, target, chat, form, harness, model, effort, work_mode, place=place, redaction=redaction)
+    if repos is not None:  # After the rebind it rode on: one that was refused changed nothing.
+        set_repos()
     if switched is not None:
         try:
             model_usage.record(state, chat, key, budget, work_mode, "switch", form="web-" + str(op_id))
         except OSError as exc:
             env.runtime.log(f"model usage save failed: {type(exc).__name__}; the switch is done")
-    text = done_text(record, choice, effort, work_mode, place, redaction, was, switched)
+    text = done_text(record, choice, effort, work_mode, place, redaction, was, switched) + (f"\n{moved}" if moved else "")
     now = env.topics.apps.get(harness, app)
     try:  # Feishu's thread says it too; the switch is done whether this goes out or not.
         now.messenger.reply(target, chat, text, now.key("switch-web", str(op_id)), voice=now.voice)
     except Exception as exc:  # noqa: BLE001 - the page has its receipt
         env.runtime.log(f"web switch note not sent topic={str(topic_id)[:12]}: {type(exc).__name__}")
     if switched is None:
-        return "已打开脱敏，会话不变" if redaction else "已关闭脱敏，会话不变"
-    return _receipt(env.topics.apps, *switched, redaction, was, lead=bool(lead))
+        return ("已打开脱敏，会话不变" if redaction else "已关闭脱敏，会话不变") + (f"；{moved}" if moved else "")
+    return _receipt(env.topics.apps, *switched, redaction, was, lead=bool(lead), repos=moved)

@@ -29,7 +29,7 @@ from covey.core.menu_choice import budget_effort, chosen_work_mode
 from covey.app import model_usage
 from covey.app.topics import route_locked, topic_target
 from covey.core.jobs import topic_job_records, upsert_job_record
-from covey.core.topics import load_topic, read_topic, topic_label, workspace_locked
+from covey.core.topics import load_topic, mark_home, read_topic, topic_label, topic_title, workspace_locked
 from covey.core.statuses import WORKTREE_STATUS
 from covey.app.launch import (CLOSED, LATEST_DEFAULTS, RETIRED_TEXT, chat_defaults_path, form_draft, rebuild_launch_card,
                               retired_form, selected_effort)
@@ -213,6 +213,8 @@ def _submit_launch_form(app, ctx, event):
                 'model_key': model_key, 'preference_effort': preference_effort,
                 'workspace': workspace, 'source': binding.value if binding.device else str(source), 'run_mode': run_mode,
                 **({'device': binding.device} if binding.device else {}),
+                # A card of the home start that left the device alone: the topic starts in the home (core/topics.py mark_home).
+                **({'home_start': True} if not selection and not binding.device and run_mode == 'direct' else {}),
                 'chat_id': event['chat_id'], 'submitted_at': submitted_at,
                 'topic': topic_label(ctx.state_dir, ctx.topic_id)}
         # Only a model whose card showed the select can turn it on; a form from before it has no choice. Such a
@@ -348,6 +350,8 @@ def _start_topic(app, ctx, path, record, plan, directory, branch):
             topic[REDACTION_KEY] = True
         else:
             topic.pop(REDACTION_KEY, None)
+        if plan.get('home_start'):  # Once, with its start and slug: its outputs directory never moves after (app/home_turn.py).
+            mark_home(topic, title=topic_title(ctx.state_dir, ctx.topic_id), now=plan['submitted_at'])
         save_record(target.history_path.parent / 'topic.json', topic)
     for job in pending:
         upsert_job_record(ctx.state_dir, job['key'], backend=name, harness_id=name,

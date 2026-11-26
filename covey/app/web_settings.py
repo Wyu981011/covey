@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import json
 import os
 import re
 import subprocess
@@ -56,8 +55,7 @@ from covey.app.access import free_talk_on
 from covey.app.workspace_manager import derived_repos, repo_entries
 from covey.core import butler, butler_settings, projects, repomap, web_sync
 from covey.core.jobs import running_job_records, topic_job_records
-from covey.core.locks import shared_file_lock
-from covey.core.state import epoch_seconds, read_object, write_json
+from covey.core.state import epoch_seconds, read_object
 from covey.core.statuses import ENDED
 from covey.core.workspaces import add_workspace, load_config, missing_workspaces, remove_workspaces, worktree_root
 
@@ -135,53 +133,26 @@ def clean_line(text, limit) -> str:
     return " ".join(str(text).split())[:limit]
 
 
-def repo_json(repo) -> dict:
-    """A ``Repo`` as repos.json holds it: its known keys, then the ones a newer release wrote (``extra``), as they were."""
-    return {"name": repo.name, "path": repo.path, "device": repo.device, "note": repo.note, "status": repo.status,
-            "write_mode": repo.write_mode, "branch": repo.branch, "rules": list(repo.rules), "added_by": repo.added_by,
-            "last_used": repo.last_used, **repo.extra}
-
-
-def write_map(state_dir, repos, raw) -> None:
-    """``repos`` as repos.json, the file's other keys (``raw``, what it held) and the entries ``repomap.read`` passes over left as
-    they were. core/repomap.py's own ``save`` when this release has it, else the atomic write here (core/state.py write_json), under
-    the file's lock; the caller holds it."""
-    save = getattr(repomap, "save", None)
-    if callable(save):
-        try:
-            save(state_dir, repos)
-            return
-        except TypeError:  # Not the signature this was written for: the fallback below.
-            pass
-    passed = [item for item in raw.get("repos") or () if not (isinstance(item, dict) and str(item.get("name") or "").strip()
-                                                             and str(item.get("path") or "").startswith("/"))]
-    data = {**{key: value for key, value in raw.items() if key != "repos"}, "version": raw.get("version") or 1,
-            "repos": [repo_json(repo) for repo in repos] + passed}
-    write_json(repomap.path(state_dir), data, ensure_ascii=False, indent=2)
-
-
 def edit_repos(state_dir, home, change) -> str:
-    """One change of the repository map under its file lock: ``change(repos)`` returns (the repos now, the receipt) or raises
-    ValueError. A deployment without repos.json starts from the old workspace list (``derived_repos``, with the butler's 用途) and
-    this is where the file is made; one that cannot be read is never written over."""
-    file = repomap.path(state_dir)
-    with shared_file_lock(file):
-        if file.exists():
-            try:
-                raw = json.loads(file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                raise ValueError("仓库地图读不出来，" + NOT_CHANGED) from None
-            if not isinstance(raw, dict):
-                raise ValueError("仓库地图的格式不对，" + NOT_CHANGED)
-            repos = repomap.read(state_dir)
-        else:
-            raw, repos = {}, derived_repos(state_dir, home)
-        repos, receipt = change(list(repos))
-        try:
-            write_map(state_dir, repos, raw)
-        except OSError:
-            raise ValueError("仓库地图写不进去，" + NOT_CHANGED) from None
-    return receipt
+    """One change of the repository map: ``change(repos)`` returns (the repos now, the receipt) or raises ValueError. It is
+    core/repomap.py ``update``'s, the map's one writer (its file lock, the keys and entries a newer release wrote kept as they
+    were); a deployment without repos.json starts from the old workspace list (``derived_repos``, with the butler's 用途) and
+    this is where the file is made; one that cannot be read is never written over. Then ``repos.md`` (``render``), so the next
+    turn reads the map as it is now."""
+    receipt = []
+
+    def apply(repos):
+        repos, said = change(repos)
+        receipt.append(said)
+        return repos
+    try:
+        repomap.update(state_dir, apply, start=lambda: derived_repos(state_dir, home))
+    except repomap.Unreadable as exc:
+        raise ValueError(("仓库地图的格式不对，" if str(exc) == "format" else "仓库地图读不出来，") + NOT_CHANGED) from None
+    except OSError:
+        raise ValueError("仓库地图写不进去，" + NOT_CHANGED) from None
+    repomap.render(state_dir, home)  # None when it cannot be written: the map is changed, the next turn's render tries again.
+    return receipt[0]
 
 
 def checked_directory(text, timeout=DIR_SECONDS):

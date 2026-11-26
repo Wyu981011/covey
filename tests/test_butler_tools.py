@@ -440,12 +440,47 @@ class ReposAndMemoryToolsTest(unittest.TestCase):
         answer = self.call("repos_list")
         self.assertTrue(answer["ok"], answer)
         self.assertEqual(answer["text"].splitlines(), ["仓库地图还没有建，下面是登记的工作区（名字可以写进 repos）：", "bridge（默认） · /w/bridge"])
+        self.assertEqual((answer["data"]["repos"], answer["data"]["count"], answer["data"]["workspaces"]["default"]), ([], 0, "bridge"))
         (self.state / "repos.json").write_text(json.dumps({"version": 1, "repos": [
             {"name": "covey", "path": "/w/covey", "note": "核心", "status": "active"},
             {"name": "old", "path": "/w/old", "status": "frozen"}]}, ensure_ascii=False), encoding="utf-8")
         self.assertEqual(self.call("repos_list")["text"].splitlines(), ["covey · 可写 · 用途：核心 · /w/covey", "old · 已冻结 · /w/old"])
-        with mock.patch("covey.app.repos_turn.repos_list", create=True, return_value={"ok": True, "text": "W1 的", "data": {"n": 1}}):
-            self.assertEqual(self.call("repos_list"), {"ok": True, "text": "W1 的", "data": {"n": 1}})
+
+    def test_repos_list_says_app_repos_turns_answer_as_a_list_for_the_calling_jobs_topic(self):
+        """Seam W2 ↔ W1 (T870): the Bridge tool hands app/repos_turn.py repos_list a context of its own (the home of the
+        default Harness, the topic of the job that called), never the ButlerEnv, and says its dict as lines; the dict stays
+        the answer's data."""
+        home = self.state.parent / "home"
+        home.mkdir()
+        self.harnesses["claude"].context = SimpleNamespace(default_workdir=str(home))
+        (self.state / "repos.json").write_text(json.dumps({"version": 1, "repos": [
+            {"name": "covey", "path": "/w/covey", "note": "核心", "write_mode": "inplace"},
+            {"name": "web", "path": "/w/web", "status": "readonly"}]}, ensure_ascii=False), encoding="utf-8")
+        lead = "1e" * 16
+        write_topic(self.state, topic_id=lead, chat_id=CHAT, harness_id="claude", repos=[
+            {"name": "covey", "path": "/w/covey", "mode": "write", "worktree": "/wt/T1-x/covey", "source": "declared"},
+            {"name": "notes", "path": "/w/notes", "mode": "read", "source": "touched"}])
+        write_job(self.state, "lead-1", chat_id=CHAT, topic_id=lead, job_id=1, status="running")
+        answer = butler_tools.TOOLS["repos_list"](self.env, butler_requests.Request("r1", "repos_list", {}, "lead-1", NOW))
+        self.assertTrue(answer["ok"], answer)
+        self.assertEqual(answer["text"].splitlines(), [
+            f"主目录：{home} · 仓库地图：{self.state / 'repos.md'}",
+            "covey · 可写 · 原地改 · 用途：核心 · /w/covey · 本话题在改", "web · 只读 · /w/web",
+            "本话题还用到（地图里没有）：", "notes · /w/notes · 本话题在读"])
+        data = answer["data"]
+        self.assertEqual((data["home"], data["count"], data["map"]), (str(home), 2, str(self.state / "repos.md")))
+        self.assertEqual([(row["name"], row.get("used"), row.get("worktree")) for row in data["repos"]],
+                         [("covey", "write", "/wt/T1-x/covey"), ("web", None, None)])
+        self.assertEqual(data["topic_only"], [{"name": "notes", "path": "/w/notes", "used": "read", "worktree": ""}])
+        # A job whose record is gone: the map alone, no topic's repositories.
+        alone = butler_tools.TOOLS["repos_list"](self.env, butler_requests.Request("r2", "repos_list", {}, "gone-1", NOW))
+        self.assertEqual(alone["text"].splitlines()[1:], ["covey · 可写 · 原地改 · 用途：核心 · /w/covey", "web · 只读 · /w/web"])
+        self.assertEqual(alone["data"]["topic_only"], [])
+        # An empty map and no saved workspace: what the topic uses is still said.
+        (self.state / "repos.json").write_text(json.dumps({"version": 1, "repos": []}), encoding="utf-8")
+        empty = butler_tools.TOOLS["repos_list"](self.env, butler_requests.Request("r3", "repos_list", {}, "lead-1", NOW))
+        self.assertTrue(empty["ok"], empty)
+        self.assertIn("covey · /w/covey · 本话题在改", empty["text"])
 
     def test_the_older_names_run_as_the_new_tools(self):
         from covey.core.butler_tool_specs import current_name
@@ -495,6 +530,10 @@ class ReposAndMemoryToolsTest(unittest.TestCase):
         with mock.patch("covey.app.butler_knowledge.memory_revise", create=True, side_effect=made):
             self.call("memory_revise", id="k1a2b3c", reason="作废")  # knowledge_drop's.
         self.assertEqual(calls[-1], {"key": "k1a2b3c", "action": "retire", "why": "作废"})
+        # memory_search's arguments go on as called (T870, for M2): what narrows a search is not cut to query and limit.
+        with mock.patch("covey.app.butler_knowledge.memory_search", create=True, side_effect=made):
+            self.call("memory_search", query="部署", limit=3, scope="project", project="P1", kinds=["rule"])
+        self.assertEqual(calls[-1], {"query": "部署", "limit": 3, "scope": "project", "project": "P1", "kinds": ["rule"]})
 
     def test_the_leads_project_remember_takes_rule_and_note_before_its_handler_does(self):
         seen = []

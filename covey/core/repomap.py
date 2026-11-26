@@ -116,27 +116,62 @@ def to_json(repo: Repo) -> dict:
     return {**repo.extra, **data}
 
 
+class Unreadable(ValueError):
+    """``repos.json`` is there but cannot be read (``str``: "read", or "format" for JSON that is no object): never
+    written over."""
+
+
 @contextlib.contextmanager
 def _locked(state_dir):
     with file_lock(Path(state_dir) / (REPOS_FILE + ".lock")):
         yield
 
 
-def write(state_dir, repos, *, excluded=None) -> None:
-    """``repos.json`` replaced whole with ``repos`` (the caller holds ``update``'s lock or is the only writer)."""
-    data = {"version": 1, "repos": [to_json(repo) for repo in repos],
-            "exclude": list(excluded if excluded is not None else exclude(state_dir))}
+def _raw(state_dir) -> dict:
+    """What ``repos.json`` holds, {} when it is missing; Unreadable when it is there and cannot be read."""
+    file = path(state_dir)
+    if not file.exists():
+        return {}
+    try:
+        data = json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise Unreadable("read") from None
+    if not isinstance(data, dict):
+        raise Unreadable("format")
+    return data
+
+
+def _passed_over(raw) -> list:
+    """The entries of ``raw`` that ``read`` leaves out (no name, no absolute path: a device's, a newer release's)."""
+    return [item for item in (raw.get("repos") if isinstance(raw.get("repos"), list) else ())
+            if not (isinstance(item, dict) and str(item.get("name") or "").strip() and str(item.get("path") or "").startswith("/"))]
+
+
+def write(state_dir, repos, *, excluded=None, raw=None) -> None:
+    """``repos.json`` replaced whole with ``repos`` (the caller holds ``update``'s lock or is the only writer). What the
+    file held besides (``raw``, read now when not given: its other keys, ``exclude``, the entries ``read`` passes over)
+    is written back as it was."""
+    raw = _data(state_dir) if raw is None else raw
+    kept = raw.get("exclude")
+    data = {**{key: value for key, value in raw.items() if key not in ("version", "repos", "exclude")},
+            "version": raw.get("version") or 1, "repos": [to_json(repo) for repo in repos] + _passed_over(raw),
+            "exclude": list(excluded if excluded is not None else kept if isinstance(kept, list) else EXCLUDE)}
     write_private_text(path(state_dir), json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
-def update(state_dir, change) -> list[Repo]:
+def update(state_dir, change, *, start=None) -> list[Repo]:
     """``change(repos) -> repos`` applied to ``repos.json`` under its file lock; the repositories written (unchanged
-    ones are not written again)."""
+    ones are not written again). Every writer of the map comes here (the turn's ``note_used``, the settings page,
+    app/web_settings.py ``edit_repos``). ``start()``: the repositories to begin from while the file is missing, and the
+    file is made then even when ``change`` keeps them; without it a missing file stays missing unless ``change`` adds
+    one. A file that is there and cannot be read raises Unreadable and is left as it is."""
     with _locked(state_dir):
-        before = read(state_dir)
+        raw = _raw(state_dir)
+        there = path(state_dir).exists()
+        before = _repos(raw) if there else list(start() if start is not None else ())
         after = list(change(list(before)))
-        if after != before:
-            write(state_dir, after)
+        if after != before or (not there and start is not None):
+            write(state_dir, after, raw=raw)
     return after
 
 
@@ -283,7 +318,10 @@ def note_used(state_dir, used, *, now=None) -> None:
             names.add(name)
         return repos
 
-    update(state_dir, change)
+    try:
+        update(state_dir, change)
+    except Unreadable:
+        return  # A map that cannot be read is the owner's to mend (the settings page says so); a turn leaves it.
 
 
 # ---- a repository's rules ------------------------------------------------------------------------------------------

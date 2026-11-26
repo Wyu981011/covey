@@ -425,7 +425,7 @@ class UnifiedBridgeApp(CardRouting, JobDispatch):
             stopping.callback(stop)
             # Old records migrated before anything reads them (core/migrate.py); once done, one file read.
             from covey.core.migrate import migrate
-            migrate(ctx.state_dir, log=self.runtime.log)
+            migrate(ctx.state_dir, log=self.runtime.log, workdir=ctx.default_workdir)  # The home's steps too.
             warm_records(ctx.state_dir)  # Read meanwhile: the recovery below reads every job and question record.
             self.butler.settle(ctx, self.runtime.log)  # The private chat mode, once (docs/butler.md 私聊模式).
             self.welcome.settle(ctx)  # Whether this deployment gets its welcome card, once (app/welcome.py).

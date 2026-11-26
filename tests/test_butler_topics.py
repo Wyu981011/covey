@@ -79,6 +79,16 @@ class HomeStartTest(ButlerTopicsCase):
         self.assertEqual(Path(topic["workdir"]), Path(self.work).resolve())
         self.assertTrue(topic["home_start"])
         self.assertNotIn("repos", topic)
+        # Its start and slug written with it (T870, core/topics.py mark_home): the outputs directory never moves.
+        self.assertIsInstance(topic["started_at"], float)
+        self.assertTrue(topic["slug"])
+        from covey.app import home_turn
+        from covey.core import home
+        home.write(self.ctx.state_dir, home.HomeConfig())
+        ctx = SimpleNamespace(state_dir=Path(self.ctx.state_dir), topic_id=answer["data"]["topic_id"], default_workdir=self.work)
+        first = home_turn.outputs_dir(ctx, topic)
+        with mock.patch("time.time", return_value=topic["started_at"] + 3 * 86400):  # Days later: the same directory.
+            self.assertEqual(home_turn.outputs_dir(ctx, topic), first)
         card = json.dumps(self.app.messenger.create_and_send_card.call_args.args[2], ensure_ascii=False)
         self.assertIn("主目录", card)
         self.assertNotIn("工作区", card)

@@ -24,7 +24,7 @@ from covey.core.harness import backend_capabilities
 from covey.core.locks import LOCK, resource_lock
 from covey.core.state import read_json, write_json
 from covey.core.history_storage import recent_history
-from covey.core.topics import claim_area_root, context_for_topic, read_topic, topic_label
+from covey.core.topics import claim_area_root, context_for_topic, mark_home, read_topic, topic_label
 from covey.cards.elements import notice_card
 from covey.core.store import directory_store
 from covey.core.text import cut
@@ -37,12 +37,15 @@ FINISHED = frozenset({"done", "waiting_user", "continued"})  # A turn a fork may
 THREAD_PAGE = 50
 
 
-def home_fields(source):
-    """What a fork takes from the source's ``topic.json`` about the home: ``home_start``, and the repos it touched as
-    read-only ones (a fork never carries on in the source's worktree: ``worktree``, ``branch``, ``base`` and ``base_oid``
-    go, ``source`` becomes ``touched``). Nothing for a topic that has neither."""
+def home_fields(source, now=None):
+    """What a fork takes from the source's ``topic.json`` about the home: ``home_start`` (with a start of its own, ``now``, and
+    the source's ``slug``: core/topics.py mark_home), and the repos it touched as read-only ones (a fork never carries on in the
+    source's worktree: ``worktree``, ``branch``, ``base`` and ``base_oid`` go, ``source`` becomes ``touched``). Nothing for a
+    topic that has neither."""
     fields = {}
-    if "home_start" in source:
+    if source.get("home_start") is True:
+        mark_home(fields, title=str(source.get("slug") or ""), now=now)
+    elif "home_start" in source:
         fields["home_start"] = source["home_start"]
     repos = source.get("repos")
     if isinstance(repos, list):
@@ -115,7 +118,7 @@ class Forks:
                 data.update({key: source[key] for key in ("harness_id", "model", "effort", "model_settings_snapshot",
                                                           "work_mode", "workspace_name", "workdir", "redaction")
                              if key in source},
-                            **home_fields(source),
+                            **home_fields(source, now=origin["at"]),
                             binding_revision=1, workspace_locked=True, harness_locked=True, forked_from=origin)
                 write_json(target.history_path.parent / "topic.json", data, ensure_ascii=False, indent=2)
             new_label = topic_label(ctx.state_dir, target.topic_id)

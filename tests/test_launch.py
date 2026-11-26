@@ -173,6 +173,8 @@ class LaunchTests(LaunchCase):
         self.assertEqual(record['selection']['workdir'], str(self.work.resolve()))
         topic = read_topic(self.route('task')[1])
         self.assertEqual(topic['workdir'], str(self.work.resolve()))
+        # A home start (T870, core/topics.py mark_home): marked, with its start and slug, as the butler's topics are.
+        self.assertEqual((topic['home_start'], type(topic['started_at']), topic['slug']), (True, float, 'hello'))  # Its first line.
 
     def test_a_card_sent_before_the_home_start_still_starts_where_its_record_says(self):
         # Rule 10: a launch card already sent (a message waiting_workspace for it) names a workspace in its record.
@@ -190,6 +192,7 @@ class LaunchTests(LaunchCase):
         self.app.handle_card_action_event({**event, 'form_value': {'path': ''}}, self.ctx)  # Nothing posted: the record's.
         job = self.app.runtime.jobs.queue.get_nowait()
         self.assertEqual(job.workdir, other.resolve())
+        self.assertNotIn('home_start', read_topic(self.route('task')[1]))  # A workspace's topic, as before.
         self.assertEqual(self.launch_form(token)['selection']['workspace'], name)
 
     def test_a_card_that_names_a_workspace_still_asks_for_a_worktree(self):

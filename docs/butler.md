@@ -174,7 +174,7 @@ Bridge 进程 ── app/butler_tools.py：pending → claim → 核对 job_key 
 | `topics_list` | group、query、limit | 按等你 → 有结果没看 → 在做 → 最近列话题 |
 | `topics_search` | clues*、limit | 按线索找是哪个话题哪一轮做的 |
 | `topic_read` | topic*、job、turns | 读话题最近几轮：问题、结论、检查点、没答的问题 |
-| `repos_list` | 无 | 列仓库地图：名字、状态（可写、只读、冻结）、用途、路径；还没建地图时列登记的工作区 |
+| `repos_list` | 无 | 列主目录、仓库地图（名字、状态：可写、只读、冻结，原地改的标出，用途、路径）和调用的这个话题在改、在读的仓库（`app/repos_turn.py` 的 `repos_list`，结构化结果另放在 `data` 里）；地图里还没有仓库时列登记的工作区 |
 | `topic_start` | title*、prompt*、readonly*、user_requested*、why*、repos、workspace、attachments、criteria、harness、model、effort、basis、redaction | 为新的事开话题，从主目录直接开工；`repos` 是要用的仓库（`[{name, mode: read|write}]`，最多 10 项，冻结或只读的仓库不能写）；旧参数 `workspace` 当作一项只读仓库；新话题默认脱敏而所选 Harness 不能脱敏时拒绝，写明先问主人（[敏感词脱敏](usage.md#敏感词脱敏)）；填了 harness、model、effort 要写 basis（见下面[点名配置的依据](#点名配置的依据)） |
 | `topic_send` | topic*、text*、note、title、criteria、attachments | 把主人的话追加给已有话题 |
 | `topic_fork` | topic*、title*、prompt*、attachments | 从已有话题分叉 |

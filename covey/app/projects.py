@@ -43,7 +43,7 @@ from covey.core.locks import LOCK, resource_lock, topic_lock
 from covey.core.loops import every
 from covey.core.state import read_object, write_json
 from covey.core.text import cut
-from covey.core.topics import move_topic_message, route_message, set_topic_project, topic_file, topic_label, topic_title
+from covey.core.topics import mark_home, move_topic_message, route_message, set_topic_project, topic_file, topic_label, topic_title
 
 ENV = "COVEY_PROJECT_UPGRADE"
 OFF, BUTLER, AUTO = "off", "butler", "auto"
@@ -324,7 +324,10 @@ class Projects:
         if repos:
             data["repos"] = list(repos.values())
         if source.get("home_start") or origin.get("home_start") or (not source and root.get("home_start")):
-            data["home_start"] = True
+            data.pop("started_at", None), data.pop("slug", None)  # The lead's own, not the butler's or the source topic's.
+            made = record.get("created_at")
+            mark_home(data, title=str(record.get("name") or ""),
+                      now=made if isinstance(made, (int, float)) and not isinstance(made, bool) and made > 0 else None)
         with LOCK:
             write_json(path, {**read_object(path), **data}, ensure_ascii=False, indent=2)
         self.env.runtime.log(f"project lead bound project={pid[:8]} harness={chosen['harness_id']} from={chosen['source']}")

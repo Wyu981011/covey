@@ -172,15 +172,29 @@ def home_start(data) -> bool:
     return isinstance(data, dict) and data.get("home_start") is True
 
 
+def mark_home(data: dict, *, title: str = "", now: float | None = None) -> dict:
+    """``data`` (a topic.json being written, under LOCK) marked as started in the home: ``home_start``, and once its
+    ``started_at`` and ``slug`` (core/home.py ``slug`` of ``title``), which app/home_turn.py ``outputs_dir`` names the
+    topic's outputs directory by, so it never moves after (a missing start would be each day's date). Every writer of
+    ``home_start`` comes here: ``bind_home``, the butler's and the page's topics (app/butler_topics.py bind_topic), the
+    launch card's (app/launch_submit.py), a project's lead (app/projects.py) and a fork (app/forks.py). ``data``."""
+    import time
+
+    from covey.core.home import slug
+
+    data["home_start"] = True
+    if not isinstance(data.get("started_at"), (int, float)) or isinstance(data.get("started_at"), bool):
+        data["started_at"] = time.time() if now is None else now
+    if not str(data.get("slug") or "").strip():
+        data["slug"] = slug(title)
+    return data
+
+
 def bind_home(ctx, home: Path, *, name: str = "", repos=(), title: str = "", now: float | None = None) -> None:
     """Start the topic in the home ``home``: ``home_start``, its workdir the home (``workspace_name`` ``name`` and the
     workspace fields still written, so an older release reads the topic as before), the repositories it is given
     (``repos``: TopicRepo dicts, ``source`` declared), and, once, its start time and ``slug`` (core/home.py ``slug`` of
     ``title``): its outputs directory's name never changes after (app/home_turn.py ``outputs_dir``)."""
-    import time
-
-    from covey.core.home import slug
-
     with LOCK:
         path = ctx.history_path.parent / "topic.json"
         data = read_json(path)
@@ -188,9 +202,8 @@ def bind_home(ctx, home: Path, *, name: str = "", repos=(), title: str = "", now
                 Path(str(data.get("workdir") or "")).resolve() != Path(home).resolve():
             raise ValueError("本话题已绑定工作区，请在其他工作区新开话题")
         data.update(workspace_name=name or data.get("workspace_name") or ctx.workspace_name, workdir=str(home),
-                    workspace_locked=True, home_start=True)
-        data.setdefault("started_at", time.time() if now is None else now)
-        data.setdefault("slug", slug(title))
+                    workspace_locked=True)
+        mark_home(data, title=title, now=now)
         if repos:
             data["repos"] = _merged_repos(data.get("repos"), list(repos))
         write_json(path, data, ensure_ascii=False, indent=2)

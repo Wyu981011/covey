@@ -83,6 +83,8 @@ class ForkTests(UnifiedCase):
         _, target = self.route_reply('om_forwarded')
         made = read_topic(target)
         self.assertIs(made['home_start'], True)
+        self.assertIsInstance(made['started_at'], float)  # Its own start (T870, core/topics.py mark_home), the slug's 'topic'.
+        self.assertEqual(made['slug'], 'topic')
         self.assertEqual(made['repos'], [{'name': 'proj', 'path': '/absolute/proj', 'mode': 'read', 'source': 'touched',
                                           'first_at': 5, 'rules_read_at': 6}])
         self.assertEqual(read_topic(self.source)['repos'][0]['mode'], 'write')  # The source is untouched.

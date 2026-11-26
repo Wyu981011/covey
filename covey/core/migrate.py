@@ -29,11 +29,22 @@ it stopped. Nobody sees a change: the records keep what older releases read.
   owner's own stand-in, an older version's, or "" for the automatic one. Every term goes out as its automatic stand-in now
   (core/redaction.py): the list is written again without them (``anywhere`` stays), once. An older release reads a row
   without one as automatic.
+
+The steps of ``HOME_STEPS`` need the home, the service's ``--workdir``: they run at the Bridge's start, which passes it
+(``migrate(..., workdir=)``); maintenance ``--apply`` has none and leaves them to it (docs/configuration.md 主目录与仓库地图).
+Each is W1's ``migrate_v1``: it writes a file only when it is missing, so an older release (which reads neither file) and a
+run cut short are safe, and a step that raised is run again at the next start.
+
+- home_v1: a home Covey made gets ``home.json``'s defaults (core/home.py migrate_v1); a taken-over one none.
+- repos_v1: ``repos.json`` from the old workspace list and the git repositories one level under the home, then ``repos.md``
+  (core/repomap.py migrate_v1). The old files stay; a workspace an older release adds after a rollback is not in the map
+  (the settings page adds it).
 """
 # compat(ff57531): the one place that reads a job record's embedded process snapshot; retire when every job record
 # that embeds one has its traces/ file in every deployment (compat_report: embedded-trace)
 from __future__ import annotations
 
+import functools
 import time
 from pathlib import Path
 
@@ -49,6 +60,8 @@ DESK_RETIRE = "desk-retire"
 REDACTION_DEFAULT = "redaction-default"
 PROJECT_JOINED = "project-joined"
 REDACTION_STAND_IN = "redaction-stand-in"
+HOME_V1 = "home_v1"
+REPOS_V1 = "repos_v1"
 DESK_REGISTRY = Path("main-thread") / "desk"  # One empty file per front-desk topic id (older releases).
 RETIRED, RETIRED_DESK = "retired", "desk"  # topic.json's key and value (core/topics.py RETIRED_DESK).
 FAILED_KEYS = 20  # Keys named in the summary line per step.
@@ -57,7 +70,7 @@ FAILED_KEYS = 20  # Keys named in the summary line per step.
 def done(state_dir: Path) -> dict:
     """The steps marked done in ``state_dir`` (name -> what it did)."""
     return {name: value for name, value in read_object(Path(state_dir) / MIGRATIONS).items()
-            if name in STEPS and isinstance(value, dict) and value.get("done")}
+            if (name in STEPS or name in HOME_STEPS) and isinstance(value, dict) and value.get("done")}
 
 
 def _mark(state_dir: Path, name: str, value: dict) -> None:
@@ -94,7 +107,7 @@ def pending(state_dir: Path) -> dict:
     """What the steps not marked done would still do (step -> records), reading only: maintenance --dry-run."""
     state_dir = Path(state_dir)
     finished = done(state_dir)
-    return {name: still(state_dir) for name, (_, still) in STEPS.items() if name not in finished}
+    return {name: still(state_dir) for name, (_, still) in {**STEPS, **HOME_STEPS}.items() if name not in finished}
 
 
 def _unwritten(state_dir: Path) -> int:
@@ -145,14 +158,21 @@ def _desk_left(state_dir: Path) -> int:
                if (data := read_object(path)) and data.get(RETIRED) != RETIRED_DESK)
 
 
-def migrate(state_dir: Path, log=None) -> dict:
+def steps(workdir=None) -> dict:
+    """The steps a run takes, in order: ``STEPS``, then ``HOME_STEPS`` given ``workdir`` (the home), none of them without."""
+    if not workdir:
+        return dict(STEPS)
+    return {**STEPS, **{name: (functools.partial(run, workdir=workdir), still) for name, (run, still) in HOME_STEPS.items()}}
+
+
+def migrate(state_dir: Path, log=None, *, workdir=None) -> dict:
     """Run the steps not marked done in ``state_dir``; what each did. ``log`` gets one summary line when one ran,
-    naming the first records a step could not write."""
+    naming the first records a step could not write. ``workdir``: the home, for ``HOME_STEPS`` (the Bridge's start)."""
     state_dir = Path(state_dir)
     finished = done(state_dir)
     summary, unwritten = {}, {}
     started = time.monotonic()
-    for name, (run, _) in STEPS.items():
+    for name, (run, _) in steps(workdir).items():
         if name in finished:
             continue
         written, failed = run(state_dir)
@@ -249,8 +269,44 @@ def drop_stand_ins(state_dir: Path) -> tuple[int, list[str]]:
     return 1, []
 
 
+def _home_left(state_dir: Path) -> int:
+    """1 while ``home.json`` is missing (a taken-over home keeps it missing: the Bridge's start marks the step done)."""
+    from covey.core import home
+    return int(not home.configured(state_dir))
+
+
+def home_v1(state_dir: Path, *, workdir) -> tuple[int, list[str]]:
+    """core/home.py migrate_v1: (1 when it wrote ``home.json``, [] or the file when it raised)."""
+    from covey.core import home
+    had = home.configured(state_dir)
+    try:
+        home.migrate_v1(state_dir, workdir)
+    except Exception:  # noqa: BLE001 - tried again at the next start
+        return 0, ["home.json"]
+    return int(not had and home.configured(state_dir)), []
+
+
+def _repos_left(state_dir: Path) -> int:
+    """1 while ``repos.json`` is missing."""
+    from covey.core import repomap
+    return int(not repomap.path(state_dir).exists())
+
+
+def repos_v1(state_dir: Path, *, workdir) -> tuple[int, list[str]]:
+    """core/repomap.py migrate_v1: (1 when it wrote ``repos.json``, [] or the file when it raised)."""
+    from covey.core import repomap
+    had = repomap.path(state_dir).exists()
+    try:
+        repomap.migrate_v1(state_dir, workdir)
+    except Exception:  # noqa: BLE001 - tried again at the next start
+        return 0, ["repos.json"]
+    return int(not had and repomap.path(state_dir).exists()), []
+
+
 # The steps in the order they run: name -> (what it does: files written and the keys of the records it could not
-# write; what it would still do: records, reading only). A new step is one more row.
+# write; what it would still do: records, reading only). A new step is one more row: of STEPS when it needs the state
+# directory alone, of HOME_STEPS (its ``run`` given ``workdir=``) when it needs the home too.
 STEPS = {EMBEDDED_TRACE: (embedded_traces, _unwritten), DESK_RETIRE: (retire_desk_topics, _desk_left),
          REDACTION_DEFAULT: (merge_redaction_default, _redaction_default_left), PROJECT_JOINED: (stamp_joined, _joined_left),
          REDACTION_STAND_IN: (drop_stand_ins, _stand_ins_left)}
+HOME_STEPS = {HOME_V1: (home_v1, _home_left), REPOS_V1: (repos_v1, _repos_left)}

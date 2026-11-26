@@ -114,7 +114,7 @@ def memory_search(env, request):
     args = request.args if isinstance(request.args, dict) else {}
     made = memory_handler("memory_search")
     if made is not None:
-        return answer_of(made(env, {"query": str(args.get("query") or ""), **({"limit": args["limit"]} if "limit" in args else {})}))
+        return answer_of(made(env, dict(args)))  # As called: query, limit and whatever narrows it (project, topic, kinds…).
     if "query" not in args:  # An older session's principles_list.
         return principles_list(env, request)
     words = [word for word in str(args.get("query") or "").lower().split() if word]

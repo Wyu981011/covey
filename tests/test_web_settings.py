@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 FIXTURE = os.environ.get("COVEY_WEB_SETTINGS_FIXTURE", "")  # Writes the snapshot there (the page's local mirror uses it).
 from unittest import mock
@@ -394,17 +396,45 @@ class WebSettingsTest(UnifiedCase):
         self.assertEqual(sorted(r.name for r in repomap.read(self.ctx.state_dir)), ["gone"])
         self.assertEqual(self.op(what="repos_remove", name="")[0], "failed")
 
-    def test_a_map_that_cannot_be_read_is_never_written_over_and_repomap_save_is_used_when_it_is_there(self):
+    def test_a_map_that_cannot_be_read_is_never_written_over(self):
         self.worktrees_root()
         self.repos_file().write_text("{not json")
         self.assertEqual(self.op(what="repos_set", name="docs", note="x"), ("failed", "仓库地图读不出来，没有改动"))
         self.assertEqual(self.repos_file().read_text(), "{not json")
-        self.repos_file().unlink()
-        with mock.patch.object(repomap, "save", create=True) as save:  # W1's writer, once it exists.
-            self.assertEqual(self.op(what="repos_set", name="docs", note="x"), ("done", "已改 docs：用途"))
-        (state, repos), _ = save.call_args
-        self.assertEqual((state, [r.name for r in repos]), (self.ctx.state_dir, ["docs", "gone"]))
-        self.assertFalse(self.repos_file().exists())
+        self.repos_file().write_text("[1, 2]")
+        self.assertEqual(self.op(what="repos_remove", name="docs"), ("failed", "仓库地图的格式不对，没有改动"))
+        self.assertEqual(self.repos_file().read_text(), "[1, 2]")
+        # A turn's settle leaves it too (core/repomap.py note_used), no error.
+        repomap.note_used(self.ctx.state_dir, [SimpleNamespace(name="x", path="/w/x")])
+        self.assertEqual(self.repos_file().read_text(), "[1, 2]")
+
+    def test_every_change_of_the_map_is_repomaps_under_its_lock_and_renders_repos_md(self):
+        """Seam W2 ↔ W1 (T870): the page's changes and the old workspace ones mirrored into the map are written by core/repomap.py
+        ``update`` (its repos.json.lock, the one the turn's note_used holds) and repos.md is rendered after each."""
+        self.worktrees_root()
+        rendered = repomap.rendered_path(self.ctx.state_dir, self.web.context().default_workdir)
+        locked = []
+        real = repomap._locked
+
+        def counted(state):
+            locked.append(Path(state))
+            return real(state)
+        extra = self.make_repo(self.root / "r" / "extra")
+        mirrored = self.make_repo(self.root / "m" / "mirrored")
+        with mock.patch.object(repomap, "_locked", side_effect=counted):
+            self.assertEqual(self.op(what="repos_set", name="docs", note="文档"), ("done", "已改 docs：用途"))
+            self.assertIn("| docs | `" + str(self.root) + "` | 文档 |", rendered.read_text())
+            self.assertEqual(self.op(what="repos_add", path=str(extra)), ("done", "已加入仓库地图：extra"))
+            self.assertIn("| extra |", rendered.read_text())
+            self.assertEqual(self.op(what="repos_remove", name="extra")[0], "done")
+            self.assertNotIn("| extra |", rendered.read_text())
+            self.assertEqual(self.op(what="workspace_add", path=str(mirrored))[0], "done")
+            self.assertIn("| mirrored |", rendered.read_text())
+            self.assertEqual(self.op(what="workspace_remove", workspace="mirrored")[0], "done")
+            self.assertNotIn("| mirrored |", rendered.read_text())
+        self.assertEqual(locked, [self.ctx.state_dir] * 5)
+        self.assertTrue((self.ctx.state_dir / "repos.json.lock").exists())
+        self.assertFalse((self.ctx.state_dir / ".locks" / "repos.json.lock").exists())  # No second lock of the same file.
 
     def test_a_topic_running_in_a_repository_is_counted_and_one_elsewhere_is_not(self):
         self.worktrees_root()
@@ -670,6 +700,18 @@ class WebSettingsTest(UnifiedCase):
                          ("done", words))
         self.assertEqual(len(sent), 1)
 
+    def test_a_home_launch_from_the_page_writes_the_topics_start_and_slug_once(self):
+        """Seam W2 ↔ W1 (T870): the page's home start goes through app/butler_topics.py bind_topic, which marks it as every home
+        start is marked (core/topics.py mark_home): ``home_start``, ``started_at`` the launch's time, ``slug`` of its title."""
+        model = self.snap()["launch"]["models"][-1]
+        self.app.messenger.create_and_send_card = mock.Mock(return_value=("card2", "om_root2"))
+        state, words = self.launch("op-h1", text="fix the README links", model=model["key"], effort=model["start_budget"],
+                                   redaction="off")
+        self.assertEqual(state, "done", words)
+        record = json.loads((self.ctx.state_dir / "web" / "launches" / "op-h1.json").read_text())
+        topic = json.loads((self.ctx.state_dir / "topics" / record["topic_id"] / "topic.json").read_text())
+        self.assertEqual((topic["home_start"], topic["started_at"], topic["slug"]), (True, record["at"], "fix-the-readme-links"))
+
     def test_a_launch_with_files_gives_the_first_turn_its_attachments_and_one_that_cannot_be_taken_opens_nothing(self):
         """T616 21:46 (data contract v25): the new-topic page's + and pasted screenshots go with the first turn, as a say's files do."""
         import base64
@@ -777,6 +819,78 @@ class WebSettingsTest(UnifiedCase):
         self.assertEqual(len(replies), 1)
         self.assertIn("🔁 已换配置", replies[0])
         self.assertEqual(web_switch.topic_config(after)["model"].split(":")[0], other["harness"])
+
+    def repos_map(self):
+        write_json(self.repos_file(), {"version": 1, "repos": [
+            {"name": "covey", "path": str(self.root / "covey")}, {"name": "web", "path": str(self.root / "web"), "status": "readonly"}]})
+
+    def same_config(self, path):
+        from covey.app import web_switch
+        config = web_switch.topic_config(json.loads(path.read_text()))
+        return {key: config[key] for key in ("model", "effort", "work_mode", "redaction")}
+
+    def test_a_switch_sets_the_topics_repos_it_adds_changes_clears_or_leaves_them(self):
+        """Seam W2 ↔ WEB (T870, data contract v43 §4 ``repos?``): ``repos`` sets the topic's repositories, checked as a new topic's
+        are; repositories alone are a change (no rebind: the same binding_revision and session); ``[]`` clears them; a payload
+        without ``repos`` leaves them as they are."""
+        self.repos_map()
+        model = self.snap()["launch"]["models"][0]
+        topic, path = self.opened(model)
+        replies = []
+        for app in self.app.topics.apps.values():
+            app.messenger.reply = mock.Mock(side_effect=lambda *a, **k: replies.append(a[2]))
+        same, before = self.same_config(path), json.loads(path.read_text())
+        # Added.
+        self.assertEqual(self.switch(topic, "op-p1", **same, repos=[{"name": "covey", "mode": "write"}, {"name": "web", "mode": "read"}]),
+                         ("done", "已换配置：仓库 无 → covey（改）、web，会话不变"))
+        after = json.loads(path.read_text())
+        self.assertEqual([(r["name"], r["mode"], r["source"], r["path"]) for r in after["repos"]],
+                         [("covey", "write", "declared", str(self.root / "covey")), ("web", "read", "declared", str(self.root / "web"))])
+        self.assertEqual((after.get("binding_revision"), after["harness_id"], after["model"]),
+                         (before.get("binding_revision"), before["harness_id"], before["model"]))
+        self.assertIn("covey（改）、web", replies[-1])  # Feishu's thread hears of it too.
+        # Changed: the one kept keeps what it had (its worktree), with the mode asked; the other goes.
+        data = json.loads(path.read_text())
+        data["repos"][0]["worktree"] = "/wt/T1-x/covey"
+        write_json(path, data)
+        self.assertEqual(self.switch(topic, "op-p2", **same, repos=[{"name": "covey", "mode": "read"}]),
+                         ("done", "已换配置：仓库 covey（改）、web → covey，会话不变"))
+        self.assertEqual([(r["name"], r["mode"], r.get("worktree")) for r in json.loads(path.read_text())["repos"]],
+                         [("covey", "read", "/wt/T1-x/covey")])
+        self.assertEqual(self.switch(topic, "op-p3", **same, repos=[{"name": "covey", "mode": "read"}]), ("failed", "配置没有变化"))
+        # Refused as a new topic's would be: nothing written.
+        self.assertEqual(self.switch(topic, "op-p4", **same, repos=[{"name": "web", "mode": "write"}]),
+                         ("failed", "仓库「web」只读，不能改；只读就把 mode 写成 read"))
+        self.assertEqual(self.switch(topic, "op-p5", **same, repos=[{"name": "nope", "mode": "read"}]),
+                         ("failed", "仓库地图里没有「nope」，可选：covey、web"))
+        self.assertEqual(self.switch(topic, "op-p6", **same, repos="covey")[0], "failed")
+        self.assertEqual([r["name"] for r in json.loads(path.read_text())["repos"]], ["covey"])
+        # Left out: a model change alone keeps them.
+        other = next(m for m in self.snap()["launch"]["models"] if m["key"] != model["key"])
+        state, words = self.switch(topic, "op-p7", model=other["key"], effort=other["start_budget"], work_mode="", redaction="off")
+        self.assertEqual(state, "done", words)
+        self.assertNotIn("仓库", words)
+        moved = json.loads(path.read_text())
+        self.assertEqual(([r["name"] for r in moved["repos"]], moved["binding_revision"]), (["covey"], before.get("binding_revision", 1) + 1))
+        # With a model change: one rebind, one receipt.
+        state, words = self.switch(topic, "op-p8", model=model["key"], effort=model["start_budget"], work_mode="", redaction="off",
+                                   repos=[{"name": "covey", "mode": "write"}])
+        self.assertEqual(state, "done", words)
+        self.assertRegex(words, r"^已换配置：.* → .*；仓库 covey → covey（改），下一句话起由新会话接着做$")
+        self.assertEqual(json.loads(path.read_text())["repos"][0]["mode"], "write")
+        # Cleared.
+        self.assertEqual(self.switch(topic, "op-p9", **self.same_config(path), repos=[]), ("done", "已换配置：仓库 covey（改） → 无，会话不变"))
+        self.assertEqual(json.loads(path.read_text())["repos"], [])
+        self.assertEqual(self.switch(topic, "op-pa", **self.same_config(path), repos=[]), ("failed", "配置没有变化"))
+
+    def test_a_switch_of_the_repos_alone_waits_for_the_running_task_too(self):
+        self.repos_map()
+        model = self.snap()["launch"]["models"][0]
+        topic, path = self.opened(model, done=False)
+        state, words = self.switch(topic, "op-q1", **self.same_config(path), repos=[{"name": "covey", "mode": "read"}])
+        self.assertEqual(state, "failed")
+        self.assertIn("还有任务在排队或执行，请先停止", words)
+        self.assertNotIn("repos", json.loads(path.read_text()))
 
     def test_a_switch_is_refused_while_a_task_runs_for_a_new_worktree_and_for_choices_not_offered(self):
         model = self.snap()["launch"]["models"][0]

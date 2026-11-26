@@ -529,26 +529,62 @@ def principles_list(env, request):
 
 
 # 仓库地图 (docs/configuration.md 主目录与仓库地图): repos_list, workspaces_list's successor (an older session's call to that
-# name comes here too, core/butler_tool_specs.py RENAMED_TOOLS). app/repos_turn.py ``repos_list(env) -> dict`` answers it once
-# it is there; until then the map is read here, and a deployment with no map yet hears its saved workspaces.
+# name comes here too, core/butler_tool_specs.py RENAMED_TOOLS). app/repos_turn.py ``repos_list(ctx)`` finds what to say, for
+# the home and the topic of the job that called (the butler's or a lead's); it is said here as a list, the dict kept as its
+# data. A deployment with no map yet hears its saved workspaces.
+
+REPO_STATUS = {"active": "可写", "readonly": "只读", "frozen": "已冻结"}
+REPO_USED = {"write": "本话题在改", "read": "本话题在读"}
+
+
+def home_of(env) -> str:
+    """The home, the service's ``--workdir`` (the default Harness's ``default_workdir``); '' when the env has none."""
+    harness = (getattr(env.topics, "harnesses", None) or {}).get(getattr(env.topics, "default", ""))
+    return str(getattr(getattr(harness, "context", None), "default_workdir", "") or "")
+
+
+def repos_context(env, request):
+    """What app/repos_turn.py repos_list reads of a turn (``state_dir``, ``topic_id``, ``default_workdir``) for the job of
+    ``request``: its topic, '' when the record is gone. Without a home known the state directory stands in for it, so the
+    map's path is still the one a taken-over home has (core/repomap.py rendered_path)."""
+    from types import SimpleNamespace
+    record = read_job_record(job_path(env.state_dir, request.job_key)) if request.job_key else None
+    home = home_of(env) or str(env.state_dir)
+    return SimpleNamespace(state_dir=Path(env.state_dir), topic_id=str((record or {}).get("topic_id") or ""),
+                           default_workdir=home, workdir=home, device="")
+
+
+def repo_line(row) -> str:
+    """One repository of repos_list: 名字 · 状态 (· 原地改) (· 用途) · 路径 (· 本话题在改/在读)."""
+    return " · ".join(part for part in (
+        row.get("name"), REPO_STATUS.get(row.get("status"), row.get("status") or ""),
+        "原地改" if row.get("write_mode") == "inplace" else "", f"用途：{row['note']}" if row.get("note") else "",
+        row.get("path"), REPO_USED.get(row.get("used"), "")) if part)
+
 
 def repos_list(env, request):
     from covey.app import repos_turn
-    made = getattr(repos_turn, "repos_list", None)
-    if callable(made):
-        return answer_of(made(env))
-    from covey.core import repomap
-    repos = repomap.read(env.state_dir)
-    if not repos:
+    home = home_of(env)
+    found = {**repos_turn.repos_list(repos_context(env, request)), "home": home}
+    rows, extra = list(found.get("repos") or ()), list(found.get("topic_only") or ())
+    found["count"] = len(rows)
+    if not rows:
         listed = workspaces_list(env, request)
+        lines = [repo_line(row) for row in extra]
         if not listed.get("ok"):
-            return reply(False, "仓库地图是空的，也没有登记的工作区。")
-        return reply(True, "仓库地图还没有建，下面是登记的工作区（名字可以写进 repos）：\n" + listed["text"],
-                     **listed.get("data", {}))
-    words = {"active": "可写", "readonly": "只读", "frozen": "已冻结"}
-    lines = [" · ".join(part for part in (repo.name, words.get(repo.status, repo.status),
-                                          f"用途：{repo.note}" if repo.note else "", repo.path) if part) for repo in repos]
-    return reply(True, "\n".join(lines), count=len(repos))
+            if lines:
+                return reply(True, "仓库地图是空的；本话题用到的：\n" + "\n".join(lines), **found)
+            return reply(False, "仓库地图是空的，也没有登记的工作区。", **found)
+        from covey.core import repomap
+        found["workspaces"] = listed.get("data", {})
+        head = "仓库地图里还没有仓库" if repomap.path(env.state_dir).exists() else "仓库地图还没有建"
+        return reply(True, head + "，下面是登记的工作区（名字可以写进 repos）：\n" + listed["text"]
+                     + ("\n本话题用到的：\n" + "\n".join(lines) if lines else ""), **found)
+    head = [f"主目录：{home} · 仓库地图：{found.get('map')}"] if home else []
+    lines = [*head, *map(repo_line, rows)]
+    if extra:
+        lines += ["本话题还用到（地图里没有）：", *map(repo_line, extra)]
+    return reply(True, "\n".join(lines), **found)
 
 
 def answer_of(value) -> dict:

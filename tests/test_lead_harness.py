@@ -267,6 +267,8 @@ class CardSwitchTest(UpCase):
                 return ops.run({"kind": "switch", "op_id": op_id, "topic_key": self.lead, "payload": payload})
         moved = {**config, "workspace": "docs"}
         self.assertEqual(run("op-w1", **moved), ("failed", web_switch.LEAD_PLACE))
+        # A lead's repositories are the project's, read only (T870): a payload that changes them is refused.
+        self.assertEqual(run("op-w0", **{**config, "repos": [{"name": "covey", "mode": "write"}]}), ("failed", web_switch.LEAD_REPOS))
         with without_tools():
             self.assertEqual(run("op-w2", **{**config, "model": "dsh:dsh-model", "effort": models["dsh:dsh-model"]["start_budget"]}),
                              ("failed", lead_harness.CANNOT_LEAD))

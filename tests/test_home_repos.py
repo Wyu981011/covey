@@ -191,6 +191,88 @@ class RepoMapTest(Sandbox):
                          [("a", "/absolute/a", "owner", 100.0), ("a-1", "/absolute/other/a", "touched", 100.0)])
 
 
+class MapWriterTest(Sandbox):
+    """core/repomap.py ``update`` is the map's one writer (T870): what a newer release wrote kept, a file that cannot be read
+    never written over, and a missing one made from ``start`` only when asked."""
+
+    def test_update_keeps_the_files_other_keys_and_the_entries_read_passes_over(self):
+        (self.state / "repos.json").write_text(json.dumps({"version": 1, "exclude": ["node_modules/"], "future": {"k": 1}, "repos": [
+            {"name": "a", "path": "/absolute/a", "later": True}, {"name": "gpu", "path": "gpu1:/srv/x"}]}))
+        repomap.update(self.state, lambda repos: [*repos, repomap.Repo(name="b", path="/absolute/b")])
+        raw = json.loads((self.state / "repos.json").read_text())
+        self.assertEqual((raw["exclude"], raw["future"]), (["node_modules/"], {"k": 1}))
+        self.assertEqual([item["name"] for item in raw["repos"]], ["a", "b", "gpu"])
+        self.assertTrue(raw["repos"][0]["later"])
+
+    def test_a_file_that_cannot_be_read_raises_and_stays(self):
+        for text, why in (("{oops", "read"), ("[1]", "format")):
+            (self.state / "repos.json").write_text(text)
+            with self.assertRaises(repomap.Unreadable) as raised:
+                repomap.update(self.state, lambda repos: [repomap.Repo(name="b", path="/absolute/b")])
+            self.assertEqual((str(raised.exception), (self.state / "repos.json").read_text()), (why, text))
+            repomap.note_used(self.state, [topic_repos.TopicRepo(name="b", path="/absolute/b")])  # A turn's settle: no error.
+            self.assertEqual((self.state / "repos.json").read_text(), text)
+
+    def test_a_missing_file_is_made_from_start_only(self):
+        repomap.update(self.state, lambda repos: repos)
+        self.assertFalse((self.state / "repos.json").exists())
+        repomap.update(self.state, lambda repos: repos, start=lambda: [repomap.Repo(name="a", path="/absolute/a")])
+        self.assertEqual([repo.name for repo in repomap.read(self.state)], ["a"])
+
+
+class MigrateStepsTest(Sandbox):
+    """W1's migrations in core/migrate.py (T870): home_v1 and repos_v1 run at the Bridge's start (it passes the home), once;
+    maintenance --apply, without the home, leaves them pending; a step that raised runs again; an older release's marks and
+    files are left as they were."""
+
+    def migrate(self, **kwargs):
+        from covey.core import migrate
+        return migrate.migrate(self.state, **kwargs)
+
+    def test_the_bridges_start_writes_home_json_and_the_map_once(self):
+        from covey.core import migrate
+        seeded = self.root / "seeded"
+        home.seed_home(seeded)
+        make_repo(seeded / "app")
+        self.assertEqual({name: count for name, count in migrate.pending(self.state).items() if name in migrate.HOME_STEPS},
+                         {"home_v1": 1, "repos_v1": 1})
+        self.assertFalse({"home_v1", "repos_v1"} & set(self.migrate()))  # Maintenance --apply: no home, the home's steps wait.
+        self.assertFalse(home.configured(self.state) or (self.state / "repos.json").exists())
+        self.assertIn("repos_v1", migrate.pending(self.state))
+        summary = self.migrate(workdir=str(seeded))
+        self.assertEqual((summary["home_v1"], summary["repos_v1"]), ({"written": 1, "failed": 0}, {"written": 1, "failed": 0}))
+        self.assertTrue(home.configured(self.state))
+        self.assertEqual([(repo.name, repo.write_mode) for repo in repomap.read(self.state)], [("app", "inplace")])
+        self.assertIn("| app |", (seeded / "repos.md").read_text())
+        marks = json.loads((self.state / migrate.MIGRATIONS).read_text())
+        self.assertTrue(marks["home_v1"]["done"] and marks["repos_v1"]["done"])
+        before = (self.state / "repos.json").read_text()
+        self.assertEqual(self.migrate(workdir=str(seeded)), {})  # Once: one read of migrations.json from then on.
+        self.assertEqual((self.state / "repos.json").read_text(), before)
+        self.assertNotIn("repos_v1", migrate.pending(self.state))
+
+    def test_a_taken_over_home_gets_no_home_json_and_a_map_already_there_is_kept(self):
+        make_repo(self.home / "core")
+        repomap.write(self.state, [repomap.Repo(name="mine", path="/absolute/mine", note="主人写的")])
+        before = (self.state / "repos.json").read_text()
+        summary = self.migrate(workdir=str(self.home))
+        self.assertEqual((summary["home_v1"]["written"], summary["repos_v1"]["written"]), (0, 0))
+        self.assertFalse(home.configured(self.state))  # Its own AGENTS.md says where outputs go.
+        self.assertEqual((self.state / "repos.json").read_text(), before)  # A map an earlier run (or the owner) made stays.
+        self.assertIn("| mine |", (self.state / "repos.md").read_text())
+
+    def test_a_step_that_raised_runs_again_and_an_older_releases_marks_stay(self):
+        from covey.core import migrate
+        (self.state / migrate.MIGRATIONS).write_text(json.dumps({"older-step": {"done": True, "at": 1}}))
+        with mock.patch.object(repomap, "migrate_v1", side_effect=OSError("disk")):
+            summary = self.migrate(workdir=str(self.home))
+        self.assertEqual(summary["repos_v1"], {"written": 0, "failed": 1})
+        self.assertNotIn("repos_v1", migrate.done(self.state))
+        self.assertEqual(self.migrate(workdir=str(self.home))["repos_v1"]["failed"], 0)
+        marks = json.loads((self.state / migrate.MIGRATIONS).read_text())
+        self.assertEqual(marks["older-step"], {"done": True, "at": 1})  # A mark this release does not know is kept as it was.
+        self.assertTrue(marks["repos_v1"]["done"])
+
 class CommandTest(Sandbox):
     def setUp(self):
         super().setUp()

@@ -56,7 +56,7 @@ from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 from covey.core.state import read_object, write_json
 from covey.core.history_storage import append_history
 from covey.core.steer import SteerRefused, SteerUncertain
-from covey.core.topics import (claim_area_root, load_topic, message_topic, read_topic, topic_label,
+from covey.core.topics import (claim_area_root, load_topic, mark_home, message_topic, read_topic, topic_label,
                                        retired_topic, topic_title, workspace_locked)
 from covey.core.workspaces import RUN_MODES, config_path, load_config, topic_context, touch_workspace
 
@@ -501,8 +501,8 @@ def bind_topic(env, app, request, path, record, args, event, config, kind="main"
                 data[criteria.KEY] = items
             if lead is not None:  # Written with the binding: the thread's first turn is queued only after it.
                 data["project"] = projects.project_field(lead[0], projects.MEMBER)
-            if plan.get("home_start"):  # 主目录启动 (core/topic_repos.py): where it started and what it said it uses.
-                data["home_start"] = True
+            if plan.get("home_start"):  # 主目录启动 (core/topic_repos.py): where it started (once, with its slug) and what it uses.
+                mark_home(data, title=title, now=record["at"])
             if plan.get("repos"):
                 data["repos"] = [dict(repo) for repo in plan["repos"]]
             if plan["start"]:
