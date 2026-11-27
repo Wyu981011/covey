@@ -4,8 +4,9 @@ words and the ones a task showed him (its checkpoint's ``show_images``), sent up
 - Which: an owner line's images are the files its words list under "收到的附件" (feishu/media.py) or name in plain words (a hand-on
   that quotes a screenshot), and only files in a topic's ``incoming_media/`` of this state directory; a task's are its checkpoint's
   ``show_images`` (app/turn_images.py ``wanted``), none of a task on a device. At most PER_TURN a turn, none over MAX_SOURCE bytes.
-- Sent: a thumbnail (long side THUMB_SIDE) and a large one (FULL_SIDE), WebP, each at most MAX_PART bytes so its request stays under the
-  page's 1 MiB body limit; Pillow makes them. Without Pillow a PNG, JPEG, WebP or GIF of at most MAX_PART bytes goes up as it is, both
+- Sent: a thumbnail (long side THUMB_SIDE) and a large one (FULL_SIDE), WebP, each at most as many bytes as the page takes in one image
+  (``Client.image_bytes``: MAX_PART to a page that does not say, so the request stays under its 1 MiB body limit; up to 3 MB to one of
+  data contract v44 that says more); Pillow makes them. Without Pillow a PNG, JPEG, WebP or GIF of at most that many bytes goes up as it is, both
   sizes the same file; a larger one is not sent. The id is the SHA-256 of the file (its first ID_CHARS hex digits): the same image goes
   up once. The page keeps an image KEEP_DAYS after the message it came with (``expires_at``), and so does this side: an image of an
   older message is not sent and its ref says ``gone``.
@@ -31,7 +32,7 @@ from covey.core.state import read_object, write_json
 LEDGER_FILE = "images.json"
 PER_TURN = 9
 MAX_SOURCE = 20 * 1024 * 1024
-MAX_PART = 700_000  # Bytes of one encoded image: base64 in its JSON request stays under the page's 1 MiB.
+MAX_PART = web_sync.IMAGE_PART  # Bytes of one encoded image to a page that does not say its limits: base64 in its request stays under 1 MiB.
 THUMB_SIDE, FULL_SIDE = 480, 2048
 MAX_PIXELS = 60_000_000
 ID_CHARS = 32
@@ -117,8 +118,9 @@ def media_paths(text, state) -> list[Path]:
     return found[:PER_TURN]
 
 
-def encode(path) -> tuple:
-    """(width, height, thumb, full, mime) of the image at ``path``: WebP bytes from Pillow, or the file itself without it."""
+def encode(path, max_part=MAX_PART) -> tuple:
+    """(width, height, thumb, full, mime) of the image at ``path``, each at most ``max_part`` bytes: WebP bytes from Pillow, or the
+    file itself without it."""
     path = Path(path)
     try:
         size = path.stat().st_size
@@ -128,7 +130,7 @@ def encode(path) -> tuple:
         raise BadImage("size")
     if Image is None:
         mime = RAW_TYPES.get(path.suffix.lower())
-        if mime is None or size > MAX_PART:
+        if mime is None or size > max_part:
             raise BadImage("no Pillow")
         data = path.read_bytes()
         return 0, 0, data, data, mime
@@ -143,18 +145,18 @@ def encode(path) -> tuple:
     if image.mode not in ("RGB", "RGBA"):
         image = image.convert("RGBA" if "A" in image.mode or "transparency" in image.info else "RGB")
     width, height = image.size
-    return width, height, _webp(image, THUMB_SIDE, 80), _webp(image, FULL_SIDE, 85), "image/webp"
+    return width, height, _webp(image, THUMB_SIDE, 80, max_part), _webp(image, FULL_SIDE, 85, max_part), "image/webp"
 
 
-def _webp(image, side, quality) -> bytes:
-    """``image`` within ``side`` × ``side`` as WebP, at ``quality`` or lower (and smaller) until it is at most MAX_PART bytes."""
+def _webp(image, side, quality, max_part=MAX_PART) -> bytes:
+    """``image`` within ``side`` × ``side`` as WebP, at ``quality`` or lower (and smaller) until it is at most ``max_part`` bytes."""
     while True:
         copy = image.copy()
         copy.thumbnail((side, side))
         buffer = io.BytesIO()
         copy.save(buffer, "WEBP", quality=quality, method=4)
         data = buffer.getvalue()
-        if len(data) <= MAX_PART or side < 256:
+        if len(data) <= max_part or side < 256:
             return data
         if quality > 60:
             quality -= 10
@@ -309,9 +311,11 @@ class WebImages:
     # -- sending --------------------------------------------------------------------------------------------------------
 
     def send(self, client, raw, ident, expires, moved) -> None:
-        """Both sizes of the image at ``raw`` to the page. BadImage: not an image to send, or one the page refused (400, 413)."""
+        """Both sizes of the image at ``raw`` to the page, as large as it takes (``client.image_bytes``; MAX_PART for a client without
+        it). BadImage: not an image to send, or one the page refused (400, 413)."""
+        most = getattr(client, "image_bytes", None)
         try:
-            width, height, thumb, full, mime = encode(raw)
+            width, height, thumb, full, mime = encode(raw, most() if callable(most) else MAX_PART)
         except OSError as exc:
             raise BadImage(type(exc).__name__) from None
         for part, data in (("thumb", thumb), ("full", full)):

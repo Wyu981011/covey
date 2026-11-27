@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
-import { UPLOAD_MAX_BYTES, UPLOAD_MAX_FILES, UPLOAD_PART_BYTES, type SayFile } from '@shared/api.interface';
+import { UPLOAD_MAX_BYTES, UPLOAD_MAX_FILES, type SayFile } from '@shared/api.interface';
 import { uploadDone, uploadPart, uploadStart } from '@client/src/api/workbench';
+import { partBytesOf, partRange } from './uploadParts';
 import { errorText } from '@client/src/lib/workbench-format';
 
 /** 输入框的一个附件（v20）：选好就开始传，传完才有 file（say 里带的编号） */
@@ -127,10 +128,14 @@ async function upload(conv: string, key: string, f: File, name: string): Promise
   patch(conv, key, { phase: 'uploading', progress: 0, error: undefined });
   try {
     const mime: string = f.type || 'application/octet-stream';
-    const { id, parts } = await withRetry(() => uploadStart({ name, mime, size: f.size }));
+    const started = await withRetry(() => uploadStart({ name, mime, size: f.size }));
+    const { id, parts } = started;
+    // 每段多大照服务端说的（v44 part_bytes，按它的请求体上限放大，段数少了请求也少）；旧服务端不说，照 512 KiB
+    const each: number = partBytesOf(started, f.size);
     for (let n = 0; n < parts; n += 1) {
       if (!blobs.has(key)) return; // 删掉了
-      const data: string = await base64Of(f.slice(n * UPLOAD_PART_BYTES, (n + 1) * UPLOAD_PART_BYTES));
+      const [from, to] = partRange(n, each, f.size);
+      const data: string = await base64Of(f.slice(from, to));
       await withRetry(() => uploadPart(id, { n, data }));
       patch(conv, key, { progress: (n + 1) / parts });
     }

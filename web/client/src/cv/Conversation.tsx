@@ -4,8 +4,9 @@ import { ArrowDown, ChevronRight, Paperclip } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CollabView, OutboxView, SayFile, SnapshotProject, SnapshotTopic, TurnView } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { newOpId, postOutboxQuiet, useRoomTurns, useSnapshot, useTurns } from '@client/src/hooks/use-workbench';
-import { useSendOutbox, useTrackedOp } from './sendOp';
+import { useQueryClient } from '@tanstack/react-query';
+import { newOpId, useRoomTurns, useSnapshot, useTurns } from '@client/src/hooks/use-workbench';
+import { sendQuiet, useSendOutbox, useTrackedOp } from './sendOp';
 import {
   addPending, getDraft, getScroll, markSeenSent, patchPending, removePending, setDraft, setScroll, usePending, type Pending,
 } from '@client/src/lib/conv-store';
@@ -171,6 +172,7 @@ export const Conversation: React.FC<{
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const send = useSendOutbox();
   const say = useSay(topicKey);
+  const qc = useQueryClient();
 
   const topic: SnapshotTopic | undefined = snap?.topics.find((t: SnapshotTopic) => t.key === topicKey) ?? (tq.data?.topic as SnapshotTopic | undefined);
   const turns: TurnView[] = useMemo(() => (isPlaceholderData ? [] : (data?.turns ?? [])), [data, isPlaceholderData]);
@@ -189,8 +191,9 @@ export const Conversation: React.FC<{
   useEffect(() => {
     if (butler || !topic?.unseen || topic.kind !== 'topic') return;
     if (!markSeenSent(topicKey)) return;
-    postOutboxQuiet({ op_id: newOpId(), kind: 'seen', topic_key: topicKey, payload: {} });
-  }, [butler, topic?.unseen, topic?.kind, topicKey]);
+    // 乐观更新：侧栏、看板马上记为看过，Covey 没办成再改回（sendOp.sendQuiet）
+    sendQuiet(qc, { op_id: newOpId(), kind: 'seen', topic_key: topicKey, payload: {} });
+  }, [butler, topic?.unseen, topic?.kind, topicKey, qc]);
 
   useEffect(() => {
     if (!pending.length || !loaded) return;

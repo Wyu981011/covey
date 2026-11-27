@@ -6,7 +6,9 @@ does what the page asked for).
   never stored in the config object's repr, a log line or a record. ``page_url`` (optional): the address the owner opens the page at,
   for the cards' 打开网页 (``page_url``); without it the cards are as they were.
 - Items: ``project``, ``topic``, ``turn``, ``question``, ``collab`` (COVEY_COLLAB=1 only: one collaboration, app/web_collect.py) (the contract's fields, in Chinese words for states) and one ``settings`` (the 设置
-  card's tabs, app/web_settings.py); ``rev`` is the hash of an item's data, so only what changed is pushed. A batch is at most ``BATCH_ITEMS`` items or ``BATCH_BYTES`` bytes.
+  card's tabs, app/web_settings.py); ``rev`` is the hash of an item's data, so only what changed is pushed. A batch is at most ``BATCH_ITEMS`` items and,
+  to a page that says nothing of its limits, ``BATCH_BYTES`` bytes; a page of data contract v44 says them (``limits`` in its answers, ``limits_of``)
+  and gets larger batches and images (``batch_bytes``, ``image_bytes``).
 - The ledger (``<state>/web/inbox.json``): an operation's op_id and seq are written before it is done, so a restart does not do it
   twice; an operation found "received" without a result is not done again (rule 6 of AGENTS.md: a write is not replayed).
 """
@@ -28,7 +30,13 @@ CONFIG_ENV = "COVEY_WEB_CONFIG"  # The JSON file of the config.
 FOLDER = "web"
 LEDGER = "inbox.json"
 PUSH_SECONDS, POLL_SECONDS, FULL_SECONDS = 1.0, 0.5, 60.0
-BATCH_ITEMS, BATCH_BYTES = 500, 1_000_000  # Bytes as sent (UTF-8): the page's body parser refuses a request over 1 MiB.
+BATCH_ITEMS, BATCH_BYTES = 500, 1_000_000  # Bytes as sent (UTF-8) to a page without ``limits`` (before v44): it refuses a body over 1 MiB.
+# v44: a page whose ``limits.body_bytes`` (its BODY_SIZE_LIMIT) is BIG_BODY or more gets batches of BATCH_SHARE of it, BATCH_MOST at
+# most (the hosting platform refuses a request over 12 MB; the page's default is 8 MB): fewer requests to a gateway that allows about 10 a second.
+BIG_BODY, BATCH_SHARE, BATCH_MOST = 2_000_000, 0.6, 5_000_000
+# One encoded image (POST /sync/image): IMAGE_PART to a page without limits (its base64 stays under 1 MiB); to one whose
+# ``limits.image_bytes`` is over IMAGE_OLD (what a page before v44 takes, 760 KiB) that less IMAGE_MARGIN, IMAGE_MOST at most.
+IMAGE_PART, IMAGE_OLD, IMAGE_MARGIN, IMAGE_MOST = 700_000, 760 * 1024, 65_536, 3_000_000
 BODY_BYTES = 64 * 1024
 CUT_NOTE = "\n\n（内容太长，已截断）"
 LEDGER_KEPT = 2000
@@ -149,13 +157,13 @@ def clip(text) -> str:
     return raw[:BODY_BYTES - len(CUT_NOTE.encode())].decode(errors="ignore") + CUT_NOTE
 
 
-def batches(items) -> list:
-    """``items`` in batches of at most BATCH_ITEMS items and BATCH_BYTES bytes as sent, UTF-8 with the separator (a Chinese character
+def batches(items, limit=BATCH_BYTES) -> list:
+    """``items`` in batches of at most BATCH_ITEMS items and ``limit`` bytes as sent, UTF-8 with the separator (a Chinese character
     is three; one item over the size is a batch of its own)."""
     out, current, size = [], [], 0
     for each in items:
         weight = len(json.dumps(each, ensure_ascii=False).encode()) + 2
-        if current and (len(current) >= BATCH_ITEMS or size + weight > BATCH_BYTES):
+        if current and (len(current) >= BATCH_ITEMS or size + weight > limit):
             out.append(current)
             current, size = [], 0
         current.append(each)
@@ -163,6 +171,32 @@ def batches(items) -> list:
     if current:
         out.append(current)
     return out
+
+
+def _count(value) -> int:
+    """``value`` as a count of bytes: a positive int (not a bool), else 0."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def limits_of(answer):
+    """The ``limits`` a page of data contract v44 put in an answer (``/sync/upsert``, ``/sync/images/have``): {body_bytes, image_bytes,
+    ...} with a positive ``body_bytes``; None when there are none (an older page) or they are not of that shape."""
+    limits = answer.get("limits") if isinstance(answer, dict) else None
+    if not isinstance(limits, dict) or not _count(limits.get("body_bytes")):
+        return None
+    return dict(limits)
+
+
+def batch_bytes(limits) -> int:
+    """The bytes of one batch to a page that said ``limits`` (``limits_of``; None: BATCH_BYTES, as before v44)."""
+    body = _count((limits or {}).get("body_bytes"))
+    return min(BATCH_MOST, int(body * BATCH_SHARE)) if body >= BIG_BODY else BATCH_BYTES
+
+
+def image_bytes(limits) -> int:
+    """The bytes of one encoded image to a page that said ``limits`` (None: IMAGE_PART, as before v44)."""
+    image = _count((limits or {}).get("image_bytes"))
+    return min(IMAGE_MOST, image - IMAGE_MARGIN) if image > IMAGE_OLD else IMAGE_PART
 
 
 # -- the ledger -----------------------------------------------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
-import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
+import type { PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
+import { WB_DB } from './workbench.tokens';
 import { sql } from 'drizzle-orm';
 import {
   isOutboxKind,
@@ -56,6 +57,7 @@ import { usageFromSnapshot } from '@shared/usage';
 import { collabOf, turnCollabOf } from '@shared/collab';
 import { arr, asRows, missingTable, num, obj, oneLine, str, unescapeHtml } from './workbench.util';
 import { wake, waitFor } from './workbench.wake';
+import { Batcher } from './workbench.guard';
 import {
   actionsOf, answersOf, asksOf, backgroundOf, checklistOf, configOf, criteriaOf, deliveryOf, failureOf, gapsOf, gistOf, memoryUndoShape, ownerSendOf, progressOf, projectNotesOf, projectOpShape, recoverShape,
   revisitCancelShape, revisitOf,
@@ -389,7 +391,16 @@ function turnImages(v: unknown): TurnImage[] {
 
 @Injectable()
 export class WorkbenchQueryService {
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  /** 挂着等回执的请求各自每 250 毫秒查一次：同一时刻的合成一条 `op_id in (...)`（T876） */
+  private readonly acks: Batcher<string, OutboxStatus>;
+
+  constructor(@Inject(WB_DB) private readonly db: PostgresJsDatabase) {
+    this.acks = new Batcher<string, OutboxStatus>(async (ids: string[]): Promise<Map<string, OutboxStatus>> => {
+      const rows = asRows<OutboxStatus>(await this.db.execute(sql`select op_id, kind, state, coalesce(message, '') as message, _created_at as created_at
+        from outbox where op_id in (${sql.join(ids.map((x: string) => sql`${x}`), sql`, `)})`));
+      return new Map(rows.map((r: OutboxStatus) => [r.op_id, r]));
+    });
+  }
 
   private brief(r: TopicRow): TopicBrief {
     return {
@@ -1067,10 +1078,7 @@ export class WorkbenchQueryService {
   async outboxStatus(opId: string, waitMs = 0, aborted: () => boolean = () => false): Promise<OutboxStatus> {
     let last: OutboxStatus | null = null;
     const read = async (): Promise<OutboxStatus> => {
-      const row = asRows<OutboxStatus>(
-        await this.db.execute(sql`select op_id, kind, state, coalesce(message, '') as message, _created_at as created_at
-          from outbox where op_id = ${opId}`),
-      )[0];
+      const row: OutboxStatus | undefined = await this.acks.get(opId);
       if (!row) throw new NotFoundException('没有这条发件');
       last = row;
       return row;

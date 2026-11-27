@@ -8,7 +8,7 @@
  *     直到看到预期的新状态（你的那一轮出现了、问题收起了、话题停了…）。
  * 取数一律“上一次还没回来就跳过”（cancelRefetch: false，在 sendOp.ts 的 pull 里）：CUA 第一版每 300 毫秒取整份快照并取消在途请求，
  * 单次取数一超过 300 毫秒就永远落不了地，反而慢到 11–14 秒。 */
-import type { OutboxRequest, OutboxView, RoomResponse, SnapshotResponse, TurnsResponse } from '@shared/api.interface';
+import type { OutboxRequest, OutboxView, RoomResponse, SnapshotResponse, SnapshotTopic, TurnsResponse } from '@shared/api.interface';
 import { OP_WAIT_MS } from './opWords';
 
 /** 带给服务端的 wait（秒）：新服务端最多挂这么久等回执，旧服务端不认、马上回 */
@@ -123,6 +123,61 @@ export function expectation(body: Pick<OutboxRequest, 'op_id' | 'kind' | 'topic_
       return null;
   }
 }
+
+/* ---------- 乐观更新（T876）：写进发件箱以后、Covey 回执之前，先在快照缓存里改掉这个话题 ---------- */
+
+/**
+ * 只做两种低风险的、新状态网页自己就知道的：seen（记为看过：unseen 置 false，“有结果没看”的 tone 换成 done，同 Covey 推来的）、
+ * dismiss（不管了：board 置空串，从看板拿掉，同 Covey 推来的）。别的不改缓存：say 有输入框自己的回显，answer 有题面的锁
+ * （priorAnswer），stop、recover、launch 的新状态只有 Covey 知道。不用改（已经看过、不在看板上、没开看板）是 null。
+ */
+export function optimisticTopic(body: Pick<OutboxRequest, 'kind'>, t: SnapshotTopic): SnapshotTopic | null {
+  if (body.kind === 'seen') {
+    if (!t.unseen && t.tone !== 'result') return null;
+    return { ...t, unseen: false, ...(t.tone === 'result' ? { tone: 'done' } : {}) };
+  }
+  if (body.kind === 'dismiss') {
+    if (typeof t.board !== 'string' || t.board === '') return null;
+    return { ...t, board: '' };
+  }
+  return null;
+}
+
+/** 记下的一次乐观改动：哪个话题、放进去的对象、原来的对象（改回用） */
+export interface Optimistic {
+  key: string;
+  placed: SnapshotTopic;
+  was: SnapshotTopic;
+}
+
+/** 把乐观的改动放进快照：返回新快照和记下的改动；不用改、缓存里没有快照或没有这个话题是 null */
+export function applyOptimistic(snap: SnapshotResponse | undefined, body: Pick<OutboxRequest, 'kind' | 'topic_key'>): { snap: SnapshotResponse; mark: Optimistic } | null {
+  if (!snap || !body.topic_key) return null;
+  const i: number = snap.topics.findIndex((t: SnapshotTopic) => t.key === body.topic_key);
+  if (i < 0) return null;
+  const was: SnapshotTopic = snap.topics[i];
+  const placed: SnapshotTopic | null = optimisticTopic(body, was);
+  if (!placed) return null;
+  const topics: SnapshotTopic[] = snap.topics.slice();
+  topics[i] = placed;
+  return { snap: { ...snap, topics }, mark: { key: body.topic_key, placed, was } };
+}
+
+/**
+ * 改回（回执没办成、或等满了没回音）：缓存里这个话题还是放进去的那个对象才换回原来的；这期间 Covey 推来了它的新状态
+ * （增量把它换掉了）、或取过一份整份，就以推来的为准，返回 null 不改
+ */
+export function undoOptimistic(snap: SnapshotResponse | undefined, mark: Optimistic): SnapshotResponse | null {
+  if (!snap) return null;
+  const i: number = snap.topics.findIndex((t: SnapshotTopic) => t === mark.placed);
+  if (i < 0) return null;
+  const topics: SnapshotTopic[] = snap.topics.slice();
+  topics[i] = mark.was;
+  return { ...snap, topics };
+}
+
+/** 回执以后要不要改回：没办成要；等满了没回音也要（Covey 没收下，看板照它原来的样子），但组件卸了才停问的那种不算 */
+export const shouldUndo = (phase: TrackResult['phase'], gone: boolean): boolean => phase === 'failed' || (phase === 'timeout' && !gone);
 
 /** 一条 answer 发件是哪种动作：提交回答、不处理（aside）、撤销不处理（restore） */
 export const answerAct = (o: Pick<OutboxView, 'payload'>): 'answer' | 'aside' | 'restore' =>

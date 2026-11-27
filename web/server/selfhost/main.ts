@@ -16,6 +16,7 @@ import { apiGuard, openapiGuard, publicGuard, securityHeaders, stripPlatformHead
 import { backupHandler, healthHandler, type HealthState, type PublicHealth } from './routes';
 import { ensureSelfSigned, loadProvided, type TlsMaterial } from './tls';
 import { selfhostAppModule } from './selfhost.module';
+import { bodyLimit } from '../modules/workbench/workbench.limits';
 
 async function bootstrap(): Promise<void> {
   const log = new Logger('Selfhost');
@@ -35,8 +36,9 @@ async function bootstrap(): Promise<void> {
   app.use(healthHandler(health));
   app.use(openapiGuard(keys, cfg.allowRemoteOpenapi));
   app.use(backupHandler(db, cfg.backupMaxBytes));
-  app.useBodyParser('json', { limit: '2mb' });
-  app.useBodyParser('urlencoded', { extended: true, limit: '2mb' });
+  // 和妙搭同一个上限（T876，workbench.limits.ts）：limits.body_bytes 报的就是它，Covey 照它放大一批
+  app.useBodyParser('json', { limit: bodyLimit() });
+  app.useBodyParser('urlencoded', { extended: true, limit: bodyLimit() });
   app.use(apiGuard(app.get(AuthService)));
   app.useStaticAssets(cfg.staticDir, { index: false, maxAge: '1h', setHeaders: (res, path) => {
     if (path.includes('/assets/')) res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');

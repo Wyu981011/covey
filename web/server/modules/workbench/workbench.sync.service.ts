@@ -1,5 +1,6 @@
 import { Injectable, Inject, BadRequestException, Logger } from '@nestjs/common';
-import { DRIZZLE_DATABASE, type PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
+import type { PostgresJsDatabase } from '@lark-apaas/fullstack-nestjs-core';
+import { WB_DB } from './workbench.tokens';
 import { sql } from 'drizzle-orm';
 import {
   isSettingsKey,
@@ -15,7 +16,8 @@ import { arr, asRows, clipBody, missingTable, num, obj, str } from './workbench.
 import { wake, waitFor } from './workbench.wake';
 
 const MAX_ITEMS = 500;
-const CHUNK = 25;
+/** 一批里同时写几条：库查询过闸门（workbench.guard.ts，Covey 这边最多 2 条连接），多发也只是排队，所以 4 条一组就够 */
+const CHUNK = 4;
 /** 挂着等取件时多久查一次库（毫秒） */
 const INBOX_STEP_MS = 200;
 
@@ -38,7 +40,7 @@ export class WorkbenchSyncService {
   /** 妙搭模式没有登录表，第一次发现后不再查 */
   private noLoginTable = false;
 
-  constructor(@Inject(DRIZZLE_DATABASE) private readonly db: PostgresJsDatabase) {}
+  constructor(@Inject(WB_DB) private readonly db: PostgresJsDatabase) {}
 
   async upsert(body: SyncUpsertRequest): Promise<SyncUpsertResponse> {
     const items: SyncItem[] = arr<SyncItem>(body?.items);

@@ -47,6 +47,8 @@ class ImageWeb(Web):
                 status, answer = self.refuse or self.refuse_image, {"ok": False}
             elif handler.path.startswith("/sync/images/have"):
                 answer = {"have": [each for each in request["ids"] if each in self.have]}
+                if self.limits is not None:  # Web.limits: a page of data contract v44 says what it takes here too.
+                    answer["limits"] = self.limits
             else:
                 self.images[(request["id"], request["v"])] = request
             payload = json.dumps(answer).encode()
@@ -206,6 +208,22 @@ class SentImageTest(ImagesCase):
         self.assertEqual(sorted(self.web.images), [(ident, "full"), (ident, "thumb")])
         self.assertEqual(self.web.images[(ident, "full")]["mime"], "image/png")
         self.assertEqual([each["id"] for each in self.owner_turn()["images"]], [ident])
+
+    def test_a_page_that_says_it_takes_larger_images_gets_them(self):
+        """Data contract v44: the page's ``limits.image_bytes`` (here 4 MiB) lifts MAX_PART; without Pillow an image of 800 KB, which
+        an older page would not get, goes up as it is."""
+        large = self.media / "om_1-1-large.png"
+        large.parent.mkdir(parents=True, exist_ok=True)
+        large.write_bytes(b"\x89PNG" + b"0" * 800_000)
+        self.said_with(large)
+        self.web.limits = {"body_bytes": 8 * 1024 * 1024, "image_bytes": 4 * 1024 * 1024, "store": "file"}
+        with mock.patch.object(web_images, "Image", None):
+            self.sync.push_once(T0)
+            self.sync.push_once(T0 + 1)
+        ident = web_images.file_id(large)
+        self.assertEqual(self.sync.client.image_bytes(), 3_000_000)
+        self.assertEqual(sorted(self.web.images), [(ident, "full"), (ident, "thumb")])
+        self.assertEqual(len(base64.b64decode(self.web.images[(ident, "full")]["data"])), 800_004)
 
 
 class ShownImageTest(ImagesCase):

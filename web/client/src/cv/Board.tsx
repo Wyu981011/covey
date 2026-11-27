@@ -6,7 +6,7 @@ import type {
   ActivityItem, FeedItem, QuestionView, SnapshotProject, SnapshotResponse, SnapshotTopic, StatsResponse, UsageDay,
 } from '@shared/api.interface';
 import { useIsDesktop } from '@client/src/hooks/use-breakpoint';
-import { newOpId, postOutboxQuiet, prefetchTurns, useSettings, useSnapshot, useStats, useTidy, useUsage } from '@client/src/hooks/use-workbench';
+import { newOpId, prefetchTurns, useSettings, useSnapshot, useStats, useTidy, useUsage } from '@client/src/hooks/use-workbench';
 import { errorText, oneLineText } from '@client/src/lib/workbench-format';
 import { cleanLabel, isRec, quickAnswerable } from './Question';
 import { Head, SyncDot } from './Shell';
@@ -22,7 +22,7 @@ import { DismissButton, RecoverActions, useBoardOn } from './RecoverBits';
 import { RoleAvatar, TopicBadge } from './RoleAvatar';
 import { PaneHandle } from './PaneHandle';
 import { BOARD_RAIL } from './panes';
-import { trackedOf, trackOp, useOutboxOp, useSendOutbox, useTrackedOp } from './sendOp';
+import { sendQuiet, trackedOf, trackOp, useOutboxOp, useSendOutbox, useTrackedOp } from './sendOp';
 import { LaterPanel, ProjectOps } from './V34Bits';
 import { opWords } from './opWords';
 
@@ -192,9 +192,10 @@ const RunRow: React.FC<{ t: SnapshotTopic }> = ({ t }) => {
   );
 };
 
-/** 有结果没看：一行，右边「记为看过」 */
+/** 有结果没看：一行，右边「记为看过」。点了先乐观记为看过（sendOp.sendQuiet），这一行跟着从“有结果没看”里拿掉，Covey 没办成再回来 */
 const ResultRow: React.FC<{ t: SnapshotTopic }> = ({ t }) => {
   const nav = useNavigate();
+  const qc = useQueryClient();
   const [seen, setSeen] = useState<boolean>(false);
   const line: string = t.latest_role !== 'owner' ? oneLineText(t.latest, 90) : '';
   return (
@@ -210,7 +211,7 @@ const ResultRow: React.FC<{ t: SnapshotTopic }> = ({ t }) => {
           <button
             type="button"
             className="btn sm nb-right"
-            onClick={(e: React.MouseEvent) => { e.stopPropagation(); postOutboxQuiet({ op_id: newOpId(), kind: 'seen', topic_key: t.key, payload: {} }); setSeen(true); }}
+            onClick={(e: React.MouseEvent) => { e.stopPropagation(); setSeen(true); sendQuiet(qc, { op_id: newOpId(), kind: 'seen', topic_key: t.key, payload: {} }); }}
           >
             记为看过
           </button>

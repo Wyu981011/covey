@@ -111,6 +111,18 @@ python3 web/deploy/miaoda/deploy.py --covey-state /absolute/path/to/covey-state 
 
 平台的 `+db-execute` 只在第一句是 `BEGIN` 时才把整段当一个事务，所以脚本执行前会去掉整行注释，并检查首句是 `BEGIN`、末句是 `COMMIT`。
 
+## 已有部署升级到 v44（T876 起）
+
+新网页把图片和附件的字节放进应用的文件存储，库里只存路径；旧库没有路径列时自动照旧存库里，所以先发网页、后加列都不会坏。要让新的图片和附件进文件存储、快照增量用上索引，在 dev 执行一次迁移再发布到 online：
+
+```bash
+lark-cli apps +db-execute --app-id <应用> --environment dev --sql - --yes < web/deploy/miaoda/migrations/20261127-t876-blobs.sql
+lark-cli apps +db-env-diff --app-id <应用>      # 只应看到 images、upload_parts 的新列，upload_parts.data 可空，两个 _updated_at 索引
+lark-cli apps +db-env-migrate --app-id <应用> --yes
+```
+
+只加列和索引，不动已有数据。历史图片搬进文件存储（`/openapi/sync/blobs/backfill`）和清掉库里的旧字节见 Covey `docs/web.md`「数据约定 v44」，清字节前先备份。
+
 ## 测试
 
 不连飞书，用假的 lark-cli 和本机的 git 仓库。在 covey 仓库根目录运行：

@@ -10,12 +10,13 @@ import * as S from '../client/src/cv/snapshotMerge.ts';
 const topic = (key, updated, extra = {}) => ({ key, title: key, updated_at: updated, state: '空闲', kind: 'topic', ...extra });
 const snap = (topics, extra = {}) => ({ synced_at: 's', butler_key: null, projects: [], topics, questions: [], ...extra });
 
-test('什么时候带 since：有游标且整份是一分钟内取的；第一次、旧服务端没给过游标、该整份了都是 null', () => {
-  const prev = snap([], { cursor: '2026-11-25T10:00:00.000Z' });
-  assert.equal(S.sinceFor(undefined, 0, 1000), null);
-  assert.equal(S.sinceFor(snap([]), 0, 1000), null, '旧服务端：没有 cursor，永远整份');
-  assert.equal(S.sinceFor(prev, 1000, 1000 + 59_000), '2026-11-25T10:00:00.000Z');
-  assert.equal(S.sinceFor(prev, 1000, 1000 + S.FULL_EVERY_MS), null);
+test('什么时候带 since：有游标、缓存里有上一份、没有待校准的理由、离上次整份不满 30 分钟（各种理由见 calib.test.mjs）', () => {
+  const c = { ...S.calibStart(), lastFullAt: 1000 };
+  assert.equal(S.planSnapshot(null, false, c, 1000).since, null);
+  assert.equal(S.planSnapshot(undefined, true, c, 1000).since, null, '旧服务端：没有 cursor，永远整份');
+  assert.equal(S.planSnapshot('2026-11-25T10:00:00.000Z', true, c, 1000 + 59_000).since, '2026-11-25T10:00:00.000Z');
+  assert.equal(S.planSnapshot('2026-11-25T10:00:00.000Z', true, c, 1000 + 10 * 60_000).since, '2026-11-25T10:00:00.000Z', '不再每分钟整份');
+  assert.equal(S.planSnapshot('2026-11-25T10:00:00.000Z', true, c, 1000 + S.FULL_BACKSTOP_MS).since, null);
 });
 
 test('整份（没有 partial，旧服务端或没带 since）直接替换', () => {
@@ -80,5 +81,5 @@ test('游标不放进缓存的快照里（它每次都变，放进去会让用�
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src', 'hooks', 'use-workbench.ts'), 'utf8');
   assert.match(src, /let snapCursor: string \| null = null;/u);
   assert.match(src, /const \{ cursor: _cursor, \.\.\.data \} = out;/u);
-  assert.match(src, /sinceFor\(\{ cursor: snapCursor \?\? undefined \}, lastFullAt, Date\.now\(\)\)/u);
+  assert.match(src, /planSnapshot\(snapCursor, !!qc\.getQueryData<SnapshotResponse>\(SNAPSHOT_KEY\), calib, Date\.now\(\)\)/u);
 });

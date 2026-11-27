@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { OutboxRequest, OutboxResponse, RoomResponse, TurnsResponse } from '@shared/api.interface';
+import type { OutboxRequest, OutboxResponse, RoomResponse, SnapshotResponse, TurnsResponse } from '@shared/api.interface';
 import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
 import { MEMORY_KEY, QUOTA_KEY, ROOM_KEY, SETTINGS_KEY, SNAPSHOT_KEY, TIDY_KEY, UPGRADE_KEY, turnsKey } from '@client/src/hooks/use-workbench';
 import { errorText } from '@client/src/lib/workbench-format';
 import { opWords, type OpPhase } from './opWords';
-import { expectation, isMemoryPullKey, pullPlan, settle, trackReceipt, type Pull, type TrackDeps, type View } from './opTrack';
+import { applyOptimistic, expectation, isMemoryPullKey, pullPlan, settle, shouldUndo, trackReceipt, undoOptimistic, type Optimistic, type Pull, type TrackDeps, type View } from './opTrack';
 
 /* 发件箱的操作统一从这里发、在这里等回执和拉数据（T647 P1-C2，T765 F1）：说法在 opWords.ts，等法和拉数据的节奏在 opTrack.ts，
  * 各处不再自己写一套。发成功的操作都由 trackOp 跟踪：问回执、回执后重取这个话题的轮次和快照。 */
@@ -103,15 +103,34 @@ function depsFor(qc: QueryClient, body: Pick<OutboxRequest, 'topic_key'>): { dep
   };
 }
 
+/** 乐观更新（opTrack.applyOptimistic）放进快照缓存；没改是 null */
+function putOptimistic(qc: QueryClient, body: OutboxRequest): Optimistic | null {
+  const box: { mark: Optimistic | null } = { mark: null };
+  qc.setQueryData<SnapshotResponse>(SNAPSHOT_KEY, (prev: SnapshotResponse | undefined) => {
+    const got = applyOptimistic(prev, body);
+    if (!got) return prev;
+    box.mark = got.mark;
+    return got.snap;
+  });
+  return box.mark;
+}
+
+/** 改回乐观更新：缓存里还是放进去的那个才改（opTrack.undoOptimistic） */
+function dropOptimistic(qc: QueryClient, mark: Optimistic): void {
+  qc.setQueryData<SnapshotResponse>(SNAPSHOT_KEY, (prev: SnapshotResponse | undefined) => undoOptimistic(prev, mark) ?? prev);
+}
+
 /**
- * 发成功的操作交给它：问回执（opTrack.trackReceipt），回执一到就返回（done、failed、timeout），同时开始拉数据（opTrack.settle：
+ * 发成功的操作交给它：先做乐观更新（seen、dismiss，见 opTrack.optimisticTopic；没办成或等满了没回音再改回），问回执（opTrack.trackReceipt），回执一到就返回（done、failed、timeout），同时开始拉数据（opTrack.settle：
  * 这个话题的轮次、大厅、快照各取一次，之后约 3 秒内每 500 毫秒只取这个话题的轮次，直到看到预期的新状态）；返回值的 settled 是那段取数。
  * 结果也写进小仓库（useTrackedOp）。gone() 为真（组件卸了）就不再问回执；ms 是最长等多久。
  */
 export async function trackOp(qc: QueryClient, body: OutboxRequest, o: { gone?: () => boolean; ms?: number } = {}): Promise<OpResult> {
   const { deps, before } = depsFor(qc, body);
   setTracked({ opId: body.op_id, phase: 'waiting', message: '', settled: false, at: Date.now() });
+  const mark: Optimistic | null = putOptimistic(qc, body);
   const r = await trackReceipt(deps, body.op_id, { ms: o.ms, gone: o.gone });
+  if (mark && shouldUndo(r.phase, !!o.gone?.())) dropOptimistic(qc, mark);
   if (r.phase === 'timeout') {
     patchTracked(body.op_id, { phase: 'timeout', settled: true });
     return { phase: 'timeout', message: '' };
@@ -121,6 +140,17 @@ export async function trackOp(qc: QueryClient, body: OutboxRequest, o: { gone?: 
   const settled: Promise<boolean> = settle(deps, pullPlan(body, turnsActive), r, expectation(body, before, r.message)).catch(() => false);
   void settled.then(() => patchTracked(body.op_id, { settled: true }));
   return { phase: r.phase, message: r.message, settled };
+}
+
+/**
+ * 不等结果、失败也不打扰的一次性发件（seen）：写进发件箱以后照常交给跟踪器，乐观更新先把话题记为看过（侧栏、看板马上变），
+ * Covey 回执没办成或一分钟没回音再改回去。seen 回执后不取数（pullPlan），只问一两次回执（服务端挂着等）
+ */
+export function sendQuiet(qc: QueryClient, body: OutboxRequest): void {
+  postOutbox(body).then(
+    () => void trackOp(qc, body),
+    () => undefined,
+  );
 }
 
 /** 发一条操作并等回执；onSent 在请求发出去（写进网页库）以后调一次（界面从“发送中”换成“等 Covey”） */

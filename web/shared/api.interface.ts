@@ -839,7 +839,7 @@ export interface SyncDeleted {
   type: SyncType;
   key: string;
 }
-/** v19：Covey 传一张图的一份（POST /openapi/sync/image）；data 是 base64，解出来不超过 760 KB */
+/** v19：Covey 传一张图的一份（POST /openapi/sync/image）；data 是 base64，解出来不超过 760 KB（v44：不超过服务端 limits.image_bytes） */
 export interface ImageUploadRequest {
   id: string;
   v: 'thumb' | 'full';
@@ -856,6 +856,8 @@ export interface ImageHaveRequest {
 }
 export interface ImageHaveResponse {
   have: string[];
+  /** v44：同 SyncUpsertResponse.limits；Covey 传图之前先问 have，所以从这里就知道一张图能多大 */
+  limits?: SyncLimits;
 }
 
 export interface SyncUpsertRequest {
@@ -867,6 +869,21 @@ export interface SyncUpsertResponse {
   upserted: number;
   skipped: number;
   deleted: number;
+  /** v44：这个服务端此刻的收发上限和内存读数。旧服务端没有，Covey 照 1 MB 一批、700 KB 一张图的老办法 */
+  limits?: SyncLimits;
+}
+/** v44：服务端的上限（upsert、images/have 的响应里带）。Covey 照它放大一批和一张图；数都按字节 */
+export interface SyncLimits {
+  /** 请求体上限：BODY_SIZE_LIMIT，没设是代码默认 8mb（妙搭 FaaS 的硬顶是 12 MB） */
+  body_bytes: number;
+  /** 一份图片（/sync/image 的 data 解出来）最多多少字节 */
+  image_bytes: number;
+  /** 图片和附件这会儿存在哪：file 是妙搭文件存储，db 是本应用库（旧办法；文件存储用不了时退回它） */
+  store: 'file' | 'db';
+  /** 内存（MB）：V8 堆上限（看 NODE_OPTIONS 的 --max-old-space-size 生效没有）、此刻常驻、容器上限；读不到是 0 */
+  heap_limit_mb: number;
+  rss_mb: number;
+  mem_limit_mb: number;
 }
 export interface InboxItem {
   seq: number;
@@ -1169,6 +1186,8 @@ export interface UploadStartRequest {
 export interface UploadStartResponse {
   id: string;
   parts: number;
+  /** v44：这个附件每段原始字节（最后一段可以更短）。旧服务端没有，按 UPLOAD_PART_BYTES 切 */
+  part_bytes?: number;
 }
 /** POST /api/uploads/:id/parts：n 从 0 起，data 是 base64 */
 export interface UploadPartRequest {

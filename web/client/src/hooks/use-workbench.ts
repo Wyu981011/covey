@@ -1,5 +1,5 @@
 import { keepPreviousData, useQueries, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type {
   OutboxRequest,
   ReportResponse,
@@ -15,10 +15,13 @@ import type {
   TurnsResponse, MainMemoryResponse, UpgradeResponse, QuotaResponse, MemoryIndex, MemoryKeyResponse } from '@shared/api.interface';
 import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchMemoryKey, fetchUpgrade, fetchQuota, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
 import { mergeCollabs } from '@client/src/cv/collab';
-import { mergeSnapshot, sinceFor } from '@client/src/cv/snapshotMerge';
+import { needsWarm, warmList, warmSig, WARM_STALE_MS } from '@client/src/cv/warmup';
+import { calibFailed, calibGotFull, calibHidden, calibOnline, calibStart, calibVisible, mergeSnapshot, planSnapshot, type Calib } from '@client/src/cv/snapshotMerge';
 
 /**
- * 所有列表来自同一份快照，每 1 秒取一次：带 ?since= 只取变过的话题（数据约定 v38，见 cv/snapshotMerge.ts），每分钟取一次整份兜底；
+ * 所有列表来自同一份快照，每 1 秒取一次：带 ?since= 只取变过的话题（数据约定 v38，见 cv/snapshotMerge.ts），整份只在要校准时取
+ * （第一次、增量断档、断线重连、网络恢复、在后台待满 30 秒切回来，另有 30 分钟的长兜底：cv/snapshotMerge.ts planSnapshot）；
+ * 标签页在后台时 react-query 的定时取数本来就停（refetchIntervalInBackground 默认关），切回前台马上取一次（watchPage）；
  * 旧服务端不认 since，每次都是整份（和以前一样，只是更勤了，所以旧服务端上 1 秒一份整份：699 个话题约 1 MB，库里约 76 毫秒——
  * 要退回去把 POLL_MS 改回 2000）。
  * 话题的轮次在有任务在跑（有人在等它出结果）时也是 1 秒，其余 2 秒；大厅 2 秒。发过操作的话题另由 cv/sendOp.ts 的跟踪器勤取几秒。
@@ -35,32 +38,84 @@ export const turnsKey = (key: string): readonly unknown[] => ['turns', key];
 export const useMe = () =>
   useQuery<{ name: string | null }>({ queryKey: ['me'], queryFn: fetchMe, staleTime: Infinity, gcTime: Infinity, retry: 1 });
 
-/** 上一次取到整份快照的时刻（增量取数每分钟回整份一次）和上一份响应的游标。游标不放进缓存的数据里：它每次都变，放进去的话
- * 快照没变也会让所有用它的页面每秒重画一遍（数据一样时 react-query 沿用旧对象，页面不动） */
-let lastFullAt = 0;
+/** 快照校准的状态（上一次整份的时刻、待校准的理由、切到后台的时刻，cv/snapshotMerge.ts）和上一份响应的游标。游标不放进缓存的数据里：
+ * 它每次都变，放进去的话快照没变也会让所有用它的页面每秒重画一遍（数据一样时 react-query 沿用旧对象，页面不动） */
+let calib: Calib = calibStart();
 let snapCursor: string | null = null;
 
-/** 取快照：能带 since 就取增量并进上一份，并不进去（缓存和响应对不上）就再取一份整份 */
+/** 取快照：能带 since 就取增量并进上一份，并不进去（缓存和响应对不上）就再取一份整份；要不要整份照 planSnapshot。
+ * 取失败了记下来（calibFailed），下一次成功的那次取整份 */
 export async function fetchSnapshotMerged(qc: QueryClient): Promise<SnapshotResponse> {
-  const prev: SnapshotResponse | undefined = qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY);
-  const res: SnapshotResponse = await fetchSnapshot(prev ? sinceFor({ cursor: snapCursor ?? undefined }, lastFullAt, Date.now()) : null);
+  const plan = planSnapshot(snapCursor, !!qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY), calib, Date.now());
+  calib = plan.next;
+  const get = async (since: string | null): Promise<SnapshotResponse> => {
+    try {
+      return await fetchSnapshot(since);
+    } catch (e) {
+      calib = calibFailed(calib);
+      throw e;
+    }
+  };
+  const res: SnapshotResponse = await get(plan.since);
   snapCursor = res.cursor ?? null;
-  let out: SnapshotResponse | null = res;
-  if (res.partial) {
-    out = mergeSnapshot(qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY), res);
-  }
+  let full: boolean = !res.partial;
+  let out: SnapshotResponse | null = res.partial ? mergeSnapshot(qc.getQueryData<SnapshotResponse>(SNAPSHOT_KEY), res) : res;
   if (!out) {
-    // 并不进去：再取一份整份
-    out = await fetchSnapshot(null);
+    // 并不进去（增量断了档）：再取一份整份
+    out = await get(null);
     snapCursor = out.cursor ?? null;
+    full = true;
   }
-  if (!res.partial || out !== res) lastFullAt = Date.now();
+  if (full) calib = calibGotFull(calib, Date.now());
   const { cursor: _cursor, ...data } = out;
   return data;
 }
 
+/* 标签页前后台、网络恢复（T876）：切到后台记下时刻；切回前台马上取一次快照和开着的话题、大厅（在后台待满 30 秒的这次快照取整份），
+ * 网络恢复时下一次快照取整份。用快照的组件很多，监听只挂一份：第一个挂上、最后一个卸下时摘掉 */
+let watchers = 0;
+let unwatch: (() => void) | null = null;
+/** 取数一律“上一次还没回来就跳过”，不取消在途的请求（同 cv/sendOp.ts） */
+const no = { cancelRefetch: false } as const;
+function watchPage(qc: QueryClient): () => void {
+  watchers += 1;
+  if (watchers === 1 && typeof document !== 'undefined') {
+    const pull = (): void => {
+      void qc.refetchQueries({ queryKey: SNAPSHOT_KEY, type: 'active' }, no);
+      void qc.refetchQueries({ queryKey: ['turns'], type: 'active' }, no);
+      void qc.refetchQueries({ queryKey: ROOM_KEY, type: 'active' }, no);
+    };
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'hidden') {
+        calib = calibHidden(calib, Date.now());
+        return;
+      }
+      calib = calibVisible(calib, Date.now());
+      pull();
+    };
+    const onOnline = (): void => {
+      calib = calibOnline(calib);
+      void qc.refetchQueries({ queryKey: SNAPSHOT_KEY, type: 'active' }, no);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', onOnline);
+    unwatch = (): void => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', onOnline);
+    };
+  }
+  return (): void => {
+    watchers -= 1;
+    if (watchers === 0) {
+      unwatch?.();
+      unwatch = null;
+    }
+  };
+}
+
 export const useSnapshot = () => {
   const qc: QueryClient = useQueryClient();
+  useEffect(() => watchPage(qc), [qc]);
   return useQuery<SnapshotResponse>({
     queryKey: SNAPSHOT_KEY,
     queryFn: () => fetchSnapshotMerged(qc),
@@ -153,17 +208,18 @@ export function prefetchTurns(qc: QueryClient, key: string): void {
 export function useWarmup(delayMs = 0): void {
   const qc: QueryClient = useQueryClient();
   const { data } = useSnapshot();
-  const keys: string = useMemo(() => {
-    const ts: SnapshotTopic[] = [...(data?.topics ?? [])].sort((a: SnapshotTopic, b: SnapshotTopic) => b.updated_at - a.updated_at);
-    const hot: SnapshotTopic[] = ts.filter((t: SnapshotTopic) => t.state === '等你' || t.state === '在做' || t.unseen || t.kind === 'butler');
-    const rest: SnapshotTopic[] = ts.filter((t: SnapshotTopic) => !hot.includes(t)).slice(0, 8);
-    return [...hot, ...rest].slice(0, 24).map((t: SnapshotTopic) => t.key).join(',');
-  }, [data]);
+  // 依赖是集合不是顺序（cv/warmup.ts）：在做的话题一推进顺序就变，以前每变一次就把 24 个话题的轮次重取一遍
+  const list: string[] = useMemo(() => warmList(data?.topics ?? []), [data]);
+  const sig: string = warmSig(list);
+  const latest = useRef<string[]>(list);
+  latest.current = list;
   useEffect(() => {
-    const list: string[] = keys.split(',').filter(Boolean);
-    const timers: number[] = list.map((k: string, i: number) => window.setTimeout(() => prefetchTurns(qc, k), delayMs + 150 * i));
+    const now: number = Date.now();
+    const todo: string[] = latest.current.filter((k: string) => needsWarm(qc.getQueryState(turnsKey(k))?.dataUpdatedAt, now));
+    const timers: number[] = todo.map((k: string, i: number) =>
+      window.setTimeout(() => void qc.prefetchQuery({ queryKey: turnsKey(k), queryFn: () => fetchMerged(qc, k), staleTime: WARM_STALE_MS, gcTime: KEEP_MS }), delayMs + 150 * i));
     return () => timers.forEach((t: number) => window.clearTimeout(t));
-  }, [keys, qc, delayMs]);
+  }, [sig, qc, delayMs]);
 }
 
 export const useSearch = (q: string) =>

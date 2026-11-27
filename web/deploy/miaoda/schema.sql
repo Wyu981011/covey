@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS topics (
 COMMENT ON TABLE topics IS 'Covey 推来的话题（含管家和专项负责人）';
 CREATE INDEX IF NOT EXISTS idx_topics_project_key ON topics(project_key);
 CREATE INDEX IF NOT EXISTS idx_topics_state ON topics(state);
+-- 快照增量（?since=）按它找变过的话题，页面开着时每秒一次（T876）
+CREATE INDEX IF NOT EXISTS idx_topics_touched ON topics(_updated_at);
 
 CREATE TABLE IF NOT EXISTS turns (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -62,6 +64,7 @@ CREATE TABLE IF NOT EXISTS turns (
 );
 COMMENT ON TABLE turns IS 'Covey 推来的每一轮（你说的和它答的）';
 CREATE INDEX IF NOT EXISTS idx_turns_topic_key ON turns(topic_key);
+CREATE INDEX IF NOT EXISTS idx_turns_touched ON turns(_updated_at);
 
 CREATE TABLE IF NOT EXISTS questions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -119,14 +122,19 @@ CREATE TABLE IF NOT EXISTS images (
   h integer NOT NULL DEFAULT 0,
   thumb_data bytea,
   full_data bytea,
+  thumb_path text,
+  full_path text,
   expires_at TIMESTAMP(3) WITH TIME ZONE NOT NULL,
   _created_at TIMESTAMP(3) WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   _created_by user_profile DEFAULT (CASE WHEN current_setting('app.user_id', TRUE) = '' THEN NULL ELSE concat('(', current_setting('app.user_id', TRUE), ')')::user_profile END),
   _updated_at TIMESTAMP(3) WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   _updated_by user_profile DEFAULT (CASE WHEN current_setting('app.user_id', TRUE) = '' THEN NULL ELSE concat('(', current_setting('app.user_id', TRUE), ')')::user_profile END)
 );
-COMMENT ON TABLE images IS 'Covey 推来的图片（一轮的缩略图和大图），消息之后 90 天过期';
+COMMENT ON TABLE images IS 'Covey 推来的图片（一轮的缩略图和大图），消息之后 90 天过期；字节在妙搭文件存储（*_path），存不了时在 *_data';
 CREATE INDEX IF NOT EXISTS idx_images_expires ON images(expires_at);
+-- 2026-11-27 T876 之前建的库没有路径列：重套 schema.sql 时补上（见 migrations/20261127-t876-blobs.sql）
+ALTER TABLE images ADD COLUMN IF NOT EXISTS thumb_path text;
+ALTER TABLE images ADD COLUMN IF NOT EXISTS full_path text;
 
 CREATE TABLE IF NOT EXISTS uploads (
   id varchar(32) PRIMARY KEY,
@@ -147,14 +155,19 @@ CREATE INDEX IF NOT EXISTS idx_uploads_expires ON uploads(expires_at);
 CREATE TABLE IF NOT EXISTS upload_parts (
   upload_id varchar(32) NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
   n integer NOT NULL,
-  data bytea NOT NULL,
+  data bytea,
+  path text,
+  bytes integer,
   _created_at TIMESTAMP(3) WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   _created_by user_profile DEFAULT (CASE WHEN current_setting('app.user_id', TRUE) = '' THEN NULL ELSE concat('(', current_setting('app.user_id', TRUE), ')')::user_profile END),
   _updated_at TIMESTAMP(3) WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
   _updated_by user_profile DEFAULT (CASE WHEN current_setting('app.user_id', TRUE) = '' THEN NULL ELSE concat('(', current_setting('app.user_id', TRUE), ')')::user_profile END),
   PRIMARY KEY (upload_id, n)
 );
-COMMENT ON TABLE upload_parts IS '附件的分段（每段原始字节不超过 512 KiB）';
+COMMENT ON TABLE upload_parts IS '附件的分段（每段原始字节不超过 start 回的 part_bytes）；字节在妙搭文件存储（path），存不了时在 data';
+ALTER TABLE upload_parts ADD COLUMN IF NOT EXISTS path text;
+ALTER TABLE upload_parts ADD COLUMN IF NOT EXISTS bytes integer;
+ALTER TABLE upload_parts ALTER COLUMN data DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS collabs (
   key varchar(128) PRIMARY KEY,

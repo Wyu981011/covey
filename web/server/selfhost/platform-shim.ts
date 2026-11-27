@@ -19,3 +19,7 @@ export const NEED_LOGIN = 'selfhost:need_login';
 export function NeedLogin(): ClassDecorator & MethodDecorator {
   return SetMetadata(NEED_LOGIN, true);
 }
+
+/** 妙搭的文件存储服务（T876 图片、附件放文件存储）。自托管没有：这是个空类，没人提供它，
+ *  workbench.module.ts 可选注入拿到 undefined，图片和附件照旧存库里 */
+export class FileService {}

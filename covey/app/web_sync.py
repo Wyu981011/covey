@@ -55,7 +55,6 @@ from covey.core.loops import Stuck, Worker
 from covey.core.state import epoch_seconds, read_object, write_json
 
 FULL_SECONDS = web_sync.FULL_SECONDS  # A full pass starts this long after the last one ended (its own thread reads it a slice a step).
-STEP_BYTES = web_sync.BATCH_BYTES  # What a quick look sends of the pass's items (the backlog) after its own: one batch.
 SENT_FILE = "sent.json"  # <state>/web/: what the page took (key -> rev), so a restart sends only what changed since.
 SENT_SAVE_SECONDS = 30.0  # It is written at most this often, and when a pass ends.
 SENT_KEEP_SECONDS = 86400.0  # Once a day ``sent`` starts empty again, so everything goes once (a page whose database was emptied fills again).
@@ -396,6 +395,7 @@ class WebSync:
 
     def post_hot(self, collector, sent) -> int:
         """push_hot's posting, under ``post_lock``: the look's fresh items, a batch of the backlog, the deletions, then 要你处理."""
+        step = self.client.batch_bytes()  # What a quick look sends of the pass's items (the backlog) after its own: one batch.
         with self.backlog_lock:
             urgent = self.fresh_items(collector.groups)
             later, size = [], 0
@@ -404,7 +404,7 @@ class WebSync:
                     del self.backlog[name]  # A newer read of its topic went out, or the page has it already.
                     continue
                 weight = len(json.dumps(each, ensure_ascii=False).encode())
-                if later and size + weight > STEP_BYTES:
+                if later and size + weight > step:
                     break
                 later.append(each)
                 size += weight
@@ -413,7 +413,7 @@ class WebSync:
             ended, self.pass_ended = self.pass_ended, False
         count, posted = 0, False
         try:
-            for batch in web_sync.batches(urgent + later):
+            for batch in web_sync.batches(urgent + later, step):
                 if collector is not self.collector:
                     return count  # Left behind (start_over) while it looked: what it read is old, the page would go back to it.
                 self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
@@ -549,7 +549,7 @@ class WebSync:
         with self.post_lock:
             with self.backlog_lock:
                 items = self.fresh_items(collector.groups)
-            for batch in web_sync.batches(items):
+            for batch in web_sync.batches(items, self.client.batch_bytes()):
                 self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
                 collector.moved = time.monotonic()
                 with self.backlog_lock:
@@ -1008,7 +1008,7 @@ class WebSync:
             if not fresh and not index and not gone:
                 return 0
             try:
-                for batch in web_sync.batches(fresh):
+                for batch in web_sync.batches(fresh, self.client.batch_bytes()):
                     self.client.request("POST", "/sync/upsert", {"items": batch, "deleted": []})
                     for each in batch:
                         self.sent[("settings", each["key"])] = each["rev"]

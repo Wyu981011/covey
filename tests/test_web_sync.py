@@ -54,6 +54,7 @@ class Web:
     def __init__(self, test):
         self.upserts, self.acks, self.outbox, self.seen, self.fail = [], [], [], [], 0
         self.waited = None  # True: a page that knows the inbox's ``wait`` (data contract: docs/web.md 更快的取数); None: an older one.
+        self.limits = None  # A dict: a page of data contract v44, which says what it takes in its upsert answers; None: an older one.
         self.uploads = {}  # id -> (meta, [part bytes]): the files the owner uploaded on the page (data contract v21).
         self.server = LoopbackServer(self.handle, "web-fake").__enter__()
         test.addCleanup(self.server.__exit__)
@@ -67,6 +68,8 @@ class Web:
             status, answer = 401, {"ok": False}
         elif handler.path.startswith("/sync/upsert"):
             self.upserts.append(json.loads(body))
+            if self.limits is not None:
+                answer["limits"] = self.limits
         elif handler.path.startswith("/sync/inbox"):
             after = int(handler.path.split("after=")[1].split("&")[0])
             answer = {"items": [row for row in self.outbox if row["seq"] > after and row.get("state", "new") == "new"]}
@@ -428,12 +431,13 @@ class PushTest(WebCase):
 
     def test_the_hot_topics_go_first_and_the_pass_a_step_s_worth_after_them(self):
         """2026-11-20 00:31-00:53: four restarts, each first pass ~20 MB over ~5 minutes; starts and ends reached the page 55-73 s late.
-        The hot topics' changes go first every step; what the pass read waits in a backlog and goes STEP_BYTES a step after them."""
+        The hot topics' changes go first every step; what the pass read waits in a backlog and goes a batch (the client's
+        batch_bytes) a step after them."""
         quiet = [f"{n:02d}" * 16 for n in range(10, 16)]
         for number, topic in enumerate(quiet, 20):
             self.topic(topic, number=number, title=f"话题{number}")
         self.topic(status="running", lines=(("user", "做一下"),))
-        with mock.patch.object(app_web, "STEP_BYTES", 1, create=True):
+        with mock.patch.object(self.sync.client, "batch_bytes", return_value=1):
             self.sync.push_once(T0)
             self.assertEqual(self.web.upserts[0]["items"][0]["key"], TOPIC)
             self.assertLess(len({item["key"] for item in self.web.items("topic")} & set(quiet)), 2)

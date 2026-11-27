@@ -151,17 +151,18 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 `web-push`（快看）和 `web-pass`（全量）两条线程一起把四类条目推给网页：专项、话题、一轮、问题；另有几条设置条目（见下）。条目由快看发出，全量读到的排在它后面；网页刚操作过的话题由 `web-touch` 马上单独发（见下）。
 
-- **只推变了的**：每条带内容哈希 `rev`。一批最多 500 条或 1 MB（按发出去的 UTF-8 字节算；网页收的请求体上限是 1 MiB，超了整批 500），POST `/sync/upsert`。
+- **只推变了的**：每条带内容哈希 `rev`。一批最多 500 条，字节数（按发出去的 UTF-8 字节算）看网页说它收多大（v44）：`/sync/upsert`、`/sync/images/have` 的响应带 `limits`，`body_bytes` ≥ 2,000,000 时一批按它的 0.6 倍、最多 5,000,000 字节（网页默认 8mb 时就是 5 MB 一批），否则照旧 1,000,000 字节（旧网页的请求体上限是 1 MiB，超了整批 500）。还没收到过 `limits`（刚启动的第一批）照 1 MB 发；`web.json` 的 `base_url` 换了从 1 MB 重来。POST `/sync/upsert`。代码在 `core/web_sync.py` 的 `limits_of`、`batch_bytes`、`image_bytes` 和 `app/web_push_client.py` 的 `Client`。
 - **节奏**：
   - **快看**（`web-push`）：每秒只看在跑的任务、等回答的问题、等你在启动卡上点开始的话题，以及刚停下或刚被网页操作过的话题，再加专项（只有记录、状态或记忆、资料库文件变了的才重读）。Bridge 自己写了任务或问题记录（比如你在飞书卡片上答了题），快看马上再看一次，两次之间至少隔 0.25 秒。快看推的也守下面“先后序号”的规矩：一个话题比网页已有的读数旧的，整份不推。日志每分钟一行 `web sync push steps=N p50=…ms p90=…ms max=…ms`，是这一分钟里每一步快看的耗时（在跑的话题多、网络盘上的读慢时一步要几秒，偶尔一次读卡几十秒，看这一行就知道）。
   - **刚操作过的话题**（`web-touch`）：网页上的一条操作回执之后，这个话题（开新话题时是新开的那个）马上由这条线程单独重建、推上去，不等快看把所有在跑的话题都看一遍；有回执后补做的事（答题之后的新一轮、它的任务卡），做完再推一次。用的看板读法是上一次快看留下的，“要你处理”的数由快看接着更新。快看或全量读这个话题时卡在网络盘上、被丢下的，它照样重读一遍（网络盘上挂住的是那一次调用，换个线程再读一般马上回来；它要是也跟着跳过，答完题要等那次读回来网页才变，可能好几分钟）；它自己读这个话题卡住 15 秒没进展，才把这个话题留给快看，那次读回来之前网页再操作它，日志写一行 `web sync touch leaves topic … to the quick look`。索引忙（`web sync touch waits: …`）或网页没收下这一批，话题放回去下次再推，不会悄悄丢掉。日志每分钟一行 `web sync touch steps=…`。
   - **卡住的话题换线程重读**（`web-reread`）：快看、全量读一个话题卡在网络盘上被丢下以后，那次读回来之前快看都跳过它（免得再卡一次），话题在网页上就停在原样，可能好几分钟。这条线程换个线程重读它：被丢下 5 秒后读一次；它还在跑、在等你、刚结束或网页刚操作过它时，每 10 秒再读一次；不再“热”了只再读一次。一次只读一个话题；重读它也卡住 15 秒的，那次读回来之前不再读它，之后还要等 60 秒（再卡就翻倍，最多 10 分钟）；同时有 2 个重读卡着时一个都不开，日志写 `web sync reread waits: …`，有一个回来了写 `goes on`。每个话题第一次重读成功写一行 `web sync reread topic … read again in … ms`，之后每分钟一行 `web sync reread steps=…`；那次卡住的读回来时写 `web sync <push|pass|touch|reread> read of topic … came back after N s; read again K times meanwhile`。
   - **全量**（`web-pass`，单独一条线程）：上一轮读完 60 秒后开始下一轮（最近 30 天有任务的话题、管家和负责人的对话），每步看 25 个话题、歇 1 秒；快看正在看的话题留给快看。全量这边哪个读卡在网络盘上，快看照常每秒推；一轮看完才知道哪些该删，每轮开始时设置、整理专项和全部专项也重读一遍，图片也由这条线程上传。
   - **全量只重建变了的话题**：看一个话题先读它的输入（`app/web_collect.py` 的 `inputs`：任务和问题记录，history.jsonl、topic.json、要点文件各一次 stat，这一轮读到的看板分组和“没看过”、加入的专项和时间、所在的协作、每轮回带到私聊的时间、到点回来看和代发草稿，开关和模型菜单），和上次建它时一样、网页也收下了上次建出的全部条目，就不重建、不读它别的文件，照样算这一轮看过，不会被删。任务没结束（排队、在跑、等回答、等开始）或有问题还开着的话题每轮都建；产物还在上传的，下一轮再读。不管输入变没变，每个话题最迟 15–30 分钟（按话题 id 错开，不挤在同一轮）重建一次兜底；进程重启、`sent` 每天清空、网页没收下、快看推过它别的读数，也都让它重建。管家和负责人的对话会读别的话题，每轮开头建一次。
-  - 快看先推自己读到的变化（整份推），再推全量读到、还没推的，每次最多 1 MB，没推完的留到下一次。每个话题的每次读取都有先后序号：快看已经推过一个话题更新的读数，全量之前读到的旧读数就不再推（不然网页会被改回“等你”）。
+  - 快看先推自己读到的变化（整份推），再推全量读到、还没推的，每次最多一批的字节数（同上，1 MB 或按 `limits` 放大），没推完的留到下一次。每个话题的每次读取都有先后序号：快看已经推过一个话题更新的读数，全量之前读到的旧读数就不再推（不然网页会被改回“等你”）。
 - **网页收下了什么**：哪些条目、各是哪个 `rev`，存在 `<state>/web/sent.json`（最多每 30 秒写一次，一轮全量读完也写）。重启后接着用，只推这期间变了的；文件是推给别的网页地址的、或者从上次清空起已满一天，就全部再推一遍。进程不重启也每满一天清空一次，网页库被清空过也能补回来。
 - **读法**：话题的状态和“做完没看”用看板的读法（`core/board_read.py`、`app/pins.py` 的 `board_results`），不每秒扫全部任务记录。在跑的一轮，正文是已落盘的进展说明，变了就推。每话题推最近 100 轮，单轮正文超过 64 KB 截断并写明。
-- **失败**：请求失败按 2、4、8、16、30 秒退避重试，只记第一次和每第十次，不影响 Bridge 别的线程。全量对时没有要推的，也发一批空的，网页的“最后同步”照样往前走。
+- **失败**：请求失败按 2、4、8、16、30 秒退避重试，只记第一次和每第十次，不影响 Bridge 别的线程。
+- **节流**（v44）：发往 https:// 网页（全栈应用平台，经飞书网关，实测每个密钥约 10 次/秒，超了回 429、没有 `Retry-After`）的请求，同一个 Bridge 里所有同步线程（快看、全量、刚操作过、重读、取件、各操作车道）共用一个令牌桶（`app/web_push_client.py` 的 `Gate`）：每秒 8 个、一下最多 10 个；拿不到令牌就等，一次最多等 2 秒，等不到也照发（只放慢，不让推送停住）。收到 429 时整个客户端 1.5 秒内不发，之后令牌从 0 开始攒，这次请求照样算失败、照上面退避。本机自托管（http:// 回环）没有网关，不节流。全量对时没有要推的，也发一批空的，网页的“最后同步”照样往前走。
 - **卡住**：快看、全量、取的每一步在各自的工作线程里跑。
   - 快看一步 15 秒、全量一步 60 秒没有进展（网络盘上的 open、read 可能一直不返回），记一行 `web sync push stuck`（全量是 `web sync pass stuck`），写明卡在哪一步（`at: indexes`、`board`、`topic <话题>`、`projects`、`posting`…），丢下它，下一步换新线程。读过的缓存留着、不清空，已推过的记录（`sent`）也留着；全量这边从头开始一轮，快看不受影响。
   - 快看读任务和问题的索引最多等 5 秒：别的线程拿着索引锁卡在网络盘上时，快看这一步直接跳过（记一行 `web sync push waits`），不再一个个丢下线程。
@@ -247,7 +248,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **图片**（v19）：`images` 是 `[{id, w, h, kind, note?, gone?}]`。
   - `kind` 是 `sent`（你那一轮带的图，只认本状态目录 `topics/<话题>/incoming_media/` 下的文件）或 `shown`（任务检查点 `show_images` 推给你看的图，设备上的任务不推），`note` 是检查点里那句说明。
   - 图片只按编号给：`id` 是原图 SHA-256 的前 32 位，网页从自己的 `/api/images/<id>?v=thumb|full` 取（要登录、只有主人）。本机路径和公开直链都不给网页。
-  - 传：每张一次，缩略图（长边 480）和大图（长边 2048）各一份 WebP，每份不超过 700 KB，POST `/sync/image`（`id`、`v`、`mime`、`w`、`h`、`expires_at`、`data` 是 base64）；传之前 POST `/sync/images/have` 问一次已有的。每轮最多 9 张，原图超过 20 MB 不传；推送线程每一步最多传 8 张、20 秒。机器上没有 Pillow 时，700 KB 以内的 PNG、JPEG、WebP、GIF 原样传，更大的不传。传过的记在 `<state>/web/images.json`。网页不收时只把图压后 5 分钟，条目照常推；网页拒收某一张（400、413）就不再传它。
+  - 传：每张一次，缩略图（长边 480）和大图（长边 2048）各一份 WebP，每份不超过 700 KB（网页的 `limits.image_bytes` 大于 760 KiB 时放大到它减 64 KiB、最多 3,000,000 字节，v44），POST `/sync/image`（`id`、`v`、`mime`、`w`、`h`、`expires_at`、`data` 是 base64）；传之前 POST `/sync/images/have` 问一次已有的。每轮最多 9 张，原图超过 20 MB 不传；推送线程每一步最多传 8 张、20 秒。机器上没有 Pillow 时，这个上限以内的 PNG、JPEG、WebP、GIF 原样传，更大的不传。网页那边字节放平台的文件存储，见[数据约定 v44](#数据约定-v44上限文件存储与连接保护)。传过的记在 `<state>/web/images.json`。网页不收时只把图压后 5 分钟，条目照常推；网页拒收某一张（400、413）就不再传它。
   - 管家、负责人转给话题的那一行：历史里只存原话和“附件：图片 N 张”，图从它开的那个任务的提示词里取。
   - 留多久：消息之后 90 天（`expires_at`，网页每天清过期的）；更早的消息的图不传，条目里 `gone: true`、没有 `id`，网页写“已过期，飞书里还能看”。
   - 本机路径不进网页：你那一轮的正文（`body`、`display`）和问题的回答都先去掉路径（`app/web_images.py` 的 `scrub`）：“收到的附件”那块变成“附件：图片 N 张”，别处写出的路径写成“（图片）”。
@@ -366,7 +367,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 **`say` 带附件**（v21）：`payload.files` 是 `[{id, name, mime, size}]`，有附件时 `text` 可以为空。
 
-- 网页先把文件分段传进自己的库：`POST /api/uploads`（`{name, mime, size}`，回 `{id}`）、`POST /api/uploads/:id/parts`（`{n, data}`，每段原始字节不超过 512 KiB）、`POST /api/uploads/:id/done`。单个不超过 20 MB，一句最多 9 个，7 天后过期。
+- 网页先把文件分段传进自己的库：`POST /api/uploads`（`{name, mime, size}`，回 `{id}`）、`POST /api/uploads/:id/parts`（`{n, data}`，每段原始字节不超过 512 KiB；v44 的服务端在 `POST /api/uploads` 的响应里回 `part_bytes`，默认 8mb 时 4 MiB，网页照它切，最后一段可以短，没有 `part_bytes` 或段数对不上照 512 KiB 切，`web/client/src/cv/uploadParts.ts`）、`POST /api/uploads/:id/done`。单个不超过 20 MB，一句最多 9 个，7 天后过期。
 - Covey 执行 `say` 时经开放接口取回：`GET /sync/upload?id=<id>`（`{id, name, mime, size, parts, done}`，没有、过期、没传完是 404）、`GET /sync/upload/part?id=<id>&n=<n>`（`{n, data}`）。存进话题的 `incoming_media/`（文件名 `web-<id 前 16 位>-<净化过的原名>`），按飞书附件的格式列在话说完之后（`app/web_files.py`）：图片是“图片 N”并作为图片交给模型，其余是“文件 N（原名）”。
 - 有一个取不到（过期、没传完、比说的大、超过 20 MB）整条 `say` 回 failed，写明哪个、为什么，不发半截。
 - 这一轮推回网页时，图片照 v19 的 `images` 显示，正文里的附件块是“附件：图片 N 张”。开新话题（`launch`）也能带，见下（v25）。
@@ -470,10 +471,26 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 数据约定 v38。下面都是请求里可选的参数和响应里可选的字段：不带参数的旧调用、认不得新字段的旧页面，行为和以前完全一样；新网页遇到不认参数的旧服务端，退回整份、马上返回的老办法。
 
 - **取件挂着等**：`GET /sync/inbox?after=<seq>&wait=<秒>`。`wait` 上限 10，没有新操作时服务端每约 200 毫秒查一次库，最多等 `wait` 秒，有了马上返回；同一个进程里网页 `POST /api/outbox` 写入会提前叫醒它（多实例时靠查库兜底），Covey 断开了就不再等。带了 `wait` 的响应多一个 `"waited": true`（不管这次有没有真的等），Covey 靠它认出服务端是新的；不带 `wait` 的响应没有这个字段，和以前一样。旧服务端不认 `wait`、马上返回且没有 `waited`，Covey 照 0.5 秒一取的老办法。
-- **快照增量**：`GET /api/snapshot?since=<cursor>`。每次响应都带 `cursor`（这次查询开始时数据库的时间往前留 5 秒）。带了 `since` 时 `topics` 只有这个游标之后变过的话题（话题行或它的轮次的 `_updated_at` 晚于它；快照里的最新一轮、在跑状态都来自轮次表），另有 `keys`（现在所有话题的 key，按 `updated_at` 倒序，管家只留最新那个；不在里面的话题已经没了）和 `"partial": true`；`projects`、`questions`、`asks` 照旧整份，专项卡上的话题计数也照所有话题算。网页按 key 并进上一份，并不进去（缺话题）就再取一份整份，每分钟也回整份一次兜底。没有 `partial` 就是整份，直接替换；旧服务端不认 `since`、响应里没有 `cursor`，网页永远取整份。
+- **快照增量**：`GET /api/snapshot?since=<cursor>`。每次响应都带 `cursor`（这次查询开始时数据库的时间往前留 5 秒）。带了 `since` 时 `topics` 只有这个游标之后变过的话题（话题行或它的轮次的 `_updated_at` 晚于它；快照里的最新一轮、在跑状态都来自轮次表），另有 `keys`（现在所有话题的 key，按 `updated_at` 倒序，管家只留最新那个；不在里面的话题已经没了）和 `"partial": true`；`projects`、`questions`、`asks` 照旧整份，专项卡上的话题计数也照所有话题算。网页按 key 并进上一份。整份只在要校准时取（`web/client/src/cv/snapshotMerge.ts` 的 `planSnapshot`，单测 `web/scripts/calib.test.mjs`，v44）：第一次（缓存里没有，或服务端从没给过游标）；增量并不进去（keys 里有缓存和响应都没有的话题，当场再取一份整份）；上一次取快照失败后的第一次成功（断线重连、网关 429、5xx 之后）；浏览器报网络恢复（`online`）；页面在后台待满 30 秒又切回前台。另留 30 分钟一次的长兜底（`FULL_BACKSTOP_MS`），兜住游标照不到的边角（同一个 key 删了又建回、改了数据没动 `_updated_at`），要去掉就改成 `Infinity`。其余时候每秒一次都是增量，操作回执后的那次快照也是增量。（v44 之前写的是“每分钟也回整份一次兜底”，但每次增量合并后都刷新了上次整份的时刻，前台一直开着时其实不触发；真正取整份的是首屏、断档和后台待了 60 秒以上回来的那次。）没有 `partial` 就是整份，直接替换；旧服务端不认 `since`、响应里没有 `cursor`，网页永远取整份。
 - **回执挂着等**：`GET /api/outbox/:opId?wait=<秒>`。`wait` 上限 8，这条发件还是 `new` 时服务端每约 250 毫秒查一次库（同进程里 Covey 的回执会提前叫醒），不是 `new` 了马上返回；没有这条发件仍是 404。旧服务端不认 `wait`、马上返回，网页照 250 毫秒起的间隔再问。
 
+**标签页在后台**：定时取数（快照 1 秒、话题轮次 1–2 秒、大厅 2 秒，以及统计、设置、记忆角标等）在标签页不可见时本来就停（react-query 的 `refetchIntervalInBackground` 默认关，平台的 QueryProvider 关了 `refetchOnWindowFocus`）。切回前台时马上取一次快照、开着的话题轮次和大厅（`hooks/use-workbench.ts` 的 `watchPage`，监听只挂一份；取数不取消在途请求），在后台待满 30 秒的这次快照取整份校准，不满取增量。发出的操作在后台照样等回执、回执后照样取数。
+
 网页上每个操作发出去以后只有一个跟踪器等结果（`web/client/src/cv/opTrack.ts`、`sendOp.ts`）：问回执，回执一到取这个话题的轮次（大厅取大厅）和快照各一次，之后约 3 秒内每 0.5 秒只取这个话题的轮次，直到看到预期的新状态；取数一律“上一次还没回来就跳过”，不取消在途的请求。问题卡交过以后到新状态推来之前一直锁着、写“已执行，等页面更新”：锁不锁看这个话题的发件行里这道题最新的那条 answer（在等 Covey 或办成了就锁；最新的是撤销不处理或没办成就不锁，`opTrack.ts` 的 `priorAnswer`），所以刷新、换页面回来、另一个窗口打开都不会让人再点一次。
+
+**乐观更新**（v44，`opTrack.ts` 的 `optimisticTopic`、`sendOp.ts` 的 `trackOp`）：写进发件箱以后、Covey 回执之前，先在快照缓存里改掉这个话题，只做网页自己就知道新状态的两种：`seen`（记为看过：`unseen` 置 false，侧栏、看板马上变）和 `dismiss`（不管了：从看板拿掉）。回执没办成、或等满一分钟没回音，缓存里这个话题还是放进去的那份就改回去；这期间 Covey 推来了它的新状态或取过整份，以推来的为准。`seen` 以前发了就不管，现在也交给跟踪器（`sendQuiet`：回执后不取数，服务端挂着等回执，一般问一两次）。其余操作不改缓存：`say` 有输入框自己的回显，`answer` 有题面的锁，`stop`、`recover`、`launch` 的新状态只有 Covey 知道。Covey 这边回执之后只单独推受影响的那个话题（`web-touch`），网页回执后也只取这个话题的轮次（大厅取大厅）和一份增量快照。
+
+### 数据约定 v44：上限、文件存储与连接保护
+
+按对全栈应用平台的实测（单实例 0.5 核、1 GiB 内存，Node 却设了 `--max-old-space-size=3072`；请求体平台硬顶 12 MB、框架默认只收 1mb；开放接口每个密钥约 10 次/秒；连接池 7 条）做的四件事。新字段都可选，旧 Covey、旧网页照旧。
+
+- **请求体上限**：`web/server/main.ts` 把 `bodyLimit` 交给平台的 `configureApp`：环境变量 `BODY_SIZE_LIMIT` 认得出就用它，没设是 `8mb`（平台的硬顶是 12 MB；`workbench.limits.ts`；自托管入口用同一个数）。由它推出一张图（`image_bytes`）和附件一段（`part_bytes`）各最多多少：base64 后整个请求还在上限里，各封顶 4 MiB；上限不超过 1 MiB 时和以前一样（760 KiB、512 KiB）。`/sync/upsert` 和 `/sync/images/have` 的响应带 `limits: {body_bytes, image_bytes, store, heap_limit_mb, rss_mb, mem_limit_mb}`，Covey 照它放大一批和一张图（见[推](#推)）；后三个是 V8 堆上限、此刻常驻、容器上限（MB），看 `NODE_OPTIONS` 的 `--max-old-space-size` 生效没有。
+- **图片和附件放平台的文件存储**（`workbench.blobs.ts`）：新的图片（缩略图、大图各一份）和附件的每段，字节经平台的 `FileService` 存进应用的文件存储（路径 `covey/images/<id>-<thumb|full>.<ext>`、`covey/uploads/<id>/<n>.part`，id 是内容哈希或随机编号），`images` 表只存 `thumb_path`、`full_path`，`upload_parts` 只存 `path`、`bytes`。鉴权和以前一样：不给页面发直链，页面仍只经 `/api/images/:id`（要登录、只有主人）取图，Covey 仍只经 `/sync/upload/part` 取附件；服务端用短时签名地址（签 10 分钟、进程里用 8 分钟，不出进程、不进库）自己去取字节再回出去。文件存储用不了（自托管没有它、平台报错、库里还没有路径列）时照旧存 bytea，连着失败 3 次歇 10 分钟再试，第一次失败记一行日志；`limits.store` 是 `file` 还是 `db`。老的 bytea 行照常读；有路径也有 bytea 的先读文件存储，取不到再读 bytea。
+  - 已有的库要先加列：部署脚本目录下的 `migrations/20261127-t876-blobs.sql`（见 [web/README.md 的「部署」](../web/README.md#部署)）（只加列和两个 `_updated_at` 索引、`upload_parts.data` 改可空，不动数据；多环境应用在 dev 执行再 `+db-env-migrate` 到 online）。没加列的库上新网页自动退回 bytea。新建的库 `schema.sql` 里已经有。
+  - **历史回迁**（不自动跑）：`POST /openapi/sync/blobs/backfill {limit≤50, drop}`。`drop` 不是 true 时只复制：把还只在 bytea 里的图存进文件存储、写上路径，bytea 留着（不丢，先读文件存储、取不到读 bytea）；`drop: true` 才在读回核对大小以后清掉 bytea。回 `{copied, dropped, left, errors, store}`。清 bytea 是改线上已有数据，先备份、问过主人再跑。
+  - **冷热清理**：图片消息之后 90 天过期、附件传完 7 天过期，和以前一样每小时跟着上传清一次；现在先删文件存储里的对象，删掉了才删行（删不掉的行留到下一轮，不留下没人引用的文件）。
+- **内存水位**（`workbench.guard.ts` 的 `MemoryGuard`）：常驻占容器上限（读不到用堆上限）70% 以上是 high：取件、回执不再挂着等（马上按库里的回），新图片和新附件回 503 让对方稍后重传；85% 以上是 critical：页面的整份快照、统计、报告、搜索、取图、传附件也回 503（`Retry-After: 5`），增量快照、轮次、发件、回执和 Covey 的推送照常。水位变了记一行 `[workbench] memory …`。平台允许时另在应用环境变量里设 `NODE_OPTIONS=--max-old-space-size=640`，堆先回收、不等被 cgroup 杀；生效没有看 `limits.heap_limit_mb`。
+- **连接池**（`workbench.guard.ts` 的 `Gate`、`gated`）：每条库查询先过闸门，按车道限并发：页面（`/api`）4 条、Covey（`/openapi`）2 条，加起来 6 条，比平台包的 7 条池少一条，谁都占不满、Covey 的推送和回执不会排在几个标签页的整份快照后面；排队每条车道最多 400 个、最久 15 秒，超了回 503。车道由 workbench 模块的中间件按路径设（AsyncLocalStorage）。Covey 一批里同时写 4 条（以前 25 条）。挂着等的请求睡着时不占连接；每条通道各自限挂起数（取件 4、回执 16）；同一时刻挂着等回执的合成一条 `op_id in (...)` 查询（`Batcher`）。`topics`、`turns` 加了 `_updated_at` 索引，快照增量每秒按它找变过的话题，不再全表扫轮次。
 
 ### 协作与三层记忆（契约，开发中）
 
@@ -565,3 +582,4 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | v41 | 专项条目的 `background`、`actions`、`gaps`，`checklist` 条目的 `title`、`waiting_on`、`done_at`、`topics`；话题 `progress` 的 `next_step`、`waiting`（专项页的「简报」标签），都可选 |
 | v42 | `settings` 的 `quota` 条目（[账号与额度](#账号与额度)：每个来源一份、agy 一个号一行只列近 7 天用过的模型池、号的 `login`）和 `quota_refresh` 操作；`ops` 里有 `quota_refresh` 才画这一页 |
 | v43 | 记忆中心与仓库（[数据约定 v43](#数据约定-v43记忆中心与仓库)）：`settings` 的 `memory:*` 键（index、global、topics、p:<专项 id>、import:<页>、previews），`memory_edit` 的 `v: 43` payload（17 种 action），`repos_set`、`repos_add`、`repos_remove`、`worktrees_prune` 设置操作，`launch`、`switch` 的 `repos`（`workspace`、`run_mode` 改可选），话题 `repos`、一轮 `memory`、设置页 `repos`，都可选 |
+| v44 | `/sync/upsert`、`/sync/images/have` 响应的 `limits`（请求体、一张图的上限，图片附件存哪，内存读数）；`/api/uploads` 响应的 `part_bytes`；`/openapi/sync/blobs/backfill`（手动回迁）；图片和附件的字节放平台的文件存储（`images.thumb_path`、`full_path`，`upload_parts.path`、`bytes`，见[数据约定 v44](#数据约定-v44上限文件存储与连接保护)）。推送的条目没有变化 |
