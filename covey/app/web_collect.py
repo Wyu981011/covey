@@ -43,6 +43,9 @@ STATE_WORDS = {"done": "做完", "waiting_user": "等你", "cancelled": "已停�
 BUTLER_TITLE = "管家"
 LEAD_TITLE = "负责人"
 EXTRA_TURNS = 20  # The newest turns of a topic that get their process and plan; every kept turn gets its figures (each read from its trace file once).
+# A turn that ended more than this long ago goes without its process (``steps``): most of the page's database was the process of
+# old turns (37.6 of 61 MB of its turns, 2026-11-27), and the page is opened for what is going on now. Its plan, figures and words stay.
+STEPS_SECONDS = 7 * 86400
 FIGURES_KEPT = 8192  # Ended turns whose figures are remembered (a few numbers each): all kept turns of all topics a full look builds.
 # The caches go oldest first, a quarter at a time, never all at once (``Shared.keep``): a cleared cache read every topic's
 # history and trace files again in the next steps (2026-11-23 T673: 512 ended turns' extras were cleared every 26 topics).
@@ -72,6 +75,14 @@ def estimate_of(job, turn) -> None:
         turn["estimate_seconds"] = value
     else:
         turn.pop("estimate_seconds", None)
+
+
+
+def steps_expired(turn, now) -> bool:
+    """Whether an ended turn's process is no longer pushed (STEPS_SECONDS after it ended); a turn without an end (running, waiting)
+    keeps it, as does any turn while ``now`` is not known."""
+    ended = turn.get("ended_at") or 0
+    return bool(ended) and bool(now) and now - float(ended) > STEPS_SECONDS
 
 
 class Shared:
@@ -854,7 +865,10 @@ class Collector:
                 if files:
                     turn["artifacts"] = files
             if job is not None:
-                turn.update(self.ended_extras(state, job) if seq > total - EXTRA_TURNS else self.ended_figures(state, job))
+                extra = self.ended_extras(state, job) if seq > total - EXTRA_TURNS else self.ended_figures(state, job)
+                if "steps" in extra and steps_expired(turn, self.now):
+                    extra = {key: value for key, value in extra.items() if key != "steps"}  # Not the cached dict: others read it.
+                turn.update(extra)
                 self.fold_usage(state, turn, before.get(id(job)) or ())
                 # The memory notes are written after the turn has ended (app/memory_collect.py), maybe within the same
                 # second as its end: read them from the record every time, not from the cache.

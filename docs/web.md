@@ -222,7 +222,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - `label`（v18）是纯文本，不带卡片用的转义。模型说了这一步做什么的，`label` 只写“标题：目的”，命令放在 `detail`（最多 400 字）；`label` 超过 80 字被截断的，`detail` 是完整的那段。
   - `plan`：检查点里的 steps（`{title, state}`）；这一轮已结束时还停在 doing 的那步推成 todo。
   - `usage`（`input`、`output`、`cache_read`、`total`）、`seconds`、`speed`（token/s）、`context`（`{used, limit}`）、`notes`（记忆那一路写的 `memory_notes`，原样推）。
-  - 在跑的一轮随每秒的推送更新：`seconds` 每 10 秒才变一次、`speed` 取整，没有实质变化时 `rev` 不变。已结束的轮：`usage`、`seconds`、`speed`、`context` 每轮都带，`steps`、`plan` 只带最近 20 轮的。
+  - 在跑的一轮随每秒的推送更新：`seconds` 每 10 秒才变一次、`speed` 取整，没有实质变化时 `rev` 不变。已结束的轮：`usage`、`seconds`、`speed`、`context` 每轮都带，`steps`、`plan` 只带最近 20 轮的；结束超过 7 天的轮不再带 `steps`（执行过程，`app/web_collect.py` 的 `STEPS_SECONDS`；网页库里大半是旧轮次的执行过程），计划、用量、正文照旧。已推过的旧轮次在话题下次重建时（最迟 15–30 分钟）去掉 `steps` 再推一次。
   - 被 Bridge 重启打断、由自动重试接着做完的任务，它的 token 算进重试那一轮的 `usage`。
 - **发到了私聊**（v23）：普通话题的回答那一轮，结论发到了私聊顶层（[结论回到顶层](butler.md#结论回到顶层)，`main-thread/relays/` 里这个任务的记录是 `sent`；合成一条发的也算）时带 `relayed_at`（发出的时刻，秒）。网页的大厅把这些轮收成一行放进时间线；负责人、管家的轮不带。
 - **用的什么配置**（v27，`app/web_turns.py` 的 `ran_with`）：回答那一轮带 `ran_with`：`{harness, provider, model, effort, workspace, redaction}`，用启动卡上的叫法（Claude Code、自带、Opus 5.5），从这一轮的任务记录取；脱敏取话题现在的开关（任务记录不存）；菜单读不到时 `model` 是模型自己的名字、不带 `provider`。网页写在回答下面一行。

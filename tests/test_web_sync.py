@@ -2416,6 +2416,28 @@ class TurnJobsTest(WebCase):
         self.assertEqual([("steps" in data) for data in answers], [False] * 5 + [True] * 10)
         self.assertEqual(self.sync.push_once(T0 + 1), 0)  # Read once: nothing changes the next second.
 
+    def test_a_turn_that_ended_more_than_seven_days_ago_goes_without_its_process(self):
+        self.topic(lines=())
+        history = self.state / "topics" / TOPIC / "history.jsonl"
+        for number in range(1, 4):
+            write_job(self.state, f"k-{number}", topic_id=TOPIC, chat_id=CHAT, job_id=100 + number, status="done", message_id=f"om_{number}")
+            append_history(history, "user", f"第 {number} 件", {"message_id": f"om_{number}"})
+            append_history(history, "assistant", f"第 {number} 件做完了")
+        for module in (app_collect, web_turns):
+            patch = mock.patch.object(module, "load_trace", side_effect=lambda *args: snapshot_of(T0))
+            patch.start()
+            self.addCleanup(patch.stop)
+
+        def answers():  # The newest of each turn the page has.
+            latest = {item["key"]: item["data"] for item in self.web.items("turn")}
+            return [data for _, data in sorted(latest.items()) if data["role"] == "agent"]
+        self.sync.push_once(T0 + 6 * 86400)
+        self.assertEqual([("steps" in data, data["usage"]["total"]) for data in answers()], [(True, 1500)] * 3)
+        self.sync.collector.touch(TOPIC)
+        self.sync.push_once(T0 + 8 * 86400)
+        self.assertEqual([("steps" in data, data["usage"]["total"]) for data in answers()], [(False, 1500)] * 3)
+        self.assertFalse(app_collect.steps_expired({"ended_at": 0}, T0 + 8 * 86400), "a running turn keeps its process")
+
     def test_an_answer_turn_with_no_task_record_is_logged_once(self):
         self.topic(lines=(("user", "你好"), ("assistant", "好的")))
         write_job(self.state, f"k-{TOPIC[:4]}", message_id="om_gone", timings={"backend_started": T0 + 3600})
