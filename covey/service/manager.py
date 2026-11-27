@@ -23,6 +23,7 @@ import time
 from urllib.parse import urlsplit
 
 from covey.core import env as cenv
+from covey.core import home
 from covey.core.paths import entry_script, service_root
 from covey.core.file_lock import LOCK_ROOT_ENV, file_lock
 from covey.service import memguard, web_selfhost
@@ -41,8 +42,11 @@ RUNTIME_ENV_KEYS = frozenset({"PATH", "LANG", "CODEX_HOME", "CLAUDE_CONFIG_DIR",
 BRIDGE_SETTING = re.compile(r"LARK_(?:[A-Z0-9]+_)*BRIDGE_[A-Z0-9_]+|COVEY_[A-Z0-9_]+")
 MANAGER_ENV_KEYS = frozenset({"LARK_BRIDGE_MANAGED", "LARK_BRIDGE_SERVICE_ROOT", "LARK_BRIDGE_REQUIRED_MOUNT",
                               "COVEY_MANAGED", "COVEY_SERVICE_ROOT", "COVEY_REQUIRED_MOUNT"})
-# A task's marker (core/task_processes.py): a launch from a task's shell (deploying from a task) never saves it.
-TASK_ENV_KEYS = frozenset({TASK_DIR_ENV, *cenv.spellings(TASK_DIR_ENV)})
+# What a task runner sets for its own process and the Harness's (core/task_processes.py, core/home.py env): never a service's
+# setting, so a shell of a task that registers or deploys the service carries none of them into its manifest (T872:
+# after the home's turn variables came, a deploy run from a task stopped at env_extra and PATH's env_value_diff).
+TASK_ENV_KEYS = frozenset({TASK_DIR_ENV, *cenv.spellings(TASK_DIR_ENV), *(spelling for name in home.TURN_ENV
+                                                                          for spelling in cenv.spellings(name))})
 SECRET_NAME = re.compile(r"SECRET|TOKEN|PASSWORD|CREDENTIAL|(^|_)KEY($|_)")
 PROXY_ENV_KEYS = frozenset({"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
                           "http_proxy", "https_proxy", "all_proxy", "no_proxy"})
@@ -100,6 +104,10 @@ def runtime_environment(environ=None):
     # COVEY_<X> is saved as LARK_BRIDGE_<X> (core/env.py canonical): an upgrade changes no manifest and the older
     # release a rollback starts reads the names it knows; the Manager mirrors both spellings into the service.
     settings = cenv.canonical({k: v for k, v in environ.items() if persistable(k)})
+    if "PATH" in settings:
+        # A task's PATH starts with <数据根>/bin (core/home.py env): the service's own does not.
+        first = str(home.bin_dir())
+        settings["PATH"] = os.pathsep.join(part for part in settings["PATH"].split(os.pathsep) if part != first)
     validate_environment(settings)
     return settings
 

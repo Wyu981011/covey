@@ -235,6 +235,9 @@ def ensure_shim(root=None, *, tool_bin=None, force=False) -> Path | None:
     return target
 
 
+TURN_ENV = ("COVEY_HOME", "COVEY_TOPIC", "COVEY_STATE")  # What ``env`` adds for a turn: never a service's setting.
+
+
 def env(ctx) -> dict:
     """What the Harness process of ``ctx``'s turn gets on top of the Bridge's environment: ``COVEY_HOME`` (the home),
     ``COVEY_TOPIC`` (the topic, '' for none), ``COVEY_STATE`` (the state directory) and ``PATH`` with ``<数据根>/bin``

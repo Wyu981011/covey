@@ -51,6 +51,15 @@ class NamesTest(unittest.TestCase):
         cenv.put(child, "COVEY_TASK_DIR", "/run")
         self.assertEqual(child, {"COVEY_TASK_DIR": "/run", "LARK_BRIDGE_TASK_DIR": "/run"})
 
+    def test_a_tasks_own_variables_are_never_a_services_setting(self):
+        """A task's shell has its turn's COVEY_HOME, COVEY_TOPIC, COVEY_STATE and <数据根>/bin first on PATH (core/home.py
+        env): registering or deploying from it saves none of them and finds no difference from the manifest (T872)."""
+        from covey.core import home
+        from covey.service.manager import runtime_environment
+        task = {"COVEY_HOME": "/absolute/home", "COVEY_TOPIC": "abc", "COVEY_STATE": "/absolute/state",
+                "COVEY_TASK_DIR": "/absolute/run", "PATH": f"{home.bin_dir()}:/usr/bin:/bin", "COVEY_PINNED_TOPICS": "1"}
+        self.assertEqual(runtime_environment(task), {"PATH": "/usr/bin:/bin", "LARK_BRIDGE_PINNED_TOPICS": "1"})
+
     def test_manifests_keep_the_old_spelling_so_an_upgrade_or_rollback_changes_nothing(self):
         self.assertTrue(persistable("COVEY_PINNED_TOPICS") and persistable("LARK_BRIDGE_PINNED_TOPICS"))
         self.assertFalse(persistable("COVEY_API_TOKEN"))
