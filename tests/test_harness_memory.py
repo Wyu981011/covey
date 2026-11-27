@@ -148,7 +148,7 @@ class ScanTest(Case):
         self.assertEqual(len({item.fingerprint for item in items}), len(items))
 
     def test_a_claude_folder_of_no_repository_is_named_short(self):
-        """T870 Wave 3.5 (P1-5): the page grouped them under ``-mnt-bn-…-xuke-code-covey`` (the folder's dashed name)."""
+        """T870 Wave 3.5 (P1-5): the page grouped them under ``-srv-work-covey`` (the folder's dashed name)."""
         Repo = type("Repo", (), {})
         one = Repo()
         one.path, one.name = "/absolute/work/covey", "covey"

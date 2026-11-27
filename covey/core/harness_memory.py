@@ -241,7 +241,7 @@ SLUG = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)+")  # A name that is only a
 def short_bucket(bucket: str, repos) -> str:
     """How the page names a bucket no repository of the map is (a Claude Code project folder, every character of its
     directory a dash): what is left past the dashed parent of a repository of the map or of the home directory
-    (``-mnt-…-xuke-code-misc-tasks`` -> ``misc-tasks``), that directory's own name for the parent itself, else the dashed
+    (``-srv-work-misc-tasks`` -> ``misc-tasks``), that directory's own name for the parent itself, else the dashed
     name's last part. Any other bucket as it is."""
     bucket = str(bucket or "")
     if not bucket.startswith("-"):
