@@ -1,5 +1,7 @@
 """整理专项 on the web page: when its state last changed, the panel's view, and a 好 or 不用 from the page, which goes through the
-click of the card (docs/web.md)."""
+click of the card (docs/web.md). The view says how the latest 整理 went (``last_run``: running with its progress, done, or
+failed with its reason in words and the Harness it asked), so a 整理 started on the page shows there, a failure that left no
+suggestion too."""
 from __future__ import annotations
 
 import time
@@ -16,6 +18,8 @@ from covey.core.state import read_object
 WEB_RUNS, WEB_OPEN_DAYS, WEB_DECIDED_HOURS = 30, 7, 24  # The web page's 整理专项: the runs looked at, how long open and decided ones stay.
 WEB_STATES = {proposals.ACCEPTED: "done"}  # Being carried out: no buttons; the next look says done or failed.
 WEB_DOING = "正在照办……"
+# What of a run's record the page gets (``last_run``): the 整理专项 card's words, never a CLI's own (``detail``) or the owner's.
+RUN_FIELDS = ("state", "why", "why_code", "via", "model", "retry", "scope")
 WEB_REFUSED = {"tidy_stale": "这条建议的卡已经过时了", "tidy_running": "正在整理，等这次整理完再定", "tidy_decided": "这条已经定过了",
                "tidy_bad_value": "这条建议找不到了", "tidy_no_topics": "没有话题，专项没建"}
 
@@ -40,22 +44,62 @@ class WebSide:
 
     def __init__(self, runtime, env, shared, words, clicks) -> None:
         self.runtime, self.env, self.shared, self.words, self.clicks = runtime, env, shared, words, clicks
+        self.latest = (None, None)  # (the runs folder's mtime, the newest run record's path) of the last look.
 
     def stamps(self) -> tuple:
-        """When the runs and the proposals last changed (their folders' mtimes: every write is a rename into them), so the web
-        page's 整理专项 is built again only then (app/web_sync.py push_tidy)."""
+        """When the runs and the proposals last changed (their folders' mtimes: every write is a rename into them), the newest
+        run record's mtime and the reading's progress (done, total), so the web page's 整理专项 is built again only then
+        (app/web_sync.py push_tidy) and follows a 整理 as it reads."""
         found = []
-        for folder in (proposals.folder(Path(self.env.state_dir)) / "runs", proposals.proposals_dir(Path(self.env.state_dir))):
+        runs = proposals.folder(Path(self.env.state_dir)) / "runs"
+        for folder in (runs, proposals.proposals_dir(Path(self.env.state_dir))):
             try:
                 found.append(folder.stat().st_mtime_ns)
             except OSError:
                 found.append(0)
-        return (*found, self.shared.busy.locked())
+        progress = self.shared.progress if isinstance(self.shared.progress, dict) else {}
+        return (*found, self.shared.busy.locked(), progress.get("done"), progress.get("total"), self.newest_stamp(runs, found[0]))
+
+    def newest_stamp(self, runs, folder_stamp) -> int:
+        """The newest run record's mtime; the folder is listed again only when its own mtime changed."""
+        if folder_stamp != self.latest[0]:
+            try:
+                names = sorted(path.name for path in runs.glob("*.json"))
+            except OSError:
+                names = []
+            self.latest = (folder_stamp, runs / names[-1] if names else None)
+        try:
+            return self.latest[1].stat().st_mtime_ns if self.latest[1] is not None else 0
+        except OSError:
+            return 0
+
+    def last_run(self, paths, now) -> dict | None:
+        """How the newest 整理 of ``paths`` (run records, newest first) went: {run, state, why, why_code, via, model, retry, scope,
+        origin, at, progress {done, total, current}}; None without one in the last WEB_OPEN_DAYS. No word of the owner's but its
+        ``scope`` and a topic's label in ``current``, as the 整理专项 card shows them."""
+        if not paths:
+            return None
+        record = read_object(paths[0])
+        view = record.get("view") if isinstance(record.get("view"), dict) else {}
+        at = float(record.get("finished_at") or record.get("started_at") or 0)
+        if not view or now - at > WEB_OPEN_DAYS * 86400:
+            return None
+        state = str(view.get("state") or "running")
+        if state == "running" and record.get("finished_at"):
+            state = "failed"  # Ended without saying how (a Bridge that stopped meanwhile).
+        found = {key: view.get(key) for key in RUN_FIELDS if view.get(key) not in (None, "")}
+        progress = view.get("progress") if isinstance(view.get("progress"), dict) else {}
+        found.update(state=state, run=str(record.get("run") or paths[0].stem), origin=str(record.get("origin") or ""), at=at,
+                     progress={"done": int(progress.get("done") or 0), "total": int(progress.get("total") or 0),
+                               "current": str(progress.get("current") or "")})
+        found["retry"] = bool(found.get("retry"))
+        return found
 
     def view(self, now=None) -> dict | None:
         """The 整理专项 panel of the web page's 看板 (data contract v16, ``settings`` item ``tidy``): the suggestions as the 整理专项 card
         draws them (cards/project_proposal.py suggestion_words) and the 新建 proposals waiting on a card of their own; the ones still
-        open from the runs of the last WEB_OPEN_DAYS, the decided ones for WEB_DECIDED_HOURS. None with 整理专项 off."""
+        open from the runs of the last WEB_OPEN_DAYS, the decided ones for WEB_DECIDED_HOURS; ``last_run`` (``last_run``, left out
+        without one: an older page reads the rest as before). None with 整理专项 off."""
         if not proposals.enabled() or not self.env.state_dir:
             return None
         state, now = Path(self.env.state_dir), time.time() if now is None else now
@@ -101,7 +145,8 @@ class WebSide:
                 put(record, self.words.row_item(ctx, record), "")
         shown.sort(key=lambda each: (each["state"] != "open", -each["at"]))
         running = dict(self.shared.progress) if self.shared.busy.locked() else None
-        return {"proposals": shown, "running": running, "updated_at": now}
+        last = self.last_run(paths, now)
+        return {"proposals": shown, "running": running, "updated_at": now, **({"last_run": last} if last else {})}
 
     def decide(self, pid, choice) -> tuple:
         """好 (``choice`` "ok") or 不用 ("decline") on one suggestion, from the web page (app/web_ops.py ``tidy_decide``): through the

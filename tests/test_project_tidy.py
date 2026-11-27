@@ -14,6 +14,7 @@ from unittest import mock
 
 from support.records import write_topic
 from test_dispatch_cards import CHAT
+from support.assist import claude_topics
 from test_project_upgrade import UpCase
 
 from covey.app import project_sorter as sorter
@@ -83,7 +84,7 @@ class TidyCase(UpCase):
             on_card(message)
         return True
 
-    def ask(self, system, data, backend, ctx, limit):
+    def ask(self, system, data, where, limit):
         given = json.loads(data)
         self.asked.append((system, given))
         if system == sorter.GIST_SYSTEM:
@@ -570,7 +571,7 @@ class TidyCardTest(TidyCase):
         # Which one and why (the owner, 2026-11-18: “读不了”的话题，要写清是哪几个、为什么读不了).
         self.assertEqual(len(view["skipped"]), 1)
         self.assertIn("1 个话题读不了，没参与这次整理：", view["skipped"][0])
-        self.assertIn("老话题 2（模型调用出错）", view["skipped"][0])
+        self.assertIn("老话题 2（模型返回了错误）", view["skipped"][0])
         self.assertIn(f"https://applink.example/{topics[2][-6:]}", view["skipped"][0])
         self.assertTrue(any("已收起「回流周报」" in line for line in view["did"]))
         self.assertTrue(projects.folded(projects.read_record(self.state, pid)))
@@ -926,11 +927,11 @@ class FollowTest(TidyCase):
 class WhyUnreadTest(UpCase):
     def test_a_refusal_and_a_topic_too_long_are_told_apart_from_other_exits(self):
         """The owner, 2026-11-18: “读不了”的话题，要写清为什么 — Claude Code says a refusal only on stdout."""
-        self.assertEqual(sorter.why_failed(Failed("exit_nonzero", "code=1 stop_reason=refusal")), "refused")
+        self.assertEqual(sorter.why_failed(Failed("exit_nonzero", "code=1 stop_reason=refusal")), "policy_refusal")
         self.assertEqual(sorter.why_failed(Failed("exit_nonzero", "code=1 Prompt is too long")), "too_long")
         self.assertEqual(sorter.why_failed(Failed("exit_nonzero", "code=1 boom")), "exit_nonzero")
         self.assertEqual(sorter.why_failed(Failed("timeout")), "timeout")
-        for reason in ("refused", "too_long", "exit_nonzero", "timeout", "model_error", "empty", "redacted"):
+        for reason in ("refused", "policy_refusal", "too_long", "exit_nonzero", "timeout", "model_error", "empty", "redacted"):
             self.assertIn(reason, tidy_run.UNREADABLE_WORDS)
 
 
@@ -1053,9 +1054,10 @@ class TidyModelTest(UpCase):
             seen.update(kwargs)
             return ["claude"]
 
-        ctx = SimpleNamespace(state_dir=self.state)
+        ctx = SimpleNamespace(state_dir=self.state, backend_cmd=["claude"], options={})
+        topics = claude_topics(self.state, SimpleNamespace(), ctx)
         with mock.patch.dict(os.environ, {"COVEY_PROJECT_TIDY_MODEL": "opus"}), \
                 mock.patch.object(sorter.track_judge, "claude_argv", argv), \
-                mock.patch.object(sorter.track_judge, "run", return_value="{}"):
-            sorter.ask("system", "data", SimpleNamespace(), ctx, 5)
+                mock.patch.object(sorter.track_judge, "run", return_value=envelope({"suggestions": []})):
+            sorter.ask("system", "data", sorter.Where(topics), 5)
         self.assertEqual("opus", seen.get("model"))

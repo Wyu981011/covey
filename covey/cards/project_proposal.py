@@ -21,12 +21,15 @@ ALL_KIND = "bridge_tidy_all"  # 全部照办 (a card of an older release: no new
 LEAVE_KIND = "bridge_tidy_leave"  # 移出 on a topic's card
 LESSON_KIND = "bridge_tidy_lesson"  # 记下 under a 不用 or 移出: the owner's reason
 START_KIND = "bridge_tidy_start"  # 整理专项 on the 设置 card
+# 换辅助模型 / 看诊断 under a 整理 that failed: the 设置 card on ``tab`` (config with ``open`` assist, or doctor).
+OPEN_SETTINGS_KIND = "bridge_tidy_open_settings"
 BOARD_FROM = "board"  # As app/tidy_clicks.py BOARD_FROM: a proposal decided under 等你 on the 看板 or 手上的事 (waiting_block).
 KINDS = (CREATE_KIND, RENAME_KIND, NAMED_KIND, BACK_KIND, DECLINE_KIND, NEVER_KIND, AUTO_KIND, OK_KIND, ALL_KIND, LEAVE_KIND,
-         LESSON_KIND, START_KIND)
+         LESSON_KIND, START_KIND, OPEN_SETTINGS_KIND)
 LABELS = {CREATE_KIND: "建专项", RENAME_KIND: "改个名再建专项", NAMED_KIND: "改名后建专项", BACK_KIND: "取消改名",
           DECLINE_KIND: "不用这条整理建议", NEVER_KIND: "以后别提议专项", AUTO_KIND: "以后直接建专项", OK_KIND: "照这条整理",
-          ALL_KIND: "整理建议全部照办", LEAVE_KIND: "移出专项", LESSON_KIND: "记下整理的理由", START_KIND: "整理专项"}
+          ALL_KIND: "整理建议全部照办", LEAVE_KIND: "移出专项", LESSON_KIND: "记下整理的理由", START_KIND: "整理专项",
+          OPEN_SETTINGS_KIND: "打开辅助模型设置"}
 
 ICON = "folder-add_outlined"
 INTRO = "专项是一件要分几个话题、跨几天推进的事，由一个负责人带着。"
@@ -260,6 +263,37 @@ def tidy_band(view, rows):
     return ui.conclusion_band("要你定 · 整理专项" if waiting else "整理专项", headline, read)
 
 
+# What a 整理 that failed says next, by its reason's kind (core/assist.py kind_of; app/tidy_run.py failed): (words, buttons).
+SETTINGS_BUTTON = ("换辅助模型", {"tab": "config", "open": "assist"})
+DOCTOR_BUTTON = ("看诊断", {"tab": "doctor"})
+NEXT = {
+    "passing": ("可以过一会儿再试。", ()),
+    "refused": ("整理会把最近 7 天话题里你说的话发给模型；换个辅助模型更可能过，同一个模型 6 小时内不再送。", (SETTINGS_BUTTON,)),
+    "break": ("它恢复之前，后台活先不再找它；可以换个辅助模型，或看诊断里它的登录和额度。", (SETTINGS_BUTTON, DOCTOR_BUTTON)),
+    "not_asked": ("整理专项要模型才能判断：在设置里换一个能用的辅助模型。", (SETTINGS_BUTTON,)),
+    "one_off": ("可以再整理一次；还不行就换个辅助模型。", (SETTINGS_BUTTON,)),
+}
+
+
+def failed_block(view) -> list:
+    """A failed 整理's part of its card: what went wrong through which Harness (``why``, app/tidy_run.py failed_words), what
+    to do next (NEXT by ``why_code``'s kind) and its buttons (OPEN_SETTINGS_KIND). A view kept before ``why_code`` says
+    its reason alone (no 过一会儿再试 it may not deserve)."""
+    from covey.core.assist import kind_of
+    why = literal_text(view.get("why") or "出错了")
+    code = str(view.get("why_code") or "")
+    if not code:
+        return [md(f"这次没整理成：{why}。")]
+    kind = "passing" if view.get("retry") else kind_of(code) or "one_off"
+    words, buttons = NEXT.get(kind, NEXT["one_off"])
+    out = [md(f"这次没整理成：{why}。"), note(words)]
+    if buttons:
+        out.append(button_row([text_button(label, {"kind": OPEN_SETTINGS_KIND, "run": "", **value},
+                                           tone="primary" if index == 0 else "")
+                               for index, (label, value) in enumerate(buttons)]))
+    return out
+
+
 def tidy_card(view):
     """The 整理专项 card. ``view``: run (id), state (running, done, failed), progress {done, total, current} while it runs, why (the
     failure in words), did [lines done at once], rows [{proposal, line, state, note}] (at most CARD_ROWS), skipped {words},
@@ -276,7 +310,7 @@ def tidy_card(view):
             "正在整理……" if not progress.get("total") else f"正在判断（{progress.get('total')} 个话题）"
         elements.append(md(line))
     elif state == "failed":
-        elements.append(md(f"这次没整理成：{literal_text(view.get('why') or '出错了')}。可以过一会儿再试。"))
+        elements += failed_block(view)
     did = list(view.get("did") or ())
     if did:
         elements += [section("已经做了")] + [md("· " + literal_text(line)) for line in did]

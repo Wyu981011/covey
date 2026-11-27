@@ -9,7 +9,10 @@ plugin, skill, memory or history), in the read-only sandbox, with the tools a su
 shell, subagents, web search, apps, the question …), no Bridge tool and no workspace reader; a request the app server
 sends (an approval, a question) is refused. Its prompt cache is not the thread's (the tools differ), so the old thread
 is read once more in full. It never raises: ``summarize`` gives ``(text, outcome)``, ``text`` empty unless it succeeded;
-past ``seconds``, or when the task is stopped, the app server is closed and its process group stopped.
+past ``seconds``, or when the task is stopped, the app server is closed and its process group stopped. A gateway that is
+down does not hold the new turn that long: the app server's answers to initialize, thread/fork and turn/start each come
+within HANDSHAKE_SECONDS, and the old model's first sign of output (``first_sign``: a reasoning or answer item started, a
+tool call, the turn's end) within FIRST_SECONDS of turn/start; past either the summary is given up at once.
 """
 from __future__ import annotations
 
@@ -19,10 +22,13 @@ import time
 
 from covey.backends.codex import consult
 from covey.backends.codex.rpc import AppServer, RpcError
+from covey.backends.codex.turn import output_item_started, tool_call_started
 from covey.core.harness import UUID_RE, JobCancelled
 from covey.core.result import is_identifier
 
 SUMMARY_SECONDS = 180  # The new turn waits at most this long for the summary, then starts without it.
+HANDSHAKE_SECONDS = 30  # Each of initialize, thread/fork and turn/start: the app server answers them itself.
+FIRST_SECONDS = 30  # From turn/start to the model's first sign (``first_sign``): none by then, its gateway is down.
 # On top of a consult's (apps, plugins, memories, hooks, goals, image generation, web search and the question off): both
 # shells (shell_tool and unified_exec, its exec_command and write_stdin), subagents and the other tools a summary has no
 # use for. Every key is one `codex features list` of codex-cli 0.171.0 shows (it ignores a key it does not know).
@@ -65,9 +71,23 @@ def agent_messages(items) -> dict:
             and isinstance(item.get("text"), str)}
 
 
-def summarize(ctx, session_id, prompt, env, *, cancel=None, seconds=SUMMARY_SECONDS):
+def first_sign(method, p) -> bool:
+    """Whether the notification ``method`` (its params ``p``, of the fork's turn) shows the model answering: an output
+    item started or done (backends/codex/turn.py output_item_started, tool_call_started), an agent message's text, the
+    turn's end."""
+    done = method == "item/completed" and isinstance(p.get("item"), dict) and p["item"].get("type") in (
+        "reasoning", "agentMessage")
+    return (done or output_item_started(method, p) or tool_call_started(method, p) or method == "turn/completed"
+            or method in ("item/agentMessage/delta", "item/reasoning/textDelta", "item/reasoning/summaryTextDelta"))
+
+
+def summarize(ctx, session_id, prompt, env, *, cancel=None, seconds=SUMMARY_SECONDS, first_seconds=None,
+              handshake_seconds=None):
     """(summary text, outcome words) from an ephemeral fork of ``session_id`` run in ``ctx`` (the old binding's workdir,
-    model and budget) with ``env`` (a HandoffHome's)."""
+    model and budget) with ``env`` (a HandoffHome's). ``first_seconds``, ``handshake_seconds``: FIRST_SECONDS and
+    HANDSHAKE_SECONDS unless given."""
+    first_seconds = FIRST_SECONDS if first_seconds is None else first_seconds
+    handshake = HANDSHAKE_SECONDS if handshake_seconds is None else handshake_seconds
     if not isinstance(session_id, str) or not UUID_RE.fullmatch(session_id):
         return "", "原会话标识不对"
     deadline = time.monotonic() + seconds
@@ -79,13 +99,16 @@ def summarize(ctx, session_id, prompt, env, *, cancel=None, seconds=SUMMARY_SECO
             raise subprocess.TimeoutExpired("codex app-server", seconds)
         return remaining
 
+    def short():
+        return min(left(), handshake)
+
     try:
         rpc = AppServer([*ctx.backend_cmd, "app-server", "--stdio", *[part for flag in FLAGS for part in ("-c", flag)]],
                         ctx.workdir, env)
         rpc.request("initialize", {"clientInfo": {"name": "feishu_bridge", "version": "1.0"},
-                                   "capabilities": {"experimentalApi": True}}, timeout=left())
+                                   "capabilities": {"experimentalApi": True}}, timeout=short())
         rpc.send({"method": "initialized"})
-        reply = rpc.request("thread/fork", fork_params(ctx, session_id), timeout=left())
+        reply = rpc.request("thread/fork", fork_params(ctx, session_id), timeout=short())
         fork = (reply.get("thread") or {}).get("id") if isinstance(reply, dict) else None
         if not is_identifier(fork) or fork == session_id:
             return "", "Codex 没有给出分叉"
@@ -93,15 +116,21 @@ def summarize(ctx, session_id, prompt, env, *, cancel=None, seconds=SUMMARY_SECO
         reply = rpc.request("turn/start", {
             "threadId": fork, "input": [{"type": "text", "text": prompt}], "sandboxPolicy": {"type": "readOnly"},
             **({"model": ctx.model} if ctx.model else {}), **({"effort": ctx.effort} if ctx.effort else {})},
-            timeout=left())
+            timeout=short())
         rpc.turn_id = (reply.get("turn") or {}).get("id") if isinstance(reply, dict) else None
         if not is_identifier(rpc.turn_id):
             return "", "Codex 没有开始这一轮"
-        return read_summary(rpc, cancel, left)
+        return read_summary(rpc, cancel, left, first_by=time.monotonic() + first_seconds)
     except JobCancelled:
         return "", "已停止"
+    except Silent:
+        return "", f"原模型 {first_seconds} 秒没有回应（网关可能断开）"
     except subprocess.TimeoutExpired:
         return "", f"超过 {seconds} 秒"
+    except RpcError as exc:
+        if "timed out" in str(exc) and time.monotonic() < deadline:  # An answer of its own past HANDSHAKE_SECONDS.
+            return "", f"Codex {handshake} 秒没有回应"
+        return "", f"出错（{type(exc).__name__}）"
     except (OSError, RuntimeError, ValueError, KeyError, TypeError, AttributeError) as exc:
         return "", f"出错（{type(exc).__name__}）"
     finally:
@@ -112,11 +141,18 @@ def summarize(ctx, session_id, prompt, env, *, cancel=None, seconds=SUMMARY_SECO
                 pass
 
 
-def read_summary(rpc, cancel, left):
-    """Read the fork's turn to its end: (text, outcome). Raises JobCancelled on a stop (the turn interrupted first) and
-    TimeoutExpired past the deadline (``left``)."""
-    items = {}
+class Silent(Exception):
+    """The fork's model gave no sign of output by ``read_summary``'s ``first_by``."""
+
+
+def read_summary(rpc, cancel, left, first_by=None):
+    """Read the fork's turn to its end: (text, outcome). Raises JobCancelled on a stop (the turn interrupted first),
+    TimeoutExpired past the deadline (``left``) and Silent when the model shows no sign of output (``first_sign``) by
+    ``first_by`` (time.monotonic(); None: no such limit)."""
+    items, heard = {}, first_by is None
     while True:
+        if not heard and time.monotonic() >= first_by:
+            raise Silent()
         if cancel is not None and cancel.is_set():
             try:
                 rpc.request("turn/interrupt", {"threadId": rpc.thread_id, "turnId": rpc.turn_id}, timeout=5)
@@ -135,6 +171,7 @@ def read_summary(rpc, cancel, left):
             continue
         if not isinstance(p, dict) or p.get("threadId") != rpc.thread_id:
             continue
+        heard = heard or first_sign(method, p)
         if method == "item/completed" and p.get("turnId") == rpc.turn_id:
             items.update(agent_messages([p.get("item")]))
             continue

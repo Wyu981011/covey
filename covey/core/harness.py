@@ -124,16 +124,22 @@ class HarnessCapabilities:
     # marker are never touched, and the fork's limits hold for that turn alone. Declared once a real write was refused in
     # such a turn on the installed CLI (C8, docs/architecture.md 多参与者协作 · 能力与预检).
     collab: bool = False
-    # Answers one question by itself (``backend.ask_once(ctx, system, data, *, heavy, limit, cwd)``, the answer's text, or
-    # AskFailed): a system prompt and one JSON text in, in a process of its own with no tool that changes anything, no MCP
-    # server, no hook and no saved session, its whole process group killed at the limit. The small model's questions go
-    # there where no Claude Code is enabled (app/track_judge.py ``tools``); Claude Code's own one-shot is app/track_judge.py's.
+    # Answers one question by itself (``backend.ask_once(ctx, system, data, *, heavy, limit, cwd, follow)``, the answer's
+    # text, or AskFailed): a system prompt and one JSON text in, in a process of its own with no tool that changes anything,
+    # no MCP server, no hook and no saved session, its whole process group killed at the limit. ``follow``: the model of the
+    # setting the question follows (a model gateway's goes to that gateway). ``backend.ask_model(ctx, *, heavy, follow)``
+    # says which model such a question runs on ('' when only the CLI knows) without starting anything, for the words of
+    # the 辅助模型 setting. The background model's questions go there when it is this Harness (app/assist.py); Claude
+    # Code's own one-shot is app/track_judge.py's.
     ask_once: bool = False
 
 
 class AskFailed(Exception):
-    """A question ``ask_once`` got no usable answer to: ``reason`` as the small model's log lines say it (spawn_failed,
-    timeout, exit_nonzero, model_error, bad_output), ``detail`` a short line that never holds the question's text."""
+    """A question ``ask_once`` got no usable answer to: ``reason`` as the small model's log lines say it, one of
+    core/assist.py's (a turn's code: authentication_error, quota_exhausted, rate_limited, server_fault, transport_error,
+    model_unavailable, model_blocked, policy_refusal; or a question's own: not_signed_in, timeout, spawn_failed,
+    exit_nonzero, bad_output, model_error, too_long), ``detail`` the CLI's own words as a card may show them
+    (core/failure.py said_of), never the question's text."""
 
     def __init__(self, reason: str, detail: str = ""):
         super().__init__(reason)

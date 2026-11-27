@@ -305,6 +305,7 @@
    "bridge_job_retry_cancel",
    "bridge_job_split",
    "bridge_job_stop",
+   "bridge_main_assist_harness",
    "bridge_main_compact",
    "bridge_main_effort",
    "bridge_main_enable",
@@ -426,6 +427,7 @@
    "bridge_tidy_named",
    "bridge_tidy_never",
    "bridge_tidy_ok",
+   "bridge_tidy_open_settings",
    "bridge_tidy_rename",
    "bridge_tidy_start",
    "bridge_trace",
@@ -538,6 +540,7 @@
    "资料",
    "转成专项",
    "转给管家",
+   "辅助模型",
    "长期约定、当前决定、历史记录",
    "项目简报（页面标签、界面上简称简报）"
   ]

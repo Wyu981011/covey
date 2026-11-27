@@ -50,6 +50,7 @@ SEEN_KEPT = 400
 NAME_CHARS = 12  # 对象 + 要达成的事, at most this many characters (a CJK one or an ASCII word's letter alike).
 JOIN_SURE = 0.85
 STARTED_WORDS = "已开始整理，结果发到私聊"  # What whoever asked for a 整理 hears (app/project_tidy.py start).
+WEB_STARTED_WORDS = "已开始整理，进度和结果显示在整理面板上"  # ... from the web page, whose 整理专项 panel follows it (app/tidy_web.py).
 BUSY_PREFIX = "正在整理"  # ... and while one runs: 正在整理（12/40）.
 DATED = re.compile(r"(?:T\d{2,}|\d{4}[-/年.]\d{1,2}(?:[-/月.]\d{1,2}[日号]?)?|\d{1,2}[-/月.]\d{1,2}[日号]?|#\d+|第\s*\d+\s*[期轮次])")
 

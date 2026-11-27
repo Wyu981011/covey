@@ -183,6 +183,7 @@ ACTIONS = {
     "bridge_main_topic_redaction": CardAction("选择新话题脱敏"),
     "bridge_main_topic_workspace": CardAction("选择新话题工作区（已下线）"),
     "bridge_main_subagents": CardAction("选择子 Agent 模型"),
+    "bridge_main_assist_harness": CardAction("选择辅助模型"),
     "bridge_main_review_harness": CardAction("选择独立复核 Harness"),
     "bridge_main_review_provider": CardAction("选择独立复核供应商"),
     "bridge_main_review_model": CardAction("选择独立复核模型"),

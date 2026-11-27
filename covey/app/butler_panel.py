@@ -30,7 +30,7 @@ from covey.core.menu_choice import (budget_effort, butler_harnesses, default_ent
 from covey.app.butler_env import reply
 from covey.app.butler_model_choice import resolve
 from covey.app.menu_panel import MenuPanel, hub_top
-from covey.cards.butler_panel import (COMPACT, EFFORT, ENABLE, HARNESS, KINDS, MODE, MODE_CHOICES, MODEL, MODEL_FOLLOW,
+from covey.cards.butler_panel import (ASSIST, COMPACT, EFFORT, ENABLE, HARNESS, KINDS, MODE, MODE_CHOICES, MODEL, MODEL_FOLLOW,
                                                     NOTE_LENGTH, OFFLINE_KINDS, OFFLINE_NOTICE, PAGE_OF, PROVIDER, REDACTION,
                                                     RETIRED_KINDS, RETIRED_NOTICE, SUBAGENTS,
                                                     TOPIC_EFFORT, TOPIC_HARNESS, TOPIC_MODEL, TOPIC_PROVIDER, TOPIC_REDACTION,
@@ -64,7 +64,7 @@ SAVED = {BUTLER: '已保存：管家下一轮起照这个来。', TOPIC: '已保
          LEAD: '已保存：之后新建的专项，负责人照这个来；已有的专项在专项卡上点「换配置」。'}
 # A row whose change waits for the butler to be idle and starts a new session (app/butler.py write_topic).
 SAVED_NEW_SESSION = '已保存：管家手上这一轮做完后换过去，开一个新会话，最近的对话会带上。'
-SAVED_OF = {HARNESS: SAVED_NEW_SESSION}
+SAVED_OF = {HARNESS: SAVED_NEW_SESSION, ASSIST: '已保存：后台活从下一次起照这个来。'}
 
 
 def workspace_names(state_dir):
@@ -270,7 +270,13 @@ class ButlerPanel:
                                       fallback=self.fallback(ctx, defaults, choices, chat),
                                       butler_on=butler.available() and settings.enabled,
                                       review_on=review.enabled(), butler_allowed=butler.available(),
-                                      lead_on=projects.enabled())
+                                      lead_on=projects.enabled(), assist=self.assist_row(ctx, settings))
+
+    def assist_row(self, ctx, settings):
+        """辅助模型's row on 配置 (app/assist.py): its choices, the one saved, what it runs on now."""
+        from covey.app import assist
+        return {'options': assist.offered(self.topics, state=ctx.state_dir), 'current': assist.current(settings),
+                'words': assist.describe(self.topics, state=ctx.state_dir)['words']}
 
     def resolved(self, ctx, defaults, choices, chat=''):
         """What a topic the butler of ``chat`` opens now runs with over ``defaults`` (app/butler_topics.py resolve,
@@ -394,6 +400,10 @@ class ButlerPanel:
             return {}
         if not isinstance(option, str):
             return None
+        if kind == ASSIST:  # 辅助模型 (app/assist.py): bot-wide, whether the butler is on or not.
+            from covey.app import assist
+            picked = assist.chosen(option, assist.offered(self.topics, state=ctx.state_dir))
+            return None if picked is None else {} if picked == saved.assist else {'assist': picked}
         choices = available_models(self.topics, ctx)
         page, change = ROW_CHANGES.get(kind, (None, None))
         if change is None:

@@ -43,7 +43,7 @@ import secrets
 import time
 from pathlib import Path
 
-from covey.app import memory_candidates, track_judge
+from covey.app import assist, memory_candidates, track_judge
 from covey.app.track_standby import Failed
 from covey.core import memory, memory_review, memory_usage, memstore, principles, project_memory, project_proposals, projects
 from covey.core.locks import resource_lock
@@ -197,11 +197,16 @@ def borrowed(text, others) -> bool:
 
 
 class MemoryTidy:
-    """The digest's hook (app/digest.py ``memory_tidy``, set by app/unified.py): ``topics`` for the 整理 model
-    (app/track_judge.py tools), ``runtime`` for the log. ``ask``: track_judge.ask (a test's stand-in)."""
+    """The digest's hook (app/digest.py ``memory_tidy``, set by app/unified.py): ``topics`` for the 辅助模型 (app/assist.py,
+    its heavy model), ``runtime`` for the log. ``ask``: a test's stand-in, called as ``ask(SYSTEM, data, topics=…, limit=…,
+    cwd=…, model=…, state=…)``."""
 
     def __init__(self, runtime, topics, ask=None):
-        self.runtime, self.topics, self.ask = runtime, topics, ask or track_judge.ask
+        self.runtime, self.topics, self.ask = runtime, topics, ask or self.assist_ask
+
+    def assist_ask(self, system, data, **kw):
+        """One question of 整理记忆 through the 辅助模型 (app/assist.py ask, MEMORY_TIDY), routed anew each call."""
+        return assist.ask(assist.MEMORY_TIDY, system, data, **kw)
 
     def view(self, ctx, chat, slot, now=None) -> dict:
         """The run of ``slot`` as the evening digest shows it, tidied first when it was not (the module's docstring); {} when
@@ -220,7 +225,6 @@ class MemoryTidy:
         now = time.time() if now is None else now
         state = Path(ctx.state_dir)
         usage = memory_usage.idle_view(state)  # Both use files: a turn carrying a line now writes only memory/usage.json.
-        backend, judge_ctx = track_judge.tools(getattr(self.topics, "apps", None))
         started = time.monotonic()
         found, cursors = [], dict(load(state)["cursors"])
         live = [record for record in projects.records(state, chat) if record.get("state") not in (projects.DONE, projects.CANCELLED)]
@@ -245,7 +249,7 @@ class MemoryTidy:
             if len(rest) >= MIN_LINES and time.monotonic() - started < BUDGET:
                 shown_lines, cursors[pid] = window(rest, cursors.get(pid, 0))
                 try:
-                    told = self._ask(record, shown_lines, held, others, backend, judge_ctx, state)
+                    told = self._ask(record, shown_lines, held, others, state)
                 except Failed as exc:
                     outcome["failed"] = exc.reason
                     self.runtime.log(f"memory tidy judge failed project={pid} reason={exc.reason}")
@@ -343,13 +347,13 @@ class MemoryTidy:
         except Exception as exc:  # noqa: BLE001
             self.runtime.log(f"memory tidy review failed: {type(exc).__name__}")
 
-    def _ask(self, record, lines, held, others, backend, judge_ctx, state) -> dict:
+    def _ask(self, record, lines, held, others, state) -> dict:
         data = {"name": str(record.get("name") or ""), "goal": cut(record.get("goal"), 300), "others": others,
                 "rules": [cut(line["text"], TEXT) for line in held][-20:],
                 "lines": [{"id": line["id"], "part": memory.PART_WORDS[line["part"]], "day": _day(line["at"]),
                            "text": cut(line["text"], TEXT)} for line in lines]}
-        raw = self.ask(SYSTEM, json.dumps(data, ensure_ascii=False), backend=backend, ctx=judge_ctx, limit=SECONDS,
-                       cwd=state / "memory-tidy", model=project_proposals.model())
+        raw = self.ask(SYSTEM, json.dumps(data, ensure_ascii=False), topics=self.topics, limit=SECONDS,
+                       cwd=state / "memory-tidy", model=project_proposals.model(), state=state)
         return parse(track_judge.answer_text(raw, "claude"), {line["id"] for line in lines})
 
     def decide(self, ctx, run_id, op, *, project="", entry="", message_id="", now=None) -> dict | None:

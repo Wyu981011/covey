@@ -711,14 +711,16 @@ class Ops:
 
     def tidy(self, state, chat, row, payload) -> str:
         """整理专项 from the page (app/project_tidy.py start): ``scope`` empty for all, else a project id or a word. done with
-        已开始整理，结果发到私聊, or with how far the one running has got (正在整理（12/40））; off, ``failed``."""
+        已开始整理，进度和结果显示在整理面板上 (the panel follows it, app/tidy_web.py), or with how far the one running has got
+        (正在整理（12/40））; off, ``failed``."""
         from covey.core import project_proposals
 
         tidy = getattr(self.env, "tidy", None)
         if tidy is None or not project_proposals.enabled():
             raise ValueError("整理专项没有开（COVEY_PROJECT_TIDY）")
         words = tidy.start(origin="web", scope=" ".join(str(payload.get("scope") or "").split())[:40])
-        if words != project_proposals.STARTED_WORDS and not words.startswith(project_proposals.BUSY_PREFIX):
+        if words not in (project_proposals.STARTED_WORDS, project_proposals.WEB_STARTED_WORDS) \
+                and not words.startswith(project_proposals.BUSY_PREFIX):
             raise ValueError(words)
         return words
 

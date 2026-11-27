@@ -236,3 +236,11 @@ test('预取：要紧的在前，最多 24 个；顺序变了集合签名不变�
   assert.equal(needsWarm(1000, 1000 + WARM_STALE_MS - 1), false);
   assert.equal(needsWarm(1000, 1000 + WARM_STALE_MS + 1), true);
 });
+
+test('快照响应不完整（空串、截断的 JSON 被当成字符串、缺 topics）不当快照', () => {
+  assert.equal(S.isSnapshot(''), false);
+  assert.equal(S.isSnapshot('{"topics":[1,'), false);
+  assert.equal(S.isSnapshot(null), false);
+  assert.equal(S.isSnapshot({ projects: [], questions: [] }), false);
+  assert.equal(S.isSnapshot({ topics: [], projects: [], questions: [], synced_at: null }), true);
+});

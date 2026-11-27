@@ -168,7 +168,8 @@ class ButlerPanelTests(UnifiedCase):
         self.assertLess(text.index('私聊顶层的消息'), text.index('**更多**'))
         self.assertNotIn('select_static', text)
         self.assertNotIn(panel_card.NOTE, text)
-        self.assertEqual([v['open'] for v in self.values(panel_card.SECTION)], ['topic'])
+        # T884: 辅助模型 a section of its own, closed while another one is open.
+        self.assertEqual([v['open'] for v in self.values(panel_card.SECTION)], ['topic', 'assist'])
         self.assertEqual([v['option'] for v in self.values(panel_card.MODE)], ['agent', 'topics'])
         self.assertEqual(self.values(panel_card.ENABLE), [])
         self.assertEqual([v['option'] for v in self.values(panel_card.REDACTION)], ['off', 'on'])
@@ -185,7 +186,7 @@ class ButlerPanelTests(UnifiedCase):
         text = self.text()
         self.assertIn(panel_card.TOPIC_NOTE, text)
         self.assertNotIn('直接开工', text)
-        self.assertEqual([v['open'] for v in self.values(panel_card.SECTION)], ['butler'])
+        self.assertEqual([v['open'] for v in self.values(panel_card.SECTION)], ['butler', 'assist'])
         self.assertEqual(self.values(panel_card.MODEL), [])
         self.assertEqual(self.values(panel_card.TOPIC_MODEL), [])
         self.assertIn('codex', [v['option'] for v in self.values(panel_card.TOPIC_HARNESS)])

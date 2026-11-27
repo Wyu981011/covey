@@ -8,8 +8,8 @@ import { pref, setPref } from './lib';
 import { opWords, plainReceipt } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 import {
-  choice, dismissible, isOpen, look, outcome, panelWords, remember, shown,
-  TIDY_SHOW_ALL, TIDY_WORD, type TidyChoice, type TidyLook, type TidyProposal, type TidyTopic,
+  choice, dismissible, failedRun, failWords, isOpen, look, nextWords, outcome, panelWords, progressShare, remember, shown,
+  wantsSettings, TIDY_SHOW_ALL, TIDY_WORD, type TidyChoice, type TidyLastRun, type TidyLook, type TidyProposal, type TidyTopic,
 } from './tidyData';
 import './tidy.css';
 
@@ -45,6 +45,26 @@ const TopicList: React.FC<{ topics: TidyTopic[] }> = ({ topics }) => {
         </li>
       ) : null}
     </ul>
+  );
+};
+
+/** 最近一次没整理成（T884）：红字原因（整理卡上那句，带问的是哪个 Harness），下一步，再试没用时「去设置」换辅助模型 */
+const FailNote: React.FC<{ r: TidyLastRun }> = ({ r }) => (
+  <div className="td-fail" role="alert">
+    <p className="td-fail-w">{failWords(r)}</p>
+    <p className="td-fail-n">{nextWords(r)}</p>
+    {wantsSettings(r) ? <Link className="btn sm td-fail-go" to="/settings/config">去设置</Link> : null}
+  </div>
+);
+
+/** 正在整理的进度条：知道读了几个、一共几个才画 */
+const RunBar: React.FC<{ l: TidyLook }> = ({ l }) => {
+  const share: number | null = progressShare(l);
+  if (share === null) return null;
+  return (
+    <div className="td-bar" role="progressbar" aria-valuemin={0} aria-valuemax={l.running?.total ?? 0} aria-valuenow={l.running?.done ?? 0}>
+      <i style={{ width: `${Math.round(share * 100)}%` }} />
+    </div>
   );
 };
 
@@ -167,6 +187,22 @@ export const TidyPanel: React.FC = () => {
     setPicked(null);
     setMine([]);
   };
+  const fail: TidyLastRun | null = failedRun(l);
+  if (!l.open.length && !l.settled.length) {
+    // 一条建议都没有：正在整理就画进度，没整理成就画原因和「去设置」（T884：网页上点的整理在这里看得到）
+    return (
+      <section className="nb-panel td-panel td-solo" aria-label="整理专项">
+        <h3 className="nb-ph">整理专项
+          {w.run ? <em>· {w.run}</em> : fail ? <em className="st-failed">· 没整理成</em> : null}
+          <span className="td-acts">
+            {canGo ? <button type="button" className="td-act" onClick={dismiss} title="从看板收走；下次没整理成会再出来">知道了</button> : null}
+          </span>
+        </h3>
+        {l.running ? <RunBar l={l} /> : null}
+        {fail ? <FailNote r={fail} /> : null}
+      </section>
+    );
+  }
   const projects = new Set<string>((snap?.projects ?? []).map((x: SnapshotProject) => x.key));
   const row = (p: TidyProposal): React.ReactNode => (
     <SettledRow key={p.id} p={p} project={p.project && projects.has(p.project) ? p.project : ''} said={mine.includes(p.id)} />
@@ -182,6 +218,7 @@ export const TidyPanel: React.FC = () => {
           {w.more ? <span className="td-cnt td-lmore">{w.more}</span> : null}
           {w.run ? <span className="td-cnt">{w.run}</span> : null}
           {w.failed ? <span className="td-cnt st-failed">{w.failed}</span> : null}
+          {w.fail ? <span className="td-cnt st-failed">{w.fail}</span> : null}
           <span className="td-open"><span className="td-ot">展开</span><ChevronDown /></span>
         </button>
         {canGo ? <button type="button" className="td-x" onClick={dismiss} title="从看板收走；有新建议或结果变了会再出来">知道了</button> : null}
@@ -202,6 +239,8 @@ export const TidyPanel: React.FC = () => {
           <button type="button" className="td-act" onClick={fold} aria-expanded>收起<ChevronUp /></button>
         </span>
       </h3>
+      {l.running ? <RunBar l={l} /> : null}
+      {fail ? <FailNote r={fail} /> : null}
       {l.open.length ? (
         <div className="td-list">
           {l.open.map((p: TidyProposal) => (

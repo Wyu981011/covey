@@ -93,3 +93,15 @@
   .cv .td-rt{height:44px}
   .cv .td-rn{display:none}
 }
+
+/* T884：最近一次没整理成（红字原因、下一步、去设置）和正在整理的进度条 */
+.cv .td-fail{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin:0 0 10px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--st-stopped) 40%,var(--line));
+  border-radius:12px;background:color-mix(in srgb,var(--st-stopped) 7%,var(--s1))}
+.cv .td-fail-w{flex:1 1 100%;margin:0;font-size:13.5px;line-height:1.5;color:var(--st-stopped);overflow-wrap:anywhere}
+.cv .td-fail-n{flex:1 1 auto;margin:0;font-size:12px;line-height:1.5;color:var(--t3)}
+.cv .td-fail-go{flex:none}
+.cv .td-solo .td-fail{margin-bottom:0}
+.cv .td-bar{height:4px;margin:0 0 10px;border-radius:2px;background:var(--s3);overflow:hidden}
+.cv .td-bar>i{display:block;height:100%;border-radius:2px;background:var(--run);transition:width .3s var(--ease)}
+@media (prefers-reduced-motion:reduce){.cv .td-bar>i{transition:none}}
+@media (max-width:767px){.cv .td-fail-go{height:40px}}

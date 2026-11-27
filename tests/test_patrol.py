@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from support.records import state_dir, write_topic
+from support.assist import claude_topics, topics_with
 from covey.app import patrol, patrol_judge, patrol_rules, track_judge
 from covey.app.digest import Digest, collect, wanted_view
 from covey.app.track_standby import Failed
@@ -392,7 +393,8 @@ class JudgeTests(Records, unittest.TestCase):
         ctx = SimpleNamespace(state_dir=self.state, backend_cmd=["claude"])
         answer = self.reply([{"index": 1, "verdict": "note", "why": "先记下", "action": "none"}])
         with mock.patch.object(track_judge, "run", return_value=answer) as run:
-            found, why = patrol_judge.decide(self.state, self.rows(1), backend=backend, ctx=ctx, log=lambda _: None)
+            found, why = patrol_judge.decide(self.state, self.rows(1), topics=claude_topics(self.state, backend, ctx),
+                                             log=lambda _: None)
         self.assertEqual((why, [d["verdict"] for d in found]), ("ok", ["note"]))
         argv = seen[0]
         self.assertEqual(argv[argv.index("--model") + 1], "haiku")
@@ -405,12 +407,14 @@ class JudgeTests(Records, unittest.TestCase):
         backend = SimpleNamespace(wrap_argv=lambda argv, ctx: argv)
         ctx = SimpleNamespace(state_dir=self.state, backend_cmd=["claude"])
         logs = []
+        topics = claude_topics(self.state, backend, ctx)
         for error, reason in ((Failed("timeout"), "timeout"), (RuntimeError("x"), "error")):
             with mock.patch.object(track_judge, "run", side_effect=error):
-                self.assertEqual(patrol_judge.decide(self.state, self.rows(1), backend=backend, ctx=ctx, log=logs.append), ([], reason))
+                self.assertEqual(patrol_judge.decide(self.state, self.rows(1), topics=topics, log=logs.append), ([], reason))
         with mock.patch.object(track_judge, "run", return_value="not json"):
-            self.assertEqual(patrol_judge.decide(self.state, self.rows(1), backend=backend, ctx=ctx, log=logs.append)[1], "bad_output")
-        self.assertEqual(patrol_judge.decide(self.state, self.rows(1), backend=None, ctx=None, log=logs.append)[1], "no_backend")
+            self.assertEqual(patrol_judge.decide(self.state, self.rows(1), topics=topics, log=logs.append)[1], "bad_output")
+        self.assertEqual(patrol_judge.decide(self.state, self.rows(1), topics=topics_with(self.state), log=logs.append)[1],
+                         "no_backend")
         self.assertTrue(all("detail" not in line or "标题" not in line for line in logs))
 
 

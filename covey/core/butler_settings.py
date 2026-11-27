@@ -60,6 +60,16 @@ class LeadModel:
 
 
 @dataclasses.dataclass(frozen=True)
+class AssistChoice:
+    """辅助模型 (app/assist.py): which Harness the background model calls (分流, 整理专项, 看看, 记忆) go through, set on the
+    设置 card's 配置 and the web page. ``harness`` "" and ``off`` false: 自动（跟随管家）; ``off``: 不用模型 (no call at
+    all, the rules alone); else only this Harness, never another one (one it cannot use now says why). A Harness named here
+    that is retired or not enabled stays named: the calls then say it cannot be used instead of picking another one."""
+    harness: str = ""
+    off: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
 class Settings:
     # The private chat mode (docs/butler.md 私聊模式): True 管家, False 纯话题, the chat's top level
     # opening topics as before. Saved as ``mode``, and as ``enabled`` for an older release.
@@ -81,6 +91,7 @@ class Settings:
     subagents: str = SUBAGENTS[0]  # SUBAGENTS.
     review: ReviewModel = ReviewModel()  # 独立复核's model (ReviewModel); saved as ``review``.
     lead: LeadModel = LeadModel()  # A new project's lead's model (LeadModel); saved as ``lead``.
+    assist: AssistChoice = AssistChoice()  # 辅助模型 (AssistChoice); saved as ``assist``, an older release ignores it.
     # Retired: main-thread.json's desk_topics opened front-desk topics in older releases, frozen since
     # (core/migrate.py desk-retire). It is no longer read, so every topic the butler
     #  opens is a 话题区; a file that says true gets one warning line at the Bridge's start
@@ -117,6 +128,7 @@ def from_json(data) -> Settings:
     notes = data.get("workspace_notes")
     review = data.get("review") if isinstance(data.get("review"), dict) else {}
     lead = data.get("lead") if isinstance(data.get("lead"), dict) else {}
+    assist = data.get("assist") if isinstance(data.get("assist"), dict) else {}
     harness, model, effort = _choice(data)
     return Settings(
         enabled=contract.agent_mode(data),
@@ -131,7 +143,9 @@ def from_json(data) -> Settings:
         if isinstance(notes, dict) else (),
         subagents=data["subagents"] if data.get("subagents") in SUBAGENTS else base.subagents,
         review=ReviewModel(*_choice(review)),
-        lead=LeadModel(*_choice(lead)))
+        lead=LeadModel(*_choice(lead)),
+        # Not through _choice: a retired Harness named here stays named (the calls say it is gone), never 自动.
+        assist=AssistChoice(harness=_text(assist.get("harness")), off=assist.get("off") is True))
 
 
 def to_json(settings: Settings) -> dict:
@@ -170,18 +184,42 @@ def _write(state_dir, settings: Settings) -> None:
     write_json(path(state_dir), {**kept, **to_json(settings)}, ensure_ascii=False, indent=1)
 
 
+# Called after every write of the settings with (state directory, the settings before, after), outside the lock: what
+# keeps something of the settings in memory (app/assist.py on_settings_changed) hears of it. A listener that raises is
+# skipped.
+_listeners: list = []
+
+
+def listen(listener) -> None:
+    """``listener(state_dir, before, after)`` after each ``save`` and ``update`` (once however often it is given)."""
+    if listener not in _listeners:
+        _listeners.append(listener)
+
+
+def _told(state_dir, before, after) -> None:
+    for listener in list(_listeners):
+        try:
+            listener(state_dir, before, after)
+        except Exception:  # noqa: BLE001 - the write is done; a listener's trouble is its own
+            pass
+
+
 def save(state_dir, settings: Settings) -> None:
     with resource_lock("main-thread-settings", str(path(state_dir))):
+        before = load(state_dir)
         _write(state_dir, settings)
     contract.forget_mode()
+    _told(state_dir, before, settings)
 
 
 def update(state_dir, **changes) -> Settings:
     """Read, change the fields given, write; the new settings. One writer at a time (the settings card)."""
     with resource_lock("main-thread-settings", str(path(state_dir))):
-        settings = dataclasses.replace(load(state_dir), **changes)
+        before = load(state_dir)
+        settings = dataclasses.replace(before, **changes)
         _write(state_dir, settings)
     contract.forget_mode()
+    _told(state_dir, before, settings)
     return settings
 
 
@@ -193,6 +231,7 @@ def merge_topic_defaults(state_dir, **fields) -> None:
         topic = data.get("topic_defaults") if isinstance(data.get("topic_defaults"), dict) else {}
         write_json(path(state_dir), {**data, "topic_defaults": {**topic, **fields}}, ensure_ascii=False, indent=1)
     contract.forget_mode()
+    _told(state_dir, None, None)
 
 
 def preset_harness(state_dir, harness) -> bool:
@@ -206,6 +245,7 @@ def preset_harness(state_dir, harness) -> bool:
             return False
         write_json(path(state_dir), {**data, "harness": harness}, ensure_ascii=False, indent=1)
     contract.forget_mode()
+    _told(state_dir, None, None)
     return True
 
 
@@ -228,4 +268,5 @@ def settle_mode(state_dir):
         settings = dataclasses.replace(from_json(data), enabled=_fresh(state_dir) or contract.agent_mode(data))
         write_json(path(state_dir), {**data, **to_json(settings)}, ensure_ascii=False, indent=1)
     contract.forget_mode()
+    _told(state_dir, None, None)
     return contract.AGENT if settings.enabled else contract.TOPICS

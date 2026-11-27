@@ -118,12 +118,13 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **停、重开、记为看过、不管了**：和飞书卡片上的同名按钮做同一件事。
 - **停住了的一轮**：原因和下一步和任务卡同一句话，按钮也和任务卡一样：检查并继续（结果没发出去时是“重新投递结果”，只重发保存的结果，不重跑模型；限流是“现在重试”）、看原因、拆小再试做的和飞书里点同名按钮一样；自动重试已经排好时写几点重试，只给“现在重试”和“停止自动重试”，不会和排好的那次一起跑；换个模型用网页自己的换配置（负责人的也是，v36；管家的配置只在飞书的设置卡上换）。
 - **开新话题**：选项和启动卡一样（模型、思考预算、工作模式、脱敏、工作区、运行方式），直接开工；要独立 worktree 的话题会在飞书里出一张填好的启动卡，点开始。
-- **设置**：设置卡的各页都能看，第一页和卡上一样是“配置”，分新话题、管家、独立复核（开了独立复核才有）、专项负责人（开了专项才有）、更多几段；卡片一次只展开一段，网页各段都展开。能改的有新话题的每一行，管家的每一行（Harness、供应商、模型、思考预算、脱敏、工作区、压缩阈值）和私聊顶层的消息，独立复核的模型，专项负责人的模型，子 Agent，工作区的用途和增删，脱敏的两个开关和词表的批量增删，群的停用与免@（只能改成关闭或只有你），用 ssh 添加和移除设备，代答的开关和白名单。其余只读，每页有“去飞书改”。
+- **设置**：设置卡的各页都能看，第一页和卡上一样是“配置”，分新话题、管家、独立复核（开了独立复核才有）、专项负责人（开了专项才有）、辅助模型、更多几段；卡片一次只展开一段，网页各段都展开。能改的有新话题的每一行，管家的每一行（Harness、供应商、模型、思考预算、脱敏、工作区、压缩阈值）和私聊顶层的消息，独立复核的模型，专项负责人的模型，[辅助模型](configuration.md#辅助模型)（管家关着也能改；下面一行写现在实际用哪个模型，再下面直接展开“后台活最近一次”小表：功能、用了谁、结果、原因、耗时、时间，只有原因码，不写原话），子 Agent，工作区的用途和增删，脱敏的两个开关和词表的批量增删，群的停用与免@（只能改成关闭或只有你），用 ssh 添加和移除设备，代答的开关和白名单。其余只读，每页有“去飞书改”。
 - **记忆**（v37，默认开，[记忆](butler.md#记忆)没关时）：设置页的「记忆」一页是主人的主记忆：全局和每个工作区的原则、知识条目（`COVEY_KNOWLEDGE` 开着时）和待确认的候选（开了 `COVEY_MEMORY_LEARN` 时）。每组写着用了多少字、上限多少、下一轮带不带每一条（放不下的标出来），常驻的排在前面；能搜、能按全局或工作区筛，能看某个工作区下一轮实际带上的那一段。新建、改正文（数着字，⌘/Ctrl+S 保存）、标或取消常驻、删除或作废、候选的「记下」「不用」都在页上（办完在列表上方留一条回执，几秒后或点掉才消失；常驻只在那一行上写），和飞书设置卡「记忆」改的是同一份。专项和话题的记忆还在专项页、话题页的右栏。
 - **账号与额度**（v42，有额度来源时，`COVEY_QUOTA` 没关）：设置页的「账号与额度」一页，一张表：账号｜5 小时剩余｜周剩余，格里只有百分比、细条和重置时刻，写上海时间的几月几号几点几分（`11月27日 03:30`；表窄时时刻换到条下面一行）。剩余不到 20% 红色；用完写“用完”和恢复时刻（`11月27日 03:30 恢复`）；读不到写“—”、不画条；旧读数数字变灰。agy 的号展开，一行一个号，写这个号登录的 Google 邮箱（读不到才写 `agy-accounts.json` 里的名字），在用的号前一个蓝点，只画这个号近 7 天真跑过的模型池（Gemini、Claude/GPT 都跑过的，同一格上下两行）；网关和外接命令的来源折成一行平均值和“k/n 个能用”，有冷却或低额度的号时组名后一个红点，点开看每个号（外接命令的来源有号要重新登录或用完时直接展开），来源给了 `link` 才有“运维台↗”。有号要重新登录时表上方一行红条。右上角只有「刷新」：Covey 立刻重读所有来源、agy 查一遍每个号的 `/usage`（5 分钟冷却）。页面上没有暂停、只用这个号、查全部账号。某个来源整体见底（能用的号都用完或剩不到 20%）或有号要重新登录时，侧栏顶上多一行（收起成窄条时是一个带红点的小图标），点了到这一页。
 - **整理专项**：开了[整理专项](projects.md#整理专项)时，看板首屏“要你处理”下面有整理专项的建议。
   - 有要你定的：一条一块（原因、目标、话题），直接点照办或「不用」；标题栏「收起」收成一行“要你定 N 条”，来了新建议再展开。
   - 定好的（24 小时内）一行一条：标签、动作、几个话题、结果（已拆出、不用、没做成……），照办了的带「去专项」；点一行看原因、话题和没做成的原因。有要你定的时它们收在底下“已定 N 条”里。
+  - 正在整理时面板一直在，写读到哪个话题（3/10）或正在判断，带进度条；最近一次没整理成时（没点「知道了」）面板里一个红框：用的是谁、什么原因、下一步，模型那边的问题带「去设置」（超时、限流这类过一会儿能好的不带）。从网页点整理，回执是“已开始整理，进度和结果显示在整理面板上”。
   - 都定好了：收成一行“都定好了 · … 等 N 条”，没做成的标红；「展开」看一行一条，「知道了」从看板收走，有新建议或哪条的结果变了再出来。收起和「知道了」只记在这台设备的浏览器里。
 - **专项的简报**（v41，v40 的「进度」并进来；负责人写了[目标检查表](projects.md#负责人对照目标跟进)时）：专项页在「全图」和「报告」之间的标签叫「简报」（手机上同样一个；地址 `/brief`，旧的 `/progress` 仍能打开，跳到简报），只读，一页看清专项做到哪了，自上而下：
   - **头部**：专项名、背景（负责人用 `project_goal` 写的）、目标，一行统计：几个动作、各状态几个、话题数、检查表几条满足。
@@ -222,7 +223,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - `label`（v18）是纯文本，不带卡片用的转义。模型说了这一步做什么的，`label` 只写“标题：目的”，命令放在 `detail`（最多 400 字）；`label` 超过 80 字被截断的，`detail` 是完整的那段。
   - `plan`：检查点里的 steps（`{title, state}`）；这一轮已结束时还停在 doing 的那步推成 todo。
   - `usage`（`input`、`output`、`cache_read`、`total`）、`seconds`、`speed`（token/s）、`context`（`{used, limit}`）、`notes`（记忆那一路写的 `memory_notes`，原样推）。
-  - 在跑的一轮随每秒的推送更新：`seconds` 每 10 秒才变一次、`speed` 取整，没有实质变化时 `rev` 不变。已结束的轮：`usage`、`seconds`、`speed`、`context` 每轮都带，`steps`、`plan` 只带最近 20 轮的。
+  - 在跑的一轮随每秒的推送更新：`seconds` 每 10 秒才变一次、`speed` 取整，没有实质变化时 `rev` 不变。已结束的轮：`usage`、`seconds`、`speed`、`context` 每轮都带，`steps`、`plan` 只带最近 20 轮的；结束超过 7 天的轮不再带 `steps`（执行过程，`app/web_collect.py` 的 `STEPS_SECONDS`；网页库里大半是旧轮次的执行过程），计划、用量、正文照旧。已推过的旧轮次在话题下次重建时（最迟 15–30 分钟）去掉 `steps` 再推一次。
   - 被 Bridge 重启打断、由自动重试接着做完的任务，它的 token 算进重试那一轮的 `usage`。
 - **发到了私聊**（v23）：普通话题的回答那一轮，结论发到了私聊顶层（[结论回到顶层](butler.md#结论回到顶层)，`main-thread/relays/` 里这个任务的记录是 `sent`；合成一条发的也算）时带 `relayed_at`（发出的时刻，秒）。网页的大厅把这些轮收成一行放进时间线；负责人、管家的轮不带。
 - **用的什么配置**（v27，`app/web_turns.py` 的 `ran_with`）：回答那一轮带 `ran_with`：`{harness, provider, model, effort, workspace, redaction}`，用启动卡上的叫法（Claude Code、自带、Opus 5.5），从这一轮的任务记录取；脱敏取话题现在的开关（任务记录不存）；菜单读不到时 `model` 是模型自己的名字、不带 `provider`。网页写在回答下面一行。
@@ -282,7 +283,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 
 另推几条 `settings` 条目。设置条目由取操作的线程（`web-inbox`，每秒一次）单独推：网页改了一项设置，回执之前就推（网页看到“已保存”时读到的已是新值）；`main-thread.json`、工作区列表或脱敏词表一改，下一秒就推；推的线程全量对时也推一次（内容没变 `rev` 不变就不发）。
 
-- **`settings`**（v7）：飞书设置卡的各页，同名同序：配置（v22；v21 及以前是新话题、管家两页 `topic`、`main`）、工作区、脱敏、群聊、设备（只在设了 `COVEY_NODE_LISTEN` 时有）。`config` 是 `{summary, topic, main?, review?, lead?, more, more_note, locked}`：`topic`（新话题：`title`、`rows`、`note`）、`main`（管家，`COVEY_BUTLER=0` 时没有：`title`、`on`、`rows`、`note`，私聊顶层的消息是 `rows` 的最后一行）、`review`（独立复核，`COVEY_REVIEW` 没关才有：`title`、`rows`、`note`）、`lead`（专项负责人，v36，专项开着才有：`title`、`rows`、`note`，行的 key 是 `l_harness`、`l_provider`、`l_model`、`l_effort`），`more` 是子 Agent 一行，`summary` 是卡片标题栏那句。每页的行和卡片用同一套函数画（`cards/butler_panel.py` 的 `topic_settings`、`butler_setting_list` 等）：标签、当前值、可选项，`editable` 说网页能不能改。另带 `feishu`（打开机器人的 applink）。代码在 `app/web_settings.py`、`app/web_panels.py`。
+- **`settings`**（v7）：飞书设置卡的各页，同名同序：配置（v22；v21 及以前是新话题、管家两页 `topic`、`main`）、工作区、脱敏、群聊、设备（只在设了 `COVEY_NODE_LISTEN` 时有）。`config` 是 `{summary, topic, main?, review?, lead?, more, more_note, locked}`：`topic`（新话题：`title`、`rows`、`note`）、`main`（管家，`COVEY_BUTLER=0` 时没有：`title`、`on`、`rows`、`note`，私聊顶层的消息是 `rows` 的最后一行）、`review`（独立复核，`COVEY_REVIEW` 没关才有：`title`、`rows`、`note`）、`lead`（专项负责人，v36，专项开着才有：`title`、`rows`、`note`，行的 key 是 `l_harness`、`l_provider`、`l_model`、`l_effort`），`assist`（辅助模型，可选：`title`、`rows`（一行，kind `bridge_main_assist_harness`）、`note`、`words`（现在实际用哪个）、`recent`（后台活最近一次，每行 `feature`、`label`、`harness`、`name`、`model`、`ok`、`code`、`words`、`ms`、`at`、`manual`，读 `<state>/assist-state.json`；它一变 `stamps` 就变，设置条目随即重推）；旧网页不认这个字段就不画），`more` 是子 Agent 一行，`summary` 是卡片标题栏那句。每页的行和卡片用同一套函数画（`cards/butler_panel.py` 的 `topic_settings`、`butler_setting_list` 等）：标签、当前值、可选项，`editable` 说网页能不能改。另带 `feishu`（打开机器人的 applink）。代码在 `app/web_settings.py`、`app/web_panels.py`。
   - 工作区带标签、路径尾部、最近使用和用途；每条带 `removable`（默认的那个不能移除），另带 `missing`（目录确认不存在的有几个）（v15）。
   - 脱敏带统计、开着脱敏的话题、两个开关和词表（v14：`terms` 按词表顺序的原词，另带 `ignore_case`、`max_terms`、`max_length` 给网页保存前检查；**替身词不推**；原词会进网页应用的库，为的是在网页上批量编辑）；`records` 是最近几轮替换了多少，只有数字（v15）。
   - 群用 chat id 的哈希当 key，带状态和免@；每个群带 `free_mode` 和 `free_choices`（v15）。群名照群聊卡的读法问飞书，同一个群 30 分钟问一次。
@@ -295,6 +296,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
   - `workspaces[]`（最近用过的在前，设备上的带 `device` 和那台设备声明的 `harnesses`）、`run_modes[]`、`preselect`（现在开一张启动卡会预选的）。
   - 网页照卡的两条规则联动：换 Harness 或供应商时，当前模型在新范围里就不动，否则取这个顺序里的第一个；换模型时取它的 `start_budget`。
 - **key `tidy`**（v16，开了整理专项时）：网页的“整理专项 · 要你定 N 条”面板读它。
+  - `last_run`（可选）：最近一次整理的 `run`、`state`、`why`、`why_code`、`via`、`model`、`retry`、`scope`、`origin`、`at`、`progress`（`done`、`total`、`current`），不带模型的原话；整理进行中进度一变就重推（`app/tidy_web.py` 的 `stamps` 纳入进度和最新一条整理记录）。
   - `proposals` 每条是 `id`、`run`、`kind`、`tag`、`verb`、`headline`、`from`（这几个词和卡片同一个函数）、`why`、`goal`、`topics`（`key`、`label`、`title`）、`state`（open、done、declined、failed、expired、never）、`note`（定了以后的结果）、`project`（v28：照办了以后「去专项」打开哪个专项：新建、拆出是建出来的那个，合并是留下的那个，其余是动到的那个；没照办、或那个专项已经没了是空串）；列最近 7 天整理里还开着的，和 24 小时内定了的。`running` 是正在整理的进度。
   - 它单独一个请求推（整理记录和提议两个目录变了、或全量对时才推）；比 v16 旧的网页拒收这个 key 时只记日志，不耽误设置。
 - **key `usage`**：本周用量，按菜单「用量」卡的算法（`app/weekly_usage.py` 的 `summarize`：往前 7×24 小时、按任务记录的创建时间、算后端真跑过的所有任务），推的线程全量对时推。
@@ -343,7 +345,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 | `reopen` | 把收起或被停住的专项重新展开；已结束的回 failed |
 | `forget` | `project_key`、`payload.entry_id`：作废一条专项记忆，同专项卡上的“删”（留墓碑，负责人 30 天内不会再记回去），回 done“已作废：<前 40 字>” |
 | `dismiss`（v15） | `topic_key`：同看板卡的“不管了”，只改看板的记录；没开看板时回 failed |
-| `tidy` | `{scope}`：开始一次整理专项，回 done“已开始整理，结果发到私聊”；正在整理时写进度；整理专项没开时回 failed |
+| `tidy` | `{scope}`：开始一次整理专项，回 done“已开始整理，进度和结果显示在整理面板上”；正在整理时写进度；整理专项没开时回 failed |
 | `tidy_decide`（v16） | `proposal` 是提议 id，`choice` 是 `ok` 或 `decline`：走那张卡自己的点击，卡原地重画成一样的结果；已经定过的回 failed |
 | `launch`（v17） | 开新话题，见下 |
 | `switch`（v21） | 换话题的配置，见下 |
@@ -487,7 +489,7 @@ python3 -B -m covey.service.web_selfhost --restore-db /absolute/path/to/backups/
 - **请求体上限**：`web/server/main.ts` 把 `bodyLimit` 交给平台的 `configureApp`：环境变量 `BODY_SIZE_LIMIT` 认得出就用它，没设是 `8mb`（平台的硬顶是 12 MB；`workbench.limits.ts`；自托管入口用同一个数）。由它推出一张图（`image_bytes`）和附件一段（`part_bytes`）各最多多少：base64 后整个请求还在上限里，各封顶 4 MiB；上限不超过 1 MiB 时和以前一样（760 KiB、512 KiB）。`/sync/upsert` 和 `/sync/images/have` 的响应带 `limits: {body_bytes, image_bytes, store, heap_limit_mb, rss_mb, mem_limit_mb}`，Covey 照它放大一批和一张图（见[推](#推)）；后三个是 V8 堆上限、此刻常驻、容器上限（MB），看 `NODE_OPTIONS` 的 `--max-old-space-size` 生效没有。
 - **图片和附件放平台的文件存储**（`workbench.blobs.ts`）：新的图片（缩略图、大图各一份）和附件的每段，字节经平台的 `FileService` 存进应用的文件存储（路径 `covey/images/<id>-<thumb|full>.<ext>`、`covey/uploads/<id>/<n>.part`，id 是内容哈希或随机编号），`images` 表只存 `thumb_path`、`full_path`，`upload_parts` 只存 `path`、`bytes`。鉴权和以前一样：不给页面发直链，页面仍只经 `/api/images/:id`（要登录、只有主人）取图，Covey 仍只经 `/sync/upload/part` 取附件；服务端用短时签名地址（签 10 分钟、进程里用 8 分钟，不出进程、不进库）自己去取字节再回出去。文件存储用不了（自托管没有它、平台报错、库里还没有路径列）时照旧存 bytea，连着失败 3 次歇 10 分钟再试，第一次失败记一行日志；`limits.store` 是 `file` 还是 `db`。老的 bytea 行照常读；有路径也有 bytea 的先读文件存储，取不到再读 bytea。
   - 已有的库要先加列：部署脚本目录下的 `migrations/20261127-t876-blobs.sql`（见 [web/README.md 的「部署」](../web/README.md#部署)）（只加列和两个 `_updated_at` 索引、`upload_parts.data` 改可空，不动数据；多环境应用在 dev 执行再 `+db-env-migrate` 到 online）。没加列的库上新网页自动退回 bytea。新建的库 `schema.sql` 里已经有。
-  - **历史回迁**（不自动跑）：`POST /openapi/sync/blobs/backfill {limit≤50, drop}`。`drop` 不是 true 时只复制：把还只在 bytea 里的图存进文件存储、写上路径，bytea 留着（不丢，先读文件存储、取不到读 bytea）；`drop: true` 才在读回核对大小以后清掉 bytea。回 `{copied, dropped, left, errors, store}`。清 bytea 是改线上已有数据，先备份、问过主人再跑。
+  - **历史回迁**（不自动跑）：`POST /openapi/sync/blobs/backfill {limit≤50, drop}`。`drop` 不是 true 时只复制：把还只在 bytea 里的图存进文件存储、写上路径，bytea 留着（不丢，先读文件存储、取不到读 bytea）；`drop: true` 才在读回核对大小以后清掉 bytea。回 `{copied, dropped, left, errors, store}`。开放接口密钥按路由放行的（不是放开全部 `/openapi/**`），要另外放行这条路由才调得到，Covey 自己从不调它。清 bytea 是改线上已有数据，先备份、问过主人再跑。
   - **冷热清理**：图片消息之后 90 天过期、附件传完 7 天过期，和以前一样每小时跟着上传清一次；现在先删文件存储里的对象，删掉了才删行（删不掉的行留到下一轮，不留下没人引用的文件）。
 - **内存水位**（`workbench.guard.ts` 的 `MemoryGuard`）：常驻占容器上限（读不到用堆上限）70% 以上是 high：取件、回执不再挂着等（马上按库里的回），新图片和新附件回 503 让对方稍后重传；85% 以上是 critical：页面的整份快照、统计、报告、搜索、取图、传附件也回 503（`Retry-After: 5`），增量快照、轮次、发件、回执和 Covey 的推送照常。水位变了记一行 `[workbench] memory …`。平台允许时另在应用环境变量里设 `NODE_OPTIONS=--max-old-space-size=640`，堆先回收、不等被 cgroup 杀；生效没有看 `limits.heap_limit_mb`。
 - **连接池**（`workbench.guard.ts` 的 `Gate`、`gated`）：每条库查询先过闸门，按车道限并发：页面（`/api`）4 条、Covey（`/openapi`）2 条，加起来 6 条，比平台包的 7 条池少一条，谁都占不满、Covey 的推送和回执不会排在几个标签页的整份快照后面；排队每条车道最多 400 个、最久 15 秒，超了回 503。车道由 workbench 模块的中间件按路径设（AsyncLocalStorage）。Covey 一批里同时写 4 条（以前 25 条）。挂着等的请求睡着时不占连接；每条通道各自限挂起数（取件 4、回执 16）；同一时刻挂着等回执的合成一条 `op_id in (...)` 查询（`Batcher`）。`topics`、`turns` 加了 `_updated_at` 索引，快照增量每秒按它找变过的话题，不再全表扫轮次。

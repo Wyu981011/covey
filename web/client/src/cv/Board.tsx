@@ -327,7 +327,8 @@ const TidyButton: React.FC = () => {
   else if (send.isPending) note = <span className="a-faint">{opWords('sending')}</span>;
   else if (waiting) note = <span className="a-faint">{opWords('waiting')}</span>;
   else if (late) note = <span className="a-faint">{opWords('timeout')}</span>;
-  else if (tr?.phase === 'done') note = <span className="a-okt">{opWords('done', tr.message || '已开始整理，结果发到私聊')}</span>;
+  // Covey 回的话照原样（新版说进度和结果显示在整理面板上，旧版说发到私聊）
+  else if (tr?.phase === 'done') note = <span className="a-okt">{opWords('done', tr.message || '已开始整理')}</span>;
   else if (tr?.phase === 'failed') note = <span className="a-errt">{opWords('failed', tr.message)}</span>;
   return (
     <span className="a-tidy">

@@ -14,7 +14,7 @@ import hashlib
 import time
 from pathlib import Path
 
-from covey.app import patrol_judge, patrol_rules, track_judge
+from covey.app import assist, patrol_judge, patrol_rules
 from covey.core import patrol
 from covey.core.locks import resource_lock
 from covey.core.loops import every
@@ -121,13 +121,16 @@ class Patrol:
             self.runtime.log(f"patrol judge skipped: {used} calls today")
             self.judged_at = now
             return
+        self.judged_at = now
+        if assist.route(self.env.topics, assist.PATROL, state=state_dir).first is None:
+            # 不用模型, or the one named cannot be used now: no call goes out, none of the day's is used up.
+            self.runtime.log("patrol judge skipped: no 辅助模型 now")
+            return
         with resource_lock("patrol", str(patrol.folder(state_dir))):
             data = patrol.load(state_dir)
             data["calls"] = {"day": patrol.day_of(now), "n": used + 1}  # Counted before the call: a failed one used the model too.
             patrol.save(state_dir, data)
-        self.judged_at = now
-        backend, context = track_judge.tools(self.env.topics.apps)  # Claude Code, else Codex's or agy's own CLI.
-        decisions, _ = patrol_judge.decide(state_dir, batch, backend=backend, ctx=context, log=self.runtime.log)
+        decisions, _ = patrol_judge.decide(state_dir, batch, topics=self.env.topics, log=self.runtime.log)
         with resource_lock("patrol", str(patrol.folder(state_dir))):
             data = patrol.load(state_dir)
             settle(data, batch, decisions, now, state_dir)

@@ -275,7 +275,7 @@
 
 不设就是 `suggest`，新装的和老服务都一样（`core/switches.py` 的 `DEFAULTS` 记着各转正开关不设时的值，全部见[默认已开](#默认已开)）。要关，按[改开关三步](#改开关三步)设 `COVEY_PROJECT_TIDY=off`。
 
-可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断都是一问一答，去[小模型判断](#小模型判断)说的地方：有 Claude Code 时用它的 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），走 Claude Harness 自己的包装；没有时用 Codex 或 Antigravity 自己的默认模型（不用它们的轻量模型，理由同上）。都没有时判断不了，整理卡写“没有能判断的模型（Claude Code、Codex、Antigravity 都没启用）”。
+可调的数（都是正数，写错按默认）：`COVEY_PROJECT_TIDY_DAYS`（7，整理看最近几天的话题）、`COVEY_PROJECT_TIDY_AGE_DAYS`（3，话题跨进第几天算一次实时时机）、`COVEY_PROJECT_TIDY_WORDS`（15，主人在话题里说到第几句算一次）、`COVEY_PROJECT_TIDY_MIN_TOPICS`（5，聊天里的话题少于这个数时不整理）、`COVEY_PROJECT_TIDY_JUDGE_SECONDS`（90，一次判断调用的上限）、`COVEY_PROJECT_TIDY_READ_SECONDS`（60，补一个话题要点的上限）。补话题要点和判断都是一问一答，去[辅助模型](#辅助模型)选的地方：Claude Code 用 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`：两者都要读整段对话、说出一件事的本质，小模型不够），Codex 或 Antigravity 用账号自己的模型（不用它们的轻量模型，理由同上）。判断不了时整理卡写原因、用的是谁和下一步（「换辅助模型」「看诊断」）；补话题要点时遇到登录失效、额度用完这类模型那边的问题，不把话题标成“读不了”，整理在这里停下并说明。
 
 ### 记忆
 
@@ -283,11 +283,11 @@
 - 关着（`COVEY_MEMORY=0`）：规则、续接提醒、答案卡和任务记录都和没有这个功能时一样，不读不写话题的 `memory.json`，设置卡没有「记忆」标签。
 - 开着时设置卡有一个「记忆」标签（`app/memory_panel.py`）：只看数、处理待审核、去网页。副标题是规矩、决定、资料、待审核各多少条，各范围一行计数；待审核每条“采纳”或“不要”（走网页记忆中心同一套 `review_decide`）；有网页（`COVEY_WEB=1` 且配了 `page_url`）时给“打开网页记忆中心”和“去网页逐条看”链接，没有时列出规矩的标题，每条能“收起”。常驻、工作区、下一轮带上什么都不在这里了，管理都去网页记忆中心。
 - 升为全局：飞书上已下线。答案卡上“记下了”那一行只有“不对”（有网页时多一个“改”，打开网页记忆中心）；要把一条提到更大的范围，到网页记忆中心做。旧卡片上点“升为全局”只回一句“升为全局已下线：到网页记忆中心把它提到更大的范围”，不改东西、不开任务。
-- 开着且[早晚汇总](#早晚汇总)也开着时，每天的晚间汇总多一节“你反复说的”（`app/memory_candidates.py`）：从那之前 24 小时里结束的普通话题（不读开了脱敏的话题、管家话题、代答话题，只读主人自己那一轮的原话里带纠正字眼的句子）找主人在两个以上话题里重复说的纠正，最多 3 条，每天看一次。分组用小模型（[小模型判断](#小模型判断)：有 Claude Code 时是 Haiku，没有时是 Codex 或 Antigravity 的轻量模型；最多 30 秒）；哪个都没有或调用失败时只按“几乎一样的话”分组。点「记下」才记成一条原则（来源话题都在一个工作区就记到那个工作区，否则通用），点「不用」以后不再提同一句；记录在 `<state>/memory-candidates.json`。日志：`memory candidates found=N via=model|rules sentences=N`、`memory candidates none: …`、`memory candidates judge failed reason=…`，不写原话。
+- 开着且[早晚汇总](#早晚汇总)也开着时，每天的晚间汇总多一节“你反复说的”（`app/memory_candidates.py`）：从那之前 24 小时里结束的普通话题（不读开了脱敏的话题、管家话题、代答话题，只读主人自己那一轮的原话里带纠正字眼的句子）找主人在两个以上话题里重复说的纠正，最多 3 条，每天看一次。分组用[辅助模型](#辅助模型)的轻量模型（最多 30 秒）；不用模型、用不了或调用失败时只按“几乎一样的话”分组。点「记下」才记成一条原则（来源话题都在一个工作区就记到那个工作区，否则通用），点「不用」以后不再提同一句；记录在 `<state>/memory-candidates.json`。日志：`memory candidates found=N via=model|rules sentences=N`、`memory candidates none: …`、`memory candidates judge failed reason=…`，不写原话。
 - 关掉：按[改开关三步](#改开关三步)设成 `0`；已经写下的记忆留着，标了常驻的原则在原则块里照样不被挤掉。
 - 日志：`memory lines written=N of M job=#…`、`memory lines ignored reason=… job=#…`、`memory lines failed job=#…`。
 - `COVEY_MEMORY_LEARN=1`（只认 `1`，要 `COVEY_MEMORY` 开着）：记忆自己长，仍然默认关（[管家 · 记忆自己长](butler.md#记忆自己长开关默认关)）。关着时以下都没有，记忆和上面写的一字不差。
-  - 每轮之后（`app/memory_learn.py`）：主人自己的一轮正常结束，他原话里有纠正的字眼，就由 Bridge 用小模型（[小模型判断](#小模型判断)，最多 45 秒，一次只问一轮）读一遍，引用核对过的长期要求直接记下：通用的、某个工作区的记成原则（`principles.json`，`source` 是 `memory_learn`），只对这件事的记到专项或话题；答案卡上照旧一行“记下了”带“不对”。不读：代答话题、负责人的话题、开了脱敏的话题、管家转交的轮次、协作轮。这时规则里不再有“以后/别再”那句检查点约定。
+  - 每轮之后（`app/memory_learn.py`）：主人自己的一轮正常结束，他原话里有纠正的字眼，就由 Bridge 用[辅助模型](#辅助模型)（最多 45 秒，一次只问一轮）读一遍，引用核对过的长期要求直接记下：通用的、某个工作区的记成原则（`principles.json`，`source` 是 `memory_learn`），只对这件事的记到专项或话题；答案卡上照旧一行“记下了”带“不对”。不读：代答话题、负责人的话题、开了脱敏的话题、管家转交的轮次、协作轮。这时规则里不再有“以后/别再”那句检查点约定。
   - 用到才留：这一轮在检查点 `memory_used` 里写的编号和回复里提到的编号，记进 `<state>/memory-usage.json`；同一个范围放不下时最近用过的先带。
   - 你反复说的：晚间汇总新找到的那几条先生效，标“它总结的”（主人的话和它冲突时让路），点「记下」才算你说的，点「不用」撤下；没点之前不会过期删掉。
   - 整理记忆（`app/memory_tidy.py`，要早晚汇总）：晚间汇总时，每个在做的专项（每晚最多 4 个）里 30 天没用过的当前决定和待核对参考收起；整理用的模型（`COVEY_PROJECT_TIDY_MODEL`，默认 Sonnet）说哪些问的事已经办完、哪些被新回答替代，再从反复的选择里提炼最多 2 条约定（标“它总结的”，点「确认长期」才算你说的）。只收起不删除，卡上「撤销」放回去；30 天没用的候选也不再带。记录在 `<state>/memory-tidy.json`。
@@ -295,19 +295,34 @@
   - 查记忆：每轮的记忆块末尾多一行 `bin/covey_memory.py search` 的命令（设备上的话题没有），放不下的、收起的、答过的题都能查。
   - 日志：`memory learned written=N of M job=#…`、`memory learn skipped reason=… job=#…`、`memory learn failed reason=… job=#…`、`memory lines used=N job=#…`、`memory tidy project=… put_away=N rules=N`、`memory harvest sources=N fresh=N added=N`，都不写原话。
 
-### 小模型判断
+### 辅助模型
 
-整理专项、“我本来想找你的事”（`COVEY_PATROL`）、同时做几件事的分流、晚间的“你反复说的”和任务卡上的“看看”都是一问一答的小判断：给一段 JSON，要一行 JSON，不用工具、不留会话，到点连进程组一起杀掉。它们去哪问由 `app/track_judge.py` 的 `tools` 和 `ask` 定，和管家用哪个 Harness 无关：
+整理专项（判断、实时归并、补话题要点）、“我本来想找你的事”（`COVEY_PATROL`）、同时做几件事的分流和它的待命进程、晚间的“你反复说的”、记忆自己长、整理记忆和任务卡上的“看看”都是后台的一问一答：给一段 JSON，要一行 JSON，不用工具、不留会话，到点连进程组一起杀掉。它们只从一个出口出去（`app/assist.py`），由设置卡「配置」和网页设置页的**辅助模型**一项决定问谁（存在 `main-thread.json` 的 `assist`，旧版本读不到这个字段，回滚后这一项回到“自动”）：
 
-1. 启用了 Claude Code：问它，和以前一样（Haiku，有待命进程，同时做几件事的分流一般 1 到 3 秒；整理专项用 `COVEY_PROJECT_TIDY_MODEL`）。
-2. 都没有时问启用了的 Codex，再没有问 Antigravity，用它们自己的命令行一次一问（`core/harness.py` 的 `ask_once`）：
-   - Codex：`codex exec --ephemeral`，只读沙箱，在一个自己的 `CODEX_HOME` 里（只有登录和模型供应商，没有你的 MCP 服务、规则、hook、插件、记忆和全局 `AGENTS.md`），不开 shell 和子 Agent，问题从标准输入进（`backends/codex/judge.py`）。
-   - Antigravity：在一个临时主目录里跑（只链着登录，对话和日志跟着临时目录删掉，不留在你的 `~/.gemini`），不带 `--dangerously-skip-permissions`，再加一层不许写文件、跑命令、读网址的规则（`backends/agy/judge.py`）；没登录时直接算失败，不等它一分钟的浏览器登录。
-   - 模型：轻量的判断用目录里名字或说明写着是轻量的第一个（Codex 如 `gpt-6-luna`，Antigravity 如 `gemini-3.8-flash`），最低一档思考；整理专项用它们自己的默认模型。`COVEY_JUDGE_CODEX_MODEL`、`COVEY_JUDGE_AGY_MODEL` 可以指定。
-   - 慢：实测一次 6 到 12 秒（大半是命令行自己起来的时间），所以同时做几件事的分流在这里最多等 10 秒（`COVEY_TRACK_JUDGE_MS` 设了就按它），超时按新开一件，这段时间这句话等着分流。嫌慢就启用 Claude Code。
-3. 哪个都没有（比如只有 DeepSeek Harness）：这些判断不做（`no_backend`），各自照原来的退路：分流按新开一件，整理卡写为什么，候选只按规则分组。
+- **自动（跟随管家）**，默认：候选按这个顺序排，只取设置里出现过的 Harness：管家开着（`COVEY_BUTLER` 不是 `0`、私聊模式是管家）时管家的 Harness，再是新话题默认、专项负责人、独立复核里点名的 Harness；这些都没点名时用 Bridge 默认的 Harness。跟着谁就连它的供应商一起跟（管家在 Codex 的某个网关模型上，后台活也走那个网关）。过滤掉不能一问一答的（DeepSeek Harness 和扩展里没声明 `ask_once` 的 Harness）、现在用不了的（可用性检查的最近一次结果和最近一轮的失败，只读内存不读盘）、Antigravity 没登录或多账号都被挡住的、正在熔断的，用剩下的第一个。
+- **点名一个 Harness**：只用它。它没启用、用不了、在熔断，这次就不调模型，各功能走自己的退路，原因写清（“设置里选的 Codex 现在用不了（登录失效）”），**绝不换到别的 Harness**。点名的 Harness 下线了也照旧显示点名，不悄悄改回自动。
+- **不用模型（只按规则）**：后台活一律不调模型：分流按新开一件，整理卡写为什么，看看用规则那句，候选只按规则分组，巡逻不扣当天的次数。
 
-脱敏话题的内容哪里都不送；日志只记原因、毫秒和问的是谁（`via=claude|codex|agy`），不记你的原话。
+模型不单列：轻的判断（分流、看看、巡逻、候选、记忆自己长）用这个 Harness 的轻量模型，整理类（整理专项、补话题要点、整理记忆）用重一档的：Claude Code 是 Haiku 和 `COVEY_PROJECT_TIDY_MODEL`（默认 `sonnet`）；Codex、Antigravity 轻的用目录里名字或说明写着轻量的第一个（Codex 如 `gpt-6-luna`；Antigravity 先找 Gemini 的 flash、lite，如 `gemini-3.8-flash`），最低一档思考，重的用账号自己的模型（Codex `medium`）。`COVEY_JUDGE_CODEX_MODEL`、`COVEY_JUDGE_AGY_MODEL` 可以指定。设置卡这一项下面一行写着现在实际用的是哪个。
+
+**失败了怎么办**（原因码和 `core/result.py` 的 `ERROR_CODES` 同一套，三家各自的报错都先按它们正式轮次的分类认一遍，原话脱敏截断后只进日志和卡上，记录里只留原因码）：
+
+- 登录失效、额度用完、程序没起来、连不上模型服务、模型在账号里用不了：这个 Harness **熔断 15 分钟**，这段时间自动触发的后台活不找它（不影响正式话题）；你自己点的（✨ 整理、看看、管家的 `projects_tidy`）照样试一次，成功就解除。自动模式下这次会换下一个候选（一次最多两个）；**分流不换**，它在你消息的路上，只试一次，失败就按新开一件。
+- 超时、限流、模型服务临时故障：不熔断，不换家，过一会儿再试。
+- 被官方内容安全拦了：不换下一家（同样的内容不再发给你的另一个账号）。整理判断、整理记忆、晚间候选这类整批的，这个 Harness 对这一项 **6 小时内不再送**，卡上说明并给「换辅助模型」；回填一个话题、实时归并、记忆自己长这类单条的，只记这一条。同一个 Harness 一天被拦到 3 次，当天后台不再找它。
+- 你改了辅助模型，熔断和冷却立即清空。
+
+熔断、冷却、当天被拦次数和每项后台活的最近一次（功能、用了谁、模型、结果、原因码、耗时、时间，不存原话）加锁写在 `<state>/assist-state.json`，重启不丢；网页设置页的“后台活最近一次”读它，它一变就推（`app/web_settings.py` 的 `stamps`）。
+
+**说了不用就不用**：所有后台活只能经 `app/assist.py`（`tests/test_structure.py` 的 `AssistExitTest` 封住直接调 `track_judge` 的 `ask`/`judge`/`warm`、`track_standby` 和后端的 `ask_once`）；起进程前出口再按当时的设置核一遍，不在允许的范围里就拒绝并记一行 `assist refused harness=… feature=…`；`tests/test_assist.py` 一格一格核对 Harness × 设置 × 功能，点名 Codex 和不用模型时 Claude Code 起进程（含待命进程）的次数是 0。
+
+**分流的待命进程**：只有分流开着、辅助模型算出来是 Claude Code，而且没有扩展包住 Claude Code 的轮次（如 covey-internal 的协议归一中继 `COVEY_CLAUDE_CLI_NORMALIZE=1`）时才起；设置一改走（辅助模型、管家的 Harness、私聊模式、自动跟随的那几项），待命进程立即关掉，之前在跑的判断也不会再把它拉起来。扩展的 `claude_turn` 钩子（中继）也包住后台的一次性 Claude Code 调用：它的地址合进 `--settings`，hook 照旧关着。
+
+**慢**：Codex、Antigravity 每问都要起一次命令行，实测一次 6 到 15 秒，所以分流在这里最多等 10 秒（`COVEY_TRACK_JUDGE_MS` 设了就按它），超时按新开一件，这段时间这句话等着分流。嫌慢就把辅助模型选成 Claude Code（有待命进程，一般 1 到 3 秒）。
+
+`COVEY_TRACK_JUDGE=off` 或 `cmd:/absolute/path` 比这一项优先，只管分流，和以前一样。脱敏话题的内容哪里都不送；日志只记原因、毫秒和问的是谁（`via=claude|codex|agy`），不记你的原话。
+
+不归辅助模型管、也不是偷跑的后台进程：每 5 分钟刷新一次启动卡的模型目录（`app/launch_models.py`：Claude Code 起一次 `claude -p` 跑完 `initialize` 列网关的模型、不发对话；Antigravity 跑 `agy models`）；管家空闲时的压缩（`app/idle_compaction.py`）跟着管家自己的 Harness；换配置后第一轮的交接摘要用离开的那个 Harness 和旧会话（`app/switch_handoff.py`：旧会话末轮因登录、额度、模型不可用、安全拒绝、网关断开等停下，或它在后台熔断、额度被挡时直接把最近几轮原文交给新模型，不再等它；握手 30 秒没回应也一样）；每分钟的可用性检查（`claude auth status`）和 Antigravity 的额度查询（`agy -p /usage`）。
 
 ### 新话题带上最近话题的要点
 
@@ -510,10 +525,10 @@
 | `COVEY_BUTLER_HUNG_MINUTES` | `app/unstick.py`（`hung_seconds`，任务进程和 Bridge 都读） | `10`：管家或负责人的一轮这么多分钟没有任何动静（不在等命令、等回答、请求重试或排队等空位），而主人后来的话还在等它（没读到的补充、同一路排着的消息）时，停下这一轮（记失败、可检查并继续），后来的话接着跑；没动静满 3 分钟时先在每条等着的消息下说一句它在等哪一轮。`0` 关掉停下，只说那一句。0 到 1440 | 否 |
 | `COVEY_BUTLER_TRACKS_MAX`（旧名 COVEY_MAIN_TRACKS_MAX、LARK_BRIDGE_MAIN_TRACKS_MAX） | `core/butler_tracks.py`（`limit`） | 3：同时在跑的件数上限，取值限制在 2 到 4，读不出来按 3 | 否 |
 | `COVEY_BUTLER`（旧名 COVEY_MAIN_THREAD、LARK_BRIDGE_MAIN_THREAD） | `core/butler.py` | 允许（模式看 `main-thread.json`）；`0` 不允许 | 否 |
-| `COVEY_TRACK_JUDGE` | `app/track_judge.py`（同时做几件事里，规则没能定的新消息交给小模型判断是并进哪件在做的事还是新开一件；`app/butler_tracks.py` 的 `Tracks.decide` 调用，`COVEY_BUTLER_TRACKS` 开着才会问） | `claude`（默认，名字沿用旧的）：小模型在哪就问哪，见[小模型判断](#小模型判断)（Claude Code 的 Haiku、Codex 或 Antigravity）；`off` 不问，直接新开；`cmd:/absolute/path` 用自己的命令（标准输入一段 JSON，标准输出一行 JSON）。超时、出错、拿不准、脱敏话题都按新开一件 | 否 |
+| `COVEY_TRACK_JUDGE` | `app/track_judge.py`（同时做几件事里，规则没能定的新消息交给小模型判断是并进哪件在做的事还是新开一件；`app/butler_tracks.py` 的 `Tracks.decide` 调用，`COVEY_BUTLER_TRACKS` 开着才会问） | `claude`（默认，名字沿用旧的）：问[辅助模型](#辅助模型)选的那个；`off` 不问，直接新开；`cmd:/absolute/path` 用自己的命令（标准输入一段 JSON，标准输出一行 JSON）。超时、出错、拿不准、脱敏话题都按新开一件 | 否 |
 | `COVEY_TRACK_JUDGE_MS` | `app/track_judge.py`（`limit_ms`） | 3000：小模型硬上限（毫秒，200 到 10000），超过按新开一件；问的是 Codex 或 Antigravity 自己的命令行时不设默认 10000（它们一次要 6 到 12 秒），设了就按设的 | 否 |
-| `COVEY_JUDGE_CODEX_MODEL` | `backends/codex/judge.py`（`choose`：没有 Claude Code 时小模型判断问 Codex 用的模型） | 空：轻量的判断用账号模型目录里 id 或说明写着轻量的第一个（如 `gpt-6-luna`），最低一档思考；整理专项用 Codex 自己的默认模型、`medium`。写一个目录里有的模型 id 就都用它（目录里没有的不用） | 否 |
-| `COVEY_JUDGE_AGY_MODEL` | `backends/agy/judge.py`（`choose`：没有 Claude Code 和 Codex 时小模型判断问 Antigravity 用的模型） | 空：轻量的判断用保存的模型目录里名字带 flash、lite 这类词的第一个（如 `gemini-3.8-flash`），最低一档；整理专项用 agy 自己的默认。写一个 `agy models` 列出的 id（带档位，如 `gemini-3.8-flash-low`）就都用它 | 否 |
+| `COVEY_JUDGE_CODEX_MODEL` | `backends/codex/judge.py`（`choose`：辅助模型是 Codex 时用的模型） | 空：轻量的判断用账号模型目录里 id 或说明写着轻量的第一个（如 `gpt-6-luna`），最低一档思考；整理专项用 Codex 自己的默认模型、`medium`。写一个目录里有的模型 id 就都用它（目录里没有的不用） | 否 |
+| `COVEY_JUDGE_AGY_MODEL` | `backends/agy/judge.py`（`choose`：辅助模型是 Antigravity 时用的模型） | 空：轻量的判断先找保存的模型目录里 Gemini 名字带 flash、lite 的第一个（如 `gemini-3.8-flash`），没有再找其他轻量词，最低一档；整理专项用 agy 自己的默认。写一个 `agy models` 列出的 id（带档位，如 `gemini-3.8-flash-low`）就都用它 | 否 |
 | `COVEY_AGY_EAGER_BYTES` | `backends/agy/home.py`（`eager_room`：管家和专项负责人跑在 Antigravity 上时，Bridge 的工具里预先加载的最多占多少字节，按描述加参数 schema 算；其余只在 agy 的提示里列名字，用到时模型先读说明再调）、`backends/agy/bridge.py`（`left_out` 的日志提到它） | 15000：交给话题的工具和其余常用的都预先加载，原则、知识条目、历史搜索这些排最后；`0`：全部只列名字。agy 的日志警告说丢了 Bridge 工具时调小 | 否 |
 | `COVEY_AGY_ACCOUNTS` | `backends/agy/accounts.py`（`config_path`：每轮 agy、诊断 `service/doctor.py` 的 `agy_row`、升级检查 `service/plugins.py` 的 `agy_switching` 读多账号配置在哪） | 数据根的 `agy-accounts.json`；写了两个及以上的号才开 agy 多账号，见 [quota.md agy 多账号](quota.md#agy-多账号) | 否 |
 | `AGY_ACCOUNTS_DIR` | `backends/agy/account_homes.py`（`accounts_dir`：终端命令 `agy-as` 把账号目录建在哪） | `~/.agy-accounts` | 否 |
@@ -649,4 +664,4 @@ Bridge 的参数：默认 Harness（Codex）和 Bridge 自己的写在服务命�
 
 已下架的 Harness 和供应商、不再读取的变量和参数、旧菜单键、旧卡片和旧安装方式现在会怎样，见[已下线的功能与旧配置](legacy.md)。只升级老部署时才用得到。
 
-这个版本起不再读的开关，清单里留着也不报错：`COVEY_TURN_EXPORT`（任务卡「下载请求与结果」整块删了）、`COVEY_HARNESS_PROBE`（可用性检查不再做真实模型调用）、`COVEY_JUDGE_GATEWAY`（小模型判断不再走模型网关，改问 Claude Code、Codex 或 Antigravity 自己的命令行）、`COVEY_BOARD`（菜单「看板」每个部署都有）、`COVEY_PROJECT_STYLE_KEEP`（负责人改过的汇报风格总会记下）。各自现在的行为见[已下线的功能](legacy.md#已下线的功能)。
+这个版本起不再读的开关，清单里留着也不报错：`COVEY_TURN_EXPORT`（任务卡「下载请求与结果」整块删了）、`COVEY_HARNESS_PROBE`（可用性检查不再做真实模型调用）、`COVEY_JUDGE_GATEWAY`（后台的一问一答不再走模型网关，改问[辅助模型](#辅助模型)选的 Harness 自己的命令行）、`COVEY_BOARD`（菜单「看板」每个部署都有）、`COVEY_PROJECT_STYLE_KEEP`（负责人改过的汇报风格总会记下）。各自现在的行为见[已下线的功能](legacy.md#已下线的功能)。

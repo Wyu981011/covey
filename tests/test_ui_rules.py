@@ -381,9 +381,49 @@ class ButtonWordsTest(unittest.TestCase):
                     self.assertNotIn(label, retired, f"{key} 的按钮“{label}”是替换掉的写法（U6）")
 
 
+class TidyFailedTest(unittest.TestCase):
+    """U13: a 整理 that failed says through which Harness, why and what next, its buttons by the reason; 过一会儿再试 only for
+    what passes by itself."""
+
+    def test_the_failed_cards_say_who_why_and_next(self):
+        from covey.cards.project_proposal import OPEN_SETTINGS_KIND
+        want = {"tidy.tidy_failed_login": (("换辅助模型", "看诊断"), "Codex", False),
+                "tidy.tidy_failed_refused": (("换辅助模型",), "Claude Code", False),
+                "tidy.tidy_failed_timeout": ((), "Codex", True),
+                "tidy.tidy_failed_none": (("换辅助模型",), "", False)}
+        for key, (labels, harness, retry) in want.items():
+            with self.subTest(key=key):
+                card = CARDS[key]
+                text = "\n".join(shown_texts(card))
+                self.assertIn("这次没整理成：" + harness, text)
+                self.assertEqual("过一会儿再试" in text, retry)
+                found = [words(button) for button in buttons(card)]
+                self.assertEqual(tuple(found), labels)
+                self.assertTrue(all(kind(button) == OPEN_SETTINGS_KIND for button in buttons(card)))
+
+    def test_a_card_kept_before_the_reason_codes_promises_no_retry(self):
+        self.assertNotIn("过一会儿再试", "\n".join(shown_texts(CARDS["tidy.tidy_failed"])))
+
+
+class AssistSectionTest(unittest.TestCase):
+    """U14: 辅助模型 is a section of 配置 of its own, folded like the others, its row and its line when open, there with the
+    butler off too."""
+
+    def test_open_closed_and_without_the_butler(self):
+        from covey.cards.butler_panel import ASSIST, ASSIST_NOTE, SECTION
+        opened = "\n".join(shown_texts(CARDS["settings.config_assist"]))
+        self.assertIn("**辅助模型**", opened)
+        self.assertIn(ASSIST_NOTE, opened)
+        self.assertIn("现在：", opened)
+        values = [node["value"] for node in walk(CARDS["settings.config_assist"]) if isinstance(node.get("value"), dict)]
+        self.assertTrue(any(value.get("kind") == ASSIST for value in values))
+        closed = [node["value"] for node in walk(CARDS["settings.config_assist_closed"]) if isinstance(node.get("value"), dict)]
+        self.assertTrue(any(value.get("kind") == SECTION and value.get("open") == "assist" for value in closed))
+
+
 # The rules of this module, by their number in docs/ui.md 13.
 RULES = {"U1": "BandTest", "U2": "HeaderTest", "U3": "SpeakerRowTest", "U4": "QuestionButtonsTest", "U5": "ModelChoiceTest",
-         "U6": "ButtonWordsTest", "U11": "BoardBandTest"}
+         "U6": "ButtonWordsTest", "U11": "BoardBandTest", "U13": "TidyFailedTest", "U14": "AssistSectionTest"}
 
 
 def decisions() -> list:

@@ -248,3 +248,29 @@
 .cv .st-cell>.st-c>.st-pop,.cv .st-cell .st-pop{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:5;padding:6px 10px;border:1px solid var(--fail);border-radius:8px;background:var(--s1);color:var(--fail);font-size:12px;line-height:1.5;box-shadow:0 4px 14px rgba(0,0,0,.25);overflow-wrap:anywhere;grid-column:auto!important;padding:6px 10px!important}
 @keyframes st-spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.cv .st-cell.saving::after{animation:none}}
+
+/* 辅助模型（T884）：说明下面一行现在实际用的模型；“后台活最近一次”小表，六列（功能、用了谁、结果、原因、耗时、时间），
+   手机上每行两层：功能 用了谁 结果 / 原因 · 耗时 · 时间。成功用结果色，调了没成用停住了的红，没调模型灰 */
+.cv .st-now{color:var(--t2)}
+.cv .st-rec{font-size:12.5px}
+.cv .st-rec-r{display:grid;grid-template-columns:88px minmax(0,1.3fr) 64px minmax(0,1.6fr) 60px 108px;gap:4px 12px;align-items:baseline;
+  padding:9px 16px;border-top:1px solid var(--line);color:var(--t2);line-height:1.5}
+.cv .st-rec-r:first-child{border-top:0}
+.cv .st-rec-h{color:var(--t3);font-size:12px;padding-top:7px;padding-bottom:7px;background:var(--s2)}
+.cv .st-rec-r>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cv .st-rec-f{color:var(--t1)}
+.cv .st-rec-o.ok{color:var(--done)}
+.cv .st-rec-o.bad,.cv .st-rec-r.bad .st-rec-y{color:var(--fail)}
+.cv .st-rec-o.off{color:var(--t3)}
+.cv .st-rec-t,.cv .st-rec-a{color:var(--t3);font-variant-numeric:tabular-nums}
+@media (max-width:767px){
+  .cv .st-rec-h{display:none}
+  .cv .st-rec-r{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"f w o" "y y y" "t a a";gap:2px 10px;padding:10px 12px}
+  .cv .st-rec-f{grid-area:f}
+  .cv .st-rec-w{grid-area:w}
+  .cv .st-rec-o{grid-area:o;justify-self:end}
+  .cv .st-rec-y{grid-area:y;white-space:normal;overflow-wrap:anywhere}
+  .cv .st-rec-r:not(.bad):not(.off) .st-rec-y{display:none}
+  .cv .st-rec-t{grid-area:t}
+  .cv .st-rec-a{grid-area:a;justify-self:end}
+}

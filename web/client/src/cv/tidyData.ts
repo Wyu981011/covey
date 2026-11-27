@@ -1,6 +1,6 @@
 /** 整理专项的建议：类型来自共享接口（v16），这里是网页自己的词和看板面板的纯函数（npm run test:tidy） */
-import type { TidyData, TidyKind, TidyProposal } from '@shared/api.interface';
-export type { TidyKind, TidyState, TidyTopic, TidyProposal, TidyData } from '@shared/api.interface';
+import type { TidyData, TidyKind, TidyLastRun, TidyProposal } from '@shared/api.interface';
+export type { TidyKind, TidyState, TidyTopic, TidyProposal, TidyData, TidyLastRun } from '@shared/api.interface';
 
 /** 已定的建议，Covey 没给 note 时的兜底词 */
 export const TIDY_WORD: Record<string, string> = { done: '已照办', declined: '不用', failed: '没做成', expired: '已过时', never: '以后不再提议' };
@@ -22,6 +22,8 @@ export function outcome(p: Pick<TidyProposal, 'kind' | 'state'>): { word: string
 
 /** 一条建议此刻的样子：id 加状态。点「知道了」记下当时全部的样子；出现没记过的（新建议、状态变了）面板再出来 */
 export const mark = (p: Pick<TidyProposal, 'id' | 'state'>): string => `${p.id}:${p.state}`;
+/** 没整理成的那一次也记一个样子：点「知道了」收走，下一次没整理成再出来 */
+export const runMark = (r: Pick<TidyLastRun, 'run' | 'state'>): string => `run:${r.run}:${r.state}`;
 
 export interface TidyLook {
   /** 要你定的，Covey 的顺序 */
@@ -34,6 +36,8 @@ export interface TidyLook {
   batch: string;
   marks: string[];
   running: { done: number; total: number } | null;
+  /** 最近一次整理（T884，旧版 Covey 没有）：在跑时的进度、没整理成的原因 */
+  last: TidyLastRun | null;
 }
 
 export function look(d: TidyData): TidyLook {
@@ -44,18 +48,24 @@ export function look(d: TidyData): TidyLook {
     settled,
     failed: settled.filter((p: TidyProposal) => p.state === 'failed').length,
     batch: open.map((p: TidyProposal) => p.id).sort().join(','),
-    marks: d.proposals.map(mark),
+    marks: [...d.proposals.map(mark), ...(d.last_run?.state === 'failed' ? [runMark(d.last_run)] : [])],
     running: d.running ?? null,
+    last: d.last_run ?? null,
   };
 }
 
-/** 面板画不画：一条建议都没有不画（正在整理的进度在「整理」按钮旁）；有要你定的总是画；都定好了的，点过「知道了」、
-    没在整理、也没有新样子就不画 */
+/** 最近一次没整理成（没在整理）：它的原因 */
+export const failedRun = (l: TidyLook): TidyLastRun | null => (!l.running && l.last?.state === 'failed' ? l.last : null);
+
+/** 面板画不画：有要你定的、正在整理（画进度），总是画；最近一次没整理成、没点过「知道了」也画（原因和去设置）；一条建议
+    都没有就不画；都定好了的，点过「知道了」、也没有新样子就不画 */
 export function shown(l: TidyLook, gone: readonly string[]): boolean {
   if (l.open.length) return true;
-  if (!l.settled.length) return false;
   if (l.running) return true;
   const seen = new Set<string>(gone);
+  const fail: TidyLastRun | null = failedRun(l);
+  if (fail && !seen.has(runMark(fail))) return true;
+  if (!l.settled.length) return false;
   return l.marks.some((m: string) => !seen.has(m));
 }
 
@@ -90,6 +100,32 @@ export function remember(l: TidyLook, gone: readonly string[]): string[] {
 
 export const runWords = (r: { done: number; total: number }): string => `正在整理（${r.done}/${r.total}）`;
 
+/** 正在整理的进度：读到哪个话题（Covey 记下了的话）和读了几个，否则同 runWords */
+export function progressWords(l: TidyLook): string {
+  if (!l.running) return '';
+  const p = l.last?.state === 'running' ? l.last.progress : null;
+  if (p?.current && p.total) return `正在读 ${p.current}（${p.done}/${p.total}）`;
+  if (p && !p.current && p.total && p.done >= p.total) return `正在判断（${p.total} 个话题）`;
+  return runWords(l.running);
+}
+
+/** 进度条的比例（0 到 1）；不知道总数时 null */
+export function progressShare(l: TidyLook): number | null {
+  const r = l.running;
+  if (!r || !r.total) return null;
+  return Math.max(0, Math.min(1, r.done / r.total));
+}
+
+/** 没整理成的那句：整理卡上的原因（“Codex 登录失效或没有权限”） */
+export const failWords = (r: TidyLastRun): string => `这次没整理成：${r.why || '出错了'}`;
+
+/** 下一步：过一会儿真能好的（超时、限流、临时故障）说再试；其余去设置换一个辅助模型 */
+export const nextWords = (r: TidyLastRun): string =>
+  r.retry ? '可以过一会儿再试。' : r.why_code === 'none' ? '整理专项要模型才能判断：在设置里选一个辅助模型。' : '在设置里换一个辅助模型更可能过。';
+
+/** 要不要给「去设置」：再试就能好的不给 */
+export const wantsSettings = (r: TidyLastRun): boolean => !r.retry;
+
 export interface TidyWords {
   /** 要你定 N 条、都定好了，或只在整理时的进度 */
   state: string;
@@ -103,14 +139,18 @@ export interface TidyWords {
   run: string;
   /** 都定好了时没做成几条：红字，要你看一眼 */
   failed: string;
+  /** 最近一次没整理成：那句原因（红字） */
+  fail: string;
 }
 
 /** 面板说什么：收成一行时整句都用，展开时标题栏用 state、run、failed */
 export function panelWords(l: TidyLook): TidyWords {
   const asking: boolean = l.open.length > 0;
   const list: TidyProposal[] = asking ? l.open : l.settled;
-  const run: string = l.running ? runWords(l.running) : '';
-  if (!list.length) return { state: run, head: '', more: '', count: '', run: '', failed: '' };
+  const run: string = progressWords(l);
+  const bad: TidyLastRun | null = failedRun(l);
+  const fail: string = bad ? failWords(bad) : '';
+  if (!list.length) return { state: run || (bad ? '没整理成' : ''), head: bad ? bad.why || '' : '', more: '', count: '', run: '', failed: '', fail };
   return {
     state: asking ? `要你定 ${list.length} 条` : '都定好了',
     head: list[0].headline,
@@ -118,8 +158,9 @@ export function panelWords(l: TidyLook): TidyWords {
     count: asking ? '' : `${list.length} 条`,
     run,
     failed: !asking && l.failed ? `${l.failed} 条没做成` : '',
+    fail,
   };
 }
 
-/** 「知道了」能不能点：都定好了、没在整理 */
-export const dismissible = (l: TidyLook): boolean => !l.open.length && !l.running && l.settled.length > 0;
+/** 「知道了」能不能点：都定好了（或最近一次没整理成）、没在整理 */
+export const dismissible = (l: TidyLook): boolean => !l.open.length && !l.running && (l.settled.length > 0 || !!failedRun(l));

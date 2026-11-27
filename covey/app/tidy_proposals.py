@@ -19,8 +19,8 @@ CHOICES = 20  # Topics the proposal card's select offers: the proposal's, then t
 
 
 class ProposalCards:
-    """The proposal cards. ``runtime``: the log. ``messenger``, ``voice``: sending and redrawing. ``env``: the judge's tools (app/tidy_facts.py
-    judge_tools). ``words``: app/tidy_words.py TopicWords, the rows of topics and of the 整理专项 card. ``applier``:
+    """The proposal cards. ``runtime``: the log. ``messenger``, ``voice``: sending and redrawing. ``env``: its ``topics``, where the 辅助模型's
+    calls go (app/assist.py). ``words``: app/tidy_words.py TopicWords, the rows of topics and of the 整理专项 card. ``applier``:
     app/tidy_apply.py Applier, which makes the project when it needs no card."""
 
     def __init__(self, runtime, messenger, voice, env, words, applier) -> None:
@@ -270,6 +270,8 @@ class ProposalCards:
                    and sorter.needs_gist(state, topic, sorter.material(state, chat, topic, now).last_job)]
         if not missing:
             return
-        backend, context = facts.judge_tools(self.env)
-        for topic in missing:
-            sorter.backfill(state, chat, topic, backend=backend, ctx=context, log=self.runtime.log, now=now)
+        from covey.app import assist
+        where = sorter.Where(getattr(self.env, "topics", None), assist.BACKFILL)
+        for topic in missing:  # Each read routed anew (app/assist.py): a model that went away is not asked again.
+            if sorter.stops(sorter.backfill(state, chat, topic, where=where, log=self.runtime.log, now=now)):
+                return

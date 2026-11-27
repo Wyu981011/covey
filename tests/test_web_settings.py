@@ -139,6 +139,47 @@ class WebSettingsTest(UnifiedCase):
                 self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="dsh"), ("failed", web_settings.GONE))
         self.assertEqual(self.op(what="row", kind=cards.LEAD_HARNESS, option="claude"), ("failed", web_settings.GONE))
 
+    def test_the_assist_section_its_row_and_the_recent_calls_with_the_butler_on_or_off(self):
+        """T884 辅助模型: 配置 has it whether the butler is on or not (the background calls run without it), its row changed on the
+        page through the card's code, ``words`` what it runs on now, ``recent`` the latest outcome of each background feature
+        (core/assist.py: who, the reason's code and words, ms, at; nothing the owner or a model said)."""
+        from covey.app import assist
+        from covey.core import assist as records
+        records.settle(self.ctx.state_dir, feature="tidy", harness="codex", model="gpt-6-astra", code="authentication_error",
+                       ms=900, manual=True)
+        records.settle(self.ctx.state_dir, feature="track", harness="claude", model="haiku", ms=1200)
+        assist.forget()
+        section = self.snap()["config"]["assist"]
+        self.assertEqual((section["title"], section["note"]), ("辅助模型", cards.ASSIST_NOTE))
+        row, = section["rows"]
+        self.assertEqual((row["kind"], row["current"], row["editable"]), (cards.ASSIST, cards.ASSIST_AUTO, True))
+        values = [o["value"] for o in row["options"]]
+        self.assertEqual((values[0], values[-1]), (cards.ASSIST_AUTO, cards.ASSIST_NONE))
+        self.assertIn("claude", values)
+        self.assertTrue(section["words"].startswith("现在：") or section["words"].startswith("现在用不了"), section["words"])
+        self.assertEqual([(r["feature"], r["ok"], r["code"], r["words"]) for r in section["recent"]],
+                         [("track", True, "", ""), ("tidy", False, "authentication_error", "登录失效或没有权限")])
+        self.assertEqual(self.op(what="row", kind=cards.ASSIST, option=cards.ASSIST_NONE),
+                         ("done", butler_panel.SAVED_OF[cards.ASSIST]))
+        self.assertTrue(settings.load(self.ctx.state_dir).assist.off)
+        assist.forget()
+        self.assertEqual(self.snap()["config"]["assist"]["words"], "后台活不调模型，只按规则做。")
+        settings.update(self.ctx.state_dir, enabled=False)  # 纯话题: still the page's to change.
+        self.assertEqual(self.op(what="row", kind=cards.ASSIST, option="claude")[0], "done")
+        self.assertEqual(settings.load(self.ctx.state_dir).assist, settings.AssistChoice(harness="claude"))
+        self.assertEqual(self.op(what="row", kind=cards.ASSIST, option="nope"), ("failed", web_settings.GONE))
+        with mock.patch.dict(os.environ, {"COVEY_BUTLER": "0"}):
+            self.assertIn("assist", self.snap()["config"])
+            self.assertEqual(self.op(what="row", kind=cards.ASSIST, option=cards.ASSIST_AUTO)[0], "done")
+        self.assertEqual(settings.load(self.ctx.state_dir).assist, settings.AssistChoice())
+
+    def test_a_background_call_pushes_the_settings_again(self):
+        """T884: the 辅助模型's record (assist-state.json) is in the stamps the push watches; the page has no timed full snapshot."""
+        from covey.core import assist as records
+        before = self.web.stamps()
+        records.settle(self.ctx.state_dir, feature="look", harness="claude", ms=10, manual=True)
+        self.assertNotEqual(self.web.stamps(), before)
+
     def test_a_row_changed_on_the_page_is_the_cards_change_and_shows_on_both(self):
         state, words = self.op(what="row", kind=cards.TOPIC_REDACTION, option="on")
         self.assertEqual((state, words), ("done", "已保存：之后新开的话题照这个来。"))

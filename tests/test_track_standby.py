@@ -102,9 +102,11 @@ class Base(unittest.TestCase):
                      LiveJob(2, "j2", "paused", "翻译 README", NOW - 100, NOW - 90))
         self.logs = []
 
-    def ask(self, text=SECRET):
+    def ask(self, text=SECRET, allow=None):
+        # app/assist.py starts the next standby (``rewarm``) for the route as it is then; here it is the same one.
         return track_judge.judge(Message(text, self.live, Quote(), now=NOW), backend=self.backend, ctx=self.ctx,
-                                 log=self.logs.append)
+                                 log=self.logs.append, rewarm=lambda: track_judge.warm(self.backend, self.ctx),
+                                 allow=allow)
 
     def lines(self):
         return [json.loads(line) for line in self.record.read_text().splitlines()] if self.record.exists() else []
@@ -387,6 +389,25 @@ class HedgeTest(Base):
         self.ask()
         self.assertEqual(self.started_count(4), 4)
         self.assertFalse(track_judge.warm(self.backend, self.ctx))
+
+    def test_a_standby_never_comes_back_after_a_shutdown_it_raced_with(self):
+        # T883 P0-4: a judge that took its backend before the owner moved 分流 off Claude Code warms again afterwards.
+        seen = track_standby.generation()
+        track_standby.shutdown()  # The settings changed meanwhile.
+        self.assertFalse(track_judge.warm(self.backend, self.ctx, generation=seen))
+        self.assertFalse(track_standby.held())
+        self.assertFalse(track_judge.warm(self.backend, self.ctx, allow=lambda: False))
+        self.assertFalse(track_standby.held())
+        self.assertEqual(self.started(), [])
+
+    def test_a_standby_is_not_handed_out_once_the_route_moved(self):
+        track_judge.warm(self.backend, self.ctx)
+        self.ready()
+        pid = self.started()[0]
+        verdict = self.ask(allow=lambda: False)  # Not Claude Code any more: a one-shot is not started either here.
+        self.assertTrue(self.gone(pid), "the standby is killed, not asked")
+        self.assertFalse(track_standby.held())
+        self.assertIn(verdict.why, ("ok", "exit_nonzero", "spawn_failed", "timeout"))
 
     def test_shutdown_kills_the_spares_too(self):
         self.primed(2)

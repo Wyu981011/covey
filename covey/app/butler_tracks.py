@@ -3,7 +3,7 @@ owner's goes when the butler's family (core/butler_tracks.py) has live tasks, an
 
 - ``Tracks.handle``, called by app/butler.py handle_event before its usual path: with no live task in the family
   it answers False and that path runs as it always did; else it builds the router's input (core/track_route.py Message:
-  the live tasks, what the message quotes), asks the router, asks the small model (app/track_judge.py) when the
+  the live tasks, what the message quotes), asks the router, asks the small model (app/assist.py, app/track_judge.py) when the
   rules cannot tell (no lock held), and acts: ``stop`` (the quoted or newest track's task, no task of its own),
   ``merge`` (a supplement to that track's task, or its answer when it waits for one) and ``new`` (``pick_slot``,
   ``enter``: the slot's topic.json, the message's alias moved to it, then the usual submission).
@@ -27,7 +27,7 @@ import json
 import time
 from pathlib import Path
 
-from covey.app import butler_reactions, runner_ipc, track_judge
+from covey.app import assist, butler_reactions, runner_ipc, track_judge
 from covey.core import butler_tracks as core
 from covey.core import butler as contract
 from covey.core import inbound_ledger
@@ -186,11 +186,11 @@ class Tracks:
             redacted = topic_redaction(ctx.state_dir, core.root_topic_id(chat))
         except ValueError:
             redacted = True
-        # The small model where it is (app/track_judge.py tools): never the butler's own Harness as such, whose command
-        # is Codex's or agy's when the butler runs there (asked as Claude Code, each judgment failed).
-        backend, own = self.judge_tools()
-        verdict = track_judge.judge(message, redacted=redacted, backend=backend, ctx=own, log=self.runtime.log)
-        track_judge.warm(backend, own)  # The standby it used is gone; the next one starts now.
+        # The 辅助模型's Harness (app/assist.py): one try, a new track on any failure; the next standby is started for the
+        # route as it is then, never with this call's backend.
+        topics = self.main.topics
+        verdict = assist.judge(message, topics=topics, redacted=redacted, log=self.runtime.log)
+        assist.warm(topics)
         if verdict.route == "merge" and verdict.target is not None:
             fresh = self.entries(ctx, chat, now)  # The model took a while: the task may have ended meanwhile.
             target = self.newest_of(fresh, verdict.target)
@@ -198,11 +198,6 @@ class Tracks:
                 return route.Decision(route.MERGE, verdict.target, "judge", target.live.job_id,
                                       answers=target.live.phase == route.PAUSED)
         return route.Decision(route.NEW, None, "judge")
-
-    def judge_tools(self) -> tuple:
-        """(backend, context) of the small model that decides a message the rules could not (app/track_judge.py tools):
-        the Claude Harness's, else Codex's or Antigravity's own CLI; (None, None) with none (a gateway may still answer)."""
-        return track_judge.tools(getattr(self.main.topics, "apps", {}) or {})
 
     @staticmethod
     def newest_of(entries, slot):
@@ -247,8 +242,8 @@ class Tracks:
         started = time.monotonic()
         now = time.time()
         # A Claude Code ready for the judge of the next message (app/track_standby.py): this message may start the task
-        # that message will have to be told from. Nothing where the small model is not Claude Code (``warm``).
-        track_judge.warm(*self.judge_tools())
+        # that message will have to be told from. Nothing where the 辅助模型 is not Claude Code (app/assist.py warm).
+        assist.warm(self.main.topics)
         entries = self.entries(ctx, chat, now)
         if not entries:
             self.remember_bare(chat, 0, bare, now)

@@ -48,6 +48,7 @@
     "upgrade": "npx -y @lark-apaas/fullstack-cli sync --disable-gen-openapi",
     "test:room": "node --test scripts/room.test.mjs",
     "test:tidy": "node --test scripts/tidy-panel.test.mjs",
+    "test:assist": "node --import ./scripts/alias.mjs --test scripts/assist-recent.test.mjs",
     "test:usage": "node --test scripts/usage.test.mjs",
     "test:collab": "node --import ./scripts/alias.mjs --test scripts/collab.test.mjs",
     "test:memory": "node --import ./scripts/alias.mjs --test scripts/memory.test.mjs",

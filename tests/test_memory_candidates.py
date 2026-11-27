@@ -140,7 +140,7 @@ class FindTests(State):
         self.turn("e" * 16, "以后先跑全量再说通过")
 
     def find(self, groups=None, error=None):
-        def ask(rows, existing, declined, backend, ctx, state_dir):
+        def ask(rows, existing, declined, topics, state_dir):
             if error:
                 raise Failed(error)
             self.asked = (rows, existing, declined)

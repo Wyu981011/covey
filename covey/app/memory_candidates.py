@@ -10,10 +10,9 @@ before the digest time, of ordinary topics (not the butler's, not a 代答 topic
 topic with redaction on or whose setting cannot be read; each message split into sentences, the ones with a correction's word
 (CUES) kept, at most PER_TOPIC a topic and MAX_SENTENCES in all. Nothing is read unless two topics or more have such words.
 
-Who groups them (``find``): the small model (where app/track_judge.py ``ask`` puts it, as app/patrol_judge.py does:
-Haiku through the Claude Harness's own wrapping, else Codex's or Antigravity's own
-CLI; no tools, at most JUDGE_SECONDS) groups the sentences that say the same correction and words each group as one rule;
-without any of them, or when the call fails, the rules alone group sentences that read nearly the same
+Who groups them (``find``): the small model (the 辅助模型's light one, app/assist.py ask, CANDIDATES; no tools, at most
+JUDGE_SECONDS) groups the sentences that say the same correction and words each group as one rule;
+with none (不用模型, the one named unusable now), or when the call fails, the rules alone group sentences that read nearly the same
 (core/topic_gist.py ``same_essence``): a correction said in other words is then missed, never invented. A group must span two
 topics or more; one that says what a principle already says (core/principles.py ``same_key``) or what the owner declined is
 left out.
@@ -50,7 +49,7 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from covey.app import track_judge
+from covey.app import assist, track_judge
 from covey.app.track_standby import Failed
 from covey.core import memory, memory_review, memory_usage, principles, topic_gist, turn_source
 from covey.core.board_read import ended_at
@@ -250,13 +249,12 @@ def by_rules(rows) -> list:
     return groups
 
 
-def ask(rows, existing, declined, backend, ctx, state_dir):
-    """The model's groups of ``rows`` (app/track_judge.py ``ask``: the gateway, Claude Code, Codex's or Antigravity's own
-    CLI); Failed when it gave none."""
+def ask(rows, existing, declined, topics, state_dir):
+    """The model's groups of ``rows`` through the 辅助模型 (app/assist.py ask, CANDIDATES); Failed when it gave none."""
     data = {"sentences": [{"index": i + 1, "topic": row["label"], "text": row["text"]} for i, row in enumerate(rows)],
             "principles": [cut(text, SENTENCE) for text in existing][-30:], "declined": declined[-30:]}
-    raw = track_judge.ask(SYSTEM, json.dumps(data, ensure_ascii=False), backend=backend, ctx=ctx, limit=JUDGE_SECONDS,
-                          cwd=Path(state_dir) / "memory-candidates")
+    raw = assist.ask(assist.CANDIDATES, SYSTEM, json.dumps(data, ensure_ascii=False), topics=topics, limit=JUDGE_SECONDS,
+                     cwd=Path(state_dir) / "memory-candidates", state=state_dir)
     return parse(track_judge.answer_text(raw, "claude"), rows)
 
 
@@ -271,7 +269,7 @@ def workspace_of(state_dir, topics) -> str:
     return names.pop() if len(names) == 1 else ""
 
 
-def find(state_dir, chat, slot, *, owner_turn, backend=None, ctx=None, log=print) -> list:
+def find(state_dir, chat, slot, *, owner_turn, topics=None, log=print) -> list:
     """The day's candidates before ``slot``: [{text, topics, labels, workspace}], at most SHOWN, none already a principle
     or declined (the module's docstring). Never raises; the model is called outside any lock."""
     try:
@@ -284,7 +282,7 @@ def find(state_dir, chat, slot, *, owner_turn, backend=None, ctx=None, log=print
         existing = [row["text"] for row in principles.entries(state_dir)]
         declined = load(state_dir)["declined"]
         try:
-            groups, via = ask(rows, existing, declined, backend, ctx, state_dir), "model"
+            groups, via = ask(rows, existing, declined, topics, state_dir), "model"
         except Failed as exc:
             log(f"memory candidates judge failed reason={exc.reason}; the rules alone")
             groups, via = by_rules(rows), "rules"
@@ -452,14 +450,12 @@ def rows_of(state_dir, slot) -> list:
 
 
 class Candidates:
-    """The digest's hook (app/digest.py ``candidates``): ``topics`` for the small model that judges (app/track_judge.py
-    tools), ``runtime`` for the owner and the log."""
+    """The digest's hook (app/digest.py ``candidates``): ``topics`` for the 辅助模型 that judges (app/assist.py), ``runtime``
+    for the owner and the log."""
 
     def __init__(self, runtime, topics):
         self.runtime, self.topics = runtime, topics
 
     def offer(self, ctx, chat, slot) -> list:
-        backend, context = track_judge.tools(self.topics.apps)  # Claude Code, else Codex's or agy's own CLI.
         return offer(ctx.state_dir, chat, slot, lambda: find(
-            ctx.state_dir, chat, slot, owner_turn=self.runtime.access.owner_turn, backend=backend, ctx=context,
-            log=self.runtime.log))
+            ctx.state_dir, chat, slot, owner_turn=self.runtime.access.owner_turn, topics=self.topics, log=self.runtime.log))
