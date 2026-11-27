@@ -38,7 +38,7 @@ from pathlib import Path
 
 from covey.core import knowledge, memory_rev, principles, project_memory, projects, turn_source
 from covey.core.locks import shared_file_lock
-from covey.core.state import epoch_seconds, read_object, write_json, write_private_text
+from covey.core.state import epoch_seconds, read_json, read_object, write_json, write_private_text
 
 KINDS = ("rule", "decision", "note")
 SCOPES = ("global", "project", "topic")
@@ -76,7 +76,8 @@ LOG_DAYS = 90  # Of memory/log.jsonl (core/maintenance_rules.py MemoryLog).
 VOID_DAYS = 30  # A void decision's events go from decisions.jsonl after this (core/maintenance_rules.py Decisions).
 _SNAP = ("title", "text", "why", "kind", "said", "status", "superseded_by", "repos")
 _ID = re.compile(r"^[0-9A-Za-z][0-9A-Za-z_\-]{0,80}$")
-_SENTENCE = re.compile(r"[。！？!?；;\n]")
+_SENTENCE = re.compile(r"[。！？?；\n]")  # Not the half-width ! and ; (``!248``, ``a; b``: inside a sentence).
+TITLE_MIN = 8  # A first sentence shorter than this (主人定（11-23）) takes the next one too.
 
 
 @dataclass(frozen=True)
@@ -245,12 +246,19 @@ def limit_of(kind: str) -> int:
 
 
 def auto_title(text, kind: str = "") -> str:
-    """A title for an entry that has none: an answer's question (``主人答：Q→A``), else the first sentence, ≤ TITLE_CHARS."""
+    """A title for an entry that has none: an answer's question (``主人答：Q→A``), else the first sentence (the next ones too
+    while it is shorter than TITLE_MIN), ≤ TITLE_CHARS."""
     text = clean(text)
     if text.startswith("主人答："):
         text = text[len("主人答："):].split("→", 1)[0]
-    end = _SENTENCE.search(text)
-    head = (text[:end.start() + (1 if end.group() in "？?" else 0)] if end else text).strip() or text
+    head = text
+    for end in _SENTENCE.finditer(text):
+        head = text[:end.start() + (1 if end.group() in "？?" else 0)].strip()
+        if len(head.rstrip("，,、：: 。！？?；")) >= TITLE_MIN:
+            break
+    else:
+        head = text
+    head = re.sub(r"\s*\n\s*", " ", head).strip() or text
     head = head.rstrip("，,、：: ")
     return head if len(head) <= TITLE_CHARS else head[:TITLE_CHARS - 1] + "…"
 
@@ -462,7 +470,7 @@ def assign(state_dir, pairs, *, aliases=None) -> dict:
         return {ref: known["refs"][ref] for ref, _ in pairs}
     try:
         with shared_file_lock(codes_path(state_dir)):
-            data = _codes_parse(read_object(codes_path(state_dir)))
+            data = _codes_parse(read_for_write(codes_path(state_dir)))
             for ref, kind in missing:
                 if ref in data["refs"]:
                     continue
@@ -481,7 +489,7 @@ def assign(state_dir, pairs, *, aliases=None) -> dict:
 def rebind(state_dir, old: str, new: str) -> None:
     """The code of ``old`` names ``new`` from now on (an entry moved), ``old`` an alias of it."""
     with shared_file_lock(codes_path(state_dir)):
-        data = _codes_parse(read_object(codes_path(state_dir)))
+        data = _codes_parse(read_for_write(codes_path(state_dir)))
         code = data["refs"].pop(old, None)
         if code:
             data["codes"][code] = new
@@ -497,7 +505,7 @@ def code_for(state_dir, kind: str) -> str:
     if kind not in KINDS:
         raise ValueError(f"kind {kind!r}")
     with shared_file_lock(codes_path(state_dir)):
-        data = _codes_parse(read_object(codes_path(state_dir)))
+        data = _codes_parse(read_for_write(codes_path(state_dir)))
         code = next(code for code in _candidates(kind, secrets.token_hex(8)) if code not in data["codes"])
         data["codes"][code] = ""
         _write_codes(state_dir, data)
@@ -522,7 +530,7 @@ def note_topic(state_dir, topic_id, *, now=None, gone=False) -> None:
         return
     try:
         with shared_file_lock(topics_path(state_dir)):
-            data = read_object(topics_path(state_dir))
+            data = read_for_write(topics_path(state_dir))
             found = data.get("topics") if isinstance(data.get("topics"), dict) else {}
             if gone:
                 found.pop(topic_id, None)
@@ -553,7 +561,7 @@ def seed_topics(state_dir, *, now=None) -> int:
         if stamps:
             found[name] = max(stamps)
     with shared_file_lock(topics_path(state_dir)):
-        data = read_object(topics_path(state_dir))
+        data = read_for_write(topics_path(state_dir))
         noted = data.get("topics") if isinstance(data.get("topics"), dict) else {}
         found.update({tid: at for tid, at in noted.items() if _number(at) >= started})  # Written during the walk.
         if noted != found and (found or data):  # Written only when it says something new.
@@ -576,7 +584,7 @@ def _put_sidecar(state_dir, scope, owner_key, changes: dict) -> None:
     """entry id -> fields merged into its record (a value None takes the key out), under the file's lock."""
     path = sidecar_path(state_dir, scope, owner_key)
     with shared_file_lock(path):
-        data = read_object(path)
+        data = read_for_write(path)
         found = data.get("entries") if isinstance(data.get("entries"), dict) else {}
         for entry_id, fields in changes.items():
             row = dict(found.get(entry_id) or {})
@@ -872,7 +880,7 @@ def add(state_dir, *, kind: str, scope: str, owner_key: str = "", text: str, tit
              "aliases": list(_refs(aliases)) or None, "status": status if status != "active" else None, "edited_at": None}
     if scope == "global":
         with shared_file_lock(global_path(state_dir)):
-            data = read_object(global_path(state_dir))
+            data = read_for_write(global_path(state_dir))
             rows = data.get("entries") if isinstance(data.get("entries"), list) else []
             key = same_key(text)
             row = next((row for row in rows if isinstance(row, dict) and row.get("kind") == kind
@@ -978,7 +986,7 @@ def _update(state_dir, entry: Entry, changes: dict, now: float) -> Entry:
         return entry
     if store == "global":
         with shared_file_lock(global_path(state_dir)):
-            data = read_object(global_path(state_dir))
+            data = read_for_write(global_path(state_dir))
             rows = data.get("entries") if isinstance(data.get("entries"), list) else []
             row = next((row for row in rows if isinstance(row, dict) and str(row.get("id")) == entry_id), None)
             if row is None:
@@ -1169,7 +1177,7 @@ def move(state_dir, key: str, *, scope: str, owner_key: str = "", base: str = ""
 def _keep_code(state_dir, old: Entry, new: Entry) -> None:
     """The moved entry keeps the code it had: the registry's code of ``old`` names ``new``; the one ``new`` got is dropped."""
     with shared_file_lock(codes_path(state_dir)):
-        data = _codes_parse(read_object(codes_path(state_dir)))
+        data = _codes_parse(read_for_write(codes_path(state_dir)))
         given = data["refs"].pop(new.ref, None)
         if given and data["codes"].get(given) == new.ref:
             data["codes"][given] = ""
@@ -1180,7 +1188,7 @@ def _keep_code(state_dir, old: Entry, new: Entry) -> None:
     if new.scope == "global":
         _, _, gid = parse_ref(new.ref)
         with shared_file_lock(global_path(state_dir)):
-            data = read_object(global_path(state_dir))
+            data = read_for_write(global_path(state_dir))
             rows = data.get("entries") if isinstance(data.get("entries"), list) else []
             for row in rows:
                 if isinstance(row, dict) and str(row.get("id")) == gid:
@@ -1263,8 +1271,26 @@ def undo(state_dir, token: str, *, who: str = "owner", now: float | None = None)
 # -------------------------------------------------------------------------------------------------------- review queue
 
 
-def _review_data(state_dir) -> dict:
-    data = read_object(review_path(state_dir))
+def read_for_write(path) -> dict:
+    """The JSON object in ``path`` a write is about to change: {} when there is no file yet; OSError when there is one that
+    cannot be read or parsed (a network disk's passing error, a torn file), so the write is refused rather than writing the
+    whole file over with only what it adds (T870 Wave 3.5; core/principles.py and core/repomap.py keep the same guard)."""
+    path = Path(path)
+    try:
+        value = read_json(path)
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as exc:
+        if not path.exists():
+            return {}
+        raise OSError(f"{path.name} 读不出来，这次不写，免得盖掉原来的内容：{type(exc).__name__}") from exc
+    if not isinstance(value, dict):
+        raise OSError(f"{path.name} 不是一个对象，这次不写")
+    return value
+
+
+def _review_data(state_dir, *, writing=False) -> dict:
+    data = (read_for_write if writing else read_object)(review_path(state_dir))
     items = data.get("items") if isinstance(data.get("items"), list) else []
     return {"version": VERSION, "items": [dict(item) for item in items if isinstance(item, dict) and item.get("key")]}
 
@@ -1307,7 +1333,7 @@ def review_put_many(state_dir, items, *, now: float | None = None) -> list[tuple
         return []
     out = []
     with shared_file_lock(review_path(state_dir)):
-        data = _review_data(state_dir)
+        data = _review_data(state_dir, writing=True)
         by_fp = {old.get("fp"): old for old in data["items"]}
         taken = {old["key"] for old in data["items"]}
         for item in wanted:
@@ -1339,7 +1365,7 @@ def review_set(state_dir, key: str, state: str, *, by: str = "owner", now: float
         raise ValueError(f"review state {state!r}")
     stamp = time.time() if now is None else now
     with shared_file_lock(review_path(state_dir)):
-        data = _review_data(state_dir)
+        data = _review_data(state_dir, writing=True)
         item = next((item for item in data["items"] if item["key"] == key), None)
         if item is None:
             return None
@@ -1352,10 +1378,10 @@ def review_set(state_dir, key: str, state: str, *, by: str = "owner", now: float
 # -------------------------------------------------------------------------------------------------------- imports
 
 
-def imports(state_dir) -> dict:
+def imports(state_dir, *, writing=False) -> dict:
     """memory/imports.json: {items: fingerprint -> {state, harness, file, bucket, at, entry_ref?}, files: file -> [mtime,
     size] (what the nightly scan saw, core/harness_memory.py fresh)}."""
-    data = read_object(imports_path(state_dir))
+    data = (read_for_write if writing else read_object)(imports_path(state_dir))
     items = data.get("items") if isinstance(data.get("items"), dict) else {}
     files = data.get("files") if isinstance(data.get("files"), dict) else None
     return {"items": {str(k): dict(v) for k, v in items.items() if isinstance(v, dict)}, "files": files}
@@ -1364,7 +1390,7 @@ def imports(state_dir) -> dict:
 def imports_update(state_dir, change) -> dict:
     """``change(data)`` (``imports``'s, changed in place) written back under the file's lock; the data."""
     with shared_file_lock(imports_path(state_dir)):
-        data = imports(state_dir)
+        data = imports(state_dir, writing=True)
         change(data)
         write_json(imports_path(state_dir), {"version": VERSION, "items": data["items"],
                                              **({"files": data["files"]} if data["files"] is not None else {})},
@@ -1462,7 +1488,7 @@ def sync_legacy(state_dir, *, now: float | None = None) -> dict:
     legacy = _legacy_global(state_dir)
     principles_ok = principles.readable(state_dir)
     with shared_file_lock(global_path(state_dir)):
-        data = read_object(global_path(state_dir))
+        data = read_for_write(global_path(state_dir))
         rows = [row for row in data.get("entries") or () if isinstance(row, dict)]
         by_alias = {alias: row for row in rows for alias in row.get("aliases") or ()}
         taken = {str(row.get("id")) for row in rows}
@@ -1626,7 +1652,7 @@ def unguarded(state_dir, pid) -> int:
 def mark_migrated(state_dir, **fields) -> None:
     """``fields`` merged into memory/global.json's top level (what the migration saw), under its lock."""
     with shared_file_lock(global_path(state_dir)):
-        data = read_object(global_path(state_dir))
+        data = read_for_write(global_path(state_dir))
         data.setdefault("version", VERSION)
         data.setdefault("entries", [])
         data.update(fields)
@@ -1722,7 +1748,7 @@ def export_legacy(state_dir, *, now: float | None = None) -> dict:
 def _set_global(state_dir, ref, **fields) -> None:
     _, _, gid = parse_ref(ref)
     with shared_file_lock(global_path(state_dir)):
-        data = read_object(global_path(state_dir))
+        data = read_for_write(global_path(state_dir))
         rows = data.get("entries") if isinstance(data.get("entries"), list) else []
         for row in rows:
             if isinstance(row, dict) and str(row.get("id")) == gid:

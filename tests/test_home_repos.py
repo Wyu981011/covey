@@ -487,6 +487,35 @@ class ReposTurnTest(Sandbox):
         self.assertNotIn("<<<", block)
         self.assertEqual(repomap.read(self.state)[0].last_used > 0, True)
 
+    def test_the_map_is_noted_later_and_a_turn_that_changes_nothing_takes_no_lock(self):
+        """T870 Wave 3.5 (Fable P1-12): the end of every turn read topic.json under LOCK and took the map's file lock before
+        its answer went out. A turn that changes nothing of the topic's repos takes no lock; the map is noted after."""
+        import threading
+        from covey.core import topics as core_topics
+        self.topic(home_start=True)
+        self.job.tool_trace = trace_of(("读取文件", str(self.repo / "AGENTS.md")))
+        note = repos_turn.settle(self.ctx(), self.job, None, later=True)
+        self.assertTrue(callable(note))
+        self.assertEqual(repomap.read(self.state)[0].last_used, 0.0)  # Not yet: after the answer.
+        note()
+        self.assertGreater(repomap.read(self.state)[0].last_used, 0)
+        held, done = threading.Event(), threading.Event()
+
+        def hold():
+            with core_topics.LOCK:
+                held.set()
+                done.wait(5)
+        other = threading.Thread(target=hold)
+        other.start()
+        self.addCleanup(other.join)
+        held.wait(5)
+        try:
+            started = time.monotonic()
+            core_topics.update_repos(self.state, TOPIC, lambda entries: entries)  # Nothing changes: no LOCK.
+            self.assertLess(time.monotonic() - started, 1.0)
+        finally:
+            done.set()
+
     def test_the_tasks_requests_are_folded_in_with_their_worktree_and_base(self):
         self.topic(home_start=True)
         task = self.state / "runs" / "om_3"

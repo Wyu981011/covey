@@ -259,6 +259,65 @@ class ConfirmLegacyTest(Case):
         self.assertEqual((again.said, again.kind, again.status), ("owner", "rule", "active"))
 
 
+class UnreadableTest(Case):
+    """T870 Wave 3.5 (Fable P1-4): a memory file that is there but cannot be read (a network disk's passing error, a torn
+    file) refuses the write; it was read as {} and written over whole with only the new entry."""
+
+    def test_an_unreadable_file_is_not_written_over(self):
+        memstore.add(self.state, kind="rule", scope="global", text="回复主人用中文", now=NOW)
+        path = memstore.global_path(self.state)
+        good = path.read_text()
+        for broken in ('{"entries": [', "[1, 2]"):
+            path.write_text(broken)
+            memstore._cache.clear()
+            with self.assertRaises(OSError):
+                memstore.add(self.state, kind="rule", scope="global", text="部署前先跑预检", now=NOW + 1)
+            self.assertEqual(path.read_text(), broken)
+        path.write_text(good)
+        memstore._cache.clear()
+        memstore.add(self.state, kind="rule", scope="global", text="部署前先跑预检", now=NOW + 2)
+        self.assertEqual(len(memstore.entries(self.state, scope="global")), 2)
+
+    def test_the_codes_review_and_sidecar_files_too(self):
+        made = memstore.add(self.state, kind="note", scope="project", owner_key=PID, text="网页服务在 8080", now=NOW)
+        for path, write in ((memstore.codes_path(self.state), lambda: memstore.add(self.state, kind="note", scope="global",
+                                                                                  text="测试机在 3 楼", now=NOW + 1)),
+                            (memstore.review_path(self.state), lambda: memstore.review_put(self.state, {
+                                "type": "learn", "title": "先给结论", "text": "回复先给结论"})),
+                            (memstore.sidecar_path(self.state, "project", PID), lambda: memstore.edit(
+                                self.state, made.ref, title="网页端口", now=NOW + 2))):
+            with self.subTest(path=path.name):
+                before = path.read_text() if path.exists() else None
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{")
+                memstore._cache.clear()
+                try:
+                    write()  # The codes are given lazily: an entry may go without one for now, the registry untouched.
+                except OSError:
+                    pass
+                self.assertEqual(path.read_text(), "{")
+                if before is None:
+                    path.unlink()
+                else:
+                    path.write_text(before)
+                memstore._cache.clear()
+
+    def test_no_file_yet_is_an_empty_one(self):
+        self.assertEqual(memstore.read_for_write(self.state / "memory" / "nothing.json"), {})
+
+
+class AutoTitleTest(unittest.TestCase):
+    def test_half_width_bang_and_semicolon_do_not_end_a_sentence_and_a_short_one_takes_the_next(self):
+        """T870 Wave 3.5 (Fable P1-7): ``主人定（11-23）：!248 合进…`` was titled 主人定（11-23）; the title is what a rule past
+        its room carries and what the page lists."""
+        self.assertEqual(memstore.auto_title("主人定（11-23）：!248 合进主干后再部署。另外一句"), "主人定（11-23）：!248 合进主干后再部署")
+        self.assertEqual(memstore.auto_title("a; b; c 都要先跑测试。再说"), "a; b; c 都要先跑测试")
+        self.assertEqual(memstore.auto_title("短。也短。第三句话够长了。"), "短。也短。第三句话够长了")
+        self.assertEqual(memstore.auto_title("部署前先在预发环境验证。别的"), "部署前先在预发环境验证")
+        self.assertEqual(memstore.auto_title("主人答：现在部署吗？→部署（推荐）"), "现在部署吗？")
+        self.assertLessEqual(len(memstore.auto_title("很长" * 60)), memstore.TITLE_CHARS)
+
+
 class DecisionTest(Case):
     def test_old_answers_and_new_decisions_read_as_one(self):
         record = {"token": "0123456789abcdef", "topic_id": TID, "job_id": 3, "questions": [], "answers": {}}

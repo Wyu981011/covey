@@ -128,7 +128,9 @@ class ScanTest(Case):
         texts = {text for _, text in found}
         self.assertEqual({item.harness for item in items}, set(hm.HARNESSES))
         claude = found[("claude_code", "Write the final reply in Chinese English replies made the owner skip question cards.")]
-        self.assertEqual((claude.title, claude.type, claude.repo), ("reply-in-chinese", "feedback", "covey"))
+        # Its title the description's, not the file's slug of a name (T870 Wave 3.5, P1-5).
+        self.assertEqual((claude.title, claude.type, claude.repo), ("Write the final reply in Chinese", "feedback", "covey"))
+        self.assertEqual(found[("claude_code", "不要 cp -al。")].title, "不要 cp -al")  # No description: the body's, not "no-cp".
         self.assertIn("主人用中文交流，结论先行。", texts)
         self.assertIn("汇报要带证据 和命令输出。", texts)  # A continuation line joins its item.
         self.assertIn("搜索前先限定目录。", texts)
@@ -144,6 +146,22 @@ class ScanTest(Case):
         self.assertFalse(any(item.file.endswith("MEMORY.md") and item.harness == "claude_code" for item in items))
         self.assertEqual([item.fingerprint for item in self.scan()], [item.fingerprint for item in items])  # Stable.
         self.assertEqual(len({item.fingerprint for item in items}), len(items))
+
+    def test_a_claude_folder_of_no_repository_is_named_short(self):
+        """T870 Wave 3.5 (P1-5): the page grouped them under ``-mnt-bn-…-xuke-code-covey`` (the folder's dashed name)."""
+        Repo = type("Repo", (), {})
+        one = Repo()
+        one.path, one.name = "/absolute/work/covey", "covey"
+        self.assertEqual(hm.short_bucket(hm._dashed("/absolute/work/misc-tasks"), [one]), "misc-tasks")
+        self.assertEqual(hm.short_bucket(hm._dashed("/absolute/work"), [one]), "work")
+        self.assertEqual(hm.short_bucket("-somewhere-else-tool", [one]), "tool")
+        self.assertEqual(hm.short_bucket("/absolute/work/gateway", [one]), "/absolute/work/gateway")
+        bucket = self.home / ".claude" / "projects" / hm._dashed("/absolute/work/misc-tasks") / "memory"
+        bucket.mkdir(parents=True)
+        (bucket / "note.md").write_text("---\nname: tidy-note\ndescription: 杂活放 misc-tasks\ntype: project\n---\n杂活目录。\n")
+        page = hm.page(self.state, self.home, 0, items=self.scan())
+        row = next(row for row in page["items"] if row["text"].startswith("杂活放"))
+        self.assertEqual((row["bucket"], row["title"]), ("misc-tasks", "杂活放 misc-tasks"))
 
     def test_the_page_orders_flags_and_names_what_is_there_already(self):
         items = self.scan()

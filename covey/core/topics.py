@@ -227,14 +227,26 @@ def update_repos(state_dir: Path, topic_id: str, change) -> list:
     """``change(repos) -> repos`` applied to the topic's topic.json ``repos`` (a list of dicts) under LOCK; the list
     written, [] when the topic is not there. Nothing is written when nothing changed. Like every topic.json writer it
     holds LOCK of its own process only: the read, the change and the write follow each other at once (no git, no
-    network in between), so another process's write of the same moment is the one window left, as for the others."""
+    network in between), so another process's write of the same moment is the one window left, as for the others. Read
+    first without LOCK: a change that changes nothing (most turns' end) takes no lock at all (T870 Wave 3.5: the end of
+    every turn waited on it before its answer went out)."""
+    path = topic_file(Path(state_dir), topic_id)
+
+    def read():
+        data = read_json(path)
+        return data, [dict(item) for item in data.get("repos") or () if isinstance(item, dict)]
+    try:
+        _, before = read()
+    except (OSError, ValueError):
+        return []
+    after = change([dict(item) for item in before])
+    if after == before:
+        return after
     with LOCK:
-        path = topic_file(Path(state_dir), topic_id)
         try:
-            data = read_json(path)
+            data, before = read()
         except (OSError, ValueError):
             return []
-        before = [dict(item) for item in data.get("repos") or () if isinstance(item, dict)]
         after = change([dict(item) for item in before])
         if after != before:
             data["repos"] = after

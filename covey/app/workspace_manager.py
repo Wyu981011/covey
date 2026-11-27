@@ -13,6 +13,7 @@ nothing. Its builders stay in cards/workspace_manager.py for the cards already s
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from covey.app.card_actions import action_value
@@ -39,10 +40,27 @@ def is_hub(path):
     return path.parent.name == HUB_FOLDER
 
 
+def _real(path) -> str:
+    try:
+        return os.path.realpath(str(path)).rstrip('/') if path else ''
+    except (OSError, ValueError):
+        return str(path or '').rstrip('/')
+
+
+def _checkout(path) -> bool:
+    """Whether ``path`` may be a repository: a git checkout (its ``.git`` a directory, or a worktree's file), or a directory
+    not there now (the page says it is missing); False for a directory that is there and no checkout."""
+    try:
+        where = Path(path)
+        return (where / '.git').exists() or not where.is_dir()
+    except (OSError, ValueError):
+        return True
+
+
 def derived_repos(state_dir, home=None):
     """The repositories the old workspace list and the butler's 用途 say, as ``Repo``s (added_by ``migrate``), for a deployment without
-    ``repos.json``: read only, nothing is written. The home itself, a device's workspace and a name without an absolute path are left
-    out; ``last_used`` is the list's last use; the way a topic writes to it is the one the 新话题 default had (``run_mode``): ``worktree``
+    ``repos.json``: read only, nothing is written. The home itself (its real path too), a directory there that is no git checkout, a device's
+    workspace and a name without an absolute path are left out; ``last_used`` is the list's last use; the way a topic writes to it is the one the 新话题 default had (``run_mode``): ``worktree``
     for an own worktree, else ``inplace``, as every topic edited it before."""
     config = read_object(config_path(Path(state_dir)))
     found = config.get('workspaces') if isinstance(config.get('workspaces'), dict) else {}
@@ -53,11 +71,14 @@ def derived_repos(state_dir, home=None):
     except (OSError, ValueError, AttributeError):
         notes, mode = {}, 'direct'
     home = str(home or '').rstrip('/')
+    homes = {home, _real(home)} - {''}
     out = []
     for name, value in found.items():
         value = str(value)
-        if not isinstance(name, str) or not value.startswith('/') or devices.is_device_value(value) or value.rstrip('/') == home:
+        if not isinstance(name, str) or not value.startswith('/') or devices.is_device_value(value) or value.rstrip('/') in homes:
             continue
+        if _real(value) in homes or not _checkout(value):
+            continue  # The home under another name, or a directory a topic once ran in that is there and no repository.
         used = recent.get(name)
         out.append(repomap.Repo(name=name, path=value, note=str(notes.get(name) or ''), status='active',
                                 write_mode='worktree' if mode == 'worktree' else 'inplace', added_by='migrate',

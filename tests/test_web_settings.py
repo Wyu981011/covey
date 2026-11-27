@@ -31,6 +31,7 @@ class WebSettingsTest(UnifiedCase):
     def setUp(self):
         super().setUp()
         self.app.runtime.access.remember_owner_chat("dm")
+        (self.root / ".git").mkdir(exist_ok=True)  # docs is a checkout: before repos.json the page lists only those (T870 Wave 3.5).
         write_json(config_path(self.ctx.state_dir), {"default": "project", "workspaces": {
             "project": str(self.work), "docs": str(self.root), "gone": str(self.root / "nope")}})
         settings.update(self.ctx.state_dir, enabled=True)
@@ -320,6 +321,18 @@ class WebSettingsTest(UnifiedCase):
 
     def repos_file(self):
         return repomap.path(self.ctx.state_dir)
+
+    def test_before_the_map_the_home_by_another_name_and_a_plain_directory_are_no_repositories(self):
+        """T870 Wave 3.5 (P1-10, CUA C14): the old list had the home under a link's name and directories topics once ran in."""
+        self.worktrees_root()
+        plain = self.root / "plain-dir"
+        plain.mkdir()
+        link = self.root / "home-link"
+        link.symlink_to(self.work)
+        write_json(config_path(self.ctx.state_dir), {"default": "project", "workspaces": {
+            "project": str(self.work), "docs": str(self.root), "plain": str(plain), "again": str(link),
+            "gone": str(self.root / "nope")}})
+        self.assertEqual([i["name"] for i in self.snap()["repos"]["items"]], ["docs", "gone"])
 
     def test_the_repos_page_is_the_old_list_read_only_until_the_first_change(self):
         self.worktrees_root()

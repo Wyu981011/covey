@@ -118,16 +118,18 @@ def _workdir_repo(data) -> dict | None:
             "source": "touched", "first_at": now, "rules_read_at": now, "rules_miss": 0}
 
 
-def settle(ctx, job, task_dir) -> None:
+def settle(ctx, job, task_dir, *, later=False):
     """Fold what ``job``'s turn did with repositories into its topic: the ``covey repo use`` requests of its task
     (core/topic_repos.py ``requests``; their rules were printed, so read), the repositories its steps touched (rules
     read or not, a main checkout changed) and those whose rules ``tail`` inlined (read now); a repository written
-    without its rules gets ``rules_miss`` and its rules inlined next turn. Then the repo map takes the ones it used."""
+    without its rules gets ``rules_miss`` and its rules inlined next turn. Then the repo map takes the ones it used:
+    at once, or with ``later`` by the function returned (app/worker.py calls it once the answer is out: the map's file
+    lock waits on nothing before it). None when there is nothing to do later."""
     if getattr(ctx, "device", ""):
-        return
+        return None
     topic, data = _topic(ctx, job)
     if not topic or not data:
-        return
+        return None
     now = time.time()
     asked = topic_repos.requests(task_dir) if task_dir else []
     repos = repomap.read(ctx.state_dir)
@@ -202,11 +204,17 @@ def settle(ctx, job, task_dir) -> None:
     entries = update_repos(ctx.state_dir, topic, change)
     names = {repo.name for repo in found} | {str(request.get("name")) for request in asked}
     used = [repo for repo in map(topic_repos.from_dict, entries) if repo is not None and repo.name in names]
-    try:
-        repomap.note_used(ctx.state_dir, used, now=now)
-        repomap.render(ctx.state_dir, where)
-    except OSError:
-        pass
+
+    def note() -> None:
+        try:
+            repomap.note_used(ctx.state_dir, used, now=now)
+            repomap.render(ctx.state_dir, where)
+        except OSError:
+            pass
+    if later:
+        return note if used else None
+    note()
+    return None
 
 
 def repos_list(ctx) -> dict:

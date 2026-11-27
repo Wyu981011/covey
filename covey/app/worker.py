@@ -224,14 +224,26 @@ def process_bridge_reply_job(job: Any, ctx: Any, *, harness, runtime, messenger,
     runtime.log(f"finished reply job #{job.job_id}")
 
 
-def settle_repos(ctx, job, runtime) -> None:
+def settle_repos(ctx, job, runtime, *, later=False):
     """Once the turn has ended, before its result is recorded and sent (the topic's next turn may start as soon as it
-    is): the repositories it used into its topic and the repo map (app/repos_turn.py ``settle``). A failure here is
-    logged and changes nothing of the turn."""
+    is): the repositories it used into its topic, and the repo map (app/repos_turn.py ``settle``): at once, or with
+    ``later`` by the function returned, called once the answer is out (``noted_later``). A failure here is logged and
+    changes nothing of the turn."""
     try:
-        repos_turn.settle(ctx, job, topic_repos.task_dir_of(ctx.state_dir, job))
+        return repos_turn.settle(ctx, job, topic_repos.task_dir_of(ctx.state_dir, job), later=later)
     except Exception as exc:  # noqa: BLE001 - the turn is over; only its repositories stay as they were
         runtime.log(f"repositories of job #{job.job_id} not settled: {type(exc).__name__}")
+        return None
+
+
+def noted_later(note, job, runtime) -> None:
+    """``settle_repos``'s ``later`` function, after the answer is out; never raises."""
+    if note is None:
+        return
+    try:
+        note()
+    except Exception as exc:  # noqa: BLE001 - only the repo map's last use stays as it was
+        runtime.log(f"repo map of job #{job.job_id} not noted: {type(exc).__name__}")
 
 
 def _write_repos(ctx, job) -> list:
@@ -379,7 +391,7 @@ def _deliver_turn(job, ctx, turn, snapshot, *, harness, runtime, messenger, card
         # card goes out now, and its failure, stop or question is said there as on any task card.
         cards.reveal_held(ctx, job, "ended")
     show_outcome(cards, ctx, job, turn.status, runtime)
-    settle_repos(ctx, job, runtime)  # After the outcome is up, before the job is recorded finished.
+    later = settle_repos(ctx, job, runtime, later=True)  # After the outcome is up, before the job is recorded finished.
 
     retry = auto_retry.plan(harness, ctx, job, turn)
     quota_return.register(ctx, job, turn, retry)  # A spent quota too far off to wait for: told of when it is back.
@@ -400,6 +412,7 @@ def _deliver_turn(job, ctx, turn, snapshot, *, harness, runtime, messenger, card
         delivery.deliver(snapshot)
         butler_reply.react_end(delivery)  # A quiet butler turn: OnIt on the owner's message becomes its end (D1).
     finally:
+        noted_later(later, job, runtime)  # The repo map's file lock after the answer card, not before it.
         job.supplements_listed = delivery.listed  # Those still held at its end too (settle_held_at_end).
         if capabilities.steer_reads:  # After the result: the scan never holds it back.
             try:

@@ -147,7 +147,10 @@ class ClaudeCodeAdapter:
                     head.setdefault(key.strip(), value.strip().strip('"').strip("'"))
         kind = head.get("type") or "note"
         words = " ".join(part for part in (head.get("description", ""), " ".join(body.split())) if part)
-        title = head.get("name") or memstore.auto_title(words)
+        # The description says what it is; the name is often the file's slug (bridge-denies-compound-deletes).
+        name = head.get("name", "")
+        title = (memstore.auto_title(head["description"]) if head.get("description") else
+                 name if name and not SLUG.fullmatch(name) else memstore.auto_title(" ".join(body.split()) or words))
         return [(title, words, kind)] if words.strip() else []
 
 
@@ -232,6 +235,27 @@ def roots(home) -> dict:
     return {"claude_code": home / ".claude", "codex": home / ".codex", "antigravity": home / ".gemini"}
 
 
+SLUG = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*")  # A name that is only a file's slug, not a title.
+
+
+def short_bucket(bucket: str, repos) -> str:
+    """How the page names a bucket no repository of the map is (a Claude Code project folder, every character of its
+    directory a dash): what is left past the dashed parent of a repository of the map or of the home directory
+    (``-mnt-…-xuke-code-misc-tasks`` -> ``misc-tasks``), that directory's own name for the parent itself, else the dashed
+    name's last part. Any other bucket as it is."""
+    bucket = str(bucket or "")
+    if not bucket.startswith("-"):
+        return bucket
+    parents = {str(Path(repo.path).parent).rstrip("/") for repo in repos} | {str(Path.home()).rstrip("/")}
+    named = sorted(((_dashed(where), Path(where).name) for where in parents if where), key=lambda pair: -len(pair[0]))
+    for prefix, name in named:
+        if bucket == prefix:
+            return name or bucket
+        if bucket.startswith(prefix + "-") and len(bucket) > len(prefix) + 1:
+            return bucket[len(prefix) + 1:]
+    return bucket.strip("-").rsplit("-", 1)[-1] or bucket
+
+
 def _dashed(path: str) -> str:
     """A directory as Claude Code names its project folder: every character but a letter or a digit a dash."""
     return re.sub(r"[^A-Za-z0-9]", "-", str(path).rstrip("/"))
@@ -304,6 +328,7 @@ def view(item: ImportItem, record: dict | None, repos, *, dup_of: str = "") -> d
     out.update(file_tail=_tail(item.file), suggest=suggest(item), state=(record or {}).get("state") or "new")
     if not out["repo"]:
         out.pop("repo")
+        out["bucket"] = short_bucket(item.bucket, repos)
     if dup_of:
         out["dup_of"] = dup_of
     if old_repo(item, repos):
