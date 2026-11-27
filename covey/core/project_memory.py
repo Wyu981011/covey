@@ -675,7 +675,7 @@ def rewrite(state_dir, project_id, entry_id, *, text=None, kind=None, valid=None
     (``update``'s), nothing logged in ``fixes``. ``text`` new words (an answer's up to ``ANSWER_TEXT``), ``kind`` one of
     ``KINDS``, ``valid`` one of ``SETTLED`` or '' for active again, ``superseded_by`` an id ('' none), ``deleted`` a time for a
     tombstone or 0 for live again, ``owner`` True for a line the owner confirmed (its parties the owner's and the Bridge's,
-    as ``fix`` writes them: the lead's tools and 整理记忆 read it as his). The entry as ``entries`` gives it; None when the file
+    as ``fix`` writes them: the lead's tools and 整理记忆 read it as his), False for that undone (its source's again). The entry as ``entries`` gives it; None when the file
     has no such line. KeyError for a project with no record."""
     stamp = time.time() if now is None else now
 
@@ -702,6 +702,9 @@ def rewrite(state_dir, project_id, entry_id, *, text=None, kind=None, valid=None
                 entry.pop("superseded_by", None)
         if owner:
             entry.update(asserted_by=turn_source.PARTY_OWNER, recorded_by=turn_source.PARTY_BRIDGE)
+        elif owner is False:  # The confirmation undone: its parties its source's again.
+            entry.pop("asserted_by", None)
+            entry.pop("recorded_by", None)
         if entry:
             meta[row["id"]] = entry
         else:

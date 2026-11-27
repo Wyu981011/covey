@@ -235,7 +235,7 @@ def roots(home) -> dict:
     return {"claude_code": home / ".claude", "codex": home / ".codex", "antigravity": home / ".gemini"}
 
 
-SLUG = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)*")  # A name that is only a file's slug, not a title.
+SLUG = re.compile(r"[A-Za-z0-9]+(?:[-_][A-Za-z0-9]+)+")  # A name that is only a file's slug (a-b-c), not a title.
 
 
 def short_bucket(bucket: str, repos) -> str:

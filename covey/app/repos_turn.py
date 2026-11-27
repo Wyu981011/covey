@@ -154,8 +154,9 @@ def settle(ctx, job, task_dir, *, later=False):
     def change(entries):
         by_name = {str(item.get("name")): item for item in entries}
         if legacy is not None and legacy["name"] not in by_name:
-            entries.append(legacy)
-            by_name[legacy["name"]] = legacy
+            made = dict(legacy)  # A copy each call: core/topics.py update_repos may call ``change`` twice.
+            entries.append(made)
+            by_name[made["name"]] = made
         for item in entries:
             item.pop(CHECKOUT_WRITES, None)
             if item.get("name") in inlined:

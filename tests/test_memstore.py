@@ -257,6 +257,12 @@ class ConfirmLegacyTest(Case):
         memstore._cache.clear()
         again = memstore.find(self.state, made.ref)
         self.assertEqual((again.said, again.kind, again.status), ("owner", "rule", "active"))
+        (logged,) = [row for row in memstore.log_read(self.state) if row["action"] == "confirm"]
+        memstore.undo(self.state, logged["undo_token"], now=NOW + 2)  # The confirmation undone: the lead's again everywhere.
+        memstore._cache.clear()
+        self.assertEqual(memstore.find(self.state, made.ref).said, "summary")
+        self.assertNotEqual(memory.describe(row())["asserted_by"], turn_source.PARTY_OWNER)
+        self.assertEqual(project_tools.revise_refusal("update", row()), "")
 
 
 class UnreadableTest(Case):

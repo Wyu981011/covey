@@ -393,21 +393,25 @@ def _deliver_turn(job, ctx, turn, snapshot, *, harness, runtime, messenger, card
     show_outcome(cards, ctx, job, turn.status, runtime)
     later = settle_repos(ctx, job, runtime, later=True)  # After the outcome is up, before the job is recorded finished.
 
-    retry = auto_retry.plan(harness, ctx, job, turn)
-    quota_return.register(ctx, job, turn, retry)  # A spent quota too far off to wait for: told of when it is back.
-    promised = None
     try:
-        # A refusal of cyber or bio: one retry on an older model, said in the stopped turn's text (app/policy_retry.py).
-        promised = policy_retry.at_stop(ctx, job, turn)
-    except (OSError, ValueError) as exc:
-        runtime.log(f"policy retry of job #{job.job_id} not scheduled: {type(exc).__name__}")
-    delivery = TurnDelivery(job, ctx, turn, prefix=harness.spec.idempotency_prefix, cards=cards, runtime=runtime,
-                            artifacts=artifacts, questions=questions, steering=steering,
-                            record_job_state=record_job_state, send_text=send_text, retry=retry,
-                            relay=functools.partial(butler_relay.after_turn, messenger=messenger, profile=ctx.profile,
-                                                    voice=harness.voice),
-                            react=functools.partial(butler_reactions.finish, messenger, ctx.profile, log=runtime.log),
-                            ledger=track_digest.record, retry_promised=promised is not None)
+        retry = auto_retry.plan(harness, ctx, job, turn)
+        quota_return.register(ctx, job, turn, retry)  # A spent quota too far off to wait for: told of when it is back.
+        promised = None
+        try:
+            # A refusal of cyber or bio: one retry on an older model, said in the stopped turn's text (app/policy_retry.py).
+            promised = policy_retry.at_stop(ctx, job, turn)
+        except (OSError, ValueError) as exc:
+            runtime.log(f"policy retry of job #{job.job_id} not scheduled: {type(exc).__name__}")
+        delivery = TurnDelivery(job, ctx, turn, prefix=harness.spec.idempotency_prefix, cards=cards, runtime=runtime,
+                                artifacts=artifacts, questions=questions, steering=steering,
+                                record_job_state=record_job_state, send_text=send_text, retry=retry,
+                                relay=functools.partial(butler_relay.after_turn, messenger=messenger, profile=ctx.profile,
+                                                        voice=harness.voice),
+                                react=functools.partial(butler_reactions.finish, messenger, ctx.profile, log=runtime.log),
+                                ledger=track_digest.record, retry_promised=promised is not None)
+    except BaseException:
+        noted_later(later, job, runtime)  # Nothing goes out after all: the repo map is noted now.
+        raise
     try:
         delivery.deliver(snapshot)
         butler_reply.react_end(delivery)  # A quiet butler turn: OnIt on the owner's message becomes its end (D1).

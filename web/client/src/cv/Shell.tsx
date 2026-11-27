@@ -662,7 +662,9 @@ const Shell: React.FC = () => {
   const ui = useUi();
   const { isLoading, isError, error, refetch, data } = useSnapshot();
   const loc = useLocation();
-  useWarmup(warmupDelay(loc.pathname));
+  // 只看打开网页时的首屏：之后在页面间切换不再重排一轮预热（T870 Wave 3.5 复核）
+  const [warmDelay] = useState<number>(() => warmupDelay(loc.pathname));
+  useWarmup(warmDelay);
   useEffect(() => setMenu(false), [loc.pathname]);
   useMatch('/');
   const cls: string = `cv${ui.light ? ' light' : ''}${desktop ? '' : ' m'}`;

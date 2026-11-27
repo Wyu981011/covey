@@ -516,6 +516,15 @@ class ReposTurnTest(Sandbox):
         finally:
             done.set()
 
+    def test_an_old_topics_repository_written_without_its_rules_is_counted_once(self):
+        """T870 Wave 3.5 review: update_repos may call ``change`` twice (read without LOCK, then under it); the old topic's
+        own repository was the same dict both times, its rules_miss counted twice."""
+        self.topic(workdir=str(self.repo))  # From before the home: no repos yet, its workdir the repository.
+        self.job.tool_trace = trace_of(("修改文件", str(self.repo / "app.py")))
+        repos_turn.settle(self.ctx(workdir=self.repo), self.job, None)
+        (entry,) = self.topic_data()["repos"]
+        self.assertEqual((entry["name"], entry["mode"], entry.get("rules_miss", 0)), ("core", "write", 0))
+
     def test_the_tasks_requests_are_folded_in_with_their_worktree_and_base(self):
         self.topic(home_start=True)
         task = self.state / "runs" / "om_3"
