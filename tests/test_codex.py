@@ -993,6 +993,47 @@ class CodexHandoffSummaryTests(unittest.TestCase):
         self.assertTrue(rpc.closed)
         self.assertEqual(list((self.ctx.state_dir / "tmp").glob("codex-handoff-*")), [])
 
+    def test_a_gateway_that_is_down_gives_up_at_the_handshake_or_the_first_sign_not_the_whole_limit(self):
+        """T884 A12: a model that shows no output within FIRST_SECONDS of turn/start (Codex retrying a lost connection says
+        so with willRetry errors), or an app server whose own answer takes past HANDSHAKE_SECONDS, gives the summary up at
+        once; the new turn does not wait SUMMARY_SECONDS."""
+        from covey.backends.codex import handoff
+        from covey.backends.codex.rpc import RpcError
+        self.assertEqual((handoff.FIRST_SECONDS, handoff.HANDSHAKE_SECONDS), (30, 30))
+        retrying = {"method": "error", "params": {"threadId": FORK, "turnId": TURN, "willRetry": True,
+                                                  "error": {"message": "stream disconnected", "codexErrorInfo": {
+                                                      "responseStreamConnectionFailed": {"httpStatusCode": None}}}}}
+        rpc = ForkRpc([retrying], start_sid=FORK)
+        rpc.events = queue.Queue()
+        rpc.events.put(retrying)  # Then nothing: no bridge/closed either.
+        with mock.patch.object(handoff, "AppServer", return_value=rpc):
+            started = time.monotonic()
+            self.assertEqual(handoff.summarize(self.ctx, SID, "写", dict(os.environ), seconds=20, first_seconds=0.3),
+                             ("", "原模型 0.3 秒没有回应（网关可能断开）"))
+            self.assertLess(time.monotonic() - started, 5)
+        self.assertTrue(rpc.closed)
+        # A reasoning item started in time: the model answers, the summary is read to its end.
+        reasoning = {"method": "item/started", "params": {"threadId": FORK, "turnId": TURN,
+                                                          "item": {"id": "r", "type": "reasoning"}}}
+        (text, outcome), _ = self.summarize([reasoning, fork_item("f", "摘要"), fork_done()], direct=True,
+                                            first_seconds=5)
+        self.assertEqual((text, outcome), ("摘要", "写好了"))
+
+        class SlowServer(ForkRpc):
+            timeouts = []
+
+            def request(self, method, params, timeout=30):
+                SlowServer.timeouts.append((method, timeout))
+                if method == "initialize":
+                    raise RpcError(f"{method} response timed out; delivery is unknown")
+                return super().request(method, params, timeout)
+        slow = SlowServer([], start_sid=FORK)
+        with mock.patch.object(handoff, "AppServer", return_value=slow):
+            self.assertEqual(handoff.summarize(self.ctx, SID, "写", dict(os.environ)), ("", "Codex 30 秒没有回应"))
+        self.assertEqual(SlowServer.timeouts[0][0], "initialize")
+        self.assertLessEqual(SlowServer.timeouts[0][1], handoff.HANDSHAKE_SECONDS)
+        self.assertTrue(slow.closed)
+
     def test_a_redacted_topic_or_a_session_that_is_no_thread_sends_nothing(self):
         from covey.backends.codex import handoff
         from covey.backends.codex.bridge import NOT_REDACTED

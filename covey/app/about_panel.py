@@ -15,6 +15,8 @@ each draw), so a tap on the tab (it folds, then unfolds afresh) shows the deploy
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import platform
 
 from covey.app import butler_harness, welcome
@@ -78,10 +80,11 @@ def _tidy(probe):
     if not project_proposals.enabled():
         return False, ("设 COVEY_PROJECT_TIDY=suggest" if projects.enabled()
                        else "先开专项（COVEY_PROJECTS=1），再设 COVEY_PROJECT_TIDY=suggest"), project_proposals.ENV
-    from covey.app import track_judge
-    if not track_judge.available(probe.apps):
-        return (False, "开着，但没有能判断的模型：Claude Code、Codex、Antigravity 都没启用",
-                project_proposals.ENV)
+    from covey.app import assist
+    ok, why = assist.available(SimpleNamespace(apps=probe.apps, default=getattr(probe, "default", ""),
+                                               runtime=getattr(probe, "runtime", None)), state=probe.state_dir)
+    if not ok:
+        return False, "开着，但" + why, project_proposals.ENV
     return True, "", project_proposals.ENV
 
 

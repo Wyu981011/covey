@@ -1348,6 +1348,9 @@ def settings_cards():
     from covey.core.butler_settings import LeadModel, ReviewModel, Settings
 
     tabs = ["config", "repos", "redaction", "groups"]
+    ASSIST_ROW = {"options": [("auto", "自动（跟随管家）"), ("claude", "Claude Code"), ("codex", "Codex"),
+                              ("none", "不用模型（只按规则）")],
+                  "current": "auto", "words": "现在：轻的判断用 Claude Code · haiku，整理用 Claude Code · sonnet。"}
 
     def row(tab):
         return [tab_row(tab, "c" * 24, tabs)]
@@ -1381,6 +1384,12 @@ def settings_cards():
             "c" * 24, {**view, "open": "lead"},
             Settings(lead=LeadModel(harness="codex", model="gpt-6", effort="high")),
             LEAD_CHOICES, ["bridge", "docs"], top=row("config"), page="config", lead_on=True),
+        # T884: 辅助模型, a section of its own (the owner's choice A), shown with the butler off too.
+        "config_assist": butler_panel_card("c" * 24, {**view, "open": "assist"}, Settings(), BUTLER_CHOICES,
+                                           ["bridge", "docs"], top=row("config"), page="config", assist=ASSIST_ROW),
+        "config_assist_closed": butler_panel_card("c" * 24, view, Settings(enabled=False), BUTLER_CHOICES,
+                                                  ["bridge", "docs"], top=row("config"), page="config", assist=ASSIST_ROW,
+                                                  butler_on=False, butler_allowed=False),
         "config_confirm": butler_panel_card("c" * 24, {**view, "confirm": True}, Settings(), BUTLER_CHOICES,
                                             ["bridge", "docs"], top=row("config"), page="config"),
         "config_topics": butler_panel_card("c" * 24, {**view, "open": "butler"}, Settings(enabled=False), BUTLER_CHOICES,
@@ -1968,6 +1977,15 @@ def tidy_cards():
                 "skipped_md": True}),
             "tidy_nothing": tc.tidy_card({"run": "r", "state": "done", "scope": "Covey"}),
             "tidy_failed": tc.tidy_card({"run": "r", "state": "failed", "why": "判断超时了"}),
+            # T884 (the owner's choice A): the reason through which Harness, what to do next and its buttons by the kind.
+            "tidy_failed_login": tc.tidy_card({"run": "r", "state": "failed", "why": "Codex 登录失效或没有权限",
+                                               "why_code": "authentication_error", "via": "codex", "model": "gpt-6-astra"}),
+            "tidy_failed_refused": tc.tidy_card({"run": "r", "state": "failed", "why": "Claude Code 被官方内容安全拦了",
+                                                 "why_code": "policy_refusal", "via": "claude", "model": "sonnet"}),
+            "tidy_failed_timeout": tc.tidy_card({"run": "r", "state": "failed", "why": "Codex 判断超时了",
+                                                 "why_code": "timeout", "via": "codex", "retry": True}),
+            "tidy_failed_none": tc.tidy_card({"run": "r", "state": "failed", "why": "辅助模型选了不用模型",
+                                              "why_code": "none"}),
             "leave_answer": tc.lesson_card("已把这个话题移出专项「DataLab Prompt 优化」，以后它不会再被自动归进专项。",
                                            {"kind": tc.LESSON_KIND, "topic": "f" * 32, "project": "a1b2c3d4e5f6"}),
             "joined_line": tc.joined_card("DataLab Prompt 优化", "f" * 32, "a1b2c3d4e5f6"),

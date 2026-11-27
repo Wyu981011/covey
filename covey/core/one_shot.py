@@ -5,8 +5,10 @@ lines it prints and its deadline, shared by backends/codex/judge.py and backends
 its own (a CLI that does not read it yet never holds the caller past the limit) and closes it, and reads its standard
 output line by line until the caller's ``done`` says the answer is in: the whole group is killed then (a CLI may take
 seconds more to exit after its answer), when the output ends, or when ``limit`` seconds pass. Every failure is an AskFailed
-with its reason; its detail is the exit code and the last line of standard error, cut and with anything secret-looking
-hidden, never the question. Standard library and core/ only.
+with its reason; its detail is the exit code and the last line of standard error as a card may show it (core/failure.py
+said_of: secrets, paths, addresses hidden, cut), never the question. A non-zero exit's reason is what the last lines of
+standard error say (``classify``, the Harness's own reading, else core/assist.py code_of_text: a login, a spent quota, a
+refusal, a lost connection), ``exit_nonzero`` when they say none of these. Standard library and core/ only.
 """
 from __future__ import annotations
 
@@ -19,10 +21,12 @@ import subprocess
 import threading
 import time
 
+from covey.core.assist import code_of_text
+from covey.core.failure import said_of
 from covey.core.harness import AskFailed
-from covey.core.text import cut, redact
 
 STDERR_KEPT = 160
+CLASSIFIED_LINES = 5  # The last lines of standard error a non-zero exit's reason is read from (earlier ones are warnings).
 
 
 def _read(stream, out: queue.Queue) -> None:
@@ -74,19 +78,30 @@ def close_pipes(proc, *readers) -> None:
 
 
 def last_stderr_line(text: str, skip=()) -> str:
-    """The last line of ``text`` with words in it and none of ``skip`` (a sign-in URL), secrets hidden and cut to
-    STDERR_KEPT."""
+    """The last line of ``text`` with words in it and none of ``skip`` (a sign-in URL), as a card may show it
+    (core/failure.py said_of) and cut to STDERR_KEPT."""
     lines = [line.strip() for line in str(text or "").splitlines()
              if line.strip() and not any(word in line for word in skip)]
-    return cut(redact(lines[-1]), STDERR_KEPT) if lines else ""
+    return said_of(lines[-1])[:STDERR_KEPT] if lines else ""
 
 
-def run_lines(argv, stdin_text: str, *, env, cwd, limit: float, done, skip=()) -> list:
+def exit_code_of(text: str, classify=None) -> str:
+    """The reason a non-zero exit's standard error ``text`` says, read from its last CLASSIFIED_LINES lines (a sign-in URL
+    among them too: it says the login is gone): ``classify(text)`` (the Harness's own reading) first, then
+    core/assist.py code_of_text; ``exit_nonzero`` when neither knows it."""
+    lines = [line for line in str(text or "").splitlines() if line.strip()][-CLASSIFIED_LINES:]
+    tail = "\n".join(lines)
+    if not tail:
+        return "exit_nonzero"
+    return (classify(tail) if classify is not None else "") or code_of_text(tail) or "exit_nonzero"
+
+
+def run_lines(argv, stdin_text: str, *, env, cwd, limit: float, done, skip=(), classify=None) -> list:
     """The JSON objects ``argv`` printed (one per line; other lines are skipped) up to the one ``done(row)`` is true for.
-    AskFailed("spawn_failed") when it does not start, ("timeout") past ``limit`` seconds, ("exit_nonzero", "code=N …")
-    when the output ends without ``done`` and the exit code is not 0 (``skip``: words of a stderr line never shown); with
-    code 0 the rows it printed (``done`` never said yes: the caller decides). The process group is always gone when this
-    returns."""
+    AskFailed("spawn_failed") when it does not start, ("timeout") past ``limit`` seconds, (``exit_code_of`` its standard
+    error, "code=N …") when the output ends without ``done`` and the exit code is not 0 (``skip``: words of a stderr line
+    never shown; ``classify``: the Harness's own reading of its stderr); with code 0 the rows it printed (``done`` never
+    said yes: the caller decides). The process group is always gone when this returns."""
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
                                 cwd=cwd, start_new_session=True)
@@ -125,6 +140,7 @@ def run_lines(argv, stdin_text: str, *, env, cwd, limit: float, done, skip=()) -
         close_pipes(proc, out_reader, err_reader)
     code = proc.returncode
     if code not in (0, None) and code != -signal.SIGKILL:
-        said = last_stderr_line(errors[0].decode("utf-8", "replace") if errors and errors[0] else "", skip)
-        raise AskFailed("exit_nonzero", f"code={code}" + (f" {said}" if said else ""))
+        text = errors[0].decode("utf-8", "replace") if errors and errors[0] else ""
+        said = last_stderr_line(text, skip)
+        raise AskFailed(exit_code_of(text, classify), f"code={code}" + (f" {said}" if said else ""))
     return rows

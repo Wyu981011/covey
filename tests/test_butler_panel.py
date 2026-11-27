@@ -168,7 +168,8 @@ class ButlerPanelTests(UnifiedCase):
         self.assertLess(text.index('私聊顶层的消息'), text.index('**更多**'))
         self.assertNotIn('select_static', text)
         self.assertNotIn(panel_card.NOTE, text)
-        self.assertEqual([v['open'] for v in self.values(panel_card.SECTION)], ['topic'])
+        # T884: 辅助模型 a section of its own, closed under the open 管家.
+        self.assertEqual([v['open'] for v in self.values(panel_card.SECTION)], ['topic', 'assist'])
         self.assertEqual([v['option'] for v in self.values(panel_card.MODE)], ['agent', 'topics'])
         self.assertEqual(self.values(panel_card.ENABLE), [])
         self.assertEqual([v['option'] for v in self.values(panel_card.REDACTION)], ['off', 'on'])

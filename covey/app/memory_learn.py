@@ -41,7 +41,7 @@ import threading
 import time
 from pathlib import Path
 
-from covey.app import memory_collect, memory_turn, track_judge
+from covey.app import assist, memory_collect, memory_turn, track_judge
 from covey.app import memory_candidates
 from covey.app.memory_candidates import CUES
 from covey.app.track_standby import Failed
@@ -186,13 +186,13 @@ def after_turn(gateway, app, job, ctx) -> None:
             if reason not in QUIET:
                 runtime.log(f"memory learn skipped reason={reason} job=#{record.get('job_id')}")
             return
-        backend, judge_ctx = track_judge.tools(getattr(getattr(gateway, "topics", None), "apps", None))
-        if not track_judge.available(getattr(getattr(gateway, "topics", None), "apps", None)):
+        topics = getattr(gateway, "topics", None)
+        if assist.route(topics, assist.LEARN, state=ctx.state_dir).first is None:  # 不用模型, or none to ask now.
             runtime.log(f"memory learn skipped reason=no-model job=#{record.get('job_id')}")
             return
         upsert_job_record(ctx.state_dir, str(record["key"]), memory_learned={"at": time.time(), "state": "asked"})
         messenger = getattr(app, "messenger", None)
-        if not start(lambda: learn(runtime, messenger, ctx, record, backend, judge_ctx)):
+        if not start(lambda: learn(runtime, messenger, ctx, record, topics)):
             upsert_job_record(ctx.state_dir, str(record["key"]), memory_learned={"at": time.time(), "state": "busy"})
             runtime.log(f"memory learn skipped reason=busy job=#{record.get('job_id')}")
     except Exception as exc:  # noqa: BLE001 - the turn's ending goes on
@@ -411,15 +411,18 @@ def apply(ctx, record, said, remember, void, supersede=(), *, log=None, lead=Fal
     return [note for note in notes if note]
 
 
-def learn(runtime, messenger, ctx, record, backend, judge_ctx, *, ask=None) -> list:
+def learn(runtime, messenger, ctx, record, topics, *, ask=None) -> list:
     """Read the owner's words of the turn of ``record`` and write what they ask to be remembered (the module's docstring); the
-    notes written. ``ask``: track_judge.ask (a test's stand-in)."""
-    ask = track_judge.ask if ask is None else ask
+    notes written. Asked through the 辅助模型 of ``topics`` (app/assist.py ask, LEARN). ``ask``: a test's stand-in, called
+    as ``ask(SYSTEM, data, topics=…, limit=…, cwd=…)``."""
     state, key, job = ctx.state_dir, str(record["key"]), record.get("job_id")
+    if ask is None:
+        def ask(system, data, **kw):
+            return assist.ask(assist.LEARN, system, data, state=state, **kw)
     try:
         said = memory_turn.owner_words(record, state)
         data = json.dumps(payload(ctx, record, said), ensure_ascii=False)
-        raw = ask(SYSTEM, data, backend=backend, ctx=judge_ctx, limit=SECONDS, cwd=Path(state) / "memory-learn")
+        raw = ask(SYSTEM, data, topics=topics, limit=SECONDS, cwd=Path(state) / "memory-learn")
         remember, void, supersede = parse(track_judge.answer_text(raw, "claude"))
         fresh = find_job_record(state, key) or record
         if "memory_notes" in fresh:

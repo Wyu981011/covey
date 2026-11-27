@@ -196,19 +196,18 @@ def reply_text(found, sentence, job_id, now=None) -> str:
     return "\n".join([f"🔍 看了一下任务 #{job_id}：{sentence}", *(f"- {line}" for line in facts_lines(found, now))])
 
 
-def ask_model(found, rule, backend, ctx, limit=MODEL_SECONDS, state_dir=None) -> str:
-    """The small model's sentence of ``found`` (``rule``: the rules' own), '' when it cannot be had. Where
-    app/track_judge.py ``ask`` puts it: Claude Code (``backend``, ``ctx``), or Codex's or Antigravity's own CLI.
-    ``state_dir``: where its directory is when there is no ``ctx``."""
-    from covey.app import track_judge
+def ask_model(found, rule, topics, state_dir, limit=MODEL_SECONDS) -> str:
+    """The small model's sentence of ``found`` (``rule``: the rules' own), '' when it cannot be had: through the 辅助模型
+    (app/assist.py ask, LOOK, asked for by the owner), whatever Harness the topic itself runs on."""
+    from covey.app import assist, track_judge
     data = json.dumps({"rule": rule, **{key: found[key] for key in ("processes", "log", "steps")},
                        "phase": found["progress"].get("phase"), "plan": turn_progress.plan_words(found["progress"]),
                        "last": turn_progress.activity_line(found["progress"], time.time()),
                        "runner": found["runner"]}, ensure_ascii=False)
-    cwd = Path(state_dir or ctx.state_dir) / "stuck-check"
+    cwd = Path(state_dir) / "stuck-check"
     try:
-        text = track_judge.answer_text(track_judge.ask(SYSTEM, data, backend=backend, ctx=ctx, limit=limit, cwd=cwd),
-                                       "claude")
+        text = track_judge.answer_text(assist.ask(assist.LOOK, SYSTEM, data, topics=topics, limit=limit, cwd=cwd,
+                                                  manual=True, state=state_dir), "claude")
     except Failed:
         return ""
     except (OSError, ValueError, AttributeError, TypeError):
@@ -225,7 +224,7 @@ class StuckCheck:
         self.harness = harness
         self.runtime = runtime
         self.messenger = messenger
-        self.topics = topics  # The Bridge's Harnesses: another Harness's topic is judged through the Claude one.
+        self.topics = topics  # The Bridge's Harnesses: the 辅助模型 (app/assist.py) chooses among them.
         self.voice = harness.voice
         self.looking = set()  # Job keys looked at now: a second click meanwhile adds nothing.
         self.lock = threading.Lock()
@@ -271,26 +270,14 @@ class StuckCheck:
                 self.looking.discard(key)
 
     def worded(self, ctx, record, found, rule) -> str:
-        """The small model's sentence, '' when it cannot be asked safely: the topic redacts (its facts would reach a model
-        unredacted), or no Claude Harness can ask it (``judge``)."""
+        """The small model's sentence, '' when it cannot be asked safely (the topic redacts: its facts would reach a model
+        unredacted) or the 辅助模型 gives none (不用模型, the one it names cannot be used now)."""
         try:
             if topic_redaction(ctx.state_dir, record.get("topic_id")):
                 return ""
         except ValueError:
             return ""
-        backend, judge_ctx = self.judge(ctx)
-        if backend is None or judge_ctx is None or not getattr(judge_ctx, "backend_cmd", None):
-            return ""
-        return ask_model(found, rule, backend, judge_ctx, state_dir=ctx.state_dir)
-
-    def judge(self, ctx):
-        """(backend, context) the small model is asked through: this Harness's own when it is Claude Code, else this
-        Bridge's (``topics``; #17, app/track_judge.py tools): its Claude Harness, else Codex's or Antigravity's own CLI;
-        (None, None) without one."""
-        from covey.app import track_judge
-        if getattr(getattr(self.harness, "spec", None), "name", "") == "claude":
-            return getattr(self.harness, "backend", None), ctx
-        return track_judge.tools(getattr(self.topics, "apps", None) or {})
+        return ask_model(found, rule, self.topics, ctx.state_dir)
 
     def reply(self, ctx, chat, text, name, event_id):
         if chat:

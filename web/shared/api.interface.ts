@@ -979,9 +979,38 @@ export interface SettingsConfigPage {
   /** v36：专项负责人（开了 COVEY_PROJECTS 才有）：新建的专项，负责人用这里选的 Harness、模型、思考预算；行的 key 是 l_harness、l_provider、l_model、l_effort，
    * 改行同独立复核（settings 的 row）。已有专项的负责人在它自己的配置栏换（话题条目 kind=lead 的 config） */
   lead?: SettingsConfigSection;
+  /** 辅助模型（T884）：分流、整理专项、看看、记忆这些后台活用哪个 Harness。一行（key assist，kind bridge_main_assist_harness，
+   * 改行同别的段：settings 的 row），管家关着也能改；旧版 Covey 不带这一段 */
+  assist?: SettingsConfigAssist;
   more: SettingsRow[];
   more_note: string;
   locked: string;
+}
+/** 后台活最近一次的一行：每个功能一行，只有原因码和说法，没有原话 */
+export interface SettingsAssistRecent {
+  /** track（分流）、tidy（整理专项）、tidy_realtime、backfill、look（看看）、candidates、learn、memory_tidy、patrol */
+  feature: string;
+  label: string;
+  /** Harness 的名字（claude、codex、agy）；没问到谁时是空串 */
+  harness: string;
+  /** Harness 的显示名（Claude Code、Codex、Antigravity） */
+  name: string;
+  model: string;
+  ok: boolean;
+  /** 原因码（core/assist.py）；成功是空串 */
+  code: string;
+  /** 原因的说法（“登录失效或没有权限”）；成功是空串 */
+  words: string;
+  ms: number;
+  /** 秒 */
+  at: number;
+  /** 主人点的（✨ 整理、看看） */
+  manual: boolean;
+}
+export interface SettingsConfigAssist extends SettingsConfigSection {
+  /** 现在实际用的（“现在：轻的判断用 Codex · gpt-6-luna，整理用 …”），或用不了的原因 */
+  words: string;
+  recent: SettingsAssistRecent[];
 }
 export interface SettingsWorkspaceItem {
   name: string;
@@ -1298,11 +1327,34 @@ export interface TidyProposal {
   project?: string;
   at: number;
 }
+/** 最近一次整理（T884）：在跑时带进度，失败时带原因（整理卡上的那句）和问的是哪个 Harness；只有原因码和说法，没有原话 */
+export interface TidyLastRun {
+  run: string;
+  state: 'running' | 'done' | 'failed';
+  /** 失败的说法（“Codex 登录失效或没有权限”） */
+  why?: string;
+  /** 原因码（core/assist.py） */
+  why_code?: string;
+  /** 问的 Harness（claude、codex、agy） */
+  via?: string;
+  model?: string;
+  /** 过一会儿再试有用（超时、限流、临时故障） */
+  retry: boolean;
+  /** 只整理和它有关的 */
+  scope?: string;
+  /** scheduled、asked、settings、web、butler */
+  origin: string;
+  /** 秒：结束时间，没结束是开始时间 */
+  at: number;
+  progress: { done: number; total: number; current: string };
+}
 export interface TidyData {
   proposals: TidyProposal[];
   /** 正在整理时有 */
   running: { done: number; total: number } | null;
   updated_at: number;
+  /** T884：最近一次整理；旧版 Covey 不带 */
+  last_run?: TidyLastRun;
 }
 /** GET /api/tidy：sync_state 里 name='tidy' 的 data；没收到过是 null */
 export type TidyResponse = TidyData | null;

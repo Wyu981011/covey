@@ -20,6 +20,11 @@ class Realtime:
         self.runtime, self.env, self.shared = runtime, env, shared
         self.applier, self.proposal_cards = applier, proposal_cards
 
+    def where(self):
+        """Where its calls go (app/project_sorter.py Where): the 辅助模型's real-time merge, never asked for by the owner."""
+        from covey.app import assist
+        return sorter.Where(getattr(self.env, "topics", None), assist.REALTIME)
+
     def handle(self, ctx, chat, topic, reason, now) -> str:
         """One topic's real-time 整理; what came of it in a word (for the log and the tests)."""
         state = Path(ctx.state_dir)
@@ -43,13 +48,13 @@ class Realtime:
         if proposals.open_with(state, topic):
             return "open"
         topics = [topic] + [other for other in facts.recent_topics(state, chat, now, records=records) if other != topic]
-        backend, context = facts.judge_tools(self.env)
+        where = self.where()
         # The topic judged is read whole first when it has no 话题要点 (a first title such as
         # 阅读这个session… says nothing): the judge then sees what it is about, and so does its proposal card.
         if sorter.needs_gist(state, topic, sorter.material(state, chat, topic, now).last_job):
-            sorter.backfill(state, chat, topic, backend=backend, ctx=context, log=self.runtime.log, now=now)
+            sorter.backfill(state, chat, topic, where=where, log=self.runtime.log, now=now)
         items = [sorter.material(state, chat, other, now) for other in topics[:sorter.MAX_TOPICS] if not sorter.hidden(state, other)]
-        verdict = sorter.judge(state, records, items, backend=backend, ctx=context, focus=topic,
+        verdict = sorter.judge(state, records, items, where=where, focus=topic,
                                lessons=proposals.lessons(state), source="realtime", log=self.runtime.log)
         sign = facts.gist_sign(state, topic)
         proposals.change_topic(state, topic, lambda flags: flags.update(judged_at=now, judged_for=reason, judged_sign=sign))
@@ -74,8 +79,7 @@ class Realtime:
         "rule_declined"; the gist counts as judged either way."""
         state = Path(ctx.state_dir)
         record = projects.read_record(state, pid)
-        backend, context = facts.judge_tools(self.env)
-        verdict = sorter.judge(state, [record], [sorter.material(state, chat, topic, now)], backend=backend, ctx=context,
+        verdict = sorter.judge(state, [record], [sorter.material(state, chat, topic, now)], where=self.where(),
                                focus=topic, lessons=proposals.lessons(state), source="realtime", log=self.runtime.log)
         sign = facts.gist_sign(state, topic)
         proposals.change_topic(state, topic, lambda flags: flags.update(judged_at=now, judged_for="rule", judged_sign=sign))
@@ -92,8 +96,7 @@ class Realtime:
         sign = facts.gist_sign(state, topic)
         if not sign or proposals.topic_flags(state, topic).get("judged_sign") == sign:
             return "same"
-        backend, context = facts.judge_tools(self.env)
-        verdict = sorter.judge(state, records, [sorter.material(state, chat, topic, now)], backend=backend, ctx=context,
+        verdict = sorter.judge(state, records, [sorter.material(state, chat, topic, now)], where=self.where(),
                                focus=topic, lessons=proposals.lessons(state), source="realtime", log=self.runtime.log)
         proposals.change_topic(state, topic, lambda flags: flags.update(judged_at=now, judged_for=facts.TURN, judged_sign=sign))
         outcome = "none"
@@ -121,9 +124,8 @@ class Realtime:
             if found in ("", pid):  # A rule hit is judged too (rule_confirm); one naming another project's topics is left out.
                 rest.append(topic)
         if rest:
-            backend, context = facts.judge_tools(self.env)
             items = [sorter.material(state, chat, topic, now) for topic in rest]
-            verdict = sorter.judge(state, [record], items, backend=backend, ctx=context, lessons=proposals.lessons(state),
+            verdict = sorter.judge(state, [record], items, where=self.where(), lessons=proposals.lessons(state),
                                    source="sweep", log=self.runtime.log)
             for made in verdict.suggestions:
                 if (made["kind"] == proposals.JOIN and made["project"] == pid and made["confidence"] >= proposals.JOIN_SURE

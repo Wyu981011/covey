@@ -4,6 +4,7 @@ words they show it with, the task monitor that keeps it on the record and tells 
 (the pinned status cards, 手上的事, 早晚汇总, the butler's snapshot) that write its phase and estimate, never a command."""
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -370,36 +371,49 @@ class LookTest(unittest.TestCase):
         messenger = SimpleNamespace(reply=lambda ctx, chat, text, key, voice: replies.append((chat, text, key)))
         return StuckCheck(harness, runtime=SimpleNamespace(log=lambda line: None), messenger=messenger)
 
-    def test_the_small_model_words_it_on_any_harness_unless_the_topic_redacts(self):
-        # #17: a Codex topic's 看看 is worded by Haiku through this Bridge's Claude Harness; without one, or for a topic
-        # that redacts, the rules' sentence stands.
-        from covey.app import stuck_check
+    def test_the_small_model_words_it_through_the_assist_on_any_harness_unless_the_topic_redacts(self):
+        # 看看 is worded by the 辅助模型 (app/assist.py), whatever the topic runs on: a Claude topic with Codex named asks
+        # Codex, never its own Claude Code (T883 P0-3); 不用模型 or a topic that redacts: the rules' sentence stands.
+        from covey.app import stuck_check, track_judge
         from covey.app.stuck_check import StuckCheck
+        from covey.core import butler_settings
+        from covey.core.harness import HarnessCapabilities
         from covey.core.redaction import TOPIC_KEY
         from covey.core.state import write_json
+        from support.assist import harness_app, topics_with
 
         state = Path(tempfile.mkdtemp())
         self.addCleanup(lambda: __import__("shutil").rmtree(state, ignore_errors=True))
         write_json(state / "topics" / "t1" / "topic.json", {"topic_id": "t1"})
-        claude = SimpleNamespace(harness=SimpleNamespace(backend="claude-backend",
-                                                         context=SimpleNamespace(backend_cmd=["claude"], state_dir=state)))
-        codex = SimpleNamespace(spec=SimpleNamespace(name="codex"), backend="codex-backend", voice=None)
-        ctx = SimpleNamespace(state_dir=state, backend_cmd=["codex"])
+        claude_backend = SimpleNamespace(name="claude-backend")
+        codex_backend = SimpleNamespace(name="codex-backend", capabilities=lambda ctx: HarnessCapabilities(ask_once=True))
+        apps = {"claude": harness_app(claude_backend, SimpleNamespace(backend_cmd=["claude"], state_dir=state)),
+                "codex": harness_app(codex_backend, SimpleNamespace(backend_cmd=["codex"], state_dir=state,
+                                                                    options={"harness_id": "codex"}))}
+        topics = topics_with(state, apps, default="claude")
+        own = SimpleNamespace(spec=SimpleNamespace(name="claude"), backend=claude_backend, voice=None)
+        ctx = SimpleNamespace(state_dir=state, backend_cmd=["claude"])
         record = {"topic_id": "t1"}
-        with mock.patch.object(stuck_check, "ask_model", return_value="还在跑测试") as ask:
-            check = StuckCheck(codex, runtime=None, messenger=None, topics=SimpleNamespace(apps={"claude": claude}))
-            self.assertEqual(check.worded(ctx, record, {}, "规则"), "还在跑测试")
-            self.assertEqual(ask.call_args.args[2:], ("claude-backend", claude.harness.context))
-            alone = StuckCheck(codex, runtime=None, messenger=None, topics=SimpleNamespace(apps={}))
-            self.assertEqual(alone.worded(ctx, record, {}, "规则"), "")  # No Claude Harness here.
-            own = StuckCheck(SimpleNamespace(spec=SimpleNamespace(name="claude"), backend="own", voice=None),
-                             runtime=None, messenger=None)
-            self.assertEqual(own.worded(ctx, record, {}, "规则"), "还在跑测试")  # A Claude topic asks its own, as before.
-            self.assertEqual(ask.call_args.args[2:], ("own", ctx))
+        found = {"processes": [], "log": [], "steps": [], "progress": {}, "runner": "alive"}
+        asked = []
+
+        def ask(system, data, *, backend, **kw):
+            asked.append(backend.name)
+            return json.dumps({"type": "result", "is_error": False, "result": "还在跑测试"})
+        check = StuckCheck(own, runtime=None, messenger=None, topics=topics)
+        with mock.patch.object(track_judge, "ask", side_effect=ask), \
+                mock.patch.object(stuck_check.turn_progress, "plan_words", return_value=""), \
+                mock.patch.object(stuck_check.turn_progress, "activity_line", return_value=""):
+            butler_settings.update(state, assist=butler_settings.AssistChoice(harness="codex"))
+            self.assertEqual(check.worded(ctx, record, found, "规则"), "还在跑测试")
+            self.assertEqual(asked, ["codex-backend"])  # Not the topic's own Claude Code.
+            butler_settings.update(state, assist=butler_settings.AssistChoice(off=True))
+            self.assertEqual(check.worded(ctx, record, found, "规则"), "")
+            self.assertEqual(asked, ["codex-backend"])  # 不用模型: nothing asked.
+            butler_settings.update(state, assist=butler_settings.AssistChoice())
             write_json(state / "topics" / "t1" / "topic.json", {"topic_id": "t1", TOPIC_KEY: True})
-            calls = ask.call_count
-            self.assertEqual(check.worded(ctx, record, {}, "规则"), "")  # It redacts: nothing goes to a model.
-            self.assertEqual(ask.call_count, calls)
+            self.assertEqual(check.worded(ctx, record, found, "规则"), "")  # It redacts: nothing goes to a model.
+            self.assertEqual(asked, ["codex-backend"])
 
     def test_a_click_on_an_ended_turn_says_so_and_a_running_one_is_looked_at_once(self):
         from covey.app import stuck_check

@@ -1578,6 +1578,95 @@ class HarnessSwitchTests(UnifiedCase):
                           status='done', session_id=old)
         self.assertEqual(self.refused_summary([])[0], [old])
 
+    def test_no_summary_when_the_old_sessions_last_turn_failed_on_its_login_quota_model_or_connection(self):
+        """T884 A12 ①: the job records say why the old model very likely cannot answer now (this runs in the task runner,
+        which has no availability watch): its session's last turn failed on its login (or the like)."""
+        old = self.leave_claude()
+        upsert_job_record(self.ctx.state_dir, 'job-a', topic_id=self.source.topic_id, chat_id='chat', job_id=5,
+                          status='failed', session_id=old, failure_code='authentication_error')
+        notes = []
+        calls, note = self.refused_summary(notes)
+        self.assertEqual(calls, [])
+        self.assertIn('只有最近 3 轮原文', note)
+        self.assertEqual(notes, [switch_handoff.REFUSED['last turn authentication_error']])
+        self.assertIn('原会话上一轮因登录失效停下', notes[0])
+        self.assertTrue(any('switch summary skipped' in line and 'last turn authentication_error' in line
+                            for line in self.logs))
+        self.assertEqual(switch_handoff.WHY_WORDS['last turn transport_error'], '原会话上一轮因连不上模型服务停下')
+        # A timeout of its own (not a failure the next call would repeat) does not stop the summary, nor does a later turn
+        # that ended well.
+        upsert_job_record(self.ctx.state_dir, 'job-t', topic_id=self.source.topic_id, chat_id='chat', job_id=6,
+                          status='timed_out', session_id=old, failure_code='timeout')
+        self.assertEqual(self.refused_summary([])[0], [old])
+        for kept in (self.source.history_path.parent / 'handoff').glob('summary-*'):
+            kept.unlink()
+        upsert_job_record(self.ctx.state_dir, 'job-q', topic_id=self.source.topic_id, chat_id='chat', job_id=7,
+                          status='failed', session_id=old, failure_code='quota_exhausted')
+        self.assertEqual(self.refused_summary([])[0], [])
+        upsert_job_record(self.ctx.state_dir, 'job-d', topic_id=self.source.topic_id, chat_id='chat', job_id=8,
+                          status='done', session_id=old)
+        self.assertEqual(self.refused_summary([])[0], [old])
+
+    def test_no_summary_when_the_background_found_the_old_harness_broken_or_its_model_failing(self):
+        """T884 A12 ②: core/assist.py's breaks (written by the main process's background calls) and the last task
+        outcome of the old model (app/availability.py backend-health), read from the state directory."""
+        from covey.app import availability
+        from covey.core import assist
+        old = self.leave_claude()
+        _, ctx = self.route('src')
+        state = ctx.state_dir
+        frm = self.topic()['switches'][-1]['from']
+        model = frm.get('model') or self.app.apps['claude'].harness.context.model
+        assist.settle(state, feature='tidy', harness='claude', model='sonnet', code='transport_error')
+        notes = []
+        self.assertEqual(self.refused_summary(notes)[0], [])
+        self.assertEqual(notes, [switch_handoff.REFUSED['assist broken']])
+        self.assertTrue(any('switch summary skipped' in line and 'assist broken' in line for line in self.logs))
+        # Another model the account cannot use is that model's alone: the old one is still asked.
+        assist.clear(state)
+        assist.settle(state, feature='tidy', harness='claude', model='some-other-model', code='model_unavailable')
+        self.assertEqual(self.refused_summary([])[0], [old])
+        for kept in (self.source.history_path.parent / 'handoff').glob('summary-*'):
+            kept.unlink()
+        assist.clear(state)
+        # The old model's last task failed on its quota a minute ago: not asked; a quarter of an hour later it is.
+        availability.observe(SimpleNamespace(state_dir=state), 'claude', model or '', status='failed',
+                             error='quota_exhausted')
+        notes = []
+        self.assertEqual(self.refused_summary(notes)[0], [])
+        self.assertEqual(notes, [switch_handoff.REFUSED['model failing']])
+        later = time.time() + availability.NOT_NOW_SECONDS + 5
+        self.assertEqual(switch_handoff.unfit(state, 'claude', model, now=later), '')
+        self.assertEqual(switch_handoff.unfit(state, 'claude', model), 'model failing')
+
+    def test_no_summary_when_the_old_backend_refuses_such_a_turn_before_it_starts(self):
+        """T884 A12 ③: the old backend's start_refusal (Antigravity's held quota, a model gone from its list) is asked with
+        the summary's own context; a refusal starts nothing."""
+        self.leave_claude()
+        backend = self.app.apps['claude'].backend
+        seen = []
+
+        def refusal(ctx):
+            seen.append(ctx.model)
+            return 'quota_exhausted', '额度用完', 0.0
+        notes = []
+        with mock.patch.object(backend, 'start_refusal', side_effect=refusal, create=True):
+            self.assertEqual(self.refused_summary(notes)[0], [])
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(notes, [switch_handoff.REFUSED['start refused']])
+        self.assertTrue(any('switch summary skipped' in line and 'start refused' in line for line in self.logs))
+        # A check that fails refuses nothing.
+        self.assertEqual(switch_handoff.start_refused(SimpleNamespace(start_refusal=lambda ctx: 1 / 0), None), '')
+
+    def test_an_antigravity_quota_held_is_a_start_refusal(self):
+        """Antigravity's own start_refusal is what A12 ③ asks: a group whose quota is held (accounts.holding)."""
+        from covey.backends.agy import accounts
+        from covey.backends.agy.bridge import AntigravityBackend
+        target = SimpleNamespace(model='gemini-x', state_dir=self.ctx.state_dir, device='')
+        with mock.patch.object(accounts, 'configured', return_value=False), \
+                mock.patch.object(accounts, 'holding', return_value={'reset_at': time.time() + 600, 'seen_at': time.time()}):
+            self.assertEqual(switch_handoff.start_refused(AntigravityBackend(), target), 'start refused')
+
     def test_a_turn_about_to_be_refused_says_nothing_of_rounds_for_a_blocked_old_session(self):
         # Blocked old session and 敏感词脱敏 on while the new Harness cannot redact: the turn is refused, so no
         # card line may say the old rounds go to the new model.

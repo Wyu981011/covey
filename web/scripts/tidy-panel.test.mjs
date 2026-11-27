@@ -7,11 +7,12 @@ const P = (id, state, extra = {}) => ({
   id, run: 'r', kind: 'split', tag: '拆出', verb: '拆出来', headline: `拆出新专项「${id}」`, from: '', why: '', goal: '',
   topics: [], state, note: '', at: 0, ...extra,
 });
-const D = (proposals, running = null) => ({ proposals, running, updated_at: 0 });
+const D = (proposals, running = null, last_run = undefined) => ({ proposals, running, updated_at: 0, ...(last_run ? { last_run } : {}) });
+const RUN = (state, extra = {}) => ({ run: 'r1', state, retry: false, origin: 'web', at: 0, progress: { done: 0, total: 0, current: '' }, ...extra });
 
-test('一条建议都没有不画，正在整理也不画（进度在「整理」按钮旁）', () => {
+test('一条建议都没有不画；正在整理画进度（T884：网页上点的整理在面板上看得到）', () => {
   assert.equal(T.shown(T.look(D([])), []), false);
-  assert.equal(T.shown(T.look(D([], { done: 3, total: 10 })), []), false);
+  assert.equal(T.shown(T.look(D([], { done: 3, total: 10 })), []), true);
 });
 
 test('有要你定的：总是画、一进来展开；点过收起就收成一行，其中一条在别处定掉了还收着，来了新的一条再展开', () => {
@@ -61,9 +62,9 @@ test('「知道了」只在都定好了、没在整理时能点；记下的样�
 
 test('一行的字：要你定的说条数和第一条；都定好了说“等 N 条”和没做成几条', () => {
   const asking = T.panelWords(T.look(D([P('a', 'open'), P('b', 'open'), P('c', 'failed')])));
-  assert.deepEqual(asking, { state: '要你定 2 条', head: '拆出新专项「a」', more: '', count: '', run: '', failed: '' });
+  assert.deepEqual(asking, { state: '要你定 2 条', head: '拆出新专项「a」', more: '', count: '', run: '', failed: '', fail: '' });
   const settled = T.panelWords(T.look(D([P('a', 'done'), P('b', 'declined'), P('c', 'failed')], { done: 2, total: 5 })));
-  assert.deepEqual(settled, { state: '都定好了', head: '拆出新专项「a」', more: '等 3 条', count: '3 条', run: '正在整理（2/5）', failed: '1 条没做成' });
+  assert.deepEqual(settled, { state: '都定好了', head: '拆出新专项「a」', more: '等 3 条', count: '3 条', run: '正在整理（2/5）', failed: '1 条没做成', fail: '' });
   assert.equal(T.panelWords(T.look(D([P('a', 'done')]))).more, '');
 });
 
@@ -75,4 +76,46 @@ test('定好的一行末尾的结果词：照办了按种类说，没做成是�
   assert.deepEqual(T.outcome({ kind: 'create', state: 'declined' }), { word: '不用', tone: 'off' });
   assert.deepEqual(T.outcome({ kind: 'create', state: 'expired' }), { word: '已过时', tone: 'off' });
   assert.deepEqual(T.outcome({ kind: 'create', state: 'never' }), { word: '不再提议', tone: 'off' });
+});
+
+test('T884 最近一次没整理成：没有建议也画原因，「知道了」收走，下一次没整理成再出来；旧版 Covey 不带 last_run 照旧', () => {
+  const bad = RUN('failed', { why: 'Codex 登录失效或没有权限', why_code: 'authentication_error', via: 'codex' });
+  const l = T.look(D([], null, bad));
+  assert.equal(T.shown(l, []), true);
+  assert.equal(T.dismissible(l), true);
+  assert.equal(T.failWords(T.failedRun(l)), '这次没整理成：Codex 登录失效或没有权限');
+  assert.equal(T.wantsSettings(T.failedRun(l)), true);
+  assert.equal(T.panelWords(l).state, '没整理成');
+  const gone = T.remember(l, []);
+  assert.equal(T.shown(l, gone), false);
+  assert.equal(T.shown(T.look(D([], null, { ...bad, run: 'r2' })), gone), true, '又一次没整理成');
+  assert.equal(T.shown(T.look(D([], null, RUN('done'))), []), false, '最近一次整理好了、没有建议：不画');
+  assert.equal(T.shown(T.look(D([])), []), false);
+});
+
+test('T884 过一会儿真能好的才说再试，不给「去设置」；选了不用模型说去设置选一个', () => {
+  const late = T.look(D([], null, RUN('failed', { why: 'Codex 判断超时了', why_code: 'timeout', retry: true })));
+  assert.equal(T.nextWords(T.failedRun(late)), '可以过一会儿再试。');
+  assert.equal(T.wantsSettings(T.failedRun(late)), false);
+  const none = T.look(D([], null, RUN('failed', { why: '辅助模型选了不用模型', why_code: 'none' })));
+  assert.match(T.nextWords(T.failedRun(none)), /选一个辅助模型/);
+});
+
+test('T884 正在整理：读到哪个话题、读了几个，进度条的比例；没在整理时不算没整理成', () => {
+  const run = RUN('running', { progress: { done: 3, total: 10, current: 'T503 老话题' } });
+  const l = T.look(D([], { done: 3, total: 10 }, run));
+  assert.equal(T.progressWords(l), '正在读 T503 老话题（3/10）');
+  assert.equal(T.progressShare(l), 0.3);
+  assert.equal(T.failedRun(l), null);
+  assert.equal(T.dismissible(l), false);
+  const judging = T.look(D([], { done: 10, total: 10 }, RUN('running', { progress: { done: 10, total: 10, current: '' } })));
+  assert.equal(T.progressWords(judging), '正在判断（10 个话题）');
+  assert.equal(T.progressWords(T.look(D([], { done: 1, total: 4 }))), '正在整理（1/4）', '旧版 Covey：只有 running');
+  assert.equal(T.progressShare(T.look(D([], { done: 0, total: 0 }))), null);
+});
+
+test('T884 有建议时最近一次没整理成：收成一行也写原因', () => {
+  const l = T.look(D([P('a', 'done')], null, RUN('failed', { why: 'Claude Code 被官方内容安全拦了' })));
+  assert.equal(T.panelWords(l).fail, '这次没整理成：Claude Code 被官方内容安全拦了');
+  assert.equal(T.shown(l, []), true);
 });

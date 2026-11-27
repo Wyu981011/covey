@@ -1230,6 +1230,28 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
         missing = self.summarize(workdir=self.root / "gone")
         self.assertEqual(missing[0], "")
 
+    def test_a_model_that_says_nothing_after_the_question_gives_up_at_the_first_sign_limit(self):
+        """T884 A12: a gateway that is down: Claude Code answers initialize, then nothing of the model comes (only its
+        own init row): the summary is given up after FIRST_SECONDS, not SUMMARY_SECONDS."""
+        from covey.backends.claude import handoff
+        self.assertEqual(handoff.FIRST_SECONDS, 30)
+        backend, ctx = ClaudeBackend(), self.context("handoff-hang")
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(self.config)}):
+            self.assertEqual(handoff.summarize(backend, ctx, SID, "[Bridge 交接请求]", backend.child_env(ctx), seconds=20,
+                                               first_seconds=0.5), ("", "原模型 0.5 秒没有回应（网关可能断开）"))
+        self.assertLess(time.monotonic() - started, 15)
+
+    def test_a_removed_providers_or_gateways_model_is_never_asked_for_a_summary(self):
+        from covey.core.providers import RETIRED_PREFIXES
+        prefix, name = next(iter(RETIRED_PREFIXES.items()))
+        self.assertEqual(self.summarize(model=prefix + "claude-opus-4-8"),
+                         ("", f"原来的模型来自已下线的供应商「{name}」，没有发送"))
+        self.assertFalse((self.root / "handoff-argv.json").exists())
+        with mock.patch.object(ClaudeBackend, "retired_gateway", return_value=True):
+            self.assertEqual(self.summarize(), ("", "原来的模型所在网关已下线，没有发送"))
+        self.assertFalse((self.root / "handoff-argv.json").exists())
+
     def test_a_redacted_session_is_summarized_through_the_relay_or_not_at_all(self):
         from covey.backends.claude import redaction
         settings = {"ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}
@@ -1265,6 +1287,42 @@ class ClaudeHandoffSummaryTests(unittest.TestCase):
         (ctx.state_dir / "redaction" / "config.json").write_text("not json")
         self.assertEqual(self.summarize(redact=True), ("", "敏感词中继不可用，没有发送"))
         self.assertFalse((self.root / "handoff-argv.json").exists())
+
+
+class ClaudeOneShotTests(unittest.TestCase):
+    """ClaudeBackend.one_shot and turn_hooked (T884 E2): the 辅助模型's one question to Claude Code goes through the
+    extensions' claude_turn hooks (covey-internal's protocol-normalization relay) and its --settings point at the relay
+    a hook gave."""
+
+    def test_the_settings_take_the_relay_a_hook_gave_and_no_user_hook(self):
+        from covey.backends.claude import bridge as claude_bridge, redaction
+        ctx = codex_context(Path("/nonexistent-root"), "stream-json")
+        relay = {"ANTHROPIC_BASE_URL": "http://127.0.0.1:9"}
+        entered, left = [], []
+
+        class Hook:
+            @staticmethod
+            @contextlib.contextmanager
+            def turn(ctx, env, *, run_id=""):
+                entered.append(run_id)
+                try:
+                    yield dataclasses.replace(ctx, options={**ctx.options, redaction.SETTINGS_ENV: relay}), {**env, "X": "1"}
+                finally:
+                    left.append(run_id)
+        backend = ClaudeBackend()
+        with mock.patch.object(claude_bridge.extensions, "hooks", return_value=[("covey_internal", Hook)]):
+            self.assertTrue(backend.turn_hooked())
+            with backend.one_shot(ctx, {"A": "b"}, run_id="assist-1") as (hooked, env, settings):
+                self.assertEqual(settings, {"disableAllHooks": True, "env": relay})
+                self.assertEqual(env, {"A": "b", "X": "1"})
+                self.assertEqual(hooked.options[redaction.SETTINGS_ENV], relay)
+                self.assertEqual(left, [])
+        self.assertEqual((entered, left), (["assist-1"], ["assist-1"]))  # The relay ends with the question.
+        with mock.patch.object(claude_bridge.extensions, "hooks", return_value=[]):
+            self.assertFalse(backend.turn_hooked())
+            with backend.one_shot(ctx, {}) as (same, _, settings):
+                self.assertEqual(settings, {"disableAllHooks": True})
+                self.assertIs(same, ctx)
 
 
 class InstalledClaudeContractTests(unittest.TestCase):

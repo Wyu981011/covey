@@ -33,7 +33,7 @@
 | 卡片按钮与点击 | `app/card_actions.py`、`app/card_routing.py`、`app/card_lanes.py` | [卡片点击的数据流](docs/architecture.md#卡片点击的数据流)、[cards.md](docs/cards.md) |
 | 谁被服务、群聊、别人私聊时回一句（`COVEY_STRANGER_REPLY`，默认开） | `app/access.py`、`core/groups.py`、`app/group_manager.py`、`app/strangers.py` | [谁被服务](docs/architecture.md#谁被服务) |
 | 管家（私聊模式） | `app/butler.py`、`core/butler.py`、`core/placement.py`、`app/butler_tools.py`；跑在哪个 Harness `app/butler_harness.py` | [butler.md](docs/butler.md) |
-| 小模型判断（整理专项、巡逻、分流、晚间候选、看看；Claude Code → Codex → Antigravity） | `app/track_judge.py`（`tools`、`ask`、`judge`）、`backends/codex/judge.py`、`backends/agy/judge.py`、`core/one_shot.py` | [配置 · 小模型判断](docs/configuration.md#小模型判断) |
+| 辅助模型：后台的一问一答（分流和它的待命进程、整理专项、看看、巡逻、晚间候选、记忆自己长、整理记忆）的唯一出口，设置里一项（自动跟随管家 / 点名 / 不用模型），熔断、拒绝冷却和最近一次记在 `assist-state.json` | `app/assist.py`（`route`、`ask`、`judge`、`warm`、`on_settings_changed`）、`core/assist.py`（记录、原因码）、`app/track_judge.py`（只管怎么问）、`app/track_standby.py`、`backends/codex/judge.py`、`backends/agy/judge.py`、`core/one_shot.py` | [配置 · 辅助模型](docs/configuration.md#辅助模型) |
 | 话题与回带 | `app/butler_topics.py`（新话题的 Harness、模型、预算在 `app/butler_model_choice.py`；请求幂等账本 `core/butler_opened.py`）、`app/butler_relay.py`、`app/relay_targets.py`、`app/relay_send.py`；停住卡的原因、按钮和点击 `app/relay_stops.py` | [butler.md](docs/butler.md) |
 | 引用卡片接着说（顶层引用结论卡、问题卡副本等直达话题的那句话上的表情） | `app/butler_reactions.py` 的 `top_message`、`top_queued` 等，接入点在 `app/submission.py`、`app/steering.py`、`app/questions.py`、`app/held_notes.py`、`app/task_controls.py` | [引用卡片接着说的表情](docs/architecture.md#引用卡片接着说的表情) |
 | 看板、Pin、手上的事 | `app/pins.py`、`app/status_cards.py`、`app/overview.py`、`core/board_read.py` | [手上的事](docs/usage.md#手上的事)、[配置](docs/configuration.md#手上的事与话题看板) |
@@ -93,6 +93,7 @@
 | `app/app_setup.py` | The Feishu app's configuration kept up with the Bridge: 使用者只扫码，其余由 Bridge 用浏览器完成 |
 | `app/artifact_policy.py` | What of a task's artifacts may be published |
 | `app/artifacts.py` | Publish only explicitly recorded, bounded artifacts of a task |
+| `app/assist.py` | 辅助模型: the one way the Bridge's background model calls go out |
 | `app/auto_retry.py` | Automatic 检查并继续 after a turn that ended without a reply as one of KINDS |
 | `app/auto_upgrade.py` | 定时自动升级: with COVEY_AUTO_UPGRADE=HH:MM and an upgrader set up, the Bridge upgrades itself and the web page … |
 | `app/availability.py` | Separate local backend readiness from recently observed model access |
@@ -367,6 +368,7 @@
 | --- | --- |
 | `core/agy_home.py` | A HOME of its own for one Antigravity (`agy`) run that must leave nothing behind |
 | `core/app_manifest.py` | What the Feishu app behind a Bridge must have, and what its online version lacks |
+| `core/assist.py` | 辅助模型: what the background model calls (分流, 整理专项, 看看, 记忆) share across processes, in … |
 | `core/attachments.py` | Image attachments a Harness hands its model itself (Claude Code's stream-json input) |
 | `core/avatars.py` | The avatars of the private chat's cards: which picture a speaker has, and the image keys Feishu gave them |
 | `core/background.py` | The work a task runner finishes before it exits |
@@ -584,7 +586,7 @@
 | `backends/agy/bridge.py` | Antigravity (Google's `agy` CLI): Gemini and the other models of the owner's Google account, headless |
 | `backends/agy/compaction.py` | Compacting an agy conversation between turns: `/compact` in an agy process of its own |
 | `backends/agy/home.py` | agy's private home for one turn that takes the Bridge's tools (`options["mcp_config"]`, the butler's) |
-| `backends/agy/judge.py` | One question to Antigravity and nothing else |
+| `backends/agy/judge.py` | One question to Antigravity and nothing else: the background model's questions when they go to Antigravity |
 
 ### backends/claude
 
@@ -622,7 +624,7 @@
 | `backends/codex/events.py` | Codex App Server items as public Harness events |
 | `backends/codex/gateway.py` | A model gateway's OpenAI Responses models inside the regular Codex Harness |
 | `backends/codex/handoff.py` | A handoff summary from a Codex thread the topic is leaving, as backends/claude/handoff.py writes Claude Code's |
-| `backends/codex/judge.py` | One question to Codex and nothing else: the small model's questions where no Claude Code is enabled |
+| `backends/codex/judge.py` | One question to Codex and nothing else: the background model's questions when they go to Codex |
 | `backends/codex/rpc.py` | The Codex App Server process and its JSON-RPC over stdio (AppServer) |
 | `backends/codex/sessions.py` | Codex rollout session store for the Lark bridge |
 | `backends/codex/turn.py` | One Codex turn read to its end (read_turn) |

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from covey.app import project_sorter as sorter
-from covey.app import topic_links, track_judge
+from covey.app import topic_links
 from covey.cards import project_proposal as cards
 from covey.core import project_proposals as proposals
 from covey.core import projects, topic_gist
@@ -102,13 +102,6 @@ def foldable(state, pid) -> bool:
 def owner_chat(runtime) -> str:
     """The owner's private chat ('' before the Bridge knows it)."""
     return runtime.access.owner_chat() or ""
-
-
-def judge_tools(env) -> tuple:
-    """(the backend, the context) the small model's calls go through (app/track_judge.py tools): the Claude app's, else
-    Codex's or Antigravity's own CLI; (None, None) with none."""
-    apps = getattr(getattr(env, "topics", None), "apps", None) or {}
-    return track_judge.tools(apps)
 
 
 def live_projects(state, chat) -> list:

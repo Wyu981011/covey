@@ -454,10 +454,18 @@ class AntigravityBackend(BackendRuntime):
         finally:
             homes.close()
 
-    def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None):
-        """One question to agy and nothing else (backends/agy/judge.py): the answer's text, or AskFailed."""
+    def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None, follow=""):
+        """One question to agy and nothing else (backends/agy/judge.py): the answer's text, or AskFailed with the reason
+        ``error_code`` reads of its error. ``follow``: the model of the setting the question follows (a heavy one's)."""
         from covey.backends.agy.judge import ask_once
-        return ask_once(self, ctx, system, data, heavy=heavy, limit=limit, cwd=cwd, settings=READ_ONLY_SETTINGS)
+        return ask_once(self, ctx, system, data, heavy=heavy, limit=limit, cwd=cwd, settings=READ_ONLY_SETTINGS,
+                        follow=follow, classify=error_code)
+
+    def ask_model(self, ctx, *, heavy=False, follow=""):
+        """The model id ``ask_once`` would run on (backends/agy/judge.py model_of); '' for agy's own default, which only
+        agy knows. Nothing is started."""
+        from covey.backends.agy.judge import model_of
+        return model_of(self, ctx, heavy=heavy, follow=follow)
 
     def environment(self, ctx):
         # COVEY_HOME, COVEY_TOPIC, COVEY_STATE and <数据根>/bin on PATH (core/home.py), none on a device.

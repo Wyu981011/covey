@@ -6,19 +6,22 @@ record written but the gists the backfill reads (core/topic_gist.py); app/projec
   its workspace (none for a topic that started in the home) and the repositories it lists (``repos``), the project it is in,
   its age in days and how many turns the owner started.
 - ``backfill``: a topic that has no 话题要点 (one from before 整理专项) is read once by a call of its own (``GIST_SYSTEM``: its
-  material with READ_CHARS of its words) and its gist written (core/topic_gist.py, source ``backfill``). A call that fails (the
-  model refuses the content, times out, answers nothing usable) only marks that topic unreadable (``mark_unreadable``): it sits
-  this 整理 out, the others go on.
+  material with READ_CHARS of its words) and its gist written (core/topic_gist.py, source ``backfill``). A call that fails on
+  the topic itself (TOPIC_PROBLEMS: the model refuses the content, it is too long, the answer is not usable) marks that topic
+  unreadable (``mark_unreadable``): it sits this 整理 out, the others go on. A failure of the model's side (a login, a spent
+  quota, a lost connection, a timeout, no model allowed) never marks it: the topic is read again next time, and
+  app/tidy_run.py stops the reading when no model can take it (``stops``).
 - ``judge``: one call over the projects (name, goal, state, their topics' essences) and the topics (``material``), with the
   owner's lessons (the reasons he gave for 不用 and 移出) as rules: the answer is a list of suggestions (core/project_proposals.py
   KINDS). The model may first ask to read up to READ_MAX topics in full (``read``): they are given with READ_CHARS each and it is
   asked once more, its last answer taken. ``focus`` (a real-time 整理): only suggestions about that topic count.
 
-Both calls go where app/track_judge.py ``ask`` puts the small model's questions (no tools, MCP servers, hooks or saved session,
-killed past the limit): the Claude Harness, asked for COVEY_PROJECT_TIDY_MODEL (core/project_proposals.py model, Sonnet by default) through its own wrapping;
-else Codex's or Antigravity's own CLI on its default model (a heavy question: core/harness.py ask_once). A topic that
-redacts (core/redaction.py) is never sent and is counted apart. Every failure is a reason, never an exception
-(``Failed``)."""
+Both calls go out through the 辅助模型 (app/assist.py ask, ``Where`` says which of its features and whether the owner asked):
+no tools, MCP servers, hooks or saved session, killed past the limit; Claude Code is asked for COVEY_PROJECT_TIDY_MODEL
+(core/project_proposals.py model, Sonnet by default), Codex's or Antigravity's own CLI for its heavy model. A topic that
+redacts (core/redaction.py) is never sent and is counted apart. Every failure is a reason (core/assist.py's), never an
+exception (``Failed``); the judge's says which Harness and model it was (``Verdict.via``, ``model``) and their own words,
+secrets hidden (``detail``)."""
 from __future__ import annotations
 
 import dataclasses
@@ -26,8 +29,9 @@ import json
 import time
 from pathlib import Path
 
-from covey.app import track_judge
+from covey.app import assist, track_judge
 from covey.app.track_standby import Failed
+from covey.core import assist as reasons
 from covey.cards.review import answer_lead
 from covey.core import project_proposals as proposals
 from covey.core import projects, redaction, topic_gist
@@ -153,11 +157,25 @@ def hidden(state, topic) -> bool:
 
 # The calls -----------------------------------------------------------------------------------------------------------
 
-def ask(system, data, backend, ctx, limit) -> str:
-    """The model's raw answer (as Claude Code's JSON envelope) to ``data``, one call of the 整理 model with ``system``, where
-    app/track_judge.py ``ask`` puts it (the gateway, the Claude Harness, Codex's or Antigravity's own CLI); Failed otherwise."""
-    cwd = proposals.folder(ctx.state_dir) / "judge" if ctx is not None else None
-    return track_judge.ask(system, data, backend=backend, ctx=ctx, limit=limit, cwd=cwd, model=proposals.model())
+@dataclasses.dataclass(frozen=True)
+class Where:
+    """Where a call of 整理专项 goes (app/assist.py): the Bridge's ``topics``, the ``feature`` (assist TIDY, REALTIME,
+    BACKFILL) and whether the owner asked for this 整理 (``manual``: ✨ 整理, the butler's projects_tidy)."""
+    topics: object
+    feature: str = assist.TIDY
+    manual: bool = False
+
+    def as_(self, feature) -> "Where":
+        return dataclasses.replace(self, feature=feature)
+
+
+def ask(system, data, where, limit) -> str:
+    """The model's raw answer (as Claude Code's JSON envelope) to ``data``, one call of the 整理 model with ``system``,
+    through the 辅助模型 (app/assist.py ask); Failed otherwise. A new route each call: a loop over topics never keeps one."""
+    state = assist.state_of(where.topics)
+    cwd = proposals.folder(state) / "judge" if state is not None else Path(".")
+    return assist.ask(where.feature, system, data, topics=where.topics, limit=limit, cwd=cwd, manual=where.manual,
+                      model=proposals.model())
 
 
 def first_object(text, key):
@@ -177,9 +195,22 @@ def answer(raw) -> str:
     return track_judge.answer_text(raw, "claude")
 
 
-def backfill(state, chat, topic, *, backend, ctx, log=print, now=None, call=None) -> str:
-    """Write ``topic``'s gist from one read of its whole content; '' when it was written, else why not (the topic then marked
-    unreadable: this 整理 goes on without it). ``call`` (tests): stands in for ``ask``."""
+# What a read of a topic failed on that is the topic's own: it is marked unreadable until its next turn.
+# A bare non-zero exit is not one: it may be the CLI's environment.
+TOPIC_PROBLEMS = frozenset({"redacted", "empty", "too_long", "refused", "policy_refusal", "bad_output", "out_of_range",
+                            "model_error", "root_failed", "error"})
+
+
+def stops(reason) -> bool:
+    """Whether a backfill that failed on ``reason`` means no model can read any topic now (a login, a spent quota, a lost
+    connection, none allowed or none left): app/tidy_run.py stops reading the others."""
+    return reasons.kind_of(reason) in ("break", "not_asked")
+
+
+def backfill(state, chat, topic, *, where, log=print, now=None, call=None) -> str:
+    """Write ``topic``'s gist from one read of its whole content; '' when it was written, else why not (TOPIC_PROBLEMS mark
+    the topic unreadable: this 整理 goes on without it; the model side's reasons do not). ``where``: the call's (``Where``,
+    its feature BACKFILL). ``call`` (tests): stands in for ``ask``."""
     now = time.time() if now is None else now
     started = time.monotonic()
     found = material(state, chat, topic, now, owner_chars=READ_CHARS)
@@ -192,16 +223,17 @@ def backfill(state, chat, topic, *, backend, ctx, log=print, now=None, call=None
     data = json.dumps({"title": found.title, "owner": found.owner,
                        "conclusions": [first_paragraph(text) for text in found.conclusions]}, ensure_ascii=False)
     try:
-        raw = (call or ask)(GIST_SYSTEM, data, backend, ctx, proposals.number("read_seconds"))
+        raw = (call or ask)(GIST_SYSTEM, data, where.as_(assist.BACKFILL), proposals.number("read_seconds"))
         gist = topic_gist.parse(first_object(answer(raw), "essence") or {})
         if not gist:
             raise Failed("bad_output")
     except Failed as exc:
         reason = why_failed(exc)
-        topic_gist.mark_unreadable(state, topic, reason, job=found.last_job, now=now)
+        if reason in TOPIC_PROBLEMS:
+            topic_gist.mark_unreadable(state, topic, reason, job=found.last_job, now=now)
         detail = " ".join(str(getattr(exc, "detail", "") or "").split())[:160]
         log(f"project tidy backfill failed topic={topic[:12]} reason={reason} ms={round((time.monotonic() - started) * 1000)}"
-            + (f" detail={detail}" if detail else ""))
+            + (f" via={getattr(exc, 'via', '')}" if getattr(exc, "via", "") else "") + (f" detail={detail}" if detail else ""))
         return reason
     except Exception as exc:  # noqa: BLE001 - this topic only
         topic_gist.mark_unreadable(state, topic, "error", job=found.last_job, now=now)
@@ -213,13 +245,10 @@ def backfill(state, chat, topic, *, backend, ctx, log=print, now=None, call=None
 
 
 def why_failed(exc) -> str:
-    """A failed read's reason, told apart by what the CLI said when it exited non-zero: ``too_long`` (the topic does not fit
-    one read), ``refused`` (an official safety refusal), else the reason as it came."""
-    detail = str(getattr(exc, "detail", "") or "").lower()
-    if exc.reason == "exit_nonzero" and ("too long" in detail or "context length" in detail or "too many tokens" in detail):
-        return "too_long"
-    if exc.reason == "exit_nonzero" and ("usage policy" in detail or "refus" in detail or "safety" in detail):
-        return "refused"
+    """A failed call's reason (core/assist.py's): as it came, but a bare non-zero exit or a model error told apart by what
+    the CLI said (core/assist.py code_of_text: ``too_long``, ``policy_refusal``, a login, a quota…)."""
+    if exc.reason in ("exit_nonzero", "model_error"):
+        return reasons.code_of_text(getattr(exc, "detail", "") or "") or exc.reason
     return exc.reason
 
 
@@ -242,6 +271,9 @@ class Verdict:
     why: str = "ok"
     read: tuple = ()
     ms: int = 0
+    via: str = ""  # The Harness asked ('' none), and its model.
+    model: str = ""
+    detail: str = ""  # Its own words of a failure, secrets hidden and cut (core/failure.py said_of).
 
 
 def project_rows(state, records, topics_by_id) -> list:
@@ -360,16 +392,18 @@ def parse(text, records, items, *, focus=None, run="", source="tidy") -> list:
     return kept
 
 
-def judge(state, records, items, *, backend, ctx, focus=None, scope="", lessons=(), run="", source="tidy", log=print,
+def judge(state, records, items, *, where, focus=None, scope="", lessons=(), run="", source="tidy", log=print,
           call=None) -> Verdict:
-    """The model's suggestions over ``records`` (the projects) and ``items`` (``material`` of the topics); never raises."""
+    """The model's suggestions over ``records`` (the projects) and ``items`` (``material`` of the topics), asked through
+    ``where`` (``Where``); never raises."""
     started = time.monotonic()
     records, items = list(records)[:MAX_PROJECTS], list(items)[:MAX_TOPICS]
 
     def done(verdict):
         verdict.ms = round((time.monotonic() - started) * 1000)
         log(f"project tidy judge suggestions={len(verdict.suggestions)} why={verdict.why} read={len(verdict.read)} "
-            f"topics={len(items)} projects={len(records)} ms={verdict.ms}")
+            f"topics={len(items)} projects={len(records)} ms={verdict.ms}" + (f" via={verdict.via}" if verdict.via else "")
+            + (f" detail={verdict.detail}" if verdict.detail and verdict.why != "ok" else ""))
         return verdict
 
     if not items:
@@ -380,7 +414,7 @@ def judge(state, records, items, *, backend, ctx, focus=None, scope="", lessons=
         for attempt in range(2):
             data = json.dumps(payload(state, records, items, focus=focus, scope=scope, lessons=lessons, full=full),
                               ensure_ascii=False)
-            text = answer((call or ask)(JUDGE_SYSTEM, data, backend, ctx, limit))
+            text = answer((call or ask)(JUDGE_SYSTEM, data, where, limit))
             wanted = first_object(text, "read")
             if attempt == 0 and wanted is not None and first_object(text, "suggestions") is None:
                 chosen = [items[i - 1] for i in _indexes(wanted.get("read"), len(items))][:READ_MAX]
@@ -392,7 +426,10 @@ def judge(state, records, items, *, backend, ctx, focus=None, scope="", lessons=
             return done(Verdict(suggestions, "ok", tuple(sorted(full or ()))))
         raise Failed("bad_output")
     except Failed as exc:
-        return done(Verdict([], exc.reason, tuple(sorted(full or ()))))
+        from covey.core.failure import said_of
+        return done(Verdict([], why_failed(exc), tuple(sorted(full or ())), via=str(getattr(exc, "via", "") or ""),
+                            model=str(getattr(exc, "model", "") or ""),
+                            detail=said_of(" ".join(str(exc.detail or "").split()))[:160]))
     except Exception as exc:  # noqa: BLE001 - a judging that fails changes nothing
         log(f"project tidy judge failed detail={type(exc).__name__}")
         return done(Verdict([], "error"))

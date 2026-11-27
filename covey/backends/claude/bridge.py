@@ -17,6 +17,7 @@ import argparse
 import contextlib
 import dataclasses
 import shlex
+import time
 from typing import Any
 
 from covey.core import extensions, home
@@ -223,6 +224,12 @@ class ClaudeBackend(BackendRuntime):
         not sent when the relay cannot run or the topic's setting cannot be read. ``run_id``: its row in the relay's
         counts, apart from the turns'."""
         from covey.backends.claude.handoff import summarize
+        # The same refusals as ``run``: a removed provider's or gateway's model is never asked, not even for a summary.
+        removed = retired_provider(ctx.model)
+        if removed:
+            return "", f"原来的模型来自已下线的供应商「{removed}」，没有发送"
+        if self.retired_gateway(ctx):
+            return "", "原来的模型所在网关已下线，没有发送"
         env = self.child_env(ctx)
         try:
             want_redact = redact or redaction.wanted(ctx)
@@ -233,6 +240,43 @@ class ClaudeBackend(BackendRuntime):
                     return summarize(self, ctx, session_id, prompt, env, cancel=cancel)
         except redaction.Unavailable:
             return "", "敏感词中继不可用，没有发送"
+
+    @contextlib.contextmanager
+    def one_shot(self, ctx, env, *, run_id=""):
+        """(ctx, env, settings) for one question to a Claude Code started by the Bridge outside a turn (the 辅助模型's
+        one-shot and standby, app/track_judge.py): the extensions' ``claude_turn`` hooks around it as around a turn
+        (``_extension_turn``; covey-internal's protocol-normalization relay, COVEY_CLAUDE_CLI_NORMALIZE=1, is one: a
+        machine that reaches its model only through it would have every background question refused upstream without
+        it), and ``settings`` its ``--settings``: no hook of the user's (``disableAllHooks``) and, when a hook gave the
+        turn a relay (backends/claude/redaction.py SETTINGS_ENV: its ANTHROPIC_BASE_URL), what points Claude Code at it.
+        The hooks' own Claude Code hooks (TURN_HOOKS) are not taken: the question runs none. Whatever the hooks started
+        ends when the block does."""
+        with _extension_turn(ctx, env, run_id=run_id) as (ctx, env):
+            yield ctx, env, {"disableAllHooks": True, **redaction.settings(ctx)}
+
+    def turn_hooked(self, ctx=None) -> bool:
+        """Whether an enabled extension wraps Claude Code's turns (a ``claude_turn`` hook, ``one_shot``): a process kept
+        waiting between questions (app/track_standby.py) would outlive what the hook started for it, so none is kept then.
+        With ``ctx``: only a hook that does wrap this context's turn counts (one that is registered but off, a protocol
+        relay without its switch, changes nothing and leaves the standby alone); found by entering the hooks once with
+        nothing run inside, kept HOOKED_SECONDS (a switch changes with the service's environment, at a restart)."""
+        hooks = extensions.hooks("claude_turn")
+        if not hooks:
+            return False
+        if ctx is None:
+            return True
+        key = (str(getattr(ctx, "state_dir", "")), tuple(getattr(ctx, "backend_cmd", None) or ()))
+        held = _hooked.get(key)
+        if held is not None and time.monotonic() - held[0] < HOOKED_SECONDS:
+            return held[1]
+        env = self.child_env(ctx)
+        try:
+            with _extension_turn(ctx, env) as (wrapped, wrapped_env):
+                found = wrapped.options != ctx.options or wrapped_env != env
+        except Exception:  # noqa: BLE001 - a hook that cannot be entered may still wrap a turn: no standby
+            found = True
+        _hooked[key] = (time.monotonic(), found)
+        return found
 
     def subagent_report(self, ctx, session_id, since):
         """Each subagent of the session's turn from ``since``: its description, end and last text (backends/claude/subagent_report.py)."""
@@ -285,6 +329,10 @@ class ClaudeBackend(BackendRuntime):
 
     def on_startup(self, ctx: BridgeContext) -> None:
         return None
+
+
+HOOKED_SECONDS = 300
+_hooked: dict = {}  # (state directory, Claude Code's command) -> (monotonic time, whether a hook wraps its turns)
 
 
 @contextlib.contextmanager

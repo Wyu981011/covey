@@ -102,10 +102,17 @@ class CodexBackend(BackendRuntime):
                                               bridge_tools=True, read_only=True, collab=True, rate_limit_retry=True,
                                               fault_retry=True, ask_once=True), ctx)
 
-    def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None):
-        """One question to Codex and nothing else (backends/codex/judge.py): the answer's text, or AskFailed."""
+    def ask_once(self, ctx, system, data, *, heavy=False, limit, cwd=None, follow=""):
+        """One question to Codex and nothing else (backends/codex/judge.py): the answer's text, or AskFailed. ``follow``:
+        the model of the setting the question follows (a model gateway's: the question goes to that gateway)."""
         from covey.backends.codex.judge import ask_once
-        return ask_once(ctx, system, data, heavy=heavy, limit=limit, cwd=cwd)
+        return ask_once(ctx, system, data, heavy=heavy, limit=limit, cwd=cwd, follow=follow)
+
+    def ask_model(self, ctx, *, heavy=False, follow=""):
+        """The model id ``ask_once`` would run on (backends/codex/judge.py model_of: a gateway's with its prefix, Codex's own
+        default as config.toml names it, '' when unknown); nothing is started or fetched."""
+        from covey.backends.codex.judge import model_of
+        return model_of(ctx, heavy=heavy, follow=follow)
 
     # The signed-in account's models plus the gateways' Responses models (<prefix><model>, core/gateways.py).
     def model_catalog(self, ctx: BridgeContext) -> dict:

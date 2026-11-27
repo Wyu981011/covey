@@ -1028,3 +1028,64 @@ class TidyPartsTest(unittest.TestCase):
                 if isinstance(node, ast.ClassDef):
                     self.assertEqual([ast.unparse(base) for base in node.bases if ast.unparse(base) != "Exception"], [],
                                      f"{name}.{node.name}")
+
+
+class AssistExitTest(unittest.TestCase):
+    """辅助模型 (app/assist.py): the Bridge's background model calls have one way out. No other module picks a Harness for
+    them or starts one: none calls app/track_judge.py's ``tools`` (gone), ``ask``, ``judge``, ``warm`` or its process
+    helpers, none touches app/track_standby.py but for its ``Failed``, and nothing but app/track_judge.py (and a backend
+    wrapping its own one-question module) calls a backend's ``ask_once``. So 不用模型 and a named Harness hold everywhere."""
+
+    EXIT = {"app/assist.py", "app/track_judge.py", "app/track_standby.py"}
+    JUDGE = {"tools", "available", "ask", "ask_native", "judge", "warm", "run", "claude_once", "standby_target"}
+
+    def sources(self):
+        for path in sorted(PACKAGE.rglob("*.py")):
+            rel = path.relative_to(PACKAGE).as_posix()
+            if rel in self.EXIT:
+                continue
+            yield rel, ast.parse(path.read_text(), filename=str(path))
+
+    def test_no_module_but_the_exit_calls_the_judge_or_the_standby(self):
+        found = []
+        for rel, tree in self.sources():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                    if node.value.id == "track_judge" and node.attr in self.JUDGE:
+                        found.append(f"{rel}:{node.lineno} track_judge.{node.attr}")
+                    if node.value.id == "track_standby" and node.attr != "Failed":
+                        found.append(f"{rel}:{node.lineno} track_standby.{node.attr}")
+                if isinstance(node, ast.ImportFrom) and node.module in ("covey.app.track_judge", "covey.app.track_standby"):
+                    for alias in node.names:
+                        if alias.name != "Failed" and (node.module.endswith("standby") or alias.name in self.JUDGE):
+                            found.append(f"{rel}:{node.lineno} from {node.module} import {alias.name}")
+                if isinstance(node, ast.ImportFrom) and node.module == "covey.app":
+                    for alias in node.names:
+                        if alias.name == "track_standby":
+                            found.append(f"{rel}:{node.lineno} imports track_standby")
+        self.assertEqual(found, [], "后台模型调用只能经 app/assist.py（docs/configuration.md 辅助模型）")
+
+    def test_only_the_judge_and_a_backend_s_own_wrapper_call_ask_once(self):
+        found = []
+        for rel, tree in self.sources():
+            if rel.startswith("backends/"):
+                continue  # A backend's ask_once method hands the question to its own judge module.
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "ask_once":
+                    found.append(f"{rel}:{node.lineno}")
+        self.assertEqual(found, [])
+
+    def test_the_exit_checks_the_harness_again_before_it_starts_one(self):
+        source = (PACKAGE / "app" / "assist.py").read_text()
+        self.assertIn("assist refused harness=", source)
+        self.assertIn("def allowed(", source)
+
+    def test_every_feature_is_asked_through_the_exit(self):
+        from covey.app import assist
+        users = {"track": "app/butler_tracks.py", "tidy": "app/tidy_run.py", "tidy_realtime": "app/tidy_realtime.py",
+                 "backfill": "app/project_sorter.py", "look": "app/stuck_check.py", "patrol": "app/patrol_judge.py",
+                 "candidates": "app/memory_candidates.py", "learn": "app/memory_learn.py", "memory_tidy": "app/memory_tidy.py"}
+        self.assertEqual(set(users), set(assist.FEATURES))
+        for feature, rel in users.items():
+            with self.subTest(feature=feature):
+                self.assertIn("assist", (PACKAGE / rel).read_text())

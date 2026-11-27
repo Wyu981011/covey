@@ -9,9 +9,14 @@ the answer. Because it answers one question, nothing of an earlier message is in
 
 Safety: the process leads a process group of its own, killed outright (SIGKILL on the group) when it is used, past its
 limit, idle for IDLE_S (a timer thread, one per standby, only while one exists), older than MAX_AGE_S when the next
-``warm`` comes, at ``shutdown`` (the Bridge's stop, app/unified.py ``stop_children``) and at interpreter exit. A Bridge that
-dies hard closes its standard input, which ends the child on its own. Nothing here starts a process unless ``warm`` is
-called, and only the track router calls it (COVEY_BUTLER_TRACKS=1). Standard library and core/process.py only.
+``warm`` comes, at ``shutdown`` (the Bridge's stop, app/unified.py ``stop_children``; a settings change that moves 分流 off
+Claude Code, app/assist.py on_settings_changed) and at interpreter exit. A Bridge that dies hard closes its standard input,
+which ends the child on its own. Nothing here starts a process unless ``warm`` is called, and only app/assist.py calls it
+(through app/track_judge.py, for the track router, COVEY_BUTLER_TRACKS=1).
+
+No standby comes back after a ``shutdown`` it raced with: each ``shutdown`` starts a new ``generation``; ``warm`` given the
+generation its caller saw starts nothing once it changed, and asks ``allow`` (is the route Claude Code still) under the
+lock before it starts one; ``take`` asks ``allow`` again before it hands one out. Standard library and core/process.py only.
 """
 from __future__ import annotations
 
@@ -156,6 +161,19 @@ _lock = threading.Lock()
 _current: Standby | None = None
 _spares: list[Standby] = []  # Further ones asked together with ``_current`` (the judge's hedge): the first answer wins.
 _exit_hook = False
+_generation = 0  # One more at each ``shutdown``.
+
+
+def generation() -> int:
+    """The generation now: a ``warm`` given an older one starts nothing."""
+    with _lock:
+        return _generation
+
+
+def held() -> bool:
+    """Whether a standby is kept now."""
+    with _lock:
+        return _current is not None or bool(_spares)
 
 
 def usable(have: Standby | None, signature) -> bool:
@@ -163,14 +181,22 @@ def usable(have: Standby | None, signature) -> bool:
         and time.monotonic() - have.started < MAX_AGE_S
 
 
-def warm(argv, env, cwd, signature, idle_s: float = IDLE_S, spares: int = 0) -> bool:
+def warm(argv, env, cwd, signature, idle_s: float = IDLE_S, spares: int = 0, *, generation=None, allow=None) -> bool:
     """Make sure a standby is on its way: a live unused one with this ``signature`` is only kept (its idle count starts
     again) unless it is older than MAX_AGE_S; otherwise it is replaced by a new one. ``spares`` more of them are kept
     the same way (they are asked together with it, ``ask_first``). True when a process was started.
-    A process that cannot start is not an error here (the judge starts a one-shot instead)."""
+    A process that cannot start is not an error here (the judge starts a one-shot instead). ``generation``: the one the
+    caller saw (``generation()``); changed since (a ``shutdown`` came between), nothing is started or kept. ``allow``: asked
+    under the lock before any is started; false, nothing is started or kept."""
     global _current, _spares, _exit_hook
     stale, started = [], False
     with _lock:
+        if (generation is not None and generation != _generation) or (allow is not None and not _allowed(allow)):
+            stale.extend(have for have in (_current, *_spares) if have is not None)
+            _current, _spares = None, []
+            for have in stale:
+                threading.Thread(target=have.kill, name="track-standby-kill", daemon=True).start()
+            return False
         def keep(have):
             if usable(have, signature):
                 have.touch()
@@ -205,10 +231,21 @@ def warm(argv, env, cwd, signature, idle_s: float = IDLE_S, spares: int = 0) -> 
     return started
 
 
-def take(signature) -> Standby | None:
+def _allowed(allow) -> bool:
+    try:
+        return bool(allow())
+    except Exception:  # noqa: BLE001 - not known to be allowed: not started
+        return False
+
+
+def take(signature, allow=None) -> Standby | None:
     """The standby, handed out once (it is no longer ``current``); None when there is none that is alive, unused and
-    started with ``signature``. One that is not usable is killed."""
+    started with ``signature``, or ``allow`` says no (the route moved off Claude Code: every standby is killed). One that is
+    not usable is killed."""
     global _current
+    if allow is not None and not _allowed(allow):
+        shutdown()
+        return None
     with _lock:
         have, _current = _current, None
     if have is None:
@@ -265,11 +302,12 @@ def ask_first(standbys, text: str, limit: float, check) -> str:
 
 
 def shutdown() -> None:
-    """Kill the standbys, if any (the Bridge's stop, interpreter exit)."""
-    global _current, _spares
+    """Kill the standbys, if any (the Bridge's stop, interpreter exit, a settings change), and start a new generation."""
+    global _current, _spares, _generation
     with _lock:
         have, _current = [_current, *_spares], None
         _spares = []
+        _generation += 1
     for one in have:
         if one is not None:
             one.kill()

@@ -2,7 +2,7 @@
 (app/butler_harness.py), the lead's app before and after its topic.json (app/project_loop.py lead_app, app/projects.py
 step_lead), the lead held to reading on every Harness that takes the Bridge's tools (core/harness.py LEAD: Claude Code's
 tools, Codex's read-only sandbox with the Bridge's tools approved, Antigravity's deny rules), refused on one that does not
-(app/tool_limits.py refusal), and the small model's callers going where app/track_judge.py tools puts them."""
+(app/tool_limits.py refusal), and the small model's callers going where the 辅助模型 (app/assist.py) puts them."""
 from __future__ import annotations
 
 import dataclasses
@@ -15,7 +15,8 @@ from unittest import mock
 
 from support import make_context
 
-from covey.app import butler_harness, project_loop, tidy_facts, tool_limits, track_judge
+from support.assist import topics_with
+from covey.app import assist, butler_harness, project_loop, tool_limits
 from covey.backends.agy.bridge import READ_ONLY_SETTINGS, AntigravityBackend
 from covey.backends.codex import appserver
 from covey.backends.codex.bridge import CodexBackend
@@ -185,30 +186,25 @@ class LeadLimitTest(Case):
 
 
 class JudgeCallersTest(Case):
-    """Each caller of the small model takes what app/track_judge.py tools picks: no "claude" of its own."""
+    """Every caller of the small model goes through the 辅助模型 (app/assist.py): no "claude" of its own."""
 
     def apps(self):
         return {"codex": app("codex", ask_once=True), "dsh": app("dsh", tools=False)}
 
     def test_tidy_and_the_patrol_and_the_memory_candidates_and_the_stuck_check_ask_codex_without_claude_code(self):
         apps = self.apps()
-        want = (apps["codex"].harness.backend, apps["codex"].harness.context)
-        self.assertEqual(tidy_facts.judge_tools(SimpleNamespace(topics=SimpleNamespace(apps=apps))), want)
-        self.assertEqual(track_judge.tools(apps), want)
-        from covey.app import stuck_check
-        check = stuck_check.StuckCheck.__new__(stuck_check.StuckCheck)
-        check.harness = SimpleNamespace(spec=SimpleNamespace(name="dsh"))
-        check.topics = SimpleNamespace(apps=apps)
-        self.assertEqual(check.judge(SimpleNamespace()), want)
+        found = assist.route(topics_with(self.state, apps))
+        self.assertEqual((found.first.backend, found.first.ctx), (apps["codex"].harness.backend, apps["codex"].harness.context))
 
-    def test_the_butlers_tracks_never_ask_the_butlers_own_harness_as_claude_code(self):
-        from covey.app import butler_tracks
-        tracks = butler_tracks.Tracks.__new__(butler_tracks.Tracks)
+    def test_automatic_follows_the_butlers_harness_with_claude_code_enabled_and_the_default(self):
         apps = {"claude": app("claude"), **self.apps()}
-        tracks.main = SimpleNamespace(topics=SimpleNamespace(apps=apps))
-        self.assertEqual(tracks.judge_tools(), (apps["claude"].harness.backend, apps["claude"].harness.context))
-        tracks.main = SimpleNamespace(topics=SimpleNamespace(apps=self.apps()))
-        self.assertEqual(tracks.judge_tools()[1].options["harness_id"], "codex")
+        topics = topics_with(self.state, apps, default="claude")
+        self.assertEqual(assist.route(topics).harness, "claude")  # Butler off, nothing named: the Bridge's default.
+        butler_settings.save(self.state, butler_settings.Settings(enabled=True, harness="codex"))
+        with mock.patch("covey.core.butler.available", return_value=True):
+            self.assertEqual(assist.route(topics).harness, "codex")
+            butler_settings.update(self.state, enabled=False)
+            self.assertEqual(assist.route(topics).harness, "claude")  # 纯话题: the butler is not followed.
 
 
 if __name__ == "__main__":

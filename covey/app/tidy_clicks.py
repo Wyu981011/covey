@@ -49,6 +49,8 @@ class Clicks:
             after_ack(lambda: self.messenger.send_message(ctx.profile, chat, words, self.voice.safe_key(
                 self.voice.key("tidy-start", event_id)), voice=self.voice))
             return "tidy_start"
+        if kind == cards.OPEN_SETTINGS_KIND:
+            return self.open_settings(ctx, chat, raw, event_id)
         if kind == cards.LEAVE_KIND:
             topic, pid = str(raw.get("topic_id") or ""), str(raw.get("project_id") or "")
             if not projects.TOPIC_RE.fullmatch(topic) or not projects.valid_id(pid):
@@ -66,6 +68,18 @@ class Clicks:
         if raw.get("run"):
             return self.row_click(ctx, chat, event, raw, message)
         return self.proposal_click(ctx, chat, event, raw, message)
+
+    def open_settings(self, ctx, chat, raw, event_id) -> str:
+        """换辅助模型 or 看诊断 under a failed 整理: the 设置 card on 配置 with 辅助模型 open, or on 诊断 (app/settings_hub.py)."""
+        from covey.cards.butler_panel import ASSIST_PART
+        from covey.cards.settings_hub import CONFIG, DOCTOR
+        hub = getattr(getattr(self.runs, "env", None), "settings", None)
+        tab = DOCTOR if raw.get("tab") == "doctor" else CONFIG
+        if hub is None:
+            return "tidy_no_settings"
+        after_ack(lambda: hub.open_on(ctx, chat, "tidy-settings-" + event_id, tab,
+                                      section=ASSIST_PART if tab == CONFIG else ""))
+        return "tidy_open_settings"
 
     def lesson(self, ctx, event, raw, message) -> str:
         from covey.app.card_actions import form_fields

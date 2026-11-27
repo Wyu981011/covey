@@ -63,7 +63,11 @@ LEAD_HARNESS = 'bridge_main_lead_harness'
 LEAD_PROVIDER = 'bridge_main_lead_provider'
 LEAD_MODEL = 'bridge_main_lead_model'
 LEAD_EFFORT = 'bridge_main_lead_effort'
-ROWS = frozenset({HARNESS, MODEL, EFFORT, PROVIDER, REDACTION, COMPACT, TOPIC_HARNESS, TOPIC_PROVIDER, TOPIC_MODEL, TOPIC_EFFORT,
+# 辅助模型 (core/butler_settings.py AssistChoice, app/assist.py): which Harness the background model calls go through.
+ASSIST = 'bridge_main_assist_harness'
+ASSIST_AUTO, ASSIST_NONE = 'auto', 'none'  # app/assist.py AUTO, NONE: the row's two choices that are not a Harness.
+ASSIST_WORDS = {ASSIST_AUTO: '自动（跟随管家）', ASSIST_NONE: '不用模型（只按规则）'}
+ROWS = frozenset({ASSIST, HARNESS, MODEL, EFFORT, PROVIDER, REDACTION, COMPACT, TOPIC_HARNESS, TOPIC_PROVIDER, TOPIC_MODEL, TOPIC_EFFORT,
                   TOPIC_REDACTION, SUBAGENTS, MODE, REVIEW_HARNESS, REVIEW_PROVIDER,
                   REVIEW_MODEL, REVIEW_EFFORT, LEAD_HARNESS, LEAD_PROVIDER, LEAD_MODEL,
                   LEAD_EFFORT})  # Settings-list rows: the value's ``option`` is the choice.
@@ -73,15 +77,15 @@ OFFLINE_KINDS = frozenset({SPACE, TOPIC_WORKSPACE, TOPIC_RUN_MODE, NOTES})
 KINDS = ROWS | RETIRED_KINDS | OFFLINE_KINDS | {ENABLE, SECTION}
 # 配置's sections that open one at a time (the card has room for one's options, CardKit's element budget): the view's
 # ``open`` names it, OPEN_FIRST when it names none. A closed one is its heading, 展开 and one grey line of what it holds.
-TOPIC_PART, BUTLER_PART, REVIEW_PART, LEAD_PART = 'topic', 'butler', 'review', 'lead'
-SECTIONS = {TOPIC_PART: '新话题', BUTLER_PART: '管家', REVIEW_PART: '独立复核', LEAD_PART: '专项负责人'}
+TOPIC_PART, BUTLER_PART, REVIEW_PART, LEAD_PART, ASSIST_PART = 'topic', 'butler', 'review', 'lead', 'assist'
+SECTIONS = {TOPIC_PART: '新话题', BUTLER_PART: '管家', REVIEW_PART: '独立复核', LEAD_PART: '专项负责人', ASSIST_PART: '辅助模型'}
 OPEN_FIRST = TOPIC_PART
 # The section a row is in: a click on it opens that section (a card drawn before the sections names any row).
 PART_OF = {**dict.fromkeys((TOPIC_HARNESS, TOPIC_PROVIDER, TOPIC_MODEL, TOPIC_EFFORT, TOPIC_RUN_MODE, TOPIC_REDACTION,
                             TOPIC_WORKSPACE, *RETIRED_KINDS), TOPIC_PART),
            **dict.fromkeys((HARNESS, PROVIDER, MODEL, EFFORT, REDACTION, SPACE, COMPACT, MODE, ENABLE), BUTLER_PART),
            **dict.fromkeys((REVIEW_HARNESS, REVIEW_PROVIDER, REVIEW_MODEL, REVIEW_EFFORT), REVIEW_PART),
-           **dict.fromkeys((LEAD_HARNESS, LEAD_PROVIDER, LEAD_MODEL, LEAD_EFFORT), LEAD_PART)}
+           **dict.fromkeys((LEAD_HARNESS, LEAD_PROVIDER, LEAD_MODEL, LEAD_EFFORT), LEAD_PART), ASSIST: ASSIST_PART}
 # The page each button is on: a click on a card drawn before the pages, on one of the retired pages 管家, 新话题 and 模型
 # or on the retired 其他 or 工作区 redraws the page of its row now (配置).
 PAGE_OF = dict.fromkeys(KINDS, CONFIG)
@@ -119,6 +123,8 @@ SUBAGENT_NOTE = '子 Agent 对所有 Claude Code 话题和管家都生效；改�
 LEAD_FOLLOW = '跟管家一样'
 LEAD_NOTE = ('新建的专项，负责人用这里选的；没选就跟管家一样。已有的专项在专项卡上点「换配置」。'
              '只列能接 Bridge 工具的 Harness（负责人用它们派话题，在哪个上都只读）；管家开着脱敏时只列能脱敏的。')
+# 辅助模型's line under its row (app/assist.py), then what it runs on now (app/assist.py describe).
+ASSIST_NOTE = '分流、整理专项、看看、记忆这些后台活用它；选了哪个就只用哪个，用不了就不调模型并说明原因。'
 RETIRED_NOTICE = '直接开工已下线：管家开的话题一律直接开工，这一项不用再设。'
 OFFLINE_NOTICE = '这个选项已下线：新话题一律从主目录开始，仓库在网页设置的「仓库」页管。'
 # 管家's line under its rows while 脱敏 keeps a Harness that cannot redact off its Harness row.
@@ -217,6 +223,20 @@ def subagent_setting(settings):
     """The 子 Agent row (core/butler_settings.py SUBAGENTS), bot-wide: every Claude Code turn's subagents."""
     return Setting('subagent', '子 Agent', SUBAGENTS, settings.subagents,
                    [(mode, SUBAGENT_LABELS[mode]) for mode in SUBAGENT_MODES])
+
+
+def assist_setting(assist):
+    """辅助模型's row (app/assist.py offered, current): 自动（跟随管家）, each Harness that answers one question by itself,
+    不用模型."""
+    options = list(assist.get('options') or ())
+    current = str(assist.get('current') or ASSIST_AUTO)
+    return Setting('assist', '辅助模型', ASSIST, current, known(options, current, ASSIST_WORDS.get(current, current)))
+
+
+def assist_note(assist):
+    """The line under 辅助模型's row: ASSIST_NOTE, then what it runs on now."""
+    words = str(assist.get('words') or '')
+    return note(ASSIST_NOTE + (words if words else ''))
 
 
 def review_setting_list(settings, choices, limit):
@@ -327,12 +347,13 @@ def closed_section(part, line, click):
 
 
 def config_page(settings, choices, workspaces, limit, follows, models, fallback, rows, value, confirm, *,
-                butler_allowed, butler_on, review_on, open_=OPEN_FIRST, lead_on=False):
+                butler_allowed, butler_on, review_on, open_=OPEN_FIRST, lead_on=False, assist=None):
     """配置's body, a section a use (``rows`` draws a section's rows, ``value`` a button's value): 新话题 (topic_settings,
     with 直接开工 and 记住的工作区 while ``butler_on``); 管家 while ``butler_allowed`` (the deployment allows the butler):
     its own rows (butler_setting_list) and the private chat mode, the mode's row alone in 纯话题, ``confirm`` asking
     before 每条直接开一个话题 is saved (mode_confirm, the section open); 独立复核 (review_setting_list) while
-    ``review_on``; 专项负责人 (lead_setting_list) while ``lead_on`` (COVEY_PROJECTS=1); under 更多 子 Agent. Only the section
+    ``review_on``; 专项负责人 (lead_setting_list) while ``lead_on`` (COVEY_PROJECTS=1); 辅助模型 (``assist``: app/assist.py's row
+    data; with the butler off too: the background calls run without it); under 更多 子 Agent. Only the section
     ``open_`` (SECTIONS) shows its rows; each other is its heading with 展开 (SECTION) and a grey line of what it holds
     (``summary``)."""
     parts = {TOPIC_PART: topic_settings(settings.topic_defaults, choices, workspaces, limit, follows, models, fallback,
@@ -344,6 +365,8 @@ def config_page(settings, choices, workspaces, limit, follows, models, fallback,
         parts[REVIEW_PART] = review_setting_list(settings, choices, limit)
     if lead_on:
         parts[LEAD_PART] = lead_setting_list(settings, choices, limit)
+    if assist:
+        parts[ASSIST_PART] = [assist_setting(assist)]
     open_ = BUTLER_PART if confirm and BUTLER_PART in parts else open_ if open_ in parts else OPEN_FIRST
     elements = []
     for part, settings_ in parts.items():
@@ -362,8 +385,10 @@ def config_page(settings, choices, workspaces, limit, follows, models, fallback,
                 elements += mode_confirm(value)
         elif part == LEAD_PART:
             elements.append(note(LEAD_NOTE))
-        else:
+        elif part == REVIEW_PART:
             elements.append(note(REVIEW_NOTE))
+        elif part == ASSIST_PART:
+            elements.append(assist_note(assist))
     elements += [heading('更多'), *rows([subagent_setting(settings)]), note(SUBAGENT_NOTE)]
     if butler_on:
         elements.append(note(LOCKED))
@@ -371,14 +396,15 @@ def config_page(settings, choices, workspaces, limit, follows, models, fallback,
 
 
 def butler_panel_card(token, view, settings, choices, workspaces, top=(), follows=None, page=None,
-                           fallback=None, butler_on=True, review_on=False, butler_allowed=True, lead_on=False):
+                           fallback=None, butler_on=True, review_on=False, butler_allowed=True, lead_on=False, assist=None):
     """The whole card for ``view`` (revision, notice) over ``settings`` (core/butler_settings.py Settings),
     ``choices`` (app/launch_models.py available_models) and ``workspaces``, the saved workspace names: ``page``
     (cards/settings_hub.py BUTLER_PAGES, a retired one as 配置) on the 设置 card, a card of its own (None, gen 286) as it
     was. ``top``: elements above the body (the 设置 card's tab row), within the same budget; ``follows`` and
     ``fallback`` as topic_settings. ``butler_on``: whether the butler serves the private chat now (its mode 管家 and the
     deployment allowing it, ``butler_allowed``): without it 新话题 has no 直接开工. ``review_on``: whether 独立复核 is on
-    (app/review.py enabled), for its rows; ``lead_on``: whether projects are on (COVEY_PROJECTS=1), for 专项负责人's.
+    (app/review.py enabled), for its rows; ``lead_on``: whether projects are on (COVEY_PROJECTS=1), for 专项负责人's;
+    ``assist``: 辅助模型's row (app/assist.py: options, current, words), None without it.
     ``view['confirm']``: 管家 asks to confirm 每条直接开一个话题
     (``mode_confirm``), ``view['open']`` the section of 配置 that shows its rows (SECTIONS). 整理专项 is not here: the
     看板's alone (cards/board.py)."""
@@ -410,7 +436,8 @@ def butler_panel_card(token, view, settings, choices, workspaces, top=(), follow
             return elements
         return elements + config_page(settings, choices, workspaces, limit, follows, models, fallback, rows, value,
                                       view.get('confirm'), butler_allowed=butler_allowed, butler_on=butler_on,
-                                      review_on=review_on, open_=view.get('open') or OPEN_FIRST, lead_on=lead_on)
+                                      review_on=review_on, open_=view.get('open') or OPEN_FIRST, lead_on=lead_on,
+                                      assist=assist)
 
     # Too much for one card: fewer options a row down to SHORT; then the new topic's model list down to SHORT, then fewer options.
     def tries():

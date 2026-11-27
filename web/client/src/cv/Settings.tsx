@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ExternalLink } from 'lucide-react';
 import { SELFHOST } from '@client/src/selfhost/flag';
 import type {
+  SettingsConfigAssist,
   SettingsConfigPage,
   SettingsData,
   SettingsError,
@@ -37,6 +38,7 @@ import { appendLines, dropLine, planTerms, type TermLine, type TermPlan } from '
 import { opWords, plainReceipt } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 import * as RP from './reposPage';
+import { recentLines, type RecentLine } from './assistRecent';
 import './settings.css';
 import './repos.css';
 
@@ -172,7 +174,7 @@ const Choice: React.FC<{ row: SettingsRow; busy: boolean; onPick: (v: string) =>
 };
 
 /** 字长的项：手机上占整行 */
-const WIDE: Set<string> = new Set(['t_model', 'model', 'r_model', 'l_model', 't_space', 'space', 'mode', 'subagent']);
+const WIDE: Set<string> = new Set(['t_model', 'model', 'r_model', 'l_model', 't_space', 'space', 'mode', 'subagent', 'assist']);
 
 const RowView: React.FC<{ row: SettingsRow; ops: Ops; feishu: string; mk?: (row: SettingsRow, option: string) => Record<string, unknown>; cell?: boolean; stale?: boolean }> = ({ row, ops, feishu, mk, cell, stale }) => {
   const s: Phase | undefined = ops.st[row.key];
@@ -272,6 +274,8 @@ const REVIEW_LAYOUT: string[][] = [['r_harness', 'r_provider', 'r_model', 'r_eff
 /** v36 专项负责人：新建的专项，负责人用的 Harness、模型、思考预算（开了专项才有这一段） */
 const LEAD_LAYOUT: string[][] = [['l_harness', 'l_provider', 'l_model', 'l_effort']];
 const MORE_LAYOUT: string[][] = [['subagent']];
+/** 辅助模型（T884）：分流、整理专项、看看、记忆这些后台活用哪个 Harness，一行；管家关着也能改 */
+const ASSIST_LAYOUT: string[][] = [['assist']];
 
 const Note: React.FC<{ text?: string }> = ({ text }) => (text ? <p className="st-note">{text}</p> : null);
 
@@ -337,6 +341,44 @@ const Trusted: React.FC<{ items: { key: string; text: string }[]; ops: Ops }> = 
   </>
 );
 
+/** 后台活最近一次：每个功能一行，功能、用了谁、结果、原因、耗时、时间（只有原因码的说法，没有原话） */
+const RecentTable: React.FC<{ lines: RecentLine[] }> = ({ lines }) => (
+  <>
+    <h4 className="st-h4">后台活最近一次</h4>
+    {lines.length ? (
+      <div className="st-list st-rec" role="table" aria-label="后台活最近一次">
+        <div className="st-rec-r st-rec-h" role="row">
+          {['功能', '用了谁', '结果', '原因', '耗时', '时间'].map((t: string) => <span key={t} role="columnheader">{t}</span>)}
+        </div>
+        {lines.map((x: RecentLine) => (
+          <div key={x.key} className={`st-rec-r ${x.tone}`} role="row">
+            <span className="st-rec-f" role="cell">{x.feature}</span>
+            <span className="st-rec-w" role="cell" title={x.who}>{x.who}</span>
+            <span className={`st-rec-o ${x.tone}`} role="cell">{x.result}</span>
+            <span className="st-rec-y" role="cell" title={x.why}>{x.why || '—'}</span>
+            <span className="st-rec-t" role="cell">{x.took}</span>
+            <span className="st-rec-a" role="cell">{x.when}</span>
+          </div>
+        ))}
+      </div>
+    ) : <p className="st-note">还没有后台活调过模型。</p>}
+  </>
+);
+
+/** 辅助模型：一行选择（自动跟随管家、各 Harness、不用模型），说明，现在实际用的模型，后台活最近一次 */
+const AssistSection: React.FC<{ p: SettingsConfigAssist; ops: Ops; feishu: string }> = ({ p, ops, feishu }) => {
+  const now: number = Math.floor(useTick(30000));
+  return (
+    <section className="st-sec st-assist">
+      <h3 className="st-h">{p.title}</h3>
+      <Grid rows={p.rows} layout={ASSIST_LAYOUT} ops={ops} feishu={feishu} />
+      <Note text={p.note} />
+      {p.words ? <p className="st-note st-now">{p.words}</p> : null}
+      <RecentTable lines={recentLines(p.recent, now)} />
+    </section>
+  );
+};
+
 /** 配置（v22）：和飞书设置卡的「配置」同一页同几段；卡片一次只展开一段（放不下），网页没有这个限制，各段都展开 */
 const ConfigTab: React.FC<{ p: SettingsConfigPage; ops: Ops; feishu: string }> = ({ p, ops, feishu }) => (
   <>
@@ -370,6 +412,7 @@ const ConfigTab: React.FC<{ p: SettingsConfigPage; ops: Ops; feishu: string }> =
         <Note text={p.lead.note} />
       </section>
     ) : null}
+    {p.assist ? <AssistSection p={p.assist} ops={ops} feishu={feishu} /> : null}
     {p.more.length ? (
       <section className="st-sec">
         <h3 className="st-h">更多</h3>

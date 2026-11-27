@@ -84,7 +84,7 @@ class Case(unittest.TestCase):
         def ask(system, data, **kwargs):
             asked.append(json.loads(data))
             return envelope(answer)
-        notes = memory_learn.learn(self.runtime, self.messenger, self.ctx, record, None, None, ask=ask)
+        notes = memory_learn.learn(self.runtime, self.messenger, self.ctx, record, None, ask=ask)
         return notes, asked, find_job_record(self.state, job.message_id)
 
 
@@ -186,7 +186,7 @@ class LearnTest(Case):
     def test_an_answer_it_cannot_read_writes_nothing_and_says_why(self):
         job = self.turn()
         record = find_job_record(self.state, job.message_id)
-        memory_learn.learn(self.runtime, self.messenger, self.ctx, record, None, None, ask=lambda *a, **k: "不是 JSON")
+        memory_learn.learn(self.runtime, self.messenger, self.ctx, record, None, ask=lambda *a, **k: "不是 JSON")
         record = find_job_record(self.state, job.message_id)
         self.assertNotIn("memory_notes", record)
         self.assertEqual(record["memory_learned"]["state"], "failed")
@@ -361,7 +361,8 @@ class AfterTurnTest(Case):
     def test_a_turn_is_handed_to_the_learner_once(self):
         job = self.turn()
         started = []
-        with mock.patch.object(memory_learn.track_judge, "available", return_value=True), \
+        routed = memory_learn.assist.Route(memory_learn.assist.Choice("claude"))
+        with mock.patch.object(memory_learn.assist, "route", return_value=routed), \
                 mock.patch.object(memory_learn, "start", side_effect=lambda work: started.append(work) or True):
             memory_learn.after_turn(self.gateway(), mock.Mock(messenger=self.messenger), job, self.ctx)
             memory_learn.after_turn(self.gateway(), mock.Mock(messenger=self.messenger), job, self.ctx)

@@ -9,6 +9,10 @@ the page logs in (a login request, the owner's approval pushed as Covey pushes i
     <python with Pillow> -B scripts/web_shots.py --out /absolute/shots --install   # the four README ones into docs/media/screenshots
 
 Every page (看板, 专项, 大厅, a topic) at a desktop and a phone size, dark and light: web-<page>-<size>-<theme>.png.
+Two more, asked by name (``--pages assist,tidy``; their demo data is pushed only then, so the README's four stay as they
+are): 设置's 辅助模型 with its 后台活最近一次 (``assist``, the section alone) and the 看板's 整理专项 after a 整理 that failed
+(``tidy``). ``--variants`` shoots the samples of docs/ui.md 第 12 节 too (VARIANTS: A is the page as built, B and C are drawn
+over it in the browser only, never in the page's code): web-<page>-<variant>-<size>-<theme>.png.
 Only demo data: a demo-app story (a topic waiting on a question, one running, one stopped, one with an unseen result, a
 project with its lead and memory, the butler), no real name, chat, open_id or path. The server listens on 127.0.0.1
 only and is stopped, its whole process group, before the script ends.
@@ -37,6 +41,38 @@ SWITCHES = {"COVEY_PROJECTS": "1", "COVEY_REVIEW": "1", "COVEY_REVISIT": "1", "C
 TITLES = {"claude": "Claude Code", "codex": "Codex"}  # The Harnesses the demo routes, as the Bridge's apps name them.
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 PAGES = {"board": "/", "project": f"/projects/{PID}", "hall": "/butler", "topic": "/topics/" + "7" * 32}
+README_PAGES = ("board", "project", "hall", "topic")  # The default: the README's.
+EXTRA = {"assist": "/settings/config", "tidy": "/"}  # Shot only when named (T884's samples).
+FOCUS = {"assist": ".st-assist", "tidy": ".td-panel"}  # What of the page is shot (assist: that element alone; tidy: scrolled to).
+# The samples (docs/ui.md 第 12 节) drawn over the built page in the browser: (sizes, CSS, script). A is the page itself.
+SAMPLE_CSS = {
+    "assist-B": ".cv .st-sample-b summary{display:flex;align-items:center;gap:6px;margin:14px 2px 6px;font-size:13px;font-weight:600;"
+                "color:var(--t2);cursor:pointer;list-style:none}.cv .st-sample-b summary em{font-style:normal;font-weight:400;"
+                "color:var(--fail)}",
+    "assist-C": ".cv .st-rec{border:0;background:none;display:flex;flex-direction:column;gap:8px;overflow:visible}"
+                ".cv .st-rec .st-rec-h{display:none}.cv .st-rec .st-rec-r{border:1px solid var(--line);border-radius:12px;"
+                "background:var(--s1)}.cv .st-rec .st-rec-r.bad{border-color:color-mix(in srgb,var(--fail) 45%,var(--line))}",
+    "tidy-B": ".cv .td-sample-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 14px;padding:10px 14px;"
+              "border-radius:10px;background:color-mix(in srgb,var(--st-stopped) 14%,var(--s1));color:var(--st-stopped);"
+              "font-size:13.5px;line-height:1.5}.cv .td-sample-banner span{flex:1 1 240px}",
+}
+SAMPLE_JS = {
+    "assist-B": """() => { const sec = document.querySelector('.st-assist'); const head = sec.querySelector('.st-h4');
+        const body = sec.querySelector('.st-rec'); const rows = body ? body.querySelectorAll('.st-rec-r:not(.st-rec-h)') : [];
+        const bad = body ? body.querySelectorAll('.st-rec-r.bad').length : 0;
+        const box = document.createElement('details'); box.className = 'st-sample-b';
+        const sum = document.createElement('summary');
+        sum.innerHTML = '后台活最近一次 · ' + rows.length + ' 项' + (bad ? ' <em>' + bad + ' 项没成</em>' : '') + ' ▸';
+        box.append(sum); if (body) box.append(body); head.replaceWith(box); }""",
+    "tidy-B": """() => { const why = document.querySelector('.td-fail-w'); const panel = document.querySelector('.td-panel');
+        const scroll = document.querySelector('.nb-scroll'); if (!why || !panel || !scroll) return;
+        const bar = document.createElement('div'); bar.className = 'td-sample-banner';
+        const words = document.createElement('span'); words.textContent = '整理专项 · ' + why.textContent;
+        const go = document.createElement('a'); go.className = 'btn sm'; go.textContent = '去设置'; go.href = '/settings/config';
+        const ok = document.createElement('button'); ok.className = 'btn sm txt'; ok.textContent = '知道了';
+        bar.append(words, go, ok); panel.style.display = 'none'; scroll.prepend(bar); scroll.scrollTop = 0; }""",
+}
+VARIANTS = {"assist": {"B": ("desktop", "phone"), "C": ("phone",)}, "tidy": {"B": ("desktop", "phone")}}
 SIZES = {"desktop": dict(viewport={"width": 1440, "height": 900}, device_scale_factor=2),
          "phone": dict(viewport={"width": 390, "height": 844}, device_scale_factor=3, is_mobile=True, has_touch=True)}
 # The README's four: shot -> (its name in docs/media/screenshots, width in pixels).
@@ -135,7 +171,39 @@ def demo_state(state, now):
     record_reads(state, {t9: now - 6000, t4: now - 88000}, now=now)  # Two results read already; T6's not.
 
 
-def push(state, base, key_file, now):
+def demo_assist(state, now):
+    """辅助模型's demo (T884): the 设置 item's 配置 with its 辅助模型 named Codex, the background calls' latest outcomes
+    (core/assist.py, as the calls leave them: 整理专项 refused a login on Codex, 分流 answered by Claude Code) and the 整理专项 item
+    after that 整理 failed. Made-up words only; returns the two ``settings`` items."""
+    from covey.app import assist, web_settings
+    from covey.cards import butler_panel as cards
+    from covey.core import assist as records
+    from covey.core import web_sync
+    for feature, harness, model, code, ms, ago, manual in (
+            ("track", "claude", "haiku", "", 1400, 40, False), ("tidy", "codex", "gpt-6-astra", "authentication_error", 2100, 120, True),
+            ("backfill", "codex", "gpt-6-astra", "", 7800, 180, False), ("look", "codex", "gpt-6-luna", "", 5200, 900, True),
+            ("candidates", "codex", "gpt-6-luna", "timeout", 30000, 7200, False)):
+        records.settle(state, feature=feature, harness=harness, model=model, code=code, ms=ms, manual=manual, now=now - ago)
+    row = cards.assist_setting({"options": [(cards.ASSIST_AUTO, cards.ASSIST_WORDS[cards.ASSIST_AUTO]), ("claude", "Claude Code"),
+                                            ("codex", "Codex"), ("agy", "Antigravity"),
+                                            (cards.ASSIST_NONE, cards.ASSIST_WORDS[cards.ASSIST_NONE])], "current": "codex"})
+    harness = {"key": "t_harness", "kind": cards.TOPIC_HARNESS, "label": "Harness", "current": "claude", "text": "Claude Code",
+               "options": [{"value": "claude", "text": "Claude Code"}, {"value": "codex", "text": "Codex"}], "editable": True,
+               "line": 1}
+    config = {"summary": "新话题 Claude Code · 管家 Opus 5.5", "topic": {"title": "新话题", "rows": [harness], "note": cards.TOPIC_NOTE},
+              "assist": {"title": cards.SECTIONS[cards.ASSIST_PART], "note": cards.ASSIST_NOTE,
+                         "words": "现在：轻的判断用 Codex · gpt-6-luna，整理用 Codex · gpt-6-astra。",
+                         "rows": web_settings.rows_of([row]), "recent": assist.recent(state)},
+              "more": [], "more_note": "", "locked": ""}
+    settings = {"tabs": [{"key": "config", "label": "配置"}], "feishu": "", "ops": list(web_sync.KINDS), "config": config}
+    tidy = {"proposals": [], "running": None, "updated_at": now,
+            "last_run": {"run": "demo-run", "state": "failed", "why": "Codex 登录失效或没有权限", "why_code": "authentication_error",
+                         "via": "codex", "model": "gpt-6-astra", "retry": False, "origin": "web", "at": now - 120,
+                         "progress": {"done": 0, "total": 0, "current": ""}}}
+    return [web_sync.item("settings", web_sync.SETTINGS_KEY, settings), web_sync.item("settings", web_sync.TIDY_KEY, tidy)]
+
+
+def push(state, base, key_file, now, extra=()):
     """Push the demo with Covey's own sync (two passes: what the first look learned, the lead's project, goes too), and
     本周用量 as app/web_settings.py counts it (the Bridge pushes it with its settings, which this demo has none of)."""
     from covey.app import weekly_usage
@@ -160,7 +228,8 @@ def push(state, base, key_file, now):
     found = weekly_usage.summarize(select_job_records(state, lambda r: (weekly_usage.created_at(r) or 0) >= since), now, TITLES)
     usage = {**found, "outcomes": dict(found["outcomes"]), "ended": dict(found["ended"]), "at": now,
              "history": weekly_usage.history(state, now, TITLES)}
-    sync.client.request("POST", "/sync/upsert", {"items": [web_sync.item("settings", web_sync.USAGE_KEY, usage)], "deleted": []})
+    sync.client.request("POST", "/sync/upsert", {"items": [web_sync.item("settings", web_sync.USAGE_KEY, usage), *extra],
+                                                 "deleted": []})
     return pushed
 
 
@@ -189,8 +258,11 @@ def login(base, key):
     return name, value
 
 
-def shoot(base, cookie, out, browser, pages):
+def shoot(base, cookie, out, browser, pages, variants=False):
+    """Each page at each size and theme; the T884 pages (EXTRA) as their FOCUS shows them, and with ``variants`` their
+    samples (VARIANTS) too."""
     from playwright.sync_api import sync_playwright
+    paths = {**PAGES, **EXTRA}
     with sync_playwright() as pw:
         chromium = pw.chromium.launch(**({"executable_path": browser} if browser else {}))
         for size, options in SIZES.items():
@@ -200,10 +272,28 @@ def shoot(base, cookie, out, browser, pages):
                 context.add_init_script(f"try {{ localStorage.setItem('covey.theme', '{theme}'); }} catch (e) {{}}")
                 page = context.new_page()
                 for name in pages:
-                    page.goto(base + PAGES[name], wait_until="networkidle")
-                    page.wait_for_timeout(1500)
-                    page.screenshot(path=str(out / f"web-{name}-{size}-{theme}.png"))
-                    print(out / f"web-{name}-{size}-{theme}.png")
+                    looks = [("A", None)] + ([(v, v) for v, sizes in VARIANTS.get(name, {}).items() if size in sizes]
+                                             if variants else [])
+                    for look, sample in looks:
+                        page.goto(base + paths[name], wait_until="networkidle")
+                        page.wait_for_timeout(1500)
+                        if sample:
+                            key = f"{name}-{sample}"
+                            if key in SAMPLE_CSS:
+                                page.add_style_tag(content=SAMPLE_CSS[key])
+                            if key in SAMPLE_JS:
+                                page.evaluate(SAMPLE_JS[key])
+                            page.wait_for_timeout(300)
+                        tag = f"-{look}" if name in EXTRA else ""
+                        path = out / f"web-{name}{tag}-{size}-{theme}.png"
+                        focus = page.locator(FOCUS[name]).first if name in FOCUS else None
+                        if name == "assist" and focus is not None and focus.count():
+                            focus.screenshot(path=str(path))
+                        else:
+                            if focus is not None and focus.count() and focus.is_visible():
+                                focus.scroll_into_view_if_needed()
+                            page.screenshot(path=str(path))
+                        print(path)
                 context.close()
         chromium.close()
 
@@ -226,7 +316,9 @@ def main(argv=None):
     parser.add_argument("--build", help="the self-hosted build (web/deploy/selfhost/build.sh's directory, with dist-selfhost/)")
     parser.add_argument("--browser", default="", help="a Chromium or headless_shell when Playwright has none of its own")
     parser.add_argument("--port", type=int, default=18741, help="the page's port on 127.0.0.1 (default 18741)")
-    parser.add_argument("--pages", default=",".join(PAGES), help=f"which of {', '.join(PAGES)} (default all)")
+    parser.add_argument("--pages", default=",".join(README_PAGES),
+                        help=f"which of {', '.join([*PAGES, *EXTRA])} (default the README's: {', '.join(README_PAGES)})")
+    parser.add_argument("--variants", action="store_true", help="the samples of assist and tidy too (VARIANTS)")
     parser.add_argument("--install", action="store_true", help="put the README's four into docs/media/screenshots (needs Pillow)")
     args = parser.parse_args(argv)
     out = Path(args.out).expanduser().resolve()
@@ -264,8 +356,10 @@ def main(argv=None):
             state.mkdir()
             now = time.time()
             demo_state(state, now)
-            print("pushed", push(state, base, key_file, now), "items")
-            shoot(base, login(base, key_file.read_text().strip()), out, args.browser, args.pages.split(","))
+            pages = [name for name in args.pages.split(",") if name]
+            extra = demo_assist(state, now) if any(name in EXTRA for name in pages) else ()
+            print("pushed", push(state, base, key_file, now, extra), "items")
+            shoot(base, login(base, key_file.read_text().strip()), out, args.browser, pages, args.variants)
         finally:
             os.killpg(server.pid, signal.SIGTERM)  # Its whole process group (start_new_session).
             try:

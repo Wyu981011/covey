@@ -10,7 +10,14 @@ Claude's, on a fork of the session, backends/claude/handoff.py), the old model's
 Harness, a switch recorded before the summary existed or with a ↩️ 回退 pending, a failure or timeout) the last
 HANDOFF_ROUNDS rounds. While the summary is asked for, a Bridge line on the task card says so, then its outcome.
 No summary either of a session the Bridge has blocked or whose last turn a safety refusal stopped or retried
-(``refused_session``): a fork would send the refused conversation again, to the model that refused it.
+(``refused_session``): a fork would send the refused conversation again, to the model that refused it. Nor of one the
+old model very likely cannot answer now (``unfit``), told without asking it (this runs in the task runner, which has no
+availability watch of its own): the session's last turn failed on its login, quota, model, connection or a policy block
+(``stopped_session``, STOPPED_BY); the background calls found the old Harness broken (core/assist.py, the 辅助模型's
+record) or its model's last task failed that way within NOT_NOW_SECONDS (app/availability.py's backend-health); its
+gateway's quota is held (core/quota_hold.py); or its backend refuses such a turn before it starts (``start_refusal``:
+Antigravity's held quota, a model gone from its list). The backends wait at most their own handshake limit for the old
+model's first sign (backends/claude/handoff.py, backends/codex/handoff.py FIRST_SECONDS) before they give up.
 The handoff is the new binding's alone until one of its runs has finished with a session the topic may resume
 (``settled``); a later fresh session of the same binding (a safety-refusal retry, a pointer cleared after a
 failed turn, a ↩️ 回退 of a session's first turn) starts from its own history like any other fresh turn.
@@ -25,10 +32,11 @@ import json
 import time
 from pathlib import Path
 
+from covey.app import availability
 from covey.app.binding import latest_switch_revision
 from covey.cards.switch_form import handoff_block
 from covey.cards.topic_actions import switch_panel, topic_panel
-from covey.core import devices
+from covey.core import assist, devices, quota_hold
 from covey.core.defaults import work_mode_tag
 from covey.core.harness import backend_capabilities
 from covey.core.jobs import topic_job_records
@@ -45,8 +53,8 @@ CUT = "…（完整内容见记录文件）"
 SUMMARY_CHARS = 4000  # Of the summary in the prompt; the file keeps it whole.
 WAITING = "正在请原模型写交接摘要（最多 3 分钟），写好后再开始本轮。"
 STOPPED = "已停止，没有写交接摘要。"
-# Card lines of a summary not asked for: the old session may not run again.
-# Keyed by refused_session's reason, each line says why.
+# Card lines of a summary not asked for: the old session may not run again, or its model very likely cannot answer now.
+# Keyed by refused_session's, stopped_session's (``last turn <code>``) and unfit's reason, each line says why.
 _RAW = f"不再续接它写交接摘要，改为把最近 {HANDOFF_ROUNDS} 轮原文交给新模型。"
 REFUSED = {"policy refusal": "原会话被安全拒绝停过，" + _RAW,
            "policy fallback": "原会话因官方模型降级停过，" + _RAW,
@@ -58,7 +66,25 @@ WHY_WORDS = {"no session": "原来的配置还没有会话", "not supported": "�
              "policy refusal": "原会话被安全拒绝停过", "policy fallback": "原会话因官方模型降级停过",
              "policy retry": "原会话是安全拒绝后的重试", "session blocked": "原会话已禁止续接",
              "rewind pending": "更换时还有一步回退没做完", "no redaction record": "这次更换早于交接摘要功能",
-             "device": "原会话在设备上", "workdir missing": "原来的工作目录不在了", "redaction unknown": "读不出脱敏设置"}
+             "device": "原会话在设备上", "workdir missing": "原来的工作目录不在了", "redaction unknown": "读不出脱敏设置",
+             "assist broken": "原来的 Harness 刚在后台调用里失败过（登录、额度或连接）",
+             "model failing": "原来的模型最近一次任务失败了，现在多半还用不了",
+             "quota held": "原来的模型所在网关额度用完了", "start refused": "原来的模型现在开不了新的一轮"}
+# The ends of the old session's last turn after which its model very likely cannot write a summary now (``stopped_session``):
+# the code its job record says, in the words of the 交接 block and the card line.
+STOPPED_BY = {"authentication_error": "登录失效", "quota_exhausted": "额度用完", "model_unavailable": "所选模型用不了",
+              "model_blocked": "账号被暂停使用这个模型", "policy_refusal": "官方安全拒绝", "transport_error": "连不上模型服务",
+              "request_hung": "模型请求一直没有回应", "server_fault": "模型服务故障", "rate_limited": "模型服务限流",
+              "process_exit": "进程异常退出", "root_failed": "模型返回了错误"}
+WHY_WORDS.update({f"last turn {code}": f"原会话上一轮因{words}停下" for code, words in STOPPED_BY.items()})
+REFUSED.update({why: f"{WHY_WORDS[why]}，不再请原模型写交接摘要，改为把最近 {HANDOFF_ROUNDS} 轮原文交给新模型。"
+                for why in ("assist broken", "model failing", "quota held", "start refused")})
+REFUSED.update({f"last turn {code}": f"原会话上一轮因{words}停下，不再请原模型写交接摘要，改为把最近 {HANDOFF_ROUNDS} 轮原文交给新模型。"
+                for code, words in STOPPED_BY.items()})
+# A Harness's last task failed this way on the old model within availability.NOT_NOW_SECONDS: the summary would too.
+FAILING = availability.NOT_NOW | {"model_unavailable", "transport_error"}
+# A break of the background calls that is the old model's only when it names that model (another model may answer).
+MODEL_BREAKS = frozenset({"model_unavailable", "model_blocked"})
 SUMMARY_PROMPT = (
     "[Bridge 交接请求] 本话题马上换到另一个模型接着做，它看不到这段会话。请为它写一份简短的交接摘要："
     "不要调用任何工具，不要继续做任务，只回复摘要本身。用本话题对话所用的语言写，不超过 1500 字，分这几块："
@@ -209,6 +235,66 @@ def refused_session(ctx, backend, session_id):
         return "session blocked"
 
 
+def stopped_session(ctx, session_id) -> str:
+    """The failure code (a key of STOPPED_BY) the latest job of the old binding's ``session_id`` ended with, when it failed or
+    timed out on one of them; '' otherwise (or when the records cannot be read). Read from the job records, not the
+    Bridge's memory: this runs in the task runner."""
+    try:
+        jobs = [r for r in topic_job_records(ctx.state_dir, ctx.topic_id) if r.get("session_id") == session_id]
+    except (OSError, ValueError, TypeError):
+        return ""
+    if not jobs:
+        return ""
+    latest = max(jobs, key=lambda r: int(r.get("job_id") or 0))
+    code = latest.get("failure_code")
+    return code if latest.get("status") in ("failed", "timed_out") and code in STOPPED_BY else ""
+
+
+def unfit(state_dir, harness, model, now=None) -> str:
+    """Why the old binding's Harness ``harness`` on ``model`` very likely cannot write a summary now, as the Bridge's
+    records say (the module docstring), or '': "assist broken", "model failing", "quota held". Never raises."""
+    now = time.time() if now is None else now
+    try:
+        row = assist.broken(assist.read(state_dir, fresh=True), harness, now)
+        if row is not None and (row.get("code") not in MODEL_BREAKS or not row.get("model") or row.get("model") == model):
+            return "assist broken"
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    try:
+        rows = [r for r in availability.snapshot(state_dir) if r.get("backend") == harness
+                and isinstance(r.get("checked_at"), (int, float))]
+        mine = [r for r in rows if r.get("model") == (model or "")]
+        latest = max(mine, key=lambda r: r["checked_at"], default=None)
+        if (latest is not None and latest.get("status") == "failed" and latest.get("error") in FAILING
+                and now - latest["checked_at"] < availability.NOT_NOW_SECONDS):
+            return "model failing"
+        # A lost login is the account's: whichever of its models said it last.
+        latest = max(rows, key=lambda r: r["checked_at"], default=None)
+        if (latest is not None and latest.get("status") == "failed" and latest.get("error") == "authentication_error"
+                and now - latest["checked_at"] < availability.NOT_NOW_SECONDS):
+            return "model failing"
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    try:
+        if model and quota_hold.blocks(state_dir, harness, model, now) is not None:
+            return "quota held"
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return ""
+
+
+def start_refused(backend, target) -> str:
+    """The old backend's own refusal of a turn on ``target`` (BackendRuntime.start_refusal: Antigravity's held quota, a model
+    gone from its list), "start refused"; '' for none, and when asking it fails."""
+    check = getattr(backend, "start_refusal", None)
+    if not callable(check):
+        return ""
+    try:
+        return "start refused" if check(target) else ""
+    except Exception:  # noqa: BLE001 - a check that fails refuses nothing
+        return ""
+
+
 def handoff_note(topic, path, rounds, summary="", summary_path=None):
     switch = topic["switches"][-1]
     place = (f"工作目录从 {switch['from']['workdir']} 换成了上面的当前工作目录；之前各轮的改动在原目录里，"
@@ -345,6 +431,8 @@ class SwitchHandoff:
             why = "turn refused"
         elif refused := refused_session(ctx, app.spec.name, old["session_id"]):
             why = refused
+        elif stopped := stopped_session(ctx, old["session_id"]):
+            why = f"last turn {stopped}"
         elif "rewind_keep" in old:
             # Switched with a ↩️ 回退 pending (app/binding.py): a fork of the session's tip would summarize the
             # round the owner dropped (and the files it changed, maybe put back since) for the new model.
@@ -356,6 +444,9 @@ class SwitchHandoff:
             why = "device"  # The old session is on the device; the summary would run on this machine.
         elif not workdir.is_dir():
             why = "workdir missing"
+        elif unfitting := unfit(ctx.state_dir, old.get("harness_id") or app.spec.name,
+                                old.get("model") or app.harness.context.model):
+            why = unfitting
         else:
             why = ""
         if not why:
@@ -376,6 +467,11 @@ class SwitchHandoff:
             history_path=ctx.history_path, session_path=ctx.history_path.parent / app.spec.session_filename,
             model=old.get("model") or base.model, effort=old.get("effort") or base.effort,
             options={**base.options, "harness_id": old.get("harness_id")})
+        refused = start_refused(app.backend, target)
+        if refused:
+            self.runtime.log(f"switch summary skipped topic={ctx.topic_id[:12]} from={old.get('harness_id')} {refused}")
+            _say(note, REFUSED[refused])
+            return "", None, refused
         started = time.monotonic()
         _say(note, WAITING)
         if waiting is not None:
