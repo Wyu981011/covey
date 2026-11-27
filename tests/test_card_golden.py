@@ -399,6 +399,22 @@ def question_cards():
     # One short question without a header in its thread: in bold where the band that said it was, never left out (T666).
     cards["card_in_thread_one"] = question_card(question_record(questions=[{"id": "go", "question": "现在部署吗？"}],
                                                                 answers={}), "T70", "改看板的 Pin 目标")
+    # The same short question asked before (app/question_dedup.py, T870 Wave 3.5): its grey line 上次你答过 under the bold
+    # words, then the third same-class question the card adds (``extra_questions``); the record's questions untouched.
+    cards["card_in_thread_one_dedup"] = question_card(question_record(
+        questions=[{"id": "go", "question": "现在合进主干吗？", "options": [{"label": "合进去"}, {"label": "先不合"}]}],
+        answers={}, dedup={"go": {"ref": "decision:a1b2c3d4e5f6:d1", "code": "D7K2Q", "answer": "合进去",
+                                  "question": "这次的改动现在合进主干吗？", "line": "上次你答过：合进去（T12 · 11-26）"}},
+        extra_questions=[{"id": "__memory_class", "header": "以后", "question": "以后这类（合进主干）还要问你吗？",
+                          "options": [{"label": "还要问", "description": "照常问；30 天内不再问这一句"},
+                                      {"label": "以后按这次的做", "description": "记成一条规矩：以后同类的题按这次的回答直接做"}],
+                          "class": {"key": "a1b2c3d4e5f6:merge:c29f6324", "category": "merge"}}]), "T70", "改看板的 Pin 目标")
+    # Only the grey line (no third of its class): the one short question in bold, the grey line its own line under it.
+    cards["card_in_thread_one_seen"] = question_card(question_record(
+        questions=[{"id": "go", "question": "现在合进主干吗？", "options": [{"label": "合进去"}, {"label": "先不合"}]}],
+        answers={}, dedup={"go": {"ref": "decision:a1b2c3d4e5f6:d1", "code": "D7K2Q", "answer": "合进去",
+                                  "question": "这次的改动现在合进主干吗？", "line": "上次你答过：合进去（T12 · 11-26）"}}),
+        "T70", "改看板的 Pin 目标")
     # A question its turn did not wait for, the turn over: that grey line over it, the only line above the question.
     cards["card_in_thread_not_waiting"] = question_card(question_record(
         blocking=False, task_finished=True, answers={},
