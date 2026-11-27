@@ -1,10 +1,4 @@
 {
- "freeze": {
-  "since": "2026-11-25",
-  "until": "2026-12-09",
-  "by": "T780 复盘、专项「Covey 体验与同事痛点」P1-G（T788）",
-  "why": "两周内不加新概念：先把已有的入口、Harness、界面补齐，默认关的开关定下删、转正还是保留"
- },
  "concepts": {
   "settings": [
    "--activate",
@@ -55,6 +49,7 @@
    "--keep-login",
    "--kill",
    "--label",
+   "--legacy",
    "--legacy-root",
    "--limit",
    "--log",
@@ -117,21 +112,29 @@
    "--work",
    "--workdir",
    "--workspace",
+   "--write",
+   "AGY_ACCOUNTS_DIR",
+   "AGY_CMD",
+   "ANTHROPIC_API_KEY",
+   "ANTHROPIC_AUTH_TOKEN",
    "ANTHROPIC_BASE_URL",
    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
    "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING",
    "CLAUDE_CONFIG_DIR",
    "CODEX_HOME",
    "COVEY_ACCEPT_CHATS",
+   "COVEY_AGY_ACCOUNTS",
    "COVEY_AGY_EAGER_BYTES",
    "COVEY_AGY_MESSAGE_CHUNK_LIMIT",
    "COVEY_AGY_MESSAGE_FORMAT",
    "COVEY_AGY_STATE_DIR",
    "COVEY_APP_CHECK",
    "COVEY_AUTO_RETRY_LONG",
+   "COVEY_AUTO_UPGRADE",
    "COVEY_AVATARS",
    "COVEY_BROWSER_EXECUTABLE",
    "COVEY_BUTLER",
+   "COVEY_BUTLER_HUNG_MINUTES",
    "COVEY_BUTLER_JOB",
    "COVEY_BUTLER_RULES",
    "COVEY_BUTLER_STATE",
@@ -157,10 +160,12 @@
    "COVEY_GROUP_ALL_MESSAGES",
    "COVEY_GROUP_MEMBERS",
    "COVEY_HISTORY_CMD",
+   "COVEY_HOME",
    "COVEY_INVITE_URL",
    "COVEY_JUDGE_AGY_MODEL",
    "COVEY_JUDGE_CODEX_MODEL",
    "COVEY_KNOWLEDGE",
+   "COVEY_LEDGER_RECONCILE",
    "COVEY_LIMIT_NOTICE",
    "COVEY_LOCK_ROOT",
    "COVEY_MANAGED",
@@ -215,6 +220,7 @@
    "COVEY_PROXY_REPLY_CHECK",
    "COVEY_QUICK_ANSWER_SECONDS",
    "COVEY_QUIET_HOURS",
+   "COVEY_QUOTA",
    "COVEY_RELAY_MERGE_SECONDS",
    "COVEY_REQUIRED_MOUNT",
    "COVEY_REVIEW",
@@ -222,10 +228,12 @@
    "COVEY_RUNNER_PYTHONPATH",
    "COVEY_SERVICE_ROOT",
    "COVEY_SOURCE_WATCH",
+   "COVEY_STATE",
    "COVEY_STATE_DIR",
    "COVEY_STEER_URGENT_SECONDS",
    "COVEY_STRANGER_REPLY",
    "COVEY_TASK_DIR",
+   "COVEY_TOPIC",
    "COVEY_TOPIC_STEER",
    "COVEY_TRACK_JUDGE",
    "COVEY_TRACK_JUDGE_HEDGE",
@@ -264,6 +272,9 @@
    "bridge_artifact_page",
    "bridge_artifact_send",
    "bridge_artifact_upload",
+   "bridge_batch_switch_cancel",
+   "bridge_batch_switch_confirm",
+   "bridge_batch_switch_retry",
    "bridge_board_open",
    "bridge_board_project_go",
    "bridge_board_recover",
@@ -425,11 +436,15 @@
   ],
   "tools": [
    "history_search",
+   "memory_revise",
+   "memory_save",
+   "memory_search",
    "project_answer",
    "project_checklist",
    "project_escalate",
    "project_finish",
    "project_goal",
+   "project_memory_revise",
    "project_note",
    "project_remember",
    "project_send",
@@ -440,6 +455,7 @@
    "projects_list",
    "projects_tidy",
    "question_answer",
+   "repos_list",
    "settings_panel",
    "topic_fork",
    "topic_priority",
@@ -447,7 +463,8 @@
    "topic_send",
    "topic_start",
    "topics_list",
-   "topics_search"
+   "topics_search",
+   "topics_switch"
   ],
   "harnesses": [
    "agy",
@@ -468,12 +485,17 @@
    "专项卡",
    "专项的话题",
    "主人",
+   "主目录",
+   "仓库地图",
    "代发（卡：代发草稿）",
    "任务 #N",
    "任务卡",
+   "体检",
    "做完",
    "停住了",
+   "决定记录",
    "到点回来看",
+   "动作",
    "协作",
    "参与者",
    "可能卡住",
@@ -485,254 +507,40 @@
    "完成标准",
    "已停止",
    "常驻",
+   "待审核",
+   "执行设备",
    "排队",
    "整理专项",
    "整理记忆",
    "普通的事 / 普通话题",
    "有结果",
+   "样张",
    "欢迎卡",
    "汇总方",
    "派发卡",
    "独立复核",
+   "用到的仓库",
    "目标检查表",
    "空闲",
    "等你",
    "管家",
    "补充",
+   "规矩",
    "记忆",
+   "记忆中心",
    "记忆自己长",
    "话题",
    "话题串",
+   "话题产物目录",
    "话题卡",
    "话题要点",
    "负责人",
+   "资料",
    "转成专项",
    "转给管家",
-   "长期约定、当前决定、历史记录"
+   "长期约定、当前决定、历史记录",
+   "项目简报（页面标签、界面上简称简报）"
   ]
  },
- "approved": [
-  {
-   "kind": "settings",
-   "name": "COVEY_BUTLER_HUNG_MINUTES",
-   "by": "P0-C 工作包（专项「Covey 体验与同事痛点」，T784）",
-   "why": "管家一轮的模型请求挂住时停下它、让主人后来的话先跑：停下前等几分钟，0 只提示不停下"
-  },
-  {
-   "kind": "settings",
-   "name": "COVEY_LEDGER_RECONCILE",
-   "by": "P0-A（T782，专项「Covey 体验与同事痛点」）",
-   "why": "等主人的账定时对账补发缺的问题卡；0 关掉线程，是公共核心新后台线程的退路"
-  },
-  {
-   "kind": "terms",
-   "name": "样张",
-   "by": "P1-F 工作包（专项「Covey 体验与同事痛点」，T787）",
-   "why": "主人选定的 P1-F：改卡片和网页的样子前先出 2~3 版样张让主人点选（检查点问题选项的 sample 字段，docs/ui.md 第 12 节）"
-  },
-  {
-   "kind": "settings",
-   "name": "COVEY_AUTO_UPGRADE",
-   "by": "P0-D 工作包（专项「Covey 体验与同事痛点」，T785）",
-   "why": "核心自带的定时安全升级：每天这个时间照 upgrade.json 升一次，有任务就推迟、不强切不回滚；不设就没有线程"
-  },
-  {
-   "kind": "tools",
-   "name": "topics_switch",
-   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
-   "why": "管家和负责人批量给话题换配置：只发确认卡，主人点了才换（工作包原文：发卡给主人确认后执行）"
-  },
-  {
-   "kind": "card_kinds",
-   "name": "bridge_batch_switch_confirm",
-   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
-   "why": "批量换配置卡的「确认更换」"
-  },
-  {
-   "kind": "card_kinds",
-   "name": "bridge_batch_switch_cancel",
-   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
-   "why": "批量换配置卡的「取消」"
-  },
-  {
-   "kind": "card_kinds",
-   "name": "bridge_batch_switch_retry",
-   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
-   "why": "批量换配置卡的「再试没换的」：在跑的话题停了之后再换"
-  },
-  {
-   "kind": "settings",
-   "name": "ANTHROPIC_AUTH_TOKEN",
-   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
-   "why": "不是新开关：Claude Code 自己登录用的密钥，只取摘要判断它和某个模型网关是不是同一账号（同一账号不拆成两个供应商）"
-  },
-  {
-   "kind": "settings",
-   "name": "ANTHROPIC_API_KEY",
-   "by": "P1-E 工作包（专项「Covey 体验与同事痛点」，T786）",
-   "why": "同上，Claude Code 用 API key 登录时的变量"
-  },
-  {
-   "kind": "terms",
-   "name": "项目简报（页面标签、界面上简称简报）",
-   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
-   "why": "W4：专项页「进度」并进「简报」（fork Wyu981011/covey 的 83edc58d）；负责人工具随之多的参数 project_goal.background、project_checklist.actions、project_topic_start/project_topic_send 的 action、item 不单独算概念，记在这里"
-  },
-  {
-   "kind": "terms",
-   "name": "动作",
-   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
-   "why": "W4：项目简报里把目标拆成的一件事（core/project_actions.py），状态由 Bridge 和网页按条目和话题现算"
-  },
-  {
-   "kind": "settings",
-   "name": "COVEY_QUOTA",
-   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
-   "why": "W1a（账号与额度的总开关，默认开，0/off 关）"
-  },
-  {
-   "kind": "settings",
-   "name": "COVEY_AGY_ACCOUNTS",
-   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
-   "why": "W1a（agy 多账号从公司扩展搬进核心，配置文件在哪）"
-  },
-  {
-   "kind": "settings",
-   "name": "AGY_ACCOUNTS_DIR",
-   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
-   "why": "W1a（agy 多账号搬进核心：agy-as 的账号目录）"
-  },
-  {
-   "kind": "settings",
-   "name": "AGY_CMD",
-   "by": "主人 11-26 14:41（T820：不受 12-09 收敛期约束，一次大改）",
-   "why": "W1a（agy 多账号搬进核心：agy-as 运行哪个 agy）"
-  },
-  {
-   "kind": "tools",
-   "name": "project_memory_revise",
-   "by": "主人 11-27 批准记忆改造不受收敛期限制（T852）",
-   "why": "负责人改、以新代旧、收进历史专项记忆里已有的一条，不再只能追加“作废”"
-  },
-  {
-   "kind": "settings",
-   "name": "COVEY_HOME",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "Bridge 导出给 Harness 的主目录，covey repo 据此找上下文（去工作区、主目录启动）"
-  },
-  {
-   "kind": "settings",
-   "name": "COVEY_TOPIC",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "Bridge 导出给 Harness 的话题 id，covey repo use 据此记本话题用到的仓库"
-  },
-  {
-   "kind": "settings",
-   "name": "COVEY_STATE",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "Bridge 导出给 Harness 的状态目录，covey repo / covey memory 只读用"
-  },
-  {
-   "kind": "settings",
-   "name": "--write",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "covey repo use 的参数：要改这个仓库，建或复用本话题的 worktree"
-  },
-  {
-   "kind": "settings",
-   "name": "--legacy",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "covey repo prune-plan 的参数：只读列出某目录下可清理的旧 worktree"
-  },
-  {
-   "kind": "terms",
-   "name": "主目录",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "去工作区后话题一律从这里启动（服务的 --workdir）"
-  },
-  {
-   "kind": "terms",
-   "name": "仓库地图",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "部署在哪些 git 仓库里干活（repos.json），取代工作区列表"
-  },
-  {
-   "kind": "terms",
-   "name": "用到的仓库",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "话题实际读过或改过的仓库（topic.json repos），多仓感知的单位"
-  },
-  {
-   "kind": "terms",
-   "name": "话题产物目录",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "Covey 按 home.json 模板给话题设好的产物目录"
-  },
-  {
-   "kind": "terms",
-   "name": "规矩",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "记忆三类之一：每轮全文带"
-  },
-  {
-   "kind": "terms",
-   "name": "决定记录",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "记忆三类之一：问题卡回答，只给在办的话题带"
-  },
-  {
-   "kind": "terms",
-   "name": "资料",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "记忆三类之一：相关才带的参考"
-  },
-  {
-   "kind": "terms",
-   "name": "待审核",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "别人提的记忆统一等主人点了才算数"
-  },
-  {
-   "kind": "terms",
-   "name": "记忆中心",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "网页一级页 /memory，看和改全部记忆"
-  },
-  {
-   "kind": "terms",
-   "name": "体检",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "记忆中心的问题项（重复、冲突、含糊、过期）"
-  },
-  {
-   "kind": "terms",
-   "name": "执行设备",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "多设备时话题实际在哪台机器跑"
-  },
-  {
-   "kind": "tools",
-   "name": "memory_save",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "记一条记忆（规矩、决定、资料），取代 principle_save、knowledge_save"
-  },
-  {
-   "kind": "tools",
-   "name": "memory_revise",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "改、替代或收起一条记忆，取代 principle_delete、knowledge_update、knowledge_drop"
-  },
-  {
-   "kind": "tools",
-   "name": "memory_search",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "查记忆，取代 principles_list、knowledge_search"
-  },
-  {
-   "kind": "tools",
-   "name": "repos_list",
-   "by": "主人 11-27 01:22 授权全量改造不受收敛期限制（T860 A0，FINAL-SPEC）",
-   "why": "列出仓库地图，取代 workspaces_list"
-  }
- ]
+ "approved": []
 }

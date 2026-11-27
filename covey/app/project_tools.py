@@ -41,6 +41,7 @@ import time
 from pathlib import Path
 
 from covey.app import butler_topics, project_lead, triage as triage_flow
+from covey.app.butler_handoff import choice_error
 from covey.app.butler_env import reply
 from covey.core import butler, memory, memstore, project_actions, project_memory, projects, quota_hold, triage, turn_source
 from covey.core import project_checklist as checklist
@@ -204,7 +205,8 @@ def project_topic_start(env, request):
     topic = answer.get("data", {}).get("topic_id")
     if topic:
         projects.add_member(env.state_dir, pid, topic)  # Again for a request that ran before: once only.
-        answer = {**answer, "text": answer["text"] + hang(env, pid, topic, request, place)}
+        answer = {**answer, "text": answer["text"] + hang(env, pid, topic, request, place)
+                  + files_left(env, request, "用 project_topic_send 带上 attachments 补给它")}
         acted(env, pid, request, "start")
     return answer if answer.get("ok") else {**answer, "text": "没有开出话题：" + answer["text"]}
 
@@ -221,16 +223,32 @@ def project_topic_send(env, request):
     spent = spent_quota(env, topic, found[2])
     if spent:
         return reply(False, spent)
+    wrong = choice_error(request.args.get("attachments"))
+    if wrong:  # Before an ordinary topic is taken in for nothing.
+        return reply(False, wrong)
     if topic not in (record.get("threads") or ()):
         refused = take_in(env, chat, pid, topic, request.args.get("text"))
         if refused:
             return reply(False, refused)
-    args = {"topic": topic, "text": request.args.get("text"), "note": request.args.get("note")}
+    args = {"topic": topic, "text": request.args.get("text"), "note": request.args.get("note"),
+            "attachments": request.args.get("attachments")}
     answer = butler_topics.topic_send(env, dataclasses.replace(request, args=args))
     if answer.get("ok"):
-        answer = {**answer, "text": answer["text"] + hang(env, pid, topic, request, place)}
+        answer = {**answer, "text": answer["text"] + hang(env, pid, topic, request, place)
+                  + files_left(env, request, "带上 attachments 再给它加一次话")}
         acted(env, pid, request, "send")
     return answer
+
+
+def files_left(env, request, how) -> str:
+    """What the lead is told when its call named no ``attachments`` and its turn got the owner's files (his message, his
+    supplements): none went to the topic, and ``how`` it gives them; '' otherwise (T856: they go only where it names them)."""
+    if request.args.get("attachments") is not None:
+        return ""
+    from covey.app.butler_handoff import asked, summary
+
+    found = asked(env.state_dir, request.job_key).attachments
+    return f" 主人这一轮的附件（{summary(found)}）没有转给它；要它看，{how}（如 [\"图片 1\"]）。" if found else ""
 
 
 def spent_quota(env, topic, data) -> str:

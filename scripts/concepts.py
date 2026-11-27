@@ -10,10 +10,11 @@ option of docs/configuration.md 环境变量与选项一览), a card button kind
 butler or a lead calls (core/butler_tool_specs.py), a Harness (core/roster.py CORE_HARNESSES), a provider
 (core/providers.py CORE_PROVIDERS), a word of docs/glossary.md (名词, 状态词). Only the core's: an extension's are its own.
 
-The list has three parts. ``freeze`` is the 收敛期 (AGENTS.md 收敛期: no new concept until ``until``), ``concepts`` what
-the core had when it began, ``approved`` what was added since, each with who allowed it (``by``) and why (``why``). In the
-收敛期 ``--write`` refuses a new one that ``approved`` does not name; after it, ``--write`` takes every new one onto
-``concepts`` and folds ``approved`` into it. tests/test_structure.py ConceptFreezeTest runs ``--check``'s comparison.
+The list has three parts. ``freeze``, when there is one, is a 收敛期 (AGENTS.md 概念清单: no new concept until ``until``;
+the one of 2026-11-25 to 12-09 was called off on 11-27), ``concepts`` what the core had, ``approved`` what was added in a
+收敛期, each with who allowed it (``by``) and why (``why``). In a 收敛期 ``--write`` refuses a new one that ``approved`` does
+not name; outside one, ``--write`` takes every new one onto ``concepts`` and folds ``approved`` into it.
+tests/test_structure.py ConceptFreezeTest runs ``--check``'s comparison.
 """
 from __future__ import annotations
 

@@ -56,7 +56,7 @@ python3 -B -m unittest discover -s tests -p test_steer.py        # 不经地图�
 
 - 名册里加了 Harness：先在 `SEEN` 里写它的后端怎么接 Bridge 工具、怎么让负责人只读，否则 `test_every_core_harness_says_how_its_cells_are_seen` 失败。
 - 某一格在某个 Harness 上做不到：修好，或者写进 `GAPS` 并写明原因（设计如此还是待接上）；`GAPS` 里的格后来做到了也会失败，提醒把它去掉。
-- 概念清单（`scripts/concepts.py`、`tests/golden/concepts.json`）见 AGENTS.md 的「收敛期」，由 `test_structure` 的 `ConceptFreezeTest` 核对。
+- 概念清单（`scripts/concepts.py`、`tests/golden/concepts.json`）见 AGENTS.md 的「概念清单」，由 `test_structure` 的 `ConceptFreezeTest` 核对。
 
 ### 不改行为的改动：副作用轨迹与补丁清单
 

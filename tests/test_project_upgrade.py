@@ -861,6 +861,33 @@ class ToolTest(UpCase):
         with mock.patch.dict(os.environ, {projects.ENV: "0"}):
             self.assertFalse(self.call("projects_list", "t4")["ok"])
 
+    def test_project_send_hands_the_lead_the_owners_files_with_his_words(self):
+        """T856, 2026-11-27 (the owner: 后面我发附件或者图片给负责人很正常啊): a picture he sent the butler reached the lead's topic
+        nowhere, so the lead could hand it to no topic. Now it is carried into the lead's incoming_media and listed in its turn,
+        and the lead's turn has it among its own (butler_handoff.asked) to name for a topic."""
+        from covey.app import butler_handoff
+        from covey.core.attachments import ATTACHMENTS_HEADER
+        from covey.core.butler import butler_topic_id
+
+        topic, project = self.upgraded()
+        lead = project["lead_topic_id"]
+        media = self.state / "topics" / (find_job_record(self.state, "main-job").get("topic_id") or butler_topic_id(CHAT)) / "incoming_media"
+        media.mkdir(parents=True, exist_ok=True)
+        image = media / "om_ask-1.png"
+        image.write_bytes(b"\x89PNG fake")
+        upsert_job_record(self.state, "main-job", user_text=ASK + "\n附件：图片 1 张",
+                          prompt_text="\n\n".join((ASK, ATTACHMENTS_HEADER, f"- 图片 1: `{image}`")))
+        answer = self.call("project_send", "send-img", pid=project["id"][:6], text="照截图改")
+        self.assertTrue(answer["ok"], answer)
+        mid = "main-" + butler_opened.request_token(SimpleNamespace(id="send-img"))
+        queued = self.app.runtime.jobs.find(0, mid)
+        carried = self.state / "topics" / lead / "incoming_media" / image.name
+        self.assertTrue(carried.is_file())
+        self.assertIn(f"- 图片 1: `{carried}`", queued.prompt_text)
+        self.assertTrue(queued.user_text.endswith("\n附件：图片 1 张"), queued.user_text)
+        found = butler_handoff.asked(self.state, mid)  # The lead's turn: its files are its own to name.
+        self.assertEqual([item.path for item in found.attachments], [str(carried)])
+
     def test_project_send_gives_a_running_lead_turn_a_supplement_and_an_idle_lead_the_next_turn_as_the_owners(self):
         topic, project = self.upgraded()
         lead = project["lead_topic_id"]

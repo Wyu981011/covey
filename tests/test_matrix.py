@@ -1,4 +1,4 @@
-"""入口 × Harness × 界面 (AGENTS.md 收敛期): every way into Covey on every core Harness, and where its turns show.
+"""入口 × Harness × 界面 (AGENTS.md 概念清单): every way into Covey on every core Harness, and where its turns show.
 
 The entries are the rows: the butler (管家, the private chat's top level), a project's lead (负责人), a topic (话题: the
 launch card, 换配置, the butler's topic_start) and a topic opened on the web page (网页). The columns are core/roster.py

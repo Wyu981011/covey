@@ -14,8 +14,8 @@ topic_fork, handlers as app/butler_env.py describes them. Only in the owner's pr
 
 What each topic's model gets is app/butler_handoff.py's: the Bridge's note, the butler's task, the owner's words
 from the butler turn's record and its attachments, carried into the topic's incoming_media; its card and
-history show the owner's words. A project's lead's call (``lead_of``) hands on its task alone, its card and history show
-that (``handed``), and the topic it opens hangs under no message of the owner's (``place``).
+history show the owner's words. A project's lead's call (``lead_of``) hands on its task and the files it names, its card
+and history show that (``handed``), and the topic it opens hangs under no message of the owner's (``place``).
 - ``topic_fork`` forks a topic's last finished turn, on whichever Harness it ran (app/forks.py create_fork), and submits
   the new topic's first.
 - The 派发卡 (``dispatch_card``, COVEY_DISPATCH_CARD=1) is topic_send's alone, in the thread of the owner's question
@@ -141,16 +141,23 @@ def media_dir(ctx) -> Path:
 
 def handed(env, request, ctx):
     """(the owner's message the request's butler turn answers, the attachments of it the call hands ``ctx``'s
-    topic, carried into its incoming_media). A project's lead's call hands on its own words alone: Asked with ``lead``
-    and nothing said, no attachments, whatever its turn answers."""
+    topic, carried into its incoming_media). A project's lead's call hands on its own words alone (Asked with ``lead``
+    and nothing said) and the files of its turn it names (``attachments``), none unnamed."""
     lead = lead_of(env, request)
     if lead is not None:
-        # The lead runs the project: what the owner said in its turn (a reply to its card, his supplements, their files) is
-        # the lead's to act on, and one turn of it often opens several topics and reminds another of something else. Its
-        # task says what each is to do; the owner's words are never handed on as theirs, nor his files (T856, 2026-11-27:
-        # T831, handed a reminder, got the owner's whole reply about two other documents, and the threads T852 to T855
-        # opened in that turn and the next showed his words in place of their task).
-        return butler_handoff.Asked(lead=lead[1] or "专项"), []
+        # The lead runs the project: what the owner said in its turn (a reply to its card, his supplements) is the lead's
+        # to act on, and one turn of it often opens several topics and reminds another of something else. Its task says
+        # what each is to do; the owner's words are never handed on as theirs (T856, 2026-11-27: T831, handed a reminder,
+        # got the owner's whole reply about two other documents, and the threads T852 to T855 opened in that turn and the
+        # next showed his words in place of their task). His files go to the topic the lead names them for (the owner:
+        # 转不转给话题由负责人决定); none when it names none.
+        chosen = request.args.get("attachments")
+        if not chosen or chosen == "none":
+            return butler_handoff.Asked(lead=lead[1] or "专项"), []
+        turn = butler_handoff.asked(env.state_dir, request.job_key)
+        owner = butler_handoff.Asked(attachments=turn.attachments, roots=turn.roots, lead=lead[1] or "专项")
+        items = butler_handoff.picked(owner.attachments, chosen)
+        return owner, butler_handoff.carry(items, media_dir(ctx), owner.roots) if items else []
     owner = butler_handoff.asked(env.state_dir, request.job_key)
     items = butler_handoff.picked(owner.attachments, request.args.get("attachments"))
     return owner, butler_handoff.carry(items, media_dir(ctx), owner.roots) if items else []
