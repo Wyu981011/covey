@@ -75,6 +75,9 @@ class Config:
     key: str = dataclasses.field(repr=False)
     push_seconds: float = PUSH_SECONDS
     poll_seconds: float = POLL_SECONDS
+    # ``direct``: true when the page is reached without the environment's https proxy (2026-11-27 T876: the dev machine's proxy
+    # carried 0.1 MB/s up to the page, the direct route 4-7 MB/s). Without it the proxy is used as the environment says.
+    direct: bool = False
 
 
 def page_url_ok(url) -> bool:
@@ -134,7 +137,8 @@ def load_config(path=None) -> Config:
         raise ValueError(f"key_file 读不了：{type(exc).__name__}") from exc
     if not key:
         raise ValueError("key_file 是空的或没有写")
-    return Config(base, key, _seconds(data.get("push_seconds"), PUSH_SECONDS), _seconds(data.get("poll_seconds"), POLL_SECONDS))
+    return Config(base, key, _seconds(data.get("push_seconds"), PUSH_SECONDS), _seconds(data.get("poll_seconds"), POLL_SECONDS),
+                  data.get("direct") is True)
 
 
 # -- items ----------------------------------------------------------------------------------------------------------------------
@@ -187,16 +191,31 @@ def limits_of(answer):
     return dict(limits)
 
 
-def batch_bytes(limits) -> int:
-    """The bytes of one batch to a page that said ``limits`` (``limits_of``; None: BATCH_BYTES, as before v44)."""
+# What one request may carry is also bounded by how fast the way to the page carries it (``rate``, bytes a second as measured by
+# app/web_push_client.py): a batch about BATCH_TARGET_SECONDS, an image about IMAGE_TARGET_SECONDS of it, never under the old sizes'
+# share below. A 5 MB batch through a proxy that carries 0.1 MB/s took 52 s, and the quick look took it for stuck (2026-11-27 T876).
+BATCH_TARGET_SECONDS, BATCH_FLOOR = 4.0, 250_000
+IMAGE_TARGET_SECONDS = 8.0
+
+
+def batch_bytes(limits, rate=None) -> int:
+    """The bytes of one batch to a page that said ``limits`` (``limits_of``; None: BATCH_BYTES, as before v44), over a way that
+    carries ``rate`` bytes a second (None: not measured yet, at most BATCH_BYTES)."""
     body = _count((limits or {}).get("body_bytes"))
-    return min(BATCH_MOST, int(body * BATCH_SHARE)) if body >= BIG_BODY else BATCH_BYTES
+    most = min(BATCH_MOST, int(body * BATCH_SHARE)) if body >= BIG_BODY else BATCH_BYTES
+    if not rate:
+        return min(most, BATCH_BYTES)
+    return max(min(BATCH_FLOOR, most), min(most, int(rate * BATCH_TARGET_SECONDS)))
 
 
-def image_bytes(limits) -> int:
-    """The bytes of one encoded image to a page that said ``limits`` (None: IMAGE_PART, as before v44)."""
+def image_bytes(limits, rate=None) -> int:
+    """The bytes of one encoded image to a page that said ``limits`` (None: IMAGE_PART, as before v44), over a way that carries
+    ``rate`` bytes a second (None: not measured yet, IMAGE_PART)."""
     image = _count((limits or {}).get("image_bytes"))
-    return min(IMAGE_MOST, image - IMAGE_MARGIN) if image > IMAGE_OLD else IMAGE_PART
+    most = min(IMAGE_MOST, image - IMAGE_MARGIN) if image > IMAGE_OLD else IMAGE_PART
+    if not rate:
+        return min(most, IMAGE_PART)
+    return max(min(IMAGE_PART, most), min(most, int(rate * IMAGE_TARGET_SECONDS)))
 
 
 # -- the ledger -----------------------------------------------------------------------------------------------------------------

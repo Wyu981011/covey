@@ -46,6 +46,9 @@ class FakeClock:
         self.now += seconds
 
 
+FAST = 50_000_000  # Bytes a second of a way to the page fast enough that only the page's limits count.
+
+
 class LimitsTest(unittest.TestCase):
     def test_a_page_that_says_nothing_gets_what_it_got_before(self):
         for answer in ({}, {"ok": True}, {"limits": None}, {"limits": "8mb"}, {"limits": {"body_bytes": "8mb"}},
@@ -55,16 +58,25 @@ class LimitsTest(unittest.TestCase):
             self.assertEqual((web_sync.batch_bytes(limits), web_sync.image_bytes(limits)), (1_000_000, 700_000))
 
     def test_the_batch_is_six_tenths_of_the_body_limit_and_five_mb_at_most(self):
-        self.assertEqual(web_sync.batch_bytes(web_sync.limits_of({"limits": {"body_bytes": MB8}})), 5_000_000)
-        self.assertEqual(web_sync.batch_bytes({"body_bytes": 4_000_000}), 2_400_000)
-        self.assertEqual(web_sync.batch_bytes({"body_bytes": 1024 * 1024}), 1_000_000)  # A page left at the old 1 MB: as before.
-        self.assertEqual(web_sync.batch_bytes({"body_bytes": 64 * 1024 * 1024}), 5_000_000)
+        self.assertEqual(web_sync.batch_bytes(web_sync.limits_of({"limits": {"body_bytes": MB8}}), FAST), 5_000_000)
+        self.assertEqual(web_sync.batch_bytes({"body_bytes": 4_000_000}, FAST), 2_400_000)
+        self.assertEqual(web_sync.batch_bytes({"body_bytes": 1024 * 1024}, FAST), 1_000_000)  # A page left at the old 1 MB: as before.
+        self.assertEqual(web_sync.batch_bytes({"body_bytes": 64 * 1024 * 1024}, FAST), 5_000_000)
 
     def test_an_image_is_what_the_page_takes_less_a_margin_and_three_mb_at_most(self):
-        self.assertEqual(web_sync.image_bytes({"body_bytes": MB8, "image_bytes": 2_000_000}), 2_000_000 - 65_536)
-        self.assertEqual(web_sync.image_bytes(NEW), 3_000_000)
-        self.assertEqual(web_sync.image_bytes({"body_bytes": MB8, "image_bytes": 760 * 1024}), 700_000)  # What an older page takes.
-        self.assertEqual(web_sync.image_bytes({"body_bytes": MB8}), 700_000)
+        self.assertEqual(web_sync.image_bytes({"body_bytes": MB8, "image_bytes": 2_000_000}, FAST), 2_000_000 - 65_536)
+        self.assertEqual(web_sync.image_bytes(NEW, FAST), 3_000_000)
+        self.assertEqual(web_sync.image_bytes({"body_bytes": MB8, "image_bytes": 760 * 1024}, FAST), 700_000)  # What an older page takes.
+        self.assertEqual(web_sync.image_bytes({"body_bytes": MB8}, FAST), 700_000)
+
+    def test_the_way_to_the_page_bounds_a_batch_and_an_image_by_a_few_seconds_of_it(self):
+        """T876: through the dev machine's proxy (0.1 MB/s) a 5 MB batch took 52 s and the quick look took it for stuck."""
+        self.assertEqual((web_sync.batch_bytes(NEW), web_sync.image_bytes(NEW)), (1_000_000, 700_000), "not measured yet: the old sizes")
+        self.assertEqual((web_sync.batch_bytes(NEW, 100_000), web_sync.image_bytes(NEW, 100_000)), (400_000, 800_000))
+        self.assertEqual((web_sync.batch_bytes(NEW, 10_000), web_sync.image_bytes(NEW, 10_000)), (250_000, 700_000), "never under the floor")
+        self.assertEqual((web_sync.batch_bytes(NEW, 5_000_000), web_sync.image_bytes(NEW, 5_000_000)), (5_000_000, 3_000_000))
+        self.assertEqual(web_sync.batch_bytes(None, 10_000), 250_000)
+        self.assertEqual(web_sync.batch_bytes(None, FAST), 1_000_000, "an older page: never over its 1 MB")
 
     def test_batches_are_cut_at_the_limit_given(self):
         items = [web_sync.item("turn", str(n), {"body": "y" * 400_000}) for n in range(12)]
@@ -129,6 +141,8 @@ class Kept:
 
     def send(self, method, url, body, headers, timeout):
         self.sent.append((method, url))
+        if not self.answers:
+            raise OSError("timed out")  # Nothing answers.
         return self.answers.pop(0)
 
 
@@ -172,6 +186,7 @@ class ClientTest(unittest.TestCase):
         self.client.kept = Kept(self.answer({"ok": True, "limits": NEW}), self.answer({"items": []}), self.answer({"limits": {"x": 1}}))
         self.assertEqual((self.client.batch_bytes(), self.client.image_bytes()), (1_000_000, 700_000))
         self.client.request("POST", "/sync/upsert", {"items": []})
+        self.client.rate = FAST
         self.assertEqual((self.client.batch_bytes(), self.client.image_bytes()), (5_000_000, 3_000_000))
         self.client.request("GET", "/sync/inbox?after=0")  # An answer without limits (the inbox) leaves them as they were.
         self.client.request("POST", "/sync/images/have", {"ids": []})  # Limits not of the shape: left as they were too.
@@ -181,6 +196,7 @@ class ClientTest(unittest.TestCase):
     def test_another_page_starts_from_nothing(self):
         self.client.kept = Kept(self.answer({"limits": NEW}), self.answer({"ok": True}))
         self.client.request("POST", "/sync/upsert", {"items": []})
+        self.client.rate = FAST
         self.assertEqual(self.client.batch_bytes(), 5_000_000)
         time.sleep(0.01)
         self.write("https://page-two.example/openapi")
@@ -193,6 +209,7 @@ class ClientTest(unittest.TestCase):
     def test_the_same_page_read_again_keeps_its_limits(self):
         self.client.kept = Kept(self.answer({"limits": NEW}), self.answer({"ok": True}))
         self.client.request("POST", "/sync/upsert", {"items": []})
+        self.client.rate = FAST
         os.utime(self.config, ns=(time.time_ns(), time.time_ns() + 5_000_000_000))  # Touched, same address.
         self.client.loaded = 0.0
         self.client.request("GET", "/sync/inbox?after=0")
@@ -235,7 +252,40 @@ class ClientTest(unittest.TestCase):
             self.client.request("POST", "/sync/upsert", {"items": []})
         self.assertEqual(len(seen), 3)
         self.assertEqual(self.gate.calls, [])
+        self.client.rate = FAST
         self.assertEqual(self.client.batch_bytes(), 5_000_000)  # A self-hosted page of v44 says its limits too.
+
+    def test_a_large_request_tells_how_fast_the_way_is_and_a_slow_way_gets_smaller_batches(self):
+        """T876: each request of RATE_MIN_BYTES or more is timed, a failed one too; the average follows the last few."""
+        self.client.limits = NEW
+        self.client.measured(1_000_000, 10.0)  # 0.1 MB/s, as the dev machine's proxy carried it.
+        self.assertEqual(self.client.rate, 100_000)
+        self.assertEqual((self.client.batch_bytes(), self.client.image_bytes()), (400_000, 800_000))
+        self.client.measured(1_000_000, 2.0)  # Halfway to 0.5 MB/s.
+        self.assertEqual(self.client.rate, 300_000)
+        big, small = {"items": [{"body": "y" * 300_000}]}, {"items": []}
+        self.client.kept = Kept(self.answer({"ok": True}), self.answer({"ok": True}))
+        with mock.patch.object(self.client, "measured") as measured:
+            self.client.request("POST", "/sync/upsert", small)
+            self.client.request("POST", "/sync/upsert", big)
+            with self.assertRaises(WebError):
+                self.client.request("POST", "/sync/upsert", big)  # Nothing answers: timed all the same.
+        self.assertEqual([call.args[0] > 300_000 for call in measured.call_args_list], [True, True])
+
+    def test_the_configs_direct_goes_round_the_proxy(self):
+        write_json(self.config, {"base_url": "https://page-one.example/openapi", "key_file": str(self.key), "direct": True})
+        os.utime(self.config, ns=(time.time_ns(), time.time_ns() + 5_000_000_000))
+        self.client.loaded, self.client.config = 0.0, None
+        self.client.kept = Kept()  # Through the proxy: must not be used.
+        self.client.kept_direct = Kept(self.answer({"ok": True}))
+        self.client.request("GET", "/sync/inbox?after=0")
+        self.assertEqual(len(self.client.kept_direct.sent), 1)
+        self.assertEqual(self.client.kept.sent, [])
+        with mock.patch("urllib.request.getproxies", return_value={"https": "http://proxy.invalid:8118"}), \
+                mock.patch("http.client.HTTPSConnection") as conn:
+            http_upstream.KeepAlive(direct=True).connect(("page-one.example", 443), 5)
+            http_upstream.KeepAlive().connect(("page-one.example", 443), 5)
+        self.assertEqual([call.args[0] for call in conn.call_args_list], ["page-one.example", "proxy.invalid"])
 
 
 class PushTest(WebCase):
@@ -248,10 +298,13 @@ class PushTest(WebCase):
         self.assertEqual({call.args[1] for call in cut.call_args_list}, {1_000_000})
 
     def test_a_page_that_says_it_takes_eight_mb_gets_batches_of_five(self):
-        """The first batch goes at 1 MB (nothing said yet); once the page's answer said 8 MB, five a batch."""
+        """The first batch goes at 1 MB (nothing said yet); once the page's answer said 8 MB and the way to it is fast, five a batch
+        (not measured yet, still 1 MB: T876)."""
         self.web.limits = NEW
         self.topic()
         self.sync.push_once(T0)
+        self.assertEqual(self.sync.client.batch_bytes(), 1_000_000)
+        self.sync.client.rate = FAST
         self.assertEqual(self.sync.client.batch_bytes(), 5_000_000)
         with mock.patch.object(app_web.web_sync, "batches", wraps=web_sync.batches) as cut:
             self.sync.collector.touch(TOPIC)
