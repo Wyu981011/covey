@@ -15,6 +15,7 @@ from covey.core import gateways, quota_hold
 from covey.core.limit_reset import FAULT_STATUSES, account_fault
 from covey.core.protocol import retry_note, retry_reason
 from covey.core.result import MAX_REPLY_BYTES, is_identifier
+from covey.core.text import safe_text
 from covey.core.ttft import FirstToken
 
 # codexErrorInfo's variants (codex-cli 0.171.0's app-server schema), as ``codex_failure_code`` names them: lower case,
@@ -28,6 +29,15 @@ CONNECTION = frozenset({"httpconnectionfailed", "responsestreamconnectionfailed"
 # A limit's words that say no retry helps until someone pays or upgrades: Codex's QuotaExceeded ("Quota exceeded. Check
 # your plan and billing details.") and UsageNotIncluded ("… upgrade to Plus …") come as usageLimitExceeded too.
 SPENT = re.compile(r"quota exceeded|billing details|insufficient_quota|upgrade to plus", re.I)
+# A request the model service's safety review refused: codexErrorInfo cyberPolicy, bioPolicy or
+# misalignmentPolicyViolation, or OpenAI's fixed sentence ("Invalid
+# prompt: your prompt was flagged as potentially violating our usage policy.", said as "other" on codex-cli 0.167; its
+# rollout's codex_error_info invalid_prompt). The same words are refused again: never retried (T872, 2026-11-27: four
+# turns of one account, each card saying only 主任务中途出错).
+POLICY = frozenset({"cyberpolicy", "biopolicy", "misalignmentpolicyviolation", "invalidprompt"})
+REFUSED = re.compile(r"\binvalid prompt\b|flagged as potentially violating", re.I)
+MISSING_MODEL = frozenset({"modelnotfound"})  # The model is not this account's (or no longer anyone's).
+LOGGED_CHARS = 400  # Of the error's own words, for the run's log (``backend_failure``) only.
 
 
 def context_of(usage):
@@ -66,6 +76,10 @@ def codex_failure_code(error):
         return "quota_exhausted"
     if name == "unauthorized" or status in {401, 403}:
         return "authentication_error"
+    if name in POLICY or REFUSED.search(message):
+        return "policy_refusal"
+    if name in MISSING_MODEL:
+        return "model_unavailable"
     if name in LIMITED or status == 429:
         return "quota_exhausted" if SPENT.search(message) else "rate_limited"
     if name in FAULTED or (name in CONNECTION and (status is None or status in FAULT_STATUSES)):
@@ -74,6 +88,33 @@ def codex_failure_code(error):
     if name in CONNECTION:
         return "transport_error"
     return "root_failed"
+
+
+def error_kind(error) -> str:
+    """The name of ``error``'s codexErrorInfo variant ("badRequest", "other"), letters only; "" when it has none."""
+    info = error.get("codexErrorInfo") if isinstance(error, dict) else None
+    variant = next(iter(info), "") if isinstance(info, dict) else info
+    return re.sub(r"[^A-Za-z_]", "", variant)[:40] if isinstance(variant, str) else ""
+
+
+def failure_words(error, code) -> str:
+    """What the failure card says of a failed turn in Codex's terms (RunResult.failure_detail): the kind of error Codex
+    named, never its message, which may carry the request's data (the run's log has it, ``logged_words``); OpenAI's fixed
+    refusal sentence is named as what it is. "" for a limit, a fault, a spent quota or a login, whose own words stand."""
+    if not isinstance(error, dict) or code in ("rate_limited", "server_fault", "quota_exhausted", "authentication_error"):
+        return ""
+    kind = error_kind(error)
+    if REFUSED.search(str(error.get("message") or "")):
+        return "Codex 报：Invalid prompt（OpenAI 判定这次请求可能违反使用政策）"
+    return f"Codex 报的错误类型：{kind}" if kind else "Codex 没说是哪类错误（原话在运行日志 runner.log）"
+
+
+def logged_words(error) -> list:
+    """``error`` for the run's log alone (app/runs.py log_backend_failure): its kind and its words, secrets hidden."""
+    if not isinstance(error, dict):
+        return []
+    kind = error_kind(error)
+    return [safe_text(f"{kind + ': ' if kind else ''}{error.get('message') or ''}", LOGGED_CHARS)]
 
 
 def note_spent(ctx, error):
@@ -175,6 +216,7 @@ def end_turn(rpc, state, turn, ctx, started, cancel, text):
         if turn.get("status") == "interrupted":
             raise JobCancelled("任务已停止")
         if turn.get("status") != "completed":
+            rpc.turn_error = turn.get("error")  # Its words: the card's kind of error and the run's log (appserver.py).
             code = codex_failure_code(turn.get("error"))
             if code == "quota_exhausted":
                 note_spent(ctx, turn.get("error"))

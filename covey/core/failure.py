@@ -79,7 +79,16 @@ OWN = {
     "read_only_refused": ("这个群的群成员只读，这个模型做不到只读，这一轮没有开始；可以换个模型（Claude 或 Codex）",
                           (SWITCH_MODEL,)),
     START_FAILED: ("任务进程没能启动，这一轮没有开始；可以接着做，或先看原因", (CONTINUE, DIAGNOSE)),
+    # A refusal said only by the backend's error (Codex's invalid_prompt, Antigravity's safety block; a Claude Code
+    # policy event is "policy" instead): the same words would be refused again (T872).
+    "policy_refusal": ("模型服务的安全审查拒了这一轮（不是 Covey 出错，也不是额度）；原样重试多半还会被拒，可以拆小再试或换个模型",
+                       (SPLIT, SWITCH_MODEL)),
+    "model_unavailable": ("所选模型在当前账号里用不了（没有权限、已下线或不支持所选档位），重试不会成功；换个模型接着做",
+                          (SWITCH_MODEL,)),
 }
+# Where the backend's own words (the record's failure_detail: its kind of error, what it said in its words of record)
+# go in the detail too: a failure whose title says no more than that the turn did not finish, or one of the two above.
+SAID_TOO = frozenset({"failed", "incomplete", "policy_refusal", "model_unavailable"})
 
 
 def clock(at):
@@ -223,7 +232,11 @@ def failure_view(record, now=None):
         label = classify(record).label
         if not (bool(label) if code == "undelivered" else label == RETRY_LABEL):
             actions = tuple(a for a in actions if a not in (CONTINUE, RETRY))
-    return {"title": title, "detail": _detail(record, code), "actions": list(actions)}
+    detail = _detail(record, code)
+    said = str(record.get("failure_detail") or "").strip()
+    if said and (code in SAID_TOO or code in BROKE or code in UNFINISHED) and said.rstrip("。") not in title + detail:
+        detail = "；".join(part for part in (detail, said.rstrip("。")) if part)
+    return {"title": title, "detail": detail, "actions": list(actions)}
 
 
 def label(record, action) -> str:

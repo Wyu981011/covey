@@ -20,7 +20,7 @@ ERROR_CODES = frozenset({"", "child_error", "child_aborted", "child_unknown", "s
     "protocol_error", "session_guard", "process_exit", "identity_mismatch", "output_missing", "storage_failed",
     "max_turns", "budget_exceeded", "authentication_error", "rate_limited", "workspace_routing_timeout",
     "workdir_missing", "background_timeout", "quota_exhausted", "model_blocked", "redaction_failed",
-    "read_only_refused", "server_fault", "request_hung"}) | POLICY_CODES
+    "read_only_refused", "server_fault", "request_hung", "model_unavailable"}) | POLICY_CODES
 
 
 # What the user can do next, where a failure has a clear way on. The plain words replace
@@ -44,6 +44,13 @@ RECOVERY = {
                            "带上本话题最近的对话；被停止的后台任务不会自动重跑。"),
     "redaction_failed": "问题解决后，在本话题再发一条消息即可接着做。",
     "read_only_refused": "点任务卡上的“🔁 换配置”换到 Claude 或 Codex 的模型，再在本话题发一条消息。",
+    # Without a policy event (one is POLICY_RECOVERY's): a Codex or Antigravity refusal said only by its error (T872).
+    "policy_refusal": ("本轮没有产出回复。\n\n**怎么继续**\n"
+                       "- 同样的内容原样重试或“继续”多半还会被拒，机器人也不会自动重试。\n"
+                       "- 把任务拆小、换个说法再试，或点任务卡上的“🔁 换配置”换一个模型接着做。"),
+    "model_unavailable": ("本轮没有产出回复。\n\n**怎么继续**\n"
+                          "- 这个模型在当前账号里用不了，重试和“继续”都不会成功，机器人也不会自动重试。\n"
+                          "- 点任务卡上的“🔁 换配置”换一个模型接着做。"),
 }
 RECOVERY_DEFAULT = "未取得可交付的已验证公开回复，原生会话不可续接。"
 # The line before a saved reply sent despite the failure, where the default wording misleads.
@@ -63,6 +70,8 @@ STATUS_MESSAGES = {
     "cancelled": "任务已停止，发出停止前最后一条完整回复",
     # Stopped by the Bridge, not the owner: a butler's turn quiet that long while his next words waited (app/unstick.py).
     "request_hung": "模型请求长时间没有回应，Bridge 停下了这一轮",
+    "policy_refusal": "模型服务的安全审查拒了这一轮，本轮没有产出回复",
+    "model_unavailable": "所选模型在当前账号里用不了，本轮没有产出回复",
 }
 INCOMPLETE_STATUS = "本轮执行未全部完成，原生会话不可续接"
 # The detail after a failure's label (ExecutionOutcome.summary: Claude Code and the failure card), by error
@@ -76,6 +85,7 @@ DETAILS = {
     "root_incomplete": "主任务的完整结束状态无法确认。",
     "policy_refusal": "模型服务明确拒绝了本轮内容，已停止自动继续。",
     "policy_fallback": "模型服务报告了明确降级，已停止自动继续。",
+    "model_unavailable": "所选模型在当前账号里用不了：账号没有它的权限、它已下线，或它不支持所选的思考档位。",
     "cancelled": "执行已取消。",
     "timeout": "任务执行时间已到。",
     "transport_error": "与执行后端的连接发生异常。",

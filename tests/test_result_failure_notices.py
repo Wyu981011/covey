@@ -52,6 +52,7 @@ class FixedFailureNoticeTests(unittest.TestCase):
             "redaction_failed": ("敏感词脱敏", "没有发给模型服务"),
             "read_only_refused": ("群成员只读", "后端没有启动"),
             "request_hung": ("长时间没有回应", "停下了这一轮"),
+            "model_unavailable": ("当前账号里用不了", "下线"),
         }
         self.assertEqual(set(details), set(ERROR_CODES) - {""})
         reply = VerifiedRootReply("claude", "11111111-2222-4333-8444-555555555555",

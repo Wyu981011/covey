@@ -88,10 +88,16 @@ class CodexVerifiedReplyTests(CodexRunCase):
              "transport_error"),
             ({"message": SECRET, "codexErrorInfo": "other"}, "root_failed"),
             ({"message": "workspace routing discovery timed out " + SECRET}, "root_failed"),
-        ] + [({"message": SECRET, "codexErrorInfo": name}, "root_failed") for name in (
-            "modelNotFound", "badRequest", "contextWindowExceeded", "sessionBudgetExceeded", "cyberPolicy", "bioPolicy",
-            "misalignmentPolicyViolation", "policyCapacityUnavailable", "tooManyDenials", "inferenceHookDenied",
-            "sandboxError", "threadRollbackFailed")]
+            # The safety review's refusal, by name or by OpenAI's fixed sentence ("other" on codex-cli 0.167, T872).
+            ({"message": "Invalid prompt: your prompt was flagged as potentially violating our usage policy. Please try "
+                         "again with a different prompt: https://platform.openai.com/docs/guides/reasoning",
+              "codexErrorInfo": "other"}, "policy_refusal"),
+            ({"message": SECRET, "codexErrorInfo": "modelNotFound"}, "model_unavailable"),
+        ] + [({"message": SECRET, "codexErrorInfo": name}, "policy_refusal") for name in (
+            "cyberPolicy", "bioPolicy", "misalignmentPolicyViolation")] + [
+            ({"message": SECRET, "codexErrorInfo": name}, "root_failed") for name in (
+                "badRequest", "contextWindowExceeded", "sessionBudgetExceeded", "policyCapacityUnavailable",
+                "tooManyDenials", "inferenceHookDenied", "sandboxError", "threadRollbackFailed")]
         for error, code in cases:
             with self.subTest(code=code, error=error.get("codexErrorInfo")):
                 result = self.run_rpc(FakeRpc([finished(turn(status="failed", error=error, items=[]))]))
@@ -99,7 +105,13 @@ class CodexVerifiedReplyTests(CodexRunCase):
                 self.assertEqual(result.outcome.error_code, code)
                 self.assertFalse(result.outcome.resume_allowed)
                 self.assertIsNone(result.public_reply)
-                self.assertNotIn(SECRET, result.text + result.outcome.summary())
+                self.assertNotIn(SECRET, result.text + result.outcome.summary() + result.failure_detail)
+                # The card names the kind Codex said (T872), never its words: those only reach the run's log.
+                kind = error.get("codexErrorInfo")
+                if code == "root_failed" and isinstance(kind, str) and kind != "other":
+                    self.assertEqual(result.failure_detail, f"Codex 报的错误类型：{kind}")
+                if code == "policy_refusal" and kind == "other":
+                    self.assertIn("Invalid prompt", result.failure_detail)
         # The fault's own words, not transport_error's 通信失败 they fell back to.
         result = self.run_rpc(FakeRpc([finished(turn(status="failed", error={"codexErrorInfo": "serverOverloaded"},
                                                      items=[]))]))

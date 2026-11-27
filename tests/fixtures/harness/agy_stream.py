@@ -24,6 +24,10 @@ json.dump(record, open(os.environ["FAKE_AGY_RECORD"], "w"))
 with open(os.environ["FAKE_AGY_RECORD"] + ".all", "a") as runs:  # Every process of the turn, in order.
     runs.write(json.dumps(record) + "\n")
 scenario = os.environ.get("FAKE_AGY_SCENARIO", "ok")
+if scenario == "model-gone":
+    # agy 1.5.18 once the account's list lost the model (T872): before the conversation, on stderr only.
+    print('error: invalid model selection (--model "gemini-4-neon" --effort "xhigh"): --effort is not supported for '
+          'model "gemini-4-neon" PRIVATE_DETAIL', file=sys.stderr); sys.exit(1)
 if scenario == "steer" and "--conversation" in args:
     scenario = "ok"  # The process after the supplement: the turn goes on and ends.
 if scenario == "steer":
@@ -128,6 +132,14 @@ if scenario == "quota-window":
                           "Your quota will reset after 1h2m3s. PRIVATE_DETAIL"); sys.exit(3)
 if scenario == "quota":
     result("ERROR", error="PRIVATE_DETAIL: you are out of credits"); sys.exit(3)
+if scenario == "quota-days":
+    # agy 1.5.18 on an account whose plan's quota is spent for days (T872).
+    result("ERROR", error="RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to "
+                          "increase your limits. Resets in 157h33m41s. PRIVATE_DETAIL"); sys.exit(3)
+if scenario == "refused":
+    result("ERROR", error="INVALID_ARGUMENT (code 400): response blocked by SAFETY. PRIVATE_DETAIL"); sys.exit(3)
+if scenario == "bad-request":
+    result("ERROR", error="INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools PRIVATE_DETAIL"); sys.exit(3)
 if scenario == "waits":
     # A subagent sent in the background, a line while it runs, its return as a system message (T588 #5298).
     step(3, "DONE", "subagent", tool_name="invoke_subagent", subagent_info={"subagents": [{"role": "Counter"}]})

@@ -357,7 +357,8 @@ class AntigravityTests(unittest.TestCase):
 
     def test_a_limit_and_a_passing_fault_are_told_from_what_no_retry_gets_past(self):
         """agy's ``result.error`` read for app/auto_retry.py: a limit or a quota that resets by itself (retried), a
-        passing server fault (retried), and a login, a spent quota or anything else (never)."""
+        passing server fault (retried), and a login, a spent quota, a safety block, a model the account cannot use or
+        anything else (never)."""
         from covey.backends.agy.bridge import error_code
         cases = {
             "rate_limited": ("429 Too Many Requests", "RESOURCE_EXHAUSTED (code 429): rate limit exceeded",
@@ -372,17 +373,76 @@ class AntigravityTests(unittest.TestCase):
             "quota_exhausted": ("you are out of credits", "Quota exhausted for this account", "usage limit reached"),
             "authentication_error": ("You are not logged into Antigravity.", "401 Unauthorized",
                                      "authentication failed or timed out"),
+            # A safety block is never a limit or a fault, whatever else it says (T872: said as what it is).
+            "policy_refusal": ("INTERNAL (code 500): response blocked by SAFETY", "429: content violates the usage policy",
+                               "UNAVAILABLE: PROHIBITED_CONTENT"),
+            "model_unavailable": ("model not found",
+                                  'invalid model selection (--model "gemini-4-neon" --effort "xhigh"): --effort is not '
+                                  'supported for model "gemini-4-neon"',
+                                  "failed to construct executor: unknown model key MODEL_PLACEHOLDER_M535: model not found"),
             "": ("PRIVATE_DETAIL internal", "PERMISSION_DENIED (code 403): Your location is not eligible",
-                 "INVALID_ARGUMENT (code 400): bad request", "model not found", "tool run_command failed", "",
-                 # A safety block is never a limit or a fault, whatever else it says.
-                 "INTERNAL (code 500): response blocked by SAFETY", "429: content violates the usage policy",
-                 "UNAVAILABLE: PROHIBITED_CONTENT"),
+                 "INVALID_ARGUMENT (code 400): bad request", "tool run_command failed", ""),
         }
         cases["rate_limited"] += ("model gemini-3.1-pro is out of quota until 2026-11-23T08:00:00Z",)
         for code, errors in cases.items():
             for error in errors:
                 with self.subTest(error=error):
                     self.assertEqual(error_code(error), code)
+
+    def test_a_failure_says_what_it_was_on_the_card_and_agys_own_words_only_in_the_log(self):
+        """T872: a failure agy named is said as what it was (the card's failure_detail), never in agy's own sentences,
+        which only the run's log keeps (backend_failure): a model the account lost, a safety block, Google's status."""
+        for scenario, code, said in (("model-gone", "model_unavailable", "Antigravity 不认 gemini-3.8-pro-high"),
+                                     ("refused", "policy_refusal", "安全策略拦下"),
+                                     ("bad-request", "root_failed", "Antigravity 报的错误：INVALID_ARGUMENT（400）"),
+                                     ("error", "root_failed", "")):
+            with self.subTest(scenario=scenario):
+                result, events, _replies, _sessions, _record = self.run_agy(scenario)
+                self.assertEqual((result.is_error, result.outcome.error_code), (True, code))
+                self.assertIn(said, result.failure_detail)
+                self.assertEqual(bool(result.failure_detail), bool(said))
+                self.assertNotIn("PRIVATE_DETAIL", result.failure_detail + result.text)
+                failure = [d for k, d in events if k == "backend_failure"][-1]
+                self.assertEqual(failure["code"], code)
+
+    def test_a_quota_back_in_days_is_spent_held_and_refused_before_the_next_turn_starts(self):
+        """T872, 2026-11-27: "Individual quota reached … Resets in 157h33m41s" was a passing limit, retried every few
+        minutes, each failing. It is a spent quota with its reset (app/auto_retry.py retries none that far off), and the
+        model's group is held: the next turn on it is refused before it starts, until HOLD_RECHECK passes."""
+        from covey.backends.agy import accounts
+        before = time.time()
+        result, *_rest = self.run_agy("quota-days")
+        self.assertEqual(result.outcome.error_code, "quota_exhausted")
+        self.assertAlmostEqual(result.limit["reset_at"] - before, 157 * 3600 + 33 * 60 + 41, delta=60)
+        self.assertIn("gemini-3.8-pro-high 额度用完了", result.failure_detail)
+        self.assertIn("恢复", result.failure_detail)
+        self.assertNotIn("PRIVATE_DETAIL", result.failure_detail)
+        code, words, reset = self.backend.start_refusal(self.ctx)
+        self.assertEqual((code, reset), ("quota_exhausted", result.limit["reset_at"]))
+        self.assertIn("额度用完了", words)
+        # The same group's other models too; another group's not; the hold over after the recheck wait.
+        self.assertIsNotNone(self.backend.start_refusal(dataclasses.replace(self.ctx, model="gemini-3.8-flash")))
+        self.assertIsNone(self.backend.start_refusal(dataclasses.replace(self.ctx, model="claude-opus-4-6-thinking")))
+        later = time.time() + accounts.HOLD_RECHECK + 1
+        self.assertIsNone(accounts.holding(self.ctx.state_dir, self.ctx.model, now=later))
+        # A window that comes back within hours stays a passing limit, retried at its reset.
+        result, *_rest = self.run_agy("quota-window")
+        self.assertEqual(result.outcome.error_code, "rate_limited")
+        self.assertAlmostEqual(result.limit["reset_at"] - time.time(), 3723, delta=60)
+
+    def test_a_model_gone_from_the_saved_list_is_refused_before_the_turn_starts(self):
+        """F2 (T872): the account's list (launch-models/agy.json, ``agy models``) no longer has the topic's model: the
+        turn is refused before it starts, in words that say to switch; agy's own default and an empty list never are."""
+        folder = Path(self.ctx.state_dir) / "launch-models"
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "agy.json").write_text(json.dumps({"models": {"gemini-4-hydrogen": {"levels": ["high"]}}}))
+        code, words, reset = self.backend.start_refusal(dataclasses.replace(self.ctx, model="gemini-4-neon"))
+        self.assertEqual((code, reset), ("model_unavailable", 0.0))
+        self.assertIn("gemini-4-neon", words)
+        self.assertIsNone(self.backend.start_refusal(dataclasses.replace(self.ctx, model="gemini-4-hydrogen")))
+        self.assertIsNone(self.backend.start_refusal(dataclasses.replace(self.ctx, model="")))
+        (folder / "agy.json").write_text(json.dumps({"models": {}}))
+        self.assertIsNone(self.backend.start_refusal(dataclasses.replace(self.ctx, model="gemini-4-neon")))
 
     def test_a_stopped_turn_is_never_a_limit_or_a_fault(self):
         """The stop's own end (agy cut off mid-stream) says cancelled, never what app/auto_retry.py would retry."""

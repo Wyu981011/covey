@@ -34,7 +34,8 @@ when something happened since it last looked, and the mechanical checks that sto
   a spent quota or a passing server fault and its automatic retry is to come (app/auto_retry.py, at the reset when one is
   known), or none is to come and it ended less than LIMIT_REST ago, or its model draws on a gateway quota that is held
   (core/quota_hold.py), or its latest turns did not start (``backend_down``: its Harness's login check or program failed,
-  its task runner did not start) and the latest ended less than DOWN_LADDER says ago. The receipts wait in the inbox; the
+  its task runner did not start), or failed as the next would (``stuck``: a refusal, a model the account cannot use, a
+  login, or nothing done at all), and the latest ended less than DOWN_LADDER says ago. The receipts wait in the inbox; the
   retry, or the wake after the wait, reads them all in one turn, as any lead turn takes them. A receipt of the owner's own
   doing that came after that turn (``start``, ``owner_choice``) still wakes it, once. A wake-up that does not start after
   one that did not either tells the owner nothing (``quiet_start``): he was told when the first did not.
@@ -110,6 +111,10 @@ LIMIT_REST = 600  # A lead turn that failed on a limit with no retry to come: th
 OWN_WAKES = ("start", "owner_choice")  # The owner's own doing: wakes the lead once even while it waits out a limit.
 RETRY_COMING = ("pending", "submitting")  # app/auto_retry.py AUTO_RETRY_TRANSITIONS: the retry has not been queued yet.
 DOWN_LADDER = (60, 180, 600)  # The lead's turns that did not start, 1, 2, 3 or more in a row: the next wake waits this long.
+# A lead's turn that failed in a way the next one fails the same (``stuck``): a refusal of its content, a model its
+# account cannot use, a login or an account block. T872, 2026-11-27: a lead on a model its account had lost woke every
+# 10 s, 12 failed turns in two minutes each time, until the wake guard paused the project.
+WONT_HEAL = frozenset({"policy_refusal", "model_unavailable", "authentication_error", "model_blocked"})
 
 
 def wakes_of(record) -> dict:
@@ -1018,7 +1023,8 @@ def limit_wait(state_dir, record, pending, now) -> tuple:
       after it ended.
     - ``quota``: the lead's model draws on a gateway quota that is held (core/quota_hold.py ``blocks``): its turn would
       fail before it starts. Until the reset; the hold itself is checked again RECHECK after it was last found spent.
-    - ``down``: the lead's latest turn did not start (``backend_down``; 2026-11-26 10:57: a Claude Code on the remote
+    - ``down``: the lead's latest turn did not start, or failed as the next one would (``stuck``; ``backend_down``,
+      2026-11-26 10:57: a Claude Code on the remote
       machine that its login check could not reach, a wake every 10 s, each telling the owner 后端暂不可用 with a
       recovery card). Until DOWN_LADDER after it ended, by how many of its latest turns in a row did not; the wake then
       is the try whether it starts again, and the first that does reads every receipt.
@@ -1032,8 +1038,8 @@ def limit_wait(state_dir, record, pending, now) -> tuple:
     ended = board_read.ended_at(latest) if latest else 0.0
     if any(item.get("kind") in OWN_WAKES and float(item.get("at") or 0) > ended for item in pending):
         return "", 0.0
-    if latest and backend_down(latest):
-        row = next((n for n, job in enumerate(turns) if not backend_down(job)), len(turns))
+    if latest and stuck(latest):
+        row = next((n for n, job in enumerate(turns) if not stuck(job)), len(turns))
         until = ended + DOWN_LADDER[min(row, len(DOWN_LADDER)) - 1]
         if now < until:
             return "down", until
@@ -1056,6 +1062,18 @@ def backend_down(job) -> bool:
     if job.get("status") == "failed" and str(job.get("status_message") or "").startswith(failure.STARTUP_FAILED):
         return True
     return failure.failure_code(job) == failure.START_FAILED
+
+
+def stuck(job) -> bool:
+    """Whether the next turn of ``job``'s lead would fail as it did: it did not start (``backend_down``), or it failed
+    as one of WONT_HEAL, or with nothing done at all (no tool step, no token) for a reason it did not name."""
+    if backend_down(job):
+        return True
+    code = failure.failure_code(job)
+    if code in WONT_HEAL:
+        return True
+    idle = not int(job.get("tool_step_count") or 0) and not int(job.get("input_tokens") or 0)
+    return code in ("root_failed", "process_exit", "root_incomplete") and idle
 
 
 def quiet_start(state_dir, job, now=None) -> bool:

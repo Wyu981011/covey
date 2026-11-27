@@ -43,7 +43,7 @@ from covey.core.butler import is_butler_topic, traits
 from covey.core.metrics import mark
 from covey.core.proxy import brief_history, owner_turn_note
 from covey.core.redaction import topic_redaction
-from covey.core.result import ExecutionOutcome
+from covey.core.result import ERROR_CODES, ExecutionOutcome
 from covey.core.saved_results import consume_paused_question_answer, observe_verified_reply
 from covey.core.session_guard import claim_native_session
 from covey.core.history_storage import recent_history
@@ -405,7 +405,27 @@ class Runs:
             refused = quota_hold.failure_words(*found)
             outcome = ExecutionOutcome("failed", "quota_exhausted", cleanup_confirmed=True, protection_confirmed=True)
             return RunResult(refused, session_id, True, None, outcome, failure_detail=refused)
+        found = self._backend_refusal(ctx)
+        if found:
+            # The Harness knows the turn would only fail (its model gone from the account, its quota held, T872).
+            code, refused, reset = found
+            outcome = ExecutionOutcome("failed", code, cleanup_confirmed=True, protection_confirmed=True)
+            return RunResult(outcome.summary(refused), session_id, True, None, outcome, failure_detail=refused,
+                             limit={"reset_at": reset} if reset else None)
         return None
+
+    def _backend_refusal(self, ctx: BridgeContext):
+        """The backend's own refusal of the turn (BackendRuntime.start_refusal), or None; one that fails is none."""
+        check = getattr(self.harness.backend, "start_refusal", None)
+        try:
+            found = check(ctx) if callable(check) else None
+        except Exception as exc:  # noqa: BLE001 - a check never stops a turn
+            self.runtime.log(f"start check of {self.harness.spec.name} failed: {type(exc).__name__}")
+            return None
+        if (not isinstance(found, tuple) or len(found) != 3 or found[0] not in ERROR_CODES or not found[0]
+                or not isinstance(found[1], str)):
+            return None
+        return found
 
     def _limit_refusal(self, ctx: BridgeContext) -> str:
         """Why the turn may not start for its limit (app/tool_limits.py refusal), or '' when it may."""

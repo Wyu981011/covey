@@ -419,6 +419,34 @@ class LimitTest(Loop):
         self.loop.tick(NOW + 65)
         self.assertEqual(len(self.queued), 1)
 
+    def test_a_lead_turn_that_failed_as_the_next_would_holds_as_a_backend_down(self):
+        """T872, 2026-11-27: a lead on a model its account had lost was woken every 10 s, 12 failed turns in two
+        minutes. A refusal, a model the account cannot use, or a failure that did nothing at all waits the ladder too."""
+        for n, fields in enumerate(({"failure_code": "model_unavailable"}, {"failure_code": "policy_refusal"},
+                                    {"failure_code": "root_failed", "tool_step_count": 0, "input_tokens": 0}), 1):
+            with self.subTest(fields=fields):
+                self.setUp()
+                self.autowake()
+                self.receipt()
+                key = projects.wake_id(PID, n)
+                write_job(self.state, key, topic_id=LEAD, chat_id=CHAT, job_id=n, message_id=key, status="failed",
+                          timings={"execution_finished": NOW}, **fields)
+                self.update(wakes={"count": 1, "streak": 1, "last_at": NOW, "recent": [NOW]})
+                self.loop.tick(NOW + 30)
+                self.assertEqual(self.woken(), [])
+                self.loop.tick(NOW + 65)
+                self.assertEqual(len(self.queued), 1)
+        # A failure that did work goes on as before: woken at once.
+        self.setUp()
+        self.autowake()
+        self.receipt()
+        key = projects.wake_id(PID, 9)
+        write_job(self.state, key, topic_id=LEAD, chat_id=CHAT, job_id=9, message_id=key, status="failed",
+                  failure_code="root_failed", tool_step_count=12, input_tokens=90000, timings={"execution_finished": NOW})
+        self.update(wakes={"count": 1, "streak": 1, "last_at": NOW, "recent": [NOW]})
+        self.loop.tick(NOW + 30)
+        self.assertEqual(len(self.queued), 1)
+
     def test_the_owners_choice_after_a_backend_down_wakes_the_lead_at_once(self):
         self.receipt("start", at=NOW - 60)
         self.down(1, NOW)

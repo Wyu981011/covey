@@ -295,8 +295,10 @@ class AutoRetryTest(UnifiedCase):
                  ('serverOverloaded', 'PRIVATE', 'server_fault'),
                  ({'responseStreamDisconnected': {'httpStatusCode': None}}, 'PRIVATE', 'server_fault'),
                  # Never retried: each fails as what it is, not as an error of the Bridge's.
-                 ('unauthorized', 'PRIVATE', 'authentication_error'), ('modelNotFound', 'PRIVATE', 'root_failed'),
-                 ('badRequest', 'PRIVATE', 'root_failed'), ('cyberPolicy', 'PRIVATE', 'root_failed'),
+                 ('unauthorized', 'PRIVATE', 'authentication_error'), ('modelNotFound', 'PRIVATE', 'model_unavailable'),
+                 ('badRequest', 'PRIVATE', 'root_failed'), ('cyberPolicy', 'PRIVATE', 'policy_refusal'),
+                 ('other', 'Invalid prompt: your prompt was flagged as potentially violating our usage policy.',
+                  'policy_refusal'),
                  ('usageLimitExceeded', 'Quota exceeded. Check your plan and billing details.', 'quota_exhausted'),
                  ({'httpConnectionFailed': {'httpStatusCode': 400}}, 'PRIVATE', 'transport_error'))
         for number, (info, message, code) in enumerate(cases):
@@ -308,6 +310,28 @@ class AutoRetryTest(UnifiedCase):
                 else:
                     self.assertNotIn('auto_retry_state', record)
                 self.assertNotIn('PRIVATE', record.get('final_text') or '')
+                self.assertNotIn('PRIVATE', record.get('failure_detail') or '')
+
+    def test_a_turn_its_backend_refuses_before_it_starts_fails_as_that_and_is_never_retried(self):
+        """BackendRuntime.start_refusal (app/runs.py, T872): a model the account lost, or its quota held until days
+        later, fails the turn before the backend runs, in the backend's words, with no automatic retry."""
+        for code, words, reset in (("model_unavailable", "Antigravity 的模型列表里已经没有 gemini-4-neon", 0.0),
+                                   ("quota_exhausted", "额度用完了，北京时间 12-03 21:23 恢复", time.time() + 157 * 3600)):
+            with self.subTest(code=code):
+                backend = Failing()
+                backend.start_refusal = lambda ctx, found=(code, words, reset): found
+                self.claude.harness.backend = backend
+                record = self.failed_job(f'refused-{code}')
+                self.assertEqual(backend.calls, [])
+                self.assertEqual((record['status'], record['failure_code'], record['failure_detail']),
+                                 ('failed', code, words))
+                self.assertNotIn('auto_retry_state', record)
+        # A check that raises, or says something that is not a refusal, starts the turn as before.
+        backend = Failing()
+        backend.start_refusal = mock.Mock(side_effect=RuntimeError('broken'))
+        self.claude.harness.backend = backend
+        self.failed_job('refused-broken')
+        self.assertEqual(len(backend.calls), 1)
 
     def test_a_turn_whose_answer_was_withdrawn_is_retried(self):
         """Claude answered, a background task woke it, then it was rate-limited or ended incomplete: the

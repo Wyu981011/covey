@@ -64,6 +64,7 @@ from covey.core.reply_state import ReplyState
 from covey.core.result import MAX_REPLY_BYTES
 from covey.core.steer import SteerRefused, refuse_steer, steer_text
 from covey.core.steps import AnswerNotes, Steps
+from covey.core.quota_hold import clock
 from covey.core.text import redact, tool_detail
 from covey.core.usage import TurnTokens
 
@@ -90,6 +91,15 @@ FAULT_RE = re.compile(r"\b50[0234] (?:internal|bad gateway|service unavailable|g
 # A safety block (Gemini's finish reasons and policy words): never a limit or a fault, whatever else the error says.
 POLICY_RE = re.compile(r"\bsafety\b|prohibited.?content|blocklist|recitation|\bspii\b|violat|usage polic|"
                        r"content polic|acceptable use|flagged", re.I)
+# The model is not the account's, not with this budget, or no longer anyone's (agy 1.5.18: 'invalid model selection
+# (--model "gemini-4-neon" --effort "xhigh"): --effort is not supported for model …' once its list lost the model;
+# 'unknown model key MODEL_PLACEHOLDER_M535: model not found' resuming a conversation of a model gone). T872.
+MODEL_RE = re.compile(r"invalid model selection|unknown model key|model not found", re.I)
+LONG_RESET = 6 * 3600  # A quota back later than this is a spent one, not a passing limit (app/auto_retry.py MAX_RESET_WAIT).
+RESET_RE = re.compile(r"\b(?:reset|refresh)\w*\s+(?:after|in)\s+((?:\d+\s*[dhms]\s*)+)", re.I)
+# Google's status of an error as agy prints it ("INVALID_ARGUMENT (code 400): …"): what the card may say of it.
+STATUS_RE = re.compile(r"\b([A-Z][A-Z_]{3,}) \(code (\d{3})\)")
+UNSAID = ("root_failed", "process_exit", "root_incomplete", "output_missing")  # Codes that say nothing of their own.
 RETRIED = ("rate_limited", "server_fault")  # What app/auto_retry.py retries, of what error_code says.
 NOT_LOGGED_IN = ("Antigravity 还没有登录：在运行机器人的账号下执行一次 agy，选 Google OAuth 登录"
                  "（远程机器上打开它给的链接、把授权码贴回终端），再重试本轮。")
@@ -454,6 +464,26 @@ class AntigravityBackend(BackendRuntime):
         # COVEY_HOME, COVEY_TOPIC, COVEY_STATE and <数据根>/bin on PATH (core/home.py), none on a device.
         return {**child_process_env(ctx.workdir, device=process_device(ctx)), **covey_home.env(ctx)}
 
+    def start_refusal(self, ctx):
+        """(error code, words, reset) when a turn on ``ctx.model`` would only fail, refused before it starts
+        (app/runs.py): its group's quota held (accounts.holding, a spent one's reset said by an earlier turn), or a model
+        the saved list (``model_catalog``) no longer has. None otherwise, for agy's own default, on a device, and on any
+        doubt: the turn then starts and fails as it would."""
+        if not ctx.model or device_of(ctx):
+            return None
+        try:
+            found = None if accounts.configured() else accounts.holding(ctx.state_dir, ctx.model)
+            if found is not None:
+                return "quota_exhausted", failure_words(ctx, "quota_exhausted", "", found["reset_at"], time.time()), \
+                    float(found["reset_at"])
+            catalog = self.model_catalog(ctx)
+            if catalog and ctx.model not in catalog:
+                return ("model_unavailable", f"Antigravity 的模型列表里已经没有 {ctx.model}（账号没有它的权限，或它已下线），"
+                        "这一轮没有开始；换个模型接着做", 0.0)
+        except Exception:  # noqa: BLE001 - a check that fails never stops a turn
+            logging.getLogger(__name__).warning("agy start check failed", exc_info=True)
+        return None
+
     def model_catalog(self, ctx):
         path = Path(ctx.state_dir) / "launch-models" / "agy.json"
         try:
@@ -704,12 +734,15 @@ class StreamRows:
 
 def error_code(error):
     """The failure code agy's ``result.error`` names, '' for none of these: a login (never retried), a safety block
-    ('': never retried), a spent quota (never retried), a limit or a quota that resets by itself (``rate_limited``), a
-    passing server fault (``server_fault``); the last two are what app/auto_retry.py retries."""
+    (``policy_refusal``), a model the account cannot use (``model_unavailable``), a spent quota (never retried), a limit
+    or a quota that resets by itself (``rate_limited``), a passing server fault (``server_fault``); the last two are
+    what app/auto_retry.py retries."""
     if AUTH_RE.search(error):
         return "authentication_error"
     if POLICY_RE.search(error):
-        return ""
+        return "policy_refusal"
+    if MODEL_RE.search(error):
+        return "model_unavailable"
     if QUOTA_RE.search(error) and not WINDOW_RE.search(error):
         return "quota_exhausted"
     if LIMIT_RE.search(error) or QUOTA_RE.search(error):
@@ -918,12 +951,58 @@ def next_words(rows, argv, stdin):
     return argv, stdin
 
 
+def error_words(rows, stderr) -> str:
+    """What agy said of a failure: its result's ``error`` and the error lines of its stderr (``AGY_ERROR``, ``error:``)."""
+    lines = [line for line in str(stderr or "").splitlines() if re.match(r"\s*(?:AGY_ERROR|error)\b", line, re.I)]
+    return "\n".join([str((rows.result or {}).get("error") or ""), *lines[-STDERR_LINES:]]).strip()
+
+
 def outcome(rows, rc, stderr, cancel_event):
-    """``stream_outcome``, with a process that ended before its conversation for want of a login said as one."""
+    """``stream_outcome``, with a process that ended before its conversation for want of a login said as one, and one
+    that said nothing of its own whose stderr names a safety block or a model the account cannot use said as that."""
     status, code = stream_outcome(rows, rc, cancel_event)
     if code in ("process_exit", "root_incomplete") and rows.sid is None and auth_failure(stderr):
         code = "authentication_error"
+    elif status == "failed" and code in UNSAID:
+        said = error_code(error_words(rows, stderr))
+        code = said if said in ("policy_refusal", "model_unavailable") else code
     return status, code
+
+
+def reset_of(words, now):
+    """When the quota ``words`` say is back ("Resets in 157h33m41s", "reset after 4h12m"), epoch seconds; None."""
+    found = RESET_RE.search(str(words or ""))
+    units = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+    seconds = sum(int(n) * units[u.lower()] for n, u in re.findall(r"(\d+)\s*([dhms])", found.group(1), re.I)) if found else 0
+    return now + seconds if seconds > 0 else None
+
+
+def failure_words(ctx, code, words, reset, now) -> str:
+    """What the failure card says of a failed turn in agy's terms (RunResult.failure_detail): the model it could not use,
+    a spent quota with when it is back, a safety block, or the status Google named; never agy's own sentences beyond
+    that. "" where the code's own words say it (a passing limit, a fault, a login)."""
+    model = ctx.model or "所选模型"
+    if code == "model_unavailable":
+        return f"Antigravity 不认 {model}（账号没有它的权限、它已下线，或不支持所选档位）"
+    if code == "quota_exhausted" and reset:
+        return f"Antigravity 的 {model} 额度用完了，{clock(reset, now)} 恢复；恢复前重试不会成功，可以换个模型接着做"
+    if code == "policy_refusal":
+        return "Antigravity 报：这一轮的内容被模型服务的安全策略拦下"
+    found = STATUS_RE.search(str(words or ""))
+    return f"Antigravity 报的错误：{found[1]}（{found[2]}）" if found and code in UNSAID else ""
+
+
+def failed_turn(result, ctx, code, words, reset, now):
+    """``result`` of a failed turn with its words (``failure_words``) and a spent quota's reset (``limit.reset_at``, for
+    app/auto_retry.py), and that quota held (accounts.hold: no turn on its group starts meanwhile, accounts.holding);
+    any other result as it is. The accounts' own (accounts.turn) say theirs over these."""
+    if not result.is_error:
+        return result
+    detail = result.failure_detail or failure_words(ctx, code, words, reset, now)
+    limit = {**(result.limit or {}), "reset_at": reset} if reset else result.limit
+    if code == "quota_exhausted" and reset and not device_of(ctx) and not accounts.configured():
+        accounts.hold(ctx.state_dir, ctx.model, reset, now)
+    return dataclasses.replace(result, failure_detail=detail, limit=limit)
 
 
 def run_stream(request, argv, stdin, env, switch=None):
@@ -1028,10 +1107,18 @@ def run_stream(request, argv, stdin, env, switch=None):
         except Exception:
             pass
     observed = process.poll() if process is not None else None
-    return state.finish(text, rows.sid or expected_session, status, code,
-                        identity=bool(rows.sid and rows.result is not None and not rows.invalid),
-                        cleanup=not forced_cleanup and type(observed) is int and (rc is None or observed == rc),
-                        cancel_event=cancel_event, emit=request.emit)
+    now = time.time()
+    words = error_words(rows, stderr) if status == "failed" else ""
+    reset = reset_of(words, now) if code in ("rate_limited", "quota_exhausted") else None
+    if reset is not None and reset - now > LONG_RESET:
+        # "Individual quota reached … Resets in 157h33m41s" (T872): back in days, not minutes; retried every few minutes
+        # as a passing limit it was, each failing. Spent, it is retried only at a reset within app/auto_retry.py's wait.
+        code = "quota_exhausted"
+    result = state.finish(text, rows.sid or expected_session, status, code,
+                          identity=bool(rows.sid and rows.result is not None and not rows.invalid),
+                          cleanup=not forced_cleanup and type(observed) is int and (rc is None or observed == rc),
+                          cancel_event=cancel_event, emit=request.emit)
+    return failed_turn(result, ctx, code, words, reset, now)
 
 
 HARNESS_REGISTRY.register("agy", AntigravityBackend)

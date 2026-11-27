@@ -52,6 +52,7 @@ import contextlib
 from dataclasses import dataclass
 import datetime as dt
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -197,6 +198,34 @@ def reset_in(words) -> int:
     found = RESET_WORDS.search(str(words or ""))
     units = {"d": 86400, "h": 3600, "m": 60, "s": 1}
     return sum(int(n) * units[u.lower()] for n, u in re.findall(r"(\d+)\s*([dhms])", found.group(1), re.I)) if found else 0
+
+
+HOLD_KEY = "hold"  # In state.json: this machine's own login held out of a group, when no accounts are listed (T872).
+HOLD_RECHECK = 600  # Seconds after the quota was last found spent before one turn on it starts again to look.
+
+
+def hold(state_dir, model, reset_at, now=None) -> None:
+    """With no accounts listed (``configured`` False): hold this machine's login out of ``model``'s group until
+    ``reset_at``, the spent quota's reset its own words said (backends/agy/bridge.py ``failed_turn``). Fail-open."""
+    now = time.time() if now is None else now
+    group = group_of(state_dir, model)
+    try:
+        Records(state_dir).change(lambda state: state.update({HOLD_KEY: {
+            **(state.get(HOLD_KEY) if isinstance(state.get(HOLD_KEY), dict) else {}),
+            group: {"reset_at": float(reset_at), "seen_at": now, "model": str(model or "")}}}))
+    except (OSError, ValueError) as exc:
+        logging.getLogger(__name__).warning("agy hold not written: %s", type(exc).__name__)
+
+
+def holding(state_dir, model, now=None) -> dict | None:
+    """The hold of ``model``'s group a new turn is refused for ({reset_at, seen_at, model}), or None: none, over, or
+    found spent more than HOLD_RECHECK ago (that turn then starts, and its failure holds again)."""
+    now = time.time() if now is None else now
+    held = Records(state_dir).read().get(HOLD_KEY)
+    row = held.get(group_of(state_dir, model)) if isinstance(held, dict) else None
+    if not isinstance(row, dict) or not all(isinstance(row.get(k), (int, float)) for k in ("reset_at", "seen_at")):
+        return None
+    return row if row["reset_at"] > now and now - row["seen_at"] < HOLD_RECHECK else None
 
 
 def display_name(state_dir, model) -> str:

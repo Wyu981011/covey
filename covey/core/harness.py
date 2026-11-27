@@ -284,6 +284,11 @@ class BackendRuntime:
     def run(self, request: RunRequest) -> RunResult:
         raise NotImplementedError("a backend implements run(request)")
 
+    def start_refusal(self, ctx: BridgeContext):
+        """(error code, words, reset epoch or 0) when a turn on ``ctx`` would only fail the same way, so it is refused
+        before it starts (app/runs.py); None to start it. A backend that knows such a case says so (backends/agy)."""
+        return None
+
 
 class HarnessRegistry:
     def __init__(self):

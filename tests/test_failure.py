@@ -75,6 +75,25 @@ class ViewTest(unittest.TestCase):
         self.assertIn("toolu_1", failure.failure_view(cases["policy"][0])["detail"])  # Internal words go to the detail.
         self.assertIn("错误码 root_failed", failure.failure_view(cases["unfinished"][0])["detail"])
 
+    def test_a_refusal_and_a_model_the_account_lost_say_so_and_a_vague_ending_shows_what_the_backend_said(self):
+        """T872: a turn the model service's safety review refused, or on a model the account cannot use, says that and
+        offers what can help; one that only did not finish keeps its title, its detail naming what the backend said."""
+        view = failure.failure_view(failed(failure_code="policy_refusal",
+                                           failure_detail="Codex 报：Invalid prompt（OpenAI 判定这次请求可能违反使用政策）"))
+        self.assertIn("安全审查拒了这一轮", view["title"])
+        self.assertEqual(view["actions"], ["split", "switch_model"])
+        self.assertIn("Invalid prompt", view["detail"])
+        view = failure.failure_view(failed(failure_code="model_unavailable", failure_detail="Antigravity 不认 gemini-4-neon"))
+        self.assertIn("当前账号里用不了", view["title"])
+        self.assertEqual(view["actions"], ["switch_model"])
+        self.assertIn("gemini-4-neon", view["detail"])
+        view = failure.failure_view(failed(failure_code="root_failed", failure_detail="Codex 报的错误类型：badRequest"))
+        self.assertIn("这一轮没做完（主任务中途出错）", view["title"])
+        self.assertIn("错误码 root_failed；Codex 报的错误类型：badRequest", view["detail"])
+        # A code whose own title says it keeps its detail as it was.
+        view = failure.failure_view(failed(failure_code="rate_limited", failure_detail="whatever the route said"))
+        self.assertNotIn("whatever", view["detail"])
+
     def test_an_old_record_is_read_from_its_status_line(self):
         view = failure.failure_view(failed(status_message="本轮执行未全部完成，原生会话不可续接"))
         self.assertEqual(view["title"], "这一轮没做完，已做的部分保留着；可以在新会话里接着做，或先看原因")

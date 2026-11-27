@@ -8,6 +8,7 @@ automatically: the caller's checkpoint-aware retry owns that decision.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import subprocess
@@ -16,7 +17,7 @@ import time
 
 from covey.backends.codex.events import CodexEventAdapter
 from covey.backends.codex.rpc import AppServer, RpcError, failed
-from covey.backends.codex.turn import close_turn, paused_question_end, read_turn
+from covey.backends.codex.turn import close_turn, failure_words, logged_words, paused_question_end, read_turn
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.backends.codex import consult
 from covey.core import repomap, topic_repos
@@ -287,6 +288,10 @@ def run_appserver(request, env):
             rpc, request, ctx, state, adapter, generation_clock, first_token_start, event, started, turn_usage, text)
         if finished:
             event("turn_finished", {}, rpc)
+        if status == "failed" and getattr(rpc, "turn_error", None) is not None:
+            # Only the run's log hears Codex's own words (app/runs.py); the card says their kind (failure_words).
+            event("backend_failure", {"status": status, "code": code, "stage": "turn",
+                                      "stderr": logged_words(rpc.turn_error)}, rpc)
     except JobCancelled as exc:
         status, code, legacy_exception = "cancelled", "cancelled", exc
     except subprocess.TimeoutExpired:
@@ -316,5 +321,9 @@ def run_appserver(request, env):
     if legacy_exception is not None and not state.enabled:
         raise legacy_exception
     # trace_finished went out with the controls (close_turn).
-    return state.finish(text, sid, status, code, identity=identity, cleanup=cleanup, protection=protection,
-                        cancel_event=cancel)
+    result = state.finish(text, sid, status, code, identity=identity, cleanup=cleanup, protection=protection,
+                          cancel_event=cancel)
+    words = failure_words(getattr(rpc, "turn_error", None), code) if rpc is not None and status == "failed" else ""
+    if words and result.is_error and not result.failure_detail:
+        return dataclasses.replace(result, failure_detail=words)
+    return result
