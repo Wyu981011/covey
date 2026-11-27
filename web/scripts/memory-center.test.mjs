@@ -378,7 +378,10 @@ test('首屏：非话题页（记忆中心、设置）晚 3 秒再预热话题�
   assert.equal(W.warmupDelay('/memory/review'), 3000);
   assert.equal(W.warmupDelay('/settings/memory'), 3000);
   assert.equal(W.warmupDelay('/memoryx'), 0);
-  assert.match(readFileSync(join(SRC, 'cv', 'Shell.tsx'), 'utf8'), /useWarmup\(warmupDelay\(loc\.pathname\)\)/u);
+  // 只看打开网页时的首屏路由：之后切页不重排预热
+  const shell = readFileSync(join(SRC, 'cv', 'Shell.tsx'), 'utf8');
+  assert.match(shell, /useState<number>\(\(\) => warmupDelay\(loc\.pathname\)\)/u);
+  assert.match(shell, /useWarmup\(warmDelay\)/u);
   assert.match(readFileSync(join(SRC, 'hooks', 'use-workbench.ts'), 'utf8'), /delayMs \+ 150 \* i/u);
 });
 
