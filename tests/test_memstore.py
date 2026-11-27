@@ -190,6 +190,8 @@ class WriteTest(Case):
         self.assertEqual((old.ref, old.status, old.superseded_by), (t.ref, "archived", moved.ref))
         self.assertEqual(memory_usage.counts(self.state), {})
         self.assertEqual(memstore.undo(self.state, "u-move"), [t.ref, moved.ref])
+        (undone,) = [row for row in memstore.log_read(self.state) if row["action"] == "undo"]
+        self.assertEqual(undone.get("title"), moved.title)  # 记录页写撤销了哪条（CUA 复验：原来是「」）。
         self.assertEqual(memstore.find(self.state, moved.ref).status, "void")
         restored = memstore.entries(self.state, scope="topic", owner_key=TID)[0]
         self.assertEqual((restored.status, restored.superseded_by), ("active", ""))

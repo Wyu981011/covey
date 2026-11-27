@@ -394,5 +394,9 @@ test('390px：范围下拉右侧留够放箭头的空，.mc-link 点按区不小
   const css = readFileSync(join(SRC, 'cv', 'memorycenter.css'), 'utf8');
   const phone = css.slice(css.indexOf('@media (max-width:640px)'));
   assert.match(phone, /\.cv \.mc-sel\{[^}]*padding-right:30px/u);
+  // 顶栏的范围下拉独占一行，“全局（待审核 12）”放得下（CUA 复验：和搜索框挤一行时右括号被省略号吃掉）
+  assert.match(phone, /\.cv \.mc-top > \.mc-sel\{flex:1 1 100%\}/u);
+  // 记录页撤销那一行没有标题时不画空的「」
+  assert.match(readFileSync(join(SRC, 'cv', 'MemoryCenter.tsx'), 'utf8'), /\{w\.title \? `「\$\{w\.title\}」` : ''\}/u);
   assert.match(phone, /\.cv \.mc-link,\.cv \.mc-seg button\{min-height:40px;min-width:40px/u);
 });

@@ -1262,7 +1262,9 @@ def undo(state_dir, token: str, *, who: str = "owner", now: float | None = None)
         _update(state_dir, current, wanted, stamp)
         done.append(ref)
     try:
-        _append_line(log_path(state_dir), {"at": stamp, "who": who, "action": "undo", "refs": done, "undid": token})
+        title = next((str(row.get("title") or "") for row in reversed(mine) if row.get("title")), "")  # 记录页写撤销了哪条。
+        _append_line(log_path(state_dir), {"at": stamp, "who": who, "action": "undo", "refs": done, "undid": token,
+                                           **({"title": title} if title else {})})
     except OSError:
         pass
     touch_rev(state_dir, stamp)

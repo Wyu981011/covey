@@ -426,7 +426,7 @@ const LogTab: React.FC<{ rows: MemoryLogItem[]; ctx: Ctx }> = ({ rows, ctx }) =>
           <li key={`${l.at}:${i}`} className="mc-row">
             <div className="mc-line">
               <div className="mc-main static">
-                <span className="mc-t1"><span className="mc-title">{w.who}{w.action}「{w.title}」</span></span>
+                <span className="mc-t1"><span className="mc-title">{w.who}{w.action}{w.title ? `「${w.title}」` : ''}</span></span>
                 <span className="mc-meta">{[at(l.at), w.because].filter(Boolean).join(' · ')}</span>
               </div>
               {l.undo_token ? (

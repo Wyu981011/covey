@@ -160,6 +160,8 @@
   .cv .mc{padding:0 12px 40px;gap:8px}
   .cv .mc-top{gap:6px}
   .cv .mc-sel{flex:1 1 40%;max-width:none;height:40px;padding-right:30px}
+  /* 范围下拉在手机上独占一行：“全局（待审核 12）”这类标签和搜索框挤一行时右括号会被省略号吃掉（CUA 复验） */
+  .cv .mc-top > .mc-sel{flex:1 1 100%}
   .cv .mc-search{flex:1 1 50%;height:40px}
   .cv .mc-search input{height:100%;min-height:40px}
   .cv .mc-top .sp{display:none}
