@@ -314,6 +314,11 @@ test('一轮下“带了 N 条记忆”：用到的和带入的两份清单不�
   assert.match(src, /codes\.length > 0/u);
   assert.doesNotMatch(src, /mem\.codes\[i\]/u);
   assert.doesNotMatch(src, /\{mem\.used\.length \? \(\s*<button/u);
+  // 旧格式任务记录只有 M 号：两份清单都空，不给一个点开是空的按钮（CUA C13 复验）
+  const empty = C.turnMemoryRows({ used: [], codes: [] }, titles);
+  assert.deepEqual([empty.used.length, empty.carried.length], [0, 0]);
+  assert.match(src, /memCanOpen: boolean = !!memRows && \(memRows\.used\.length > 0 \|\| memRows\.carried\.length > 0\)/u);
+  assert.match(src, /\{memCanOpen \? \(\s*<button/u);
 });
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src');

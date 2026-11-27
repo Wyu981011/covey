@@ -80,6 +80,8 @@ export const AnswerFoot: React.FC<{
   const memIndex = useMemoryIndex(memOpen).data?.data;
   const memRows = mem ? turnMemoryRows(mem, memIndex?.titles) : null;
   const memCount: number = mem ? Math.max(mem.count, mem.codes.length) : 0;
+  // 有短码或用到的条目才能展开；旧格式的任务记录只记了 M 号、没有短码时只写“带了 N 条”，不给一个点开是空的按钮
+  const memCanOpen: boolean = !!memRows && (memRows.used.length > 0 || memRows.carried.length > 0);
   const memText: string = mem ? `带了 ${memCount} 条记忆${mem.used.length ? ` · 用到 ${mem.used.length} 条` : ''}` : '';
   const memItem = (r: TurnMemoryRow, i: number): React.ReactNode => (
     <span key={`${r.code}-${i}`}>
@@ -91,12 +93,14 @@ export const AnswerFoot: React.FC<{
       <div className="afoot-row" key="memory">
         <b>记忆</b>
         <span className="afoot-bits">
-          <button type="button" className="afoot-crit" aria-expanded={memOpen} onClick={() => setMemOpen(!memOpen)}>
-            {memText}{memOpen ? ' · 收起' : ' · 展开'}
-          </button>
+          {memCanOpen ? (
+            <button type="button" className="afoot-crit" aria-expanded={memOpen} onClick={() => setMemOpen(!memOpen)}>
+              {memText}{memOpen ? ' · 收起' : ' · 展开'}
+            </button>
+          ) : <span>{memText}</span>}
         </span>
       </div>
-      {memOpen ? (
+      {memOpen && memCanOpen ? (
         <div className="afoot-list">
           {memRows.used.length ? <b className="afoot-sub">用到</b> : null}
           {memRows.used.map(memItem)}
