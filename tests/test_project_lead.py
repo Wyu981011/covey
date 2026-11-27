@@ -763,6 +763,7 @@ class OwnerThereTest(ToolsCase):
         fields.update(args)
         answer = self.tool("project_topic_start", request_id=request_id, **fields)
         self.assertTrue(answer["ok"], answer)
+        self.answer = answer
         return answer["data"], self.job(request_id)
 
     def assert_the_leads_alone(self, job, task):
@@ -791,8 +792,49 @@ class OwnerThereTest(ToolsCase):
             record = json.loads((self.state / "main-thread" / "opened" / f"{butler_topics_token(request)}.json").read_text())
             self.assertEqual((record["area_root"], record["area_taken"], record["by"]), ("", False, "lead"))
         self.assertEqual(message_topic(self.state, CHAT, OWNER_REPLY), LEAD)  # His reply is still the lead's.
+        # His picture went to neither, as the lead named it for neither: the lead hears so, and how to hand it on.
+        self.assertIn("主人这一轮的附件（图片 1 张）没有转给它；要它看，用 project_topic_send 带上 attachments 补给它", self.answer["text"])
         self.assertNotIn("主人这条提问下面", self.tool("project_topic_start", request_id="r1", title="记忆 P0 止血",
                                                      prompt="x", workspace="project", readonly=False, why="x")["text"])
+
+    def test_the_files_the_lead_names_go_to_the_topic_with_its_task_and_none_of_his_words(self):
+        """The owner, 2026-11-27: 负责人转不了附件感觉不对……转不转给话题由负责人决定. The lead names them (attachments), they are
+        carried into the topic as the butler's are; its card, history and thread say so in words; his words stay out."""
+        from covey.core.attachments import native_image_attachments
+
+        data, job = self.start("r1", attachments=["图片 1"])
+        media = job.history_path.parent / "incoming_media"
+        carried = media / self.image.name
+        self.assertTrue(carried.is_file())
+        self.assertIn(f"- 图片 1: `{carried}`", job.prompt_text)
+        self.assertIn("负责人转给你的附件：图片 1 张（见下方“收到的附件”）", job.prompt_text)
+        self.assertEqual([item["path"] for item in native_image_attachments(job.prompt_text, media)], [str(carried.resolve())])
+        self.assertNotIn(str(self.image), job.prompt_text)  # Not the lead's copy.
+        for words in (OWNER_WORDS, OWNER_MORE, "主人原话"):
+            self.assertNotIn(words, job.prompt_text)
+        task = "修记忆 P0 的两个 Bug，清现网脏记忆"
+        self.assertEqual(job.user_text, task + "\n附件：图片 1 张")
+        self.assertEqual(json.loads(job.history_path.read_text().splitlines()[-1])["content"], job.user_text)
+        self.assertNotIn("没有转给它", self.answer["text"])
+        # A supplement with all of them ("all" in the lead's list of strings), into its running turn.
+        job.execution_started = True
+        job.backend_control = SimpleNamespace(steer=mock.Mock(return_value=None), remote=False)
+        before = len(self.said())
+        answer = self.tool("project_topic_send", request_id="s1", thread=data["label"], text="图里那条报错也看下", attachments=["all"])
+        self.assertTrue(answer["ok"] and answer["data"]["steered"], answer)
+        sent = job.backend_control.steer.call_args.args[0]
+        self.assertIn(f"- 图片 1: `{carried}`", sent)
+        self.assertNotIn(OWNER_WORDS, sent)
+        self.assertEqual(self.said()[before:], ["负责人转来补充：\n图里那条报错也看下\n附件：图片 1 张"])
+        # One it cannot name is refused, nothing sent.
+        refused = self.tool("project_topic_send", request_id="s2", thread=data["label"], text="x", attachments=["某张图"])
+        self.assertFalse(refused["ok"], refused)
+        self.assertIn("attachments", refused["text"])
+
+    def test_an_empty_list_names_none_and_says_nothing_of_them(self):
+        _, job = self.start("r1", attachments=[])
+        self.assert_the_leads_alone(job, "修记忆 P0 的两个 Bug，清现网脏记忆")
+        self.assertNotIn("没有转给它", self.answer["text"])
 
     def test_words_the_lead_adds_to_a_topic_are_its_own_in_the_thread_the_turn_and_the_history(self):
         from covey.core.deliveries import delivery_path, read_delivery, shown_text

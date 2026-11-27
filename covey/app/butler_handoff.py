@@ -16,7 +16,8 @@ state directory's) are, as a listed path can come from a forwarded message's tex
 A project's lead hands work on in its own words (``Asked.lead``, app/butler_topics.py handed): the note says the
 project's lead sent it, the model gets the lead's task and no quote, and the card, the history and the thread's line
 show that task. What the owner said in the lead's turn stays the lead's: one turn of it often hands several topics
-different work.
+different work. His files go on only as the lead names them (its ``attachments``, none by default), carried as the
+butler's are.
 """
 from __future__ import annotations
 
@@ -139,11 +140,12 @@ def asked(state_dir, job_key) -> Asked:
 
 def choice_error(value) -> str:
     """Why the tool argument ``attachments`` is not one: "all", "none" or a list of 1-based numbers or names like
-    "图片 1"; '' when it is."""
+    "图片 1" (a lead's, a list of strings, may say ["all"]); '' when it is."""
     if value is None or value in ("all", "none"):
         return ""
     if isinstance(value, list) and all(isinstance(item, int) and not isinstance(item, bool)
-                                       or isinstance(item, str) and re.fullmatch(r"(图片|文件)?\s*\d+", item.strip())
+                                       or isinstance(item, str) and (item.strip() in ("all", "none")
+                                                                     or re.fullmatch(r"(图片|文件)?\s*\d+", item.strip()))
                                        for item in value):
         return ""
     return "attachments 只能是 \"all\"、\"none\" 或序号列表（如 [1, 2] 或 [\"图片 1\"]）。"
@@ -153,7 +155,7 @@ def picked(items, value) -> list:
     """The attachments of ``items`` the argument ``value`` (``choice_error`` says it is one) names: all of them by
     default; a bare number counts all of them in order, "图片 N" and "文件 N" each kind on its own."""
     items = list(items)
-    if value is None or value == "all":
+    if value is None or value == "all" or isinstance(value, list) and "all" in [str(entry).strip() for entry in value]:
         return items
     if value == "none":
         return []
@@ -321,6 +323,8 @@ def handoff_prompt(kind, *, label, title, task, owner: Asked, items=(), extra=""
     parts = [note(kind, label=label, title=title, owner=owner, source=source),
              f"任务说明（{who}整理）：\n" + task + (f"\n{who}补充：{extra}" if extra else "")
              + ("\n\n" + LOOK_NOTE if read_only else "")]
+    if owner.lead and items:
+        parts.append(f"负责人转给你的附件：{summary(items)}（见下方“收到的附件”）")
     if not owner.lead and (owner.words or items):
         quoted = []
         for index, (words, at) in enumerate(owner.said):

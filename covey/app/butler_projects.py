@@ -115,16 +115,20 @@ def lead_target(env, record):
     return app, app.submission.event_context(app.harness.context, {"chat_id": chat, "message_id": alias})
 
 
-def lead_prompt(name, text, owner) -> str:
+def lead_prompt(name, text, owner, items=()) -> str:
     """What the lead's model gets when the butler hands it the owner's words (the Bridge's note, the butler's task text, the
-    owner's own words quoted): a turn the owner started, not a wake-up."""
+    owner's own words quoted) and his files (``items``, carried into the lead's incoming_media, as a message sent to it
+    lists them): a turn the owner started, not a wake-up."""
     from covey.app.butler_handoff import NOTE
+    from covey.core.attachments import attachment_block
 
     parts = [f"{NOTE} 主人在私聊里对专项「{name}」说了话，由管家转给你；这是主人触发的一轮，不是自动唤醒，你的回复会由 Bridge "
              "发给主人。按他的意思调整专项：开话题、给话题加话、记决定或改风格就用 project_* 工具。",
              "管家整理的说明：\n" + text]
     if owner.words:
         parts.append("主人原话：\n" + "\n".join("> " + line for line in owner.words.split("\n")))
+    if items:
+        parts.append("\n".join(attachment_block(items)))
     return "\n\n".join(parts)
 
 
@@ -169,10 +173,12 @@ def project_send(env, request):
             "at": time.time()}
     butler_opened.save(path, note)
     owner = butler_handoff.asked(state, request.job_key)
-    sent = lead_prompt(name, text, owner)
+    # His files go to the lead with his words (T856): it sees them, and hands them on to the topics it names them for.
+    items = butler_handoff.carry(owner.attachments, butler_topics.media_dir(ctx), owner.roots) if owner.attachments else []
+    sent = lead_prompt(name, text, owner, items)
     taken = (f"收进专项的话题：{'、'.join(joined)}（不打断它们）。" if joined else "") + (
         f"没收进：{'；'.join(unjoined)}。把这些告诉主人。" if unjoined else "")
-    shown = owner.words or text
+    shown = butler_handoff.shown(owner, text, items)
     data = {"project_id": record["id"], "lead_topic_id": lead}
     job = butler_topics.live_turn(app, ctx, chat)
     if job is not None:

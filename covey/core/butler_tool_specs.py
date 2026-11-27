@@ -22,6 +22,9 @@ ATTACHMENTS = {"description": "可选，主人这条消息的附件交给它哪�
                               "（第一条有图片 1，补充里的图片 1 就是图片 2）。一条消息拆成几件事时，用它把附件分给对应的话题",
                "anyOf": [{"type": "string", "enum": ["all", "none"]},
                          {"type": "array", "items": {"anyOf": [{"type": "integer", "minimum": 1}, {"type": "string"}]}}]}
+# A lead's project_topic_start and project_topic_send: the owner's files it got go on to the topic it names them for, none
+# unnamed (T856: 转不转给话题由负责人决定). Short: agy's room for a lead's tools.
+LEAD_ATTACHMENTS = {"type": "array", "items": {"type": "string"}, "description": "可选，转给它的附件，如[\"图片 1\"]或[\"all\"]；不写不转"}
 HARNESS_ARG = ("主人点名用哪个 Harness 时必须填（如“用 Claude Code”“让 Codex 做”），值写 Harness 名：claude、codex 等；"
                "主人没点名就不填，用设置里的默认")
 MODEL_ARG = "主人点名用哪个模型时必须填，写模型名；主人没点名就不填，用设置里的默认"
@@ -261,6 +264,7 @@ PROJECT_TOOLS = (
          "prompt": {"type": "string", "description": "交给话题的任务说明。" + ASK_NOTE},
          "workspace": {"type": "string", "description": "工作区名（workspaces_list 里的），不是任意路径"},
          "readonly": {"type": "boolean", "description": "只查看、只回答，不改任何文件、不执行有副作用的命令时为 true"},
+         "attachments": LEAD_ATTACHMENTS,
          "user_requested": {"type": "boolean", "description": "主人在这个专项里亲口要求做这件事为 true；你自己推断的为 false"},
          "why": {"type": "string", "description": "一行中文：为什么选这个工作区和配置"},
          "criteria": CRITERIA,
@@ -276,7 +280,8 @@ PROJECT_TOOLS = (
      "input_schema": {"type": "object", "required": ["thread", "text"], "properties": {
          "thread": {"type": "string", "description": "话题的 T 号（如 T412）或 topic_id：这个专项的，或还不在任何专项的普通话题"},
          "text": {"type": "string", "description": "交给话题的内容：要它做或补充的事"},
-         "note": {"type": "string", "description": "可选，一句背景（最多 100 字）"}}}},
+         "note": {"type": "string", "description": "可选，一句背景（最多 100 字）"},
+         "attachments": LEAD_ATTACHMENTS}}},
     {"name": "project_topic_stop",
      "description": "主人要停这个专项里的某个话题时用：停掉它排队和在跑的任务，也收掉它还在等主人回答的问题（话题不再等回答），"
                     "话题仍记在专项里、算结束。只能停这个专项自己的话题；停掉的话题要接着做，再用 project_topic_send 给它加话。"
@@ -532,6 +537,9 @@ SECONDARY = frozenset({"topic_priority", "principle_save", "principle_delete", "
                        *(tool["name"] for tool in KNOWLEDGE_TOOLS + HISTORY_TOOLS), TIDY_TOOL["name"]})
 # The tools that hand work to topics, what a turn of the butler or of a lead is for: such a Harness loads them first.
 HANDING = frozenset({"topic_start", "topic_send", "topic_fork", "project_send", "project_topic_start", "project_topic_send"})
+# A lead sets its report style now and then: agy reads project_style's schema when it calls it, which leaves the room
+# project_topic_start's and project_topic_send's ``attachments`` take (T856).
+SECONDARY |= {"project_style"}
 assert SECONDARY | HANDING <= set(ALL_NAMES + BUTLER_PROJECT_NAMES + PROJECT_NAMES) and not SECONDARY & HANDING
 
 

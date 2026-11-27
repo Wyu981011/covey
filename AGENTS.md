@@ -13,14 +13,13 @@
 5. **公共核心的改动对所有使用者生效**：改锁、记录与状态、调度、投递、服务管理（见下文「最容易改坏的规则」）时，开关关着的行为要和原来一样，并跑全量。
 6. 部署照 [部署新版本](docs/deploy.md#部署新版本) 的步骤。
 
-## 收敛期
+## 概念清单
 
-2026-11-25 到 2026-12-09 不加新概念，先把已有的补齐：入口（管家、负责人、话题、网页开的话题）× Harness × 界面（飞书卡片、网页工作台）里漏掉的格，由 `tests/test_matrix.py` 一格一格核对；默认关的开关定下删、转正还是保留，主人拍板前不改默认。
+新概念可以加，但要登记进清单，改动里看得见。原定 2026-11-25 到 2026-12-09 的收敛期（期间不加新概念）已在 11-27 取消：主人说这些都是 bug，有 bug 就修，不卡收敛期。入口（管家、负责人、话题、网页开的话题）× Harness × 界面（飞书卡片、网页工作台）里的格照旧由 `tests/test_matrix.py` 一格一格核对。
 
-- **什么算新概念**：新的环境变量或命令行参数、卡片按钮 kind、管家或负责人的 Bridge 工具、Harness、模型来源、名词表（[docs/glossary.md](docs/glossary.md)）里的词。清单在 `tests/golden/concepts.json`，`test_structure` 的 `ConceptFreezeTest` 核对，多一个就失败。
-- **确需新增**：先问主人；主人同意后在清单的 `approved` 里加一项 `{kind, name, by, why}`，`by` 写谁在哪个话题或哪个工作包同意的。主人已选定的这一批优化（P0-A 到 P1-F）里要加的，`by` 写工作包号。
-- **去掉一个**：随时可以，`python3 -B scripts/concepts.py --write` 把它从清单去掉。
-- 收敛期过后新增也照样登记：`python3 -B scripts/concepts.py --write`，和改动一起提交，新概念在 diff 里看得见。
+- **什么算新概念**：新的环境变量或命令行参数、卡片按钮 kind、管家或负责人的 Bridge 工具、Harness、模型来源、名词表（[docs/glossary.md](docs/glossary.md)）里的词。清单在 `tests/golden/concepts.json`，`test_structure` 的 `ConceptFreezeTest` 核对，多一个、少一个都失败。
+- **加或去掉一个**：`python3 -B scripts/concepts.py --write` 把清单对齐代码，和改动一起提交。
+- **以后要再定收敛期**：在清单里写回 `freeze`（`since`、`until`、`by`、`why`），期间 `--write` 不收 `approved` 里没登记的新概念（见 `scripts/concepts.py`）。
 
 # 代码地图
 
@@ -668,7 +667,7 @@
 - 改公共核心或 `runs/` 协议（规则 10）：先跑 `scripts/cross_release.py run --old <现网 release> --out <目录>` 再 `compare`；`tests/golden/run_dir.json` 有 diff 就是改了协议（`docs/testing.md` 任务进程协议与跨版本检查）。
 - 新读环境变量或加命令行参数：在 `docs/configuration.md` 的「环境变量与选项一览」加一行（`test_structure` 的 `InventoryTest` 核对）。
 - 加、删、搬模块或改了模块 docstring 首句：`python3 -B scripts/code_map.py --write`（`--check` 只检查）。
-- 加、删环境变量、命令行参数、按钮 kind、Bridge 工具、Harness、模型来源或名词：`python3 -B scripts/concepts.py --check`，见上文[收敛期](#收敛期)。
+- 加、删环境变量、命令行参数、按钮 kind、Bridge 工具、Harness、模型来源或名词：`python3 -B scripts/concepts.py --check`，见上文[概念清单](#概念清单)。
 - `pyflakes covey bin tests extensions`（只许 2 条有意的未使用导入）；`bash -n scripts/*.sh`。
 
 ## 省 token

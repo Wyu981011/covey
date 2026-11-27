@@ -884,9 +884,9 @@ def load_concepts():
 
 
 class ConceptFreezeTest(unittest.TestCase):
-    """AGENTS.md 收敛期: every setting, card button kind, Bridge tool, Harness, provider and glossary word of the core is
-    on tests/golden/concepts.json (scripts/concepts.py), so a new concept is added in sight, and in the 收敛期 only with
-    who allowed it."""
+    """AGENTS.md 概念清单: every setting, card button kind, Bridge tool, Harness, provider and glossary word of the core is
+    on tests/golden/concepts.json (scripts/concepts.py), so a new concept is added in sight, and in a 收敛期 (the list's
+    ``freeze``, none now) only with who allowed it."""
 
     def test_the_core_has_the_concepts_the_list_keeps_and_no_other(self):
         concepts = load_concepts()
