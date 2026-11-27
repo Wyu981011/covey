@@ -43,12 +43,59 @@
   .cv .lx-sum{flex:1 1 100%;white-space:normal}
 }
 
-/* v43：仓库选择行（点一下 不用 → 只读 → 可写）和一轮的记忆链接 */
+/* v43：仓库选择（点一下 不用 → 只读 → 可写）和一轮的记忆链接。
+   T879：已选、未选一眼分得开，不靠虚线和灰字：未选只有实线边框和加号；只读是绿色实底 + 眼睛图标 + “只读”角标；
+   可写是主色实底 + 笔图标 + 实心“可写”角标、字加粗。颜色只用 token（深浅色各自成立），图标和角标让不看颜色也分得出 */
+.cv .lx-repo-box{padding:8px 0 10px;border-top:1px solid var(--line)}
+.cv .lx-repo-head{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:0 2px 8px}
+.cv .lx-repo-head .lx-l{font-size:12px;color:var(--t3)}
+.cv .lx-repo-count{font-size:12.5px;color:var(--t1);font-weight:600}
+.cv .lx-repo-legend{display:inline-flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin-left:auto;font-size:11.5px;color:var(--t3)}
+.cv .lx-rk{display:inline-flex;align-items:center;gap:3px;font-style:normal}
+.cv .lx-rk svg{width:12px;height:12px}
+.cv .lx-rk.read{color:var(--done)}
+.cv .lx-rk.write{color:var(--accent-t)}
 .cv .lx-repos{display:flex;flex-wrap:wrap;gap:6px}
-.cv .lx-rp{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;border:1px dashed var(--line2);background:transparent;color:var(--t3);font-size:12px;cursor:pointer;white-space:nowrap}
-.cv .lx-rp:hover{color:var(--t1)}
-.cv .lx-rp.read{border-style:solid;background:var(--s2);color:var(--t1)}
-.cv .lx-rp.write{border-style:solid;background:color-mix(in srgb,var(--a1) 22%,transparent);color:var(--t1);font-weight:600}
-.cv .lx-rp .lx-rm{font-size:11px;color:var(--t3);font-weight:400}
+.cv .lx-rp{display:inline-flex;align-items:center;gap:5px;min-height:28px;max-width:100%;padding:3px 10px 3px 8px;border-radius:999px;border:1px solid var(--line2);background:transparent;color:var(--t2);font-size:12.5px;cursor:pointer;white-space:nowrap}
+.cv .lx-rp svg{flex:none;width:13px;height:13px;color:var(--t3)}
+.cv .lx-rp .lx-rn{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.cv .lx-rp:hover{color:var(--t1);border-color:color-mix(in srgb,var(--t1) 35%,transparent)}
+.cv .lx-rp:focus-visible{outline:2px solid var(--a1);outline-offset:1px}
+.cv .lx-rp.read{border-color:color-mix(in srgb,var(--done) 60%,transparent);background:color-mix(in srgb,var(--done) 14%,var(--s1));color:var(--t1)}
+.cv .lx-rp.read svg{color:var(--done)}
+.cv .lx-rp.write{border-color:var(--a1);background:color-mix(in srgb,var(--a1) 22%,var(--s1));color:var(--t1);font-weight:600}
+.cv .lx-rp.write svg{color:var(--accent-t)}
+.cv .lx-rp .lx-rm{flex:none;padding:0 6px;border-radius:999px;font-size:11px;line-height:17px;font-weight:600}
+.cv .lx-rp.read .lx-rm{color:var(--done);border:1px solid color-mix(in srgb,var(--done) 55%,transparent)}
+.cv .lx-rp.write .lx-rm{color:#fff;background:var(--a1)}
+
+/* T879：话题页换配置里设备和仓库折成一行（“执行设备 本机 · 仓库 covey（改）”），右边“不变 / 已改”和“调整仓库” */
+.cv .lx-full{grid-column:1/-1}
+.cv .lx-fold{margin:2px 0 8px;border:1px solid var(--line2);border-radius:10px;background:var(--s2)}
+.cv .lx-fold-bar{display:flex;align-items:center;gap:8px;width:100%;min-height:40px;padding:6px 10px;border:0;border-radius:10px;background:transparent;color:var(--t1);font-size:12.5px;text-align:left;cursor:pointer}
+.cv .lx-fold-bar.ro{cursor:default}
+.cv button.lx-fold-bar:hover .lx-fold-go{color:var(--a1)}
+.cv button.lx-fold-bar:focus-visible{outline:2px solid var(--a1);outline-offset:-2px}
+.cv .lx-fold-sum{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 14px;flex:1;min-width:0}
+.cv .lx-fold-it{display:inline-flex;align-items:baseline;gap:6px;min-width:0;max-width:100%}
+.cv .lx-fold-k{flex:none;font-size:12px;color:var(--t3)}
+.cv .lx-fold-it b{min-width:0;font-weight:600;overflow-wrap:anywhere}
+.cv .lx-fold-tag{flex:none;padding:0 7px;border-radius:999px;font-size:11px;line-height:18px;color:var(--t3);border:1px solid var(--line2)}
+.cv .lx-fold-tag.on{color:var(--accent-t);border-color:var(--a1);background:color-mix(in srgb,var(--a1) 14%,transparent)}
+.cv .lx-fold-go{display:inline-flex;align-items:center;gap:2px;flex:none;font-size:12px;color:var(--accent-t);white-space:nowrap}
+.cv .lx-fold-go svg{width:14px;height:14px}
+.cv .lx-fold-note{padding:0 10px 8px;font-size:12px;line-height:1.5;color:var(--t3)}
+.cv .lx-fold-body{padding:0 10px 2px;border-top:1px solid var(--line)}
+.cv .lx-fold-body .lx-repo-box{border-top:0}
+.cv .lx-fold-ro{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;padding:8px 2px;border-bottom:1px solid var(--line);font-size:12.5px}
+.cv .lx-fold-ro .lx-l{font-size:12px;color:var(--t3)}
+.cv .lx-fold-ro .lx-n{flex:1 1 220px;font-size:12px;color:var(--t3)}
+@media (max-width:767px){
+  .cv .lx-repo-legend{margin-left:0;flex-basis:100%}
+  .cv .lx-rp{min-height:32px;font-size:13px}
+  .cv .lx-fold-bar{flex-wrap:wrap;min-height:44px}
+  .cv .lx-fold-sum{flex-basis:100%}
+  .cv .lx-fold-go{margin-left:auto}
+}
 .cv .afoot-list a{color:var(--t2);text-decoration:none}
 .cv .afoot-list a:hover{color:var(--a1)}

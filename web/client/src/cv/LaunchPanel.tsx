@@ -1,6 +1,6 @@
-import React from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
-import type { LaunchDevice, LaunchModel, SettingsOption } from '@shared/api.interface';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronUp, Eye, PencilLine, Plus } from 'lucide-react';
+import type { LaunchDevice, LaunchModel, LaunchRepo, SettingsOption } from '@shared/api.interface';
 import { useSettings } from '@client/src/hooks/use-workbench';
 import {
   harnessOptions,
@@ -16,7 +16,20 @@ import {
   summaryTags,
   type LaunchBox,
 } from './launch';
-import { cycleRepo, deviceText, isRepoMode, MAX_REPOS, repoChoices, repoModeOf, showDevice, type RepoMode } from './launchRepos';
+import {
+  cycleRepo,
+  deviceChoices,
+  deviceText,
+  deviceWord,
+  isRepoMode,
+  LOCAL_DEVICE,
+  MAX_REPOS,
+  placeSummary,
+  repoChoices,
+  repoModeOf,
+  showDevice,
+  type RepoMode,
+} from './launchRepos';
 import './settings.css';
 import './launch.css';
 
@@ -40,9 +53,59 @@ const Pick: React.FC<{
   );
 };
 
+/** 话题页换配置（T879）用的：话题在哪台机器上（'' 本机；undefined 是旧 Covey 没说）、仓库这一块改过没有，
+ *  负责人的仓库（跟着专项，只读显示） */
+export interface SwitchPlace {
+  device?: string;
+  changed?: boolean;
+  leadRepos?: LaunchRepo[];
+}
+
 /** 面板只用到的那几样：开新话题的 LaunchBox 是，话题页换配置（v20）也拼得出。
- *  fixedPlace（v36，负责人的换配置）：不画工作区、运行方式两行，选择里照带原值（负责人留在它读的地方） */
-export type PanelBox = Pick<LaunchBox, 'data' | 'sel' | 'edit' | 'setRedaction'> & { fixedPlace?: boolean };
+ *  fixedPlace（v36，负责人的换配置）：不画工作区、运行方式两行，选择里照带原值（负责人留在它读的地方），仓库只读。
+ *  switching（T879，话题页换配置）：模型几项在上；执行设备只读（换配置换不了机器），设备和仓库默认折成一行摘要 */
+export type PanelBox = Pick<LaunchBox, 'data' | 'sel' | 'edit' | 'setRedaction'> & { fixedPlace?: boolean; switching?: SwitchPlace };
+
+const REPO_WORD: Record<RepoMode, string> = { none: '不用', read: '只读', write: '可写' };
+
+/** 仓库选择：一块一个仓库，点一下 不用 → 只读 → 可写 → 不用；已选的实底、有图标和角标，未选的只有边框和加号 */
+const RepoPicker: React.FC<{ box: PanelBox; choices: ReturnType<typeof repoChoices> }> = ({ box, choices }) => {
+  const picked: number = (box.sel.repos ?? []).length;
+  return (
+    <div className="lx-repo-box">
+      <div className="lx-repo-head">
+        <span className="lx-l">仓库</span>
+        <span className="lx-repo-count">{picked ? `已选 ${picked} 个` : '未选仓库（从主目录起）'}</span>
+        <span className="lx-repo-legend" aria-hidden="true">
+          <i className="lx-rk read"><Eye />只读</i>
+          <i className="lx-rk write"><PencilLine />可写</i>
+          <span>点一下切换，最多 {MAX_REPOS} 个</span>
+        </span>
+      </div>
+      <div className="lx-repos" role="group" aria-label="仓库">
+        {choices.map((c) => {
+          const mode: RepoMode = repoModeOf(box.sel.repos, c.name);
+          return (
+            <button
+              key={c.name}
+              type="button"
+              className={`lx-rp ${mode}`}
+              aria-pressed={mode !== 'none'}
+              aria-label={`${c.name}：${REPO_WORD[mode]}，点一下切换`}
+              title={c.note || (c.readonly ? '只读仓库：不用 → 只读' : '点一下：不用 → 只读 → 可写')}
+              data-mode={mode}
+              onClick={() => box.edit((_d, s) => ({ ...s, repos: cycleRepo(s.repos, c.name, c.readonly) }))}
+            >
+              {mode === 'write' ? <PencilLine /> : mode === 'read' ? <Eye /> : <Plus />}
+              <span className="lx-rn">{c.name}</span>
+              {mode === 'none' ? null : <span className="lx-rm">{REPO_WORD[mode]}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 /** 配置面板：飞书启动卡的各行，A 版展开时、B 版一直在；话题页换配置也用它（v20） */
 export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: React.ReactNode }> = ({ box, className, foot }) => {
@@ -52,14 +115,18 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
   const device: boolean = onDevice(data, sel);
   const place: boolean = !box.fixedPlace;
   const repoMode: boolean = isRepoMode(data);
+  const switching: SwitchPlace | undefined = box.switching;
+  // 话题页换配置（新 Covey）：设备和仓库默认折起来，只写摘要；点开才能动仓库（负责人的点不开）
+  const folded: boolean = !!switching && repoMode;
+  const [open, setOpen] = useState<boolean>(false);
   // 新 Covey：仓库名单来自设置的 repos（出错或没有就不画仓库行）
   const { data: settings } = useSettings();
   const reposPage = settings?.data?.repos;
   const items = reposPage && 'items' in reposPage ? reposPage.items : [];
   const choices = repoMode && place ? repoChoices(items, sel.repos) : [];
-  const devices: LaunchDevice[] = data.devices ?? [];
-  const row = (label: string, body: React.ReactNode, note?: string): React.ReactNode => (
-    <div className={`lx-r st-cell${['模型', '工作区', '仓库'].includes(label) ? ' wd' : ''}${label === '仓库' ? ' x2' : ''}`}>
+  const devices: LaunchDevice[] = deviceChoices(data);
+  const row = (label: string, body: React.ReactNode, note?: string, wide = false): React.ReactNode => (
+    <div className={`lx-r st-cell${['模型', '工作区'].includes(label) ? ' wd' : ''}${wide ? ' lx-full' : ''}`}>
       <div className="lx-l st-l">{label}</div>
       <div className="lx-c">
         {body}
@@ -67,66 +134,107 @@ export const LaunchPanel: React.FC<{ box: PanelBox; className?: string; foot?: R
       </div>
     </div>
   );
-  return (
-    <div className={`lx-panel${className ? ` ${className}` : ''}`}>
-      <div className="st-gr cfg">
+  // 模型那一组：Harness、供应商、模型、思考预算，模型有的话再加工作模式、脱敏（换个模型只要改这一组）
+  const modelRows = (
+    <div className="st-gr cfg">
       {row('Harness', <Pick label="Harness" options={harnessOptions(data)} value={m?.harness ?? ''} onPick={(v: string) => box.edit((d, s) => pickHarness(d, s, v))} />)}
       {row('供应商', <Pick label="供应商" options={providerOptions(data, m?.harness ?? '')} value={m?.provider ?? ''} onPick={(v: string) => box.edit((d, s) => pickProvider(d, s, v))} />)}
       {row('模型', <Pick label="模型" options={modelOptions(data, m?.harness ?? '', m?.provider ?? '')} value={sel.model} onPick={(v: string) => box.edit((d, s) => pickModel(d, s, v))} />)}
       {row('思考预算', <Pick label="思考预算" options={m?.budgets ?? []} value={sel.effort} onPick={(v: string) => box.edit((_d, s) => ({ ...s, effort: v }))} />)}
-      </div>
-      {modes.length || place || m?.redaction ? (
-      <div className="st-gr cfg">
       {modes.length ? row('工作模式', <Pick label="工作模式" options={modes} value={sel.work_mode} onPick={(v: string) => box.edit((_d, s) => ({ ...s, work_mode: v }))} />) : null}
-      {place && !repoMode ? row(
-        '工作区',
-        <Pick
-          label="工作区"
-          options={(data.workspaces ?? []).map((w) => ({ value: w.name, text: w.device ? `${w.name}（${w.device}）` : w.name }))}
-          value={sel.workspace ?? ''}
-          onPick={(v: string) => box.edit((d, s) => pickWorkspace(d, s, v))}
-        />,
-      ) : null}
-      {place && !repoMode ? row(
-        '运行方式',
-        <Pick label="运行方式" options={data.run_modes ?? []} value={device ? 'direct' : (sel.run_mode ?? '')} onPick={(v: string) => box.edit((_d, s) => ({ ...s, run_mode: v }))} disabled={(v: string) => (device && v === 'worktree' ? '设备上只能原目录' : '')} />,
-        device ? '设备上只能原目录' : undefined,
-      ) : null}
-      {place && showDevice(data) ? row(
-        '执行设备',
-        <Pick label="执行设备" options={devices.map((dv: LaunchDevice) => ({ value: dv.name, text: deviceText(dv) }))} value={sel.device ?? devices[0]?.name ?? ''} onPick={(v: string) => box.edit((d, s) => pickDevice(d, s, v))} />,
-      ) : null}
-      {choices.length ? row(
-        '仓库',
-        <div className="lx-repos" role="group" aria-label="仓库">
-          {choices.map((c) => {
-            const mode: RepoMode = repoModeOf(sel.repos, c.name);
-            const word: string = mode === 'write' ? '可写' : mode === 'read' ? '只读' : '不用';
-            return (
-              <button
-                key={c.name}
-                type="button"
-                className={`lx-rp ${mode}`}
-                aria-label={`${c.name}：${word}，点一下切换`}
-                title={c.note || (c.readonly ? '只读仓库' : '点一下：不用 → 只读 → 可写')}
-                onClick={() => box.edit((_d, s) => ({ ...s, repos: cycleRepo(s.repos, c.name, c.readonly) }))}
-              >
-                {c.name}
-                {mode === 'none' ? null : <span className="lx-rm">{word}</span>}
-              </button>
-            );
-          })}
-        </div>,
-        `默认不带仓库（从主目录起），最多 ${MAX_REPOS} 个`,
-      ) : null}
       {m?.redaction
         ? row(
             '脱敏',
             <Pick label="敏感词脱敏" options={[{ value: 'off', text: '不脱敏' }, { value: 'on', text: '脱敏' }]} value={sel.redaction} onPick={(v: string) => box.setRedaction(v as 'on' | 'off')} />,
           )
         : null}
+    </div>
+  );
+  if (folded && switching) {
+    // 换配置：执行设备只读（Covey 的换配置换不了机器，话题在哪台就写哪台，不知道就不写）；负责人的仓库跟着专项
+    const lead: boolean = !!box.fixedPlace;
+    const sum = placeSummary(data, switching.device, lead ? switching.leadRepos : sel.repos);
+    const canOpen: boolean = !lead && choices.length > 0;
+    const shown: boolean = canOpen && open;
+    const bar = (
+      <>
+        <span className="lx-fold-sum">
+          {sum.device !== null ? (
+            <span className="lx-fold-it"><span className="lx-fold-k">执行设备</span><b data-testid="switch-device">{sum.device}</b></span>
+          ) : null}
+          <span className="lx-fold-it"><span className="lx-fold-k">仓库</span><b data-testid="switch-repos">{sum.repos}</b></span>
+        </span>
+        <span className={`lx-fold-tag${switching.changed ? ' on' : ''}`}>{switching.changed ? '已改' : '不变'}</span>
+        {canOpen ? (
+          <span className="lx-fold-go">
+            {shown ? '收起' : '调整仓库'}
+            {shown ? <ChevronUp /> : <ChevronDown />}
+          </span>
+        ) : null}
+      </>
+    );
+    return (
+      <div className={`lx-panel${className ? ` ${className}` : ''}`}>
+        {modelRows}
+        <div className={`lx-fold${shown ? ' open' : ''}`}>
+          {canOpen ? (
+            <button type="button" className="lx-fold-bar" aria-expanded={shown} onClick={() => setOpen(!shown)} data-testid="switch-place">
+              {bar}
+            </button>
+          ) : (
+            <div className="lx-fold-bar ro" data-testid="switch-place">{bar}</div>
+          )}
+          {lead ? <div className="lx-fold-note">负责人用的仓库跟着专项，这里不能换；执行设备也不能换</div> : null}
+          {shown ? (
+            <div className="lx-fold-body">
+              {sum.device !== null ? (
+                <div className="lx-fold-ro">
+                  <span className="lx-l">执行设备</span>
+                  <b>{sum.device}</b>
+                  <span className="lx-n">换配置换不了机器；要在别的设备上做，开个新话题选那台设备</span>
+                </div>
+              ) : null}
+              <RepoPicker box={box} choices={choices} />
+            </div>
+          ) : null}
+        </div>
+        {foot}
       </div>
+    );
+  }
+  return (
+    <div className={`lx-panel${className ? ` ${className}` : ''}`}>
+      {modelRows}
+      {place && (!repoMode || showDevice(data)) ? (
+        <div className="st-gr cfg">
+          {!repoMode ? row(
+            '工作区',
+            <Pick
+              label="工作区"
+              options={(data.workspaces ?? []).map((w) => ({ value: w.name, text: w.device ? `${w.name}（${w.device}）` : w.name }))}
+              value={sel.workspace ?? ''}
+              onPick={(v: string) => box.edit((d, s) => pickWorkspace(d, s, v))}
+            />,
+          ) : null}
+          {!repoMode ? row(
+            '运行方式',
+            <Pick label="运行方式" options={data.run_modes ?? []} value={device ? 'direct' : (sel.run_mode ?? '')} onPick={(v: string) => box.edit((_d, s) => ({ ...s, run_mode: v }))} disabled={(v: string) => (device && v === 'worktree' ? '设备上只能原目录' : '')} />,
+            device ? '设备上只能原目录' : undefined,
+          ) : null}
+          {showDevice(data) ? row(
+            '执行设备',
+            // 本机是空串：话题没选设备时就是本机，不拿第一台设备顶替（T879）
+            <Pick
+              label="执行设备"
+              options={devices.map((dv: LaunchDevice) => ({ value: dv.name, text: deviceText(dv) }))}
+              value={devices.some((dv: LaunchDevice) => dv.name === (sel.device ?? LOCAL_DEVICE)) ? (sel.device ?? LOCAL_DEVICE) : LOCAL_DEVICE}
+              onPick={(v: string) => box.edit((d, s) => pickDevice(d, s, v))}
+            />,
+            sel.device ? `在 ${deviceWord(data, sel.device)} 上做` : undefined,
+          ) : null}
+        </div>
       ) : null}
+      {choices.length ? <RepoPicker box={box} choices={choices} /> : null}
       {foot}
     </div>
   );

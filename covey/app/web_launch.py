@@ -7,7 +7,8 @@ owner's private chat, pushed for the page's chat box (``catalog``), and the page
   preselected model first, then the chat's recent ones), each model with its Harness and provider and their titles, the budgets the
   card offers (core/menu_choice.py plain_budgets: the levels by name), ``start_budget`` (the budget the card
   preselects when that model is chosen: launch_selection with that model as the draft, so the 新话题 page's budget, the chat's usual one
-  and 推荐 come in the card's order), whether it can redact and its work modes; ``devices`` (v43, only with COVEY_DEVICES=1 and devices: [{name, dot, harnesses}], the page's 执行设备 choice; no
+  and 推荐 come in the card's order), whether it can redact and its work modes; ``devices`` (v43, only with COVEY_DEVICES=1 and devices: 本机
+  first, then each device, ``device_rows``), the page's 执行设备 choice; no
   workspaces or run modes any more: a topic starts in the home); and ``preselect``, what a launch card of the private chat
   preselects now (the 新话题 page, the last 开始任务, the chat's usage). The page applies two rules of the card's: a Harness or provider
   choice keeps the model when it is among that one's models, else takes the first in this order (core/menu_choice.py tier_pick); a
@@ -79,14 +80,28 @@ def _selection(env, choices, reads, draft=None):
                             topic_model=(defaults.harness.lower(), defaults.model))
 
 
+LOCAL_TITLE = "本机"  # The 执行设备 row's own option, as the launch card has it (cards/launch_config.py LOCAL).
+
+
 def device_rows(env, ctx, chat) -> list:
-    """The data contract v43 ``devices`` of the launch block: [{name, dot, harnesses}] of the devices the chat may use, only with
-    COVEY_DEVICES=1 and devices in devices.json (else empty, and the page has no such choice). ``dot``: the node panel's status
-    word (app/web_panels.py node_row), "gray" where it is not known."""
+    """The data contract v43 ``devices`` of the launch block: [{name, title, dot, harnesses, local?}], the 执行设备 choices of the
+    chat as the launch card lists them: 本机 first (``name`` "", ``local`` true, ``harnesses`` [] for every Harness enabled here),
+    then each device the chat may use (its alias, its devices.json title); only with COVEY_DEVICES=1 and such a device (else
+    empty, and the page has no such choice). ``dot``: the node panel's status word (app/web_panels.py node_row), "gray" where it
+    is not known. A page older than 本机's row draws it as a nameless option that means 本机 all the same (no ``device``)."""
     from covey.app.launch import alias_harnesses
+    from covey.core import devices
+    from covey.core.nodes import LOCAL
     harnesses = alias_harnesses()
-    if not harnesses:
+    allowed = [alias for alias in harnesses if env.runtime.access.allows_device(chat, alias)]
+    if not allowed:
         return []
+
+    def title(alias):  # The card's word for it (app/launch.py device_options).
+        try:
+            return str(devices.current().device(alias).title or alias)
+        except (devices.UnknownDevice, devices.DeviceConfigError, AttributeError):
+            return alias
     dots = {}
     try:
         from covey.app.node_panel import facts
@@ -94,8 +109,9 @@ def device_rows(env, ctx, chat) -> list:
         dots = {row["alias"]: node_row(row)["dot"] for row in facts(Path(ctx.state_dir), "")["rows"]}
     except Exception:  # noqa: BLE001 - a dot the page cannot read is gray, not a launch refused
         pass
-    return [{"name": alias, "dot": dots.get(alias) or "gray", "harnesses": list(declared)}
-            for alias, declared in harnesses.items() if env.runtime.access.allows_device(chat, alias)]
+    local = {"name": "", "title": LOCAL_TITLE, "dot": dots.get(LOCAL) or "gray", "harnesses": [], "local": True}
+    return [local, *({"name": alias, "title": title(alias), "dot": dots.get(alias) or "gray", "harnesses": list(harnesses[alias])}
+                     for alias in allowed)]
 
 
 def catalog(env, ctx, chat) -> dict:

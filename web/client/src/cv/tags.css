@@ -9,7 +9,7 @@
   .a-tn, .a-tno, .nb-tno, .a-cnt, .a-badge, .a-secn, .a-byo, .a-tm, .a-mat, .a-step,
   .nb-frac, .nb-pc, .nb-eta, .td-tag, .td-more, .td-open, .td-state, .td-cnt, .td-rn, .td-out, .td-go, .td-act, .td-x,
   .rt, .elb, .rpt-flag, .rtl-ok, .lbx-n,
-  .st-tag, .st-cnt, .st-when, .lx-tag, .rm-tno, .mm2-tag
+  .st-tag, .st-cnt, .st-when, .lx-tag, .lx-fold-tag, .rm-tno, .mm2-tag
 ){white-space:nowrap;flex-shrink:0}
 
 /* 问题卡的选项：序号一列、文字一列、徽标一列。徽标在自己的列里，有没有它，序号和文字的左边都不动 */

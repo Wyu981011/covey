@@ -837,6 +837,25 @@ class WebSettingsTest(UnifiedCase):
         self.assertIn("🔁 已换配置", replies[0])
         self.assertEqual(web_switch.topic_config(after)["model"].split(":")[0], other["harness"])
 
+    def test_a_switch_names_the_topics_device_and_never_moves_it_to_another(self):
+        """T879: the page's 换配置 drew a 执行设备 choice it showed as testbox for a topic on this machine, and the switch dropped
+        it in silence. ``config`` says where the topic works ("" for 本机, a device's alias), and a ``device`` other than that
+        is refused, the topic unchanged; none or "" (the topic's own) is no change of place."""
+        from covey.app import web_switch
+        models = self.snap()["launch"]["models"]
+        first = models[0]
+        other = next(m for m in models if m["key"] != first["key"])
+        topic, path = self.opened(first)
+        before = json.loads(path.read_text())
+        self.assertEqual(web_switch.topic_config(before)["device"], "")
+        self.assertEqual(web_switch.topic_config({**before, "workdir": "gpu1:/home/me/work"})["device"], "gpu1")
+        choice = dict(model=other["key"], effort=other["start_budget"], work_mode="", redaction="off")
+        self.assertEqual(self.switch(topic, "op-d1", device="gpu1", **choice), ("failed", web_switch.DEVICE_FIXED))
+        self.assertEqual(json.loads(path.read_text())["harness_id"], before["harness_id"])
+        state, words = self.switch(topic, "op-d2", device="", **choice)
+        self.assertEqual(state, "done", words)
+        self.assertEqual(json.loads(path.read_text())["harness_id"], other["harness"])
+
     def repos_map(self):
         write_json(self.repos_file(), {"version": 1, "repos": [
             {"name": "covey", "path": str(self.root / "covey")}, {"name": "web", "path": str(self.root / "web"), "status": "readonly"}]})

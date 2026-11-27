@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import type { LaunchData, LaunchModel, LaunchPayload, LaunchWorkspace, SayFile, SettingsOption, SnapshotResponse } from '@shared/api.interface';
 import { newOpId, SNAPSHOT_KEY, useSettings } from '@client/src/hooks/use-workbench';
 import { pref, setPref } from './lib';
-import { applyDevice, isRepoMode, launchPayload, repoLabel, showDevice } from './launchRepos';
+import { applyDevice, deviceWord, isRepoMode, launchPayload, repoLabel, showDevice } from './launchRepos';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 
@@ -84,8 +84,8 @@ export function summaryTags(d: LaunchData, sel: Sel): string[] {
   // 卡上的叫法去掉括号里的说明（“自适应（按任务自己定）”→“自适应”）
   if (sel.work_mode) out.push((m?.work_mode_texts?.[sel.work_mode] ?? sel.work_mode).split('（')[0]);
   if (isRepoMode(d)) {
-    // 新 Covey：没有工作区和运行方式；多设备时写执行设备，选了仓库写仓库
-    if (showDevice(d) && sel.device) out.push(sel.device);
+    // 新 Covey：没有工作区和运行方式；有远程设备时写执行设备（本机也写），选了仓库写仓库
+    if (showDevice(d)) out.push(deviceWord(d, sel.device));
     if (sel.repos?.length) out.push(repoLabel(sel.repos));
   } else {
     out.push(sel.workspace ?? '', (d.run_modes ?? []).find((r: SettingsOption) => r.value === sel.run_mode)?.text ?? sel.run_mode ?? '');

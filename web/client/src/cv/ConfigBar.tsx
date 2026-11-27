@@ -11,7 +11,7 @@ import { engineText } from './lib';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
 import { PanelGuard } from './panelGuard';
-import { onOpenSwitch } from './switchOpen';
+import { onOpenSwitch, type OpenWhy } from './switchOpen';
 import { popPlace, POP_GAP, type PopPlace } from './popPlace';
 import { changedFields, fromConfig, leadData, switchBlock, withTopicRepos, type SwitchSel } from './switchConfig';
 import './launch.css';
@@ -43,6 +43,8 @@ const Bar: React.FC<BarProps> = ({ topic, workspace, busy }) => {
   const data: LaunchData | undefined = useMemo(() => (all && lead ? leadData(all) : all), [all, lead]);
   const qc = useQueryClient();
   const [open, setOpen] = useState<boolean>(false);
+  // 怎么打开的（T879）：从「换个模型」（失败卡、看板带 ?switch=1）打开时标题写“换个模型”，设备和仓库照旧折着、不动
+  const [why, setWhy] = useState<OpenWhy>(undefined);
   const [sel, setSel] = useState<SwitchSel | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string>('');
@@ -62,10 +64,11 @@ const Bar: React.FC<BarProps> = ({ topic, workspace, busy }) => {
   const loc = useLocation();
   const asked: boolean = new URLSearchParams(loc.search).get('switch') === '1';
   const [opened, setOpened] = useState<string>('');
-  const show = (): void => {
+  const show = (reason?: OpenWhy): void => {
     setSel(null);
     setPhase('idle');
     setMessage('');
+    setWhy(reason);
     setOpen(true);
     window.requestAnimationFrame(() => wrap.current?.scrollIntoView({ block: 'nearest' }));
   };
@@ -77,7 +80,7 @@ const Bar: React.FC<BarProps> = ({ topic, workspace, busy }) => {
   useEffect(() => {
     if (live && asked && topic && opened !== `${loc.key}:${topic.key}`) {
       setOpened(`${loc.key}:${topic.key}`);
-      show();
+      show('model');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, asked, topic?.key, loc.key]);
@@ -140,15 +143,23 @@ const Bar: React.FC<BarProps> = ({ topic, workspace, busy }) => {
     edit: (f) => setSel(f(data, cur)),
     setRedaction: (v: 'on' | 'off') => setSel({ ...cur, redaction: v }),
     ...(lead ? { fixedPlace: true } : {}),
+    // 执行设备只读：话题所在的（config.device，'' 本机；旧 Covey 没推这个键就不写），仓库这块改过没有，负责人的仓库只读显示
+    switching: {
+      device: config && 'device' in config ? (config.device ?? '') : undefined,
+      changed: changed.includes('repos'),
+      ...(lead ? { leadRepos: (topic?.repos ?? []).map((r) => ({ name: r.name, mode: r.mode })) } : {}),
+    },
   };
   const toggle = (): void => {
     if (!open) {
       setSel(null);
       setPhase('idle');
       setMessage('');
+      setWhy(undefined);
     }
     setOpen(!open);
   };
+  const forModel: boolean = why === 'model';
   const confirm = (): void => {
     if (!topic || blocked || !changed.length || phase === 'sending') return;
     // 旧 Covey 原样；新 Covey 去掉 workspace、run_mode，仓库带上（全取消发 []）
@@ -187,7 +198,7 @@ const Bar: React.FC<BarProps> = ({ topic, workspace, busy }) => {
         ) : changed.length ? (
           <span>改了{changed.map((k: string) => FIELD_WORD[k] ?? k).join('、')}：{lead ? leadNext(changed) : `从下一句话起按新配置做（${isRepoMode(all) ? '模型变了会开新会话' : '模型、工作区变了会开新会话'}，带上最近几轮）`}</span>
         ) : (
-          <span>{lead ? '这是负责人现在的配置，改哪项点哪项' : '这是话题现在的配置，改哪项点哪项'}</span>
+          <span>{lead ? '这是负责人现在的配置，改哪项点哪项' : forModel ? '只改模型这几项就行，执行设备和仓库不展开就不会动' : '这是话题现在的配置，改哪项点哪项'}</span>
         )}
       </div>
       <button type="button" className="btn sm" onClick={() => setOpen(false)} disabled={phase === 'sending'}>取消</button>
@@ -212,12 +223,12 @@ const Bar: React.FC<BarProps> = ({ topic, workspace, busy }) => {
         <div
           className={`cfg-pop${place ? ' fixed' : ''}`}
           role="dialog"
-          aria-label={lead ? '换负责人的配置' : '换配置'}
+          aria-label={forModel ? '换个模型' : lead ? '换负责人的配置' : '换配置'}
           style={place ? ({ left: place.left, width: place.width, bottom: place.bottom, '--room': `${place.room}px` } as React.CSSProperties) : undefined}
         >
           <div className="cfg-head">
-            <b>{lead ? '换负责人的配置' : '换配置'}</b>
-            <span className="t3">{lead ? '同飞书专项卡上的「换配置」' : '同飞书话题里的「换配置」'}</span>
+            <b>{forModel ? (lead ? '给负责人换个模型' : '换个模型') : lead ? '换负责人的配置' : '换配置'}</b>
+            <span className="t3">{forModel ? '其他配置保持不变' : lead ? '同飞书专项卡上的「换配置」' : '同飞书话题里的「换配置」'}</span>
           </div>
           <PanelGuard what="换配置面板" elsewhere={lead ? '在飞书专项卡上点「换配置」' : '在飞书话题里点「换配置」'} onClose={() => setOpen(false)}>
             <LaunchPanel box={box} className="flat" foot={foot} />
