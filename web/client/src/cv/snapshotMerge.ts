@@ -57,6 +57,15 @@ export function calibVisible(c: Calib, now: number): Calib {
 }
 
 /**
+ * 响应是不是一份快照（T876）：axios 遇到截断或不是 JSON 的响应体会原样返回字符串（或空串），以前直接当快照存进缓存，
+ * 侧栏读 topics.filter 时整页报错（现网无头验收见过一次：一次 5 秒的慢响应之后）。不是就当这次取失败：缓存留着上一份，下一次取整份。
+ */
+export function isSnapshot(v: unknown): v is SnapshotResponse {
+  const o = v as Partial<SnapshotResponse> | null;
+  return !!o && typeof o === 'object' && Array.isArray(o.topics) && Array.isArray(o.projects) && Array.isArray(o.questions);
+}
+
+/**
  * 把一次响应并进上一份：不是增量（没有 partial）就是它自己；增量时变过的话题盖掉旧的、没变的留着、不在 keys 里的拿掉，
  * 话题的顺序照 keys（服务端按 updated_at 倒序）；projects、questions、asks、同步时间照响应的（它们每次都是整份）。
  * 并不出来（没有上一份、响应没带 keys、keys 里有话题上一份和响应里都没有）返回 null：调用方改取整份。

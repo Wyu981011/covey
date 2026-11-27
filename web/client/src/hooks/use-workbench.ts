@@ -16,7 +16,7 @@ import type {
 import { fetchMe, fetchReport, fetchRoom, fetchSearch, fetchSettings, fetchStats, fetchTidy, fetchMemory, fetchMemoryKey, fetchUpgrade, fetchQuota, fetchSnapshot, fetchTurns, fetchUsage, postOutbox } from '@client/src/api/workbench';
 import { mergeCollabs } from '@client/src/cv/collab';
 import { needsWarm, warmList, warmSig, WARM_STALE_MS } from '@client/src/cv/warmup';
-import { calibFailed, calibGotFull, calibHidden, calibOnline, calibStart, calibVisible, mergeSnapshot, planSnapshot, type Calib } from '@client/src/cv/snapshotMerge';
+import { calibFailed, calibGotFull, calibHidden, calibOnline, calibStart, calibVisible, isSnapshot, mergeSnapshot, planSnapshot, type Calib } from '@client/src/cv/snapshotMerge';
 
 /**
  * 所有列表来自同一份快照，每 1 秒取一次：带 ?since= 只取变过的话题（数据约定 v38，见 cv/snapshotMerge.ts），整份只在要校准时取
@@ -50,7 +50,9 @@ export async function fetchSnapshotMerged(qc: QueryClient): Promise<SnapshotResp
   calib = plan.next;
   const get = async (since: string | null): Promise<SnapshotResponse> => {
     try {
-      return await fetchSnapshot(since);
+      const r: unknown = await fetchSnapshot(since);
+      if (!isSnapshot(r)) throw new Error('快照响应不完整');
+      return r;
     } catch (e) {
       calib = calibFailed(calib);
       throw e;
