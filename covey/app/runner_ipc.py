@@ -271,7 +271,7 @@ def show_in_runner(runtime, state_dir: Path, record: dict) -> bool | None:
     return bool(result and result.get("ok"))
 
 
-def forward_answer(runtime, ctx, chat, token, fields, event_id) -> bool:
+def forward_answer(runtime, ctx, chat, token, fields, event_id, *, by=None) -> bool:
     """Hand a typed answer to the runner that asked the question; False when the bridge answers it."""
     if runtime.in_runner:
         return False
@@ -283,7 +283,7 @@ def forward_answer(runtime, ctx, chat, token, fields, event_id) -> bool:
     if directory is None:
         return False
     op = write_inbox(directory, {"kind": "answer", "chat_id": chat, "token": token, "fields": fields,
-                                  "event_id": event_id})
+                                  "event_id": event_id, **({"by": by} if by else {})})
     timing.mark("forward")
     result = await_reply(directory / ACKS / (op + ".json"), time.monotonic() + ANSWER_TIMEOUT)
     timing.mark("acked")
@@ -415,7 +415,8 @@ def take_inbox(gateway, app, job, ctx, directory: Path) -> None:
                 if callable(watch):
                     watch(job_ctx, job, payload["event_id"])
             elif kind == "answer":
-                app.questions.submit_answer(job_ctx, payload["chat_id"], payload["token"], payload["fields"], payload["event_id"])
+                app.questions.submit_answer(job_ctx, payload["chat_id"], payload["token"], payload["fields"], payload["event_id"],
+                                            by=payload.get("by"))
                 ack(directory, payload["id"], True)
             elif kind == SHOW_QUESTION:
                 record = read_json(Path(job_ctx.state_dir) / "questions" / (str(payload["token"]) + ".json"))

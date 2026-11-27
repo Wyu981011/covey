@@ -670,12 +670,13 @@ def unsettle(state_dir, project_id, settled, *, now=None) -> list:
 
 
 def rewrite(state_dir, project_id, entry_id, *, text=None, kind=None, valid=None, superseded_by=None, deleted=None,
-            now=None) -> dict | None:
+            owner=None, now=None) -> dict | None:
     """The Bridge's own change of the line ``entry_id`` (live or a tombstone), for core/memstore.py: none of the lead's policy
     (``update``'s), nothing logged in ``fixes``. ``text`` new words (an answer's up to ``ANSWER_TEXT``), ``kind`` one of
     ``KINDS``, ``valid`` one of ``SETTLED`` or '' for active again, ``superseded_by`` an id ('' none), ``deleted`` a time for a
-    tombstone or 0 for live again. The entry as ``entries`` gives it; None when the file has no such line. KeyError for a
-    project with no record."""
+    tombstone or 0 for live again, ``owner`` True for a line the owner confirmed (its parties the owner's and the Bridge's,
+    as ``fix`` writes them: the lead's tools and 整理记忆 read it as his). The entry as ``entries`` gives it; None when the file
+    has no such line. KeyError for a project with no record."""
     stamp = time.time() if now is None else now
 
     def edit(rows, meta):
@@ -699,6 +700,8 @@ def rewrite(state_dir, project_id, entry_id, *, text=None, kind=None, valid=None
                 entry["superseded_by"] = clean(superseded_by, 40)
             else:
                 entry.pop("superseded_by", None)
+        if owner:
+            entry.update(asserted_by=turn_source.PARTY_OWNER, recorded_by=turn_source.PARTY_BRIDGE)
         if entry:
             meta[row["id"]] = entry
         else:

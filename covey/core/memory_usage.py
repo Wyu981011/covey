@@ -11,9 +11,10 @@ The counts the ranking of core/memory_rank.py takes are new, and an older releas
 keys, so they lie beside it in ``memory/usage.json`` (core/memstore.py usage_path) {version, refs: {ref: {e, t, h}}}:
 ``e`` how many turns carried the line's whole text (``carried``), ``t`` how many listed only its title (``listed``),
 ``h`` the strong signals that it was of use, weighed as core/memory_rank.py SIGNAL_WEIGHTS says (``signal``: shown with
-``covey memory show``, a question it answered before, the owner confirming it, a checkpoint's ``memory_used``). ``counts``
-reads both files as one: an old ref (``principle:p…``) is read as the entry that has it among its aliases
-(memory/codes.json), its ``n`` and ``last`` added to the entry's. Standard library and core only."""
+``covey memory show``, a question it answered before, the owner confirming it, a checkpoint's ``memory_used``), ``last``
+when a turn last carried it whole or gave a signal (a title listed is not a use). ``counts`` reads both files as one: an
+old ref (``principle:p…``) is read as the entry that has it among its aliases (memory/codes.json), its ``n`` added to the
+entry's and the later ``last`` kept; 整理记忆 ages the lines by it (``idle``). Standard library and core only."""
 from __future__ import annotations
 
 import time
@@ -97,12 +98,15 @@ def idle(usage, ref, written_at, *, now=None, days=IDLE_DAYS) -> bool:
 COUNTS = ("e", "t", "h")
 
 
+USED = ("e", "h")  # What moves a line's ``last``: carried whole, a signal of use (not a title listed).
+
+
 def _v2(state_dir) -> dict:
     refs = read_object(memstore.usage_path(state_dir)).get("refs")
     found = {}
     for ref, row in (refs.items() if isinstance(refs, dict) else ()):
         if isinstance(ref, str) and isinstance(row, dict):
-            found[ref] = {key: _number(row.get(key)) for key in COUNTS}
+            found[ref] = {**{key: _number(row.get(key)) for key in COUNTS}, "last": _number(row.get("last"))}
     return found
 
 
@@ -119,19 +123,33 @@ def counts(state_dir) -> dict:
         mine = found.setdefault(aliases.get(ref, ref), {**dict.fromkeys(COUNTS, 0.0), "n": 0, "last": 0.0})
         for key in COUNTS:
             mine[key] += row[key]
+        mine["last"] = max(mine["last"], row["last"])
     return found
 
 
-def _bump(state_dir, refs, key, amount) -> int:
+def idle_view(state_dir) -> dict:
+    """``counts`` as ``idle`` reads it, each entry's row under its old refs too (a project's line by the ref
+    core/project_memory.py gives it, a candidate's ``candidate:<id>``)."""
+    found = counts(state_dir)
+    for old, new in memstore.codes(state_dir)["aliases"].items():
+        if new in found and old not in found:
+            found[old] = found[new]
+    return found
+
+
+def _bump(state_dir, refs, key, amount, now=None) -> int:
     refs = list(dict.fromkeys(str(ref) for ref in refs or () if ref))
     if not refs or not amount:
         return 0
+    stamp = time.time() if now is None else now
     path = memstore.usage_path(state_dir)
     with shared_file_lock(path):
         found = _v2(state_dir)
         for ref in refs:
-            row = found.setdefault(ref, dict.fromkeys(COUNTS, 0.0))
+            row = found.setdefault(ref, {**dict.fromkeys(COUNTS, 0.0), "last": 0.0})
             row[key] = round(row[key] + amount, 3)
+            if key in USED:
+                row["last"] = max(row["last"], stamp)
         kept = dict(sorted(found.items(), key=lambda pair: -(pair[1]["e"] + pair[1]["h"]))[:KEPT * 2])
         write_json(path, {"version": memstore.VERSION, "refs": kept}, ensure_ascii=False, separators=(",", ":"))
     return len(refs)
@@ -166,8 +184,9 @@ def carry_v2(state_dir, old, new) -> bool:
         row = found.pop(old, None)
         if row is None:
             return False
-        mine = found.setdefault(new, dict.fromkeys(COUNTS, 0.0))
+        mine = found.setdefault(new, {**dict.fromkeys(COUNTS, 0.0), "last": 0.0})
         for key in COUNTS:
             mine[key] += row[key]
+        mine["last"] = max(mine.get("last", 0.0), row.get("last", 0.0))
         write_json(path, {"version": memstore.VERSION, "refs": found}, ensure_ascii=False, separators=(",", ":"))
     return True

@@ -146,6 +146,24 @@ class RunTest(Case):
         self.assertEqual(memory_tidy.view_of(run)["away"]["idle"], 1)
         self.assertEqual(stale, run["projects"][0]["settled"][0][0])
 
+    def test_a_line_the_turns_carry_now_is_in_use_though_the_old_file_never_hears_of_it(self):
+        """T870 Wave 3.5 (Fable P1-1): a turn carrying a line writes only memory/usage.json now (memory_usage.carried, the
+        old memory-usage.json's ``note`` has no caller left); 整理记忆 reads both, so a line carried every day stays."""
+        carried = self.line("主人答：天天带的问题→天天带的回答", at=NOW - 40 * DAY)
+        signalled = self.line("主人答：查重用到的问题→查重用到的回答", at=NOW - 40 * DAY)
+        listed = self.line("主人答：只列标题的问题→只列标题的回答", at=NOW - 40 * DAY)
+        with mock.patch("time.time", return_value=NOW - DAY):
+            memory_usage.carried(self.state, [f"project:{PID}:{carried}"])
+            memory_usage.signal(self.state, [f"project:{PID}:{signalled}"], "dedup")
+            memory_usage.listed(self.state, [f"project:{PID}:{listed}"])  # A title listed is not a use.
+        self.tidy().run(self.ctx, CHAT, NOW, now=NOW)
+        parts = self.parts()
+        self.assertEqual(parts["主人答：天天带的问题→天天带的回答"]["valid"], "active")
+        self.assertEqual(parts["主人答：查重用到的问题→查重用到的回答"]["valid"], "active")
+        self.assertEqual(parts["主人答：只列标题的问题→只列标题的回答"]["valid"], "done")
+        row = memory_usage.counts(self.state)[f"project:{PID}:{carried}"]
+        self.assertEqual((row["e"], row["last"]), (1.0, NOW - DAY))
+
     def test_a_slot_is_tidied_once_and_a_failed_model_leaves_the_lines(self):
         for i in range(4):
             self.line(f"主人答：问题 {i}→回答 {i}")

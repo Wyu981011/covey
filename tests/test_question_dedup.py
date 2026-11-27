@@ -410,13 +410,27 @@ class ThirdOfAClassTest(Case):
         self.assertNotIn("以后这类", shown + text)
         self.assertEqual(list(delivered), ["merge"])
         before = {entry.ref for entry in memstore.decisions(self.state, "project", PID)}
-        project_context.remember_answer(self.state, MEMBER, record, self.logs.append)
+        project_context.remember_answer(self.state, MEMBER, record, self.logs.append, owners=True)
         new = [entry for entry in memstore.decisions(self.state, "project", PID) if entry.ref not in before]
         self.assertEqual([entry.text for entry in new], [project_context.answer_line(MERGE["question"], "合进去")])
         (rule,) = memstore.entries(self.state, scope="project", owner_key=PID, kinds=("rule",))
         self.assertEqual((rule.said, rule.by), ("owner", "bridge"))
         self.assertIn("合进去", rule.text)
         self.assertEqual(question_dedup.class3(self.ctx(), {"topic_id": MEMBER}, [MERGE]), [])  # Quiet now.
+
+    def test_a_member_of_the_group_submitting_writes_no_rule(self):
+        """T870 Wave 3.5 (Fable P1-3): anybody the group lets in may submit the card; only the owner's own pick of 以后按这次的做
+        is 你定的 (app/questions.py owner_submitted: the click's operator_id is the owner's)."""
+        saved, _ = self.ask(self.native("codex"), self.job(), [MERGE], Rpc(live=False))
+        record = self.submit(saved[0], {"option_0": "0", "option_1": "1"})
+        project_context.remember_answer(self.state, MEMBER, record, self.logs.append)  # Not known to be the owner's.
+        self.assertEqual(memstore.entries(self.state, scope="project", owner_key=PID, kinds=("rule",)), [])
+        self.assertTrue(memstore.decisions(self.state, "project", PID))  # The answer itself is still noted.
+        from covey.app.questions import Questions
+        access = SimpleNamespace(is_owner=lambda open_id: open_id == "ou_owner")
+        asker = SimpleNamespace(runtime=SimpleNamespace(access=access))
+        self.assertEqual([Questions.owner_submitted(asker, by) for by in ("ou_owner", "ou_member", "", None)],
+                         [True, False, False, False])
 
     def test_the_lead_answering_never_writes_a_rule(self):
         saved, _ = self.ask(self.native("codex"), self.job(), [MERGE], Rpc(live=False))
@@ -430,7 +444,7 @@ class ThirdOfAClassTest(Case):
     def test_keep_asking_is_quiet_for_thirty_days(self):
         saved, _ = self.ask(self.native("codex"), self.job(), [MERGE], Rpc(live=False))
         record = self.submit(saved[0], {"option_0": "0", "option_1": "0"})
-        project_context.remember_answer(self.state, MEMBER, record, self.logs.append)
+        project_context.remember_answer(self.state, MEMBER, record, self.logs.append, owners=True)
         self.assertEqual(memstore.entries(self.state, scope="project", owner_key=PID, kinds=("rule",)), [])
         self.assertEqual(question_dedup.class3(self.ctx(), {"topic_id": MEMBER}, [MERGE]), [])
         later = time.time() + (question_dedup.CLASS3_QUIET_DAYS + 1) * 86400

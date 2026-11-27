@@ -238,6 +238,27 @@ class WriteTest(Case):
             self.assertGreater(path.stat().st_mtime, 1)
 
 
+class ConfirmLegacyTest(Case):
+    """T870 Wave 3.5 (Fable P1-2): a project's rule of the lead's the owner confirms (待审核 采纳) is his for the paths that read
+    the old store too: the lead's project_memory_revise refuses it, core/memory.py describe says the owner asserted it, and the
+    store maps it back to 你定的."""
+
+    def test_a_confirmed_leads_rule_is_the_owners_on_the_old_paths(self):
+        from covey.app import project_tools
+        from covey.core import memory
+        made = memstore.add(self.state, kind="rule", scope="project", owner_key=PID, text="发网关镜像都先发预发", said="summary",
+                            by="lead", now=NOW)
+        row = lambda: next(r for r in project_memory.entries(self.state, projects.read_record(self.state, PID))  # noqa: E731
+                           if r["text"] == "发网关镜像都先发预发")
+        self.assertEqual(project_tools.revise_refusal("update", row()), "")  # The lead's own: the lead may change it.
+        memstore.confirm(self.state, made.ref, now=NOW + 1)
+        self.assertEqual(memory.describe(row())["asserted_by"], turn_source.PARTY_OWNER)
+        self.assertIn("主人的长期约定", project_tools.revise_refusal("update", row()))
+        memstore._cache.clear()
+        again = memstore.find(self.state, made.ref)
+        self.assertEqual((again.said, again.kind, again.status), ("owner", "rule", "active"))
+
+
 class DecisionTest(Case):
     def test_old_answers_and_new_decisions_read_as_one(self):
         record = {"token": "0123456789abcdef", "topic_id": TID, "job_id": 3, "questions": [], "answers": {}}

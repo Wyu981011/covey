@@ -219,7 +219,7 @@ class MemoryTidy:
     def run(self, ctx, chat, slot, now=None) -> dict:
         now = time.time() if now is None else now
         state = Path(ctx.state_dir)
-        usage = memory_usage.read(state)
+        usage = memory_usage.idle_view(state)  # Both use files: a turn carrying a line now writes only memory/usage.json.
         backend, judge_ctx = track_judge.tools(getattr(self.topics, "apps", None))
         started = time.monotonic()
         found, cursors = [], dict(load(state)["cursors"])

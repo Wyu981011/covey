@@ -168,27 +168,28 @@ class Questions:
                 self.runtime.log(f"Folded question task display failed: {type(exc).__name__}")
         return True
 
-    def submit_answer(self, ctx, chat, token, fields, event_id, *, top=""):
+    def submit_answer(self, ctx, chat, token, fields, event_id, *, top="", by=None):
         """``fields`` as the answer to question ``token``: into the task that asks it when it still runs, else as its
         continuation, queued after the click is acknowledged. ``top``: the message the answer was typed in, quoted from
         outside the topic's thread (app/butler_reactions.py top_message): DONE on it once the running task took the
-        answer, else the continuation's reactions."""
-        if forward_answer(self.runtime, ctx, chat, token, fields, event_id):
+        answer, else the continuation's reactions. ``by``: the open_id of who submitted it, when known (a card's click):
+        only the owner's own submit writes the rule its extra question proposes (app/question_dedup.py settle)."""
+        if forward_answer(self.runtime, ctx, chat, token, fields, event_id, by=by):
             self._took(ctx, top)  # The task runner that asked the question took the answer.
             return None
-        return self._submit_answer(ctx, chat, token, fields, event_id, **({"top": top} if top else {}))
+        return self._submit_answer(ctx, chat, token, fields, event_id, **({"top": top} if top else {}), by=by)
 
     def _took(self, ctx, top):
         """DONE on ``top`` (none: nothing) for an answer or note the running task took. Never raises."""
         if top:
             butler_reactions.top_took(self.messenger, ctx.profile, top, self.runtime.log)
 
-    def submit_question_feedback(self, ctx, chat, token, text, event_id, attachments="", *, top=""):
+    def submit_question_feedback(self, ctx, chat, token, text, event_id, attachments="", *, top="", by=None):
         record = scoped_question(ctx, chat, token)
         fields = question_feedback_fields(record["questions"], text)
         if attachments:
             fields[ATTACHMENTS] = attachments
-        return self.submit_answer(ctx, chat, token, fields, event_id, **({"top": top} if top else {}))
+        return self.submit_answer(ctx, chat, token, fields, event_id, **({"top": top} if top else {}), by=by)
 
     def resume_saved_answer(self, ctx, chat, token, mid):
         """核查已保存回答 on a question whose saved answer's delivery is uncertain: submitted again once no
@@ -230,7 +231,15 @@ class Questions:
                 not record.get("body_delivery_confirmed") or not self.checkpoints.result_delivered(ctx, record))):
             raise ValueError(f"完整结果或问题控件尚未送达，请先{retry_hint()} 重新投递，不能提前确认")
 
-    def _submit_answer(self, ctx, chat, token, fields, event_id, *, top=""):
+    def owner_submitted(self, by) -> bool:
+        """Whether ``by`` (an open_id, None when not known) is the owner's: app/access.py is_owner."""
+        access = getattr(self.runtime, "access", None)
+        try:
+            return bool(by) and access is not None and bool(access.is_owner(by))
+        except Exception:  # noqa: BLE001 - not known to be his
+            return False
+
+    def _submit_answer(self, ctx, chat, token, fields, event_id, *, top="", by=None):
         path = question_path(ctx, token)
         # The card lock first: an answer clicked while its form is still being recorded waits for it.
         with question_card_lock(path), resource_lock("question", path):
@@ -265,7 +274,8 @@ class Questions:
             # Persist intent first. Never retry an ambiguous write as another task.
             record = transition_question(path, {"pending"}, status="submitting", answers=answers, answer_event=event_id,
                                          **response)
-        project_context.remember_answer(ctx.state_dir, ctx.topic_id, record, self.runtime.log)  # A project's topic: a decision noted.
+        project_context.remember_answer(ctx.state_dir, ctx.topic_id, record, self.runtime.log,  # A project's topic: a decision noted.
+                                        owners=self.owner_submitted(by))
         try:
             return self._deliver_answer(ctx, chat, token, record, answers, event_id, path, **({"top": top} if top else {}))
         except Exception:

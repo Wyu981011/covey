@@ -1018,6 +1018,8 @@ def _update(state_dir, entry: Entry, changes: dict, now: float) -> Entry:
                     legacy["kind"] = _legacy_kind(value)
             else:
                 side[key] = value
+                if key == "said" and value == "owner" and scope == "project" and store != "decision":
+                    legacy["owner"] = True  # Confirmed: the lead's tools and 整理记忆 (core/memory.py describe) read it as his.
                 if key in ("title", "why"):
                     side["edited_at"] = now
         if legacy:

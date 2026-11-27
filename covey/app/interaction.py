@@ -365,7 +365,7 @@ class Interaction:
                     fields = picked_fields(record["questions"], fields, raw[PICK])
                 elif record.get("status") == "pending":  # 提交回答: with 补充说明, what was left unanswered is skipped.
                     fields = with_note(record["questions"], fields)
-                self.questions.submit_answer(ctx, chat, raw["token"], fields, mid)
+                self.questions.submit_answer(ctx, chat, raw["token"], fields, mid, by=event.get("operator_id"))
             except AnswerIncomplete as exc:
                 # On the card clicked, with what was typed kept: a notice in the topic's thread was not seen from its
                 # copy at the top level (T631, 2026-11-22). A form on a task card still gets the notice.
@@ -398,7 +398,7 @@ class Interaction:
         if record.get("status") != "pending":
             with question_card_lock(question_path(ctx, token)):
                 self.questions.paint_question_state(ctx, scoped_question(ctx, chat, token))
-            self.questions.submit_answer(ctx, chat, token, fields, mid)  # Refused there, in its own words.
+            self.questions.submit_answer(ctx, chat, token, fields, mid, by=event.get("operator_id"))  # Refused there, in its own words.
             return
         try:
             answer = skip_all_fields(record["questions"], fields)
@@ -406,7 +406,7 @@ class Interaction:
             self.refuse_on_card(ctx, chat, event, token, str(exc), mid, draft=fields)
             return
         try:
-            self.questions.submit_answer(ctx, chat, token, answer, mid)
+            self.questions.submit_answer(ctx, chat, token, answer, mid, by=event.get("operator_id"))
         except QuestionFolded:
             self.show_folded(ctx, chat, event, token, mid)
 
