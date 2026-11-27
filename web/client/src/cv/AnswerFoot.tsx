@@ -3,6 +3,8 @@ import { Check, Copy } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import type { TurnRanWith, TurnView } from '@shared/api.interface';
+import { useMemoryIndex } from '@client/src/hooks/use-workbench';
+import { turnMemoryRows, type TurnMemoryRow } from './memoryCenter';
 import { fmtDur, fmtTok, turnStats } from './lib';
 import { criteriaSummary, deliveryBits } from './v34';
 import './v34.css';
@@ -73,28 +75,33 @@ export const AnswerFoot: React.FC<{
   ].filter((r) => r.bits.length > 0);
   // v34：完成标准一行：几条满足，点开是每一条和它的依据
   const crit = criteriaSummary(turn.criteria);
-  // v43：这一轮带了几条记忆、用到几条；点开每条是链接，去记忆中心按短码看
-  const mem = turn.memory && turn.memory.count > 0 ? turn.memory : null;
-  const memText: string = mem ? `带了 ${mem.count} 条记忆${mem.used.length ? ` · 用到 ${mem.used.length} 条` : ''}` : '';
-  const memRow: React.ReactNode = mem ? (
+  // v43：这一轮带了几条记忆；点开先列“用到”的，再列这一轮带入的全部短码，每条是链接，去记忆中心按短码看
+  const mem = turn.memory && (turn.memory.count > 0 || turn.memory.used.length > 0 || turn.memory.codes.length > 0) ? turn.memory : null;
+  const memIndex = useMemoryIndex(memOpen).data?.data;
+  const memRows = mem ? turnMemoryRows(mem, memIndex?.titles) : null;
+  const memCount: number = mem ? Math.max(mem.count, mem.codes.length) : 0;
+  const memText: string = mem ? `带了 ${memCount} 条记忆${mem.used.length ? ` · 用到 ${mem.used.length} 条` : ''}` : '';
+  const memItem = (r: TurnMemoryRow, i: number): React.ReactNode => (
+    <span key={`${r.code}-${i}`}>
+      {r.code ? <Link to={`/memory?code=${encodeURIComponent(r.code)}`}><span className="st">{r.code}</span>{r.title}</Link> : r.title}
+    </span>
+  );
+  const memRow: React.ReactNode = mem && memRows ? (
     <>
       <div className="afoot-row" key="memory">
         <b>记忆</b>
         <span className="afoot-bits">
-          {mem.used.length ? (
-            <button type="button" className="afoot-crit" aria-expanded={memOpen} onClick={() => setMemOpen(!memOpen)}>
-              {memText}{memOpen ? ' · 收起' : ' · 展开'}
-            </button>
-          ) : <span>{memText}</span>}
+          <button type="button" className="afoot-crit" aria-expanded={memOpen} onClick={() => setMemOpen(!memOpen)}>
+            {memText}{memOpen ? ' · 收起' : ' · 展开'}
+          </button>
         </span>
       </div>
-      {memOpen && mem.used.length ? (
+      {memOpen ? (
         <div className="afoot-list">
-          {mem.used.map((title: string, i: number) => (
-            <span key={i}>
-              {mem.codes[i] ? <Link to={`/memory?code=${encodeURIComponent(mem.codes[i])}`}><span className="st">{mem.codes[i]}</span>{title}</Link> : title}
-            </span>
-          ))}
+          {memRows.used.length ? <b className="afoot-sub">用到</b> : null}
+          {memRows.used.map(memItem)}
+          {memRows.carried.length ? <b className="afoot-sub">{memRows.used.length ? '还带入了' : '带入了'}</b> : null}
+          {memRows.carried.map(memItem)}
         </div>
       ) : null}
     </>

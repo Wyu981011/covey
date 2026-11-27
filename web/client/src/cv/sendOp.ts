@@ -6,7 +6,7 @@ import { fetchOutboxStatus, postOutbox } from '@client/src/api/workbench';
 import { MEMORY_KEY, QUOTA_KEY, ROOM_KEY, SETTINGS_KEY, SNAPSHOT_KEY, TIDY_KEY, UPGRADE_KEY, turnsKey } from '@client/src/hooks/use-workbench';
 import { errorText } from '@client/src/lib/workbench-format';
 import { opWords, type OpPhase } from './opWords';
-import { expectation, pullPlan, settle, trackReceipt, type Pull, type TrackDeps, type View } from './opTrack';
+import { expectation, isMemoryPullKey, pullPlan, settle, trackReceipt, type Pull, type TrackDeps, type View } from './opTrack';
 
 /* 发件箱的操作统一从这里发、在这里等回执和拉数据（T647 P1-C2，T765 F1）：说法在 opWords.ts，等法和拉数据的节奏在 opTrack.ts，
  * 各处不再自己写一套。发成功的操作都由 trackOp 跟踪：问回执、回执后重取这个话题的轮次和快照。 */
@@ -75,7 +75,11 @@ async function pullOf(qc: QueryClient, p: Pull): Promise<void> {
     : p.t === 'upgrade' ? UPGRADE_KEY
     : p.t === 'quota' ? QUOTA_KEY
     : MEMORY_KEY;
-  const filters = { queryKey: key, type: 'active' } as const;
+  // 记忆只取 memory:index（和旧键 memory），带 rev 的数据键不取（见 isMemoryPullKey）
+  const filters =
+    p.t === 'memory'
+      ? ({ queryKey: key, type: 'active', predicate: (q: { queryKey: readonly unknown[] }): boolean => isMemoryPullKey(q.queryKey) } as const)
+      : ({ queryKey: key, type: 'active' } as const);
   const inflight: boolean = qc.getQueryCache().find(filters)?.state.fetchStatus === 'fetching';
   await qc.refetchQueries(filters, no);
   if (inflight) await qc.refetchQueries(filters, no);

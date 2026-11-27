@@ -469,18 +469,14 @@ def in_progress(entry) -> bool:
 
 
 def rule_room(entries, scope) -> tuple[set, dict]:
-    """(the refs of the rules of one store past its room, {items, chars, item_limit, char_limit}): the active rules, the
-    owner's first, then the oldest, carried while they fit; never dropped by use (裁决 A9)."""
+    """(the refs of the rules of one store past its room, {items, chars, item_limit, char_limit}): the active rules a turn
+    carries as app/memory_turn.py ``pick_rules`` gives the room (the owner's first, then the newest); never dropped by use
+    (裁决 A9)."""
     items_limit, chars_limit = RULE_LIMITS[scope]
-    rules = sorted((e for e in entries if e.kind == "rule" and e.status == "active"), key=lambda e: (e.said != "owner", e.at, e.ref))
-    over, items, chars = set(), 0, 0
-    for entry in rules:
-        if items + 1 > items_limit or chars + len(entry.text) > chars_limit:
-            over.add(entry.ref)
-        else:
-            items, chars = items + 1, chars + len(entry.text)
-    return over, {"items": len(rules), "chars": sum(len(e.text) for e in rules), "item_limit": items_limit,
-                  "char_limit": chars_limit}
+    rules = [e for e in entries if e.kind == "rule" and e.status == "active"]
+    _, left = memory_turn.pick_rules(rules, scope)
+    return {e.ref for e in left}, {"items": len(rules), "chars": sum(len(e.text) for e in rules), "item_limit": items_limit,
+                                   "char_limit": chars_limit}
 
 
 def _carried(entry, over, live=None) -> bool:
@@ -493,8 +489,12 @@ def _carried(entry, over, live=None) -> bool:
     return True  # A note: carried when the turn finds it relevant (memory:previews says which).
 
 
-def _counts(entries, pending=0) -> dict:
+def _counts(entries, pending=0, migrate=None) -> dict:
+    """The active entries by kind and the open items of 待审核 (``pending``); ``migrate``, given, how many of those are what
+    memory_v2 carried over (type migrate: rules carried as before, not the owner's to do; the page's badge leaves them out)."""
     found = {"rule": 0, "decision": 0, "note": 0, "pending": pending}
+    if migrate is not None:
+        found["migrate"] = migrate
     for entry in entries:
         if entry.status == "active":
             found[entry.kind] += 1
@@ -577,10 +577,13 @@ class Store:
         return entry_view(entry, carried=_carried(entry, self.over, live), over_cap=entry.ref in self.over,
                           topic_number=number, live=live)
 
-    def pending(self) -> dict:
-        """Open items of 待审核 per scope summary key ('global', 'topics', 'p:<id>'), by where each would go."""
+    def pending(self, kind=None) -> dict:
+        """Open items of 待审核 per scope summary key ('global', 'topics', 'p:<id>'), by where each would go; of ``kind`` only
+        (an item's type) when given."""
         found = {}
         for item in self.review:
+            if kind is not None and item.get("type") != kind:
+                continue
             suggest = item.get("suggest") if isinstance(item.get("suggest"), dict) else {}
             pid = str(suggest.get("project_key") or "")
             key = f"p:{pid}" if suggest.get("scope") == "project" and pid in self.projects else \
@@ -855,8 +858,10 @@ def keys(state_dir, store, imported=(), *, now=None, home=None, previews_from=No
     out[PREVIEWS_KEY] = previews_from if previews_from is not None else previews(state_dir, store, now)
     revs = {key: web_sync.rev(data) for key, data in out.items()}
 
+    migrating = store.pending("migrate")
+
     def scope(key, title, found, room, waiting):
-        return {"key": key, "title": title, "counts": _counts(found, waiting), "rules": room,
+        return {"key": key, "title": title, "counts": _counts(found, waiting, migrating.get(key, 0)), "rules": room,
                 "rev": revs.get(GLOBAL_KEY if key == "global" else TOPICS_KEY if key == "topics" else "memory:" + key, "")}
 
     topic_room = {"items": 0, "chars": 0, "item_limit": 0, "char_limit": 0}
@@ -870,7 +875,7 @@ def keys(state_dir, store, imported=(), *, now=None, home=None, previews_from=No
               *(scope(f"p:{pid}", title, found, store.rooms[f"p:{pid}"], pending.get(f"p:{pid}", 0))
                 for pid, (title, found) in store.projects.items())]
     titled = sorted((e for e in store.all() if e.code and e.status != "void"), key=lambda e: (e.status not in LIVE, -e.at))
-    index = {"on": True, "version": V43, "counts": _counts(store.all(), len(store.review)), "scopes": scopes,
+    index = {"on": True, "version": V43, "counts": _counts(store.all(), len(store.review), sum(migrating.values())), "scopes": scopes,
              "revs": dict(revs), "health": health(state_dir, store, now), "imports": summary,
              "limits": {"title": memstore.TITLE_CHARS, "text": memstore.TEXT_CHARS, "decision_text": memstore.DECISION_CHARS},
              "titles": [[e.code, e.title[:memstore.TITLE_CHARS], e.ref] for e in titled[:TITLES]]}

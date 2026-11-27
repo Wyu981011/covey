@@ -28,6 +28,8 @@ import './night.css';
 import './reading.css';
 import './v2.css';
 import './tags.css';
+import { warmupDelay } from './warmup';
+import { todoPending } from './memoryCenter';
 import './sidebar.css';
 import './unify.css';
 import './v3.css';
@@ -284,7 +286,7 @@ const Sidebar: React.FC<{ mini: boolean; drawer?: boolean }> = ({ mini, drawer }
   const mem = useMemoryMode();
   const memoryOn: boolean = mem.mode === 'v43' || mem.mode === 'v37';
   const memoryTo: string = mem.mode === 'v43' ? '/memory' : '/settings/memory';
-  const pending: number = mem.mode === 'v43' ? mem.index?.counts.pending ?? 0 : 0;
+  const pending: number = mem.mode === 'v43' ? todoPending(mem.index?.counts) : 0;
   // 鼠标在侧栏里时先画它进来那刻的快照，移出或停着不动几秒再换新的：每秒的同步不让正要点的那行从鼠标底下挪走（sideHold.ts）
   const hold = useHeld(useSnapshot().data);
   const data = hold.view;
@@ -660,7 +662,7 @@ const Shell: React.FC = () => {
   const ui = useUi();
   const { isLoading, isError, error, refetch, data } = useSnapshot();
   const loc = useLocation();
-  useWarmup();
+  useWarmup(warmupDelay(loc.pathname));
   useEffect(() => setMenu(false), [loc.pathname]);
   useMatch('/');
   const cls: string = `cv${ui.light ? ' light' : ''}${desktop ? '' : ' m'}`;

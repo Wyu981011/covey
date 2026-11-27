@@ -34,7 +34,14 @@ export const KIND_WORD: Record<MemoryKind, string> = { rule: '规矩', decision:
 export const isTab = (v: unknown): v is MemoryTab => typeof v === 'string' && (TABS as readonly string[]).includes(v);
 
 /** 第一眼：有待审核默认停在待审核，否则规矩 */
-export const defaultTab = (idx: Pick<MemoryIndex, 'counts'> | null | undefined): MemoryTab => ((idx?.counts.pending ?? 0) > 0 ? 'review' : 'rules');
+export const defaultTab = (idx: Pick<MemoryIndex, 'counts'> | null | undefined): MemoryTab => (todoPending(idx?.counts) > 0 ? 'review' : 'rules');
+
+/** 要主人处理的待审核数：pending 里去掉迁移项（旧 Bridge 没有 counts.migrate 就当 0）。侧栏角标、页签数、默认落点都用它 */
+export const todoPending = (c: Pick<MemoryCounts, 'pending' | 'migrate'> | null | undefined): number => {
+  const n: number = Math.max(0, Number(c?.pending) || 0);
+  const m: number = typeof c?.migrate === 'number' && Number.isFinite(c.migrate) ? Math.max(0, c.migrate) : 0;
+  return Math.max(0, n - m);
+};
 
 /** 每个页签顶上至多一行说明（≤30 字）；待审核、记录不写 */
 export const TAB_NOTE: Partial<Record<MemoryTab, string>> = {
@@ -118,18 +125,20 @@ export interface ScopeOption {
 }
 /** 范围下拉：全部、全局、话题、各专项（按 index.scopes 的顺序） */
 export function scopeOptions(idx: Pick<MemoryIndex, 'scopes' | 'counts'> | null | undefined): ScopeOption[] {
-  const out: ScopeOption[] = [{ value: 'all', label: '全部范围', pending: idx?.counts.pending ?? 0, over: false }];
+  const out: ScopeOption[] = [{ value: 'all', label: '全部范围', pending: todoPending(idx?.counts), over: false }];
   for (const s of idx?.scopes ?? []) {
-    out.push({ value: s.key, label: s.key === 'global' ? '全局' : s.key === 'topics' ? '话题' : s.title || s.key, pending: s.counts.pending, over: roomOf(s).tone === 'over' });
+    out.push({ value: s.key, label: s.key === 'global' ? '全局' : s.key === 'topics' ? '话题' : s.title || s.key, pending: todoPending(s.counts), over: roomOf(s).tone === 'over' });
   }
   return out;
 }
 
 /** 页头“规矩 N · 决定 N · 资料 N”：选了一个范围就写那个范围的数（同专项右栏的口径），全部范围写总数 */
-export function headCounts(idx: Pick<MemoryIndex, 'scopes' | 'counts'>, scope: string): Pick<MemoryCounts, 'rule' | 'decision' | 'note'> {
+export function headCounts(idx: Pick<MemoryIndex, 'scopes' | 'counts'>, scope: string, pool?: Pick<Pool, 'entries'>): Pick<MemoryCounts, 'rule' | 'decision' | 'note'> {
   const s = scope === 'all' ? undefined : idx.scopes.find((x: MemoryScopeSummary) => x.key === scope);
   const c = s ? s.counts : idx.counts;
-  return { rule: c.rule, decision: c.decision, note: c.note };
+  // 决定：页头和决定页的“全部”从同一份条目算（在办 + 不在办），条目还没读到时先用 index 里的数
+  const decision: number = pool && pool.entries.length ? decisionCounts(pool, scope).all : c.decision;
+  return { rule: c.rule, decision, note: c.note };
 }
 
 /* ---------- 页签里的条目 ---------- */
@@ -169,6 +178,33 @@ export function decisionCounts(pool: Pick<Pool, 'entries'>, scope: ScopeFilter):
   const open: number = ds.filter(isOpenDecision).length;
   const done: number = ds.filter(isDoneDecision).length;
   return { open, done, all: open + done };
+}
+/** 待审核分成两块：要处理的（学到的、候选、矛盾、整理…），和迁移项（type === 'migrate'，负责人约束在按规矩带，不算待办）；迁移项按去处折成组 */
+export interface ReviewGroup { key: string; label: string; rows: MemoryReviewItem[] }
+export function reviewSplit(rows: MemoryReviewItem[], pool: Pick<Pool, 'projects'>): { todo: MemoryReviewItem[]; groups: ReviewGroup[] } {
+  const todo: MemoryReviewItem[] = [];
+  const by = new Map<string, ReviewGroup>();
+  for (const r of rows) {
+    if (r.type !== 'migrate') {
+      todo.push(r);
+      continue;
+    }
+    const key: string = reviewScope(r);
+    const label: string = key === 'global' ? '全局' : key === 'topics' ? '话题' : pool.projects[r.suggest.project_key ?? ''] || '专项';
+    const g: ReviewGroup = by.get(key) ?? { key, label, rows: [] };
+    g.rows.push(r);
+    by.set(key, g);
+  }
+  return { todo, groups: [...by.values()].sort((a: ReviewGroup, b: ReviewGroup) => b.rows.length - a.rows.length || a.label.localeCompare(b.label)) };
+}
+/** 组头一行 */
+export const groupLine = (g: Pick<ReviewGroup, 'label' | 'rows'>): string => `${g.label}：${g.rows.length} 条负责人约束在按规矩带`;
+/** 标题是正文开头自动截出来的（可能带省略号）就不再单独画标题，只画正文 */
+export function titleShown(r: Pick<MemoryReviewItem, 'title' | 'text'>): boolean {
+  const t: string = (r.title ?? '').replace(/(?:…|\.{3})$/u, '').trim();
+  if (!t) return false;
+  const x: string = (r.text ?? '').trim();
+  return !(x && (x === t || x.startsWith(t)));
 }
 export function reviewItems(pool: Pick<Pool, 'review'>, scope: ScopeFilter): MemoryReviewItem[] {
   return pool.review.filter((r: MemoryReviewItem) => scope === 'all' || reviewScope(r) === scope).sort((a: MemoryReviewItem, b: MemoryReviewItem) => b.created_at - a.created_at);
@@ -217,7 +253,7 @@ export function placeWord(e: Pick<MemoryEntry, 'scope' | 'project_key' | 'topic_
  * - 谁说的（你说的 / 负责人记的…）；
  * - 范围：只在看“全部范围”时写（选了某个范围，页面顶上已经写了）；
  * - 出处话题 T 号：和范围的 T 号一样就不写；
- * - 决定在“全部”里写在办 / 已办（只看在办时不写）；资料核过的写“核过 MM-DD”。
+ * - 决定在“全部”里写在办 / 不在办（只看在办时不写）；资料核过的写“核过 MM-DD”。
  * 规矩不写“带过 N 轮”，也不写“规矩”二字（页签已说）。
  */
 export function metaLine(e: MemoryEntry, ctx: { scope: ScopeFilter; view?: DecisionView; pool: Pick<Pool, 'projects' | 'topics'> }): string[] {
@@ -226,7 +262,7 @@ export function metaLine(e: MemoryEntry, ctx: { scope: ScopeFilter; view?: Decis
   if (ctx.scope === 'all') out.push(place);
   const from: string = tno(e.origin?.topic_number);
   if (from && from !== place) out.push(`来自 ${from}`);
-  if (e.kind === 'decision' && ctx.view && ctx.view !== 'open') out.push(isOpenDecision(e) ? '在办' : '已办');
+  if (e.kind === 'decision' && ctx.view && ctx.view !== 'open') out.push(isOpenDecision(e) ? '在办' : '不在办');
   if (e.kind === 'note' && e.verified_at) out.push(`核过 ${mmdd(e.verified_at)}`);
   return out;
 }
@@ -369,10 +405,29 @@ export function titleIndex(entries: Pick<MemoryEntry, 'code' | 'title'>[], title
   return m;
 }
 
+/** 一轮下面“带了 N 条记忆”展开的两段：用到的（有 code 的能点进去看），和这一轮带入的全部短码（标题查 memory:index.titles，查不到只留短码）。
+ *  used 和 codes 是两份不对应的清单，不按下标配对；带入的里已经列在“用到”里的不再列第二遍 */
+export interface TurnMemoryRow { code: string; title: string }
+export function turnMemoryRows(
+  mem: { used: { code: string; title: string }[]; codes: string[] },
+  titles: MemoryIndex['titles'] | null | undefined,
+): { used: TurnMemoryRow[]; carried: TurnMemoryRow[] } {
+  const known = titleIndex([], titles);
+  const used: TurnMemoryRow[] = mem.used.map((u) => ({ code: u.code, title: u.title || known.get(u.code) || '' }));
+  const seen = new Set<string>(used.map((u) => u.code).filter(Boolean));
+  const carried: TurnMemoryRow[] = [];
+  for (const code of mem.codes) {
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    carried.push({ code, title: known.get(code) ?? '' });
+  }
+  return { used, carried };
+}
+
 /* ---------- 导入（memory:import:<页>） ---------- */
 export const HARNESS_WORD: Record<string, string> = { claude_code: 'Claude Code', codex: 'Codex', antigravity: 'Antigravity' };
-/** 默认勾不勾：新的、不重复、不是旧仓库的才勾 */
-export const importChecked = (it: Pick<MemoryImportItem, 'state' | 'dup_of' | 'old_repo'>): boolean => it.state === 'new' && !it.dup_of && !it.old_repo;
+/** 默认勾不勾：一条都不勾（一页上百条，点一下就写入，得先看内容再自己勾）。保留参数是为了调用处不变 */
+export const importChecked = (_it?: Pick<MemoryImportItem, 'state' | 'dup_of' | 'old_repo'>): boolean => false;
 export interface ImportGroup {
   label: string;
   items: MemoryImportItem[];
@@ -399,6 +454,8 @@ export const ACTION_WORD: Record<string, string> = {
   add: '记下', edit: '改了', move: '换了范围', archive: '归档', restore: '放回', void: '作废', accept: '采纳', reject: '不要',
   accept_all: '全部采纳', reject_all: '全部不要', keep_left: '留旧的', keep_right: '留新的', keep_both: '两条都留', promote: '提到更大范围',
   import: '导入', ignore: '留在原工具', undo: '撤销',
+  // Bridge 的 memstore 还会写这几个动作（change/set_status 的 action）
+  confirm: '确认了', kind: '改了类别', settle: '标为已办', supersede: '替代了',
 };
 export const WHO_WORD: Record<string, string> = { owner: '你', lead: '负责人', butler: '管家', learn: '自动学习', import: '导入', bridge: 'Covey', web: '你' };
 export function logLine(l: MemoryLogItem): { who: string; action: string; title: string; because: string } {

@@ -20,6 +20,7 @@ from support.records import state_dir, write_job, write_topic
 from test_web_sync import WebCase
 
 from covey.app import memory_turn, web_memory
+from covey.app import web_sync as web_sync_mod
 from covey.app.web_ops import Ops
 from covey.core import harness_memory, memory_review, memory_usage, memstore, principles, projects, web_sync
 
@@ -126,6 +127,8 @@ def extra_fields(path) -> set:
         return {"topic_key", "topic_number"}
     if tail == "suggest":
         return {"project_key"}
+    if tail == "counts":
+        return {"migrate"}  # T870 Wave 3.5: the items memory_v2 carried over, of ``pending`` (MemoryCounts.migrate).
     return set()
 
 
@@ -221,9 +224,24 @@ class GoldenShapeTest(Case):
         self.assertEqual(index["revs"]["memory:global"], web_sync.rev(built["memory:global"]))
         self.assertEqual(set(index["revs"]), set(built))
         self.assertEqual(index["counts"]["pending"], 4)
+        self.assertEqual(index["counts"]["migrate"], 0)
         self.assertTrue({"dup", "conflict", "stale", "over_cap"} <= set(index["health"]), index["health"])
         for key, data in built.items():
             self.assertLessEqual(len(json.dumps(data, ensure_ascii=False).encode()), web_memory.KEY_BYTES, key)
+
+    def test_the_migrated_items_are_counted_apart_for_the_badge(self):
+        """T870 Wave 3.5 (P1-6): what memory_v2 carried over waits in 待审核 as type migrate; the index and each scope say
+        how many, the page's badge and first tab leave them out."""
+        self.seed()
+        for n in range(3):
+            memstore.review_put(self.state, {"type": "migrate", "title": f"迁移约束{n}", "text": f"负责人记的第{n}条约束",
+                                             "items": [f"project:{PID}:m{n}"],
+                                             "suggest": {"kind": "rule", "scope": "project", "project_key": PID}})
+        index = self.build()["memory:index"]
+        self.assertEqual((index["counts"]["pending"], index["counts"]["migrate"]), (7, 3))
+        scoped = {row["key"]: row["counts"] for row in index["scopes"]}
+        self.assertEqual(scoped[f"p:{PID}"]["migrate"], 3)
+        self.assertEqual(scoped["global"]["migrate"], 0)
 
     def test_entries_carry_no_use_counts_and_a_turns_use_moves_no_key(self):
         self.seed()
@@ -516,8 +534,23 @@ class IntegratedM2Test(Case):
                                  {"n": "", "ref": self.decision.ref, "scope": "project", "kind": "decision", "by": "lead"}],
                   "memory_used": [rule.code]}
         found = web_turns.memory_of(self.state, record)
-        self.assertEqual((found["count"], found["used"], found["codes"]), (2, [rule.title], [rule.code]))
+        self.assertEqual((found["count"], found["used"], found["codes"]), (2, [{"code": rule.code, "title": rule.title}],
+                                                                           [rule.code]))
         self.assertIsNone(web_turns.memory_of(self.state, {}))
+
+    def test_what_a_turn_used_names_its_own_code_not_the_carried_one_at_its_place(self):
+        """T870 Wave 3.5 (both reviews' P0, CUA C13): ``used`` and ``codes`` were two lists the page paired by position; a
+        turn that used the last entry it carried showed the first one's code. Each used one names its own code now."""
+        from covey.app import web_turns
+        made = [memstore.add(self.state, kind="rule", scope="global", text=f"第{n}条：提交前先跑测试{n}", title=f"规矩{n}")
+                for n in range(3)]
+        record = {"memory_ids": [{"n": e.code, "ref": e.ref, "scope": "global", "kind": "rule", "by": "owner"} for e in made],
+                  "memory_used": [made[2].code, "M9"]}
+        found = web_turns.memory_of(self.state, record)
+        self.assertEqual(found["codes"], [e.code for e in made])
+        self.assertEqual(found["used"], [{"code": made[2].code, "title": "规矩2"}, {"code": "", "title": "M9"}])
+        carried_only = web_turns.memory_of(self.state, {"memory_ids": record["memory_ids"]})
+        self.assertEqual((carried_only["count"], carried_only["used"]), (3, []))  # Still drawn, open-able, by its codes.
 
     def test_the_build_before_the_pages_ack_takes_the_last_previews(self):
         """CUA C6 (T870): the ack of the page's own change waited for a whole build, 21 previews most of it; a quick build
@@ -588,6 +621,8 @@ class CenterPushTest(WebCase):
         memory_usage.carried(self.state, [e.ref for e in memstore.entries(self.state)])
         self.assertEqual(self.sync.push_memory_center(force=True), 0)  # A turn's use moves no key.
         memstore.add(self.state, kind="note", scope="global", text="测试机在 3 楼")
+        self.assertEqual(self.sync.push_memory_center(), 0)  # Within CENTER_REST of the page's push: the pass waits.
+        self.sync.center_rest = 0.0
         self.assertEqual(self.sync.push_memory_center(), 2)  # memory:global and memory:index.
         self.assertEqual(self.keys_sent()[-2:], ["memory:global", "memory:index"])
 
@@ -654,6 +689,83 @@ class CenterPushTest(WebCase):
         glob = [each for batch in self.web.upserts for each in batch["items"] if each["key"] == "memory:global"][-1]
         self.assertEqual([e["title"] for e in glob["data"]["entries"]], ["先给结论"])
         self.assertEqual(glob["data"]["log"][0]["undo_token"], "w-op-m1")
+
+
+class CenterRaceTest(WebCase):
+    """T870 Wave 3.5 (both reviews' P0): the page's next change within the undo bar's 5 s is pushed before its ack. After a
+    quick build the pass builds it all again only CENTER_REST later; a push before an ack waits for a build in the making
+    (CENTER_LOCK_WAIT); a build that raises is tried again later and later, logged the first time and every tenth."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.dict(os.environ, {"COVEY_MEMORY": "1", "COVEY_KNOWLEDGE": "0"}))
+        memstore._cache.clear()
+        own_home(self, self.state / "home")
+        memstore.add(self.state, kind="rule", scope="global", text="提交前先跑测试")
+        self.sync.push_memory_center()
+
+    def builds(self):
+        made = []
+        real = web_memory.Center.build
+
+        def build(center, *args, **kw):
+            made.append(kw.get("quick", False))
+            return real(center, *args, **kw)
+        self.enterContext(mock.patch.object(web_memory.Center, "build", build))
+        return made
+
+    def test_no_full_build_right_after_the_pages_push(self):
+        made = self.builds()
+        memstore.add(self.state, kind="note", scope="global", text="测试机在 3 楼")
+        self.assertGreater(self.sync.push_memory_center(force=True), 0)
+        self.assertEqual(made, [True])
+        self.assertGreater(self.sync.center_rest, time.monotonic() + web_sync_mod.CENTER_REST - 5)
+        self.assertEqual(self.sync.push_memory_center(full=True), 0)  # The pass's next steps, within the rest: no build.
+        self.assertEqual(self.sync.push_memory_center(), 0)
+        self.assertEqual(made, [True])
+        memstore.add(self.state, kind="note", scope="global", text="撤销也要马上看到")
+        self.assertGreater(self.sync.push_memory_center(force=True), 0)  # The undo within the 5 s: built and pushed at once.
+        self.assertEqual(made, [True, True])
+        self.sync.center_rest = 0.0
+        self.sync.push_memory_center()
+        self.assertEqual(made, [True, True, False])  # Then the whole of it, the previews too.
+
+    def test_the_push_before_the_ack_waits_for_the_build_in_the_making(self):
+        import threading
+        held, release = threading.Event(), threading.Event()
+
+        def build_holding():
+            with self.sync.center_lock:
+                held.set()
+                release.wait(5)
+        other = threading.Thread(target=build_holding)
+        other.start()
+        self.addCleanup(other.join)
+        held.wait(5)
+        memstore.add(self.state, kind="note", scope="global", text="测试机在 3 楼")
+        threading.Timer(0.3, release.set).start()
+        started = time.monotonic()
+        self.assertGreater(self.sync.push_memory_center(force=True), 0)
+        self.assertGreaterEqual(time.monotonic() - started, 0.25)
+        glob = [each for batch in self.web.upserts for each in batch["items"] if each["key"] == "memory:global"][-1]
+        self.assertIn("测试机在 3 楼", json.dumps(glob["data"], ensure_ascii=False))
+
+    def test_a_build_that_raises_waits_longer_each_time_and_logs_once(self):
+        logged = []
+        self.enterContext(mock.patch.object(self.runtime, "log", logged.append))
+        self.sync.memory_center = None
+        self.sync.center_stamps = None
+        with mock.patch.object(web_memory.Center, "build", side_effect=OSError("nas")) as build:
+            self.assertEqual(self.sync.push_memory_center(full=True), 0)
+            self.assertEqual(self.sync.push_memory_center(full=True), 0)
+            self.assertEqual(self.sync.push_memory_center(), 0)
+        self.assertEqual(build.call_count, 1)  # Within the wait: not built again each pass step.
+        self.assertEqual(len([line for line in logged if "not built" in line]), 1)
+        self.assertGreater(self.sync.center_wait, time.monotonic() + web_sync_mod.CENTER_WAIT - 5)
+        self.sync.center_wait = 0.0
+        memstore.add(self.state, kind="note", scope="global", text="测试机在 3 楼")
+        self.assertGreater(self.sync.push_memory_center(full=True), 0)  # Readable again: built and pushed.
+        self.assertEqual(self.sync.center_broken, 0)
 
 
 def web_sync_error():

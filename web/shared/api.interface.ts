@@ -1634,7 +1634,8 @@ export interface MemoryEntry {
   in_progress?: boolean;    // 决定：在办
   rev: string;              // 条目 rev，memory_edit 的 base 用它做乐观锁
 }
-export interface MemoryCounts { rule: number; decision: number; note: number; pending: number }
+/** migrate：pending 里“迁移时带过来的”还没处理的条数（Bridge 新增，旧的没有这个字段就当 0）；它们不算待办，不进侧栏角标 */
+export interface MemoryCounts { rule: number; decision: number; note: number; pending: number; migrate?: number }
 export interface MemoryScopeSummary {
   key: string;              // 'global' | 'topics' | 'p:<专项 id>'
   title: string;
@@ -1722,8 +1723,9 @@ export interface MemoryEditPayloadV43 {
 
 /** v43：话题带的仓库（话题条目 repos；workspace 保留只读，旧话题显示用） */
 export interface TopicRepo { name: string; mode: 'read' | 'write'; worktree_tail?: string; branch?: string; rules_read: boolean }
-/** v43：一轮带了几条记忆（used 标题、codes 短码） */
-export interface TurnMemory { count: number; used: string[]; codes: string[] }
+/** v43：一轮带了几条记忆。used 是模型说用到的（code 可能是空串：旧 Bridge 只发标题），codes 是这一轮带入的全部短码；两个列表不按下标对应 */
+export interface TurnMemoryUsed { code: string; title: string }
+export interface TurnMemory { count: number; used: TurnMemoryUsed[]; codes: string[] }
 export interface SettingsRepoItem {
   name: string; tail: string; note: string; status: 'active' | 'readonly' | 'frozen';
   write_mode: 'worktree' | 'inplace'; branch: string; rules: string[]; last_used?: number; live_topics: number;

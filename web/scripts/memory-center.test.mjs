@@ -229,11 +229,12 @@ test('预览：四段（规矩、决定、资料、只列标题），短码换�
   assert.deepEqual(C.previewSections(fresh, (c) => titles.get(c) ?? '').map((x) => x.key), ['rules']);
 });
 
-test('导入：按来源分组，新的在前；默认只勾新的、不重复、不是旧仓库的', () => {
+test('导入：按来源分组，新的在前；默认一条都不勾（主按钮写“先勾选要导入的”）', () => {
   const items = K['memory:import:0'].items;
   const g = C.importGroups(items);
   assert.deepEqual(g.map((x) => x.label), ['Claude Code · demo-repo', 'Codex · demo-repo', 'Antigravity · demo-repo']);
-  assert.deepEqual(items.filter(C.importChecked).map((i) => i.fingerprint), ['fp-0001']);
+  assert.deepEqual(items.filter(C.importChecked).map((i) => i.fingerprint), []);
+  assert.match(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src', 'cv', 'MemoryCenter.tsx'), 'utf8'), /先勾选要导入的/u);
   assert.ok(C.importMeta(items[1], pool()).includes('已在记忆里'));
   assert.ok(C.importMeta(items[2], pool()).includes('旧仓库'));
   assert.ok(C.importMeta(items[0], pool()).includes('建议记成规矩·全局'));
@@ -244,6 +245,19 @@ test('记录与待审核的说法：谁、做了什么、因为哪句话；待�
   assert.deepEqual(C.logLine(a), { who: '你', action: '采纳', title: '提交前先跑测试', because: 'T12 “提交之前先跑测试”' });
   assert.equal(C.logLine(b).because, '');
   for (const act of MEMORY_EDIT_ACTIONS_V43) assert.ok(C.ACTION_WORD[act], act);
+  // Bridge 写进变更记录的全部动作都有中文词，记录页不露英文动词（你confirm）
+  const bridge = ['add', 'edit', 'archive', 'restore', 'void', 'settle', 'supersede', 'kind', 'confirm', 'move', 'undo', 'accept', 'reject', 'keep_left', 'keep_right', 'keep_both'];
+  const core = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'covey');
+  for (const f of ['core/memstore.py', 'core/memory_review.py', 'app/web_memory.py', 'app/memory_tidy.py']) {
+    let src = '';
+    try { src = readFileSync(join(core, f), 'utf8'); } catch { continue; }
+    for (const m of src.matchAll(/\baction="([a-z_]+)"/gu)) bridge.push(m[1]);
+  }
+  for (const act of new Set(bridge)) {
+    assert.ok(C.ACTION_WORD[act], `动作 ${act} 缺中文词`);
+    assert.doesNotMatch(C.ACTION_WORD[act], /^[a-z_]+$/u, act);
+  }
+  assert.equal(C.logLine({ at: 1, who: 'owner', action: 'confirm', refs: [], title: '同事机器' }).action, '确认了');
   const [learn, conflict] = K['memory:global'].review;
   assert.deepEqual(C.reviewMeta(learn, pool()), ['从你的话里学到', '建议记成规矩·全局', 'T12', '说过不止一次']);
   assert.deepEqual(C.reviewMeta(conflict, pool()).slice(0, 2), ['和已有的矛盾', '建议记成资料·全局']);
@@ -282,4 +296,95 @@ test('页头数字：选了范围就写那个范围的数，全部范围写总�
   assert.deepEqual(C.headCounts(idx, 'p:demo01'), { rule: 0, decision: 1, note: 0 });
   assert.deepEqual(C.headCounts(idx, 'global'), { rule: 1, decision: 0, note: 1 });
   assert.deepEqual(C.headCounts(idx, 'p:gone'), { rule: 1, decision: 1, note: 2 }, '没有这个范围时退回总数');
+});
+
+test('一轮下“带了 N 条记忆”：用到的和带入的两份清单不按下标配对，标题查 memory:index.titles，查不到只留短码', () => {
+  const titles = [['R7K2', '提交前先跑测试', 'k1'], ['D3MX9', '部署走灰度', 'k2'], ['Q1W2', '旧仓库不要动', 'k3']];
+  // 用到的是后半段那条：不能被配成 codes[0]
+  const r = C.turnMemoryRows({ used: [{ code: 'D3MX9', title: '部署走灰度' }], codes: ['R7K2', 'D3MX9', 'Q1W2', 'ZZZZ'] }, titles);
+  assert.deepEqual(r.used, [{ code: 'D3MX9', title: '部署走灰度' }]);
+  assert.deepEqual(r.carried, [{ code: 'R7K2', title: '提交前先跑测试' }, { code: 'Q1W2', title: '旧仓库不要动' }, { code: 'ZZZZ', title: '' }]);
+  // 旧 Bridge：used 只有标题（code 空），不渲染成链接，也不影响 codes 的列出；没有 titles 就只给短码
+  const old = C.turnMemoryRows({ used: [{ code: '', title: '只有标题' }], codes: ['R7K2'] }, null);
+  assert.deepEqual(old.used, [{ code: '', title: '只有标题' }]);
+  assert.deepEqual(old.carried, [{ code: 'R7K2', title: '' }]);
+  // used 空、codes 非空也有内容可展开
+  assert.equal(C.turnMemoryRows({ used: [], codes: ['R7K2'] }, titles).carried.length, 1);
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src', 'cv', 'AnswerFoot.tsx'), 'utf8');
+  assert.match(src, /codes\.length > 0/u);
+  assert.doesNotMatch(src, /mem\.codes\[i\]/u);
+  assert.doesNotMatch(src, /\{mem\.used\.length \? \(\s*<button/u);
+});
+
+const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'client', 'src');
+const mk = (over) => ({ key: 'r', type: 'migrate', title: '', text: '', suggest: { kind: 'rule', scope: 'project', project_key: 'demo01' }, created_at: 1, ...over });
+
+test('待审核角标和默认页签不算迁移项：pending - (counts.migrate ?? 0)，旧 Bridge 没有这个字段就当 0', () => {
+  assert.equal(C.todoPending({ pending: 90, migrate: 90 }), 0);
+  assert.equal(C.todoPending({ pending: 93, migrate: 90 }), 3);
+  assert.equal(C.todoPending({ pending: 5 }), 5);
+  assert.equal(C.todoPending({ pending: 2, migrate: 9 }), 0);
+  assert.equal(C.todoPending(undefined), 0);
+  const c = (counts) => ({ counts: { rule: 0, decision: 0, note: 0, ...counts } });
+  assert.equal(C.defaultTab(c({ pending: 90, migrate: 90 })), 'rules');
+  assert.equal(C.defaultTab(c({ pending: 91, migrate: 90 })), 'review');
+  assert.equal(C.defaultTab(c({ pending: 4 })), 'review');
+  assert.equal(C.scopeOptions({ scopes: [], counts: { rule: 0, decision: 0, note: 0, pending: 90, migrate: 90 } })[0].pending, 0);
+  assert.match(readFileSync(join(SRC, 'cv', 'Shell.tsx'), 'utf8'), /todoPending\(mem\.index\?\.counts\)/u);
+});
+
+test('待审核里的迁移项按专项折成组：组头一行，组里没有一键批量；标题是正文开头就不重复画', () => {
+  const rows = [mk({ key: 'a', text: '长文 A' }), mk({ key: 'b', text: '长文 B' }), mk({ key: 'c', suggest: { kind: 'rule', scope: 'global' } }), mk({ key: 'd', type: 'learn' })];
+  const { todo, groups } = C.reviewSplit(rows, { projects: { demo01: '推理服务快速部署' } });
+  assert.deepEqual(todo.map((r) => r.key), ['d']);
+  assert.deepEqual(groups.map((g) => [g.label, g.rows.length]), [['推理服务快速部署', 2], ['全局', 1]]);
+  assert.equal(C.groupLine(groups[0]), '推理服务快速部署：2 条负责人约束在按规矩带');
+  assert.equal(C.titleShown({ title: '提交前先跑测试', text: '提交前先跑测试，再推送' }), false);
+  assert.equal(C.titleShown({ title: '提交前先跑测试…', text: '提交前先跑测试，再推送' }), false);
+  assert.equal(C.titleShown({ title: '测试规矩', text: '提交前先跑测试' }), true);
+  assert.equal(C.titleShown({ title: '只有标题', text: '' }), true);
+  const src = readFileSync(join(SRC, 'cv', 'MemoryCenter.tsx'), 'utf8');
+  const grp = src.slice(src.indexOf('const MigrateGroup'), src.indexOf('const ReviewTab'));
+  assert.doesNotMatch(grp, /全部采纳|全部不要|allOp/u);
+  assert.match(src, /allOp\(a, rows\)/u);
+});
+
+test('决定页：页头“决定 N”和分段“全部”同口径（都从条目算），“已办”改叫“不在办”；撤销失败有页面提示', () => {
+  const entries = [
+    { key: 'd1', code: 'D1', kind: 'decision', status: 'active', in_progress: true, title: 'a', text: 'a', scope: 'global' },
+    { key: 'd2', code: 'D2', kind: 'decision', status: 'done', title: 'b', text: 'b', scope: 'global' },
+    { key: 'd3', code: 'D3', kind: 'decision', status: 'active', in_progress: false, title: 'c', text: 'c', scope: 'global' },
+    { key: 'd4', code: 'D4', kind: 'decision', status: 'archived', title: 'd', text: 'd', scope: 'global' },
+  ];
+  const p = { entries, review: [], log: [], projects: {}, topics: {} };
+  const dc = C.decisionCounts(p, 'all');
+  const index = { scopes: [], counts: { rule: 1, decision: 99, note: 2, pending: 0 } };
+  assert.equal(C.headCounts(index, 'all', p).decision, dc.all);
+  assert.equal(C.headCounts(index, 'all', p).decision, dc.open + dc.done);
+  assert.equal(C.headCounts(index, 'all').decision, 99, '条目还没读到时先用 index 里的数');
+  assert.equal(C.headCounts(index, 'all', { entries: [] }).decision, 99);
+  const src = readFileSync(join(SRC, 'cv', 'MemoryCenter.tsx'), 'utf8');
+  assert.match(src, /done: '不在办'/u);
+  assert.doesNotMatch(src, /done: '已办'/u);
+  assert.match(src, /headCounts\(index, scope, pool\)/u);
+  assert.match(src, /id\.startsWith\('undo:'\)\) toast\.error/u);
+});
+
+test('首屏：非话题页（记忆中心、设置）晚 3 秒再预热话题，话题页和大厅马上开始', async () => {
+  const W = await import('../client/src/cv/warmup.ts');
+  assert.equal(W.warmupDelay('/'), 0);
+  assert.equal(W.warmupDelay('/topics/abc'), 0);
+  assert.equal(W.warmupDelay('/memory'), 3000);
+  assert.equal(W.warmupDelay('/memory/review'), 3000);
+  assert.equal(W.warmupDelay('/settings/memory'), 3000);
+  assert.equal(W.warmupDelay('/memoryx'), 0);
+  assert.match(readFileSync(join(SRC, 'cv', 'Shell.tsx'), 'utf8'), /useWarmup\(warmupDelay\(loc\.pathname\)\)/u);
+  assert.match(readFileSync(join(SRC, 'hooks', 'use-workbench.ts'), 'utf8'), /delayMs \+ 150 \* i/u);
+});
+
+test('390px：范围下拉右侧留够放箭头的空，.mc-link 点按区不小于 40px', () => {
+  const css = readFileSync(join(SRC, 'cv', 'memorycenter.css'), 'utf8');
+  const phone = css.slice(css.indexOf('@media (max-width:640px)'));
+  assert.match(phone, /\.cv \.mc-sel\{[^}]*padding-right:30px/u);
+  assert.match(phone, /\.cv \.mc-link,\.cv \.mc-seg button\{min-height:40px;min-width:40px/u);
 });

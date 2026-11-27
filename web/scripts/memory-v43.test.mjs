@@ -101,10 +101,15 @@ test('launch、switch 的 repos：golden 过，超过 10 项、name 太长、mod
 });
 
 test('一轮的 memory：Covey 推来的 {count, used, codes} 原样留下（截断到上限），不像的丢掉', () => {
-  assert.deepEqual(M.turnMemoryOf({ count: 3, used: ['提交前先跑测试'], codes: ['R7K2', 'D3MX9'] }), { count: 3, used: ['提交前先跑测试'], codes: ['R7K2', 'D3MX9'] });
+  assert.deepEqual(M.turnMemoryOf({ count: 3, used: ['提交前先跑测试'], codes: ['R7K2', 'D3MX9'] }), { count: 3, used: [{ code: '', title: '提交前先跑测试' }], codes: ['R7K2', 'D3MX9'] });
+  // 新契约：used 是 [{code, title}]，code 可以是空串；不认的形状丢掉
+  assert.deepEqual(M.turnMemoryOf({ count: 5, used: [{ code: 'R7K2', title: '提交前先跑测试' }, { code: '', title: '只有标题' }, 7, null, {}], codes: ['R7K2', 'D3MX9'] }),
+    { count: 5, used: [{ code: 'R7K2', title: '提交前先跑测试' }, { code: '', title: '只有标题' }], codes: ['R7K2', 'D3MX9'] });
+  assert.deepEqual(M.turnMemoryOf({ count: 2, used: [], codes: ['A1', 'B2'] }), { count: 2, used: [], codes: ['A1', 'B2'] });
+  assert.equal(M.turnMemoryOf({ count: 2, used: [{ code: 'x'.repeat(50), title: 't'.repeat(200) }], codes: [] }).used[0].title.length, 80);
   assert.equal(M.turnMemoryOf(null), null);
   assert.equal(M.turnMemoryOf([]), null);
   assert.equal(M.turnMemoryOf({ count: 0, used: [], codes: [] }), null);
-  assert.deepEqual(M.turnMemoryOf({ count: -1, used: [1, 'x'], codes: 'R1' }), { count: 0, used: ['x'], codes: [] });
-  assert.equal(M.turnMemoryOf({ count: 2, used: ['a'.repeat(200)], codes: [] }).used[0].length, 80);
+  assert.deepEqual(M.turnMemoryOf({ count: -1, used: [1, 'x'], codes: 'R1' }), { count: 0, used: [{ code: '', title: 'x' }], codes: [] });
+  assert.equal(M.turnMemoryOf({ count: 2, used: ['a'.repeat(200)], codes: [] }).used[0].title.length, 80);
 });

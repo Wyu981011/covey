@@ -446,6 +446,8 @@ def class3(ctx, record: dict, questions, now=None) -> list:
             if quiet_until(state, key) > stamp:
                 continue
             context = search_context(topic, project, CLASS_SEARCH_TAU, "class")
+            if not project:  # An ordinary topic's class is every ordinary topic's (``ours``): read past the topic's own.
+                context["owner"] = True
             same = {}
             for entry, _ in _candidates(state, search, question, context, CLASS_CANDIDATES):
                 ours = entry.owner_key == project if project else (entry.scope == "topic" and not project_of(state, entry.owner_key))

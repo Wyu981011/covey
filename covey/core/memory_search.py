@@ -290,10 +290,15 @@ def _aliases(entry) -> list:
 
 
 def _allowed(entry, context) -> bool:
+    """Whether a turn of ``context`` may read ``entry``: the owner's own turn everything; anyone else's only the turn's own
+    topic's and its project's (not 全局, not another project's or topic's: what the turns read before memory_v2)."""
     if entry.status not in context["statuses"] or entry.kind not in context["kinds"]:
         return False
-    if entry.scope == "global" and not context["owner"]:
-        return False
+    if not context["owner"]:
+        mine = (entry.scope == "topic" and bool(context["topic"]) and entry.owner_key == context["topic"]) or (
+            entry.scope == "project" and bool(context["project"]) and entry.owner_key == context["project"])
+        if not mine:
+            return False
     return not (entry.redacted and not context["redacted"])
 
 

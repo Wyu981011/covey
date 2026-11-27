@@ -3,7 +3,8 @@ the turn's rules (``block``), the rest at the tail of its message (``tail``), th
 
 ``block`` is the 规矩 alone: 全局 ones on the owner's own turn (``owner_turn()``), the project's in an ordinary topic of a project,
 the topic's own; the owner's first, then as they were written; past a scope's room (RULE_CAPS: 全局 15 and 1,200 characters,
-专项 10 and 1,000, 话题 5 and 400) only their titles, never one dropped. It is the same every turn of a topic while its rules
+专项 10 and 1,000, 话题 5 and 400, given to the owner's first and then the newest: ``pick_rules``) only their titles, never one
+dropped. It is the same every turn of a topic while its rules
 are, so the rules stay one cacheable prefix. ``tail`` is what changes turn by turn: the decisions in progress (the topic's own
 until it ends or the same question has a newer answer; another topic's of the project while that topic is going and has not
 delivered a commit since, and at most IN_PROGRESS_HOURS old otherwise: ``in_progress``), the notes that the turn's words, the
@@ -95,6 +96,26 @@ def _rule_order(entry):
     return (entry.said != "owner", entry.at, entry.code)
 
 
+def _room_order(entry):
+    return (entry.said != "owner", -entry.at, entry.code)
+
+
+def pick_rules(found, scope) -> tuple[list, list]:
+    """(carried, titles only) of one scope's rules ``found``: the room (RULE_CAPS) goes to the owner's first, then the
+    newest, so a store past its room lists only its oldest rules not the owner's; both are then in the written order
+    (``_rule_order``), the prefix the turn's rules make staying the same while the rules do. app/web_memory.py marks the
+    same ones ``over_cap``."""
+    count, chars = RULE_CAPS[scope]
+    picked, over, used = [], [], 0
+    for entry in sorted(found, key=_room_order):
+        if len(picked) < count and used + len(entry.text) <= chars:
+            picked.append(entry)
+            used += len(entry.text)
+        else:
+            over.append(entry)
+    return sorted(picked, key=_rule_order), sorted(over, key=_rule_order)
+
+
 def rules_of(state_dir, *, topic="", project="", owner=False, redacted_on=False) -> tuple[list, list]:
     """(carried, titles only) of the rules a turn of ``topic`` in ``project`` reads (the module's docstring)."""
     carried, left = [], []
@@ -104,14 +125,9 @@ def rules_of(state_dir, *, topic="", project="", owner=False, redacted_on=False)
     for scope, key in scopes:
         found = [entry for entry in memstore.entries(state_dir, scope=scope, owner_key=key, kinds=("rule",))
                  if _readable(entry, redacted_on)]
-        count, chars = RULE_CAPS[scope]
-        used = 0
-        for entry in sorted(found, key=_rule_order):
-            if len([e for e in carried if e.scope == scope]) < count and used + len(entry.text) <= chars:
-                carried.append(entry)
-                used += len(entry.text)
-            else:
-                left.append(entry)
+        picked, over = pick_rules(found, scope)
+        carried += picked
+        left += over
     return carried, left
 
 

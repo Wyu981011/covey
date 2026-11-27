@@ -34,6 +34,15 @@ export type Pull =
   | { t: 'upgrade' }
   | { t: 'quota' };
 
+/**
+ * 记忆回执后只重取两个查询：旧的 ['memory']（v37 设置页）和 ['memory','memory:index']（v43 的小键）。
+ * 带 rev 的数据键（['memory', 键名, rev]）不重取：它们 staleTime 为 Infinity，缓存键里的 rev 就是内容的版本；
+ * 回执后立刻重取，会把 Bridge 此刻（可能已是新 rev）的内容写进旧 rev 的键里，rev 走 A→B→A 时就读到 B 的内容。
+ * 新 rev 由 index 带出来，页面自然去取新键。
+ */
+export const isMemoryPullKey = (key: readonly unknown[]): boolean =>
+  key[0] === 'memory' && (key.length === 1 || (key.length === 2 && key[1] === 'memory:index'));
+
 export const pullId = (p: Pull): string => (p.t === 'turns' ? `turns:${p.key}` : p.t);
 
 /**

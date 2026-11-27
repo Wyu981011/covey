@@ -149,8 +149,8 @@ export function prefetchTurns(qc: QueryClient, key: string): void {
   void qc.prefetchQuery({ queryKey: turnsKey(key), queryFn: () => fetchMerged(qc, key), staleTime: 5000, gcTime: KEEP_MS });
 }
 
-/** 快照一到就把要紧的话题先取好（等你、在做、没看过的、最近的几个），点进去时已在缓存里 */
-export function useWarmup(): void {
+/** 快照一到就把要紧的话题先取好（等你、在做、没看过的、最近的几个），点进去时已在缓存里。delayMs：非话题页（记忆中心、设置）晚一点再开始，让出首屏 */
+export function useWarmup(delayMs = 0): void {
   const qc: QueryClient = useQueryClient();
   const { data } = useSnapshot();
   const keys: string = useMemo(() => {
@@ -161,9 +161,9 @@ export function useWarmup(): void {
   }, [data]);
   useEffect(() => {
     const list: string[] = keys.split(',').filter(Boolean);
-    const timers: number[] = list.map((k: string, i: number) => window.setTimeout(() => prefetchTurns(qc, k), 150 * i));
+    const timers: number[] = list.map((k: string, i: number) => window.setTimeout(() => prefetchTurns(qc, k), delayMs + 150 * i));
     return () => timers.forEach((t: number) => window.clearTimeout(t));
-  }, [keys, qc]);
+  }, [keys, qc, delayMs]);
 }
 
 export const useSearch = (q: string) =>

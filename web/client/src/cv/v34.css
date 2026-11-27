@@ -34,3 +34,4 @@
 .cv.m .v34-tt{max-width:calc(100% - 90px)}
 .cv.m .v34-row .v34-later,.cv.m .v34-row .v34-drafts{flex:1 1 100%;flex-wrap:wrap}
 .cv.m .v34-lt{white-space:normal}
+.cv .afoot-list .afoot-sub{font-weight:500;color:var(--t3);font-size:11px;margin-top:2px}

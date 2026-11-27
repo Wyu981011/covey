@@ -73,6 +73,10 @@ MAX_LEFT = 3  # Left-behind steps still stuck: with this many no new thread is s
 LEFT_WAIT = 300  # Seconds waited at MAX_LEFT; then the next step runs in a new thread anyway (an open stuck for good must not stop the push).
 IMAGES_WAIT = 300  # Seconds images are held back after the page did not take one (push_images).
 CENTER_WAIT, CENTER_WAIT_MAX = 60.0, 1800.0  # The memory center's keys after a refused post: tried again this long after, doubled each time.
+# After the page's change was pushed (a quick build, before its ack) the pass builds it all again no sooner than this: the page's
+# next change within the undo bar's 5 s (an undo) does not find a full build holding the lock (T870 Wave 3.5).
+CENTER_REST = 20.0
+CENTER_LOCK_WAIT = 5.0  # A push before the page's ack waits this long for a build the pass is making, then goes without.
 INBOX_WAIT = 8  # Seconds a page that knows ``wait`` holds an empty /sync/inbox (it answers ``waited``); within the client's TIMEOUT.
 OP_WAIT = 5.0  # Seconds an inbox step waits for the operations it handed to their lanes before it asks again.
 PACE_SECONDS = 60.0  # A quick look's, a touch's and a reread's step times are logged once this often (Pace).
@@ -200,6 +204,7 @@ class WebSync:
         # row and no try before (monotonic) while the page refuses them; the builder, made once the state directory is known.
         self.center_stamps, self.center_built, self.center_lock, self.center_failed = None, None, threading.Lock(), 0
         self.center_wait, self.memory_center = 0.0, None
+        self.center_rest, self.center_broken = 0.0, 0  # No full build before (monotonic); builds that raised in a row.
         self.upgrade_stamps, self.upgrade_lock, self.upgrade_failed = None, threading.Lock(), 0  # The 版本与更新 item (push_upgrade).
         self.quota_stamps, self.quota_lock, self.quota_failed = None, threading.Lock(), 0  # The 账号与额度 item (push_quota).
         self.asks_failed, self.asks_tried, self.asks_full = 0, None, False  # The 要你处理 item (push_asks): failures in a row, the rev tried last, a pass began.
@@ -972,7 +977,7 @@ class WebSync:
         v43 refuses the keys: logged the first time and every tenth, tried again later and later (at most CENTER_WAIT_MAX).
         How many items went."""
         state = getattr(self.env, "state_dir", None)
-        if not state or not self.center_lock.acquire(blocking=False):
+        if not state or not (self.center_lock.acquire(timeout=CENTER_LOCK_WAIT) if force else self.center_lock.acquire(blocking=False)):
             return 0
         try:
             on = web_memory.enabled()
@@ -983,7 +988,7 @@ class WebSync:
             clock = time.monotonic()
             due = force or self.center_stamps is None or stamps != self.center_stamps or \
                 (full and clock - (self.center_built or 0) >= web_memory.REBUILD_SECONDS)
-            if not due or (not force and clock < self.center_wait):
+            if not due or (not force and clock < max(self.center_wait, self.center_rest)):
                 return 0
             if on:
                 if self.memory_center is None:
@@ -991,8 +996,10 @@ class WebSync:
                 built = self.memory_center.build(quick=force)  # Before the page's ack: the previews of the last build.
             else:
                 built = {web_memory.INDEX_KEY: web_memory.off_index()}
-            # After a quick one the next pass builds it all again (the previews), off the page's ack.
-            self.center_stamps, self.center_built = (None if force and on else stamps), clock
+            # After a quick one a pass builds it all again (the previews), off the page's ack and CENTER_REST later.
+            self.center_stamps, self.center_built, self.center_broken = (None if force and on else stamps), clock, 0
+            if force and on:
+                self.center_rest = clock + CENTER_REST
             items = [web_sync.item("settings", key, data) for key, data in built.items()]
             index = [each for each in items if each["key"] == web_memory.INDEX_KEY]
             fresh = [each for each in items if each["key"] != web_memory.INDEX_KEY and self.sent.get(("settings", each["key"])) != each["rev"]]
@@ -1021,8 +1028,11 @@ class WebSync:
                 self.sent.pop(("settings", each["key"]), None)
             self.sent_changed = True
             return len(fresh) + len(index) + len(gone)
-        except Exception as exc:  # noqa: BLE001 - a memory that cannot be read stops nothing
-            self.runtime.log(f"web memory center not built: {type(exc).__name__}")
+        except Exception as exc:  # noqa: BLE001 - a memory that cannot be read stops nothing; tried again later and later
+            self.center_broken += 1
+            self.center_wait = time.monotonic() + min(CENTER_WAIT * 2 ** (self.center_broken - 1), CENTER_WAIT_MAX)
+            if self.center_broken == 1 or self.center_broken % 10 == 0:
+                self.runtime.log(f"web memory center not built ({self.center_broken}): {type(exc).__name__}")
             return 0
         finally:
             self.center_lock.release()

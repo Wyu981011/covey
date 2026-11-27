@@ -17,7 +17,7 @@ from support.records import write_job, write_topic
 
 from covey.app import memory_turn
 from covey.app.prompts import RULES_HEAD, TAIL_HEAD, turn_tail
-from covey.core import memory, memory_review, memstore, projects
+from covey.core import memory, memory_review, memory_search, memstore, projects
 from covey.core.jobs import find_job_record, job_key
 
 PID, CHAT = "a1b2c3d4e5f6", "oc_owner_dm"
@@ -101,8 +101,28 @@ class RulesTest(Case):
         carried = [line for line in text.splitlines() if line.startswith("- R")]
         self.assertEqual(len(carried), 10)
         self.assertIn("还有 2 条规矩放不下", text)
-        self.assertIn("规矩10", text)
-        self.assertIn("规矩11", text)
+        self.assertIn("规矩0", text)  # The room goes to the newest: the two oldest are listed by title.
+        self.assertIn("规矩1", text)
+        self.assertNotIn("第0条", text)
+        self.assertIn("第11条", text)
+
+    def test_past_the_room_the_oldest_not_the_owners_are_the_ones_listed_by_title(self):
+        made = [self.rule(f"负责人记的第{i}条：上线前在 1 台上验证{i}", scope="project", owner_key=PID, said="summary",
+                          title=f"旧约束{i}", now=1000.0 + i) for i in range(10)]
+        mine = self.rule("同事机器全程只读，不改任何东西", scope="project", owner_key=PID, title="同事机器只读", now=900.0)
+        newest = self.rule("连夜改造不动 stable 通道", scope="project", owner_key=PID, said="summary", title="不动 stable",
+                           now=5000.0)
+        carried, left = memory_turn.rules_of(self.state, project=PID, owner=True)
+        self.assertEqual([e.ref for e in left], [made[0].ref, made[1].ref])  # The two oldest the owner did not say.
+        self.assertIn(mine.ref, [e.ref for e in carried])
+        self.assertIn(newest.ref, [e.ref for e in carried])
+        # Carried in the written order (the owner's first, then the oldest): the rules' prefix stays put.
+        self.assertEqual([e.ref for e in carried], [mine.ref, *(e.ref for e in made[2:]), newest.ref])
+        text = self.block(T1)
+        self.assertIn("同事机器全程只读", text)
+        self.assertIn("连夜改造不动 stable 通道", text)
+        self.assertIn("旧约束0", text)
+        self.assertNotIn("上线前在 1 台上验证0", text)
 
     def test_the_leads_rule_says_so_and_a_pending_one_is_not_carried(self):
         self.rule("接口叫 bill_v2，别改名", scope="project", owner_key=PID, said="summary")
@@ -165,12 +185,46 @@ class NotesTest(Case):
         self.assertEqual(self.tail(T1, "这次网页改动怎么验收？", owner=False), "")
 
 
+class OthersTurnTest(Case):
+    """T870 Wave 3.5 (Fable P0-2): a turn not the owner's reads its own topic's and its project's memory only, as it did before
+    memory_v2: no 全局, no other project's notes or decisions (not even their titles), no other topic's."""
+
+    def setUp(self):
+        super().setUp()
+        self.other = "f6e5d4c3b2a1"
+        projects.create(self.state, projects.new_record(chat_id=CHAT, name="推理服务", project_id=self.other, now=time.time()))
+        memstore.add(self.state, kind="note", scope="project", owner_key=self.other, text="推理服务的网页改动由值班同学用无头浏览器验收",
+                     title="推理服务网页验收", said="summary", by="lead")
+        memstore.add_decision(self.state, scope="project", owner_key=self.other, question="推理服务的网页改动怎么验收？",
+                              answer="无头浏览器截深浅两色", topic_key="c3" * 32, question_ref="c3c3-1", now=time.time() - 60)
+        memstore.add(self.state, kind="note", scope="topic", owner_key=T2, text="话题8的网页改动用无头浏览器截图验收", title="话题8验收")
+        memstore.add(self.state, kind="note", scope="project", owner_key=PID, text="网关的网页改动用无头浏览器截深浅两色验收",
+                     title="网关网页验收")
+
+    def test_another_projects_notes_and_decisions_are_not_read_nor_listed(self):
+        notes, listed = memory_turn.notes_of(self.state, ["网关这次的网页改动怎么用无头浏览器截深浅两色验收？"], topic=T1, project=PID, owner=False)
+        self.assertIn("网关的网页改动用无头浏览器截深浅两色验收", [entry.text for entry, _ in notes])
+        seen = [entry.text for entry, _ in notes] + [item["title"] + item["text"] for item in listed]
+        self.assertFalse([t for t in seen if "推理服务" in t or "话题8" in t], seen)
+        mine, mine_listed = memory_turn.notes_of(self.state, ["网关这次的网页改动怎么用无头浏览器截深浅两色验收？"], topic=T1, project=PID, owner=True)
+        self.assertTrue([t for t in [e.text for e, _ in mine] + [i["title"] + i["text"] for i in mine_listed] if "推理服务" in t])
+        hits = memory_search.eval_search(self.state, "网关的网页改动怎么用无头浏览器验收", {"topic": T1, "project": PID, "owner": False},
+                                         limit=10)
+        self.assertTrue(hits)
+        self.assertTrue(all((h["scope"], h["owner_key"]) in (("project", PID), ("topic", T1)) for h in hits), hits)
+
+    def test_the_owners_own_turn_still_reads_past_the_project(self):
+        mine = memory_search.eval_search(self.state, "网关的网页改动怎么用无头浏览器验收", {"topic": T1, "project": PID, "owner": True},
+                                         limit=10)
+        self.assertIn(self.other, {h["owner_key"] for h in mine})
+
+
 class RecordTest(Case):
     def test_the_record_names_what_was_carried_whole_and_what_only_by_title(self):
         made = self.rule("回复主人用中文")
+        early = self.rule("专项规矩首条：合入后通知负责人", scope="project", owner_key=PID, now=900.0)
         for i in range(10):
             self.rule(f"专项规矩{i}：发布前先验证第{i}项", scope="project", owner_key=PID, now=1000.0 + i)
-        late = self.rule("专项规矩末条：合入后通知负责人", scope="project", owner_key=PID, now=2000.0)
         job = self.job(T1)
         write_job(self.state, job_key(job.message_id, job.job_id), job_id=5, topic_id=T1, chat_id=CHAT, status="running",
                   message_id=job.message_id)
@@ -180,7 +234,7 @@ class RecordTest(Case):
         self.assertEqual(ids[made.ref]["n"], made.code)
         self.assertTrue(memstore.CODE_RE.match(ids[made.ref]["n"]))
         self.assertEqual(ids[made.ref]["kind"], "rule")
-        self.assertIn(late.ref, [row["ref"] for row in record["memory_listed"]])
+        self.assertIn(early.ref, [row["ref"] for row in record["memory_listed"]])  # Past the room: the oldest by title.
 
 
 class PreviewTest(Case):

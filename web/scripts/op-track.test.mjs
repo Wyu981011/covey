@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { QueryClient } from '@tanstack/query-core';
 import * as K from '../client/src/cv/opTrack.ts';
 import * as O from '../client/src/cv/opWords.ts';
 
@@ -262,4 +263,48 @@ test('交过的题等新状态时，题面照话题的发件行锁住：刷新�
   assert.match(q, /const prior: OutboxView \| null = !own && token \? priorAnswer\(ops, token\) : null;/u);
   assert.match(q, /const closing: boolean = own \|\| !!prior;/u);
   assert.match(q, /act: own \? ans\.act : prior \? answerAct\(prior\) : ''/u);
+});
+
+test('记忆回执后只重取 memory:index（和旧键 memory），带 rev 的数据键不重取：rev 走 A→B→A，缓存里不残留 B 的内容', async () => {
+  assert.equal(K.isMemoryPullKey(['memory']), true);
+  assert.equal(K.isMemoryPullKey(['memory', 'memory:index']), true);
+  assert.equal(K.isMemoryPullKey(['memory', 'memory:items', 'A']), false);
+  assert.equal(K.isMemoryPullKey(['settings']), false);
+  // 假 Bridge：index 说现在的 rev，数据键永远回当下的内容
+  let bridge = { rev: 'A', body: 'content-A' };
+  const qc = new QueryClient();
+  const fetched = [];
+  // 页面在看：给它们挂上观察者，使其 active
+  const { QueryObserver } = await import('@tanstack/query-core');
+  const watch = (key, fn, extra = {}) => { const o = new QueryObserver(qc, { queryKey: key, queryFn: fn, staleTime: Infinity, ...extra }); return o.subscribe(() => {}); };
+  const pull = () => qc.refetchQueries({ type: 'active', predicate: (q) => K.isMemoryPullKey(q.queryKey) }, { cancelRefetch: false });
+  let un = watch(['memory', 'memory:index'], async () => { fetched.push('index'); return { rev: bridge.rev }; }, { staleTime: 0 });
+  let unA = watch(['memory', 'memory:items', 'A'], async () => { fetched.push('items@A'); return bridge.body; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(qc.getQueryData(['memory', 'memory:items', 'A']), 'content-A');
+  // 操作回执后 Bridge 变成 B；回执后的取数只取 index
+  bridge = { rev: 'B', body: 'content-B' };
+  fetched.length = 0;
+  await pull();
+  assert.deepEqual(fetched, ['index']);
+  assert.equal(qc.getQueryData(['memory', 'memory:items', 'A']), 'content-A');
+  // 页面按 index 的新 rev 去取 B 的键，再因撤销回到 A
+  unA();
+  const unB = watch(['memory', 'memory:items', 'B'], async () => { fetched.push('items@B'); return bridge.body; });
+  await new Promise((r) => setTimeout(r, 20));
+  bridge = { rev: 'A', body: 'content-A' };
+  await pull();
+  unB();
+  unA = watch(['memory', 'memory:items', 'A'], async () => { fetched.push('items@A'); return bridge.body; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(qc.getQueryData(['memory', 'memory:items', 'A']), 'content-A');
+  assert.equal(qc.getQueryData(['memory', 'memory:items', 'B']), 'content-B');
+  un(); unA();
+  qc.clear();
+});
+
+test('sendOp 的 memory 取数用 isMemoryPullKey，不再用整个 [memory] 前缀', () => {
+  const so = read('cv/sendOp.ts');
+  assert.match(so, /isMemoryPullKey\(q\.queryKey\)/u);
+  assert.match(so, /p\.t === 'memory'/u);
 });

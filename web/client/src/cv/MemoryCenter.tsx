@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Check, ChevronRight, Eye, Import, MoreHorizontal, Plus, Search, X } from 'lucide-react';
@@ -28,8 +29,8 @@ import {
   HEALTH_OK, KIND_WORD, TABS, TAB_KIND, TAB_NOTE, TAB_WORD,
   acceptOp, allOp, archiveOp, decisionCounts, defaultTab, draftProblem, editOp, healthRows, ignoreOp, importChecked, importGroups, importMeta,
   importOp, isTab, keepOp, keysToLoad, limitsOf, locate, logLine, metaLine, mmdd, moveOp, poolOf, previewSections, projectKeyOf, promoteOp,
-  promoteTarget, rejectOp, restoreOp, reviewItems, reviewMeta, roomOf, scopeOptions, shelved, tabEntries, titleIndex, undoOp, voidOp, addOp,
-  charCount, headCounts, type DecisionView, type HealthRow, type Place, type Pool, type ScopeFilter,
+  promoteTarget, rejectOp, restoreOp, reviewItems, reviewMeta, reviewSplit, groupLine, titleShown, todoPending, roomOf, scopeOptions, shelved, tabEntries, titleIndex, undoOp, voidOp, addOp,
+  charCount, headCounts, type DecisionView, type HealthRow, type ReviewGroup, type Place, type Pool, type ScopeFilter,
 } from './memoryCenter';
 import './memorycenter.css';
 
@@ -329,12 +330,12 @@ const ReviewCard: React.FC<{ r: MemoryReviewItem; ctx: Ctx }> = ({ r, ctx }) => 
   }
   return (
     <li className="mc-rv">
-      <div className="mc-t1"><span className="mc-title">{r.title}</span></div>
+      {titleShown(r) ? <div className="mc-t1"><span className="mc-title">{r.title}</span></div> : null}
       <div className="mc-meta">{meta.join(' · ')}</div>
       {r.quote ? <button type="button" className={`mc-quote${open ? ' open' : ''}`} onClick={() => setOpen(!open)}>你说：“{r.quote}”</button> : null}
-      {r.text && r.text !== r.title ? <p className="mc-text">{r.text}</p> : null}
+      {r.text ? <p className="mc-text">{r.text}</p> : null}
       {r.items?.length ? (
-        <ul className="mc-tidy">{r.items.map((e: MemoryEntry) => <li key={e.key}><span className="mono">{e.code}</span>{e.title}</li>)}</ul>
+        <ul className="mc-tidy">{r.items.map((e: MemoryEntry) => <li key={e.key}><span className="mono">{e.code}</span>{r.type === 'migrate' ? null : e.title}</li>)}</ul>
       ) : null}
       {edit ? (
         <Editor
@@ -363,30 +364,49 @@ const ReviewCard: React.FC<{ r: MemoryReviewItem; ctx: Ctx }> = ({ r, ctx }) => 
   );
 };
 
-const ReviewTab: React.FC<{ rows: MemoryReviewItem[]; ctx: Ctx }> = ({ rows, ctx }) => {
+/** 迁移项的一个专项组：组头一行，点开逐条处理；组里不放一键批量（90 条负责人约束，闭着眼点不得） */
+const MigrateGroup: React.FC<{ g: ReviewGroup; ctx: Ctx }> = ({ g, ctx }) => {
+  const [open, setOpen] = useState<boolean>(false);
+  return (
+    <section className="mc-grp" data-testid="memory-migrate-group">
+      <button type="button" className="mc-grp-h" aria-expanded={open} onClick={() => setOpen(!open)}>
+        <ChevronRight aria-hidden="true" className={open ? 'open' : ''} />
+        <span>{groupLine(g)}</span>
+        <span className="mc-sub">{open ? '收起' : '逐条看'}</span>
+      </button>
+      {open ? <ul className="mc-list">{g.rows.map((r: MemoryReviewItem) => <ReviewCard key={r.key} r={r} ctx={ctx} />)}</ul> : null}
+    </section>
+  );
+};
+
+const ReviewTab: React.FC<{ rows: MemoryReviewItem[]; ctx: Ctx }> = ({ rows: all, ctx }) => {
   const [ask, setAsk] = useState<'' | 'accept_all' | 'reject_all'>('');
   const rc: Receipt | undefined = ctx.receipts['review:all'];
-  if (!rows.length) return <p className="mc-empty">现在没有要你审核的。</p>;
+  const { todo: rows, groups } = useMemo(() => reviewSplit(all, ctx.pool), [all, ctx.pool]);
+  if (!all.length) return <p className="mc-empty">现在没有要你审核的。</p>;
   return (
     <>
-      <div className="mc-bulk">
-        {ask ? (
-          <>
-            <span className="mc-sub">{ask === 'accept_all' ? `确认把这 ${rows.length} 条都按建议记下？` : `确认这 ${rows.length} 条都不要？`}</span>
-            <button type="button" className={`mc-btn${ask === 'accept_all' ? ' pri' : ''}`} disabled={rc?.phase === 'sending'} onClick={() => { const a = ask; setAsk(''); void ctx.run('review:all', allOp(a, rows)); }}>
-              {ask === 'accept_all' ? '全部采纳' : '全部不要'}
-            </button>
-            <button type="button" className="mc-link" onClick={() => setAsk('')}>取消</button>
-          </>
-        ) : (
-          <>
-            <button type="button" className="mc-btn" onClick={() => setAsk('accept_all')} data-testid="memory-accept-all">全部采纳</button>
-            <button type="button" className="mc-link" onClick={() => setAsk('reject_all')}>全部不要</button>
-          </>
-        )}
-      </div>
+      {rows.length ? (
+        <div className="mc-bulk">
+          {ask ? (
+            <>
+              <span className="mc-sub">{ask === 'accept_all' ? `确认把这 ${rows.length} 条都按建议记下？` : `确认这 ${rows.length} 条都不要？`}</span>
+              <button type="button" className={`mc-btn${ask === 'accept_all' ? ' pri' : ''}`} disabled={rc?.phase === 'sending'} onClick={() => { const a = ask; setAsk(''); void ctx.run('review:all', allOp(a, rows)); }}>
+                {ask === 'accept_all' ? '全部采纳' : '全部不要'}
+              </button>
+              <button type="button" className="mc-link" onClick={() => setAsk('')}>取消</button>
+            </>
+          ) : (
+            <>
+              <button type="button" className="mc-btn" onClick={() => setAsk('accept_all')} data-testid="memory-accept-all">全部采纳</button>
+              <button type="button" className="mc-link" onClick={() => setAsk('reject_all')}>全部不要</button>
+            </>
+          )}
+        </div>
+      ) : <p className="mc-empty">现在没有要你审核的。</p>}
       <ReceiptLine r={rc} />
-      <ul className="mc-list">{rows.map((r: MemoryReviewItem) => <ReviewCard key={r.key} r={r} ctx={ctx} />)}</ul>
+      {rows.length ? <ul className="mc-list">{rows.map((r: MemoryReviewItem) => <ReviewCard key={r.key} r={r} ctx={ctx} />)}</ul> : null}
+      {groups.length ? <div className="mc-grps" aria-label="迁移时带过来的">{groups.map((g: ReviewGroup) => <MigrateGroup key={g.key} g={g} ctx={ctx} />)}</div> : null}
     </>
   );
 };
@@ -479,7 +499,7 @@ const ImportDrawer: React.FC<{ page: number; pages: number; data: MemoryImportPa
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [touched, setTouched] = useState<boolean>(false);
   useEffect(() => {
-    // 换页或数据到了：没动过就按默认勾
+    // 换页或数据到了：没动过就按默认勾（默认一条都不勾，主按钮写“先勾选要导入的”）
     if (!touched) setPicked(new Set(items.filter(importChecked).map((it: MemoryImportItem) => it.fingerprint)));
   }, [items, touched]);
   const fresh: MemoryImportItem[] = items.filter((it: MemoryImportItem) => it.state === 'new');
@@ -501,7 +521,7 @@ const ImportDrawer: React.FC<{ page: number; pages: number; data: MemoryImportPa
       <ReceiptLine r={rc} />
       <span className="sp" />
       <button type="button" className="mc-link" disabled={busy || !rest.length} onClick={() => void ctx.run('import', ignoreOp(rest))}>其余 {rest.length} 条留在原工具</button>
-      <button type="button" className="mc-btn pri" disabled={busy || !chosen.length} onClick={() => void ctx.run('import', importOp(chosen)).then((ok: boolean) => { if (ok) setTouched(false); })}>导入 {chosen.length} 条</button>
+      <button type="button" className="mc-btn pri" disabled={busy || !chosen.length} onClick={() => void ctx.run('import', importOp(chosen)).then((ok: boolean) => { if (ok) setTouched(false); })}>{chosen.length ? `导入 ${chosen.length} 条` : '先勾选要导入的'}</button>
     </>
   );
   return (
@@ -599,6 +619,8 @@ export const MemoryCenter: React.FC<{ index: MemoryIndex }> = ({ index }) => {
     const ok: boolean = res.phase === 'done';
     const message: string = ok ? res.message || done || '已办好' : failWords(res);
     setReceipts((r) => ({ ...r, [id]: { phase: ok ? 'done' : 'failed', message } }));
+    // 撤销条已经关了，回执只在别的页签里画：撤销失败（“这条后来又改过了”）用页面提示告诉用户
+    if (!ok && id.startsWith('undo:')) toast.error(`没撤销成：${message}`);
     if (ok) {
       window.setTimeout(() => setReceipts((r) => {
         if (r[id]?.phase !== 'done') return r;
@@ -634,7 +656,7 @@ export const MemoryCenter: React.FC<{ index: MemoryIndex }> = ({ index }) => {
   const loading: boolean = got.loading && !pool.entries.length && !pool.review.length;
   const empty: string = query ? `没有搜到“${query}”` : focusRefs ? '这一项涉及的条目不在这个页签' : tab === 'decisions' && view === 'open' ? '没有在办的决定' : '这里还没有。';
   const kindForAdd: MemoryKind = TAB_KIND[tab] ?? 'rule';
-  const headc = headCounts(index, scope);
+  const headc = headCounts(index, scope, pool);
 
   return (
     <div className="mc-page">
@@ -666,7 +688,7 @@ export const MemoryCenter: React.FC<{ index: MemoryIndex }> = ({ index }) => {
           <nav className="mc-tabs" aria-label="记忆分页">
             {TABS.map((t: MemoryTab) => (
               <button key={t} type="button" className={t === tab ? 'on' : ''} aria-current={t === tab ? 'page' : undefined} onClick={() => goTab(t)}>
-                {TAB_WORD[t]}{t === 'review' && index.counts.pending ? <em className="mc-n wait">{index.counts.pending}</em> : null}
+                {TAB_WORD[t]}{t === 'review' && todoPending(index.counts) ? <em className="mc-n wait">{todoPending(index.counts)}</em> : null}
               </button>
             ))}
           </nav>
@@ -702,7 +724,7 @@ export const MemoryCenter: React.FC<{ index: MemoryIndex }> = ({ index }) => {
             <div className="mc-seg" role="radiogroup" aria-label="看哪些决定">
               {(['open', 'all', 'done'] as DecisionView[]).map((v: DecisionView) => (
                 <button key={v} type="button" role="radio" aria-checked={view === v} className={view === v ? 'on' : ''} onClick={() => setView(v)}>
-                  {{ open: '在办', all: '全部', done: '已办' }[v]}<em>{dc[v]}</em>
+                  {{ open: '在办', all: '全部', done: '不在办' }[v]}<em>{dc[v]}</em>
                 </button>
               ))}
             </div>

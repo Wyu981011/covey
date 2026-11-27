@@ -333,9 +333,10 @@ def topic_fields(topic) -> dict:
 
 
 def memory_of(state, record) -> dict | None:
-    """The turn's ``memory`` {count, used, codes}: how many entries it carried (the record's ``memory_ids``), the titles of
-    those it said it used (``memory_used``, by core/memstore.py find; the code itself while that cannot tell) and the
-    short codes it carried. None for a turn that carried none."""
+    """The turn's ``memory`` {count, used, codes}: how many entries it carried (the record's ``memory_ids``), those it said
+    it used (``memory_used``) as [{code, title}] (core/memstore.py find: the entry's short code, "" while it has none, and its
+    title, the key itself while find cannot tell), and the short codes it carried. None for a turn that carried none.
+    ``used`` and ``codes`` are lists of their own (the page draws each code with its title, never by position)."""
     from covey.core import memstore
 
     def code_of(item):  # app/memory_turn.py writes {n: its short code, ref, scope, kind, by}; an older turn a code or an M number.
@@ -347,13 +348,14 @@ def memory_of(state, record) -> dict | None:
     if not ids and not used:
         return None
 
-    def title(key):
+    def one(key):
         try:
             entry = memstore.find(state, key)
         except (NotImplementedError, OSError, ValueError, KeyError, TypeError):
             entry = None
-        return str(getattr(entry, "title", "") or key)[:memstore.TITLE_CHARS]
-    return {"count": len(ids), "used": [title(key) for key in used[:MEMORY_KEPT]],
+        code = str(getattr(entry, "code", "") or (key if memstore.is_code(key) else ""))
+        return {"code": code, "title": str(getattr(entry, "title", "") or key)[:memstore.TITLE_CHARS]}
+    return {"count": len(ids), "used": [one(key) for key in used[:MEMORY_KEPT]],
             "codes": [key for key in ids if memstore.is_code(key)][:MEMORY_KEPT]}
 
 

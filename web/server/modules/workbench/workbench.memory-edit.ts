@@ -1,7 +1,7 @@
 /* memory_edit 的 payload 校验（v37 旧版 + v43 新版）和 v43 的仓库校验（settings 的 repos_*、启动与换配置的 repos）。
  * 纯函数，单测在 scripts/memory-v43.test.mjs。v37 的校验原样搬来，一字未改。 */
 import { BadRequestException } from '@nestjs/common';
-import { MEMORY_EDIT_ACTIONS_V43, MEMORY_KINDS, MEMORY_SCOPES, type OutboxRequest, type TurnMemory } from '@shared/api.interface';
+import { MEMORY_EDIT_ACTIONS_V43, MEMORY_KINDS, MEMORY_SCOPES, type OutboxRequest, type TurnMemory, type TurnMemoryUsed } from '@shared/api.interface';
 import { str } from './workbench.util';
 
 const len = (v: unknown): number => Array.from(str(v)).length;
@@ -102,14 +102,25 @@ export function checkMemoryEdit(payload: Record<string, unknown>, req: OutboxReq
   if (action === 'edit' && !str(payload.text).trim()) throw new BadRequestException('记忆的正文是空的');
 }
 
-/** v43：一轮的 memory（Covey app/web_turns.py memory_of：带了几条、说用到的标题、带的短码），只留认得的形状；没有或不像就是 null */
+/** v43：一轮的 memory（Covey app/web_turns.py memory_of：带了几条、说用到的 {code,title}（旧的只有标题）、带的全部短码），只留认得的形状；没有或不像就是 null */
 export function turnMemoryOf(v: unknown): TurnMemory | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
   const count: number = typeof o.count === 'number' && Number.isFinite(o.count) && o.count >= 0 ? Math.floor(o.count) : 0;
   const texts = (x: unknown, most: number, chars: number): string[] =>
     (Array.isArray(x) ? x : []).filter((t): t is string => typeof t === 'string' && t.length > 0).slice(0, most).map((t: string) => t.slice(0, chars));
-  const used: string[] = texts(o.used, 40, 80);
+  // used：新 Bridge 发 [{code, title}]（code 可能是空串），旧 Bridge 只发标题字符串；两种都收，转成对象
+  const used: TurnMemoryUsed[] = (Array.isArray(o.used) ? o.used : [])
+    .map((u: unknown): TurnMemoryUsed | null => {
+      if (typeof u === 'string') return u ? { code: '', title: u.slice(0, 80) } : null;
+      if (!u || typeof u !== 'object' || Array.isArray(u)) return null;
+      const r = u as Record<string, unknown>;
+      const title: string = typeof r.title === 'string' ? r.title.slice(0, 80) : '';
+      const code: string = typeof r.code === 'string' ? r.code.slice(0, 16) : '';
+      return title || code ? { code, title } : null;
+    })
+    .filter((u: TurnMemoryUsed | null): u is TurnMemoryUsed => u !== null)
+    .slice(0, 40);
   const codes: string[] = texts(o.codes, 40, 16);
   if (!count && !used.length && !codes.length) return null;
   return { count, used, codes };

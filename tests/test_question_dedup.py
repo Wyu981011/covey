@@ -160,6 +160,19 @@ class RealSearchTest(Case):
     def check(self, text, topic=MEMBER):
         return question_dedup.check(self.ctx(topic), {"topic_id": topic}, [ask_of(text)]).get("q")
 
+    def test_an_ordinary_topics_third_of_a_class_reads_the_other_ordinary_topics(self):
+        # T870 Wave 3.5: a turn not the owner's reads only its own topic and project (core/memory_search.py _allowed); the
+        # class of an ordinary topic is still every ordinary topic's, the Bridge reading them for the card.
+        for n, tid in enumerate(("ef" * 32, "fa" * 32)):
+            write_topic(self.state, topic_id=tid, chat_id=CHAT, title=f"普通话题{n}")
+            memstore.add_decision(self.state, scope="topic", owner_key=tid, question=MERGE["question"], answer="合进去",
+                                  text=project_context.answer_line(MERGE["question"], "合进去"), topic_key=tid, chosen="合进去",
+                                  category=question_dedup.category(MERGE["question"]), polarity=question_dedup.polarity("合进去"),
+                                  origin={"topic_key": tid, "topic_number": 20 + n}, now=NOW - (n + 1) * 86400)
+        (extra,) = question_dedup.class3(self.ctx(PLAIN), {"topic_id": PLAIN}, [MERGE], now=NOW)
+        self.assertEqual(extra["id"], question_dedup.EXTRA_ID)
+        self.assertIsNone(self.check(MERGE["question"], topic=PLAIN))  # Asked again: only its own topic's answers count.
+
     def test_the_search_is_m2s_own(self):
         search, mutual_, tau = question_dedup.engine()
         self.assertIs(search, memory_search.eval_search)
