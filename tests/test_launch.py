@@ -1107,12 +1107,23 @@ class WebLaunchTests(LaunchCase):
         self.assertTrue(data['models'])
 
     def test_the_catalog_lists_the_devices_only_with_devices_on(self):
+        """本机 first, as the launch card's 执行设备 row has it (T879: the page showed the first device for a topic of this
+        machine and could not choose 本机), then each device the chat may use; none at all without such a device."""
         self.with_devices()
         devices = self.catalog()['devices']
-        self.assertEqual([(d['name'], d['harnesses']) for d in devices], [('gpu1', ['codex'])])
-        self.assertTrue(devices[0]['dot'])  # The node panel's word, "gray" where there is none.
+        self.assertEqual([(d['name'], d['title'], d['harnesses'], d.get('local', False)) for d in devices],
+                         [('', '本机', [], True), ('gpu1', 'gpu1', ['codex'], False)])
+        self.assertTrue(all(d['dot'] for d in devices))  # The node panel's word, "gray" where there is none.
+        self.assertNotIn('device', self.catalog()['preselect'])  # No device named: 本机, the default.
         self.app.runtime.access.allows_device = lambda chat, alias: False
         self.assertNotIn('devices', self.catalog())
+
+    def test_a_payload_naming_no_device_or_this_machine_starts_here(self):
+        """The page's 本机 is no ``device`` (or ""): the topic starts in this machine's home, a device on or off."""
+        self.with_devices()
+        for payload in ({}, {'device': ''}):
+            plan = self.plan(**payload)
+            self.assertEqual((plan['workdir'], plan.get('home_start')), (str(self.work.resolve()), True), payload)
 
     def test_a_payload_without_workspace_or_run_mode_starts_in_the_home(self):
         plan = self.plan()

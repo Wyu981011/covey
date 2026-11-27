@@ -1747,14 +1747,15 @@ class ExtrasTest(WebCase):
         self.sync.push_once(T0)
         topics = {item["key"]: item["data"] for item in self.web.items("topic")}
         self.assertEqual(topics[TOPIC]["config"], {"model": "claude:opus", "effort": "high", "work_mode": "", "workspace": "ws1",
-                                                   "run_mode": "direct", "redaction": "off"})
+                                                   "run_mode": "direct", "redaction": "off", "device": ""})
         self.assertNotIn("config", topics[BUTLER])
         from covey.app import web_switch
         # A budget preset is its model with the preset's budget; a Bridge worktree is ``worktree``.
         menu = {"claude:opus-x": {"harness": "claude", "presets": {"max": "opus-max", "high": "opus-x"}}}
         self.assertEqual(web_switch.topic_config({"harness_id": "claude", "model": "opus-max", "workdir": "/wt/abc/repo",
                                                   "redaction": True}, menu, prefix="/wt/"),
-                         {"model": "claude:opus-x", "effort": "max", "work_mode": "", "workspace": "", "run_mode": "worktree", "redaction": "on"})
+                         {"model": "claude:opus-x", "effort": "max", "work_mode": "", "workspace": "", "run_mode": "worktree", "redaction": "on",
+                          "device": ""})
         self.assertIsNone(web_switch.topic_config({}))
 
     def test_a_switched_topic_names_the_model_it_is_bound_to_before_its_next_turn(self):

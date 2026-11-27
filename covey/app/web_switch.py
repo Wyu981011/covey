@@ -3,7 +3,9 @@
 
 - ``config``: what a topic runs with, in the words of the ``launch`` block (app/web_launch.py catalog): the model's menu key (a topic bound to a
   budget preset is that model with the preset's budget, as the 换配置 card preselects it, app/preselection.py switch_selection), its budget, work
-  mode, 敏感词脱敏 and, as read-only facts for a page that still shows them, workspace and run mode. Read from topic.json alone, so a push does not ask anything else.
+  mode, 敏感词脱敏 and, as read-only facts for a page that still shows them, workspace and run mode, and the device it works on (``device``,
+  "" for 本机; T879). Read from topic.json alone, so a push does not ask anything else. ``switch`` never moves a topic to another machine:
+  a payload's ``device`` other than the topic's is refused (DEVICE_FIXED), none or "" leaves it.
 - ``switch``: the page's choices checked as 开始任务 checks a model (app/web_launch.py model_choice); a place (workspace, run mode) the payload may still carry (an older page; the new one sends none and the topic stays where it is) other than the
   topic's checked as the switch card checks it, but a worktree the Bridge would have to make now is left to the card (minutes on the NAS, which
   the inbox thread does not wait); then the rebind of the switch card (app/binding.py switch_topic: refused while a task is queued or runs, and
@@ -28,6 +30,7 @@ from covey.core.redaction import TOPIC_KEY as REDACTION_KEY
 WORKTREE_ON_CARD = "新建独立 worktree 要在飞书的换配置卡上做"
 LEAD_PLACE = "负责人的工作区和运行方式不能换：只能换 Harness、模型、思考预算和脱敏"
 LEAD_REPOS = "负责人用的仓库跟着专项（只读），不能在这里换"
+DEVICE_FIXED = "换配置不能换执行设备，话题留在原来的机器上；要在别的设备上做，开个新话题选那台设备"
 NO_REPOS = "无"
 
 
@@ -109,9 +112,17 @@ def run_mode(workdir, prefix=None) -> str:
     return "worktree" if workdir.startswith(prefix or _worktree_prefix()) else "direct"
 
 
+def device_of(workdir) -> str:
+    """The alias of the device a topic works on (its workdir ``alias:path``, core/devices.py device_shaped, which reads nothing), ""
+    for 本机."""
+    from covey.core.devices import device_shaped
+    return str(workdir).strip().split(":", 1)[0] if workdir and device_shaped(workdir) else ""
+
+
 def topic_config(topic, choices=None, prefix=None):
     """The data contract v21 ``config`` of a topic's record (topic.json); None without a Harness. ``choices``: the menu (available_models),
-    to find a budget preset's model; None or {}: the topic's own model and budget as they are."""
+    to find a budget preset's model; None or {}: the topic's own model and budget as they are. ``device`` (T879): the device it works
+    on, "" for 本机, read only (``switch`` does not move a topic to another machine)."""
     from covey.core.menu_choice import preset_choice
     harness = str(topic.get("harness_id") or "")
     if not harness:
@@ -120,7 +131,7 @@ def topic_config(topic, choices=None, prefix=None):
     key, budget = preset_choice(choices or {}, harness, model) or (f"{harness}:{model}", str(topic.get("effort") or ""))
     return {"model": key, "effort": budget, "work_mode": str(topic.get("work_mode") or ""),
             "workspace": str(topic.get("workspace_name") or ""), "run_mode": run_mode(topic.get("workdir"), prefix),
-            "redaction": "on" if topic.get(REDACTION_KEY) is True else "off"}
+            "redaction": "on" if topic.get(REDACTION_KEY) is True else "off", "device": device_of(topic.get("workdir"))}
 
 
 def _label(app, choices, key, topic) -> str:
@@ -193,6 +204,10 @@ def switch(env, op_id, chat, topic_id, payload) -> str:
     choices = available_models(env.topics, ctx)
     current = topic_config(topic, choices)
     harness, key, choice, budget, mode, redaction = model_choice(env, ctx, payload)
+    # A page that offered the 执行设备 as a choice (before T879) may send one: never applied here, so not taken in silence either.
+    asked_device = str(payload.get("device") or "")
+    if asked_device and asked_device != current["device"]:
+        raise ValueError(DEVICE_FIXED)
     # The page no longer sends a workspace or run mode (data contract v43: both optional): none, or the topic's own, moves nothing; an
     # older page's other one is checked and applied as before, a lead's refused. ``repos``: the ones the topic uses (``asked_repos``).
     workspace = str(payload.get("workspace") or current["workspace"])

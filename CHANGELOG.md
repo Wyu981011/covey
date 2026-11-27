@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed 修复
 
+- 网页工作台开新话题的「执行设备」补上「本机」并默认选它（之前只列远程设备，没选时显示成第一台 testbox，也选不回本机）；话题页换配置不再给能切设备的下拉，只读写话题所在的机器。点「换个模型」或配置栏打开的面板把模型几项放上面，执行设备和仓库折成一行摘要，点开才改仓库；仓库已选、未选的样子分得开（T879）。
 - 网页工作台的换配置面板在矮屏上（手机横着、窗口很矮）选了模型以后，说明变长，「确认更换」被挤到面板滚动区下面，要在面板里往下滚才找得到：这一行现在贴在面板底上，总看得见。
 - 同一个任务不会再有两个任务进程同时在跑、同时写一张卡（两个任务进程写同一张卡时，卡片更新会被飞书以 300315 Duplicate ID 反复拒绝）：任务进程拿到交接后对运行目录的 `runner.lock` 加排他锁、持到退出，同一任务的第二个任务进程拿不到锁就什么都不跑、不碰目录；Bridge 判断任务进程还在不在时，`runner.json`、`wake.json` 都读不到或说没了，最后还看这把锁，有人持着就不清目录、不再起一个、不标中断，重启认领和点击转发也一样。锁不靠读文件，存储一时读不了也不会误判。旧版本的任务进程不加锁，对它们照旧只看两个文件。
 - 网页工作台发完一段多行长消息后，输入框清空了，白框却还卡在近半屏高（电脑上最高到窗口的四成、手机三成），要再打字才缩回去。输入框按编辑区的高定自己的高，发出后清空编辑区的那一步晚于量高度，量到的还是刚发出去那段字的高。现在先清空再量，发完立刻回到一行高；话题页、大厅和手机都一样。
@@ -83,6 +84,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Cha
 
 ### Fixed (English)
 
+- Web workbench: the new topic's 执行设备 (device) choice now has 本机 (this machine) first and preselected (it listed only the remote devices, showed the first one, testbox, when none was chosen, and could not go back to this machine); the topic page's 换配置 no longer offers a device it cannot switch to and names the topic's machine read-only. Opened from 换个模型 or the config bar, the panel puts the model fields first and folds the device and repositories into one summary line, expanded only to change the repositories; chosen and unchosen repositories now look clearly different (T879).
 - On a short screen the web page's 换配置 panel pushed 确认更换 below its scroll view once a model was picked and the note grew longer: that row now sticks to the panel's bottom.
 - One job never has two task runners running it and writing its card at once (two runners writing one card had its updates refused by Feishu again and again with 300315 Duplicate ID): a runner holds an exclusive lock on its run directory's `runner.lock` from taking its handoff to its exit, and a second runner of the job that cannot get it runs nothing and leaves the directory alone; where the Bridge asks whether a runner is there and neither `runner.json` nor `wake.json` can be read or names a live one, it asks the lock last, and one held means no clearing of the directory, no second runner and no interrupted mark, also at a restart's adoption and for click forwarding. The lock is no file read, so storage that fails a read for a while no longer misleads the Bridge. Runners of older releases take no lock; for them the two files answer, as before.
 - Web page: after a long multi-line message was sent, the chat box was empty but stayed nearly half a screen tall (up to 40% of the window on a computer, 30% on a phone) until something was typed. The box takes its height from its editor, and the editor was cleared after the height was measured, so it measured the text just sent. Now the editor is cleared first, and the box is one line tall again as soon as the message goes, on a topic page, in the hall and on a phone alike.

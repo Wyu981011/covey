@@ -1075,9 +1075,15 @@ export interface LaunchModel {
 }
 /** v43：新 Covey 不再推 workspaces、run_modes，改推 devices 和每个话题自己的 repos；旧 Covey 照旧 */
 export interface LaunchDevice {
+  /** 设备别名；本机是空串（T879 起 Covey 把本机排在第一行推来，旧 Covey 只推远程设备，网页自己补本机） */
   name: string;
+  /** T879：选项上的叫法（本机写“本机”，设备是 devices.json 的 title）；旧 Covey 没有，用 name */
+  title?: string;
   dot: string;
+  /** 这台能用的 Harness；空 = 不限（本机） */
   harnesses: string[];
+  /** T879：本机那一行 */
+  local?: boolean;
 }
 export interface LaunchWorkspace {
   name: string;
@@ -1093,7 +1099,8 @@ export interface LaunchPreselect {
   workspace?: string;
   /** v43：可选（新 Covey 不推） */
   run_mode?: string;
-  /** v43（WEB 包加，向后兼容）：执行设备，LaunchData.devices 里的 name。只在 Covey 推了 2 台及以上设备时网页才带；不带 = 本机 */
+  /** v43（WEB 包加，向后兼容）：执行设备，LaunchData.devices 里的 name。只在有远程设备、选了远程设备时网页才带；不带或空串 = 本机。
+   *  话题的 config 里（T879）是话题所在的设备（空串 = 本机，只读：换配置换不了机器）；旧 Covey 的 config 没有这个键 */
   device?: string;
 }
 export interface LaunchData {
