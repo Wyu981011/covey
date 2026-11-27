@@ -121,6 +121,12 @@
    left、width、bottom 和 --room（输入框上沿到视口顶）写在 style 上 */
 .cv .cfg-pop.fixed{position:fixed;right:auto;max-height:min(70vh,620px,var(--room,100vh))}
 .cv .mcfg .cfg-pop.fixed{max-height:min(60vh,var(--room,100vh))}
+/* 一块读不懂机器人数据时只在这一块说明（T97 11-27，panelGuard.ts）：面板里是一段字加「关闭」，配置栏那一行里是小号一行加「重试」 */
+.cv .guard{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:10px 12px;border-radius:10px;border:1px solid color-mix(in srgb,var(--fail) 45%,var(--line2));background:var(--s1);font-size:12.5px;line-height:1.55;color:var(--t2)}
+.cv .guard b{color:var(--fail);font-size:13px}
+.cv .guard.sm{flex-direction:row;align-items:center;gap:6px;padding:2px 8px;border-radius:8px;font-size:12px;white-space:nowrap}
+.cv .guard-btn{padding:0 6px;border:0;border-radius:6px;background:transparent;color:var(--a1);font-size:12px;cursor:pointer}
+.cv .guard-btn:hover{background:var(--s3)}
 
 @media (max-width:767px){
   .cv .cfg-foot{flex-wrap:wrap}

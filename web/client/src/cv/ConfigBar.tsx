@@ -10,6 +10,7 @@ import { LaunchPanel, type PanelBox } from './LaunchPanel';
 import { engineText } from './lib';
 import { opWords } from './opWords';
 import { sendOp, type OpResult } from './sendOp';
+import { PanelGuard } from './panelGuard';
 import { onOpenSwitch } from './switchOpen';
 import { popPlace, POP_GAP, type PopPlace } from './popPlace';
 import { changedFields, fromConfig, leadData, switchBlock, withTopicRepos, type SwitchSel } from './switchConfig';
@@ -32,7 +33,8 @@ const leadNext = (changed: string[]): string =>
  * 专项负责人（kind=lead，Covey v36 起带 config）也用它，同飞书专项卡上的「换配置」：只列能当负责人的模型（bridge_tools），
  * 不画工作区、运行方式（payload 照带现在的值），从负责人下一轮起生效。管家不用它（管家的配置在设置的「配置」里）。
  */
-export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: string; busy: boolean }> = ({ topic, workspace, busy }) => {
+type BarProps = { topic: SnapshotTopic | undefined; workspace: string; busy: boolean };
+const Bar: React.FC<BarProps> = ({ topic, workspace, busy }) => {
   const { data: settings } = useSettings();
   const all: LaunchData | undefined = settings?.data?.launch;
   const lead: boolean = topic?.kind === 'lead';
@@ -217,9 +219,19 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
             <b>{lead ? '换负责人的配置' : '换配置'}</b>
             <span className="t3">{lead ? '同飞书专项卡上的「换配置」' : '同飞书话题里的「换配置」'}</span>
           </div>
-          <LaunchPanel box={box} className="flat" foot={foot} />
+          <PanelGuard what="换配置面板" elsewhere={lead ? '在飞书专项卡上点「换配置」' : '在飞书话题里点「换配置」'} onClose={() => setOpen(false)}>
+            <LaunchPanel box={box} className="flat" foot={foot} />
+          </PanelGuard>
         </div>
       ) : null}
     </span>
   );
 };
+
+/** 配置栏整个兜住（T97 11-27）：面板以外的读法（标签、初值）出错也只把这一小块换成“配置栏出错了 · 重试”，输入框照常能发；
+ *  换了话题重画。面板里出错由上面那层说明并给「关闭」 */
+export const ConfigBar: React.FC<BarProps> = (props) => (
+  <PanelGuard what="配置栏" compact resetKey={props.topic?.key}>
+    <Bar {...props} />
+  </PanelGuard>
+);

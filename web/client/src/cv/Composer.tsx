@@ -12,6 +12,7 @@ import { blobOf, useAttachments, type Attachment } from './attachments';
 import { BIG_HINT, ENTER_HINT, enterAction, fmtSize, lineBreak, listEnter, listIndent, SEND_KEY, type TextEdit } from './composerText';
 import type { LaunchBox } from './launch';
 import { LaunchLine, LaunchNote, LaunchPanel } from './LaunchPanel';
+import { PanelGuard } from './panelGuard';
 import { pref, setPref } from './lib';
 import { RichText, type EditHandle, type Trigger } from './RichText';
 import { mentionAt } from './room';
@@ -51,6 +52,10 @@ export interface KeyLike {
 }
 
 /** 触屏手机（没有鼠标悬停、指针粗）：屏幕键盘的回车只换行，点发送钮发；窄窗口的电脑仍按电脑算 */
+/** 开新话题的选项（启动行、面板、提示）出错时只在这一块说明（T97 11-27，panelGuard.ts） */
+const LAUNCH_WHAT = '开新话题的选项';
+const LAUNCH_ELSEWHERE = '在飞书私聊里让 Covey 开话题';
+
 const touchFirst = (): boolean => typeof window !== 'undefined' && !!window.matchMedia?.('(hover: none) and (pointer: coarse)').matches;
 
 /** 外面能对输入框做的：聚焦、在末尾插几个字（和打字一样走 onValue，大厅和话题页的 @ 候选跟着变） */
@@ -498,9 +503,11 @@ export const Composer: React.FC<{
   if (!desktop) {
     return (
       <>
-        {box && !launchOnly ? <LaunchLine box={box} /> : null}
-        {box && fresh && !launchOnly && box.open ? <LaunchPanel box={box} /> : null}
-        {box && fresh && !launchOnly ? <LaunchNote box={box} /> : null}
+        <PanelGuard what={LAUNCH_WHAT} elsewhere={LAUNCH_ELSEWHERE}>
+          {box && !launchOnly ? <LaunchLine box={box} /> : null}
+          {box && fresh && !launchOnly && box.open ? <LaunchPanel box={box} /> : null}
+          {box && fresh && !launchOnly ? <LaunchNote box={box} /> : null}
+        </PanelGuard>
         {config ? <div className="mcfg">{config}</div> : null}
         {route?.top ? <div className="mcroute">{route.top}</div> : null}
         {route?.chip && !fresh ? <div className="mcchip">{route.chip}</div> : null}
@@ -527,11 +534,15 @@ export const Composer: React.FC<{
   }
   return (
     <>
-      {box && fresh && !launchOnly && box.open ? <LaunchPanel box={box} /> : null}
+      <PanelGuard what={LAUNCH_WHAT} elsewhere={LAUNCH_ELSEWHERE}>
+        {box && fresh && !launchOnly && box.open ? <LaunchPanel box={box} /> : null}
+      </PanelGuard>
       <div className={`composer${big ? ' big' : ''}${drag ? ' drag' : ''}`} {...dropProps}>
         {fileInput}
-        {box && !launchOnly ? <LaunchLine box={box} /> : null}
-        {box && fresh && !launchOnly ? <LaunchNote box={box} /> : null}
+        <PanelGuard what={LAUNCH_WHAT} elsewhere={LAUNCH_ELSEWHERE}>
+          {box && !launchOnly ? <LaunchLine box={box} /> : null}
+          {box && fresh && !launchOnly ? <LaunchNote box={box} /> : null}
+        </PanelGuard>
         {route && !fresh ? route.top : null}
         {chips}
         {area}
