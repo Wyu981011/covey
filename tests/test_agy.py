@@ -389,19 +389,21 @@ class AntigravityTests(unittest.TestCase):
                 with self.subTest(error=error):
                     self.assertEqual(error_code(error), code)
 
-    def test_a_failure_says_what_it_was_on_the_card_and_agys_own_words_only_in_the_log(self):
-        """T872: a failure agy named is said as what it was (the card's failure_detail), never in agy's own sentences,
-        which only the run's log keeps (backend_failure): a model the account lost, a safety block, Google's status."""
-        for scenario, code, said in (("model-gone", "model_unavailable", "Antigravity 不认 gemini-3.8-pro-high"),
-                                     ("refused", "policy_refusal", "安全策略拦下"),
-                                     ("bad-request", "root_failed", "Antigravity 报的错误：INVALID_ARGUMENT（400）"),
-                                     ("error", "root_failed", "")):
+    def test_a_failure_says_what_it_was_and_agys_own_words_go_to_the_card(self):
+        """T872: a failure agy named is said as what it was (a model the account lost: the title's failure_detail), and
+        whatever the error, agy's own words go to the card's 技术详情 (backend_said) and the run's log."""
+        for scenario, code, title, said in (
+                ("model-gone", "model_unavailable", "Antigravity 不认 gemini-3.8-pro-high", "invalid model selection"),
+                ("refused", "policy_refusal", "", "response blocked by SAFETY"),
+                ("bad-request", "root_failed", "", "INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools"),
+                ("error", "root_failed", "", "PRIVATE_DETAIL internal")):
             with self.subTest(scenario=scenario):
                 result, events, _replies, _sessions, _record = self.run_agy(scenario)
                 self.assertEqual((result.is_error, result.outcome.error_code), (True, code))
-                self.assertIn(said, result.failure_detail)
-                self.assertEqual(bool(result.failure_detail), bool(said))
-                self.assertNotIn("PRIVATE_DETAIL", result.failure_detail + result.text)
+                self.assertEqual(result.failure_detail.startswith(title) and bool(result.failure_detail) == bool(title),
+                                 True, result.failure_detail)
+                self.assertIn(said, result.backend_said)
+                self.assertNotIn("PRIVATE_DETAIL", result.text)
                 failure = [d for k, d in events if k == "backend_failure"][-1]
                 self.assertEqual(failure["code"], code)
 

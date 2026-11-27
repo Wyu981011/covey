@@ -106,12 +106,17 @@ class CodexVerifiedReplyTests(CodexRunCase):
                 self.assertFalse(result.outcome.resume_allowed)
                 self.assertIsNone(result.public_reply)
                 self.assertNotIn(SECRET, result.text + result.outcome.summary() + result.failure_detail)
-                # The card names the kind Codex said (T872), never its words: those only reach the run's log.
+                # What Codex said goes to the card's 技术详情 as it said it, kind first (T872: whatever the error).
                 kind = error.get("codexErrorInfo")
-                if code == "root_failed" and isinstance(kind, str) and kind != "other":
-                    self.assertEqual(result.failure_detail, f"Codex 报的错误类型：{kind}")
-                if code == "policy_refusal" and kind == "other":
-                    self.assertIn("Invalid prompt", result.failure_detail)
+                if isinstance(kind, str):
+                    self.assertTrue(result.backend_said.startswith(f"{kind}: "), result.backend_said)
+                self.assertIn(error["message"].split(" ")[0], result.backend_said)
+        # A secret in Codex's words is hidden on the card, the rest of them kept.
+        result = self.run_rpc(FakeRpc([finished(turn(status="failed", items=[], error={
+            "codexErrorInfo": "badRequest", "message": "bad request: token=abc123SECRET at /absolute/someone/.codex/auth.json"}))]))
+        self.assertIn("badRequest: bad request: token=", result.backend_said)
+        self.assertNotIn("abc123SECRET", result.backend_said)
+        self.assertNotIn("/absolute/someone", result.backend_said)
         # The fault's own words, not transport_error's 通信失败 they fell back to.
         result = self.run_rpc(FakeRpc([finished(turn(status="failed", error={"codexErrorInfo": "serverOverloaded"},
                                                      items=[]))]))

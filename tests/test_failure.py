@@ -94,6 +94,19 @@ class ViewTest(unittest.TestCase):
         view = failure.failure_view(failed(failure_code="rate_limited", failure_detail="whatever the route said"))
         self.assertNotIn("whatever", view["detail"])
 
+    def test_what_the_harness_said_is_in_the_detail_whatever_the_error(self):
+        """T872: the Harness's own words (failure_said) go to 技术详情 under its name, for any error, known or not."""
+        for code, backend, name in (("root_failed", "codex", "Codex"), ("rate_limited", "agy", "Antigravity"),
+                                    ("process_exit", "claude", "Claude Code"), ("transport_error", "maso", "后端")):
+            with self.subTest(code=code):
+                view = failure.failure_view(failed(failure_code=code, backend=backend, failure_said="contextWindowExceeded: too long"))
+                self.assertIn(f"{name}原话：contextWindowExceeded: too long", view["detail"])
+        self.assertNotIn("原话", failure.failure_view(failed(failure_code="root_failed"))["detail"])
+        said = failure.said_of("bad: token=abc123SECRET key=AIzaSyABCDEF0123456789abcdef at /absolute/x/.codex/auth.json 192.0.2.7")
+        for hidden in ("abc123SECRET", "AIzaSyABCDEF0123456789abcdef", "/absolute/x", "192.0.2.7"):
+            self.assertNotIn(hidden, said)
+        self.assertTrue(said.startswith("bad: token="))
+
     def test_an_old_record_is_read_from_its_status_line(self):
         view = failure.failure_view(failed(status_message="本轮执行未全部完成，原生会话不可续接"))
         self.assertEqual(view["title"], "这一轮没做完，已做的部分保留着；可以在新会话里接着做，或先看原因")

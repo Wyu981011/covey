@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
+import re
 
 from covey.core.model_policy import FALLBACK_MODELS, category_words, policy_where
 from covey.core.recovery import RETRY_LABEL, authorized, classify, saved_delivery
@@ -86,6 +87,26 @@ OWN = {
     "model_unavailable": ("所选模型在当前账号里用不了（没有权限、已下线或不支持所选档位），重试不会成功；换个模型接着做",
                           (SWITCH_MODEL,)),
 }
+SAID_CHARS = 300  # Of a Harness's own words for a failure (``said_of``), on the card.
+LONG_RUN = re.compile(r"(?=[A-Za-z0-9_+/=-]*\d)[A-Za-z0-9_+/=-]{24,}")  # A key's or an id's run: long, with a digit.
+HARNESS_NAMES = {"codex": "Codex", "agy": "Antigravity", "claude": "Claude Code"}  # Whose words, on the card.
+
+
+def said_of(text) -> str:
+    """A Harness's own words for a failure as the card may show them (RunResult.backend_said): on one line, what looks
+    like a secret (core/text.py redact) and a key, a path, an address, a link or an e-mail (core/quota.py scrub)
+    hidden, at most SAID_CHARS. Whatever the error, known or not: the owner reads what the Harness said (T872)."""
+    from covey.core.quota import CUT, SCRUB
+    from covey.core.text import redact
+    text = " ".join(redact(str(text or "")).split())
+    # SCRUB's last rule (any long run) would hide an error's own name ("responseStreamConnectionFailed"): a key or an
+    # id has digits in it, a name of words has none.
+    for pattern in (*SCRUB[:-1], LONG_RUN):
+        text = pattern.sub(CUT, text)
+    text = re.sub(re.escape(CUT) + r"(?:\s*" + re.escape(CUT) + ")+", CUT, text)
+    return text[:SAID_CHARS].strip()
+
+
 # Where the backend's own words (the record's failure_detail: its kind of error, what it said in its words of record)
 # go in the detail too: a failure whose title says no more than that the turn did not finish, or one of the two above.
 SAID_TOO = frozenset({"failed", "incomplete", "policy_refusal", "model_unavailable"})
@@ -236,6 +257,9 @@ def failure_view(record, now=None):
     said = str(record.get("failure_detail") or "").strip()
     if said and (code in SAID_TOO or code in BROKE or code in UNFINISHED) and said.rstrip("。") not in title + detail:
         detail = "；".join(part for part in (detail, said.rstrip("。")) if part)
+    own = str(record.get("failure_said") or "").strip()
+    if own:
+        detail = "；".join(part for part in (detail, f"{HARNESS_NAMES.get(record.get('backend'), '后端')}原话：{own}") if part)
     return {"title": title, "detail": detail, "actions": list(actions)}
 
 

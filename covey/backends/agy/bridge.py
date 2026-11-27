@@ -64,6 +64,7 @@ from covey.core.reply_state import ReplyState
 from covey.core.result import MAX_REPLY_BYTES
 from covey.core.steer import SteerRefused, refuse_steer, steer_text
 from covey.core.steps import AnswerNotes, Steps
+from covey.core.failure import said_of
 from covey.core.quota_hold import clock
 from covey.core.text import redact, tool_detail
 from covey.core.usage import TurnTokens
@@ -97,8 +98,6 @@ POLICY_RE = re.compile(r"\bsafety\b|prohibited.?content|blocklist|recitation|\bs
 MODEL_RE = re.compile(r"invalid model selection|unknown model key|model not found", re.I)
 LONG_RESET = 6 * 3600  # A quota back later than this is a spent one, not a passing limit (app/auto_retry.py MAX_RESET_WAIT).
 RESET_RE = re.compile(r"\b(?:reset|refresh)\w*\s+(?:after|in)\s+((?:\d+\s*[dhms]\s*)+)", re.I)
-# Google's status of an error as agy prints it ("INVALID_ARGUMENT (code 400): …"): what the card may say of it.
-STATUS_RE = re.compile(r"\b([A-Z][A-Z_]{3,}) \(code (\d{3})\)")
 UNSAID = ("root_failed", "process_exit", "root_incomplete", "output_missing")  # Codes that say nothing of their own.
 RETRIED = ("rate_limited", "server_fault")  # What app/auto_retry.py retries, of what error_code says.
 NOT_LOGGED_IN = ("Antigravity 还没有登录：在运行机器人的账号下执行一次 agy，选 Google OAuth 登录"
@@ -978,21 +977,30 @@ def reset_of(words, now):
 
 
 def failure_words(ctx, code, words, reset, now) -> str:
-    """What the failure card says of a failed turn in agy's terms (RunResult.failure_detail): the model it could not use,
-    a spent quota with when it is back, a safety block, or the status Google named; never agy's own sentences beyond
-    that. "" where the code's own words say it (a passing limit, a fault, a login)."""
+    """What the failure card's title says of a failed turn in agy's terms (RunResult.failure_detail): the model it could
+    not use, or a spent quota with when it is back; "" otherwise (agy's own words are in 技术详情, ``said_words``)."""
     model = ctx.model or "所选模型"
     if code == "model_unavailable":
         return f"Antigravity 不认 {model}（账号没有它的权限、它已下线，或不支持所选档位）"
     if code == "quota_exhausted" and reset:
         return f"Antigravity 的 {model} 额度用完了，{clock(reset, now)} 恢复；恢复前重试不会成功，可以换个模型接着做"
-    if code == "policy_refusal":
-        return "Antigravity 报：这一轮的内容被模型服务的安全策略拦下"
-    found = STATUS_RE.search(str(words or ""))
-    return f"Antigravity 报的错误：{found[1]}（{found[2]}）" if found and code in UNSAID else ""
+    return ""
 
 
-def failed_turn(result, ctx, code, words, reset, now):
+def said_words(rows, stderr) -> str:
+    """What agy said of a failed turn (RunResult.backend_said, core/failure.py said_of): its result's error, else the
+    last ``AGY_ERROR`` line's short_error, else its last ``error:`` line."""
+    said = str((rows.result or {}).get("error") or "").strip()
+    if not said:
+        for line in reversed(str(stderr or "").splitlines()):
+            short = re.search(r'"short_error"\s*:\s*"((?:[^"\\]|\\.)*)"', line) if "AGY_ERROR" in line else None
+            if short or re.match(r"\s*error\b", line, re.I):
+                said = short[1] if short else line.strip()
+                break
+    return said_of(said)
+
+
+def failed_turn(result, ctx, code, words, reset, now, said=""):
     """``result`` of a failed turn with its words (``failure_words``) and a spent quota's reset (``limit.reset_at``, for
     app/auto_retry.py), and that quota held (accounts.hold: no turn on its group starts meanwhile, accounts.holding);
     any other result as it is. The accounts' own (accounts.turn) say theirs over these."""
@@ -1002,7 +1010,7 @@ def failed_turn(result, ctx, code, words, reset, now):
     limit = {**(result.limit or {}), "reset_at": reset} if reset else result.limit
     if code == "quota_exhausted" and reset and not device_of(ctx) and not accounts.configured():
         accounts.hold(ctx.state_dir, ctx.model, reset, now)
-    return dataclasses.replace(result, failure_detail=detail, limit=limit)
+    return dataclasses.replace(result, failure_detail=detail, limit=limit, backend_said=said)
 
 
 def run_stream(request, argv, stdin, env, switch=None):
@@ -1118,7 +1126,7 @@ def run_stream(request, argv, stdin, env, switch=None):
                           identity=bool(rows.sid and rows.result is not None and not rows.invalid),
                           cleanup=not forced_cleanup and type(observed) is int and (rc is None or observed == rc),
                           cancel_event=cancel_event, emit=request.emit)
-    return failed_turn(result, ctx, code, words, reset, now)
+    return failed_turn(result, ctx, code, words, reset, now, said_words(rows, stderr) if status == "failed" else "")
 
 
 HARNESS_REGISTRY.register("agy", AntigravityBackend)

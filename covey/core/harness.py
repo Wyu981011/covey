@@ -249,6 +249,9 @@ class RunResult:
     # (Acme's 429 is its upstream's capacity, not the owner's quota). Replaces the shared
     # detail on the failure card; the label and recovery steps stay.
     failure_detail: str = ""
+    # The Harness's own words for the failure, as it said them (core/failure.py said_of: secrets, keys, paths, addresses
+    # hidden, one line, bounded): the failure card's 技术详情 shows them whatever the error (T872), "" for none.
+    backend_said: str = ""
     # What a limit or a passing server fault said of itself ({reset_at: epoch seconds, evidence: [rows]}), for the
     # automatic retry (app/auto_retry.py); None for a turn that ended otherwise.
     limit: dict | None = None

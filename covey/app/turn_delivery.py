@@ -192,7 +192,8 @@ class TurnDelivery(AnswerParts, QuietDelivery):
         if not (turn.status == "failed" or (turn.status == "cancelled" and policy)) or turn.verified_delivery is not None:
             return {}  # Done, or stopped by the owner: no reason to give.
         code = str(getattr(outcome, "error_code", "") or "root_failed") if outcome is not None else "root_failed"
-        return {"failure_code": code, "failure_detail": str(getattr(turn, "failure_detail", "") or "")}
+        return {"failure_code": code, "failure_detail": str(getattr(turn, "failure_detail", "") or ""),
+                **({"failure_said": turn.failure_said} if getattr(turn, "failure_said", "") else {})}
 
     def card_text(self, display_text):
         """The body of a failed task card: the reason and what comes next in one line (core/failure.py), its old

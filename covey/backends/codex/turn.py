@@ -15,6 +15,7 @@ from covey.core import gateways, quota_hold
 from covey.core.limit_reset import FAULT_STATUSES, account_fault
 from covey.core.protocol import retry_note, retry_reason
 from covey.core.result import MAX_REPLY_BYTES, is_identifier
+from covey.core.failure import said_of
 from covey.core.text import safe_text
 from covey.core.ttft import FirstToken
 
@@ -97,16 +98,13 @@ def error_kind(error) -> str:
     return re.sub(r"[^A-Za-z_]", "", variant)[:40] if isinstance(variant, str) else ""
 
 
-def failure_words(error, code) -> str:
-    """What the failure card says of a failed turn in Codex's terms (RunResult.failure_detail): the kind of error Codex
-    named, never its message, which may carry the request's data (the run's log has it, ``logged_words``); OpenAI's fixed
-    refusal sentence is named as what it is. "" for a limit, a fault, a spent quota or a login, whose own words stand."""
-    if not isinstance(error, dict) or code in ("rate_limited", "server_fault", "quota_exhausted", "authentication_error"):
+def said_words(error) -> str:
+    """What Codex said of a failed turn (RunResult.backend_said, core/failure.py said_of): its kind of error and its
+    message, as it said them, secrets and the like hidden."""
+    if not isinstance(error, dict):
         return ""
     kind = error_kind(error)
-    if REFUSED.search(str(error.get("message") or "")):
-        return "Codex 报：Invalid prompt（OpenAI 判定这次请求可能违反使用政策）"
-    return f"Codex 报的错误类型：{kind}" if kind else "Codex 没说是哪类错误（原话在运行日志 runner.log）"
+    return said_of(f"{kind + ': ' if kind else ''}{error.get('message') or ''}")
 
 
 def logged_words(error) -> list:

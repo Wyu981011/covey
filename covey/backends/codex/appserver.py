@@ -17,7 +17,7 @@ import time
 
 from covey.backends.codex.events import CodexEventAdapter
 from covey.backends.codex.rpc import AppServer, RpcError, failed
-from covey.backends.codex.turn import close_turn, failure_words, logged_words, paused_question_end, read_turn
+from covey.backends.codex.turn import close_turn, logged_words, paused_question_end, read_turn, said_words
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.backends.codex import consult
 from covey.core import repomap, topic_repos
@@ -289,7 +289,7 @@ def run_appserver(request, env):
         if finished:
             event("turn_finished", {}, rpc)
         if status == "failed" and getattr(rpc, "turn_error", None) is not None:
-            # Only the run's log hears Codex's own words (app/runs.py); the card says their kind (failure_words).
+            # Only the run's log hears Codex's own words (app/runs.py); the card shows them too, secrets hidden (said_words).
             event("backend_failure", {"status": status, "code": code, "stage": "turn",
                                       "stderr": logged_words(rpc.turn_error)}, rpc)
     except JobCancelled as exc:
@@ -323,7 +323,5 @@ def run_appserver(request, env):
     # trace_finished went out with the controls (close_turn).
     result = state.finish(text, sid, status, code, identity=identity, cleanup=cleanup, protection=protection,
                           cancel_event=cancel)
-    words = failure_words(getattr(rpc, "turn_error", None), code) if rpc is not None and status == "failed" else ""
-    if words and result.is_error and not result.failure_detail:
-        return dataclasses.replace(result, failure_detail=words)
-    return result
+    said = said_words(getattr(rpc, "turn_error", None)) if rpc is not None and status == "failed" else ""
+    return dataclasses.replace(result, backend_said=said) if said and result.is_error else result

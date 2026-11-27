@@ -8,6 +8,7 @@ import time
 import uuid
 
 from covey.core.harness import RunResult, UUID_RE
+from covey.core.failure import said_of
 from covey.core.limit_reset import (account_fault, evidence, fault_in, quota_spent, relative_reset, row_reset,
                                      row_text, text_reset)
 from covey.core.result import ExecutionOutcome, MAX_REPLY_BYTES, VerifiedRootReply
@@ -20,6 +21,21 @@ TERMINAL_TASK_STATES = frozenset({"completed", "failed", "stopped"})
 # in this turn names them better. 529 overloaded is not a rate limit here, as in the other backends: it is a
 # passing server fault (``server_fault``), retried on a shorter ladder (app/auto_retry.py).
 RATE_LIMIT_MASKED = frozenset({"root_failed", "root_incomplete", "output_missing", "process_exit", "settle_timeout"})
+
+
+def claude_words(row) -> str:
+    """What Claude Code's result row said of a failure (RunResult.backend_said): the API's status and its error words,
+    or the result's text when the row is an error; "" for a row that is not one."""
+    if not isinstance(row, dict) or row.get("type") != "result":
+        return ""
+    status = row.get("api_error_status")
+    errors = row.get("errors")
+    words = " ".join(str(e) for e in errors) if isinstance(errors, list) and errors else ""
+    if not words and row.get("is_error") is True and isinstance(row.get("result"), str):
+        words = row["result"]
+    if not words and not (type(status) is int):
+        return ""
+    return (f"HTTP {status} " if type(status) is int else "") + words
 
 
 def result_failure(row):
@@ -381,6 +397,7 @@ class ClaudeReplyState:
             self.policy_event,
         )
         detail = self.policy_detail if self.policy_event else ""
+        said = said_of(claude_words(self.result)) if status not in ("completed", "cancelled") else ""
         return RunResult(
             candidate.text if candidate else outcome.summary(detail),
             self.session_id,
@@ -389,4 +406,5 @@ class ClaudeReplyState:
             outcome,
             failure_detail=detail,
             limit=self.limit_fields() if status != "completed" else None,
+            backend_said=said,
         )
