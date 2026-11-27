@@ -21,6 +21,7 @@ from covey.backends.codex.turn import close_turn, logged_words, paused_question_
 from covey.backends.codex.usage import CodexTurnUsage
 from covey.backends.codex import consult
 from covey.core import repomap, topic_repos
+from covey.core.failure import said_of
 from covey.core.harness import CONSULT, LEAD, LOOK, PROXY, READ, TOOL_LIMIT, JobCancelled, RunResult
 from covey.core.paths import entry_script
 from covey.core.process import device_of
@@ -324,4 +325,9 @@ def run_appserver(request, env):
     result = state.finish(text, sid, status, code, identity=identity, cleanup=cleanup, protection=protection,
                           cancel_event=cancel)
     said = said_words(getattr(rpc, "turn_error", None)) if rpc is not None and status == "failed" else ""
+    if not said and rpc is not None and status == "failed":
+        # No turn error said why (the app server ended, a protocol fault): its last error line, else its exit code.
+        lines = list(getattr(rpc, "error_lines", None) or ())
+        code_of = rpc.process.poll() if getattr(rpc, "process", None) is not None else None
+        said = said_of(lines[-1]) if lines else (f"codex app-server {code}，退出码 {code_of}" if type(code_of) is int else "")
     return dataclasses.replace(result, backend_said=said) if said and result.is_error else result

@@ -3,8 +3,10 @@ requests answered, supplements steered in; a failed exchange is an RpcError and 
 
 from __future__ import annotations
 
+import collections
 import json
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -25,6 +27,13 @@ def failed(code):
     return RpcError(failure_text(code), code)
 
 
+# The app server's own error lines on stderr (its log's ERROR level, a panic, an "error:" line): kept for a failure no
+# turn error explains; anything else it writes there is dropped unread.
+ERROR_LINE = re.compile(r"\bERROR\b|panicked|^\s*error\b|\bfatal\b", re.I)
+ERROR_KEPT = 5
+ERROR_CHARS = 400
+
+
 class AppServer:
     device = False  # True for an app server on a device (ctx.device), see __init__.
 
@@ -42,6 +51,7 @@ class AppServer:
             text=True,
             bufsize=1,
         )
+        self.error_lines = collections.deque(maxlen=ERROR_KEPT)
         self.events = queue.Queue()
         self.pending = {}
         self.lock = threading.RLock()
@@ -68,8 +78,11 @@ class AppServer:
             reader.start()
 
     def _stderr(self):
-        for _ in self.process.stderr:
-            pass  # Human stderr may contain prompts, tool output or reasoning.
+        # Human stderr may contain prompts, tool output or reasoning: only its error lines are kept (ERROR_LINE), the
+        # last few, for a failure no turn error explains (appserver.py, the card's 技术详情, T872).
+        for line in self.process.stderr:
+            if ERROR_LINE.search(line):
+                self.error_lines.append(line.strip()[:ERROR_CHARS])
 
     def _read(self):
         try:

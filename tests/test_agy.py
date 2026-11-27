@@ -396,7 +396,9 @@ class AntigravityTests(unittest.TestCase):
                 ("model-gone", "model_unavailable", "Antigravity 不认 gemini-3.8-pro-high", "invalid model selection"),
                 ("refused", "policy_refusal", "", "response blocked by SAFETY"),
                 ("bad-request", "root_failed", "", "INVALID_ARGUMENT (code 400): * GenerateContentRequest.tools"),
-                ("error", "root_failed", "", "PRIVATE_DETAIL internal")):
+                ("error", "root_failed", "", "PRIVATE_DETAIL internal"),
+                # Ended with no result and no error line: its last line of stderr (T872).
+                ("crash", "process_exit", "", "panic: runtime error: index out of range")):
             with self.subTest(scenario=scenario):
                 result, events, _replies, _sessions, _record = self.run_agy(scenario)
                 self.assertEqual((result.is_error, result.outcome.error_code), (True, code))

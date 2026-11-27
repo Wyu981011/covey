@@ -28,6 +28,8 @@ if scenario == "model-gone":
     # agy 1.5.18 once the account's list lost the model (T872): before the conversation, on stderr only.
     print('error: invalid model selection (--model "gemini-4-neon" --effort "xhigh"): --effort is not supported for '
           'model "gemini-4-neon" PRIVATE_DETAIL', file=sys.stderr); sys.exit(1)
+if scenario == "crash":
+    print("panic: runtime error: index out of range [3] with length 3", file=sys.stderr); sys.exit(2)
 if scenario == "steer" and "--conversation" in args:
     scenario = "ok"  # The process after the supplement: the turn goes on and ends.
 if scenario == "steer":

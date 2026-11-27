@@ -9,6 +9,8 @@ backends/claude/control.py, the argv and environment backends/claude/argv.py.
 
 from __future__ import annotations
 
+import dataclasses
+
 import subprocess
 import time
 import uuid
@@ -20,9 +22,10 @@ from covey.backends.claude.completion import ClaudeReplyState, result_failure
 from covey.backends.claude.control import ClaudeControl
 from covey.backends.claude.events import ClaudeEventAdapter
 from covey.backends.claude.hooks import TurnHooks
-from covey.backends.claude.process import (ClaudeProcess, IMAGE_FRAME, QueueNotes, failure_event, save_transport_details,
-                                           transport_error, transport_failure_details)
+from covey.backends.claude.process import (ClaudeProcess, IMAGE_FRAME, QueueNotes, failure_event, said_words,
+                                           save_transport_details, transport_error, transport_failure_details)
 from covey.core.attachments import MAX_IMAGE_BYTES, read_images
+from covey.core.failure import said_of
 from covey.core.completion import CompletionBudget
 from covey.core.harness import JobCancelled
 from covey.core.model_policy import policy_where, stop_detail, tolerated_line
@@ -288,6 +291,11 @@ def run_stream(backend, request, env):
     finally:
         failure, cleanup, rc = close_stream(request, process, control, emit, flush_events, failure, rc)
     result = state.finish(rc, cleanup=cleanup, failure=failure, stopped=stopped)
+    if result.is_error and not result.backend_said and result.outcome is not None and result.outcome.status == "failed":
+        # No result row said why (a transport failure, an exit): the CLI's stderr or the transport's reason does (T872).
+        said = said_of(said_words(process, transport_details, stage, rc))
+        if said:
+            result = dataclasses.replace(result, backend_said=said)
     save_transport_details(state, transport_details)
     diagnosis = failure_event(result.outcome, transport_details, stage, process, rc)
     if diagnosis is not None:

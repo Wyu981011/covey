@@ -117,6 +117,16 @@ class CodexVerifiedReplyTests(CodexRunCase):
         self.assertIn("badRequest: bad request: token=", result.backend_said)
         self.assertNotIn("abc123SECRET", result.backend_said)
         self.assertNotIn("/absolute/someone", result.backend_said)
+        # The app server's stderr: only its error lines are kept, for a failure no turn error explains (T872).
+        import collections
+        from types import SimpleNamespace
+        from covey.backends.codex.rpc import AppServer
+        server = SimpleNamespace(process=SimpleNamespace(stderr=iter([
+            "user prompt: PRIVATE words\n", "2026-11-27T05:00:00Z ERROR codex_core::client: stream disconnected\n",
+            "reasoning PRIVATE\n", "thread 'main' panicked at src/x.rs\n"])), error_lines=collections.deque(maxlen=5))
+        AppServer._stderr(server)
+        self.assertEqual([line.split(" ")[-1] for line in server.error_lines], ["disconnected", "src/x.rs"])
+        self.assertNotIn("PRIVATE", " ".join(server.error_lines))
         # The fault's own words, not transport_error's 通信失败 they fell back to.
         result = self.run_rpc(FakeRpc([finished(turn(status="failed", error={"codexErrorInfo": "serverOverloaded"},
                                                      items=[]))]))

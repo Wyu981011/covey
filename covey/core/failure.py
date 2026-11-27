@@ -259,7 +259,7 @@ def failure_view(record, now=None):
         detail = "；".join(part for part in (detail, said.rstrip("。")) if part)
     own = str(record.get("failure_said") or "").strip()
     if own:
-        detail = "；".join(part for part in (detail, f"{HARNESS_NAMES.get(record.get('backend'), '后端')}原话：{own}") if part)
+        detail = "；".join(part for part in (detail, f"{HARNESS_NAMES[record['backend']] + ' ' if record.get('backend') in HARNESS_NAMES else '后端'}原话：{own}") if part)
     return {"title": title, "detail": detail, "actions": list(actions)}
 
 

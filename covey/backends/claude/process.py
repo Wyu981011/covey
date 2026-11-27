@@ -178,6 +178,30 @@ def failure_event(outcome, details, stage, process, rc):
     return data
 
 
+# The stderr line that says why the CLI ended (``said_words``): a gateway's ("claude gateway: RemoteDisconnected"), a lost
+# conversation, an error. Seen on the owner's machine in ten days: ssh tunnel failed, RemoteDisconnected, TimeoutError,
+# tunnel operation is busy, No conversation found with session ID (T872).
+KEY_LINE = re.compile(r"claude gateway:|no conversation found|error|exception|fail|refused|timed? ?out|disconnect"
+                      r"|denied|not found|unavailable|busy", re.I)
+
+
+def said_words(process, details, stage, rc) -> str:
+    """What the CLI said of a run that ended with no result row (RunResult.backend_said, before core/failure.py said_of):
+    its last stderr line that names a failure (KEY_LINE), else its last one; with none, the transport's reason, stage
+    and exit code (``transport_failure_details``); "" when nothing is known."""
+    tail = getattr(process, "stderr_tail", None)
+    lines = [str(line).strip() for line in (tail if isinstance(tail, (collections.deque, list, tuple)) else ())
+             if str(line).strip()]
+    found = next((line for line in reversed(lines) if KEY_LINE.search(line)), lines[-1] if lines else "")
+    if found:
+        return found
+    details = details or {}
+    code = details.get("process_exit_code", rc)
+    parts = [str(details.get("reason") or ""), f"阶段 {details.get('stage') or stage}" if details or stage else "",
+             f"退出码 {code}" if type(code) is int else ""]
+    return "，".join(part for part in parts if part) if details or type(code) is int and code else ""
+
+
 def save_transport_details(state, details):
     """Add ``details`` to the run's diagnostics. Only a diagnosis: failing to save them never changes
     how the run ended (it would have turned a transport failure into the job's own exception)."""

@@ -100,7 +100,7 @@ class ViewTest(unittest.TestCase):
                                     ("process_exit", "claude", "Claude Code"), ("transport_error", "maso", "后端")):
             with self.subTest(code=code):
                 view = failure.failure_view(failed(failure_code=code, backend=backend, failure_said="contextWindowExceeded: too long"))
-                self.assertIn(f"{name}原话：contextWindowExceeded: too long", view["detail"])
+                self.assertIn(f"{name + ' ' if name != '后端' else name}原话：contextWindowExceeded: too long", view["detail"])
         self.assertNotIn("原话", failure.failure_view(failed(failure_code="root_failed"))["detail"])
         said = failure.said_of("bad: token=abc123SECRET key=AIzaSyABCDEF0123456789abcdef at /absolute/x/.codex/auth.json 192.0.2.7")
         for hidden in ("abc123SECRET", "AIzaSyABCDEF0123456789abcdef", "/absolute/x", "192.0.2.7"):

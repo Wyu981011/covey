@@ -1631,6 +1631,47 @@ class ClaudeTransportDiagnosticsTests(unittest.TestCase):
                          ("failed", "transport_error", "initialize", "RuntimeError", "initialize_unexpected_event", 1))
         self.assertEqual(data["stderr"], ["No conversation found with session ID: x", "exit"])
 
+    def failed_run(self, error, *, stage="initialize", tail=(), exit_code=1):
+        """The RunResult of a run that ends on ``error`` at ``stage``, the CLI's stderr ``tail``."""
+        import collections
+        with tempfile.TemporaryDirectory() as folder:
+            ctx = dataclasses.replace(codex_context(Path(folder), "stream-json"),
+                backend_cmd=["never-run-claude"], options={"transport": "stream-json"})
+            process = mock.Mock()
+            process.prelude, process.deadline = [], None
+            process.process.poll.return_value = exit_code
+            process.close.return_value = True
+            process.write_size, process.write_offset = 149, 149
+            process.stderr_tail = collections.deque(tail)
+            getattr(process, "initialize" if stage == "initialize" else "send").side_effect = error
+            with mock.patch("covey.backends.claude.runtime.ClaudeProcess", return_value=process):
+                return ClaudeBackend().run(RunRequest(ctx, TRANSPORT_PRIVATE_SENTINEL, None, callbacks=RunCallbacks(
+                    event=lambda kind, data, control: None), inputs=RunInputs(threading.Event(), run_id=RUN)))
+
+    def test_what_the_gateway_or_the_cli_said_on_stderr_reaches_the_card_when_no_result_row_said_why(self):
+        """T872: Claude Code ended before a result row (the gateway dropped, the conversation was gone): the stderr line
+        that says why is the card's 技术详情 (backend_said, then failure_said), not only the log; secrets hidden."""
+        from covey.core import failure
+        for line in ("claude gateway: ssh tunnel failed; inspect private runtime/ssh.log", "claude gateway: RemoteDisconnected",
+                     "claude gateway: TimeoutError", "claude gateway: tunnel operation is busy; retry after it finishes",
+                     "No conversation found with session ID: b22daa79-4d01-44e0-8687-147cf972b658"):
+            with self.subTest(line=line):
+                result = self.failed_run(RuntimeError("Unexpected Claude initialization event"), tail=["starting", line, "bye"])
+                self.assertEqual(result.outcome.error_code, "transport_error")
+                key = line.split(";")[0].split(":")[0]
+                self.assertIn(key, result.backend_said)
+                view = failure.failure_view({"job_id": 1, "topic_id": "t", "status": "failed", "backend": "claude",
+                                             "failure_code": "transport_error", "failure_said": result.backend_said})
+                self.assertIn("Claude Code 原话：" + key, view["detail"])
+                self.assertNotIn(TRANSPORT_PRIVATE_SENTINEL, result.backend_said)
+        # A secret on that line is hidden, the reason kept; with no stderr, the transport's reason, stage and exit code.
+        result = self.failed_run(RuntimeError("Unexpected Claude initialization event"),
+                                 tail=["claude gateway: RemoteDisconnected token=abc123SECRET"])
+        self.assertIn("claude gateway: RemoteDisconnected token=", result.backend_said)
+        self.assertNotIn("abc123SECRET", result.backend_said)
+        result = self.failed_run(RuntimeError("Unexpected Claude initialization event"), tail=[], exit_code=1)
+        self.assertEqual(result.backend_said, "initialize_unexpected_event，阶段 initialize，退出码 1")
+
     def test_the_failure_event_holds_neither_the_exceptions_message_nor_the_prompt(self):
         found = self.failure_events(OSError(11, TRANSPORT_PRIVATE_SENTINEL), stage="send_input")
         self.assertEqual(found[0]["errno"], 11)

@@ -987,9 +987,10 @@ def failure_words(ctx, code, words, reset, now) -> str:
     return ""
 
 
-def said_words(rows, stderr) -> str:
+def said_words(rows, stderr, rc=None) -> str:
     """What agy said of a failed turn (RunResult.backend_said, core/failure.py said_of): its result's error, else the
-    last ``AGY_ERROR`` line's short_error, else its last ``error:`` line."""
+    last ``AGY_ERROR`` line's short_error, else its last ``error:`` line, else its last line of stderr (a sign-in URL
+    left out, ``stderr_lines``), else its exit code."""
     said = str((rows.result or {}).get("error") or "").strip()
     if not said:
         for line in reversed(str(stderr or "").splitlines()):
@@ -997,6 +998,9 @@ def said_words(rows, stderr) -> str:
             if short or re.match(r"\s*error\b", line, re.I):
                 said = short[1] if short else line.strip()
                 break
+    if not said:
+        lines = stderr_lines(stderr)
+        said = lines[-1] if lines else (f"agy 退出码 {rc}" if type(rc) is int and rc else "")
     return said_of(said)
 
 
@@ -1126,7 +1130,7 @@ def run_stream(request, argv, stdin, env, switch=None):
                           identity=bool(rows.sid and rows.result is not None and not rows.invalid),
                           cleanup=not forced_cleanup and type(observed) is int and (rc is None or observed == rc),
                           cancel_event=cancel_event, emit=request.emit)
-    return failed_turn(result, ctx, code, words, reset, now, said_words(rows, stderr) if status == "failed" else "")
+    return failed_turn(result, ctx, code, words, reset, now, said_words(rows, stderr, rc) if status == "failed" else "")
 
 
 HARNESS_REGISTRY.register("agy", AntigravityBackend)
