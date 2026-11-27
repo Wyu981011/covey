@@ -217,6 +217,7 @@ class SentImageTest(ImagesCase):
         large.write_bytes(b"\x89PNG" + b"0" * 800_000)
         self.said_with(large)
         self.web.limits = {"body_bytes": 8 * 1024 * 1024, "image_bytes": 4 * 1024 * 1024, "store": "file"}
+        self.sync.client.rate = 50_000_000  # A fast way to the page (T876: a slow one keeps images smaller).
         with mock.patch.object(web_images, "Image", None):
             self.sync.push_once(T0)
             self.sync.push_once(T0 + 1)

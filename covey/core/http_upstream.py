@@ -63,10 +63,11 @@ class KeepAlive:
 
     IDLE = 4  # Idle connections kept per host.
 
-    def __init__(self, factory=None):
+    def __init__(self, factory=None, direct=False):
         self.lock = threading.Lock()
         self.idle = {}  # (host, port) -> [connection], the newest last
         self.factory = factory  # (host, port, timeout) -> a connection; None: HTTPS, through the proxy as above (tests pass plain HTTP).
+        self.direct = direct  # Never through the environment's proxy.
 
     def send(self, method, url, body, headers, timeout):
         """(status, body bytes) of one request. OSError when no answer came."""
@@ -121,7 +122,7 @@ class KeepAlive:
         host, port = key
         if self.factory is not None:
             return self.factory(host, port, timeout)
-        proxy = urllib.request.getproxies().get("https")
+        proxy = None if self.direct else urllib.request.getproxies().get("https")
         if proxy and not urllib.request.proxy_bypass(host):
             from urllib.parse import unquote, urlsplit
             p = urlsplit(proxy if "://" in proxy else f"http://{proxy}")
