@@ -416,7 +416,7 @@ def take_inbox(gateway, app, job, ctx, directory: Path) -> None:
                     watch(job_ctx, job, payload["event_id"])
             elif kind == "answer":
                 app.questions.submit_answer(job_ctx, payload["chat_id"], payload["token"], payload["fields"], payload["event_id"],
-                                            by=payload.get("by"))
+                                            **({"by": payload["by"]} if payload.get("by") else {}))  # A Bridge's of before: none.
                 ack(directory, payload["id"], True)
             elif kind == SHOW_QUESTION:
                 record = read_json(Path(job_ctx.state_dir) / "questions" / (str(payload["token"]) + ".json"))

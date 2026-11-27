@@ -425,7 +425,7 @@ class SixTabsTests(HubCase):
         super().setUp()
         from covey.core.workspaces import add_workspace
         for name in ('alpha', 'beta'):
-            (self.root / name).mkdir()
+            (self.root / name / '.git').mkdir(parents=True)  # Checkouts: the 仓库 tab lists no plain directory (T870 Wave 3.5).
             add_workspace(self.state, self.ctx.default_workdir, str(self.root / name))
         self.manager = self.app.workspace_manager
         self.manager.started = True  # The tests run each queued request themselves.

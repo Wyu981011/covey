@@ -344,6 +344,7 @@ class RetiredWorkspaceManagerTests(UnifiedCase):
         self.manager.started = True  # The tests run each queued request themselves.
         self.app.runtime.access.remember_owner_chat('dm')
         self.said = self.app.messenger.send_message = mock.Mock()
+        (self.root / '.git').mkdir(exist_ok=True)  # docs is a checkout: the 仓库 tab lists no plain directory (T870 Wave 3.5).
         write_json_file(config_path(self.ctx.state_dir), {'default': 'project', 'workspaces': {
             'project': str(self.work), 'docs': str(self.root), 'dev': 'gpu1:/srv/x'}, 'recent': {'docs': 1700000000}})
 

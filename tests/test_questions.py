@@ -1781,9 +1781,9 @@ class FoldOlderQuestionTest(TopicFixture, unittest.TestCase):
         self.app.cards.repaint_browse_card = mock.Mock(return_value=True)
         real = self.app.questions.submit_answer
 
-        def racing(*args):
+        def racing(*args, **kw):
             self.fold()  # The outbox poll, between the click reading the form and the answer's own check.
-            return real(*args)
+            return real(*args, **kw)
         for message, value in (('om_card_om_1105', {}), ('om_feedback_card', {'mode': 'feedback_submit'})):
             with self.subTest(value), mock.patch.object(self.app.questions, 'submit_answer', side_effect=racing):
                 self.save(self.old)
