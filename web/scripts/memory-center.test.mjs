@@ -276,3 +276,10 @@ test('消费方：有 v43 专项条目就读决定记录（kind=decision），�
   assert.deepEqual(P.entryDecisions([{ ...entries[0], status: 'void' }], topics), [], '作废的不算');
   assert.deepEqual(P.entryDecisions([{ ...entries[0], kind: 'rule' }], topics), [], '只读决定');
 });
+
+test('页头数字：选了范围就写那个范围的数，全部范围写总数（CUA C3：切专项后页头与专项右栏一致）', () => {
+  assert.deepEqual(C.headCounts(idx, 'all'), { rule: 1, decision: 1, note: 2 });
+  assert.deepEqual(C.headCounts(idx, 'p:demo01'), { rule: 0, decision: 1, note: 0 });
+  assert.deepEqual(C.headCounts(idx, 'global'), { rule: 1, decision: 0, note: 1 });
+  assert.deepEqual(C.headCounts(idx, 'p:gone'), { rule: 1, decision: 1, note: 2 }, '没有这个范围时退回总数');
+});

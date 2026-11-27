@@ -61,7 +61,7 @@ import {
   revisitCancelShape, revisitOf,
 } from './workbench.v4';
 import { upgradeOf, upgradeShape } from './workbench.upgrade';
-import { checkMemoryEdit, launchReposError, reposSettingsError } from './workbench.memory-edit';
+import { checkMemoryEdit, launchReposError, reposSettingsError, turnMemoryOf } from './workbench.memory-edit';
 import { quotaOf, quotaRefreshShape } from './workbench.quota';
 
 interface TopicRow {
@@ -320,6 +320,12 @@ function v34Turn(d: Record<string, unknown>): Partial<TurnView> {
   const delivery = deliveryOf(d.delivery);
   if (delivery) out.delivery = delivery;
   return out;
+}
+
+/** v43 的一轮字段：这一轮带了几条记忆（memory，Covey 推来才有） */
+function v43Turn(d: Record<string, unknown>): Partial<TurnView> {
+  const memory = turnMemoryOf(d.memory);
+  return memory ? { memory } : {};
 }
 
 /** v27：这一轮用的什么配置，只留认得的字段、每个最多 60 字 */
@@ -585,6 +591,7 @@ export class WorkbenchQueryService {
       ...v4Turn(d),
       ...v31Turn(d),
       ...v34Turn(d),
+      ...v43Turn(d),
     };
   }
 

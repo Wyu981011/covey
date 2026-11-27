@@ -789,6 +789,7 @@ class Center:
     def __init__(self, state_dir, home=None) -> None:
         self.state, self.home = Path(state_dir), home
         self.scanned, self.scanned_at = None, None
+        self.last_previews = None  # memory:previews of the last build, for a ``quick`` one.
 
     def imports(self, now, *, force=False) -> list:
         """The Harnesses' memory entries (core/harness_memory.py ``scan``), scanned again after IMPORT_SECONDS; [] when they
@@ -801,11 +802,16 @@ class Center:
             self.scanned_at = now
         return self.scanned
 
-    def build(self, now=None) -> dict:
-        """key -> data of every memory:* key, memory:index last (its ``revs`` name the others' revs)."""
+    def build(self, now=None, *, quick=False) -> dict:
+        """key -> data of every memory:* key, memory:index last (its ``revs`` name the others' revs). ``quick``: the one
+        before the page's ack of its own change (app/web_sync.py push_memory_center ``force``): memory:previews as the last
+        build had it, its 21 previews being most of a build's time; the next build makes them again."""
         now = time.time() if now is None else now
         store = Store(self.state, now)
-        return keys(self.state, store, self.imports(now), now=now, home=self.home)
+        built = keys(self.state, store, self.imports(now), now=now, home=self.home,
+                     previews_from=self.last_previews if quick else None)
+        self.last_previews = built.get(PREVIEWS_KEY)
+        return built
 
 
 def off_index() -> dict:
@@ -816,8 +822,9 @@ def off_index() -> dict:
             "titles": []}
 
 
-def keys(state_dir, store, imported=(), *, now=None, home=None) -> dict:
-    """Every memory:* key's data of ``store`` (``Store``) and ``imported`` (``harness_memory.scan``'s)."""
+def keys(state_dir, store, imported=(), *, now=None, home=None, previews_from=None) -> dict:
+    """Every memory:* key's data of ``store`` (``Store``) and ``imported`` (``harness_memory.scan``'s); ``previews_from``: the
+    memory:previews to use as they are instead of making them (``Center.build`` ``quick``)."""
     now = store.now if now is None else now
     views = {entry.ref: store.view(entry) for entry in store.all()}
     pending = store.pending()
@@ -845,7 +852,7 @@ def keys(state_dir, store, imported=(), *, now=None, home=None) -> dict:
         for number in range(min(summary["pages"], IMPORT_PAGES)):
             out[f"{IMPORT_PREFIX}{number}"] = harness_memory.page(state_dir, Path.home() if home is None else home, number,
                                                                   items=imported)
-    out[PREVIEWS_KEY] = previews(state_dir, store, now)
+    out[PREVIEWS_KEY] = previews_from if previews_from is not None else previews(state_dir, store, now)
     revs = {key: web_sync.rev(data) for key, data in out.items()}
 
     def scope(key, title, found, room, waiting):

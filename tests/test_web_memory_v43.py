@@ -506,6 +506,37 @@ class IntegratedM2Test(Case):
         self.assertEqual([row["topic_key"] for row in built["memory:previews"]["previews"]], [TID, "new"])
         self.assertIsInstance(built["memory:index"]["health"], dict)
 
+    def test_a_turns_memory_reads_m2s_memory_ids(self):
+        """A turn's ``memory`` on the page (app/web_turns.py memory_of): app/memory_turn.py writes ``memory_ids`` as
+        {n: the short code, ref, scope, kind, by}; their codes are the turn's, not the dicts' str (T870, CUA C13)."""
+        from covey.app import web_turns
+        self.seed()
+        rule = memstore.find(self.state, self.rule.ref)
+        record = {"memory_ids": [{"n": rule.code, "ref": rule.ref, "scope": "global", "kind": "rule", "by": "owner"},
+                                 {"n": "", "ref": self.decision.ref, "scope": "project", "kind": "decision", "by": "lead"}],
+                  "memory_used": [rule.code]}
+        found = web_turns.memory_of(self.state, record)
+        self.assertEqual((found["count"], found["used"], found["codes"]), (2, [rule.title], [rule.code]))
+        self.assertIsNone(web_turns.memory_of(self.state, {}))
+
+    def test_the_build_before_the_pages_ack_takes_the_last_previews(self):
+        """CUA C6 (T870): the ack of the page's own change waited for a whole build, 21 previews most of it; a quick build
+        takes the last ones, the next full build makes them again."""
+        self.seed()
+        center = web_memory.Center(self.state, home=self.home)
+        made = mock.Mock(side_effect=web_memory.previews)
+        with mock.patch.object(web_memory, "previews", made):
+            first = center.build(now=NOW)
+            quick = center.build(now=NOW, quick=True)
+            self.assertEqual(made.call_count, 1)
+            self.assertEqual(quick[web_memory.PREVIEWS_KEY], first[web_memory.PREVIEWS_KEY])
+            center.build(now=NOW)
+            self.assertEqual(made.call_count, 2)
+        fresh = web_memory.Center(self.state, home=self.home)
+        with mock.patch.object(web_memory, "previews", made):
+            fresh.build(now=NOW, quick=True)  # Nothing built before: made all the same.
+        self.assertEqual(made.call_count, 3)
+
     def test_a_decision_is_in_progress_by_m2s_rule(self):
         self.seed()
         old = memstore.add_decision(self.state, scope="project", owner_key=PID, question="三周前问的事？", answer="先不做",

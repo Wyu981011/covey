@@ -9,6 +9,7 @@
 import type {
   MemoryEditPayloadV43,
   MemoryEntry,
+  MemoryCounts,
   MemoryGlobalData,
   MemoryHealth,
   MemoryImportItem,
@@ -122,6 +123,13 @@ export function scopeOptions(idx: Pick<MemoryIndex, 'scopes' | 'counts'> | null 
     out.push({ value: s.key, label: s.key === 'global' ? '全局' : s.key === 'topics' ? '话题' : s.title || s.key, pending: s.counts.pending, over: roomOf(s).tone === 'over' });
   }
   return out;
+}
+
+/** 页头“规矩 N · 决定 N · 资料 N”：选了一个范围就写那个范围的数（同专项右栏的口径），全部范围写总数 */
+export function headCounts(idx: Pick<MemoryIndex, 'scopes' | 'counts'>, scope: string): Pick<MemoryCounts, 'rule' | 'decision' | 'note'> {
+  const s = scope === 'all' ? undefined : idx.scopes.find((x: MemoryScopeSummary) => x.key === scope);
+  const c = s ? s.counts : idx.counts;
+  return { rule: c.rule, decision: c.decision, note: c.note };
 }
 
 /* ---------- 页签里的条目 ---------- */

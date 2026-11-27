@@ -29,7 +29,7 @@ import {
   acceptOp, allOp, archiveOp, decisionCounts, defaultTab, draftProblem, editOp, healthRows, ignoreOp, importChecked, importGroups, importMeta,
   importOp, isTab, keepOp, keysToLoad, limitsOf, locate, logLine, metaLine, mmdd, moveOp, poolOf, previewSections, projectKeyOf, promoteOp,
   promoteTarget, rejectOp, restoreOp, reviewItems, reviewMeta, roomOf, scopeOptions, shelved, tabEntries, titleIndex, undoOp, voidOp, addOp,
-  charCount, type DecisionView, type HealthRow, type Place, type Pool, type ScopeFilter,
+  charCount, headCounts, type DecisionView, type HealthRow, type Place, type Pool, type ScopeFilter,
 } from './memoryCenter';
 import './memorycenter.css';
 
@@ -192,9 +192,9 @@ const EntryRow: React.FC<{ e: MemoryEntry; ctx: Ctx; shelf?: boolean }> = ({ e, 
   const up: Place | null = promoteTarget(e);
   const upWord: string = up ? (up.scope === 'global' ? '提到全局' : `提到专项「${ctx.pool.projects[up.project_key ?? ''] || '专项'}」`) : '';
   const items = shelf
-    ? [{ word: '放回', on: () => void ctx.run(e.key, restoreOp(e)) }]
+    ? [{ word: '放回', on: () => void ctx.run(e.key, restoreOp(e), '已放回') }]
     : [
-        ...(up ? [{ word: upWord, on: () => void ctx.run(e.key, promoteOp(e, up)) }] : []),
+        ...(up ? [{ word: upWord, on: () => void ctx.run(e.key, promoteOp(e, up), '已换范围') }] : []),
         ...(e.scope !== 'topic' ? [{ word: '换范围…', on: () => setMoving(true) }] : []),
         { word: '归档', on: () => void ctx.run(e.key, archiveOp(e), '已归档') },
         { word: '作废', danger: true, on: () => void ctx.run(e.key, voidOp(e), '已作废') },
@@ -238,7 +238,7 @@ const EntryRow: React.FC<{ e: MemoryEntry; ctx: Ctx; shelf?: boolean }> = ({ e, 
             aria-label="挪到哪个范围"
             onChange={(ev: React.ChangeEvent<HTMLSelectElement>) => {
               setMoving(false);
-              if (ev.target.value !== placeValue(e)) void ctx.run(e.key, moveOp(e, placeFromValue(ev.target.value)));
+              if (ev.target.value !== placeValue(e)) void ctx.run(e.key, moveOp(e, placeFromValue(ev.target.value)), '已换范围');
             }}
           >
             {placeOptions(ctx.pool, ctx.index).map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -634,10 +634,11 @@ export const MemoryCenter: React.FC<{ index: MemoryIndex }> = ({ index }) => {
   const loading: boolean = got.loading && !pool.entries.length && !pool.review.length;
   const empty: string = query ? `没有搜到“${query}”` : focusRefs ? '这一项涉及的条目不在这个页签' : tab === 'decisions' && view === 'open' ? '没有在办的决定' : '这里还没有。';
   const kindForAdd: MemoryKind = TAB_KIND[tab] ?? 'rule';
+  const headc = headCounts(index, scope);
 
   return (
     <div className="mc-page">
-      <Head title="记忆" sub={`规矩 ${index.counts.rule} · 决定 ${index.counts.decision} · 资料 ${index.counts.note}`} />
+      <Head title="记忆" sub={`规矩 ${headc.rule} · 决定 ${headc.decision} · 资料 ${headc.note}`} />
       <div className="scroll">
         <div className="mc" data-testid="memory-center">
           <div className="mc-top">

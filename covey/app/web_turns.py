@@ -337,7 +337,12 @@ def memory_of(state, record) -> dict | None:
     those it said it used (``memory_used``, by core/memstore.py find; the code itself while that cannot tell) and the
     short codes it carried. None for a turn that carried none."""
     from covey.core import memstore
-    ids = [str(item) for item in (record or {}).get("memory_ids") or () if str(item).strip()]
+
+    def code_of(item):  # app/memory_turn.py writes {n: its short code, ref, scope, kind, by}; an older turn a code or an M number.
+        if isinstance(item, dict):
+            return str(item.get("n") or item.get("ref") or "")
+        return str(item)
+    ids = [code_of(item) for item in (record or {}).get("memory_ids") or () if code_of(item).strip()]
     used = [str(item) for item in (record or {}).get("memory_used") or () if str(item).strip()]
     if not ids and not used:
         return None

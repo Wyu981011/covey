@@ -48,7 +48,8 @@
   .cv .rp-add{padding:10px 12px}
   .cv .rp-addrow{flex-direction:column}
   .cv .rp-addrow .btn{height:40px;width:100%}
-  .cv .rp-more{min-height:40px}
+  .cv .rp-more{min-height:40px;min-width:40px}
+  .cv .rp-addrow .st-in-t,.cv .rp-add .st-in-t{min-height:40px}
   .cv .rp-pr-hd,.cv .rp-pr,.cv .rp-pr-ft{padding-left:12px;padding-right:12px}
   .cv .rp-pr{min-height:44px;align-items:center}
   .cv .rp-pr input,.cv .rp-chk input{width:18px;height:18px}

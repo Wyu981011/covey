@@ -988,10 +988,11 @@ class WebSync:
             if on:
                 if self.memory_center is None:
                     self.memory_center = web_memory.Center(state)
-                built = self.memory_center.build()
+                built = self.memory_center.build(quick=force)  # Before the page's ack: the previews of the last build.
             else:
                 built = {web_memory.INDEX_KEY: web_memory.off_index()}
-            self.center_stamps, self.center_built = stamps, clock
+            # After a quick one the next pass builds it all again (the previews), off the page's ack.
+            self.center_stamps, self.center_built = (None if force and on else stamps), clock
             items = [web_sync.item("settings", key, data) for key, data in built.items()]
             index = [each for each in items if each["key"] == web_memory.INDEX_KEY]
             fresh = [each for each in items if each["key"] != web_memory.INDEX_KEY and self.sent.get(("settings", each["key"])) != each["rev"]]

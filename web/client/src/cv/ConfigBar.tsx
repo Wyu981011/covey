@@ -122,9 +122,9 @@ export const ConfigBar: React.FC<{ topic: SnapshotTopic | undefined; workspace: 
   }, [open, phase]);
 
   const model: LaunchModel | undefined = all && config ? all.models.find((m: LaunchModel) => m.key === config.model) : undefined;
-  // 话题带仓库（新 Covey）时写“仓库 a、b”，没有就照旧写工作区
+  // 话题带仓库（新 Covey）时写“仓库 a、b”；没带仓库：新 Covey（没有 workspaces）写“主目录 x”，旧 Covey 照旧写工作区
   const label: string = [
-    repoLabel(topic?.repos) || ((config?.workspace ?? workspace) ? `工作区 ${config?.workspace ?? workspace}` : ''),
+    repoLabel(topic?.repos) || ((config?.workspace ?? workspace) ? `${all && isRepoMode(all) ? '主目录' : '工作区'} ${config?.workspace ?? workspace}` : ''),
     model ? `${model.harness_title} · ${topic?.model_name || model.label}` : engineText(topic),
   ].filter(Boolean).join(' · ');
   if (!all || !data || !config || !base) return <span className="t3 cfg-ro" style={{ fontSize: 12 }}>{label}</span>;

@@ -161,12 +161,17 @@
   .cv .mc-top{gap:6px}
   .cv .mc-sel{flex:1 1 40%;max-width:none;height:40px}
   .cv .mc-search{flex:1 1 50%;height:40px}
+  .cv .mc-search input{height:100%;min-height:40px}
   .cv .mc-top .sp{display:none}
   .cv .mc-btn{height:40px;flex:1 1 0;justify-content:center;padding:0 8px}
   .cv .mc-btn{font-size:12.5px;gap:4px}
   .cv .mc-tabs button{height:40px;padding:0 10px}
   .cv .mc-act,.cv .mc-ic{min-height:40px;min-width:40px}
   .cv .mc-menu button{height:40px}
+  .cv .mc-chip{min-height:40px;padding:0 12px}
+  .cv .mc-link,.cv .mc-seg button{min-height:40px;min-width:40px;display:inline-flex;align-items:center;justify-content:center}
+  .cv .ml-head,.cv .ml-row,.cv .ml-more{min-height:40px;align-items:center}
+  .cv .ml-more{display:flex}
   .cv .mc-pair{grid-template-columns:1fr}
   .cv .mc-drawer{width:100vw;border-left:0}
   .cv .mc-room-w{white-space:normal}

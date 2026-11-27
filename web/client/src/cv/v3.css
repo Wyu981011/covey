@@ -54,3 +54,22 @@
 &:not(.m) .nb-act .nb-opts{grid-area:o}
 &:not(.m) .nb-act :is(.nb-btns,.rc-acts){grid-area:b;justify-content:flex-end}
 }
+
+/* 对比度（CUA 验收，WCAG AA）：深色下的次要字 --t3（look.json 的 muted #7A7F8C，在凸起面板上只有约 4.2:1）和更淡的 --t4（faint #4E535F，只有约 2.4:1）调亮；
+   主按钮白字在品牌色 #7C83FF 上只有 3.2:1，深色下底色压深到 #5B61C8（5.3:1）。look.json 来自 Python 侧（core/look.py），这里只在网页覆盖，不动它。 */
+.cv:not(.light){--t3:#8E93A0;--t4:#848996}
+.cv:not(.light) .btn.pri,.cv:not(.light) .mc-btn.pri{background:#5b61c8;border-color:#5b61c8}
+
+/* 手机点按区（CUA 验收 ≥40px）：顶栏的菜单按钮 34px 加到 40px，不挪位置 */
+@media (max-width:640px){.cv .mtop .ib{width:40px;height:40px}}
+
+/* 话题头像（T 号）：底色是按号码生成的（look.gen.ts topicColor），个别号码偏亮，白字只有 3.0:1；底色压暗 26%，白字 ≥4.5:1，色相不变。
+   状态胶囊里“做完、排队、取消、闲置”的灰字用的是状态灰 #5B6270，在深色底上只有 2.6:1，深色下改用次要字色。 */
+.cv .a-tbadge{background:color-mix(in srgb,var(--tc) 74%,#000)}
+.cv .a-tbadge.none{background:var(--s3)}
+.cv:not(.light) .pill:is(.tone-done,.tone-queued,.tone-cancelled,.tone-idle){color:var(--t3)}
+
+/* 浅色下的对比度：--t4（#9AA0AD 只有 2.2–2.6:1）、在做蓝、等你的橙、停住红在浅底和 13% 淡底上都不到 4.5:1，各压深一档，色相不变。
+   深色下“暗着”的话题头像（opacity .55）白字只有 3.0:1，提到 .8。 */
+.cv.light{--t4:#5f6575;--run:#1d4ed8;--wait:#9a3f08;--fail:#b91c1c}
+.cv .a-tp.dim .a-tbadge{opacity:.8}
